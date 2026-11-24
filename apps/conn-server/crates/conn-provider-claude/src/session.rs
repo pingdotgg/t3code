@@ -60,6 +60,8 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(20);
 const INTERRUPT_TIMEOUT: Duration = Duration::from_secs(10);
 /// `CLAUDE_STOP_CONFIRM_TIMEOUT_MS`: how long an interrupt waits for the CLI to exit.
 const STOP_CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a workflow `stopTask` may wait for the SDK (T3's `"15 seconds"`).
+const WORKFLOW_STOP_TIMEOUT: Duration = Duration::from_secs(15);
 /// The helper's session-file calls (T3's worker timeout).
 const FUNCTION_TIMEOUT: Duration = Duration::from_secs(30);
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
@@ -167,6 +169,8 @@ struct Live {
     held_since: Option<Instant>,
     /// Where Claude Code writes task output (`claudeTaskOutputRoot`), from the CLI's environment.
     task_output_root: std::path::PathBuf,
+    /// `workflowFilesRoot`: where this query's CLI writes workflow transcripts.
+    workflow_files_root: std::path::PathBuf,
 }
 
 impl ClaudeSession {
@@ -234,7 +238,7 @@ impl Inner {
     }
 
     /// Sends events and callback answers in order. Holds no lock.
-    async fn deliver(&self, query: Option<&QueryHandle>, outs: Vec<Out>) {
+    async fn deliver(self: &Arc<Self>, query: Option<&QueryHandle>, outs: Vec<Out>) {
         if outs.is_empty() {
             return;
         }
@@ -280,6 +284,46 @@ impl Inner {
                         tail.finish().await;
                     }
                 }
+                Out::StopTask { task_id } => {
+                    // `stopTask` only on a live query that is not already stopping.
+                    let query = {
+                        let state = self.lock();
+                        state
+                            .live
+                            .as_ref()
+                            .filter(|l| !l.stopping.load(Ordering::Relaxed) && !*l.ended.borrow())
+                            .map(|l| l.query.clone())
+                    };
+                    if let Some(query) = query {
+                        // An unanswered stop must not hold the turn's settlement.
+                        tokio::spawn(async move {
+                            let _ = query
+                                .call("stopTask", json!([task_id]), WORKFLOW_STOP_TIMEOUT)
+                                .await;
+                        });
+                    }
+                }
+                Out::ReadMemberTranscript(member) => {
+                    let root = self
+                        .lock()
+                        .live
+                        .as_ref()
+                        .map(|l| l.workflow_files_root.clone());
+                    if let Some(delay) = member.delay {
+                        // The flush wait runs on its own timer, so this driver keeps draining
+                        // its query and the shared SDK router never blocks on it.
+                        let inner = Arc::downgrade(self);
+                        let query = query.cloned();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(delay).await;
+                            if let Some(inner) = inner.upgrade() {
+                                inner.import_member(query.as_ref(), member, root).await;
+                            }
+                        });
+                        continue;
+                    }
+                    self.import_member(query, member, root).await;
+                }
                 Out::Skipped(kind) => {
                     let mut state = self.lock();
                     // Kinds come from the CLI; remember a bounded number of them.
@@ -292,6 +336,30 @@ impl Inner {
                 }
             }
         }
+    }
+
+    /// Reads a member transcript off the runtime thread and shows what it gained. Boxed as
+    /// `Send`: it and `deliver` call each other, and the flush timer spawns it.
+    fn import_member<'a>(
+        self: &'a Arc<Self>,
+        query: Option<&'a QueryHandle>,
+        member: crate::mapper::MemberTranscript,
+        root: Option<std::path::PathBuf>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            let answers = match root {
+                Some(root) => {
+                    let job = member.clone();
+                    tokio::task::spawn_blocking(move || read_member_transcript(&job, &root))
+                        .await
+                        .ok()
+                        .flatten()
+                }
+                None => None,
+            };
+            let outs = self.lock().mapper.member_transcript(member, answers);
+            self.deliver(query, outs).await;
+        })
     }
 
     fn start_abandoned(&self, run_id: &str) -> bool {
@@ -457,6 +525,90 @@ fn callback_request(kind: &str, args: &Value) -> Option<ControlRequest> {
         })),
         _ => None,
     }
+}
+
+/// The bytes one member transcript read takes at most (T3 drains 512 KiB reads unbounded).
+const MEMBER_TRANSCRIPT_BYTE_CAP: u64 = 8 * 1024 * 1024;
+
+/// Reads a settled member's transcript under `root`.
+pub(crate) fn read_member_transcript(
+    member: &crate::mapper::MemberTranscript,
+    root: &std::path::Path,
+) -> Option<crate::mapper::MemberAnswers> {
+    let file = member.dir.join(format!("agent-{}.jsonl", member.agent_id));
+    read_contained_tail(root, &file, MEMBER_TRANSCRIPT_BYTE_CAP, member.cursor)
+        .map(|(text, cursor)| crate::mapper::transcript_answers(&text, cursor))
+}
+
+/// `readContainedWorkflowFile` with `fromOffset`: the whole lines an absolute `.jsonl` file
+/// gained since `cursor`, whose real path stays inside `root`, and the cursor after them. Past
+/// `cap` bytes the read keeps the last whole lines, so the final answer stays. `None` when the
+/// file is missing, outside `root`, or not a regular file.
+fn read_contained_tail(
+    root: &std::path::Path,
+    file: &std::path::Path,
+    cap: u64,
+    cursor: crate::mapper::TranscriptCursor,
+) -> Option<(String, crate::mapper::TranscriptCursor)> {
+    use std::io::{Read, Seek, SeekFrom};
+    if !file.is_absolute() || file.extension()? != "jsonl" {
+        return None;
+    }
+    let root = std::fs::canonicalize(root).ok()?;
+    let resolved = std::fs::canonicalize(file).ok()?;
+    if !resolved.starts_with(&root) || resolved.extension()? != "jsonl" {
+        return None;
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // A leaf swapped for a symlink since the check fails to open; a FIFO cannot block.
+        options.custom_flags(
+            (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
+        );
+    }
+    let mut handle = options.open(&resolved).ok()?;
+    let meta = handle.metadata().ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    let identity = {
+        use std::os::unix::fs::MetadataExt;
+        Some((meta.dev(), meta.ino()))
+    };
+    #[cfg(not(unix))]
+    let identity = None;
+    let base = if identity.is_some() && cursor.identity == identity && cursor.offset <= meta.len() {
+        cursor.offset
+    } else {
+        0
+    };
+    let start = base.max(meta.len().saturating_sub(cap));
+    handle.seek(SeekFrom::Start(start)).ok()?;
+    let mut bytes = Vec::new();
+    handle.take(cap).read_to_end(&mut bytes).ok()?;
+    let first = if start > base {
+        bytes
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or(bytes.len(), |at| at + 1)
+    } else {
+        0
+    };
+    let end = bytes
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |at| at + 1)
+        .max(first);
+    let lines = bytes.get(first..end).unwrap_or_default();
+    let offset = start.saturating_add(u64::try_from(end).ok()?);
+    Some((
+        String::from_utf8_lossy(lines).into_owned(),
+        crate::mapper::TranscriptCursor { offset, identity },
+    ))
 }
 
 /// The driver: one per query, ends after the query's `End`.
@@ -662,7 +814,7 @@ fn abandoned_error() -> ProviderError {
     )
 }
 
-async fn on_end(inner: &Inner, generation: u64, end: &QueryEnd, stopping: bool) {
+async fn on_end(inner: &Arc<Inner>, generation: u64, end: &QueryEnd, stopping: bool) {
     let outs = {
         let mut state = inner.lock();
         let current = state
@@ -726,8 +878,9 @@ fn end_detail(end: &QueryEnd) -> String {
 /// `compileClaudeModelSelection`: API model id, effort, settings and the prompt effort.
 fn model_selection(
     selection: &conn_contract::ModelSelection,
+    manifest: &conn_provider::LiveManifest,
 ) -> (String, Option<String>, Map<String, Value>) {
-    let compiled = catalog::compile(&to_json(selection));
+    let compiled = catalog::compile(&to_json(selection), manifest);
     (compiled.api_model_id, compiled.effort, compiled.settings)
 }
 
@@ -997,7 +1150,8 @@ impl ClaudeSession {
         let inner = &self.inner;
         let native = native_thread_id(&input.provider_thread)
             .ok_or_else(|| failed_err("start_turn", "provider thread has no native Claude id"))?;
-        let (model, effort, selection_settings) = model_selection(&input.model_selection);
+        let (model, effort, selection_settings) =
+            model_selection(&input.model_selection, &inner.config.model_manifest);
         // `resolveSettings` may wait for the SDK host to launch; nothing is open yet.
         let run_id = input.run_id.as_str();
         let policy = self
@@ -1211,7 +1365,8 @@ impl ClaudeSession {
         native: Option<&str>,
         model_change: ModelChange,
     ) -> ProviderResult<bool> {
-        let (model, effort, settings) = model_selection(selection);
+        let (model, effort, settings) =
+            model_selection(selection, &self.inner.config.model_manifest);
         let live_change = {
             let state = self.inner.lock();
             state.live.as_ref().is_some_and(|live| {
@@ -1267,6 +1422,8 @@ impl ClaudeSession {
         // the client shows it running as T3's does; what the CLI receives does not change.
         // With a live query the host is up, and frames of that query must not reach the new
         // turn before `prepare` decided to keep or close it, so the turn opens after it.
+        let now = i64::try_from(conn_support::time::now_ms()).unwrap_or(i64::MAX);
+        let models = catalog::current_provider_models(&self.inner.config.model_manifest, now);
         let early = {
             let mut state = self.inner.lock();
             if state.mapper.turn_active() {
@@ -1275,6 +1432,7 @@ impl ClaudeSession {
                     "the previous turn is still running",
                 ));
             }
+            state.mapper.set_catalog(models);
             if state.live.is_none() && !state.closed {
                 let mode = plain_policy(&input.runtime_policy).permission_mode;
                 Some(state.mapper.begin_turn(&input, &mode))
@@ -1288,7 +1446,11 @@ impl ClaudeSession {
         }
         let run_id = input.run_id.as_str();
         // T3 reads the attachments before it opens the query (`ClaudeAdapterV2` startTurn).
-        let effort = catalog::compile(&to_json(&input.model_selection)).prompt_effort;
+        let effort = catalog::compile(
+            &to_json(&input.model_selection),
+            &self.inner.config.model_manifest,
+        )
+        .prompt_effort;
         let text = catalog::prompt_text(&input.message.text, effort.as_deref());
         let prepared = match self
             .inner
@@ -1387,8 +1549,9 @@ impl ClaudeSession {
         let env = self.environment(&input.thread_id, input.resume).await;
         // T3 resolves a relative CLAUDE_CODE_TMPDIR against the real cwd; this uses the cwd
         // as given (it differs only through a symlinked cwd and a relative value).
-        let task_output_root =
-            crate::tail::output_root(&env, input.cwd.as_deref().map(std::path::Path::new));
+        let cwd_path = input.cwd.as_deref().map(std::path::Path::new);
+        let task_output_root = crate::tail::output_root(&env, cwd_path);
+        let workflow_files_root = launch::workflow_files_root(&env, cwd_path);
         // `launchArgs`: files read off the runtime thread; a value the CLI would refuse fails
         // the start, as T3's query runner does.
         let (args, cwd) = (inner.config.launch_args.clone(), input.cwd.clone());
@@ -1438,6 +1601,7 @@ impl ClaudeSession {
                 last_activity: Instant::now(),
                 held_since: None,
                 task_output_root,
+                workflow_files_root,
             });
             generation
         };
@@ -1854,7 +2018,10 @@ impl Session for ClaudeSession {
                 None => None,
             };
             let effort = match live_selection {
-                Some(selection) => catalog::compile(&to_json(selection)).prompt_effort,
+                Some(selection) => {
+                    catalog::compile(&to_json(selection), &self.inner.config.model_manifest)
+                        .prompt_effort
+                }
                 None => self.inner.lock().turn_prompt_effort.clone(),
             };
             let text = catalog::prompt_text(&input.message.text, effort.as_deref());
@@ -2256,7 +2423,7 @@ impl Session for ClaudeSession {
                 accepted: false,
             };
             if let Err(error) = query
-                .call("stopTask", json!([input.task_id]), Duration::from_secs(15))
+                .call("stopTask", json!([input.task_id]), WORKFLOW_STOP_TIMEOUT)
                 .await
             {
                 return Err(failed_err(
@@ -2342,6 +2509,59 @@ fn require_unambiguous_server(statuses: &Value, server: &str) -> ProviderResult<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `readContainedWorkflowFile`: absolute paths only, the real path inside the root, a
+    /// regular file, and with a cap the whole lines at the end.
+    #[test]
+    fn member_transcripts_are_read_from_their_tail_inside_the_root() {
+        use crate::mapper::TranscriptCursor;
+        let dir = std::env::temp_dir().join(format!("conn-claude-tail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let root = dir.join("projects");
+        std::fs::create_dir_all(root.join("dir.jsonl")).unwrap();
+        let file = root.join("agent-a1.jsonl");
+        std::fs::write(&file, "first\nsecond\nthird\npartial").unwrap();
+        let start = TranscriptCursor::default();
+        let text = |read: Option<(String, TranscriptCursor)>| read.map(|(text, _)| text);
+        let (whole, cursor) = read_contained_tail(&root, &file, 1024, start).unwrap();
+        assert_eq!(whole, "first\nsecond\nthird\n");
+        // The cap cuts into "second": the read starts at the next whole line.
+        assert_eq!(
+            text(read_contained_tail(&root, &file, 18, start)),
+            Some("third\n".to_owned())
+        );
+        // From the cursor: only what was flushed since, and the partial line once it is whole.
+        assert_eq!(
+            text(read_contained_tail(&root, &file, 1024, cursor)),
+            Some(String::new())
+        );
+        std::fs::write(&file, "first\nsecond\nthird\npartial\nmore\n").unwrap();
+        assert_eq!(
+            text(read_contained_tail(&root, &file, 1024, cursor)),
+            Some("partial\nmore\n".to_owned())
+        );
+        assert_eq!(
+            read_contained_tail(
+                &root,
+                std::path::Path::new("projects/agent-a1.jsonl"),
+                1024,
+                start
+            ),
+            None
+        );
+        assert_eq!(
+            read_contained_tail(&root, &root.join("dir.jsonl"), 1024, start),
+            None
+        );
+        let outside = dir.join("outside.jsonl");
+        std::fs::write(&outside, "secret\n").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link.jsonl")).unwrap();
+        assert_eq!(
+            read_contained_tail(&root, &root.join("link.jsonl"), 1024, start),
+            None
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn callbacks_become_the_control_requests_the_mapper_reads() {

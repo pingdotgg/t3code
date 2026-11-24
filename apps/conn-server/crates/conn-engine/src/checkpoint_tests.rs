@@ -1216,3 +1216,190 @@ async fn a_rollback_session_gets_the_runtime_policy_override() {
     assert_eq!(policies.len(), 1, "{policies:?}");
     assert_eq!(policies[0]["approvalPolicy"], "never", "{policies:?}");
 }
+
+/// A thread in worktree `repo` that ran `first` there, then moved to a sibling worktree of the
+/// same repository: the moved run has not started yet.
+async fn moved_thread(
+    db: &TempDb,
+    repo: &Repo,
+    work: &Repo,
+    first: &str,
+) -> (
+    SqliteEngine,
+    Subscription<conn_contract::ThreadStreamItem, conn_contract::GetThreadProjectionError>,
+) {
+    repo.git(&["worktree", "add", "-b", "probe", &work.root(), "HEAD"]);
+    let (engine, _) = open_repo(db, repo);
+    dispatch(&engine, create_worktree_thread(repo)).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    turn(&engine, &mut stream, "run-one", first).await;
+    dispatch(
+        &engine,
+        json!({
+            "type":"thread.metadata.update", "threadId":"t1", "commandId":"move",
+            "worktreePath":work.root(), "branch":"probe", "expectedWorktreePath":repo.root()
+        }),
+    )
+    .await;
+    (engine, stream)
+}
+
+/// The files a unified diff touches, in its order.
+fn diff_files(diff: &Value) -> Vec<String> {
+    diff["diff"]
+        .as_str()
+        .unwrap()
+        .lines()
+        .filter_map(|l| l.strip_prefix("diff --git a/"))
+        .map(|l| l.split(" b/").next().unwrap().to_owned())
+        .collect()
+}
+
+/// T3 rebuilds the root scope from the run that starts in another folder
+/// (`CheckpointService.makeRootRunScope`): the moved run's id, root node and folder.
+/// Its turn diff compares with the previous checkout's ref, as T3's does: a file only the
+/// previous checkout had shows as deleted (a gap T3 shares).
+#[tokio::test(flavor = "current_thread")]
+async fn a_moved_thread_captures_its_new_checkout() {
+    let db = TempDb::new("handoff-diff");
+    let repo = Repo::new("handoff-diff");
+    let work = Repo::plain("handoff-new");
+    let (engine, mut stream) = moved_thread(&db, &repo, &work, "write first.txt one").await;
+    repo.write(
+        "old-only.txt",
+        "an unrelated edit in the previous checkout\n",
+    );
+    turn(
+        &engine,
+        &mut stream,
+        "run-two",
+        "write new-only.txt user-change",
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let scope = &p["checkpointScopes"][0];
+    let run_two = &p["runs"][1];
+    assert_eq!(scope["cwd"], work.root(), "{scope}");
+    assert_eq!(scope["runId"], run_two["id"], "{scope}");
+    assert_eq!(scope["nodeId"], run_two["rootNodeId"], "{scope}");
+    let diff = call(
+        &engine,
+        "orchestration.getTurnDiff",
+        json!({"threadId":"t1", "fromTurnCount":1, "toTurnCount":2}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(diff_files(&diff), ["first.txt", "new-only.txt"], "{diff}");
+    let first = call(
+        &engine,
+        "orchestration.getTurnDiff",
+        json!({"threadId":"t1", "fromTurnCount":0, "toTurnCount":1}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(diff_files(&first), ["first.txt"], "{first}");
+}
+
+/// T3 restores a checkpoint into the scope's current folder whatever checkout captured it, so
+/// rewinding files across a move would put checkout A's tree into checkout B. This server
+/// refuses that file restore; a conversation-only rewind still works.
+#[tokio::test(flavor = "current_thread")]
+async fn a_file_rewind_across_a_checkout_move_is_refused() {
+    let db = TempDb::new("moved-rewind");
+    let repo = Repo::new("moved-rewind");
+    let work = Repo::plain("moved-rewind-new");
+    let (engine, mut stream) = moved_thread(&db, &repo, &work, "write first.txt one").await;
+    work.write("b-only.txt", "only in the new checkout\n");
+    turn(&engine, &mut stream, "run-two", "write new-only.txt two").await;
+    let p = projection(&engine, "t1").await;
+    let target = checkpoint_at(&p, 1);
+    let message = refused_message(
+        engine
+            .dispatch(from_json(rollback("rb-1", &target, None)).unwrap())
+            .await,
+    );
+    assert!(message.contains("another checkout"), "{message}");
+    assert_eq!(
+        work.read("b-only.txt").as_deref(),
+        Some("only in the new checkout\n")
+    );
+    assert_eq!(work.read("new-only.txt").as_deref(), Some("two\n"));
+
+    dispatch(&engine, rollback("rb-2", &target, Some(false))).await;
+    let p = until(&engine, |p| p["runs"][1]["status"] == "rolled_back").await;
+    assert!(p["thread"]["rollbackFailure"].is_null(), "{}", p["thread"]);
+    assert_eq!(
+        work.read("b-only.txt").as_deref(),
+        Some("only in the new checkout\n")
+    );
+    assert_eq!(work.read("new-only.txt").as_deref(), Some("two\n"));
+}
+
+/// A scope imported from the T3 server has no `checkpoint-scope.created` in this log. A run
+/// that resumes it records its folder before it captures, and a checkpoint captured here whose
+/// folder the log cannot tell is not restored after a move.
+#[tokio::test(flavor = "current_thread")]
+async fn an_imported_scope_still_refuses_a_file_rewind_across_a_move() {
+    let db = TempDb::new("imported-rewind");
+    let repo = Repo::new("imported-rewind");
+    let work = Repo::plain("imported-rewind-new");
+    repo.git(&["worktree", "add", "-b", "probe", &work.root(), "HEAD"]);
+    let (engine, _) = open_repo(&db, &repo);
+    dispatch(&engine, create_worktree_thread(&repo)).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    turn(&engine, &mut stream, "run-one", "write first.txt one").await;
+    // As if the scope had come from the T3 server: its row is here, its event is not.
+    rusqlite::Connection::open(db.path())
+        .unwrap()
+        .execute(
+            "DELETE FROM events WHERE type = 'checkpoint-scope.created'",
+            [],
+        )
+        .unwrap();
+    turn(&engine, &mut stream, "run-two", "write second.txt two").await;
+    dispatch(
+        &engine,
+        json!({
+            "type":"thread.metadata.update", "threadId":"t1", "commandId":"move",
+            "worktreePath":work.root(), "branch":"probe", "expectedWorktreePath":repo.root()
+        }),
+    )
+    .await;
+    work.write("b-only.txt", "only in the new checkout\n");
+    turn(&engine, &mut stream, "run-three", "write third.txt three").await;
+    let p = projection(&engine, "t1").await;
+    for ordinal in [2, 1] {
+        let message = refused_message(
+            engine
+                .dispatch(
+                    from_json(rollback(
+                        &format!("rb-{ordinal}"),
+                        &checkpoint_at(&p, ordinal),
+                        None,
+                    ))
+                    .unwrap(),
+                )
+                .await,
+        );
+        assert!(message.contains("another checkout"), "{ordinal}: {message}");
+    }
+    assert_eq!(
+        work.read("b-only.txt").as_deref(),
+        Some("only in the new checkout\n")
+    );
+    dispatch(
+        &engine,
+        rollback("rb-talk", &checkpoint_at(&p, 2), Some(false)),
+    )
+    .await;
+    let p = until(&engine, |p| p["runs"][2]["status"] == "rolled_back").await;
+    assert!(p["thread"]["rollbackFailure"].is_null(), "{}", p["thread"]);
+}

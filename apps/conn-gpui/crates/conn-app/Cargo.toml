@@ -39,6 +39,11 @@ tokio.workspace = true
 url.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Font weight axes and the weights a family has, read from CoreText (`fonts/axes.rs`). Already in
+# the build via GPUI's text system.
+core-foundation = "0.10"
+core-graphics = "0.24"
+core-text = "21.0"
 # Tag each window's CAMetalLayer as sRGB (`colour_space.rs`), matching
 # `.refs/threadbear/desktop/gpui/Cargo.toml`. Already in the build via GPUI.
 objc2 = "0.6"

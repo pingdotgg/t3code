@@ -11,7 +11,11 @@
       "description": "The active Gateway on the private WireGuard network, resolved by Orbit private DNS."
     }
   ],
-  "security": [],
+  "security": [
+    {
+      "wireguardPeer": []
+    }
+  ],
   "tags": [
     {
       "name": "Gateway",
@@ -2188,51 +2192,68 @@
       }
     },
     "/api/v1/broadcasting/auth": {
-      "get": {
+      "post": {
         "operationId": "realtime-auth",
         "summary": "Authorize the orbit broadcast channel",
         "tags": [
           "Realtime"
         ],
-        "parameters": [
-          {
-            "name": "socket_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^\\d+\\.\\d+$"
-            }
-          },
-          {
-            "name": "channel_name",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
+        "description": "A Pusher-protocol channel authorization endpoint. A client requests access to the private `orbit` channel with its `socket_id` and `channel_name`; the caller needs Gateway access. It refuses every `private-conn-profile.*` channel with `broadcast.channel_forbidden`: only `POST /api/v1/conn/broadcasting/auth` signs a Conn profile channel.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "socket_id": {
+                    "type": "string",
+                    "pattern": "^\\d+\\.\\d+$"
+                  },
+                  "channel_name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "socket_id",
+                  "channel_name"
+                ],
+                "additionalProperties": false
+              }
             }
           }
-        ],
-        "description": "A Pusher-protocol channel authorization endpoint. A client requests access to the private `orbit` channel with its `socket_id` and `channel_name`; the caller needs Gateway access. It refuses every `private-conn-profile.*` channel with `broadcast.channel_forbidden`: only `POST /api/v1/conn/broadcasting/auth` signs a Conn profile channel.",
+        },
         "responses": {
           "200": {
-            "description": "The request succeeded.",
+            "description": "The Pusher channel signature, without a `data` wrapper. Presence channels also include `channel_data`.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "data": {
-                      "type": "object"
+                    "auth": {
+                      "type": "string",
+                      "description": "The Reverb app key and the HMAC-SHA256 channel signature."
                     },
-                    "meta": {
-                      "$ref": "#/components/schemas/Meta"
+                    "channel_data": {
+                      "type": "string",
+                      "description": "JSON-encoded presence member data, returned only for `presence-node.{id}` channels."
                     }
                   },
                   "required": [
-                    "data",
-                    "meta"
-                  ]
+                    "auth"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Realtime is not configured (`realtime.not_configured`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -2246,13 +2267,33 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "A guard refused the change and the Gateway changed nothing; `error.code` names the guard.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The JSON body is not an object, has duplicate or unknown members, or fails validation (`validation.failed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "x-codeSamples": [
           {
             "lang": "bash",
             "label": "curl",
-            "source": "curl -sS \"https://gateway.orbit/api/v1/broadcasting/auth?socket_id=1&channel_name=1\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81'\n"
+            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/broadcasting/auth\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"socket_id\": \"example\", \"channel_name\": \"example\"}'\n"
           }
         ]
       }
@@ -2264,6 +2305,7 @@
         "tags": [
           "Gateway"
         ],
+        "security": [],
         "description": "Returns the PEM-encoded Orbit root certificate and its SHA-256 fingerprint so a client can pin it before it trusts the Gateway. This endpoint needs no WireGuard identity.",
         "responses": {
           "200": {
@@ -3648,7 +3690,7 @@
           "Conn"
         ],
         "x-orbit-extension": "conn",
-        "description": "Lists the registered T3 servers whose registering Node the caller has node access to, with their URL, server version, registration time, and admin session expiry. `status` is `session_expired` when the server must register again; cleanup_pending records a newer registration revision awaiting Swamp cleanup. A server of a container Instance names its `instance_id` and the container's `power_state` (`running` or `stopped`); it also supplies `project_id`, `project_name`, `project_slug`, `instance_name`, `node_name`, and `instance_url` for Conn to display Orbit facts while container T3 servers stay stock. `instance_url` follows the Instance URL rule (authoritative Route, otherwise first Route, or null without a Route), separately from the T3 `url`. Other servers have null for all eight Instance fields.",
+        "description": "Lists the registered T3 servers whose registering Node the caller has node access to, with their URL, server version, registration time, admin session expiry, `roles` (the registering Node's active role names), and `is_primary_agent` (true only for a host server registered by the fleet's primary `agent`-role Node). `status` is `session_expired` when the server must register again; cleanup_pending records a newer registration revision awaiting Swamp cleanup. A server of a container Instance names its `instance_id` and the container's `power_state` (`running` or `stopped`); it also supplies `project_id`, `project_name`, `project_slug`, `instance_name`, `node_name`, and `instance_url` for Conn to display Orbit facts while container T3 servers stay stock. `instance_url` follows the Instance URL rule (authoritative Route, otherwise first Route, or null without a Route), separately from the T3 `url`. Other servers have null for all eight Instance fields.",
         "responses": {
           "200": {
             "description": "The request succeeded.",
@@ -3917,6 +3959,200 @@
         ]
       }
     },
+    "/api/v1/conn/environments/{environment}/attention": {
+      "post": {
+        "operationId": "conn-attention-record",
+        "summary": "Report a Conn thread attention event from a native server",
+        "tags": [
+          "Conn"
+        ],
+        "parameters": [
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": ""
+          }
+        ],
+        "x-orbit-extension": "conn",
+        "description": "Requires `orbit.conn.push` enabled (else `conn.push_disabled` 404) and node access to the Node that serves the Conn server. Validates `environment_id` and thread ownership, enforces 120 events/min per server (`conn.attention_rate_limited`, 429), deduplicates by ULID `event_id` (repeat returns 200 as a no-op; new event returns 202 and queues `SendConnPushJob`), and redacts `thread_title` from Activity.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "event_id": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "attention",
+                      "attention_cleared"
+                    ]
+                  },
+                  "kind": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "approval",
+                      "input",
+                      "turn_finished",
+                      "turn_failed",
+                      null
+                    ],
+                    "description": "Conditionally required."
+                  },
+                  "environment_id": {
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  "thread_id": {
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  "request_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 255
+                  },
+                  "occurred_at": {
+                    "type": "string"
+                  },
+                  "thread_title": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "event_id",
+                  "type",
+                  "environment_id",
+                  "thread_id",
+                  "occurred_at"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Gateway already recorded this `event_id`; nothing changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ConnAttentionReceipt"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Recorded the event and queued its push.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ConnAttentionReceipt"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "More than 120 events in a minute for this server (`conn.attention_rate_limited`); `details.retry_after` names the seconds to wait.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conn push is off (`conn.push_disabled`), or no Conn environment matches the path.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A guard refused the change and the Gateway changed nothing; `error.code` names the guard. A disabled extension returns HTTP 409 (`extension.disabled`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The JSON body is not an object, has duplicate or unknown members, or fails validation (`validation.failed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "curl",
+            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/environments/1/attention\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"event_id\": \"example\", \"type\": \"attention\", \"environment_id\": \"example\", \"thread_id\": \"example\", \"occurred_at\": \"example\"}'\n"
+          }
+        ]
+      }
+    },
     "/api/v1/conn/environments/{environment}/managed-tokens": {
       "post": {
         "operationId": "conn-managed-token-create",
@@ -3959,36 +4195,14 @@
         },
         "responses": {
           "201": {
-            "description": "Created.",
+            "description": "Issued a short-lived managed reader token.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object"
-                    },
-                    "meta": {
-                      "$ref": "#/components/schemas/Meta"
-                    }
-                  },
-                  "required": [
-                    "data",
-                    "meta"
-                  ]
-                }
-              }
-            }
-          },
-          "200": {
-            "description": "The request succeeded; an exact retry returned the existing record.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "object"
+                      "$ref": "#/components/schemas/ConnManagedToken"
                     },
                     "meta": {
                       "$ref": "#/components/schemas/Meta"
@@ -4003,7 +4217,7 @@
             }
           },
           "403": {
-            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or has no direct node access edge to the serving Node (`conn.managed_direct_edge_required`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4092,7 +4306,7 @@
                     "data": {
                       "type": "array",
                       "items": {
-                        "type": "object"
+                        "$ref": "#/components/schemas/ConnPairing"
                       }
                     },
                     "meta": {
@@ -4453,7 +4667,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object"
+                      "$ref": "#/components/schemas/IssuedConnPairing"
                     },
                     "meta": {
                       "$ref": "#/components/schemas/Meta"
@@ -4540,17 +4754,6 @@
         "x-orbit-extension": "conn",
         "description": "Requires enabled Conn and node access to the Node that serves the T3 server, else `node_access.required` (403). Only for the T3 server of a container Instance; a host server returns `conn.environment_not_instance` (409). Returns HTTP 202 with conn.environment_renew, the same Operation the hourly renewal admits, at once and also for a stopped container that the hourly renewal waits on. A renewal that runs returns `operation.target_busy` (409). Swamp issues a new `Orbit Gateway` session in the container, proves it with one authenticated read, and the Gateway stores it; then a cleanup revokes the older Gateway sessions. A refusal fails with a `conn.*` code, which the server record keeps as `renewal_error_code`. No credential enters the request or its Operation. Follow conn:operation:show.",
         "x-orbit-operation": "start",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false
-              }
-            }
-          }
-        },
         "responses": {
           "202": {
             "description": "Accepted. The operation is queued; follow it with `operation:show`.",
@@ -4773,17 +4976,6 @@
         "x-orbit-extension": "conn",
         "description": "Requires Gateway Node access. Records conn.gateway_sessions_revoke for a pending registration cleanup revision and returns HTTP 202. Swamp revokes only non-current Orbit Gateway admin sessions through owner-bound keyed effects. A clean revision returns HTTP 204; an active cleanup returns operation.target_busy. A newer registration stays pending for a later maintenance tick. No credentials enter this request or its Operation.",
         "x-orbit-operation": "start",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false
-              }
-            }
-          }
-        },
         "responses": {
           "202": {
             "description": "Accepted pending registration cleanup. Follow conn:operation:show.",
@@ -5031,17 +5223,6 @@
         ],
         "x-orbit-extension": "conn",
         "x-orbit-operation": "start",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false
-              }
-            }
-          }
-        },
         "responses": {
           "202": {
             "description": "Accepted. The operation is queued; follow it with `operation:show`.",
@@ -5287,7 +5468,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object"
+                      "$ref": "#/components/schemas/ConnInstanceWork"
                     },
                     "meta": {
                       "$ref": "#/components/schemas/Meta"
@@ -5683,7 +5864,67 @@
                     "writeOnly": true
                   },
                   "model_selection": {
-                    "type": "object"
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "model"
+                    ],
+                    "properties": {
+                      "model": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "\\S"
+                      },
+                      "instanceId": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$(?![\\s\\S])"
+                      },
+                      "provider": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$(?![\\s\\S])"
+                      },
+                      "options": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": true
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "id",
+                                "value"
+                              ],
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "\\S"
+                                },
+                                "value": {
+                                  "oneOf": [
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "pattern": "\\S"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
                   },
                   "runtime_mode": {
                     "type": "string",
@@ -5924,17 +6165,6 @@
           }
         ],
         "x-orbit-extension": "conn",
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false
-              }
-            }
-          }
-        },
         "responses": {
           "202": {
             "description": "Accepted. Follow the launch snapshot.",
@@ -5987,23 +6217,13 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "The JSON body is not an object, has duplicate or unknown members, or fails validation (`validation.failed`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
           }
         },
         "x-codeSamples": [
           {
             "lang": "bash",
             "label": "curl",
-            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/launches/1/cancel\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{}'\n"
+            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/launches/1/cancel\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81'\n"
           }
         ]
       }
@@ -6131,26 +6351,80 @@
         "tags": [
           "Conn"
         ],
+        "security": [
+          {
+            "wireguardPeer": [],
+            "managedTargetBearer": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
-                  "socket_id": {
+                  "environment_id": {
                     "type": "string",
-                    "pattern": "^\\d+\\.\\d+$"
+                    "minLength": 1,
+                    "description": "The registered Conn environment ID of the managed target."
                   },
-                  "channel_name": {
-                    "type": "string"
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "The current managed target generation."
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "observed",
+                      "recovered"
+                    ]
+                  },
+                  "notice_received_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  },
+                  "fenced_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time",
+                    "description": "Conditionally required."
+                  },
+                  "handlers_closed_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time",
+                    "description": "Conditionally required."
+                  },
+                  "recovered_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time",
+                    "description": "Conditionally required."
                   }
                 },
                 "required": [
-                  "socket_id",
-                  "channel_name"
-                ],
-                "additionalProperties": false
+                  "environment_id",
+                  "generation",
+                  "revision",
+                  "kind",
+                  "notice_received_at"
+                ]
               }
             }
           }
@@ -6164,7 +6438,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object"
+                      "$ref": "#/components/schemas/ConnManagedAck"
                     },
                     "meta": {
                       "$ref": "#/components/schemas/Meta"
@@ -6179,7 +6453,17 @@
             }
           },
           "403": {
-            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or the target identity or bearer service credential does not match (`conn.managed_target_identity`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Managed targets are off (`conn.managed_disabled`) or the environment has no managed target (`conn.managed_target_unknown`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -6213,7 +6497,201 @@
           {
             "lang": "bash",
             "label": "curl",
-            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/managed/ack\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"socket_id\": \"example\", \"channel_name\": \"example\"}'\n"
+            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/managed/ack\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"environment_id\": \"example\", \"generation\": 1, \"revision\": 1, \"kind\": \"observed\", \"notice_received_at\": \"example\"}'\n"
+          }
+        ]
+      }
+    },
+    "/api/v1/conn/managed/attention": {
+      "post": {
+        "operationId": "conn-managed-attention",
+        "summary": "Report a Conn thread attention event from a managed server",
+        "tags": [
+          "Conn"
+        ],
+        "security": [
+          {
+            "wireguardPeer": [],
+            "managedTargetBearer": []
+          }
+        ],
+        "description": "Requires `orbit.conn.managed_targets` and `orbit.conn.push` enabled and managed target authentication (`AuthenticateConnManagedTarget`). Records no Activity. Validates `environment_id` and thread ownership, enforces 120 events/min per server (429), and deduplicates by ULID `event_id` (repeat returns 200; new event returns 202 and queues `SendConnPushJob`).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "environment_id": {
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "The current managed target generation."
+                  },
+                  "event_id": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "attention",
+                      "attention_cleared"
+                    ]
+                  },
+                  "kind": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "approval",
+                      "input",
+                      "turn_finished",
+                      "turn_failed",
+                      null
+                    ],
+                    "description": "Conditionally required."
+                  },
+                  "thread_id": {
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  "request_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 255
+                  },
+                  "occurred_at": {
+                    "type": "string"
+                  },
+                  "thread_title": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "environment_id",
+                  "generation",
+                  "event_id",
+                  "type",
+                  "thread_id",
+                  "occurred_at"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Gateway already recorded this `event_id`; nothing changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ConnAttentionReceipt"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Recorded the event and queued its push.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ConnAttentionReceipt"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "More than 120 events in a minute for this server (`conn.attention_rate_limited`); `details.retry_after` names the seconds to wait.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or the target identity or bearer service credential does not match (`conn.managed_target_identity`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Managed targets are off (`conn.managed_disabled`), the environment has no managed target (`conn.managed_target_unknown`), or Conn push is off (`conn.push_disabled`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A guard refused the change and the Gateway changed nothing; `error.code` names the guard.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The JSON body is not an object, has duplicate or unknown members, or fails validation (`validation.failed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "curl",
+            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/managed/attention\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"environment_id\": \"example\", \"generation\": 1, \"event_id\": \"example\", \"type\": \"attention\", \"thread_id\": \"example\", \"occurred_at\": \"example\"}'\n"
           }
         ]
       }
@@ -6225,26 +6703,48 @@
         "tags": [
           "Conn"
         ],
+        "security": [
+          {
+            "wireguardPeer": [],
+            "managedTargetBearer": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
-                  "socket_id": {
+                  "environment_id": {
                     "type": "string",
-                    "pattern": "^\\d+\\.\\d+$"
+                    "minLength": 1,
+                    "description": "The registered Conn environment ID of the managed target."
                   },
-                  "channel_name": {
-                    "type": "string"
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "The current managed target generation."
+                  },
+                  "nonce": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,64}$"
+                  },
+                  "after_revision": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0
                   }
                 },
                 "required": [
-                  "socket_id",
-                  "channel_name"
-                ],
-                "additionalProperties": false
+                  "environment_id",
+                  "generation",
+                  "nonce",
+                  "after_revision"
+                ]
               }
             }
           }
@@ -6258,7 +6758,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object"
+                      "$ref": "#/components/schemas/ConnManagedAuthority"
                     },
                     "meta": {
                       "$ref": "#/components/schemas/Meta"
@@ -6273,7 +6773,17 @@
             }
           },
           "403": {
-            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or the target identity or bearer service credential does not match (`conn.managed_target_identity`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Managed targets are off (`conn.managed_disabled`) or the environment has no managed target (`conn.managed_target_unknown`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -6307,7 +6817,7 @@
           {
             "lang": "bash",
             "label": "curl",
-            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/managed/authority\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"socket_id\": \"example\", \"channel_name\": \"example\"}'\n"
+            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/managed/authority\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"environment_id\": \"example\", \"generation\": 1, \"nonce\": \"example\", \"after_revision\": 0}'\n"
           }
         ]
       }
@@ -6319,13 +6829,30 @@
         "tags": [
           "Conn"
         ],
+        "security": [
+          {
+            "wireguardPeer": [],
+            "managedTargetBearer": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
+                  "environment_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The registered Conn environment ID of the managed target."
+                  },
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "The current managed target generation."
+                  },
                   "socket_id": {
                     "type": "string",
                     "pattern": "^\\d+\\.\\d+$"
@@ -6335,39 +6862,48 @@
                   }
                 },
                 "required": [
+                  "environment_id",
+                  "generation",
                   "socket_id",
                   "channel_name"
-                ],
-                "additionalProperties": false
+                ]
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "The request succeeded.",
+            "description": "The Pusher channel signature, without a `data` wrapper.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "data": {
-                      "type": "object"
-                    },
-                    "meta": {
-                      "$ref": "#/components/schemas/Meta"
+                    "auth": {
+                      "type": "string",
+                      "description": "The Reverb app key and the HMAC-SHA256 of `socket_id:channel_name`."
                     }
                   },
                   "required": [
-                    "data",
-                    "meta"
-                  ]
+                    "auth"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Managed targets are off (`conn.managed_disabled`), the environment has no managed target (`conn.managed_target_unknown`), or realtime is not configured (`realtime.not_configured`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
           },
           "403": {
-            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`), the target identity or bearer service credential does not match (`conn.managed_target_identity`), or the channel is not this target's current channel (`conn.managed_channel_forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -6401,7 +6937,7 @@
           {
             "lang": "bash",
             "label": "curl",
-            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/managed/broadcasting/auth\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"socket_id\": \"example\", \"channel_name\": \"example\"}'\n"
+            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/managed/broadcasting/auth\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"environment_id\": \"example\", \"generation\": 1, \"socket_id\": \"example\", \"channel_name\": \"example\"}'\n"
           }
         ]
       }
@@ -6413,26 +6949,48 @@
         "tags": [
           "Conn"
         ],
+        "security": [
+          {
+            "wireguardPeer": [],
+            "managedTargetBearer": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
-                  "socket_id": {
+                  "environment_id": {
                     "type": "string",
-                    "pattern": "^\\d+\\.\\d+$"
+                    "minLength": 1,
+                    "description": "The registered Conn environment ID of the managed target."
                   },
-                  "channel_name": {
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "The current managed target generation."
+                  },
+                  "nonce": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,64}$"
+                  },
+                  "token": {
+                    "type": "string"
+                  },
+                  "peer_address": {
                     "type": "string"
                   }
                 },
                 "required": [
-                  "socket_id",
-                  "channel_name"
-                ],
-                "additionalProperties": false
+                  "environment_id",
+                  "generation",
+                  "nonce",
+                  "token",
+                  "peer_address"
+                ]
               }
             }
           }
@@ -6446,7 +7004,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object"
+                      "$ref": "#/components/schemas/ConnManagedIntrospect"
                     },
                     "meta": {
                       "$ref": "#/components/schemas/Meta"
@@ -6461,7 +7019,17 @@
             }
           },
           "403": {
-            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`), the target identity or bearer service credential does not match (`conn.managed_target_identity`), the managed token is invalid (`conn.managed_token_invalid`), or the socket peer does not match the token's caller (`conn.managed_peer_mismatch`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Managed targets are off (`conn.managed_disabled`) or the environment has no managed target (`conn.managed_target_unknown`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -6495,7 +7063,7 @@
           {
             "lang": "bash",
             "label": "curl",
-            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/managed/introspect\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"socket_id\": \"example\", \"channel_name\": \"example\"}'\n"
+            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/managed/introspect\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"environment_id\": \"example\", \"generation\": 1, \"nonce\": \"example\", \"token\": \"example\", \"peer_address\": \"example\"}'\n"
           }
         ]
       }
@@ -6507,26 +7075,35 @@
         "tags": [
           "Conn"
         ],
+        "security": [
+          {
+            "wireguardPeer": [],
+            "managedTargetBearer": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
-                  "socket_id": {
+                  "environment_id": {
                     "type": "string",
-                    "pattern": "^\\d+\\.\\d+$"
+                    "minLength": 1,
+                    "description": "The registered Conn environment ID of the managed target."
                   },
-                  "channel_name": {
-                    "type": "string"
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "The current managed target generation."
                   }
                 },
                 "required": [
-                  "socket_id",
-                  "channel_name"
-                ],
-                "additionalProperties": false
+                  "environment_id",
+                  "generation"
+                ]
               }
             }
           }
@@ -6540,7 +7117,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object"
+                      "$ref": "#/components/schemas/ConnManagedRealtime"
                     },
                     "meta": {
                       "$ref": "#/components/schemas/Meta"
@@ -6555,7 +7132,17 @@
             }
           },
           "403": {
-            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or the target identity or bearer service credential does not match (`conn.managed_target_identity`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Managed targets are off (`conn.managed_disabled`) or the environment has no managed target (`conn.managed_target_unknown`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -6589,7 +7176,7 @@
           {
             "lang": "bash",
             "label": "curl",
-            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/managed/realtime\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"socket_id\": \"example\", \"channel_name\": \"example\"}'\n"
+            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/managed/realtime\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"environment_id\": \"example\", \"generation\": 1}'\n"
           }
         ]
       }
@@ -6612,7 +7199,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object"
+                      "$ref": "#/components/schemas/ConnNode"
                     },
                     "meta": {
                       "$ref": "#/components/schemas/Meta"
@@ -6693,7 +7280,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object"
+                      "$ref": "#/components/schemas/ConnNode"
                     },
                     "meta": {
                       "$ref": "#/components/schemas/Meta"
@@ -6743,6 +7330,337 @@
             "lang": "bash",
             "label": "curl",
             "source": "curl -sS -X PUT \"https://gateway.orbit/api/v1/conn/me/profile\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"profile_id\": 1}'\n"
+          }
+        ]
+      }
+    },
+    "/api/v1/conn/me/push-device": {
+      "get": {
+        "operationId": "conn-me-push-device-show",
+        "summary": "Show a registered Conn push device",
+        "tags": [
+          "Conn"
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "x-orbit-extension": "conn",
+        "description": "Requires `orbit.conn.push` enabled (else `conn.push_disabled` 404) and node access to at least one Node. Returns the calling Node's registered push device for `device_id` without the APNs token, or 404 when absent.",
+        "responses": {
+          "200": {
+            "description": "The request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ConnPushDevice"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conn push is off (`conn.push_disabled`), or the calling Node has no push device with this `device_id`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A disabled extension returns HTTP 409 (`extension.disabled`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "curl",
+            "source": "curl -sS \"https://gateway.orbit/api/v1/conn/me/push-device?device_id=1\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81'\n"
+          }
+        ]
+      },
+      "put": {
+        "operationId": "conn-me-push-device-upsert",
+        "summary": "Register or update a Conn push device",
+        "tags": [
+          "Conn"
+        ],
+        "x-orbit-extension": "conn",
+        "description": "Requires `orbit.conn.push` enabled (else `conn.push_disabled` 404) and node access to at least one Node. Upserts the calling Node's iOS push device on `(node_id, device_id)`, storing the APNs token encrypted and never echoing it in the response or Activity.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "device_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "apns_token": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]+$(?![\\s\\S])",
+                    "maxLength": 512,
+                    "minLength": 32
+                  },
+                  "apns_environment": {
+                    "type": "string",
+                    "enum": [
+                      "sandbox",
+                      "production"
+                    ]
+                  },
+                  "bundle_id": {
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  "app_version": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "ios_version": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "locale": {
+                    "type": "string",
+                    "maxLength": 32
+                  },
+                  "preferences": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "approval": {
+                        "type": "boolean"
+                      },
+                      "input": {
+                        "type": "boolean"
+                      },
+                      "turn_finished": {
+                        "type": "boolean"
+                      },
+                      "turn_failed": {
+                        "type": "boolean"
+                      },
+                      "hide_titles": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "approval",
+                      "input",
+                      "turn_finished",
+                      "turn_failed",
+                      "hide_titles"
+                    ]
+                  }
+                },
+                "required": [
+                  "device_id",
+                  "apns_token",
+                  "apns_environment",
+                  "bundle_id",
+                  "app_version",
+                  "ios_version",
+                  "locale",
+                  "preferences"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ConnPushDevice"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conn push is off (`conn.push_disabled`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A guard refused the change and the Gateway changed nothing; `error.code` names the guard. A disabled extension returns HTTP 409 (`extension.disabled`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The JSON body is not an object, has duplicate or unknown members, or fails validation (`validation.failed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "curl",
+            "source": "curl -sS -X PUT \"https://gateway.orbit/api/v1/conn/me/push-device\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"device_id\": \"9a1f0c2e-6b7d-4e5f-8a9b-0c1d2e3f4a5b\", \"apns_token\": \"example\", \"apns_environment\": \"sandbox\", \"bundle_id\": \"example\", \"app_version\": \"example\", \"ios_version\": \"example\", \"locale\": \"example\", \"preferences\": {\"approval\": true, \"input\": true, \"turn_finished\": true, \"turn_failed\": true, \"hide_titles\": true}}'\n"
+          }
+        ]
+      }
+    },
+    "/api/v1/conn/me/push-device/{device_id}": {
+      "delete": {
+        "operationId": "conn-me-push-device-destroy",
+        "summary": "Remove a registered Conn push device",
+        "tags": [
+          "Conn"
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": ""
+          }
+        ],
+        "x-orbit-extension": "conn",
+        "x-orbit-destructive": true,
+        "description": "Requires `orbit.conn.push` enabled (else `conn.push_disabled` 404) and node access to at least one Node. Removes the calling Node's push device for `device_id`. Idempotent: returns `removed: true` when deleted and `removed: false` when absent.",
+        "responses": {
+          "200": {
+            "description": "The request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ConnPushDeviceRemoval"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conn push is off (`conn.push_disabled`), or `device_id` is not a UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A guard refused the change and the Gateway changed nothing; `error.code` names the guard. A disabled extension returns HTTP 409 (`extension.disabled`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "curl",
+            "source": "curl -sS -X DELETE \"https://gateway.orbit/api/v1/conn/me/push-device/1\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81'\n"
           }
         ]
       }
@@ -7002,17 +7920,6 @@
         ],
         "x-orbit-extension": "conn",
         "description": "Requires node access to at least one Node; checks the requester only. Requests cooperative cancellation, as core operation:cancel, of a Conn Operation requested by the calling Node, an instance.create it requested, or an instance.complete it started or of a clone whose create it requested. Returns 200 with the Operation record, without steps; cancellation may still be pending. A second cancel returns the same; for a running Operation it asks Swamp to stop again. A cancel that arrives as a clone create ends can find it succeeded: cancel result.completion_operation_id on this route. A cancelled clone create keeps the clone and an address it published; remove it with conn:instance:destroy. A cancelled completion keeps the clone for conn:instance:complete. Returns 404 for another requester, an instance.destroy, or another kind. Send an empty JSON object.",
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "The request succeeded.",
@@ -7065,23 +7972,13 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "The JSON body is not an object, has duplicate or unknown members, or fails validation (`validation.failed`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
           }
         },
         "x-codeSamples": [
           {
             "lang": "bash",
             "label": "curl",
-            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/operations/1/cancel\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{}'\n"
+            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/operations/1/cancel\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81'\n"
           }
         ]
       }
@@ -8946,20 +9843,31 @@
           }
         ],
         "x-orbit-extension": "conn",
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false
+        "responses": {
+          "202": {
+            "description": "Created a new reserved clone.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ConnReservation"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
               }
             }
-          }
-        },
-        "responses": {
+          },
           "200": {
-            "description": "The request succeeded.",
+            "description": "Returned the caller's existing open reservation for this Project.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9009,6 +9917,185 @@
                 }
               }
             }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "curl",
+            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/projects/4/reservations\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81'\n"
+          }
+        ]
+      }
+    },
+    "/api/v1/conn/push-credentials": {
+      "get": {
+        "operationId": "conn-push-credentials-show",
+        "summary": "Show Conn APNs push credentials status",
+        "tags": [
+          "Conn"
+        ],
+        "x-orbit-extension": "conn",
+        "description": "Requires `orbit.conn.push` enabled (else `conn.push_disabled` 404) and Gateway access. Returns only whether APNs credentials are configured, the Key ID, and the Team ID; never returns the private key.",
+        "responses": {
+          "200": {
+            "description": "The request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ConnPushCredentialsStatus"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conn push is off (`conn.push_disabled`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A disabled extension returns HTTP 409 (`extension.disabled`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "curl",
+            "source": "curl -sS \"https://gateway.orbit/api/v1/conn/push-credentials\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81'\n"
+          },
+          {
+            "lang": "php",
+            "label": "PHP SDK",
+            "source": "<?php\n\nuse Orbit\\Sdk\\GatewayConnector;\nuse Orbit\\Sdk\\Requests\\Conn\\ShowConnPushCredentialsRequest;\n\n$connector = new GatewayConnector(\n    baseUrl: 'https://gateway.orbit',\n    caPemPath: '/path/to/orbit-root-ca.pem',\n);\n\n$response = $connector->send(new ShowConnPushCredentialsRequest())->dto();\n"
+          }
+        ]
+      },
+      "put": {
+        "operationId": "conn-push-credentials-set",
+        "summary": "Store Conn APNs push credentials",
+        "tags": [
+          "Conn"
+        ],
+        "x-orbit-extension": "conn",
+        "description": "Requires `orbit.conn.push` enabled (else `conn.push_disabled` 404) and Gateway access. Validates the Apple APNs Key ID, Team ID, and EC P-256 .p8 private key, stores the key encrypted, redacts it from Activity, and returns only `configured`, `key_id`, and `team_id`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "key_id": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9]{1,32}$(?![\\s\\S])",
+                    "description": "Apple APNs Key ID"
+                  },
+                  "team_id": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9]{1,32}$(?![\\s\\S])",
+                    "description": "Apple Developer Team ID"
+                  },
+                  "private_key": {
+                    "type": "string",
+                    "maxLength": 16384
+                  }
+                },
+                "required": [
+                  "key_id",
+                  "team_id",
+                  "private_key"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ConnPushCredentialsStatus"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conn push is off (`conn.push_disabled`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A guard refused the change and the Gateway changed nothing; `error.code` names the guard. A disabled extension returns HTTP 409 (`extension.disabled`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           },
           "422": {
             "description": "The JSON body is not an object, has duplicate or unknown members, or fails validation (`validation.failed`).",
@@ -9025,7 +10112,12 @@
           {
             "lang": "bash",
             "label": "curl",
-            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/projects/4/reservations\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{}'\n"
+            "source": "curl -sS -X PUT \"https://gateway.orbit/api/v1/conn/push-credentials\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"key_id\": \"example\", \"team_id\": \"example\", \"private_key\": \"example\"}'\n"
+          },
+          {
+            "lang": "php",
+            "label": "PHP SDK",
+            "source": "<?php\n\nuse Orbit\\Sdk\\GatewayConnector;\nuse Orbit\\Sdk\\Requests\\Conn\\SetConnPushCredentialsRequest;\n\n$connector = new GatewayConnector(\n    baseUrl: 'https://gateway.orbit',\n    caPemPath: '/path/to/orbit-root-ca.pem',\n);\n\n$response = $connector->send(new SetConnPushCredentialsRequest(keyId: 'value', teamId: 'value', privateKey: 'value'))->dto();\n"
           }
         ]
       }
@@ -9133,8 +10225,8 @@
         "x-orbit-extension": "conn",
         "x-orbit-destructive": true,
         "responses": {
-          "200": {
-            "description": "The request succeeded.",
+          "202": {
+            "description": "Released the reservation and queued its clone removal.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9306,18 +10398,73 @@
           }
         ],
         "x-orbit-extension": "conn",
-        "x-orbit-operation": "start",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\\s\\S])",
+                    "maxLength": 63
+                  },
+                  "branch": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "mode",
+                          "from"
+                        ],
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "new"
+                          },
+                          "from": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 255,
+                            "description": "A valid Git branch name."
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "mode",
+                          "name"
+                        ],
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "existing"
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 255,
+                            "description": "A valid Git branch name."
+                          }
+                        }
+                      }
+                    ],
+                    "description": "Optional frozen branch selection. Omit for installed-client behavior without a remote admission read."
+                  }
+                },
+                "required": [
+                  "name"
+                ],
                 "additionalProperties": false
               }
             }
           }
         },
+        "x-orbit-operation": "start",
         "responses": {
           "202": {
             "description": "Accepted. The operation is queued; follow it with `operation:show`.",
@@ -9382,7 +10529,7 @@
             }
           },
           "422": {
-            "description": "Invalid input (`validation.failed`). A malformed Idempotency-Key also returns `validation.failed`.",
+            "description": "The JSON body is not an object, has duplicate or unknown members, or fails validation (`validation.failed`). A malformed Idempotency-Key also returns `validation.failed`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9396,7 +10543,7 @@
           {
             "lang": "bash",
             "label": "curl",
-            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/reservations/1/finalize\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81'\n"
+            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/conn/reservations/1/finalize\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"name\": \"example\", \"branch\": \"main\"}'\n"
           }
         ]
       }
@@ -9498,11 +10645,30 @@
                     "data": {
                       "type": "array",
                       "items": {
-                        "type": "object"
+                        "$ref": "#/components/schemas/ConnTask"
                       }
                     },
                     "meta": {
-                      "$ref": "#/components/schemas/Meta"
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/Meta"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "next_cursor": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "description": "Send as `cursor` with the same filters for the next page; null on the last page."
+                            }
+                          },
+                          "required": [
+                            "next_cursor"
+                          ]
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -9571,7 +10737,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object"
+                      "$ref": "#/components/schemas/ConnTaskDetail"
                     },
                     "meta": {
                       "$ref": "#/components/schemas/Meta"
@@ -9665,7 +10831,7 @@
                     "data": {
                       "type": "array",
                       "items": {
-                        "type": "object"
+                        "$ref": "#/components/schemas/ConnThread"
                       }
                     },
                     "meta": {
@@ -9701,6 +10867,11 @@
                                     "type": [
                                       "string",
                                       "null"
+                                    ],
+                                    "enum": [
+                                      "running",
+                                      "stopped",
+                                      null
                                     ],
                                     "description": "The container power state: `stopped` is asleep, and its rows are the last read."
                                   },
@@ -9781,6 +10952,12 @@
         "summary": "Record the reviewer's review receipt",
         "tags": [
           "Node callbacks"
+        ],
+        "security": [
+          {
+            "wireguardPeer": [],
+            "taskKeyBearer": []
+          }
         ],
         "description": "The reviewer in a task copy posts its review receipt during its turn, through its Node's forwarder and with its copy key, as JSON: `verdict` (`approve` or `changes`) and `findings`, the number of blocking findings from 0 to 100, 0 for `approve` and at least 1 for `changes`; any other body answers `validation.failed`. Orbit records the receipt on the check of the running reviewer turn and answers 202; the last post of a turn counts, and the review handoff row is written when the turn ends. Refuses as the pull request text does: `tasks.pr_text_not_reviewer_turn`, `tasks.commit_not_checked`, `tasks.copy_publish_held` and `tasks.group_closed`.",
         "requestBody": {
@@ -9885,6 +11062,12 @@
         "tags": [
           "Node callbacks"
         ],
+        "security": [
+          {
+            "wireguardPeer": [],
+            "taskKeyBearer": []
+          }
+        ],
         "description": "The reviewer in a task copy sends its pull request title and body during its turn, through its Node's forwarder and with its copy key, as JSON or as form fields. Orbit records the text on the check of the running reviewer turn and answers 202; the publish of the done group uses it, and once the group has its pull request, the next publish of the done check updates the pull request's title and body with it. Refuses `tasks.pr_text_not_reviewer_turn` when no reviewer turn of the group runs, `tasks.commit_not_checked` when the turn's commit is no longer the checked candidate, `tasks.copy_publish_held` when the Project is not released for copy publish, and `tasks.group_closed` when the group ended.",
         "requestBody": {
           "required": true,
@@ -9979,6 +11162,12 @@
         "summary": "Show the task copy that holds the key",
         "tags": [
           "Node callbacks"
+        ],
+        "security": [
+          {
+            "wireguardPeer": [],
+            "taskKeyBearer": []
+          }
         ],
         "description": "A task copy calls this through its Node's container model forwarder, with its own copy key as the bearer. The request must come from the WireGuard address of the copy's Node. Returns the copy's `instance_id`, `project_id` and `group_id`.",
         "responses": {
@@ -15626,6 +16815,7 @@
         "tags": [
           "Gateway"
         ],
+        "security": [],
         "description": "Returns the Gateway name, version, and status, and the release the Gateway runs from. This endpoint needs no WireGuard identity. For an active WireGuard peer it also returns `auto_release`, whether automatic releases are enabled or paused, and `desired_fleet_state`, the object `gateway:desired-fleet-state` returns, as last cached; it is null until the state is resolved and for any other caller. This endpoint never waits for Git or GitHub.",
         "responses": {
           "200": {
@@ -22085,6 +23275,138 @@
         ]
       }
     },
+    "/api/v1/instances/{instance}/server-switch": {
+      "post": {
+        "operationId": "instance-server-switch",
+        "summary": "instance:server:switch",
+        "tags": [
+          "Instances"
+        ],
+        "parameters": [
+          {
+            "name": "instance",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Numeric Instance ID."
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            },
+            "description": "A permanent key scoped to this operation kind, target and input. The same request returns the existing operation with HTTP 202; a changed identity returns operation.idempotency_conflict (409)."
+          }
+        ],
+        "description": "Switch an existing T3 container Instance to the Conn Server.",
+        "x-orbit-operation": "start",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted. The operation is queued; follow it with `operation:show`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Operation"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Gateway has no queue (`operation.queue_unavailable`) and recorded nothing, or it could not queue the job (`operation.dispatch_failed`) and ended the operation as failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No record matches the path parameters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A guard refused the change and the Gateway changed nothing; `error.code` names the guard. The key already belongs to another target or input (`operation.idempotency_conflict`), or another operation holds the target (`operation.target_busy`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input (`validation.failed`). A malformed Idempotency-Key also returns `validation.failed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "curl",
+            "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/instances/12/server-switch\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81'\n"
+          },
+          {
+            "lang": "php",
+            "label": "PHP SDK",
+            "source": "<?php\n\nuse Orbit\\Sdk\\GatewayConnector;\nuse Orbit\\Sdk\\Requests\\Instances\\SwitchInstanceServerRequest;\n\n$connector = new GatewayConnector(\n    baseUrl: 'https://gateway.orbit',\n    caPemPath: '/path/to/orbit-root-ca.pem',\n);\n\n$response = $connector->send(new SwitchInstanceServerRequest(instanceId: 4))->dto();\n"
+          }
+        ]
+      }
+    },
     "/api/v1/instances/{instance}/setup": {
       "post": {
         "operationId": "instance-setup",
@@ -22668,17 +23990,6 @@
         ],
         "description": "Requires node access to the Instance's Node. Only for a development container. Returns HTTP 202 with instance.wake; an open wake of the same Instance is returned instead of a second. A nested-fleet Instance takes the wake only while its last sleep froze it: then Swamp resumes it with its inner fleet, and a stopped one fails `instance.nested_fleet_stopped`. Otherwise a nested-fleet default returns `instance.sleep_unsupported` (409), and a nested-fleet clone returns instance.start instead: Swamp starts the container, delivers its Club key and starts its inner fleet, then waits for Doctor; the result names `fleet_seconds`. Every other Instance: Swamp resumes a frozen container, or starts a stopped one, waits until the app answers, removes the asleep marker, then waits for T3 in an Instance with a T3 server. The result names the path in `wake`. A failed wake keeps the marker. Follow operation:show.",
         "x-orbit-operation": "start",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false
-              }
-            }
-          }
-        },
         "responses": {
           "202": {
             "description": "Accepted. The operation is queued; follow it with `operation:show`.",
@@ -23947,7 +25258,8 @@
                         "websocket",
                         "analytics",
                         "ci-runner",
-                        "swamp"
+                        "swamp",
+                        "agent"
                       ]
                     }
                   },
@@ -24355,7 +25667,7 @@
             "description": "A permanent key scoped to this operation kind, target and input. The same request returns the existing operation with HTTP 202; a changed identity returns operation.idempotency_conflict (409)."
           }
         ],
-        "description": "Change the name, platform, LAN address, reboot hold, apps folder, or CI places of a Node.",
+        "description": "Change the name, platform, LAN address, reboot hold, primary agent flag, apps folder, or CI places of a Node.",
         "requestBody": {
           "required": false,
           "content": {
@@ -24389,6 +25701,10 @@
                   "reboot_hold": {
                     "type": "boolean",
                     "description": "Hold fleet reboots: true or false"
+                  },
+                  "primary_agent": {
+                    "type": "boolean",
+                    "description": "Designate this agent-role Node as the primary agent: true or false"
                   },
                   "nested_fleet": {
                     "type": "boolean"
@@ -25643,7 +26959,8 @@
                       "websocket",
                       "analytics",
                       "ci-runner",
-                      "swamp"
+                      "swamp",
+                      "agent"
                     ],
                     "description": "Role name"
                   },
@@ -25835,7 +27152,8 @@
                       "websocket",
                       "analytics",
                       "ci-runner",
-                      "swamp"
+                      "swamp",
+                      "agent"
                     ],
                     "description": "Role name"
                   },
@@ -26021,7 +27339,8 @@
                       "websocket",
                       "analytics",
                       "ci-runner",
-                      "swamp"
+                      "swamp",
+                      "agent"
                     ],
                     "description": "Role name"
                   },
@@ -26854,6 +28173,80 @@
             "lang": "bash",
             "label": "curl",
             "source": "curl -sS -X POST \"https://gateway.orbit/api/v1/observation/maintenance/health\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81' \\\n  -H 'Content-Type: application/json' \\\n  -d '{}'\n"
+          }
+        ]
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "operationId": "gateway-openapi",
+        "summary": "Fetch the OpenAPI document",
+        "tags": [
+          "Gateway"
+        ],
+        "description": "Returns this OpenAPI document as the running release built it: `bin/build-api` writes it and the MCP tool manifest in one run when the release installs its dependencies. The `X-Orbit-OpenAPI-SHA256` header is the SHA-256 of the body, so a client can pin the document it generated from. Any active WireGuard peer may read it, with or without Node access.",
+        "responses": {
+          "200": {
+            "description": "This OpenAPI 3.1 document, without a `data` wrapper.",
+            "headers": {
+              "X-Orbit-OpenAPI-SHA256": {
+                "description": "The lowercase hex SHA-256 of the response body.",
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "openapi",
+                    "info",
+                    "paths"
+                  ],
+                  "properties": {
+                    "openapi": {
+                      "type": "string"
+                    },
+                    "info": {
+                      "type": "object"
+                    },
+                    "paths": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This release has no generated OpenAPI document (`openapi.unavailable`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not an active WireGuard peer (`peer.identity_unknown`) or lacks Node access to the target (`node_access.required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "curl",
+            "source": "curl -sS \"https://gateway.orbit/api/v1/openapi.json\" \\\n  --cacert /path/to/orbit-root-ca.pem \\\n  -H 'Accept: application/json' \\\n  -H 'X-Orbit-Request-Id: 9d6b1e5c-4a3f-4a1b-9f0e-6d2c3f5a7b81'\n"
           }
         ]
       }
@@ -29383,7 +30776,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "List projects.",
+        "description": "Lists the Projects with an Instance on a Node the caller has node access to; the Gateway sees every Project. Each item carries the Project fields plus a summary for Conn clients that tag a General thread to a Project: `repository` (the credential-free `host/owner/name` identity), `node_name` (the Node of the `default` Instance when the caller has Gateway authority or access to that Node; otherwise null, also without a `default` Instance), `icon` and `color` (always null: Orbit stores neither), and `instance_count` (the Instances on Nodes the caller can reach). See /reference/projects#project-summary.",
         "responses": {
           "200": {
             "description": "The request succeeded.",
@@ -29395,7 +30788,14 @@
                     "data": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/Project"
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/Project"
+                          },
+                          {
+                            "$ref": "#/components/schemas/ProjectSummary"
+                          }
+                        ]
                       }
                     },
                     "meta": {
@@ -36408,7 +37808,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object"
+                      "$ref": "#/components/schemas/RealtimeConfig"
                     },
                     "meta": {
                       "$ref": "#/components/schemas/Meta"
@@ -45314,6 +46714,22 @@
     }
   },
   "components": {
+    "securitySchemes": {
+      "wireguardPeer": {
+        "type": "mutualTLS",
+        "description": "Active WireGuard peer identity verified by the Gateway from the peer's WireGuard source IP (`RequireActiveWireGuardPeer`)."
+      },
+      "managedTargetBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Managed Conn target service credential (`Authorization: Bearer <service_credential>`), verified together with the serving Node's active WireGuard peer (`AuthenticateConnManagedTarget`)."
+      },
+      "taskKeyBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Task copy key (`Authorization: Bearer <copy_key>`), verified together with the serving Node's active WireGuard peer (`RequireTaskKey`)."
+      }
+    },
     "schemas": {
       "Meta": {
         "type": "object",
@@ -45330,9 +46746,22 @@
       },
       "Error": {
         "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
         "properties": {
+          "status": {
+            "type": "integer",
+            "description": "Optional HTTP status code included by `RequireEnabledExtension` (`extension.disabled`)."
+          },
           "error": {
             "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message"
+            ],
             "properties": {
               "code": {
                 "type": "string",
@@ -45343,24 +46772,21 @@
                 "description": "Safe message without credentials, environment values, or remote output."
               },
               "details": {
-                "type": "object",
-                "additionalProperties": true,
-                "description": "Bounded, redacted details such as the conflicting record IDs or the failed validation rule."
-              },
-              "request_id": {
-                "type": "string",
-                "format": "uuid"
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "array",
+                    "maxItems": 0
+                  }
+                ],
+                "description": "Bounded, redacted details such as the conflicting record IDs or the failed validation rule. Encodes as `[]` when empty and as a JSON object when non-empty; omitted by `GuardBrowserOrigins` (`api.origin_refused`). The request ID travels in the `X-Orbit-Request-Id` response header."
               }
-            },
-            "required": [
-              "code",
-              "message"
-            ]
+            }
           }
-        },
-        "required": [
-          "error"
-        ]
+        }
       },
       "ConnLaunchSnapshot": {
         "type": "object",
@@ -46004,7 +47430,67 @@
                     "format": "uuid"
                   },
                   "model_selection": {
-                    "type": "object"
+                    "type": "object",
+                    "additionalProperties": true,
+                    "required": [
+                      "model"
+                    ],
+                    "properties": {
+                      "model": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "\\S"
+                      },
+                      "instanceId": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$(?![\\s\\S])"
+                      },
+                      "provider": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$(?![\\s\\S])"
+                      },
+                      "options": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": true
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "id",
+                                "value"
+                              ],
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "\\S"
+                                },
+                                "value": {
+                                  "oneOf": [
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "pattern": "\\S"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
                   },
                   "accepted_at": {
                     "type": "string",
@@ -46013,6 +47499,1577 @@
                 }
               }
             ]
+          }
+        }
+      },
+      "ConnInstanceWork": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "instance_id",
+          "state",
+          "reason",
+          "read_at",
+          "duration_ms",
+          "baseline",
+          "head",
+          "head_commit",
+          "uncommitted",
+          "unpushed",
+          "modified",
+          "untracked",
+          "commits",
+          "stashes"
+        ],
+        "properties": {
+          "instance_id": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "clean",
+              "dirty",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "stopped",
+              "asleep",
+              "timeout",
+              "not_a_repository",
+              "unreachable",
+              null
+            ]
+          },
+          "read_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration_ms": {
+            "type": "integer"
+          },
+          "baseline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "recorded",
+              "default_now",
+              "none",
+              null
+            ]
+          },
+          "head": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "head_commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uncommitted": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "unpushed": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "modified": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "count",
+                  "names"
+                ],
+                "properties": {
+                  "count": {
+                    "type": "integer"
+                  },
+                  "names": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "untracked": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "count",
+                  "names"
+                ],
+                "properties": {
+                  "count": {
+                    "type": "integer"
+                  },
+                  "names": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "commits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "count",
+                  "branch_count",
+                  "head",
+                  "branches"
+                ],
+                "properties": {
+                  "count": {
+                    "type": "integer"
+                  },
+                  "branch_count": {
+                    "type": "integer"
+                  },
+                  "head": {
+                    "type": "integer"
+                  },
+                  "branches": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "name",
+                        "count"
+                      ],
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "count": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "stashes": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "count",
+                  "names"
+                ],
+                "properties": {
+                  "count": {
+                    "type": "integer"
+                  },
+                  "names": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "ConnManagedRealtime": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "url",
+          "key",
+          "channel"
+        ],
+        "properties": {
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channel": {
+            "type": "string"
+          }
+        }
+      },
+      "ConnManagedAuthority": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nonce",
+          "environment_id",
+          "generation",
+          "head_revision",
+          "server_time",
+          "kind",
+          "owed"
+        ],
+        "properties": {
+          "nonce": {
+            "type": "string"
+          },
+          "environment_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "head_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "snapshot",
+              "delta",
+              "current"
+            ]
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "edge_id",
+                "consumer_node_id"
+              ],
+              "properties": {
+                "edge_id": {
+                  "type": "integer"
+                },
+                "consumer_node_id": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "revisions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "revision",
+                "edge_ids"
+              ],
+              "properties": {
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "edge_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          },
+          "owed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "revision",
+                "edge_ids"
+              ],
+              "properties": {
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "edge_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "ConnManagedIntrospect": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nonce",
+          "environment_id",
+          "generation",
+          "token_id",
+          "caller_node_id",
+          "edge_id",
+          "scopes",
+          "expires_at",
+          "revision"
+        ],
+        "properties": {
+          "nonce": {
+            "type": "string"
+          },
+          "environment_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "token_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "caller_node_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "edge_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ConnManagedAck": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "environment_id",
+          "generation",
+          "revision",
+          "kind",
+          "acknowledged_at"
+        ],
+        "properties": {
+          "environment_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "observed",
+              "recovered"
+            ]
+          },
+          "acknowledged_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ConnAttentionReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_id",
+          "accepted",
+          "deduplicated"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string"
+          },
+          "accepted": {
+            "type": "boolean",
+            "const": true
+          },
+          "deduplicated": {
+            "type": "boolean",
+            "description": "True when the Gateway already recorded this `event_id`; the answer is then 200, else 202."
+          }
+        }
+      },
+      "ConnPushDeviceRemoval": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "device_id",
+          "removed"
+        ],
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "removed": {
+            "type": "boolean",
+            "description": "False when the calling Node had no such device."
+          }
+        }
+      },
+      "ConnManagedToken": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "token",
+          "expires_at",
+          "scopes",
+          "generation",
+          "revision"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ConnTask": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "status",
+          "attention",
+          "project",
+          "workspace",
+          "pull_request",
+          "subtask_counts",
+          "created_at",
+          "updated_at",
+          "last_activity_at",
+          "deployed_at",
+          "pr_opened_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "backlog",
+              "todo",
+              "reserved",
+              "running",
+              "reviewing",
+              "settling",
+              "waiting_for_review",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "attention": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "question",
+                  "reason"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "question"
+                    ]
+                  },
+                  "question": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "project": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "slug",
+              "name",
+              "code"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              }
+            }
+          },
+          "workspace": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "instance_id",
+                  "name",
+                  "status",
+                  "power_state",
+                  "node",
+                  "branch",
+                  "conn_environment_id"
+                ],
+                "properties": {
+                  "instance_id": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "reserved",
+                      "checkout_prepared",
+                      "source_resolved",
+                      "active",
+                      "removing"
+                    ]
+                  },
+                  "power_state": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "running",
+                      "stopped",
+                      null
+                    ]
+                  },
+                  "node": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "name"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "branch": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "conn_environment_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "pull_request": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "number",
+                  "url",
+                  "state"
+                ],
+                "properties": {
+                  "number": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "url": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "open",
+                      "closed",
+                      "merged",
+                      null
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "subtask_counts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "total",
+              "todo",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "todo": {
+                "type": "integer"
+              },
+              "running": {
+                "type": "integer"
+              },
+              "completed": {
+                "type": "integer"
+              },
+              "failed": {
+                "type": "integer"
+              },
+              "cancelled": {
+                "type": "integer"
+              }
+            }
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_activity_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "deployed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "pr_opened_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "work_status": {
+            "type": "string",
+            "enum": [
+              "todo",
+              "reserved",
+              "running",
+              "reviewing",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          }
+        }
+      },
+      "ConnTaskDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "status",
+          "attention",
+          "project",
+          "workspace",
+          "pull_request",
+          "subtask_counts",
+          "created_at",
+          "updated_at",
+          "last_activity_at",
+          "deployed_at",
+          "pr_opened_at",
+          "brief",
+          "execution",
+          "metrics",
+          "subtasks",
+          "agents"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "backlog",
+              "todo",
+              "reserved",
+              "running",
+              "reviewing",
+              "settling",
+              "waiting_for_review",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "attention": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "question",
+                  "reason"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "question"
+                    ]
+                  },
+                  "question": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "project": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "slug",
+              "name",
+              "code"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              }
+            }
+          },
+          "workspace": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "instance_id",
+                  "name",
+                  "status",
+                  "power_state",
+                  "node",
+                  "branch",
+                  "conn_environment_id"
+                ],
+                "properties": {
+                  "instance_id": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "reserved",
+                      "checkout_prepared",
+                      "source_resolved",
+                      "active",
+                      "removing"
+                    ]
+                  },
+                  "power_state": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "running",
+                      "stopped",
+                      null
+                    ]
+                  },
+                  "node": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "name"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "branch": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "conn_environment_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "pull_request": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "number",
+                  "url",
+                  "state"
+                ],
+                "properties": {
+                  "number": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "url": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "open",
+                      "closed",
+                      "merged",
+                      null
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "subtask_counts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "total",
+              "todo",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "todo": {
+                "type": "integer"
+              },
+              "running": {
+                "type": "integer"
+              },
+              "completed": {
+                "type": "integer"
+              },
+              "failed": {
+                "type": "integer"
+              },
+              "cancelled": {
+                "type": "integer"
+              }
+            }
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_activity_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "deployed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "pr_opened_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "work_status": {
+            "type": "string",
+            "enum": [
+              "todo",
+              "reserved",
+              "running",
+              "reviewing",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "brief": {
+            "type": "string"
+          },
+          "execution": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "implementer_mode"
+            ],
+            "properties": {
+              "implementer_mode": {
+                "type": "string",
+                "enum": [
+                  "task",
+                  "per_subtask"
+                ]
+              }
+            }
+          },
+          "metrics": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "duration_ms",
+              "tokens",
+              "lines_added",
+              "lines_deleted"
+            ],
+            "properties": {
+              "duration_ms": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "tokens": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "lines_added": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "lines_deleted": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          },
+          "subtasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "position",
+                "title",
+                "brief",
+                "deliverables",
+                "status",
+                "attention",
+                "current_implementer_agent_id",
+                "metrics"
+              ],
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "position": {
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "brief": {
+                  "type": "string"
+                },
+                "deliverables": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "type",
+                      "description"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "file",
+                          "command",
+                          "review"
+                        ]
+                      },
+                      "description": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "todo",
+                    "reserved",
+                    "running",
+                    "reviewing",
+                    "completed",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "attention": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind",
+                        "question",
+                        "reason"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "question"
+                          ]
+                        },
+                        "question": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                "current_implementer_agent_id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "metrics": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "duration_ms",
+                    "tokens",
+                    "lines_added",
+                    "lines_deleted"
+                  ],
+                  "properties": {
+                    "duration_ms": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "tokens": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "lines_added": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "lines_deleted": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "role",
+                "subtask_ids",
+                "current",
+                "attempt",
+                "provider",
+                "model",
+                "effort",
+                "state",
+                "needs_input",
+                "created_at",
+                "observed_at",
+                "conn"
+              ],
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "implementer",
+                    "reviewer"
+                  ]
+                },
+                "subtask_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "current": {
+                  "type": "boolean"
+                },
+                "attempt": {
+                  "type": "integer"
+                },
+                "provider": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "effort": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "state": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "idle",
+                    "working",
+                    "asking_for_input",
+                    "done",
+                    "failed",
+                    null
+                  ]
+                },
+                "needs_input": {
+                  "type": "boolean"
+                },
+                "created_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "observed_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "conn": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "environment_id",
+                        "thread_id"
+                      ],
+                      "properties": {
+                        "environment_id": {
+                          "type": "string"
+                        },
+                        "thread_id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "work": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "review",
+              "deliverables",
+              "current_implementer_agent_id",
+              "check"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "todo",
+                  "reserved",
+                  "running",
+                  "reviewing",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "review": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "reviewing",
+                  "approved",
+                  "not_approved",
+                  null
+                ]
+              },
+              "deliverables": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "type",
+                    "description"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "command",
+                        "review"
+                      ]
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "current_implementer_agent_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "check": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "kind",
+                      "status",
+                      "started_at",
+                      "finished_at",
+                      "exit_code",
+                      "failed_step"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "integer"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "baseline",
+                          "handoff"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "running",
+                          "passed",
+                          "failed",
+                          "changed",
+                          "lost",
+                          "cancelled"
+                        ]
+                      },
+                      "started_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "finished_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "format": "date-time"
+                      },
+                      "exit_code": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "failed_step": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
           }
         }
       },
@@ -46323,7 +49380,16 @@
             ]
           },
           "status": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "waiting",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "interrupted"
+            ]
           },
           "sequence": {
             "type": "integer"
@@ -46347,11 +49413,19 @@
             ]
           },
           "result": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "additionalProperties": true
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "maxItems": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "cancel_requested": {
             "type": "boolean"
@@ -46402,18 +49476,34 @@
             ]
           },
           "assistance": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "additionalProperties": true
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "maxItems": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "error": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "additionalProperties": true
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "maxItems": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "current_step_started_at": {
             "type": [
@@ -46451,7 +49541,36 @@
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "id",
+          "kind",
+          "target_type",
+          "target_id",
+          "input",
+          "status",
+          "sequence",
+          "current_step",
+          "failed_step",
+          "error_code",
+          "result",
+          "cancel_requested",
+          "attempts",
+          "triggered_by",
+          "caller_node_id",
+          "caller_node_name",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "poll_after_seconds",
+          "assistance",
+          "error",
+          "current_step_started_at",
+          "current_step_observed_at",
+          "overdue_since",
+          "hold_wait_reason",
+          "ready_at"
+        ]
       },
       "OperationStep": {
         "type": "object",
@@ -46463,7 +49582,15 @@
             "type": "string"
           },
           "status": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "running",
+              "succeeded",
+              "failed",
+              "skipped",
+              "cancelled",
+              "interrupted"
+            ]
           },
           "started_at": {
             "type": [
@@ -46477,7 +49604,14 @@
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "name",
+          "job",
+          "status",
+          "started_at",
+          "finished_at"
+        ]
       },
       "CiRunners": {
         "type": "object",
@@ -46923,7 +50057,11 @@
             "type": "string"
           },
           "status": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "registered",
+              "session_expired"
+            ]
           },
           "cleanup_pending": {
             "type": "boolean"
@@ -46977,6 +50115,11 @@
             "type": [
               "string",
               "null"
+            ],
+            "enum": [
+              "running",
+              "stopped",
+              null
             ]
           },
           "renewal_error_code": {
@@ -46996,8 +50139,103 @@
               "string",
               "null"
             ]
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "is_primary_agent": {
+            "type": "boolean"
           }
-        }
+        },
+        "required": [
+          "environment_id",
+          "label",
+          "url",
+          "server_version",
+          "registered_by",
+          "registered_at",
+          "admin_session_expires_at",
+          "status",
+          "cleanup_pending",
+          "cleanup_version",
+          "instance_id",
+          "project_id",
+          "project_name",
+          "project_slug",
+          "instance_name",
+          "node_name",
+          "instance_url",
+          "power_state",
+          "renewal_error_code",
+          "renewal_checked_at",
+          "reservation_id",
+          "roles",
+          "is_primary_agent"
+        ]
+      },
+      "ConnPairing": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "environment_id": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "integer"
+          },
+          "node_name": {
+            "type": "string"
+          },
+          "client_label": {
+            "type": "string"
+          },
+          "issued_at": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "held": {
+            "type": "boolean",
+            "description": "Present when `include_held=true`: true for a held session pairing."
+          }
+        },
+        "required": [
+          "id",
+          "environment_id",
+          "node_id",
+          "node_name",
+          "client_label",
+          "issued_at",
+          "expires_at",
+          "revoked_at"
+        ]
+      },
+      "IssuedConnPairing": {
+        "type": "object",
+        "properties": {
+          "pairing": {
+            "$ref": "#/components/schemas/ConnPairing"
+          },
+          "pairing_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pairing",
+          "pairing_url"
+        ]
       },
       "ConnHeldSession": {
         "type": "object",
@@ -47012,7 +50250,10 @@
             "type": "integer"
           },
           "token_type": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "Bearer"
+            ]
           },
           "access_token": {
             "type": "string"
@@ -47020,7 +50261,15 @@
           "expires_at": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "environment_id",
+          "url",
+          "pairing_id",
+          "token_type",
+          "access_token",
+          "expires_at"
+        ]
       },
       "ConnThread": {
         "type": "object",
@@ -47044,6 +50293,20 @@
             "type": [
               "string",
               "null"
+            ],
+            "enum": [
+              "idle",
+              "preparing",
+              "queued",
+              "starting",
+              "running",
+              "waiting",
+              "completed",
+              "failed",
+              "cancelled",
+              "interrupted",
+              "error",
+              null
             ]
           },
           "needs_input": {
@@ -47064,7 +50327,59 @@
           "seen_at": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "environment_id",
+          "instance_id",
+          "project_id",
+          "thread_id",
+          "title",
+          "state",
+          "needs_input",
+          "last_user_message_at",
+          "last_run_completed_at",
+          "seen_at"
+        ]
+      },
+      "ConnNode": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "wireguard_ip": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConnProfile"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profile_channel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "wireguard_ip",
+          "profile",
+          "profile_channel"
+        ]
       },
       "ConnProfile": {
         "type": "object",
@@ -47081,7 +50396,95 @@
           "updated_at": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "id",
+          "name",
+          "settings_version",
+          "updated_at"
+        ]
+      },
+      "ConnPushDevice": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "node_id": {
+            "type": "integer"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "apns_environment": {
+            "type": "string",
+            "enum": [
+              "sandbox",
+              "production"
+            ]
+          },
+          "bundle_id": {
+            "type": "string"
+          },
+          "app_version": {
+            "type": "string"
+          },
+          "ios_version": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "preferences": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "approval",
+              "input",
+              "turn_finished",
+              "turn_failed",
+              "hide_titles"
+            ],
+            "properties": {
+              "approval": {
+                "type": "boolean"
+              },
+              "input": {
+                "type": "boolean"
+              },
+              "turn_finished": {
+                "type": "boolean"
+              },
+              "turn_failed": {
+                "type": "boolean"
+              },
+              "hide_titles": {
+                "type": "boolean"
+              }
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "node_id",
+          "device_id",
+          "apns_environment",
+          "bundle_id",
+          "app_version",
+          "ios_version",
+          "locale",
+          "preferences",
+          "created_at",
+          "updated_at"
+        ]
       },
       "ConnProfileSettings": {
         "type": "object",
@@ -47093,8 +50496,16 @@
             "type": "integer"
           },
           "settings": {
-            "type": "object",
-            "additionalProperties": true
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "maxItems": 0
+              }
+            ]
           },
           "sections": {
             "type": "object",
@@ -47103,7 +50514,14 @@
           "updated_at": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "profile_id",
+          "version",
+          "settings",
+          "sections",
+          "updated_at"
+        ]
       },
       "ConnProject": {
         "type": "object",
@@ -47150,7 +50568,18 @@
               "$ref": "#/components/schemas/ConnProjectCheck"
             }
           }
-        }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "node_id",
+          "node_name",
+          "instance_domain_suffix",
+          "cloneable",
+          "cloneable_reason",
+          "checks"
+        ]
       },
       "ConnProjectCheck": {
         "type": "object",
@@ -47175,7 +50604,12 @@
           "message": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "key",
+          "label",
+          "status"
+        ]
       },
       "ConnProjectBranch": {
         "type": "object",
@@ -47206,7 +50640,13 @@
               }
             ]
           }
-        }
+        },
+        "required": [
+          "name",
+          "default",
+          "pull_request",
+          "instance"
+        ]
       },
       "ConnBranchPullRequest": {
         "type": "object",
@@ -47220,7 +50660,12 @@
           "url": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "number",
+          "title",
+          "url"
+        ]
       },
       "ConnBranchInstance": {
         "type": "object",
@@ -47231,7 +50676,11 @@
           "name": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
       },
       "ConnInstanceNameCheck": {
         "type": "object",
@@ -47261,7 +50710,13 @@
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "name",
+          "available",
+          "reason",
+          "domain"
+        ]
       },
       "ConnReservation": {
         "type": "object",
@@ -47279,7 +50734,16 @@
             ]
           },
           "state": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "preparing",
+              "ready",
+              "finalizing",
+              "finalized",
+              "failed",
+              "released",
+              "expired"
+            ]
           },
           "expires_at": {
             "type": "string"
@@ -47324,50 +50788,45 @@
               }
             ]
           }
-        }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "instance_id",
+          "state",
+          "expires_at",
+          "create_operation_id",
+          "environment_id",
+          "finalize_operation_id",
+          "destroy_operation_id",
+          "error_code",
+          "pairing"
+        ]
       },
-      "IssuedConnPairing": {
+      "ConnPushCredentialsStatus": {
         "type": "object",
         "properties": {
-          "pairing": {
-            "$ref": "#/components/schemas/ConnPairing"
+          "configured": {
+            "type": "boolean"
           },
-          "pairing_url": {
-            "type": "string"
-          }
-        }
-      },
-      "ConnPairing": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer"
+          "key_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
-          "environment_id": {
-            "type": "string"
-          },
-          "node_id": {
-            "type": "integer"
-          },
-          "node_name": {
-            "type": "string"
-          },
-          "client_label": {
-            "type": "string"
-          },
-          "issued_at": {
-            "type": "string"
-          },
-          "expires_at": {
-            "type": "string"
-          },
-          "revoked_at": {
+          "team_id": {
             "type": [
               "string",
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "configured",
+          "key_id",
+          "team_id"
+        ]
       },
       "DatabaseConnection": {
         "type": "object",
@@ -49987,6 +53446,9 @@
           },
           "reboot_hold": {
             "type": "boolean"
+          },
+          "primary_agent": {
+            "type": "boolean"
           }
         }
       },
@@ -50569,6 +54031,63 @@
               "conn"
             ]
           }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "code",
+          "type",
+          "repository_url",
+          "source_access",
+          "default_branch",
+          "root",
+          "task_check",
+          "task_workspace_routed",
+          "review_and_merge",
+          "merge_check",
+          "php_version",
+          "is_laravel",
+          "maintenance",
+          "nested_fleet",
+          "task_implementer_provider",
+          "task_implementer_model",
+          "task_implementer_effort",
+          "task_reviewer_provider",
+          "task_reviewer_model",
+          "task_reviewer_effort",
+          "task_pr_mode",
+          "default_auto_deploy",
+          "container_server"
+        ]
+      },
+      "ProjectSummary": {
+        "type": "object",
+        "properties": {
+          "repository": {
+            "type": "string"
+          },
+          "node_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "icon": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "instance_count": {
+            "type": "integer"
+          }
         }
       },
       "DocumentEntry": {
@@ -50678,6 +54197,31 @@
           }
         }
       },
+      "RealtimeConfig": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channel": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "key",
+          "channel"
+        ]
+      },
       "Schedule": {
         "type": "object",
         "properties": {
@@ -50752,7 +54296,12 @@
         "type": "object",
         "properties": {
           "period": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "24h",
+              "7d",
+              "30d"
+            ]
           },
           "from": {
             "type": "string"
@@ -50787,7 +54336,18 @@
           "breakdowns": {
             "$ref": "#/components/schemas/TaskInsightsBreakdowns"
           }
-        }
+        },
+        "required": [
+          "period",
+          "from",
+          "to",
+          "current",
+          "previous",
+          "weekly",
+          "daily",
+          "hourly",
+          "breakdowns"
+        ]
       },
       "TaskInsightsSummary": {
         "type": "object",
@@ -50928,7 +54488,34 @@
           "handoffs": {
             "$ref": "#/components/schemas/TaskInsightsHandoffs"
           }
-        }
+        },
+        "required": [
+          "tasks",
+          "merged",
+          "excluded",
+          "tokens",
+          "cost_usd",
+          "tokens_per_merged_pr",
+          "cost_per_merged_pr",
+          "lead_time_ms",
+          "queue_ms",
+          "work_ms",
+          "merge_wait_ms",
+          "pr_merge_wait_ms",
+          "yield",
+          "pr_first_pass",
+          "wasted_share",
+          "subtask_first_pass",
+          "review_rounds",
+          "handoff_first_try",
+          "questions_per_task",
+          "questions_by_cause",
+          "cache_hit",
+          "tokens_per_hundred_lines",
+          "delivery_time_ms",
+          "deploy_wait_ms",
+          "handoffs"
+        ]
       },
       "TaskInsightsHandoffs": {
         "type": "object",
@@ -50977,7 +54564,18 @@
           "unresolved_tasks": {
             "type": "integer"
           }
-        }
+        },
+        "required": [
+          "tasks",
+          "handoffs_per_subtask",
+          "first_review_approval",
+          "findings_per_first_review",
+          "findings_by_category",
+          "questions_per_task",
+          "rejected_deliveries",
+          "check_parts",
+          "unresolved_tasks"
+        ]
       },
       "TaskInsightsCheckPart": {
         "type": "object",
@@ -50997,7 +54595,13 @@
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "name",
+          "runs",
+          "failures",
+          "seconds"
+        ]
       },
       "TaskInsightsWeek": {
         "type": "object",
@@ -51017,7 +54621,13 @@
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "week_start",
+          "tasks",
+          "merged",
+          "tokens_per_merged_pr"
+        ]
       },
       "TaskInsightsDay": {
         "type": "object",
@@ -51079,7 +54689,20 @@
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "date",
+          "merged",
+          "not_merged",
+          "tokens",
+          "tokens_per_merged_pr",
+          "wasted_share",
+          "lead_time_ms",
+          "delivery_time_ms",
+          "pr_first_pass",
+          "pr_merge_wait_ms",
+          "review_rounds"
+        ]
       },
       "TaskInsightsHour": {
         "type": "object",
@@ -51141,7 +54764,20 @@
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "hour",
+          "merged",
+          "not_merged",
+          "tokens",
+          "tokens_per_merged_pr",
+          "wasted_share",
+          "lead_time_ms",
+          "delivery_time_ms",
+          "pr_first_pass",
+          "pr_merge_wait_ms",
+          "review_rounds"
+        ]
       },
       "TaskInsightsBreakdowns": {
         "type": "object",
@@ -51164,7 +54800,12 @@
               "$ref": "#/components/schemas/TaskInsightsBreakdownRow"
             }
           }
-        }
+        },
+        "required": [
+          "model",
+          "project",
+          "release"
+        ]
       },
       "TaskInsightsBreakdownRow": {
         "type": "object",
@@ -51199,7 +54840,16 @@
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "key",
+          "label",
+          "tasks",
+          "merged",
+          "tokens_per_merged_pr",
+          "lead_time_ms",
+          "yield"
+        ]
       },
       "TaskQuestion": {
         "type": "object",

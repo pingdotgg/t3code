@@ -30,7 +30,8 @@ mod upstream;
 pub use generated::*;
 pub use ids::*;
 pub use upstream::{
-    PROVIDER_SEND_TURN_MAX_FILE_BYTES, T3_SERVER_VERSION, THREAD_TRANSCRIPT_HEADER_PARTS,
+    DOMAIN_EVENT_TYPES, PAYLOAD_UPDATED_AT_EVENTS, PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+    T3_SERVER_VERSION, THREAD_TRANSCRIPT_HEADER_PARTS,
 };
 
 /// `ORCHESTRATION_PROTOCOL_VERSION` in `packages/contracts/src/environment.ts`. `/ws` answers

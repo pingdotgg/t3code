@@ -126,6 +126,9 @@ impl MessageSearch {
 pub(crate) struct SidebarState {
     prefs_path: Option<PathBuf>,
     pub(crate) settled_expanded: bool,
+    /// The widths the user dragged the thread sidebar and the right panel to.
+    sidebar_width: Option<f32>,
+    right_panel_width: Option<f32>,
     tail: SettledTail,
     pub(crate) search: MessageSearch,
     pub(crate) press: Option<Press>,
@@ -167,6 +170,8 @@ impl SidebarState {
         Self {
             prefs_path,
             settled_expanded: prefs.settled_expanded,
+            sidebar_width: prefs.sidebar_width,
+            right_panel_width: prefs.right_panel_width,
             tail: SettledTail::default(),
             search: MessageSearch::default(),
             press: None,
@@ -189,6 +194,8 @@ impl SidebarState {
         };
         let json = SidebarPrefs {
             settled_expanded: self.settled_expanded,
+            sidebar_width: self.sidebar_width,
+            right_panel_width: self.right_panel_width,
         }
         .to_json();
         let write = || -> std::io::Result<()> {
@@ -201,6 +208,21 @@ impl SidebarState {
         };
         if let Err(err) = write() {
             eprintln!("sidebar: could not save {}: {err}", path.display());
+        }
+    }
+
+    /// The widths kept from the last launch, none for one never dragged.
+    pub(crate) fn saved_widths(&self) -> (Option<f32>, Option<f32>) {
+        (self.sidebar_width, self.right_panel_width)
+    }
+
+    /// Keeps the widths a seam drag or reset ended on (`finish` in `useResizableWidth`); a
+    /// width reset to its default is kept as none.
+    pub(crate) fn remember_widths(&mut self, sidebar: Option<f32>, right_panel: Option<f32>) {
+        if (sidebar, right_panel) != (self.sidebar_width, self.right_panel_width) {
+            self.sidebar_width = sidebar;
+            self.right_panel_width = right_panel;
+            self.save();
         }
     }
 
@@ -271,6 +293,7 @@ impl ConnApp {
             return;
         }
         self.shell.retry_older_page();
+        self.retry_linked_older_pages();
         let scope = self.settled_scope_key();
         self.sidebar.tail.count_for(&scope);
         self.sidebar.tail.show_more();
@@ -279,7 +302,7 @@ impl ConnApp {
     }
 
     /// The project ids the Settled shelf pages for (`olderSettledScopes`); none for every project.
-    fn older_scope(&self) -> Option<Vec<String>> {
+    pub(super) fn older_scope(&self) -> Option<Vec<String>> {
         self.active_workspace.as_ref()?;
         Some(
             self.shell
@@ -301,8 +324,14 @@ impl ConnApp {
     /// Reads the next page of older settled threads when the open shelf lists fewer rows than it
     /// shows (`useOlderSettledShelfGrowth`), one page at a time.
     pub(crate) fn drive_older_pages(&mut self, cx: &mut Context<'_, Self>) {
-        let scope = self.older_scope();
+        // This environment pages its own projects; each linked one pages its own too.
+        let scope = self.older_scope().map(|ids| {
+            ids.into_iter()
+                .filter(|id| self.linked_environment_of_project(id).is_none())
+                .collect()
+        });
         self.shell.set_older_scope(scope);
+        self.drive_linked_older_pages(cx);
         if !self.sidebar.settled_expanded {
             return;
         }
@@ -423,14 +452,26 @@ impl ConnApp {
         let Some(connection) = self.connection.clone() else {
             return;
         };
+        // Every connected environment is searched, and the answers merged, as Conn does.
+        let mut connections = vec![connection];
+        connections.extend(self.linked_connections());
         let payload = serde_json::json!({ "query": query });
         cx.spawn(async move |this, cx| {
-            let result = connection
-                .call::<_, conn_contract::OrchestrationV2SearchThreadsResult>(
+            let answers = futures::future::join_all(connections.iter().map(|connection| {
+                connection.call::<_, conn_contract::OrchestrationV2SearchThreadsResult>(
                     "orchestration.searchThreads",
                     &payload,
                 )
-                .await;
+            }))
+            .await
+            .into_iter()
+            .map(|answer| {
+                answer
+                    .map(|found| found.matches)
+                    .map_err(|err| err.to_string())
+            })
+            .collect();
+            let result = conn_state::thread_search::merge_environment_matches(answers);
             let _ = this.update(cx, |app, cx| {
                 let search = &mut app.sidebar.search;
                 if search.generation != generation {
@@ -438,11 +479,8 @@ impl ConnApp {
                 }
                 search.pending = false;
                 match result {
-                    Ok(found) => {
-                        let ready = SettledSearch {
-                            query,
-                            matches: found.matches,
-                        };
+                    Ok(matches) => {
+                        let ready = SettledSearch { query, matches };
                         search.previous = Some(ready.clone());
                         search.ready = Some(ready);
                     }
@@ -1177,5 +1215,28 @@ impl ConnApp {
             .excerpts
             .get(thread_id)
             .map(|excerpt| excerpt.snippet.clone())
+    }
+}
+
+#[cfg(test)]
+mod width_prefs_tests {
+    use super::*;
+
+    #[test]
+    fn dragged_widths_are_kept_in_the_file_and_a_reset_drops_one() {
+        let dir = std::env::temp_dir().join(format!("conn-gpui-widths-{}", std::process::id()));
+        let path = dir.join("sidebar.json");
+        let mut state = SidebarState::load();
+        state.prefs_path = Some(path.clone());
+        state.remember_widths(Some(300.0), Some(700.0));
+        let read = || SidebarPrefs::from_json(&std::fs::read_to_string(&path).unwrap_or_default());
+        assert_eq!(read().sidebar_width, Some(300.0));
+        assert_eq!(read().right_panel_width, Some(700.0));
+        // The sidebar reset to its default: only the panel's width stays.
+        state.remember_widths(None, Some(700.0));
+        assert_eq!(read().sidebar_width, None);
+        assert_eq!(read().right_panel_width, Some(700.0));
+        assert_eq!(state.saved_widths(), (None, Some(700.0)));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

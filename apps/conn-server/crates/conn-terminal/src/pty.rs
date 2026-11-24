@@ -256,13 +256,19 @@ pub(crate) fn resize(control: &OwnedFd, cols: u16, rows: u16) -> io::Result<()> 
     Ok(rustix::termios::tcsetwinsize(control, size)?)
 }
 
+/// The PTY's foreground process group, `None` when it cannot be read.
+pub(crate) fn foreground_group(control: &OwnedFd) -> Option<i32> {
+    Some(
+        rustix::termios::tcgetpgrp(control)
+            .ok()?
+            .as_raw_nonzero()
+            .get(),
+    )
+}
+
 /// The PTY's foreground process group, when it is not the shell's own: a command runs.
 pub(crate) fn foreground_job(control: &OwnedFd, shell_pid: i32) -> Option<i32> {
-    let group = rustix::termios::tcgetpgrp(control)
-        .ok()?
-        .as_raw_nonzero()
-        .get();
-    (group != shell_pid).then_some(group)
+    foreground_group(control).filter(|group| *group != shell_pid)
 }
 
 /// What a finished shell reports.

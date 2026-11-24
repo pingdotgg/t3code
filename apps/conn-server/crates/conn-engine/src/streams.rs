@@ -15,10 +15,14 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::engine::{Inner, contract_error, rejected};
+use crate::store::Store;
 use crate::{EngineError, Subscription};
 
 /// `THREAD_RESUME_MAX_REPLAY_EVENTS` in `ThreadStream.ts`: a longer gap gets a snapshot.
 const MAX_REPLAY_EVENTS: usize = 128;
+/// `THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES` and `THREAD_RESUME_MAX_REPLAY_ENCODED_BYTES`: a
+/// replay larger than this, as stored payloads or as sent items, gets a snapshot too.
+const MAX_REPLAY_BYTES: u64 = 1_048_576;
 const LIVE_READ_BATCH: usize = 256;
 
 fn shell_error(message: impl Into<String>) -> Result<GetShellSnapshotError, String> {
@@ -78,10 +82,9 @@ pub(crate) async fn subscribe_shell(
     let (first, mut cursor) = inner
         .db(move |store| -> Result<(Vec<Value>, u64), String> {
             let high = store.high_water();
-            let imported = store.imported_through();
-            let resumed = match after.filter(|after| can_replay(*after, high, imported)) {
-                Some(after) => store.shell_changes_since(after)?,
-                None => None,
+            let resumed = match after {
+                Some(after) if store.shell_resumable(after)? => store.shell_changes_since(after)?,
+                _ => None,
             };
             Ok(match resumed {
                 Some(items) => (items, high),
@@ -170,16 +173,17 @@ pub(crate) async fn subscribe_thread(
     let first = inner
         .db(move |store| -> Result<Option<(Vec<Value>, u64)>, String> {
             let high = store.high_water();
+            // T3 replays a resumed stream before it looks for the thread (`ws.ts`), so a
+            // client that missed a deletion gets `thread.deleted`.
+            let imported = store.imported_through();
+            if let Some(after) = after.filter(|after| can_replay(*after, high, imported))
+                && store.thread_known(&id)?
+                && let Some(items) = replay(store, &id, after)?
+            {
+                return Ok(Some((items, high)));
+            }
             if !store.thread_exists(&id)? {
                 return Ok(None);
-            }
-            let imported = store.imported_through();
-            if let Some(after) = after.filter(|after| can_replay(*after, high, imported)) {
-                let events = store.thread_events_after(&id, after, MAX_REPLAY_EVENTS + 1)?;
-                if events.len() <= MAX_REPLAY_EVENTS {
-                    let items = events.into_iter().map(event_item).collect();
-                    return Ok(Some((items, high)));
-                }
             }
             let (projection, omitted) = store
                 .thread_projection_with(&id, omit_local)?
@@ -240,6 +244,105 @@ pub(crate) async fn subscribe_thread(
         }
     });
     Ok(rx)
+}
+
+/// The items a resume from `after` replays, or `None` when it needs a snapshot, decided as
+/// `ws.ts` `subscribeThread` does: more than 128 events or 1 MiB of stored payload JSON; a
+/// `thread.created` of a thread that exists now (deleted and created again under its ID); or
+/// more than 1 MiB of items once streamed updates are coalesced.
+fn replay(store: &Store, id: &str, after: u64) -> Result<Option<Vec<Value>>, String> {
+    let stats = store.thread_replay_stats(id, after, MAX_REPLAY_EVENTS + 1)?;
+    if stats.events > MAX_REPLAY_EVENTS as u64 || stats.payload_bytes > MAX_REPLAY_BYTES {
+        return Ok(None);
+    }
+    if stats.has_create && store.thread_exists(id)? {
+        return Ok(None);
+    }
+    let events = store.thread_events_after(id, after, MAX_REPLAY_EVENTS + 1)?;
+    let items = coalesce(events.into_iter().map(event_item).collect());
+    let fits = items.len() <= MAX_REPLAY_EVENTS && encoded_bytes(&items) <= MAX_REPLAY_BYTES;
+    Ok(fits.then_some(items))
+}
+
+/// `coalesceLiveUpdatedEvents`: of consecutive updates to one streamed message or running
+/// turn item, only the last stays, at its own place and sequence. An update to another
+/// entity of the same event type, or any other event, ends the run.
+fn coalesce(items: Vec<Value>) -> Vec<Value> {
+    let mut latest: HashMap<String, usize> = HashMap::new();
+    let mut pending: HashMap<String, String> = HashMap::new();
+    let mut superseded = vec![false; items.len()];
+    for (index, item) in items.iter().enumerate() {
+        let event = &item["event"];
+        let Some(key) = coalescible_key(event) else {
+            latest.clear();
+            pending.clear();
+            continue;
+        };
+        let kind = event["type"].as_str().unwrap_or_default().to_owned();
+        if pending.get(&kind).is_some_and(|open| *open != key) {
+            latest.clear();
+        }
+        pending.insert(kind, key.clone());
+        if let Some(previous) = latest.insert(key, index)
+            && let Some(slot) = superseded.get_mut(previous)
+        {
+            *slot = true;
+        }
+    }
+    items
+        .into_iter()
+        .zip(superseded)
+        .filter_map(|(item, superseded)| (!superseded).then_some(item))
+        .collect()
+}
+
+/// `coalescibleUpdateKey`.
+fn coalescible_key(event: &Value) -> Option<String> {
+    let kind = event["type"].as_str()?;
+    let payload = &event["payload"];
+    let text = |value: &Value| value.as_str().unwrap_or_default().to_owned();
+    let prefix = format!(
+        "{}\0{}\0{kind}",
+        text(&event["threadId"]),
+        text(&event["runId"])
+    );
+    match kind {
+        "message.updated" => (payload["role"] == "assistant" && payload["streaming"] == true)
+            .then(|| format!("{prefix}\0{}", text(&payload["id"]))),
+        "turn-item.updated" if payload["status"] == "running" => {
+            let item = payload["type"].as_str()?;
+            let streams = match item {
+                "assistant_message" | "reasoning" => payload["streaming"] == true,
+                "command_execution" | "file_change" | "file_search" | "web_search"
+                | "dynamic_tool" => true,
+                _ => false,
+            };
+            streams.then(|| format!("{prefix}\0{item}\0{}", text(&payload["id"])))
+        }
+        _ => None,
+    }
+}
+
+/// `threadReplayEncodedBytes`: the items' JSON bytes, counted without keeping the text, up to
+/// the first total over [`MAX_REPLAY_BYTES`].
+fn encoded_bytes(items: &[Value]) -> u64 {
+    struct Count(u64);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len() as u64;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    for item in items {
+        if serde_json::to_writer(&mut count, item).is_err() || count.0 > MAX_REPLAY_BYTES {
+            return count.0.max(MAX_REPLAY_BYTES + 1);
+        }
+    }
+    count.0
 }
 
 /// The thread snapshot item, compacted for clients that opted in: a turn item's text that its
@@ -323,4 +426,37 @@ fn snapshot_item(mut projection: Value, high: u64, dedupe: bool, omitted: bool) 
 
 fn event_item((sequence, event): (u64, Value)) -> Value {
     json!({"kind": "event", "sequence": sequence, "event": event})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `coalesceLiveUpdatedEvents`: a run of one message's streamed updates keeps its last
+    /// one; another message of the same type, or another event, ends the run.
+    #[test]
+    fn coalesce_keeps_the_last_update_of_each_run() {
+        let update = |seq: u64, id: &str| {
+            event_item((
+                seq,
+                json!({"type": "message.updated", "threadId": "t1", "runId": "r1",
+                "payload": {"id": id, "role": "assistant", "streaming": true}}),
+            ))
+        };
+        let other = event_item((5, json!({"type": "run.updated", "threadId": "t1"})));
+        let items = vec![
+            update(1, "a"),
+            update(2, "a"),
+            update(3, "b"),
+            update(4, "a"),
+            other,
+            update(6, "a"),
+            update(7, "a"),
+        ];
+        let kept: Vec<u64> = coalesce(items)
+            .iter()
+            .filter_map(|item| item["sequence"].as_u64())
+            .collect();
+        assert_eq!(kept, [2, 3, 4, 5, 7]);
+    }
 }

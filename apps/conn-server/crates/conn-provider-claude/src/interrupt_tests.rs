@@ -47,6 +47,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     case "call":
       log(`call ${cmd.method}`);
       if (cmd.method === "stopTask") log(`stop ${JSON.stringify(cmd.args)}`);
+      if (cmd.method === "stopTask" && fs.existsSync(LOG + ".hang-stop")) break;
       // A CLI still booting: `initializationResult` does not answer.
       if (["mcpServerStatus", "readMcpResource", "callMcpTool", "listPermissionRules"].includes(cmd.method)) log(`mcp ${JSON.stringify(cmd)}`);
       if (fs.existsSync(LOG + ".errors")) {
@@ -845,4 +846,513 @@ async fn mcp_apps_require_each_streamed_capability_and_skip_subagent_sources() {
         session.close().await;
         helper.stop().await;
     }
+}
+
+fn api_error() -> serde_json::Value {
+    serde_json::json!({"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error",
+        "result":"Root turn failed","duration_ms":1,"duration_api_ms":1,"num_turns":1,"usage":{},
+        "modelUsage":{},"total_cost_usd":0})
+}
+
+/// The last `subagent.updated` status for a native task id.
+fn workflow_status(seen: &[serde_json::Value], task_id: &str) -> serde_json::Value {
+    seen.iter()
+        .rev()
+        .find(|e| e["subagent"]["nativeTaskRef"]["nativeId"] == task_id)
+        .map(|e| e["subagent"]["status"].clone())
+        .unwrap_or_default()
+}
+
+/// The spawned `stopTask` reaches the host a moment after the terminal event; under a loaded
+/// test run that moment can pass a second. The host logs `call stopTask` before its `stop`
+/// line, so wait for the `stop` line itself.
+async fn logged_stops(log: &Path) -> Vec<String> {
+    for _ in 0..1000 {
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        if text.lines().any(|l| l.starts_with("stop ")) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.starts_with("stop "))
+        .map(str::to_string)
+        .collect()
+}
+
+/// `ClaudeAdapterV2`: a root that fails stops its run's live workflow through the query and
+/// settles the coordinator `failed`; a later manual Stop finds nothing running.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_root_stops_its_runs_workflow() {
+    use conn_provider::StopTaskInput;
+    if !node_available() {
+        return;
+    }
+    let dir = Scratch::new("failed-root-workflow");
+    let (helper, log) = fake_host(&dir.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = dir.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    std::fs::write(
+        log.with_extension("log.frames"),
+        serde_json::json!([api_error()]).to_string(),
+    )
+    .unwrap();
+    session
+        .start_turn(turn(1, &thread, "workflow", "full-access", &cwd))
+        .await
+        .unwrap();
+    let seen = until(&mut events, is_terminal).await;
+    assert_eq!(seen.last().unwrap()["status"], "failed");
+    assert_eq!(workflow_status(&seen, "wf1"), "failed");
+    assert_eq!(logged_stops(&log).await, ["stop [\"wf1\"]"]);
+    session
+        .stop_task(StopTaskInput {
+            provider_thread: thread,
+            task_id: "wf1".into(),
+        })
+        .await
+        .unwrap_err();
+    session.close().await;
+    helper.stop_if_idle().await;
+}
+
+/// An SDK that never answers `stopTask` must not hold the root's settlement.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unanswered_workflow_stop_lets_the_root_settle() {
+    if !node_available() {
+        return;
+    }
+    let dir = Scratch::new("failed-root-hung-stop");
+    let (helper, log) = fake_host(&dir.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = dir.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    std::fs::write(log.with_extension("log.hang-stop"), "").unwrap();
+    std::fs::write(
+        log.with_extension("log.frames"),
+        serde_json::json!([api_error()]).to_string(),
+    )
+    .unwrap();
+    session
+        .start_turn(turn(1, &thread, "workflow", "full-access", &cwd))
+        .await
+        .unwrap();
+    let seen = tokio::time::timeout(Duration::from_secs(5), until(&mut events, is_terminal))
+        .await
+        .expect("the root settles while stopTask is unanswered");
+    assert_eq!(seen.last().unwrap()["status"], "failed");
+    assert_eq!(workflow_status(&seen, "wf1"), "failed");
+    assert_eq!(logged_stops(&log).await, ["stop [\"wf1\"]"]);
+    session.close().await;
+    helper.stop_if_idle().await;
+}
+
+/// A completed root keeps its background workflow running, and a failed later run leaves
+/// the earlier run's workflow alone.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_root_leaves_another_runs_workflow_running() {
+    if !node_available() {
+        return;
+    }
+    let dir = Scratch::new("failed-root-other-run");
+    let (helper, log) = fake_host(&dir.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = dir.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    session
+        .start_turn(turn(1, &thread, "workflow-background", "full-access", &cwd))
+        .await
+        .unwrap();
+    let seen = until(&mut events, is_terminal).await;
+    assert_eq!(seen.last().unwrap()["status"], "completed");
+    assert_eq!(workflow_status(&seen, "wf1"), "running");
+    std::fs::write(
+        log.with_extension("log.frames"),
+        serde_json::json!([api_error()]).to_string(),
+    )
+    .unwrap();
+    session
+        .start_turn(turn(2, &thread, "two", "full-access", &cwd))
+        .await
+        .unwrap();
+    let seen = until(&mut events, is_terminal).await;
+    assert_eq!(seen.last().unwrap()["status"], "failed");
+    assert_eq!(workflow_status(&seen, "wf1"), serde_json::Value::Null);
+    assert!(session.has_pending_background_work());
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(!text.contains("call stopTask"), "{text}");
+    session.close().await;
+    helper.stop_if_idle().await;
+}
+
+/// A stopped root closes its query; the workflow ends `cancelled` without a `stopTask`.
+#[tokio::test(flavor = "current_thread")]
+async fn an_interrupted_root_cancels_its_workflow_without_stop_task() {
+    if !node_available() {
+        return;
+    }
+    let dir = Scratch::new("interrupted-root-workflow");
+    let (helper, log) = fake_host(&dir.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = dir.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    session
+        .start_turn(turn(1, &thread, "workflow", "full-access", &cwd))
+        .await
+        .unwrap();
+    let turn_id = running_turn_id(&mut events).await;
+    let mut seen = until(&mut events, |e| e["type"] == "subagent.updated").await;
+    session
+        .interrupt_turn(InterruptInput {
+            provider_thread: thread.clone(),
+            provider_turn_id: turn_id.as_str().into(),
+        })
+        .await
+        .unwrap();
+    seen.extend(until(&mut events, is_terminal).await);
+    assert_eq!(seen.last().unwrap()["status"], "interrupted");
+    assert_eq!(workflow_status(&seen, "wf1"), "cancelled");
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(!text.contains("call stopTask"), "{text}");
+    session.close().await;
+    helper.stop_if_idle().await;
+}
+
+const MEMBER_ANSWER: &str = "Reviewed both migrations. The second one needs an index.";
+
+/// A member transcript's assistant line, as Claude writes it.
+fn member_line(uuid: &str, message_id: &str, text: &str) -> String {
+    let line = serde_json::json!({"type":"assistant","effort":"high","uuid":uuid,"message":{
+        "id":message_id,"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":text}]}});
+    format!("{line}\n")
+}
+
+/// A `workflow_agent` progress entry for the one member, `a1`.
+fn member_entry(state: &str, attempt: u64, result: Option<&str>) -> serde_json::Value {
+    let mut entry = serde_json::json!({"type":"workflow_agent","index":0,"label":"Reviewer",
+        "state":state,"attempt":attempt,"startedAt":attempt * 10,"model":"claude-sonnet-4-6",
+        "agentId":"a1","promptPreview":"Inspect code"});
+    if state == "done" {
+        entry["lastProgressAt"] = serde_json::json!(attempt * 10 + 5);
+    }
+    if let Some(result) = result {
+        entry["resultPreview"] = serde_json::json!(result);
+    }
+    entry
+}
+
+/// Where the member's transcript sits, and how the session finds Claude's config folder.
+enum MemberFile {
+    /// `<config>/projects/workflow/agent-a1.jsonl`, the config folder as the `homePath` setting.
+    Written(String),
+    /// No transcript.
+    Missing,
+    /// A FIFO in the transcript's place. A writer waits for a reader and sends an answer.
+    Fifo,
+    /// The transcript under a relative `CLAUDE_CONFIG_DIR` in the instance environment, which
+    /// the CLI resolves from the session cwd.
+    RelativeConfig(String),
+}
+
+/// The assistant messages (id, text) a workflow member's child thread got, in order. The
+/// member reports `progress` (one frame per entry), then the workflow and root complete.
+async fn member_messages(
+    name: &str,
+    file: MemberFile,
+    progress: &[serde_json::Value],
+) -> Vec<(String, String)> {
+    member_messages_flushed(name, file, progress, None).await.1
+}
+
+/// [`member_messages`], and with `flush`, a transcript line appended once the turn ended: the
+/// messages until the terminal event, then all of them once one shows `flush`'s text.
+async fn member_messages_flushed(
+    name: &str,
+    file: MemberFile,
+    progress: &[serde_json::Value],
+    flush: Option<(&str, &str)>,
+) -> (Vec<(String, String)>, Vec<(String, String)>) {
+    use serde_json::{Value, json};
+    let dir = Scratch::new(name);
+    let relative = matches!(file, MemberFile::RelativeConfig(_));
+    let config = dir
+        .0
+        .join(if relative { "claude-config" } else { "config" });
+    let transcripts = config.join("projects/workflow");
+    std::fs::create_dir_all(&transcripts).unwrap();
+    let transcript = transcripts.join("agent-a1.jsonl");
+    match &file {
+        MemberFile::Written(text) | MemberFile::RelativeConfig(text) => {
+            std::fs::write(&transcript, text).unwrap();
+        }
+        MemberFile::Missing => {}
+        MemberFile::Fifo => {
+            let made = std::process::Command::new("mkfifo")
+                .arg(&transcript)
+                .status()
+                .unwrap();
+            assert!(made.success());
+            let fifo = transcript.clone();
+            // Never joined: with no reader it waits until the test process ends.
+            std::thread::spawn(move || {
+                use std::io::Write;
+                if let Ok(mut pipe) = std::fs::OpenOptions::new().write(true).open(fifo) {
+                    let _ =
+                        pipe.write_all(member_line("pipe", "msg_pipe", "From a pipe").as_bytes());
+                }
+            });
+        }
+    }
+
+    let (helper, log) = fake_host(&dir.0, true);
+    let (tx, mut events) = mpsc::channel(crate::session::EVENT_CAPACITY);
+    let config = if relative {
+        ClaudeConfig {
+            instance_env: vec![("CLAUDE_CONFIG_DIR".to_owned(), "claude-config".to_owned())].into(),
+            ..ClaudeConfig::default()
+        }
+    } else {
+        ClaudeConfig {
+            home_path: Some(config),
+            ..ClaudeConfig::default()
+        }
+    };
+    let session = ClaudeSession::open(
+        "provider-sixth".into(),
+        "claudeAgent",
+        config,
+        helper.clone(),
+        tx,
+        vec![],
+        Default::default(),
+    );
+    let cwd = dir.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    let mut frames = Vec::new();
+    for line in include_str!("../testdata/cli/e16_workflow.ndjson").lines() {
+        let envelope: Value = serde_json::from_str(line).unwrap();
+        let mut msg = envelope["msg"].clone();
+        if envelope["dir"] != "in" || msg["subtype"] == "task_progress" {
+            continue;
+        }
+        if msg["uuid"] == "wf-4" {
+            msg["tool_use_result"]["transcriptDir"] = json!(transcripts);
+            frames.push(msg);
+            for (n, entry) in progress.iter().enumerate() {
+                frames.push(
+                    json!({"type":"system","subtype":"task_progress","uuid":format!("member-{n}"),
+                    "task_id":"wf1","tool_use_id":"tool-workflow","description":"Review",
+                    "workflow_progress":[entry]}),
+                );
+            }
+            continue;
+        }
+        let done = msg["uuid"] == "wf-7";
+        frames.push(msg);
+        if done {
+            break;
+        }
+    }
+    frames.push(json!({"type":"result","subtype":"success","is_error":false,"result":"Review complete",
+        "duration_ms":1,"duration_api_ms":1,"num_turns":1,"usage":{},"modelUsage":{},"total_cost_usd":0}));
+    std::fs::write(log.with_extension("log.frames"), json!(frames).to_string()).unwrap();
+    session
+        .start_turn(turn(1, &thread, "inspect", "full-access", &cwd))
+        .await
+        .unwrap();
+    let mut seen = until(&mut events, is_terminal).await;
+    assert_eq!(seen.last().unwrap()["status"], "completed");
+    let at_terminal = seen.len();
+    if let Some((line, text)) = flush {
+        use std::io::Write;
+        let mut handle = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        handle.write_all(line.as_bytes()).unwrap();
+        // Bounded: without the reread the text never comes.
+        let flushed = until(&mut events, |e| e["message"]["text"] == text);
+        if let Ok(more) = tokio::time::timeout(Duration::from_secs(10), flushed).await {
+            seen.extend(more);
+        }
+    }
+    let coordinator = seen
+        .iter()
+        .rev()
+        .find(|e| e["subagent"]["workflow"]["runHandles"]["transcriptDir"] == json!(transcripts))
+        .unwrap();
+    let member = &coordinator["subagent"]["workflow"]["agents"][0];
+    assert_eq!(member["agentId"], "a1");
+    let messages = |events: &[serde_json::Value]| -> Vec<(String, String)> {
+        events
+            .iter()
+            .map(|e| &e["message"])
+            .filter(|m| m["threadId"] == member["childThreadId"] && m["role"] == "assistant")
+            .map(|m| {
+                (
+                    m["id"].as_str().unwrap().to_owned(),
+                    m["text"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    };
+    let (before, all) = (messages(&seen[..at_terminal]), messages(&seen));
+    session.close().await;
+    helper.stop_if_idle().await;
+    (before, all)
+}
+
+fn texts(messages: Vec<(String, String)>) -> Vec<String> {
+    messages.into_iter().map(|(_, text)| text).collect()
+}
+
+/// The member settles once, with the excerpt "Looks good".
+fn settles_once() -> [serde_json::Value; 2] {
+    [
+        member_entry("start", 1, None),
+        member_entry("done", 1, Some("Looks good")),
+    ]
+}
+
+/// `ClaudeAdapterV2`'s member transcript reader: a settled workflow member's child shows the
+/// answer from its transcript, not the progress excerpt that contradicts it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_settled_workflow_member_shows_its_transcript_answer() {
+    if !node_available() {
+        return;
+    }
+    let written = MemberFile::Written(member_line("wf-line-1", "msg_a1", MEMBER_ANSWER));
+    let shown = member_messages("member-transcript", written, &settles_once()).await;
+    assert_eq!(texts(shown), [MEMBER_ANSWER]);
+    // Without a readable transcript the progress excerpt stands in, once.
+    let shown = member_messages("member-excerpt", MemberFile::Missing, &settles_once()).await;
+    assert_eq!(
+        texts(shown),
+        ["Partial answer from workflow progress:\n\nLooks good"]
+    );
+}
+
+/// `readContainedWorkflowFile` opens the leaf with `O_NONBLOCK` and reads only a regular file:
+/// a FIFO in the transcript's place neither blocks the session nor feeds it an answer.
+#[tokio::test(flavor = "current_thread")]
+async fn a_transcript_that_is_not_a_regular_file_is_not_read() {
+    if !node_available() {
+        return;
+    }
+    let shown = member_messages("member-fifo", MemberFile::Fifo, &settles_once()).await;
+    assert_eq!(
+        texts(shown),
+        ["Partial answer from workflow progress:\n\nLooks good"]
+    );
+}
+
+/// `!textShown && !resultShown`: a member that settled with nothing to show shows the excerpt
+/// that arrives later, once.
+#[tokio::test(flavor = "current_thread")]
+async fn a_late_excerpt_is_shown_once() {
+    if !node_available() {
+        return;
+    }
+    let progress = [
+        member_entry("start", 1, None),
+        member_entry("done", 1, None),
+        member_entry("done", 1, Some("Late excerpt")),
+        member_entry("done", 1, Some("Changed excerpt")),
+    ];
+    let shown = member_messages("member-late-excerpt", MemberFile::Missing, &progress).await;
+    assert_eq!(
+        texts(shown),
+        ["Partial answer from workflow progress:\n\nLate excerpt"]
+    );
+}
+
+/// `ClaudeAdapterV2.test.ts` "reads a settled workflow member's transcript to its end past the
+/// read cap": 80 long early messages, then `FINAL ANSWER`. All 81 show, in order, and no
+/// excerpt.
+#[tokio::test(flavor = "current_thread")]
+async fn a_long_transcript_keeps_its_final_answer() {
+    if !node_available() {
+        return;
+    }
+    let filler = "x".repeat(16 * 1024);
+    let mut transcript: String = (0..80)
+        .map(|n| {
+            member_line(
+                &format!("line-early-{n}"),
+                &format!("msg_early_{n}"),
+                &format!("{n} {filler}"),
+            )
+        })
+        .collect();
+    transcript.push_str(&member_line("line-final", "msg_final", "FINAL ANSWER"));
+    let shown = member_messages(
+        "member-long-transcript",
+        MemberFile::Written(transcript),
+        &settles_once(),
+    )
+    .await;
+    let mut expected: Vec<String> = (0..80).map(|n| format!("{n} {filler}")).collect();
+    expected.push("FINAL ANSWER".to_owned());
+    assert_eq!(texts(shown), expected);
+}
+
+/// Transcript lines keep their item ids across attempts (`nativeItemId: line.uuid`): a retry
+/// that reads the same transcript updates the answer instead of adding a second one.
+#[tokio::test(flavor = "current_thread")]
+async fn a_retry_does_not_duplicate_transcript_answers() {
+    if !node_available() {
+        return;
+    }
+    let progress = [
+        member_entry("start", 1, None),
+        member_entry("done", 1, Some("First")),
+        member_entry("start", 2, None),
+        member_entry("done", 2, Some("Second")),
+    ];
+    let written = MemberFile::Written(member_line("wf-line-1", "msg_a1", MEMBER_ANSWER));
+    let shown = member_messages("member-retry", written, &progress).await;
+    let mut ids: Vec<&str> = shown.iter().map(|(id, _)| id.as_str()).collect();
+    ids.dedup();
+    assert_eq!(ids.len(), 1, "{shown:?}");
+    assert_eq!(shown.last().unwrap().1, MEMBER_ANSWER);
+}
+
+/// `ClaudeAdapterV2` reads transcripts under the query's own `CLAUDE_CONFIG_DIR`, resolved from
+/// the session cwd when relative.
+#[tokio::test(flavor = "current_thread")]
+async fn transcripts_are_read_under_the_querys_config_dir() {
+    if !node_available() {
+        return;
+    }
+    let file = MemberFile::RelativeConfig(member_line("wf-line-1", "msg_a1", MEMBER_ANSWER));
+    let shown = member_messages("member-relative-config", file, &settles_once()).await;
+    assert_eq!(texts(shown), [MEMBER_ANSWER]);
+}
+
+/// The final flush window does not hold the query: while a member's reread waits out the
+/// window, the driver keeps taking frames (the root settles first), and the reread then shows
+/// the line Claude flushed in the meantime instead of the excerpt.
+#[tokio::test(flavor = "current_thread")]
+async fn the_flush_wait_keeps_the_driver_draining() {
+    if !node_available() {
+        return;
+    }
+    // Settled a second from now, so the window is still open when the coordinator ends.
+    let mut done = member_entry("done", 1, Some("Looks good"));
+    done["lastProgressAt"] = serde_json::json!(conn_support::time::now_ms() + 1000);
+    let mut pre_tool = member_line("wf-line-1", "msg_a1", "Let me look.");
+    pre_tool = pre_tool.replace("end_turn", "tool_use");
+    let final_line = member_line("wf-line-2", "msg_a2", "FINAL ANSWER");
+    let (before, all) = member_messages_flushed(
+        "member-flush-drain",
+        MemberFile::Written(pre_tool),
+        &[member_entry("start", 1, None), done],
+        Some((&final_line, "FINAL ANSWER")),
+    )
+    .await;
+    assert_eq!(texts(before), ["Let me look."]);
+    assert_eq!(texts(all), ["Let me look.", "FINAL ANSWER"]);
 }

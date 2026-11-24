@@ -17,6 +17,7 @@ mod drafts;
 mod footer;
 mod menus;
 mod model_picker;
+mod popovers;
 mod stash;
 
 pub(crate) use self::actions::{FollowUpBehavior, SendDispatch};
@@ -244,11 +245,16 @@ pub(crate) struct Composer {
     preparing_worktree: bool,
     context_window: Option<ContextWindowSnapshot>,
     context_meter_open: bool,
+    /// Hover and pin state of the meter popover, and its pending open or close timer.
+    meter: context_meter::MeterHover,
+    meter_timer: Option<gpui_kit::Task<()>>,
     footer_permissions_open: bool,
     picker_permissions_open: bool,
     strip_permissions_open: bool,
     permission_preview: Option<&'static str>,
     implement_menu_open: bool,
+    /// Popovers open at the last render, to tell which opened since (`popovers.rs`).
+    seen_popovers: Vec<popovers::Popover>,
     stash: PromptStash,
     /// The host draws the stash badge in its own banner dock.
     stash_docked: bool,
@@ -405,11 +411,14 @@ impl Composer {
             preparing_worktree: false,
             context_window: None,
             context_meter_open: false,
+            meter: context_meter::MeterHover::default(),
+            meter_timer: None,
             footer_permissions_open: false,
             picker_permissions_open: false,
             strip_permissions_open: false,
             permission_preview: None,
             implement_menu_open: false,
+            seen_popovers: Vec::new(),
             stash: PromptStash::default(),
             stash_docked: false,
             branch,
@@ -651,6 +660,19 @@ impl Composer {
             input.focus(window, cx);
         });
         self.on_draft_changed(cx);
+    }
+
+    /// Adds a file mention (`[name](path)`) at the end of the draft, with a space around it, and
+    /// focuses the composer (`insertTextAtEnd` in web Conn's "Add to chat").
+    pub(crate) fn insert_mention(
+        &mut self,
+        mention: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let current = self.textarea.read(cx).value().to_string();
+        let next = crate::panels::file_path::append_mention(&current, mention);
+        self.set_draft_text(next, window, cx);
     }
 
     /// Shows the draft for `key` (a thread or the new-thread draft), parking the current one.
@@ -2000,15 +2022,23 @@ impl Composer {
         model: String,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(opt) = self.catalog.find_model(Some(&instance_id), &model) {
+        let picked = self.catalog.find_model(Some(&instance_id), &model);
+        if let Some(opt) = picked {
             self.selected_driver = Some(opt.driver.clone());
         }
+        // Switching model or provider keeps only the options the new model offers, so a Codex
+        // service tier or an effort the new model lacks does not carry over (Nick, #333).
+        let carried = picked.and_then(|opt| {
+            self.selected_options
+                .as_ref()
+                .and_then(|options| opt.supported_options(options))
+        });
         let same_model = self.selected_instance_id.as_deref() == Some(instance_id.as_str())
             && self.selected_model == model;
         self.selected_instance_id = Some(instance_id.clone());
         self.selected_model = model.clone();
         if !same_model {
-            self.selected_options = None;
+            self.selected_options = carried;
         }
         // Docked: the popup stays open so the effort column can take the next pick.
         cx.emit(ComposerEvent::ModelSelected {
@@ -2291,7 +2321,7 @@ impl Composer {
                     .gap(px(4.0))
                     .h(px(22.0))
                     .px(px(6.0))
-                    .rounded(px(6.0))
+                    .rounded_full()
                     .cursor_pointer()
                     .text_color(if open { fg } else { muted })
                     .when(open, |el| el.bg(hover_bg))
@@ -2392,7 +2422,7 @@ impl Composer {
             .gap(px(6.0))
             .h(px(FOOTER_CONTROL_HEIGHT_PX))
             .px(px(8.0))
-            .rounded(px(8.0))
+            .rounded_full()
             .text_size(px(13.0))
             .line_height(px(20.0))
             .font_weight(FontWeight::MEDIUM)
@@ -2422,6 +2452,8 @@ impl Composer {
 
 impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        // One popover at a time: opening one closes the others (Nick, #323).
+        self.keep_one_popover(cx);
         // `noProviderAvailable` (`ChatComposer.tsx:934-945`): no instance is usable for this
         // composer. Until the first config arrives the catalog is merely unknown.
         let provider_selection = self
@@ -2538,7 +2570,7 @@ impl Render for Composer {
             .h(px(FOOTER_CONTROL_HEIGHT_PX))
             .pl(px(8.0))
             .pr(px(6.0))
-            .rounded(px(8.0))
+            .rounded_full()
             .cursor_pointer()
             .text_size(px(13.0))
             .line_height(px(20.0))
@@ -3024,6 +3056,12 @@ impl Render for Composer {
                     composer.attach_paths(dropped.paths().to_vec(), window, cx);
                 }),
             )
+            .on_drop(cx.listener(
+                |composer, dropped: &crate::panels::file_path::FileMentionDrag, window, cx| {
+                    let mention = crate::panels::file_path::mention(&dropped.path);
+                    composer.insert_mention(&mention, window, cx);
+                },
+            ))
             .capture_action(cx.listener(|composer, _: &Paste, window, cx| {
                 if composer.try_paste_attachments(window, cx) {
                     cx.stop_propagation();
@@ -3225,7 +3263,7 @@ impl Render for Composer {
 ///
 /// Mirrors Conn's `--shell-composer` (`var(--card)` in light, lifted surface in dark)
 /// and `--chat-composer-outline` (`8%` black/white hairline via `shell_inner_border`).
-fn composer_surface_colors(tokens: &Tokens) -> (gpui_kit::Hsla, gpui_kit::Hsla) {
+pub(crate) fn composer_surface_colors(tokens: &Tokens) -> (gpui_kit::Hsla, gpui_kit::Hsla) {
     let bg = match tokens.appearance {
         Appearance::Light => hsla(tokens.card),
         Appearance::Dark => hsla(tokens.shell_field),

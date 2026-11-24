@@ -55,7 +55,72 @@ fn path_to_cef_string(path: &std::path::Path) -> CefString {
     CefString::from(path.to_string_lossy().as_ref())
 }
 
+/// Builds the helper apps CEF launches its subprocesses from, when they are missing or stale.
+/// This is file work and signing only, so it can run on any thread ahead of [`start`], which
+/// then finds the helpers current.
+pub(crate) fn prepare() -> Result<(), WebError> {
+    prepare_helpers().map(|_| ())
+}
+
+fn prepare_helpers() -> Result<(Layout, std::path::PathBuf), WebError> {
+    let archive = archive::current_archive().ok_or(WebError::Unsupported(
+        "CEF is not supported on this platform",
+    ))?;
+    let layout = Layout::new(Layout::default_root()?);
+    if !archive::is_installed(&layout, &archive.pin()) {
+        return Err(WebError::NotInstalled);
+    }
+    let current_exe = std::env::current_exe()?;
+    let bundle_id = bundle_identifier().unwrap_or_else(|| "dev.conn.gpui".to_owned());
+    let helper_exe = archive::make_helpers(&layout, &current_exe, &bundle_id)?;
+    Ok((layout, helper_exe))
+}
+
+/// Maps the CEF framework into the process (`dlopen`). Idempotent and thread-safe, so it can run
+/// on a background thread ahead of [`start`], whose own load then finds the library mapped.
+pub(crate) fn preload_framework() -> Result<(), WebError> {
+    let archive = archive::current_archive().ok_or(WebError::Unsupported(
+        "CEF is not supported on this platform",
+    ))?;
+    let layout = Layout::new(Layout::default_root()?);
+    if !archive::is_installed(&layout, &archive.pin()) {
+        return Err(WebError::NotInstalled);
+    }
+    load_framework(&layout)
+}
+
+fn load_framework(layout: &Layout) -> Result<(), WebError> {
+    let framework_binary = layout.framework_binary();
+    let binary_cstr =
+        CString::new(framework_binary.to_string_lossy().into_owned()).map_err(|_| {
+            WebError::Runtime("CEF framework path contains an interior NUL byte".into())
+        })?;
+
+    // SAFETY: `binary_cstr` is a valid NUL-terminated CString alive through the call.
+    if unsafe { super::loader_support::cef_load_library(binary_cstr.as_ptr()) } != 1 {
+        let detail = super::loader_support::last_load_error()
+            .unwrap_or_else(|| "unknown dlopen error".to_owned());
+        return Err(WebError::Runtime(format!(
+            "failed to load CEF framework from {}: {detail}",
+            framework_binary.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Logs how long `step` took, with `CONN_WEB_TRACE=1`.
+fn timed<T>(label: &str, step: impl FnOnce() -> T) -> T {
+    let began = std::time::Instant::now();
+    let out = step();
+    super::view::trace(&format!("{label}: {:?}", began.elapsed()));
+    out
+}
+
 /// Starts CEF on the main thread (at most once per process).
+///
+/// Call [`prepare`] and [`preload_framework`] on a background thread first: this then spends its
+/// main-thread time only on `execute_process`, the settings, and the timer that runs
+/// `cef_initialize`.
 pub(crate) fn start(options: StartOptions) -> Result<(), WebError> {
     match state() {
         WebRuntimeState::Starting | WebRuntimeState::Running => return Ok(()),
@@ -67,37 +132,15 @@ pub(crate) fn start(options: StartOptions) -> Result<(), WebError> {
         | WebRuntimeState::Failed(_) => {}
     }
 
-    let archive = archive::current_archive().ok_or(WebError::Unsupported(
-        "CEF is not supported on this platform",
-    ))?;
-    let layout = Layout::new(Layout::default_root()?);
-    if !archive::is_installed(&layout, &archive.pin()) {
-        return Err(WebError::NotInstalled);
+    let began = std::time::Instant::now();
+    let (layout, helper_exe) = timed("start: helpers current?", prepare_helpers)?;
+
+    if let Err(err) = timed("start: framework mapped?", || load_framework(&layout)) {
+        set_state(WebRuntimeState::Failed(err.to_string()));
+        return Err(err);
     }
 
-    let current_exe = std::env::current_exe()?;
-    let bundle_id = bundle_identifier().unwrap_or_else(|| "dev.conn.gpui".to_owned());
-    let helper_exe = archive::make_helpers(&layout, &current_exe, &bundle_id)?;
-
-    let framework_binary = layout.framework_binary();
-    let binary_cstr =
-        CString::new(framework_binary.to_string_lossy().into_owned()).map_err(|_| {
-            WebError::Runtime("CEF framework path contains an interior NUL byte".into())
-        })?;
-
-    // SAFETY: `binary_cstr` is a valid NUL-terminated CString alive through the call.
-    if unsafe { super::loader_support::cef_load_library(binary_cstr.as_ptr()) } != 1 {
-        let detail = super::loader_support::last_load_error()
-            .unwrap_or_else(|| "unknown dlopen error".to_owned());
-        let why = format!(
-            "failed to load CEF framework from {}: {detail}",
-            framework_binary.display()
-        );
-        set_state(WebRuntimeState::Failed(why.clone()));
-        return Err(WebError::Runtime(why));
-    }
-
-    let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
+    let _ = timed("start: api_hash", || api_hash(sys::CEF_API_VERSION_LAST, 0));
 
     // SAFETY: `conn_cef_install_app_hooks` swizzles `NSApplication -sendEvent:`
     // once via `dispatch_once` and attaches `CefAppProtocol` on the main thread.
@@ -105,11 +148,13 @@ pub(crate) fn start(options: StartOptions) -> Result<(), WebError> {
 
     let args = Args::new();
     let mut app = BrowserApp::new();
-    if execute_process(
-        Some(args.as_main_args()),
-        Some(&mut app),
-        std::ptr::null_mut(),
-    ) >= 0
+    if timed("start: execute_process", || {
+        execute_process(
+            Some(args.as_main_args()),
+            Some(&mut app),
+            std::ptr::null_mut(),
+        )
+    }) >= 0
     {
         let why = "CEF treated the host process as a subprocess; call conn_web::maybe_run_subprocess() at the top of main()".to_owned();
         set_state(WebRuntimeState::Failed(why.clone()));
@@ -144,12 +189,14 @@ pub(crate) fn start(options: StartOptions) -> Result<(), WebError> {
         *pending.borrow_mut() = Some(Box::new(move || {
             let mut app = app;
             INITIALIZE_CALLED.store(true, Ordering::Release);
-            if initialize(
-                Some(args.as_main_args()),
-                Some(&settings),
-                Some(&mut app),
-                std::ptr::null_mut(),
-            ) != 1
+            if timed("cef_initialize (main thread blocked)", || {
+                initialize(
+                    Some(args.as_main_args()),
+                    Some(&settings),
+                    Some(&mut app),
+                    std::ptr::null_mut(),
+                )
+            }) != 1
             {
                 let code = get_exit_code();
                 let why = format!("cef_initialize failed with exit code {code}");
@@ -163,6 +210,10 @@ pub(crate) fn start(options: StartOptions) -> Result<(), WebError> {
 
     // SAFETY: Schedules a `CFRunLoopTimer` on the main run loop to start CEF.
     unsafe { conn_cef_start_message_loop() };
+    super::view::trace(&format!(
+        "start: main thread released after {:?}; cef_initialize is next",
+        began.elapsed()
+    ));
     Ok(())
 }
 
@@ -222,6 +273,7 @@ wrap_browser_process_handler! {
 
     impl BrowserProcessHandler {
         fn on_context_initialized(&self) {
+            super::view::trace("on_context_initialized: runtime Running");
             set_state(WebRuntimeState::Running);
         }
     }

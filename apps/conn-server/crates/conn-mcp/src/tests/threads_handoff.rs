@@ -964,8 +964,25 @@ async fn a_settled_worktree_thread_runs_its_settle_script_in_its_own_checkout() 
         .await;
     let child_id = child["childThreadId"].as_str().unwrap().to_owned();
     let settle = |id: &str, n: u32| json!({"type":"thread.settle","commandId":format!("settle-{id}-{n}"),"threadId":id});
+    // The committed `settledAt` names a settlement.
+    let settled_at = |id: String| {
+        let engine = f.service.config.engine.clone();
+        async move {
+            let p = engine
+                .get_thread_projection(id.as_str().into())
+                .await
+                .unwrap();
+            p["thread"]["settledAt"].as_str().unwrap().to_owned()
+        }
+    };
     dispatch(&f, settle(&child_id, 1)).await;
-    assert_eq!(f.service.run_settle_script(&child_id).await, None);
+    let child_settlement = settled_at(child_id.clone()).await;
+    assert_eq!(
+        f.service
+            .run_settle_script(&child_id, &child_settlement)
+            .await,
+        None
+    );
 
     operator
         .ok("conn_thread_interrupt", json!({"threadId":thread}))
@@ -977,9 +994,10 @@ async fn a_settled_worktree_thread_runs_its_settle_script_in_its_own_checkout() 
         )
         .await;
     dispatch(&f, settle(&thread, 1)).await;
+    let first = settled_at(thread.clone()).await;
     let started = f
         .service
-        .run_settle_script(&thread)
+        .run_settle_script(&thread, &first)
         .await
         .expect("the settle script starts");
     assert_eq!(started["status"], "started");
@@ -1017,9 +1035,13 @@ async fn a_settled_worktree_thread_runs_its_settle_script_in_its_own_checkout() 
     .await;
     f.service.config.engine.call("projects.mutate",json!({"type":"project.update","commandId":"settle-script-2","projectId":project_id(),"scripts":[{"id":"finish","name":"Finish","icon":"play","command":"printf 'FAILED-%s\\n' now; exit 3","runOnSettle":true,"runOnWorktreeCreate":false}]})).await.unwrap();
     dispatch(&f, settle(&thread, 3)).await;
+    // The undone settlement's cleanup, late, does nothing.
+    assert_eq!(f.service.run_settle_script(&thread, &first).await, None);
+    let second = settled_at(thread.clone()).await;
+    assert_ne!(second, first);
     let started = f
         .service
-        .run_settle_script(&thread)
+        .run_settle_script(&thread, &second)
         .await
         .expect("the new settlement runs its script");
     let terminal = started["terminalId"].as_str().unwrap().to_owned();
