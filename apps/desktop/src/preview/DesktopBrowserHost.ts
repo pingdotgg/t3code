@@ -503,7 +503,16 @@ export const make = Effect.gen(function* () {
     // Read when the pointer queue reaches the event: a guest the window shows routes its own input.
     const routeMouse: PointerRoute = (params) =>
       shownTabs.get(keyOf(tab.key)) === true ? Promise.resolve(null) : routeHidden(params);
+    // The annotation overlay lives in the guest and takes any input sent there as the
+    // person's at this window, so relayed input waits until they finish.
+    const annotated = (method: string) =>
+      method.startsWith("Input.") && tab.debuggee.annotating?.() === true;
     const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
+      // Asked again at each dispatch: an annotation can start while the input waits its turn.
+      const refuseAnnotated = () => {
+        if (annotated(method)) throw new Error(ANNOTATING_MESSAGE);
+      };
+      refuseAnnotated();
       const result = await sendPageCommand(
         webContents,
         debuggee,
@@ -511,6 +520,7 @@ export const make = Effect.gen(function* () {
         params,
         sessionId,
         routeMouse,
+        refuseAnnotated,
       );
       if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
       return result;
@@ -536,11 +546,7 @@ export const make = Effect.gen(function* () {
             syncPainting(tab);
             if (tab.screencasts.size > 0) return Promise.resolve({});
           }
-          // The annotation overlay lives in the guest and takes any input sent there as the
-          // person's at this window, so relayed input waits until they finish.
-          if (method.startsWith("Input.") && tab.debuggee.annotating?.() === true) {
-            return Promise.reject(new Error(ANNOTATING_MESSAGE));
-          }
+          if (annotated(method)) return Promise.reject(new Error(ANNOTATING_MESSAGE));
           // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
           if (AGENT_INPUT_METHOD.test(method)) {
             if (owner === undefined || !streamingOwners.has(owner)) {
