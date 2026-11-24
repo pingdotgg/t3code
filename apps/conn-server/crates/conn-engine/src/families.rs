@@ -190,13 +190,20 @@ pub(crate) fn delegated_task_request(tx: &mut Tx<'_>, c: Value) -> Outcome {
         }),
     ))?;
 
+    // Isolation `worktree`: the child's run waits in `preparing` until its setup is done, as
+    // T3's `defer_start` with a workspace (`OrchestratorMcpService.delegate`).
+    let dispatch_mode = if c["workspaceStrategy"]["type"] == "worktree" {
+        json!({"type": "defer_start", "workspaceStrategy": c["workspaceStrategy"]})
+    } else {
+        json!({"type": "start_immediately"})
+    };
     let dispatch = commands::handler("message.dispatch").expect("message.dispatch");
     dispatch(
         tx,
         json!({
             "type": "message.dispatch", "commandId": command_id, "threadId": child_id,
             "messageId": format!("message:delegated-task:{command_id}"), "text": task,
-            "attachments": [], "modelSelection": model, "dispatchMode": {"type": "start_immediately"},
+            "attachments": [], "modelSelection": model, "dispatchMode": dispatch_mode,
             "createdBy": created_by, "creationSource": creation_source,
         }),
     )

@@ -326,9 +326,12 @@ pub struct WorktreeRequest {
     pub thread_id: String,
     /// The project, for its settings overrides (`worktreeSubmodules`).
     pub project_id: Option<String>,
-    /// The link that starts the thread (`linkOrigin`); a delegate's is its parent's. A link
-    /// below full access runs no setup script (`linkOriginIsFenced`).
+    /// The link that starts the thread (`linkOrigin`). A link below full access runs no
+    /// setup script (`linkOriginIsFenced`).
     pub link_origin: Option<Value>,
+    /// Whether the checkout runs the project's setup script. A launch does; a `worktree`
+    /// delegate does not: its child runs the script while its run waits in `preparing`.
+    pub run_setup: bool,
     pub project_root: String,
     pub base_ref: String,
     pub branch: Option<String>,

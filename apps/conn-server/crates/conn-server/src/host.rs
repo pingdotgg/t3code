@@ -386,7 +386,10 @@ impl EngineHost for Host {
                     base_ref: request.base_ref,
                     branch: request.branch,
                     start_from_origin: request.start_from_origin,
-                    setup: self.setup_runner(request.project_id, request.link_origin),
+                    setup: request
+                        .run_setup
+                        .then(|| self.setup_runner(request.project_id, request.link_origin))
+                        .flatten(),
                     worktrees_dir: self.worktrees_dir(),
                     submodules,
                     missing_base: request.missing_base,

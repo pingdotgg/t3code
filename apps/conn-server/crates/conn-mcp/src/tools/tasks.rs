@@ -236,32 +236,44 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
         command["workspaceStrategy"] =
             json!({"type": "worktree", "baseRef": base, "startFromOrigin": false});
     }
-    // The child's checkout and its setup script were made before this commits
-    // (`EngineHost::provision_worktree`): a blocking script is done, an async one runs on.
-    let upgrade = if wait {
-        // The dispatch runs on its own task holding the armed upgrade, then hands it back. A
-        // call dropped meanwhile (during a worktree's setup, say) leaves the upgrade with that
-        // task, which drops it once the child committed, so the parent still hears the result.
-        let guard = WakeUpgrade::arm(cx, &caller.thread_id, &task_id, &command_id);
-        let engine = cx.config().engine.clone();
-        let (back, handed) = tokio::sync::oneshot::channel();
-        tokio::spawn(async move {
-            let dispatched = super::dispatch_to(engine.as_ref(), command).await;
-            let _ = back.send((dispatched, guard));
-        });
-        let (dispatched, mut guard) = handed
-            .await
-            .map_err(|_| super::internal("delegate_task: the dispatch ended"))?;
-        if let Err(error) = dispatched {
-            // No task was made: nothing to upgrade.
-            guard.command = None;
-            return Err(error);
+    // A worktree child's setup script runs after the commit, as T3's `prepareRun`: the child's
+    // run waits in `preparing` until it ends (`prepare_child`). A fenced parent runs none.
+    let preparation = match &isolated {
+        Some((project, _)) => {
+            let fenced = cx
+                .link_origin()
+                .await?
+                .is_some_and(|origin| crate::peers::link_origin_is_fenced(&origin));
+            Some((project.clone(), fenced))
         }
-        Some(guard)
-    } else {
-        cx.dispatch(command).await?;
-        None
+        None => None,
     };
+    // The dispatch and the preparation run on their own task, holding the armed upgrade when
+    // the call waits, then hand it back. A call dropped meanwhile leaves both to that task, so
+    // the child is still prepared and the parent still hears the result.
+    let guard = wait.then(|| WakeUpgrade::arm(cx, &caller.thread_id, &task_id, &command_id));
+    let service = cx.service.clone();
+    let (back, handed) = tokio::sync::oneshot::channel();
+    let (prepared_id, prepared_child) = (command_id.clone(), child.clone());
+    tokio::spawn(async move {
+        let dispatched = super::dispatch_to(service.config.engine.as_ref(), command).await;
+        if dispatched.is_ok()
+            && let Some((project, fenced)) = preparation
+        {
+            prepare_child(&service, &prepared_id, &prepared_child, &project, fenced).await;
+        }
+        let _ = back.send((dispatched, guard));
+    });
+    let (dispatched, upgrade) = handed
+        .await
+        .map_err(|_| super::internal("delegate_task: the dispatch ended"))?;
+    if let Err(error) = dispatched {
+        // No task was made: nothing to upgrade.
+        if let Some(mut upgrade) = upgrade {
+            upgrade.command = None;
+        }
+        return Err(error);
+    }
 
     if let Some(upgrade) = upgrade {
         let deadline = tokio::time::Instant::now() + wait_timeout(args);
@@ -393,6 +405,134 @@ async fn worktree_base(cx: &Cx<'_>, parent: &Value) -> Result<(Value, String), T
         ));
     }
     Ok((project, base))
+}
+
+/// `ThreadLaunchService.prepareRun` for a `worktree` child: the project's
+/// `runOnWorktreeCreate` script starts in the child's checkout. The child's run waits in
+/// `preparing` until a script marked `async: false` has ended, and fails without starting when
+/// that script fails. Any other script overlaps the agent.
+async fn prepare_child(
+    service: &std::sync::Arc<crate::McpService>,
+    command_id: &str,
+    child: &str,
+    project: &Value,
+    fenced: bool,
+) {
+    let engine = service.config.engine.as_ref();
+    let Ok(projection) = engine.get_thread_projection(child.into()).await else {
+        return;
+    };
+    let Some(run_id) = projection["runs"]
+        .as_array()
+        .and_then(|runs| runs.iter().find(|r| r["status"] == "preparing"))
+        .and_then(|run| run["id"].as_str())
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    let path = projection["thread"]["worktreePath"]
+        .as_str()
+        .unwrap_or_default();
+    let config = service.config.worktrees.as_ref();
+    // `skipped-for-link`: a link below full access runs none of the user's own code.
+    let started = match config {
+        Some(config) if !path.is_empty() && !fenced => super::worktree::start_project_script(
+            config,
+            child,
+            project,
+            path,
+            super::worktree::ScriptTrigger::Setup,
+            Some(super::worktree::Observe::default()),
+        )
+        .await
+        .map(Some),
+        _ => Ok(None),
+    };
+    let terminals = config.and_then(|config| config.terminals.clone());
+    let service = service.clone();
+    let (command_id, child) = (command_id.to_owned(), child.to_owned());
+    let settle = async move {
+        // No script, or an async one: it overlaps the agent.
+        let held = started.map(|run| {
+            run.filter(|run| !run.is_async)
+                .and_then(|run| Some((run.started, run.completion?)))
+        });
+        let outcome = match held {
+            Err(error) => Err(error),
+            Ok(None) => Ok(()),
+            Ok(Some((status, completion))) => {
+                let engine = service.config.engine.as_ref();
+                tokio::select! {
+                    code = completion => match code.ok().flatten() {
+                        Some(0) => Ok(()),
+                        code => Err(format!(
+                            "Setup script exited with {}.",
+                            code.map_or("no exit code".to_owned(), |c| c.to_string())
+                        )),
+                    },
+                    () = left_preparing(engine, &child, &run_id) => {
+                        // A cancel stops the script too (T3 closes the setup terminal).
+                        if let (Some(terminals), Some(terminal)) =
+                            (&terminals, status["terminalId"].as_str())
+                            && let Ok(input) = conn_contract::from_json(json!({
+                                "threadId": child, "terminalId": terminal, "deleteHistory": true}))
+                        {
+                            terminals.close(input);
+                        }
+                        return;
+                    }
+                }
+            }
+        };
+        let command = match outcome {
+            Ok(()) => {
+                json!({"type": "prepared-run.release", "commandId": format!("{command_id}:release"),
+                "threadId": child, "runId": run_id})
+            }
+            Err(message) => {
+                json!({"type": "prepared-run.fail", "commandId": format!("{command_id}:fail"),
+                "threadId": child, "runId": run_id,
+                "failure": {"class": "validation_error", "message": message, "code": null, "retryable": false}})
+            }
+        };
+        if let Ok(command) = conn_contract::from_json(command)
+            && let Err(error) = service.config.engine.dispatch(command).await
+        {
+            eprintln!("delegate_task preparation for {child}: {error:?}");
+        }
+    };
+    // T3 schedules the preparation: the call returns while the child waits in `preparing`.
+    tokio::spawn(settle);
+}
+
+/// Resolves once `run_id` is no longer `preparing`: a cancel or stop ended it before its
+/// setup did. Never resolves when the thread cannot be watched.
+async fn left_preparing(engine: &dyn conn_engine::Engine, thread: &str, run_id: &str) {
+    let preparing = || async {
+        engine
+            .get_thread_projection(thread.into())
+            .await
+            .ok()
+            .and_then(|p| {
+                p["runs"]
+                    .as_array()?
+                    .iter()
+                    .find(|run| run["id"] == run_id)
+                    .map(|run| run["status"] == "preparing")
+            })
+            .unwrap_or(false)
+    };
+    let Ok(input) = conn_contract::from_json(json!({"threadId": thread})) else {
+        return std::future::pending().await;
+    };
+    let Ok(mut stream) = engine.subscribe_thread(input).await else {
+        return std::future::pending().await;
+    };
+    while preparing().await {
+        if stream.recv().await.is_none() {
+            return std::future::pending().await;
+        }
+    }
 }
 
 pub(super) async fn status(cx: &Cx<'_>, args: &Args) -> ToolResult {

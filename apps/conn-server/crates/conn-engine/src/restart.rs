@@ -15,6 +15,8 @@
 //!   our Claude adapter reports its turn before a cold host has the prompt; a store without
 //!   start rows (before the outbox) still falls back to provider turns.
 //! - A `checkpoint.capture` row the previous process left runs again (replay-safe).
+//! - A run still `preparing` its workspace ends `cancelled`: its setup died with the process,
+//!   and the checkout may be half built.
 //! - A run waiting on an approval or a question ends `cancelled` with no continuation: the
 //!   prompt died with the process and only the user can answer it again.
 //! - A run left `waiting` (its provider turn ended, its checkpoint was not taken) is captured

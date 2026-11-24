@@ -161,6 +161,8 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
         "provider.switch" => provider_switch,
         "thread.title.regeneration.complete" => thread_title_regeneration_complete,
         "delegated_task.request" => crate::families::delegated_task_request,
+        "prepared-run.release" => prepared_run_release,
+        "prepared-run.fail" => prepared_run_fail,
         "checkpoint.rollback" => crate::rollback::checkpoint_rollback,
         "thread.fork" => crate::fork::thread_fork,
         "thread.merge_back" => crate::merge_back::thread_merge_back,
@@ -174,10 +176,9 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
 /// Why a contract command this engine does not handle is refused. The client shows the text.
 pub(crate) fn refusal(command_type: &str) -> &'static str {
     match command_type {
-        "prepared-run.release"
-        | "prepared-run.progress"
-        | "prepared-run.fail"
-        | "prepared-run.retry" => "Conn Server does not prepare worktrees for runs yet.",
+        "prepared-run.progress" | "prepared-run.retry" => {
+            "Conn Server does not report or retry workspace preparation yet."
+        }
         "thread.guest-share.close" | "thread.guest-message.dismiss" => {
             "Conn Server does not share threads with guests."
         }
@@ -326,6 +327,9 @@ struct DispatchMode {
     #[serde(rename = "type")]
     kind: String,
     target_run_id: Option<String>,
+    /// `defer_start` with a workspace: the run waits in `preparing` until
+    /// `prepared-run.release` (T3's `workspacePreparation`).
+    workspace_strategy: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -421,6 +425,7 @@ fn delivery(
             c.dispatch_mode = DispatchMode {
                 kind: "queue_after_active".into(),
                 target_run_id: None,
+                workspace_strategy: None,
             };
             return Ok(if stops {
                 (Delivery::Queue { first: true }, Some(target))
@@ -600,6 +605,7 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             c.dispatch_mode = DispatchMode {
                 kind: "queue_after_active".into(),
                 target_run_id: None,
+                workspace_strategy: None,
             };
         }
     }
@@ -690,6 +696,9 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         release_held(tx, &c.thread_id)?;
     }
     let queued = matches!(delivery, Delivery::Queue { .. });
+    let preparation = (c.dispatch_mode.kind == "defer_start" && !queued && interrupt.is_none())
+        .then(|| c.dispatch_mode.workspace_strategy.clone())
+        .flatten();
     let ordinal = tx.next_run_ordinal(&c.thread_id)?;
     let run_id = format!("run:{}:{ordinal}", c.thread_id);
     let root = format!("node:{run_id}:root");
@@ -817,7 +826,13 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         "userMessageId": c.message_id,
         "rootNodeId": root,
         "activeAttemptId": null,
-        "status": if queued { "queued" } else { "starting" },
+        "status": if queued {
+            "queued"
+        } else if preparation.is_some() {
+            "preparing"
+        } else {
+            "starting"
+        },
         "queuePosition": queue_position,
         "requestedAt": now,
         "startedAt": null,
@@ -831,6 +846,9 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     });
     if held {
         run["queueHeld"] = json!(true);
+    }
+    if let Some(strategy) = &preparation {
+        run["workspacePreparation"] = strategy.clone();
     }
     if fresh {
         run["freshContext"] = json!(true);
@@ -977,18 +995,30 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             tx.append(draft("turn-item.updated", item))?;
         }
     } else {
-        tx.append(draft(
-            "turn-item.updated",
-            user_message_item(
-                &c,
-                &run_id,
-                &root,
-                &provider_thread_id,
-                ordinal,
-                "turn_start",
-                &now,
-            ),
-        ))?;
+        let item = user_message_item(
+            &c,
+            &run_id,
+            &root,
+            &provider_thread_id,
+            ordinal,
+            "turn_start",
+            &now,
+        );
+        let item_ordinal = item["ordinal"].as_u64().unwrap_or(0);
+        tx.append(draft("turn-item.updated", item))?;
+        if preparation.is_some() {
+            tx.append(draft(
+                "turn-item.updated",
+                json!({
+                    "id": preparation_item_id(&run_id), "threadId": c.thread_id, "runId": run_id,
+                    "nodeId": root, "providerThreadId": provider_thread_id, "providerTurnId": null,
+                    "nativeItemRef": null, "parentItemId": null, "ordinal": item_ordinal + 1,
+                    "status": "running", "title": WORKSPACE_PREPARATION_INPUT, "startedAt": now,
+                    "completedAt": null, "updatedAt": now, "type": "command_execution",
+                    "input": WORKSPACE_PREPARATION_INPUT,
+                }),
+            ))?;
+        }
     }
     let seed = match c.title_seed.as_deref().map(str::trim) {
         // A rename before the first message keeps that name (#38683).
@@ -1023,13 +1053,136 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         // A run stopped before its provider started also abandons that start, and the
         // restart's message starts at once (T3's queued command path).
         effects.extend(stop_run(tx, &c.thread_id, &target, None, false)?);
-    } else if !queued {
+    } else if !queued && preparation.is_none() {
         effects.push(Effect::StartTurn {
             thread_id: c.thread_id.clone(),
             run_id,
         });
     }
     Ok(effects)
+}
+
+/// T3's `WORKSPACE_PREPARATION_INPUT`: the item a `preparing` run shows.
+const WORKSPACE_PREPARATION_INPUT: &str = "Preparing workspace";
+
+fn preparation_item_id(run_id: &str) -> String {
+    format!("turn-item:workspace-preparation:{run_id}")
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedRun {
+    thread_id: String,
+    run_id: String,
+    failure: Option<Value>,
+}
+
+/// T3's `preparedRunState`: the run still waits in `preparing`, with its preparation item.
+fn prepared_run(tx: &Tx<'_>, c: &PreparedRun) -> Result<(Value, Value), CommandError> {
+    let run = tx
+        .entity(&c.thread_id, "runs", &c.run_id)?
+        .filter(|run| run["status"] == "preparing");
+    let item = tx.entity(&c.thread_id, "turnItems", &preparation_item_id(&c.run_id))?;
+    match (run, item) {
+        (Some(run), Some(item)) => Ok((run, item)),
+        _ => reject(format!(
+            "Run {} is not awaiting workspace preparation.",
+            c.run_id
+        )),
+    }
+}
+
+/// `prepared-run.release`: the workspace is ready, so the run starts (`Orchestrator.ts`).
+fn prepared_run_release(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let c: PreparedRun = decode(command)?;
+    let (mut run, mut item) = prepared_run(tx, &c)?;
+    let now = tx.now().to_owned();
+    let root = run["rootNodeId"].as_str().map(str::to_owned);
+    let draft = |event_type, payload| {
+        Draft::new(&c.thread_id, event_type, payload)
+            .run(Some(&c.run_id))
+            .node(root.as_deref())
+    };
+    for (field, value) in [
+        ("status", json!("completed")),
+        ("title", json!("Workspace ready")),
+        ("output", json!("Workspace preparation completed.")),
+        ("exitCode", json!(0)),
+        ("completedAt", json!(now)),
+        ("updatedAt", json!(now)),
+    ] {
+        item[field] = value;
+    }
+    tx.append(draft("turn-item.updated", item))?;
+    run["status"] = json!("starting");
+    tx.append(draft("run.updated", run.clone()))?;
+    Ok(vec![Effect::StartTurn {
+        thread_id: c.thread_id,
+        run_id: c.run_id,
+    }])
+}
+
+/// `prepared-run.fail`: the workspace could not be prepared, so the run fails without
+/// reaching its provider, and a delegated child's parent hears of it.
+fn prepared_run_fail(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let c: PreparedRun = decode(command)?;
+    let (run, mut item) = prepared_run(tx, &c)?;
+    let mut failure = c.failure.clone().unwrap_or_else(|| json!({}));
+    let now = tx.now().to_owned();
+    for (field, value) in [
+        ("status", json!("failed")),
+        ("title", json!("Workspace preparation failed")),
+        ("output", failure["message"].clone()),
+        ("exitCode", json!(1)),
+        ("completedAt", json!(now)),
+        ("updatedAt", json!(now)),
+    ] {
+        item[field] = value;
+    }
+    tx.append(
+        Draft::new(&c.thread_id, "turn-item.updated", item)
+            .run(Some(&c.run_id))
+            .node(run["rootNodeId"].as_str()),
+    )?;
+    failure["code"] = json!("workspace_preparation_failed");
+    finish_run(tx, &c.thread_id, &c.run_id, "failed", Some(failure))?;
+    let mut effects = crate::families::on_run_end(tx, &c.thread_id, &c.run_id)?;
+    // T3's run end starts the queue: a `validation_error` in a checkout that exists holds none.
+    effects.extend(start_next_queued(tx, &c.thread_id, None)?);
+    Ok(effects)
+}
+
+/// Ends a run's "Preparing workspace" item while it still runs, as T3 does when an archive
+/// cancels the run or a Stop interrupts it before its provider starts.
+fn end_preparation_item(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    run: &Value,
+    status: &str,
+    title: &str,
+    output: Option<&str>,
+) -> StoreResult<()> {
+    let run_id = run["id"].as_str().unwrap_or_default();
+    let Some(mut item) = tx
+        .entity(thread_id, "turnItems", &preparation_item_id(run_id))?
+        .filter(|item| item["status"] == "running")
+    else {
+        return Ok(());
+    };
+    let now = tx.now().to_owned();
+    item["status"] = json!(status);
+    item["title"] = json!(title);
+    if let Some(output) = output {
+        item["output"] = json!(output);
+    }
+    item["completedAt"] = json!(now);
+    item["updatedAt"] = json!(now);
+    tx.append(
+        Draft::new(thread_id, "turn-item.updated", item)
+            .run(Some(run_id))
+            .node(run["rootNodeId"].as_str()),
+    )?;
+    Ok(())
 }
 
 fn user_message_item(
@@ -1942,6 +2095,7 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
         dispatch_mode: DispatchMode {
             kind: "steer_active".into(),
             target_run_id: Some(c.target_run_id.clone()),
+            workspace_strategy: None,
         },
         delivery_intent: None,
         steer_follow_up_of_run_id: None,
@@ -2154,6 +2308,14 @@ fn interrupt_before_start(
         });
         tx.append(draft("turn-item.updated", result))?;
     }
+    end_preparation_item(
+        tx,
+        thread_id,
+        run,
+        "interrupted",
+        "Workspace preparation interrupted",
+        Some(reason.unwrap_or("Interrupted before provider start")),
+    )?;
     if let Some(attempt_id) = run["activeAttemptId"].as_str()
         && let Some(mut attempt) = tx.entity(thread_id, "attempts", attempt_id)?
     {
@@ -2775,17 +2937,31 @@ fn has_running_delegated_tasks(tx: &Tx<'_>, thread_id: &str) -> StoreResult<bool
 }
 
 /// T3's archive of one thread (`Orchestrator.ts` `thread.archive`): queued and preparing runs
-/// are cancelled, live provider sessions detach, pending link requests close, and the thread's
+/// are cancelled (a delegated child's task finalizes), live provider sessions detach, pending link requests close, and the thread's
 /// terminals and devices go (`ThreadClosed`).
 fn archive_one(tx: &mut Tx<'_>, thread_id: &str) -> Outcome {
+    let mut ended = None;
     for run in tx.entities(thread_id, "runs")? {
         if matches!(run["status"].as_str(), Some("queued" | "preparing")) {
             let run_id = run["id"].as_str().unwrap_or_default();
+            end_preparation_item(
+                tx,
+                thread_id,
+                &run,
+                "cancelled",
+                "Workspace preparation cancelled",
+                None,
+            )?;
             finish_run(tx, thread_id, run_id, "cancelled", None)?;
+            ended = Some(run_id.to_owned());
         }
     }
+    // T3's run end: a delegated child's task finalizes with its cancelled run.
+    let mut effects = match &ended {
+        Some(run_id) => crate::families::on_run_end(tx, thread_id, run_id)?,
+        None => vec![],
+    };
     let now = tx.now().to_owned();
-    let mut effects = vec![];
     for session in tx.entities(thread_id, "providerSessions")? {
         if matches!(session["status"].as_str(), Some("stopped" | "error")) {
             continue;
@@ -2796,7 +2972,10 @@ fn archive_one(tx: &mut Tx<'_>, thread_id: &str) -> Outcome {
             json!({"providerSessionId": session["id"], "detachedAt": now,
                 "reason": "Thread archived."}),
         ))?;
-        if effects.is_empty() {
+        if !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::CloseSession { .. }))
+        {
             effects.push(Effect::CloseSession {
                 thread_id: thread_id.to_owned(),
             });

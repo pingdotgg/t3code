@@ -3225,6 +3225,35 @@ async fn a_restart_holds_an_undelivered_message_for_the_user() {
     assert_eq!(p["messages"][1]["text"], "echo: late");
 }
 
+/// A restart during workspace preparation cancels the run, as T3's recovery does
+/// (`ProviderRuntimeRecoveryService.test.ts`, "preparing"): its setup died with the process, so
+/// the provider never starts in a half-built checkout.
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_cancels_an_interrupted_preparation() {
+    let db = TempDb::new("restart-preparing");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        let mut send = message("t1", "c2", "work");
+        send["dispatchMode"] = json!({"type": "defer_start",
+            "workspaceStrategy": {"type": "worktree", "baseRef": "HEAD", "startFromOrigin": false}});
+        dispatch(&engine, send).await;
+    }
+    let (engine, _) = open(&db);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][0]["status"], "cancelled");
+    assert!(p["providerThreads"].as_array().unwrap().is_empty());
+    let items = p["turnItems"].as_array().unwrap();
+    assert!(items.iter().any(|i| i["title"] == "Server restarted"));
+    assert!(
+        items
+            .iter()
+            .filter(|i| i["type"] == "command_execution")
+            .all(|i| i["status"] == "cancelled")
+    );
+}
+
 /// A store the pre-merge branch wrote is at version 6 with `message_keys.search_text` and no
 /// receipt owners (that branch numbered its search step 5 and had no receipts step). It opens
 /// at 5 without the column, gets the receipt columns, and commands and their retries work.
@@ -6976,7 +7005,7 @@ fn every_contract_command_is_handled_or_refused_with_a_reason() {
             );
         }
     }
-    assert_eq!(handled, 50);
+    assert_eq!(handled, 52);
     assert_eq!(conn_contract::COMMAND_TYPES.len(), 58);
 }
 
@@ -7810,7 +7839,7 @@ async fn thread_lifecycle_commands_reach_the_shell_row() {
     assert_eq!(r["activeProviderThreadId"], Value::Null);
 
     assert!(
-        crate::commands::refusal("prepared-run.release").contains("prepare worktrees"),
+        crate::commands::refusal("prepared-run.retry").contains("workspace preparation"),
         "a refused command says why"
     );
 }
@@ -13497,6 +13526,95 @@ async fn attention_is_off_by_default() {
             .unwrap()
             .is_empty()
     );
+}
+
+/// T3's `defer_start` with a workspace and `prepared-run.release`/`fail`: the run waits in
+/// `preparing` and reaches the provider only once released; a failed preparation fails it with
+/// `workspace_preparation_failed`, and neither applies twice.
+#[tokio::test(flavor = "current_thread")]
+async fn a_prepared_run_starts_only_when_released() {
+    let db = TempDb::new("prepared-run");
+    let (engine, _) = open(&db);
+    let strategy = json!({"type": "worktree", "baseRef": "HEAD", "startFromOrigin": false});
+    for thread in ["t1", "t2"] {
+        dispatch(&engine, create(thread, &format!("create-{thread}"))).await;
+        let mut send = message(thread, &format!("send-{thread}"), "work");
+        send["dispatchMode"] = json!({"type": "defer_start", "workspaceStrategy": strategy});
+        dispatch(&engine, send).await;
+        let held = projection(&engine, thread).await;
+        assert_eq!(held["runs"][0]["status"], "preparing");
+        assert_eq!(held["runs"][0]["workspacePreparation"], strategy);
+        assert!(held["providerThreads"].as_array().unwrap().is_empty());
+    }
+    let prepared = |kind: &str, thread: &str, id: &str| {
+        json!({"type": kind, "commandId": id, "threadId": thread, "runId": format!("run:{thread}:1"),
+            "failure": {"class": "validation_error", "message": "Setup script exited with 3.",
+                "code": null, "retryable": false}})
+    };
+    dispatch(&engine, prepared("prepared-run.release", "t1", "go")).await;
+    let started = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(started["runs"][0]["status"], "completed");
+    dispatch(&engine, prepared("prepared-run.fail", "t2", "stop")).await;
+    let failed = projection(&engine, "t2").await;
+    assert_eq!(failed["runs"][0]["status"], "failed");
+    assert!(failed["providerThreads"].as_array().unwrap().is_empty());
+    let error = failed["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["type"] == "error")
+        .unwrap();
+    assert_eq!(error["failure"]["code"], "workspace_preparation_failed");
+    for (kind, thread) in [("prepared-run.release", "t1"), ("prepared-run.fail", "t2")] {
+        let again = engine
+            .dispatch(from_json(prepared(kind, thread, "again")).unwrap())
+            .await;
+        let Err(EngineError::Rejected(error)) = again else {
+            panic!("{kind} applied twice")
+        };
+        assert!(
+            to_json(&error)
+                .to_string()
+                .contains("is not awaiting workspace preparation")
+        );
+    }
+}
+
+/// T3's `startNextQueuedRun` after `prepared-run.fail`: the failure is a `validation_error` and
+/// the checkout exists, so a message queued while the setup ran starts next.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_preparation_starts_the_queued_run() {
+    let db = TempDb::new("prepared-run-queue");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut send = message("t1", "c2", "work");
+    send["dispatchMode"] = json!({"type": "defer_start",
+        "workspaceStrategy": {"type": "worktree", "baseRef": "HEAD", "startFromOrigin": false}});
+    dispatch(&engine, send).await;
+    let queued = message_with(
+        "t1",
+        "c3",
+        "next",
+        json!({"type": "queue_after_active"}),
+        None,
+    );
+    dispatch(&engine, queued).await;
+    assert_eq!(
+        projection(&engine, "t1").await["runs"][1]["status"],
+        "queued"
+    );
+    dispatch(
+        &engine,
+        json!({"type": "prepared-run.fail", "commandId": "fail", "threadId": "t1",
+            "runId": "run:t1:1", "failure": {"class": "validation_error",
+            "message": "Setup script exited with 3.", "code": null, "retryable": false}}),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][0]["status"], "failed");
+    assert_ne!(p["runs"][1]["status"], "queued", "the queue advanced");
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][1]["status"], "completed");
 }
 
 /// Removing a queued run leaves the active run's approval answerable (T3's

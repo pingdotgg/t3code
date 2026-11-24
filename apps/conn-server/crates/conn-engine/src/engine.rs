@@ -359,6 +359,9 @@ struct DelegatedWorktree {
     thread_id: String,
     project_root: String,
     worktree: crate::ProvisionedWorktree,
+    /// A `worktree` delegate's: its setup card ends at the commit, since the child's run, not
+    /// the card, waits for the setup script.
+    delegate: bool,
 }
 
 /// Test hook: the command with this id stops inside its transaction, before the commit. It
@@ -1002,8 +1005,9 @@ impl Inner {
     /// `delegate_task` with isolation `worktree` (`workspaceStrategy: {type: "worktree"}`): the
     /// child's checkout is made before the command commits, as a worktree launch makes its
     /// thread's, and the child thread records its branch and path. T3 prepares the same
-    /// checkout after the command, through `prepared-run.*`, which this server refuses. A
-    /// command already accepted makes nothing: its child keeps the first checkout.
+    /// checkout after the command. Either way the checkout runs no setup script: the child's
+    /// run waits in `preparing` while `/mcp` runs it (`prepared-run.release`). A command
+    /// already accepted makes nothing: its child keeps the first checkout.
     async fn delegated_worktree(
         &self,
         mut command: Value,
@@ -1039,7 +1043,7 @@ impl Inner {
             return Ok((command, None));
         }
         // The handler's refusals that need no write are checked first, so a command it would
-        // refuse runs no setup script: no parent, project or running parent run, or no task.
+        // refuse makes no checkout: no parent, project or running parent run, or no task.
         // It checks them again when it commits.
         let task_given = command["task"]
             .as_str()
@@ -1064,6 +1068,7 @@ impl Inner {
                 thread_id: thread_id.clone(),
                 project_id: Some(project_id),
                 link_origin,
+                run_setup: false,
                 project_root: root.clone(),
                 base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
                 branch: strategy["branch"].as_str().map(str::to_owned),
@@ -1080,6 +1085,7 @@ impl Inner {
                 thread_id,
                 project_root: root,
                 worktree: made,
+                delegate: true,
             }),
         ))
     }
@@ -1095,7 +1101,12 @@ impl Inner {
             return;
         };
         let refused = match result {
-            Ok((_, false)) => return,
+            Ok((_, false)) => {
+                if made.delegate {
+                    host.launch_committed(&made.thread_id);
+                }
+                return;
+            }
             Ok((_, true)) => None,
             Err(error) => Some(error.to_string()),
         };
@@ -1632,6 +1643,7 @@ impl Inner {
                 project_id: Some(input["projectId"].as_str().unwrap_or_default().to_owned()),
                 // The origin `thread.create` stamps on the thread (`launch`).
                 link_origin: input.get("linkOrigin").filter(|o| o.is_object()).cloned(),
+                run_setup: true,
                 project_root: root.clone(),
                 base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
                 branch: strategy["branch"].as_str().map(str::to_owned),
@@ -1646,6 +1658,7 @@ impl Inner {
             thread_id: thread_id.to_owned(),
             project_root: root,
             worktree,
+            delegate: false,
         })
     }
 
