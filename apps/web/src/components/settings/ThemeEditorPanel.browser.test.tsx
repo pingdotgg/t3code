@@ -250,7 +250,8 @@ describe("ThemeEditorPanel", () => {
     const save = screen.getByRole("button", { name: "Save changes" });
     await userEvent.click(save);
     await expect.element(save).toBeDisabled();
-    await expect.element(name).not.toBeInTheDocument();
+    (name.element() as HTMLElement).focus();
+    await expect.element(name).not.toHaveFocus();
 
     pendingSave.resolve(false);
     await expect.element(name).toHaveValue("Draft");
