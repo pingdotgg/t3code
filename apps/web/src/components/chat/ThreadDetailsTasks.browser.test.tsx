@@ -99,3 +99,29 @@ it("caps a long plan's height and keeps the step in progress in view", async () 
   expect(row.top).toBeGreaterThanOrEqual(box.top - 1);
   expect(row.bottom).toBeLessThanOrEqual(box.bottom + 1);
 });
+
+it("groups phases with their own counts and keeps the total on steps", async () => {
+  lists.set(
+    "thread-phases",
+    list(
+      ["Phase 1: Setup", "completed"],
+      ["Init repo", "completed"],
+      ["Phase 2: API", "running"],
+      ["Write route", "running"],
+      ["Test route", "pending"],
+    ),
+  );
+  await using screen = await render(
+    <ThreadDetailsTasks environmentId={environmentId} threadId={ThreadId.make("thread-phases")} />,
+  );
+
+  await expect.element(screen.getByText("1/3")).toBeVisible();
+  const phases = screen.container.querySelectorAll("[data-task-phase]");
+  expect([...phases].map((phase) => phase.getAttribute("data-task-phase"))).toEqual([
+    "completed",
+    "running",
+  ]);
+  expect(phases[1]!.querySelectorAll("[data-task-status]")).toHaveLength(2);
+  expect(phases[1]!.textContent).toContain("In progress: Phase 2: API");
+  expect(phases[1]!.textContent).toContain("0/2");
+});
