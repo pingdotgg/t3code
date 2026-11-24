@@ -1,7 +1,7 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { msg } from "gt-react";
 
-import { resolvePullRequestAuthorFilter } from "@t3tools/contracts";
+import { projectRepositoryIdentities, resolvePullRequestAuthorFilter } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   PullRequestListEntry,
@@ -981,6 +981,7 @@ export function findProjectForRepository<
     readonly id: string;
     readonly environmentId: string;
     readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+    readonly workspaceRepositories?: ReadonlyArray<RepositoryIdentity> | undefined;
   },
 >(
   projects: ReadonlyArray<Project>,
@@ -1001,19 +1002,18 @@ export function findProjectForRepository<
     ) {
       return false;
     }
-    const identity = project.repositoryIdentity;
-    if (
-      !identity ||
-      sourceControlClients.repositorySelector(identity)?.toLowerCase() !== repository
-    ) {
-      return false;
-    }
-    return (
-      host === undefined ||
-      sourceControlClients.changeRequestHost(identity, identity.provider) === host
+    // A workspace folder holds the repository when one of its checkouts is of it.
+    return projectRepositoryIdentities(project).some(
+      (identity) =>
+        sourceControlClients.repositorySelector(identity)?.toLowerCase() === repository &&
+        (host === undefined ||
+          sourceControlClients.changeRequestHost(identity, identity.provider) === host),
     );
   });
   // Azure repository names can collide across projects on the same host.
   const scoped = findScopedProject(candidates, input.scopedEnvironmentId, input.scopedProjectId);
-  return scoped ?? candidates[0];
+  // A project rooted in the repository comes before a folder that holds a checkout of it.
+  return (
+    scoped ?? candidates.find((project) => project.repositoryIdentity != null) ?? candidates[0]
+  );
 }

@@ -28,6 +28,7 @@ import {
   type IssueSetStateInput,
   type IssueTemplateList,
   type IssueTrackerSummary,
+  type RepositoryIdentity,
   type IssueTrackerProjectBinding,
   type IssueUpdateInput,
   type OrchestrationProjectShell,
@@ -73,6 +74,10 @@ interface ProjectTrackerBinding {
   readonly tracker: IssueTrackerKind;
   readonly host: string;
   readonly scope: string;
+  /** Where the tracker's tools run: the project's root, or a workspace folder's checkout. */
+  readonly cwd: string;
+  /** The workspace folder's checkout it was read from, by canonical key. */
+  readonly checkout?: string;
 }
 
 /** A project the registry has a tracker for, ready to serve reads and writes. */
@@ -86,11 +91,12 @@ interface SupportedProject extends ProjectTrackerBinding {
  * provider kind. A fork reads its upstream and its own repository.
  */
 function resolveGitHostBindings(
-  project: OrchestrationProjectShell,
+  repositoryIdentity: RepositoryIdentity | null,
+  cwd: string,
 ): ReadonlyArray<ProjectTrackerBinding> {
   return sourceControlDefinitions
-    .issueBindings(project.repositoryIdentity)
-    .map((binding) => ({ ...binding, tracker: IssueTrackerKind.make(binding.tracker) }));
+    .issueBindings(repositoryIdentity)
+    .map((binding) => ({ ...binding, tracker: IssueTrackerKind.make(binding.tracker), cwd }));
 }
 
 function findStandaloneIssueUrl(trackers: ReadonlyArray<StandaloneIssueTrackerApi>, value: string) {
@@ -186,11 +192,14 @@ const make = Effect.gen(function* () {
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const bindings = yield* IssueTrackerBindings.IssueTrackerBindingsRepository;
 
-  const resolveStandaloneBinding = (binding: IssueTrackerProjectBinding | undefined) => {
+  const resolveStandaloneBinding = (
+    binding: IssueTrackerProjectBinding | undefined,
+    cwd: string,
+  ): ProjectTrackerBinding | null => {
     if (binding === undefined) return null;
     const api = registry.get(binding.tracker);
     if (api === null || !isStandaloneIssueTracker(api)) return null;
-    return { tracker: binding.tracker, host: api.standalone.host, scope: binding.scope };
+    return { tracker: binding.tracker, host: api.standalone.host, scope: binding.scope, cwd };
   };
 
   /**
@@ -205,9 +214,28 @@ const make = Effect.gen(function* () {
       ? Effect.succeed(project.repositoryIdentity)
       : repositoryIdentities.resolve(project.workspaceRoot)
     ).pipe(
-      Effect.map((repositoryIdentity) => {
-        const standalone = resolveStandaloneBinding(binding);
-        const gitHost = resolveGitHostBindings({ ...project, repositoryIdentity });
+      Effect.flatMap((repositoryIdentity) =>
+        repositoryIdentity !== null
+          ? Effect.succeed(resolveGitHostBindings(repositoryIdentity, project.workspaceRoot))
+          : // A folder that is no repository reads the trackers of the checkouts in it.
+            repositoryIdentities.resolveWorkspace(project.workspaceRoot).pipe(
+              Effect.map((checkouts) => {
+                const seen = new Set<string>();
+                return checkouts.flatMap((checkout) =>
+                  resolveGitHostBindings(checkout, checkout.rootPath ?? project.workspaceRoot)
+                    .filter((candidate) => {
+                      const key = `${candidate.tracker} ${listCursorKey(candidate.host, candidate.scope)}`;
+                      if (seen.has(key)) return false;
+                      seen.add(key);
+                      return true;
+                    })
+                    .map((candidate) => ({ ...candidate, checkout: checkout.canonicalKey })),
+                );
+              }),
+            ),
+      ),
+      Effect.map((gitHost) => {
+        const standalone = resolveStandaloneBinding(binding, project.workspaceRoot);
         return standalone === null ? gitHost : [standalone, ...gitHost];
       }),
     );
@@ -355,7 +383,7 @@ const make = Effect.gen(function* () {
       if (viewerRequests.has(project.host)) continue;
       const request = yield* Effect.cached(
         project.api
-          .getViewer({ cwd: project.project.workspaceRoot, host: project.host })
+          .getViewer({ cwd: project.cwd, host: project.host })
           .pipe(Effect.tap((viewer) => Effect.sync(() => viewers.set(project.host, viewer)))),
       );
       viewerRequests.set(project.host, request);
@@ -410,7 +438,7 @@ const make = Effect.gen(function* () {
             Effect.flatMap((filter) =>
               project.api.listIssues({
                 ...filter,
-                cwd: project.project.workspaceRoot,
+                cwd: project.cwd,
                 host: project.host,
                 scope: project.scope,
                 state: input.state,
@@ -501,7 +529,7 @@ const make = Effect.gen(function* () {
       Effect.flatMap((project) =>
         project.api
           .getIssue({
-            cwd: project.project.workspaceRoot,
+            cwd: project.cwd,
             host: project.host,
             scope: project.scope,
             key: input.key,
@@ -518,7 +546,7 @@ const make = Effect.gen(function* () {
       Effect.flatMap((project) =>
         project.api
           .getComments({
-            cwd: project.project.workspaceRoot,
+            cwd: project.cwd,
             host: project.host,
             scope: project.scope,
             key: input.key,
@@ -535,7 +563,7 @@ const make = Effect.gen(function* () {
           ? Effect.fail(unsupported("templates", "issue templates"))
           : project.api
               .listTemplates({
-                cwd: project.project.workspaceRoot,
+                cwd: project.cwd,
                 host: project.host,
                 scope: project.scope,
               })
@@ -551,7 +579,7 @@ const make = Effect.gen(function* () {
           ? Effect.fail(unsupported("candidates", "labels or assignees"))
           : project.api
               .listCandidates({
-                cwd: project.project.workspaceRoot,
+                cwd: project.cwd,
                 host: project.host,
                 scope: project.scope,
               })
@@ -566,7 +594,7 @@ const make = Effect.gen(function* () {
           ? Effect.fail(unsupported("create", "filing issues"))
           : project.api
               .create({
-                cwd: project.project.workspaceRoot,
+                cwd: project.cwd,
                 host: project.host,
                 scope: project.scope,
                 title: input.title,
@@ -590,7 +618,7 @@ const make = Effect.gen(function* () {
           ? Effect.fail(unsupported("comment", "comments"))
           : project.api
               .comment({
-                cwd: project.project.workspaceRoot,
+                cwd: project.cwd,
                 host: project.host,
                 scope: project.scope,
                 key: input.key,
@@ -619,7 +647,7 @@ const make = Effect.gen(function* () {
           return Effect.fail(unsupported("update", "assignees"));
         return project.api
           .update({
-            cwd: project.project.workspaceRoot,
+            cwd: project.cwd,
             host: project.host,
             scope: project.scope,
             key: input.key,
@@ -639,7 +667,7 @@ const make = Effect.gen(function* () {
           return Effect.fail(unsupported("setState", "changing an issue's state"));
         return project.api
           .setState({
-            cwd: project.project.workspaceRoot,
+            cwd: project.cwd,
             host: project.host,
             scope: project.scope,
             key: input.key,
@@ -656,7 +684,7 @@ const make = Effect.gen(function* () {
           ? Effect.fail(unsupported("react", "reactions"))
           : project.api
               .setReaction({
-                cwd: project.project.workspaceRoot,
+                cwd: project.cwd,
                 host: project.host,
                 scope: project.scope,
                 key: input.key,
@@ -672,9 +700,20 @@ const make = Effect.gen(function* () {
     "IssueService.projectScope",
   )(function* (projectId) {
     const { supported } = yield* listProjects({ projectId });
-    const [own] = supported;
+    const [own, ...others] = supported;
     if (own === undefined) {
       return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
+    }
+    // A tracker bound in Settings leads; otherwise a folder's repositories each have their own.
+    if (
+      own.checkout !== undefined &&
+      others.some((other) => other.checkout !== undefined && other.checkout !== own.checkout)
+    ) {
+      return yield* new IssueOperationError({
+        operation: "projectScope",
+        detail:
+          "This project's folder holds several repositories, each with its own issues. Name an issue by its URL, or open one with its host's CLI in that repository's checkout.",
+      });
     }
     return { projectId, tracker: own.tracker, host: own.host, scope: own.scope };
   });
@@ -750,7 +789,7 @@ const make = Effect.gen(function* () {
       // Team keys repeat across workspaces; only the credential's canonical issue URL identifies one.
       const issue = yield* lender.api
         .getIssue({
-          cwd: lender.project.workspaceRoot,
+          cwd: lender.cwd,
           host: lender.host,
           scope: link.scope,
           key: link.key,

@@ -6,6 +6,7 @@ import { useEffect } from "react";
 
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useProjects, useThreadShells } from "../state/entities";
+import { useEnvironments } from "../state/environments";
 import { createdSandboxKey, forgetCreatedSandbox, useCreatedSandboxes } from "./createdSandboxes";
 import { deleteSandbox, sandboxStatus, sandboxStatusDetail } from "./sandboxActions";
 import { useSandboxes, useSandboxesOnSeveralHosts, useSandboxHostOptions } from "./useSandboxes";
@@ -46,6 +47,13 @@ function SandboxProgressRows({ sandboxes }: { readonly sandboxes: ReadonlyArray<
   const threads = useThreadShells();
   const openThread = useNewThreadHandler();
   const created = useCreatedSandboxes();
+  const { environments } = useEnvironments();
+  // agentctl reports a Sandbox ready before its relay answers; a thread waits for both.
+  const connected = new Set<string>(
+    environments
+      .filter((environment) => environment.connection.phase === "connected")
+      .map((environment) => environment.environmentId),
+  );
   // Sandboxes on two machines can share a name, so each names its machine once there are two.
   const hosts = useSandboxHostOptions();
   const severalHosts = useSandboxesOnSeveralHosts();
@@ -78,7 +86,11 @@ function SandboxProgressRows({ sandboxes }: { readonly sandboxes: ReadonlyArray<
             ? null
             : (projects.find((candidate) => candidate.environmentId === sandbox.environmentId) ??
               null);
-        const ready = sandbox.phase === "ready" && sandbox.action === null && project !== null;
+        const ready =
+          sandbox.phase === "ready" &&
+          sandbox.action === null &&
+          project !== null &&
+          connected.has(project.environmentId);
         const status = sandboxStatus(sandbox);
         const failed = sandbox.action === null && sandbox.phase === "failed";
         const detail = ready ? null : sandboxStatusDetail(sandbox);
@@ -129,7 +141,9 @@ function SandboxProgressRows({ sandboxes }: { readonly sandboxes: ReadonlyArray<
                 </button>
               ) : null}
             </div>
-            {created.has(keyOf(sandbox)) && (ready || failed) ? (
+            {created.has(keyOf(sandbox)) &&
+            sandbox.action === null &&
+            (sandbox.phase === "ready" || failed) ? (
               <button
                 type="button"
                 aria-label={`Dismiss ${sandbox.name}`}

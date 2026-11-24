@@ -132,6 +132,21 @@ describe("createdPullRequestKey", () => {
         undefined,
       ),
     ).toBeNull();
+    // A workspace folder holding one repository, in any number of clones, stands for it as a
+    // repository-rooted project does.
+    expect(
+      createdPullRequestKey(
+        prResult({ status: "created", number: 3, url: "https://ghe.internal/x/3" }),
+        {
+          ...project,
+          repositoryIdentity: null,
+          workspaceRepositories: [
+            project.repositoryIdentity!,
+            { ...project.repositoryIdentity!, rootPath: "/workspace/api-2" },
+          ],
+        },
+      ),
+    ).toMatchObject({ host: "github.acme.test", repository: "platform/api" });
   });
 });
 

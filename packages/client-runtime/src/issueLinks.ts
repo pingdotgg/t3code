@@ -1,5 +1,6 @@
 import {
   IssueTrackerKind,
+  projectRepositoryIdentities,
   type IssueRef,
   type IssueTrackerConnectionList,
 } from "@t3tools/contracts";
@@ -12,13 +13,23 @@ import {
 import { sourceControlClients } from "./sourceControlClients.ts";
 import type { EnvironmentProject } from "./state/shell.ts";
 
-type LinkProject = Pick<EnvironmentProject, "id" | "environmentId" | "repositoryIdentity">;
+type LinkProject = Pick<
+  EnvironmentProject,
+  "id" | "environmentId" | "repositoryIdentity" | "workspaceRepositories"
+>;
 
-/** The hosts and scopes a project's git-host tracker is bound to, the way the server resolves them. */
+/**
+ * The hosts and scopes a project's git-host trackers are bound to, the way the server resolves
+ * them: its repository's, or each checkout's in a folder that is no repository.
+ */
 function projectIssueBindings(project: LinkProject) {
-  return sourceControlClients
-    .issueBindings(project.repositoryIdentity)
-    .map((binding) => ({ ...binding, scope: binding.scope.toLowerCase() }));
+  return projectRepositoryIdentities(project).flatMap((identity) =>
+    sourceControlClients.issueBindings(identity).map((binding) => ({
+      ...binding,
+      provider: identity.provider,
+      scope: binding.scope.toLowerCase(),
+    })),
+  );
 }
 
 function linkAuthority(url: string): string | null {
@@ -39,10 +50,11 @@ function parseIssueLink(
   if (parsed !== null || authority === null) return parsed;
   const hostname = new URL(url).hostname.toLowerCase();
   for (const project of projects) {
-    const bindings = projectIssueBindings(project);
-    if (!bindings.some((binding) => binding.host === hostname || binding.host === authority))
-      continue;
-    const known = sourceControlClients.parseIssueUrl(url, project.repositoryIdentity?.provider);
+    const binding = projectIssueBindings(project).find(
+      (candidate) => candidate.host === hostname || candidate.host === authority,
+    );
+    if (binding === undefined) continue;
+    const known = sourceControlClients.parseIssueUrl(url, binding.provider);
     if (known !== null) return known;
   }
   return null;

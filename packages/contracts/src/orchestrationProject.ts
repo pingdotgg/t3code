@@ -30,3 +30,12 @@ export const OrchestrationProjectShell = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
+
+/** A project's own repository, or for a folder that is no repository, the checkouts it holds. */
+export function projectRepositoryIdentities(
+  project: Pick<OrchestrationProjectShell, "repositoryIdentity" | "workspaceRepositories">,
+): ReadonlyArray<RepositoryIdentity> {
+  return project.repositoryIdentity != null
+    ? [project.repositoryIdentity]
+    : (project.workspaceRepositories ?? []);
+}

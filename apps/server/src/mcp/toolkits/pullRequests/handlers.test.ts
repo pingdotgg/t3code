@@ -828,32 +828,67 @@ describe("pull request guide tools", () => {
       }),
   );
 
-  it.effect("finds an Azure DevOps checkout for a pull request named by its full path", () =>
-    Effect.gen(function* () {
-      const azure = {
-        ...makeProject({
-          canonicalKey: "dev.azure.com/org/project/_git/web",
-          locator: {
-            source: "git-remote",
-            remoteName: "origin",
-            remoteUrl: "https://dev.azure.com/org/project/_git/web",
-          },
-          provider: SourceControlProviderKind.make("azure-devops"),
-          displayName: "org/project/_git/web",
-          owner: "org",
-          name: "web",
-        }),
-        id: ProjectId.make("project-azure"),
-      };
-      const harness = yield* makeHarness({ projects: [makeProject(), azure] });
-      const result = yield* harness.call("write_pull_request_guides", {
-        pullRequests: [{ host: "dev.azure.com", repository: "org/project/_git/web", number: 9 }],
-      });
-      expect(result.guides.map((guide) => guide.outcome)).toEqual(["started"]);
-      expect((yield* Ref.get(harness.guideRequests)).map((ref) => ref.projectId)).toEqual([
-        "project-azure",
-      ]);
-    }),
+  it.effect(
+    "finds the checkout for a pull request by its full path, in a workspace folder too",
+    () =>
+      Effect.gen(function* () {
+        const azure = {
+          ...makeProject({
+            canonicalKey: "dev.azure.com/org/project/_git/web",
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: "https://dev.azure.com/org/project/_git/web",
+            },
+            provider: SourceControlProviderKind.make("azure-devops"),
+            displayName: "org/project/_git/web",
+            owner: "org",
+            name: "web",
+          }),
+          id: ProjectId.make("project-azure"),
+        };
+        const folder = {
+          ...makeProject(null),
+          id: ProjectId.make("project-folder"),
+          workspaceRepositories: [
+            {
+              canonicalKey: "github.com/acme/infra",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "https://github.com/acme/infra.git",
+              },
+              provider: SourceControlProviderKind.make("github"),
+              displayName: "acme/infra",
+            },
+          ],
+        };
+        const harness = yield* makeHarness({ projects: [makeProject(), azure, folder] });
+        const result = yield* harness.call("write_pull_request_guides", {
+          pullRequests: [
+            { host: "dev.azure.com", repository: "org/project/_git/web", number: 9 },
+            { host: "github.com", repository: "acme/infra", number: 3 },
+          ],
+        });
+        expect(result.guides.map((guide) => guide.outcome)).toEqual(["started", "started"]);
+        expect((yield* Ref.get(harness.guideRequests)).map((ref) => ref.projectId)).toEqual([
+          "project-azure",
+          "project-folder",
+        ]);
+
+        // The repository's own project comes before a folder listed ahead of it.
+        const rooted = {
+          ...makeProject(folder.workspaceRepositories[0]!),
+          id: ProjectId.make("project-infra"),
+        };
+        const both = yield* makeHarness({ projects: [folder, rooted] });
+        yield* both.call("write_pull_request_guides", {
+          pullRequests: [{ host: "github.com", repository: "acme/infra", number: 3 }],
+        });
+        expect((yield* Ref.get(both.guideRequests)).map((ref) => ref.projectId)).toEqual([
+          "project-infra",
+        ]);
+      }),
   );
 });
 
@@ -1207,13 +1242,144 @@ describe("source control tools", () => {
     }),
   );
 
+  it.effect(
+    "opens a PR from a workspace folder's checkout, and acts on its only one by number",
+    () =>
+      Effect.gen(function* () {
+        const checkout = (repository: string) => ({
+          canonicalKey: `github.com/${repository}`,
+          locator: {
+            source: "git-remote" as const,
+            remoteName: "origin",
+            remoteUrl: `https://github.com/${repository}.git`,
+          },
+          provider: SourceControlProviderKind.make("github"),
+          displayName: repository,
+          rootPath: `/workspace/${repository.split("/")[1]}`,
+        });
+        const opened: Array<string> = [];
+        const comments: Array<string> = [];
+        const folder = (...repositories: ReadonlyArray<string>) =>
+          makeHarness({
+            project: { ...makeProject(null), workspaceRepositories: repositories.map(checkout) },
+            git: {
+              createPullRequest: (input) =>
+                Effect.sync(() => opened.push(input.cwd)).pipe(
+                  Effect.as({
+                    status: "created" as const,
+                    url: "https://github.com/acme/infra/pull/7",
+                    number: 7,
+                    baseBranch: "main",
+                    headBranch: "tools",
+                    title: input.title,
+                  }),
+                ),
+            },
+            pullRequests: {
+              comment: (input) =>
+                Effect.sync(
+                  () => void comments.push(`${input.host}/${input.repository}#${input.number}`),
+                ),
+            },
+          });
+        const several = yield* folder("acme/app", "acme/infra");
+        const unnamed = yield* Effect.flip(
+          several.call("pull_request_create", { title: "Add tools", body: "Adds tools." }),
+        );
+        expect(unnamed.message).toContain("Pass repository");
+        yield* several.call("pull_request_create", {
+          title: "Add tools",
+          body: "Adds tools.",
+          repository: "acme/infra",
+        });
+        expect(opened).toEqual(["/workspace/infra"]);
+        // Two clones of one repository could each have the branch checked out.
+        const clones = yield* makeHarness({
+          project: {
+            ...makeProject(null),
+            workspaceRepositories: [
+              checkout("acme/infra"),
+              { ...checkout("acme/infra"), rootPath: "/workspace/infra-2" },
+            ],
+          },
+        });
+        const cloned = yield* Effect.flip(
+          clones.call("pull_request_create", {
+            title: "Add tools",
+            body: "Adds tools.",
+            repository: "acme/infra",
+          }),
+        );
+        expect(cloned.message).toContain("several clones");
+
+        const one = yield* folder("acme/infra");
+        yield* one.call("pull_request_respond", { number: 7, body: "Thanks." });
+        expect(comments).toEqual(["github.com/acme/infra#7"]);
+
+        // The branch's PR keeps its host when the folder holds the repository on two.
+        const twoHosts = yield* makeHarness({
+          thread: {
+            ...branchThread,
+            branchPullRequest: {
+              projectId: PROJECT_ID,
+              repository: "acme/infra",
+              number: 8,
+              url: "https://gitlab.com/acme/infra/-/merge_requests/8",
+            },
+          },
+          project: {
+            ...makeProject(null),
+            workspaceRepositories: [
+              checkout("acme/infra"),
+              {
+                ...checkout("acme/infra"),
+                canonicalKey: "gitlab.com/acme/infra",
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "https://gitlab.com/acme/infra.git",
+                },
+                provider: SourceControlProviderKind.make("gitlab"),
+              },
+            ],
+          },
+          pullRequests: {
+            comment: (input) =>
+              Effect.sync(
+                () => void comments.push(`${input.host}/${input.repository}#${input.number}`),
+              ),
+          },
+        });
+        yield* twoHosts.call("pull_request_respond", { body: "Thanks." });
+        expect(comments.at(-1)).toBe("gitlab.com/acme/infra#8");
+
+        // A URL no forge parses still leaves its repository and number.
+        const unreadable = yield* makeHarness({
+          thread: {
+            ...branchThread,
+            branchPullRequest: {
+              ...branchThread.branchPullRequest,
+              url: "https://code.internal/t3tools/t3code/changes/42",
+            },
+          },
+          pullRequests: {
+            comment: (input) =>
+              Effect.sync(() => void comments.push(`${input.repository}#${input.number}`)),
+          },
+        });
+        yield* unreadable.call("pull_request_respond", { body: "Thanks." });
+        expect(comments.at(-1)).toBe("t3tools/t3code#42");
+      }),
+  );
+
   it.effect("replies to and resolves a review thread, and refuses resolving without one", () =>
     Effect.gen(function* () {
       const calls: Array<string> = [];
       const harness = yield* makeHarness({
         thread: branchThread,
         pullRequests: {
-          replyToThread: (input) => Effect.sync(() => calls.push(`reply ${input.threadId}`)),
+          replyToThread: (input) =>
+            Effect.sync(() => calls.push(`reply ${input.threadId} ${JSON.stringify(input.body)}`)),
           setThreadResolution: (input) =>
             input.threadId === "locked-thread"
               ? Effect.fail(
@@ -1231,7 +1397,11 @@ describe("source control tools", () => {
         resolved: true,
       });
       expect(result).toMatchObject({ replied: true, resolved: true });
-      expect(calls).toEqual(["reply open-thread", "resolve open-thread true"]);
+      // T3 marks what it posts as the agent's, so a watch on the PR is not woken by it.
+      expect(calls).toEqual([
+        'reply open-thread "Fixed.\\n\\n<!-- t3code:agent -->"',
+        "resolve open-thread true",
+      ]);
       const partial = yield* harness
         .call("pull_request_respond", {
           reviewThreadId: "locked-thread",
@@ -1283,10 +1453,11 @@ describe("source control tools", () => {
         {
           number: 42,
           verdict: "request-changes",
-          body: "Two things.",
+          body: "Two things.\n\n<!-- t3code:agent -->",
           comments: [
             {
               path: "b.ts",
+              body: "Why?\n\n<!-- t3code:agent -->",
               position: { kind: "added", newLine: 10 },
               startPosition: { kind: "context", oldLine: 9, newLine: 9, side: "right" },
             },
@@ -1304,6 +1475,10 @@ describe("source control tools", () => {
         .pipe(Effect.flip);
       expect(error.message).toContain("a.ts line 40 (new side) is not in this PR's diff");
       expect(reviews).toHaveLength(1);
+
+      // An approval without a summary stays one, with no comment carrying only the marker.
+      yield* harness.call("pull_request_review", { verdict: "approve" });
+      expect(reviews[1]).toMatchObject({ verdict: "approve", body: "" });
     }),
   );
 

@@ -5,10 +5,11 @@ import {
   type SourceControlAppSignIn,
   type SourceControlDefinition,
 } from "@t3tools/source-control-core/shared/definition";
-import type {
-  RepositoryIdentity,
-  ServerSettings,
-  SourceControlAppAccessInput,
+import {
+  projectRepositoryIdentities,
+  type RepositoryIdentity,
+  type ServerSettings,
+  type SourceControlAppAccessInput,
 } from "@t3tools/contracts";
 import { parseGitRemoteRepository } from "@t3tools/shared/git";
 
@@ -37,19 +38,17 @@ export function readHostCredentialSettings(
   return readSourceControlHostSettings(HostCredentialSettings, settings.sourceControlHosts[kind]);
 }
 
-/**
- * The repositories a project's pull requests come from, as `repositorySelector` names them: its
- * own, or for a folder that is no repository, the checkouts it holds. Two checkouts of one
- * repository name it once.
- */
-export function projectRepositorySelectors(project: {
+type RepositoryProject = {
   readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
   readonly workspaceRepositories?: ReadonlyArray<RepositoryIdentity> | undefined;
-}): ReadonlyArray<string> {
-  const identities =
-    project.repositoryIdentity != null
-      ? [project.repositoryIdentity]
-      : (project.workspaceRepositories ?? []);
+};
+
+/**
+ * The repositories a project's pull requests come from, as `repositorySelector` names them. Two
+ * checkouts of one repository name it once.
+ */
+export function projectRepositorySelectors(project: RepositoryProject): ReadonlyArray<string> {
+  const identities = projectRepositoryIdentities(project);
   const selectors = new Map<string, string>();
   for (const identity of identities) {
     const selector = sourceControlClients.repositorySelector(identity);

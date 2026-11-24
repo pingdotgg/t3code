@@ -9,7 +9,11 @@ import { usePullRequestCloseBatch } from "~/components/pullRequest/usePullReques
 import { SidebarPointerSensor } from "~/components/Sidebar.pointer";
 import { resolveSidebarSweepKeys } from "~/components/Sidebar.logic";
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
-import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  projectRepositoryIdentities,
+  resolveEnvironmentMachineKind,
+  type RepositoryIdentity,
+} from "@t3tools/contracts";
 import type {
   EnvironmentId,
   ProjectId,
@@ -1147,12 +1151,7 @@ export function PullRequestsPage() {
           projectId: activePullRequestSurface.projectId as ProjectId,
           host:
             activePullRequestSurface.host ??
-            (selectedProject?.repositoryIdentity
-              ? sourceControlClients.changeRequestHost(
-                  selectedProject.repositoryIdentity,
-                  selectedProject.repositoryIdentity.provider,
-                )
-              : undefined),
+            projectHostOf(selectedProject, activePullRequestSurface.repository),
         }
       : null;
 
@@ -1732,4 +1731,24 @@ function PullRequestFiltersMenuInSidebarOrder(
   const sidebarProjectGroups = useSidebarProjectGroups();
   const projects = sortProjectsByGroupOrder(props.projects, sidebarProjectGroups);
   return <PullRequestFiltersMenu {...props} projects={projects} />;
+}
+
+/** The host of a project's checkout of `repository`: its own, or a workspace folder's. */
+function projectHostOf(
+  project:
+    | {
+        readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+        readonly workspaceRepositories?: ReadonlyArray<RepositoryIdentity> | undefined;
+      }
+    | undefined,
+  repository: string,
+): string | undefined {
+  if (project === undefined) return undefined;
+  const wanted = repository.toLowerCase();
+  const identity = projectRepositoryIdentities(project).find(
+    (candidate) => sourceControlClients.repositorySelector(candidate)?.toLowerCase() === wanted,
+  );
+  return identity === undefined
+    ? undefined
+    : sourceControlClients.changeRequestHost(identity, identity.provider);
 }

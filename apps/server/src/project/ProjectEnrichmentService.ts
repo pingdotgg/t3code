@@ -37,6 +37,8 @@ export interface ProjectEnrichmentChange {
   readonly repositoryIdentityResolved: boolean;
 }
 
+type Repositories = Pick<ProjectEnrichment, "repositoryIdentity" | "workspaceRepositories">;
+
 export interface ProjectEnrichmentServiceOptions {
   readonly cacheCapacity?: number;
   readonly maxPending?: number;
@@ -113,7 +115,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   // A folder that is no repository reads the checkouts in its subfolders instead.
   const resolveRepositories = Effect.fnUntraced(function* (
     workspaceRoot: string,
-  ): Effect.fn.Return<Pick<ProjectEnrichment, "repositoryIdentity" | "workspaceRepositories">> {
+  ): Effect.fn.Return<Repositories> {
     const repositoryIdentity = yield* repositoryIdentityResolver.resolve(workspaceRoot);
     if (repositoryIdentity !== null) return { repositoryIdentity, workspaceRepositories: [] };
     return {
@@ -121,21 +123,23 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
       workspaceRepositories: yield* repositoryIdentityResolver.resolveWorkspace(workspaceRoot),
     };
   });
-  // Outlives the cache entry so an expired or refreshing identity still reads as its last value.
-  const lastRepositoryIdentities = new Map<string, RepositoryIdentity>();
+  // Outlives the cache entry so an expired or refreshing lookup still reads as its last value.
+  const lastRepositories = new Map<string, Repositories>();
   // `invalidate` drops a root's in-flight lookup so its late result cannot overwrite a newer one.
   const lookupsInFlight = new Map<string, object>();
-  const rememberRepositoryIdentity = (
-    workspaceRoot: string,
-    repositoryIdentity: RepositoryIdentity | null,
-  ) => {
-    lastRepositoryIdentities.delete(workspaceRoot);
-    if (repositoryIdentity === null) return;
-    if (lastRepositoryIdentities.size >= cacheCapacity) {
-      const oldestRoot = lastRepositoryIdentities.keys().next().value;
-      if (oldestRoot !== undefined) lastRepositoryIdentities.delete(oldestRoot);
+  const rememberRepositories = (workspaceRoot: string, repositories: Repositories) => {
+    lastRepositories.delete(workspaceRoot);
+    if (
+      repositories.repositoryIdentity === null &&
+      repositories.workspaceRepositories.length === 0
+    ) {
+      return;
     }
-    lastRepositoryIdentities.set(workspaceRoot, repositoryIdentity);
+    if (lastRepositories.size >= cacheCapacity) {
+      const oldestRoot = lastRepositories.keys().next().value;
+      if (oldestRoot !== undefined) lastRepositories.delete(oldestRoot);
+    }
+    lastRepositories.set(workspaceRoot, repositories);
   };
 
   const repositoryIdentityCache = yield* Cache.makeWith(
@@ -148,7 +152,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
           Effect.tap((result) =>
             Effect.sync(() => {
               if (Exit.isSuccess(result) && isCurrent()) {
-                rememberRepositoryIdentity(workspaceRoot, result.value.repositoryIdentity);
+                rememberRepositories(workspaceRoot, result.value);
               }
             }),
           ),
@@ -307,11 +311,11 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         { concurrency: "unbounded" },
       );
       const repositoryIdentityResolved = isSuccessfullyResolved(repositoryIdentity);
-      const repositories = availableValue(repositoryIdentity);
+      const repositories = repositoryIdentityResolved
+        ? availableValue(repositoryIdentity)
+        : lastRepositories.get(workspaceRoot);
       return {
-        repositoryIdentity: repositoryIdentityResolved
-          ? (repositories?.repositoryIdentity ?? null)
-          : (lastRepositoryIdentities.get(workspaceRoot) ?? null),
+        repositoryIdentity: repositories?.repositoryIdentity ?? null,
         workspaceRepositories: repositories?.workspaceRepositories ?? [],
         faviconPath: availableValue(faviconPath),
         repositoryIdentityResolved,
@@ -362,7 +366,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
             Cache.invalidate(repositoryIdentityCache, workspaceRoot),
             Effect.sync(() => {
               lookupsInFlight.delete(workspaceRoot);
-              lastRepositoryIdentities.delete(workspaceRoot);
+              lastRepositories.delete(workspaceRoot);
             }),
             Cache.invalidate(faviconCache, workspaceRoot),
             // The resolver keeps its own misses, which would outlive a clone filling the folder.

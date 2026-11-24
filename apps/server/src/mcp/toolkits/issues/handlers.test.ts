@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  IssueOperationError,
   IssueTrackerKind,
   ProjectId,
   ProviderInstanceId,
@@ -350,6 +351,17 @@ describe("issue toolkit handlers", () => {
       const unlinked = yield* harness.call("unlink_issue", { key: "7" });
       expect(unlinked).toMatchObject({ key: "7", wasLinked: false });
       expect(unlinked).not.toHaveProperty("url");
+
+      // A folder whose key names none of its repositories says so, not that it has no tracker.
+      const several = new IssueOperationError({
+        operation: "projectScope",
+        detail: "This project's folder holds several repositories, each with its own issues.",
+      });
+      const folder = yield* makeHarness(
+        [],
+        Layer.mock(IssueService.IssueService)({ projectScope: () => Effect.fail(several) }),
+      );
+      expect(yield* folder.call("link_issue", { key: "7" }).pipe(Effect.flip)).toBe(several);
     }),
   );
 

@@ -251,6 +251,8 @@ function SandboxRow({
     !hostOffline && sandbox.phase === "ready" && presentation !== null
       ? connectionStatusText(presentation.connection)
       : null;
+  // agentctl reports a restarted Sandbox ready before its relay answers; a thread waits for both.
+  const connected = presentation?.connection.phase === "connected";
   const since = sandbox.since === null ? null : formatRelativeTimeLabel(sandbox.since);
   const threadSummary =
     threads.length === 0
@@ -297,7 +299,10 @@ function SandboxRow({
       control={
         hostOffline ? null : (
           <div className="flex shrink-0 items-center gap-1">
-            {project !== null && sandbox.phase === "ready" ? (
+            {project !== null &&
+            sandbox.phase === "ready" &&
+            sandbox.action === null &&
+            connected ? (
               <Button
                 size="xs"
                 variant="outline"

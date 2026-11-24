@@ -9,6 +9,7 @@ import type {
   IssueTrackerSummary,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
+import { projectRepositoryIdentities } from "@t3tools/contracts";
 
 import { mergeIssueListPage } from "./state/issues.ts";
 import { sourceControlClients } from "./sourceControlClients.ts";
@@ -173,8 +174,8 @@ export function issueFilterScopes(
   for (const [environmentId, page] of held) {
     for (const project of projects) {
       if (project.environmentId !== environmentId) continue;
-      for (const { tracker: kind, host, scope } of sourceControlClients.issueBindings(
-        project.repositoryIdentity,
+      for (const { tracker: kind, host, scope } of projectRepositoryIdentities(project).flatMap(
+        (identity) => sourceControlClients.issueBindings(identity),
       )) {
         const tracker = page.answer.trackers.find(
           (t) => String(t.tracker) === kind && t.host.toLowerCase() === host.toLowerCase(),

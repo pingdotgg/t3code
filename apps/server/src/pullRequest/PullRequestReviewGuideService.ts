@@ -19,6 +19,7 @@ import {
   type PullRequestReviewGuideRun,
   type PullRequestStack,
   ProjectId,
+  projectRepositoryIdentities,
   type RepositoryIdentity,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
@@ -62,6 +63,19 @@ const nowIso = Clock.currentTimeMillis.pipe(
   Effect.map((millis) => DateTime.formatIso(DateTime.makeUnsafe(millis))),
 );
 
+/** Whether a pull request's key names the repository `identity` is a checkout of. */
+function isOwnRepository(key: ThreadPullRequestKey, identity: RepositoryIdentity): boolean {
+  const own = pullRequestSyncKey(
+    {
+      projectId: ProjectId.make("own"),
+      number: key.number,
+      repository: sourceControlDefinitions.repositorySelector(identity) ?? "",
+    },
+    identity,
+  );
+  return own !== null && own.host === key.host && own.repository === key.repository;
+}
+
 const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const guides = yield* PullRequestReviewGuides.PullRequestReviewGuideRepository;
@@ -84,35 +98,32 @@ const make = Effect.gen(function* () {
     const project = Option.getOrUndefined(
       yield* projects.getShell(input.projectId).pipe(Effect.orElseSucceed(() => Option.none())),
     );
-    const key = pullRequestSyncKey(input, project?.repositoryIdentity ?? undefined);
+    // A workspace folder writes the guide from its checkout of the pull request's repository.
+    const checkout =
+      project?.repositoryIdentity == null && project !== undefined
+        ? projectRepositoryIdentities(project).find((identity) => {
+            const key = pullRequestSyncKey(input, identity);
+            return key !== null && isOwnRepository(key, identity);
+          })
+        : undefined;
+    const identity = checkout ?? project?.repositoryIdentity;
+    const key = pullRequestSyncKey(input, identity ?? undefined);
     if (key === null || project === undefined) {
       return yield* new PullRequestOperationError({
         operation: "reviewGuide",
         detail: "Could not identify this pull request's host.",
       });
     }
-    return { key, workspaceRoot: project.workspaceRoot, identity: project.repositoryIdentity };
+    return {
+      key,
+      workspaceRoot: checkout?.rootPath ?? project.workspaceRoot,
+      identity,
+    };
   });
 
   const requireOwnRepository = Effect.fn("PullRequestReviewGuideService.requireOwnRepository")(
     function* (key: ThreadPullRequestKey, identity: RepositoryIdentity | null | undefined) {
-      const own =
-        identity == null
-          ? null
-          : pullRequestSyncKey(
-              {
-                projectId: ProjectId.make("own"),
-                number: key.number,
-                repository: sourceControlDefinitions.repositorySelector(identity) ?? "",
-              },
-              identity,
-            );
-      if (
-        identity == null ||
-        own === null ||
-        own.host !== key.host ||
-        own.repository !== key.repository
-      ) {
+      if (identity == null || !isOwnRepository(key, identity)) {
         return yield* new PullRequestOperationError({
           operation: "generateReviewGuide",
           detail:

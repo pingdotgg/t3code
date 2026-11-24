@@ -660,6 +660,11 @@ const CreatePullRequestTool = Tool.make("pull_request_create", {
     body: Schema.String,
     base: Schema.optional(TrimmedNonEmptyString),
     draft: Schema.optional(Schema.Boolean),
+    repository: Schema.optional(
+      TrimmedNonEmptyString.annotate({
+        description: "owner/repo of the checkout, when the thread's folder holds several.",
+      }),
+    ),
   }),
   success: CreatePullRequestResult,
   failure: PullRequestToolError,

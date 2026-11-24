@@ -160,6 +160,8 @@ const makeLayer = (input: {
   readonly enabled?: boolean;
   readonly currentHead?: Ref.Ref<string>;
   readonly identity?: typeof ACME_APP;
+  /** The project is the checkout's parent folder, which is no repository itself. */
+  readonly folder?: boolean;
 }) =>
   PullRequestReviewGuideService.layer.pipe(
     Layer.provide(
@@ -191,15 +193,22 @@ const makeLayer = (input: {
     ),
     Layer.provide(
       Layer.succeed(ProjectService.ProjectService, {
-        getShell: () =>
-          Effect.succeedSome({
-            id: projectId,
-            workspaceRoot: input.workspace,
-            repositoryIdentity: {
-              ...(input.identity ?? ACME_APP),
-              locator: { ...ACME_APP.locator, remoteUrl: input.remote },
-            },
-          }),
+        getShell: () => {
+          const identity = {
+            ...(input.identity ?? ACME_APP),
+            locator: { ...ACME_APP.locator, remoteUrl: input.remote },
+          };
+          return Effect.succeedSome(
+            input.folder === true
+              ? {
+                  id: projectId,
+                  workspaceRoot: input.root,
+                  repositoryIdentity: null,
+                  workspaceRepositories: [{ ...identity, rootPath: input.workspace }],
+                }
+              : { id: projectId, workspaceRoot: input.workspace, repositoryIdentity: identity },
+          );
+        },
       } as unknown as ProjectService.ProjectService["Service"]),
     ),
     Layer.provide(
@@ -556,6 +565,30 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
       assert.isFalse(yield* Deferred.isDone(stored));
       assert.isFalse(yield* Ref.get(generated));
     }),
+  );
+
+  it.effect(
+    "writes a guide from a workspace folder's checkout of the pull request's repository",
+    () =>
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const stored = yield* Deferred.make<void>();
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            folder: true,
+            stored,
+            generate: () => Effect.succeed({ stops: [] }),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        yield* service.generate(reference);
+        yield* Deferred.await(stored);
+        assert.strictEqual((yield* service.get(reference)).guide?.headSha, repositories.headSha);
+      }),
   );
 
   it.effect("refuses a pull request from a repository the project is not a checkout of", () =>

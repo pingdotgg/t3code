@@ -81,18 +81,37 @@ function projectRepositoryFor(
   const checkouts = (project?.workspaceRepositories ?? []).filter(
     (identity) => host === undefined || projectHostAndProvider(identity).host === host,
   );
-  const wanted = repository.toLowerCase();
-  const held = checkouts.find((identity) =>
-    [
-      sourceControlDefinitions.repositorySelector(identity),
-      identity.displayName,
-      // The path below the host, which is how Azure names a repository in full.
-      identity.canonicalKey.split("/").slice(1).join("/"),
-    ].some((name) => name?.toLowerCase() === wanted),
-  );
+  const held = checkouts.find((identity) => namesRepository(identity, repository));
   if (held !== undefined) return held;
   const hosts = new Set(checkouts.map((identity) => projectHostAndProvider(identity).host));
   return hosts.size === 1 ? (checkouts[0] ?? null) : null;
+}
+
+function namesRepository(identity: RepositoryIdentity, repository: string): boolean {
+  const wanted = repository.toLowerCase();
+  return [
+    sourceControlDefinitions.repositorySelector(identity),
+    identity.displayName,
+    // The path below the host, which is how Azure names a repository in full.
+    identity.canonicalKey.split("/").slice(1).join("/"),
+  ].some((name) => name?.toLowerCase() === wanted);
+}
+
+/**
+ * A workspace folder's checkout of `repository`, or without one, its only repository. Undefined
+ * for a project rooted in a repository, and for a name the folder doesn't hold.
+ */
+export function workspaceCheckout(
+  project: OrchestrationProjectShell,
+  repository: string | undefined,
+): RepositoryIdentity | undefined {
+  if (project.repositoryIdentity != null) return undefined;
+  const checkouts = project.workspaceRepositories ?? [];
+  if (repository !== undefined) {
+    return checkouts.find((identity) => namesRepository(identity, repository));
+  }
+  const repositories = new Set(checkouts.map((identity) => identity.canonicalKey));
+  return repositories.size === 1 ? checkouts[0] : undefined;
 }
 
 function projectHostAndProvider(identity: RepositoryIdentity | null): {

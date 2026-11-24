@@ -24,6 +24,16 @@ const SNIPPET_LENGTH = 200;
 const AGENT_MARKER_TEXT = "<!-- t3code:agent -->";
 const AGENT_MARKER = /(?:^|\n)[ \t]*<!--\s*t3code:agent\b[^>]*-->\s*$/u;
 
+/**
+ * What T3's own tools post for the agent, ending with the marker unless it already does. An
+ * empty body stays empty, since hosts post nothing for it.
+ */
+export function withAgentMarker(body: string): string {
+  const text = body.trimEnd();
+  if (text.length === 0 || AGENT_MARKER.test(body)) return body;
+  return `${text}\n\n${AGENT_MARKER_TEXT}`;
+}
+
 export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }

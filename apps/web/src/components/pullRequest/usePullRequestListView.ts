@@ -1,6 +1,7 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
+  projectRepositoryIdentities,
   type EnvironmentId,
   type ProjectId,
   type PullRequestInvolvement,
@@ -174,10 +175,10 @@ export function usePullRequestScope(
       : null;
   const expectedHosts = (() => {
     const byHost = new Map<string, PullRequestExpectedHost>();
-    for (const project of projects) {
-      const kind = project.repositoryIdentity?.provider;
+    for (const identity of projects.flatMap((project) => projectRepositoryIdentities(project))) {
+      const kind = identity.provider;
       if (kind === undefined) continue;
-      const host = sourceControlClients.changeRequestHost(project.repositoryIdentity, kind);
+      const host = sourceControlClients.changeRequestHost(identity, kind);
       if (!byHost.has(host)) byHost.set(host, { host, kind });
     }
     return [...byHost.values()];

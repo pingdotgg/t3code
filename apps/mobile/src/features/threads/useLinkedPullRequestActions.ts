@@ -109,10 +109,13 @@ export function useLinkedPullRequestActions(input: {
             "{term, select, mr {Paste a merge request URL, or enter 123 / #123 for this thread's repository.} cr {Paste a change request URL, or enter 123 / #123 for this thread's repository.} other {Paste a pull request URL, or enter 123 / #123 for this thread's repository.}}",
             { term },
           ),
-      placeholder: gt(
-        "{term, select, mr {Merge request URL or #42} cr {Change request URL or #42} other {Pull request URL or #42}}",
-        { term },
-      ),
+      placeholder: severalRepositories
+        ? // oxlint-disable-next-line t3code/no-untranslated-copy -- the fork's workspace folder copy is English
+          `${terminology.singular.charAt(0).toUpperCase()}${terminology.singular.slice(1)} URL or repo#42`
+        : gt(
+            "{term, select, mr {Merge request URL or #42} cr {Change request URL or #42} other {Pull request URL or #42}}",
+            { term },
+          ),
       initialValue: "",
       confirmText: gt("Link", { $context: "verb, confirms linking a pull request" }),
       onConfirm: (reference) => {

@@ -97,7 +97,13 @@ const make = Effect.gen(function* () {
     if (projectId === undefined) return yield* new IssueProjectRequiredError();
     return yield* issues
       .projectScope(projectId)
-      .pipe(Effect.mapError(() => new IssueProjectNotFoundError({ projectId })));
+      .pipe(
+        Effect.mapError((error) =>
+          error._tag === "IssueOperationError" && error.operation === "projectScope"
+            ? error
+            : new IssueProjectNotFoundError({ projectId }),
+        ),
+      );
   });
 
   /**

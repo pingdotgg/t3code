@@ -85,6 +85,15 @@ it.effect("reads a workspace folder's checkouts in place of its own repository",
       assert.deepStrictEqual(workspace.workspaceRepositories, checkouts);
       assert.deepStrictEqual(repo.workspaceRepositories, []);
 
+      yield* TestClock.adjust(Duration.seconds(61));
+      const expired = yield* service.peek("/workspace");
+      assert.isFalse(expired.repositoryIdentityResolved);
+      assert.deepStrictEqual(
+        expired.workspaceRepositories,
+        checkouts,
+        "an expired folder's checkouts should still be returned until a refresh replaces them",
+      );
+
       // Only a folder with checkouts carries the field over the wire.
       const shell = {
         id: "p1",

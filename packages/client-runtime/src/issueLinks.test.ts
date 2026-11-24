@@ -23,13 +23,31 @@ const project = (id: string, repository: string, origin?: string) =>
   }) as never;
 
 describe("resolveIssueLinkTarget", () => {
-  const projects = [project("p1", "acme/api"), project("p2", "acme/web")];
+  // A folder that is no repository, holding a checkout of acme/infra.
+  const folder = {
+    id: ProjectId.make("folder"),
+    environmentId: EnvironmentId.make("env"),
+    repositoryIdentity: null,
+    workspaceRepositories: [
+      {
+        canonicalKey: "github.com/acme/infra",
+        provider: SourceControlProviderKind.make("github"),
+        displayName: "acme/infra",
+      },
+    ],
+  } as never;
+  const projects = [project("p1", "acme/api"), project("p2", "acme/web"), folder];
 
   it.each([
     {
       name: "reads an issue through the project bound to its repository",
       url: "https://github.com/acme/web/issues/7",
       expected: { projectId: "p2", scope: "acme/web", key: "7" },
+    },
+    {
+      name: "reads an issue through the folder holding a checkout of its repository",
+      url: "https://github.com/acme/infra/issues/5",
+      expected: { projectId: "folder", scope: "acme/infra", key: "5" },
     },
     {
       name: "lends a project on the same host to a repository no project is bound to",

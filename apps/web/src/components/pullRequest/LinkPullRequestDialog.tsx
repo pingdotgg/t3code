@@ -151,7 +151,12 @@ function LinkPullRequestDialog({
         <DialogPanel>
           <Input
             ref={inputRef}
-            placeholder={gt("Pull request URL or #42")}
+            placeholder={
+              severalRepositories
+                ? // oxlint-disable-next-line t3code/no-untranslated-copy -- the fork's workspace folder copy is English
+                  "Pull request URL or repo#42"
+                : gt("Pull request URL or #42")
+            }
             value={reference}
             onChange={(event) => {
               setDirty(true);
