@@ -65,6 +65,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   compactBeforeSend: Schema.optional(Schema.Boolean),
   freshContext: Schema.optional(Schema.Boolean),
+  handoffContext: Schema.optional(Schema.Boolean),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
   creation: Schema.optional(QueuedThreadCreationSchema),
@@ -107,6 +108,8 @@ export interface QueuedThreadMessage {
   readonly compactBeforeSend?: boolean;
   /** Starts a new provider session (`/clear`). */
   readonly freshContext?: boolean;
+  /** Resumes in a new conversation primed with the thread summary. */
+  readonly handoffContext?: boolean;
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
 }

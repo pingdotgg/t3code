@@ -1286,6 +1286,7 @@ type ShellThreadRow = {
   readonly pending_link_request_payload_json: string | null;
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
+  readonly prompt_cache_expires_at: string | null;
   readonly has_actionable_proposed_plan: number;
 };
 
@@ -2122,6 +2123,7 @@ type ShellThreadState = {
   readonly lastErrorClass: OrchestrationV2ThreadShell["lastErrorClass"];
   readonly lastErrorCode: OrchestrationV2ThreadShell["lastErrorCode"];
   readonly usageLimitResetAt: OrchestrationV2ThreadShell["usageLimitResetAt"];
+  readonly promptCacheExpiresAt: string | null;
   readonly pendingRuntimeRequest: OrchestrationV2PendingRuntimeRequestSummary | null;
   readonly latestUserMessageAt: DateTime.Utc | null;
   readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
@@ -2297,6 +2299,7 @@ function shellFromState(input: {
     lastErrorClass: input.state.lastErrorClass,
     lastErrorCode: input.state.lastErrorCode,
     usageLimitResetAt: input.state.usageLimitResetAt,
+    promptCacheExpiresAt: input.state.promptCacheExpiresAt,
     pendingRuntimeRequest: input.state.pendingRuntimeRequest,
     pendingGuestMessageCount: pendingGuestMessageCount(input.state.thread.guestShare),
     latestVisibleMessage: null,
@@ -8564,6 +8567,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
               ) AS latest_user_authored_message_at,
+              (
+                SELECT json_extract(turn.payload_json, '$.tokenUsage.promptCacheExpiresAt')
+                FROM orchestration_v2_projection_provider_turns turn
+                WHERE turn.provider_thread_id = t.active_provider_thread_id
+                  AND json_extract(turn.payload_json, '$.tokenUsage') IS NOT NULL
+                ORDER BY turn.ordinal DESC
+                LIMIT 1
+              ) AS prompt_cache_expires_at,
               EXISTS (
                 SELECT 1
                 FROM orchestration_v2_projection_plans plan
@@ -9241,6 +9252,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             terminalFailureItem?.type === "error" ? terminalFailureItem.failure : null,
             row.last_error,
           ),
+          promptCacheExpiresAt: row.prompt_cache_expires_at,
           pendingRuntimeRequest,
           latestUserMessageAt:
             row.latest_user_message_at === null

@@ -12798,5 +12798,12 @@
   "50769d067d003ec9": "Не удалось выполнить команду.",
   "7a48724aadf54862": "Worktree {name}",
   "eb40135573828cb9": "Open commit",
-  "c7e4f052c3d6c066": "Open files"
+  "c7e4f052c3d6c066": "Open files",
+  "a56dcfea20375808": "Send to a thread whose cache expired?\nIts prompt cache expired, so this message re-reads the whole conversation at the uncached input price.",
+  "a40bb5bf145d8564": "Send to a thread whose cache expired?\nIts prompt cache expired, so this message re-reads the whole conversation ({tokens} tokens) at the uncached input price.",
+  "fbcc655f2f519d29": "Prompt cache expired",
+  "f87422be34aaae08": "Prompt cache expired. The next message re-reads the whole conversation uncached.",
+  "64cf102b878f07a0": "Start new conversation sends a summary of this thread instead, losing some detail.",
+  "d88bba07909897af": "Send anyway",
+  "41703fb049d6701f": "Start new conversation"
 }

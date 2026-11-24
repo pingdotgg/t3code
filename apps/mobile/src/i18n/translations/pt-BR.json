@@ -5615,5 +5615,10 @@
   "78ceb92a5b33a779": "Comando não executado",
   "440210447ea2814b": "Você não tem permissão para executar comandos aqui.",
   "50769d067d003ec9": "Não foi possível executar o comando.",
-  "bc84f52ae9af5493": "Envie uma mensagem primeiro; os comandos são executados em uma conversa existente."
+  "bc84f52ae9af5493": "Envie uma mensagem primeiro; os comandos são executados em uma conversa existente.",
+  "3b4bce336a7ab8a2": "Send to a thread whose cache expired?",
+  "e73196c68e9de86b": "Its prompt cache expired, so this message re-reads the whole conversation at the uncached input price.",
+  "d88bba07909897af": "Send anyway",
+  "8abcfbcb9dd50971": "Its prompt cache expired, so this message re-reads the whole conversation at the uncached input price. Start new conversation sends a summary of this thread instead, losing some detail.",
+  "41703fb049d6701f": "Start new conversation"
 }

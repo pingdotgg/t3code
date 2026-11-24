@@ -25,6 +25,7 @@ import {
 import { type EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import {
   formatWorkingDurationLabel,
+  promptCacheColdAtMs,
   resolveThreadProviderStack,
 } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -54,6 +55,7 @@ import {
   PinIcon,
   PinOffIcon,
   ShieldQuestionIcon,
+  SnowflakeIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -992,6 +994,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       ? snoozeGateExpiryMs + 50
       : null;
   const snoozeGateOpened = useDeadlinePassed(snoozeGateOpensAt);
+  const promptCacheCold = useDeadlinePassed(promptCacheColdAtMs(thread));
   if (snoozeGateOpened && snoozeGateOpensAt !== null) {
     setSnoozeGateClock({ thread, now: new Date(snoozeGateOpensAt).toISOString() });
   }
@@ -1245,6 +1248,25 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     )
   ) : null;
 
+  const cacheColdIndicator = promptCacheCold ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={gt("Prompt cache expired")}
+            className="inline-flex shrink-0 text-info-foreground"
+          />
+        }
+      >
+        <SnowflakeIcon aria-hidden className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup>
+        <T>Prompt cache expired. The next message re-reads the whole conversation uncached.</T>
+      </TooltipPopup>
+    </Tooltip>
+  ) : null;
+
   const diff = latestRunDiff(thread);
   // Only the trailing icons would remain, so the row moves them to the title line instead.
   const metaLineEmpty =
@@ -1357,6 +1379,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {title}
               {multiline ? titleLineIcons : null}
               {pinIndicator}
+              {cacheColdIndicator}
               {multiline ? null : terminalStatusIcon}
               {multiline ? null : issueBadge}
               {isRegeneratingTitle ? (
@@ -1551,6 +1574,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
               {pinIndicator}
+              {cacheColdIndicator}
               {props.projectDisplayName ? (
                 <span
                   className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-xs")}

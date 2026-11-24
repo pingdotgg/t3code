@@ -5595,5 +5595,10 @@
   "78ceb92a5b33a779": "コマンドは実行されませんでした",
   "440210447ea2814b": "ここでコマンドを実行する権限がありません。",
   "50769d067d003ec9": "コマンドを実行できませんでした。",
-  "bc84f52ae9af5493": "先にメッセージを送信してください。コマンドは既存のスレッドで実行されます。"
+  "bc84f52ae9af5493": "先にメッセージを送信してください。コマンドは既存のスレッドで実行されます。",
+  "3b4bce336a7ab8a2": "Send to a thread whose cache expired?",
+  "e73196c68e9de86b": "Its prompt cache expired, so this message re-reads the whole conversation at the uncached input price.",
+  "d88bba07909897af": "Send anyway",
+  "8abcfbcb9dd50971": "Its prompt cache expired, so this message re-reads the whole conversation at the uncached input price. Start new conversation sends a summary of this thread instead, losing some detail.",
+  "41703fb049d6701f": "Start new conversation"
 }

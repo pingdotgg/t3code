@@ -5116,6 +5116,105 @@ describe("orchestration v2 provider switching", () => {
       }),
   );
 
+  it.live("hands a cold thread to a new conversation on the same provider", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("same-provider-handoff");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+          closedSessions,
+          nativeThreadGeneration: yield* Ref.make(0),
+        }),
+      ]);
+      const threadId = ThreadId.make("thread:same-provider-handoff");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const send = (name: string, options: { readonly handoffContext?: boolean } = {}) =>
+          Effect.gen(function* () {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:same-provider-handoff:${name}`),
+              threadId,
+              messageId: MessageId.make(`message:same-provider-handoff:${name}`),
+              text: `Prompt ${name}`,
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              ...options,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            yield* waitForIdle(threadId);
+            // The run completes before its checkpoint capture; let the capture finish first.
+            yield* worker.drain();
+          });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:same-provider-handoff:create"),
+          threadId,
+          projectId: ProjectId.make("project:same-provider-handoff"),
+          title: "Same provider handoff",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        yield* send("alpha");
+        const firstSession = (yield* orchestrator.getThreadProjection(threadId))
+          .providerSessions[0]!;
+        yield* send("beta", { handoffContext: true });
+        yield* send("gamma");
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const turns = yield* Ref.get(capturedTurns);
+        const turnFor = (name: string) =>
+          turns.find((turn) => turn.text.endsWith(`Prompt ${name}`))!;
+
+        const handoffRun = projection.runs.find(
+          (run) => run.userMessageId === "message:same-provider-handoff:beta",
+        )!;
+        assert.isUndefined(handoffRun.freshContext);
+        assert.isNotNull(handoffRun.contextHandoffId);
+        assert.notEqual(turnFor("beta").providerThreadId, turnFor("alpha").providerThreadId);
+        assert.notEqual(turnFor("beta").nativeThreadId, turnFor("alpha").nativeThreadId);
+        assert.include(turnFor("beta").text, "Prompt alpha");
+        assert.deepEqual(yield* Ref.get(closedSessions), [firstSession.id]);
+        // Later sends continue the new conversation without resending the summary.
+        assert.equal(turnFor("gamma").providerThreadId, turnFor("beta").providerThreadId);
+        assert.equal(turnFor("gamma").text, "Prompt gamma");
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "same-provider-handoff",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
+
   it.live(
     "starts a scheduled fresh run while the previous run's session still has background work",
     () =>

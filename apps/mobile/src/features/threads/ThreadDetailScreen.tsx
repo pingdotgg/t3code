@@ -260,6 +260,8 @@ export interface ThreadDetailScreenProps {
   readonly isCompacting: boolean;
   /** Set while the next send compacts the thread first. */
   readonly compactBeforeSend?: ThreadComposerProps["compactBeforeSend"];
+  readonly promptCacheCold?: boolean;
+  readonly coldCacheHandoffAvailable?: boolean;
   readonly creationState:
     | {
         readonly kind: "preparing";
@@ -314,6 +316,7 @@ export interface ThreadDetailScreenProps {
       hasAttachmentsOrContext: boolean,
     ) => Promise<boolean | "responded">,
     onWillEnqueue?: () => void,
+    handoffContext?: boolean,
   ) => Promise<MessageId | null>;
   /** Queues a standalone text command, such as `/goal clear`, without touching the draft. */
   readonly onSendCommand: (text: string) => Promise<MessageId | null>;
@@ -1298,6 +1301,7 @@ function ThreadDetailBody(
   const handleSendMessage = async (
     followUp?: ActiveTurnComposerAction,
     stillSendable?: () => boolean,
+    handoffContext?: boolean,
   ) => {
     const scope = threadScope.current.signal;
     const targetThreadKey = selectedThreadKey;
@@ -1341,17 +1345,22 @@ function ThreadDetailBody(
           }
         : undefined;
     let dismissingKeyboard = false;
-    const messageId = await props.onSendMessage(followUp, declineBeforeDispatch, () => {
-      if (
-        scope.aborted ||
-        Platform.OS !== "ios" ||
-        !hasUserMessage ||
-        !KeyboardController.isVisible()
-      )
-        return;
-      setSendingWithKeyboard(true);
-      dismissingKeyboard = true;
-    });
+    const messageId = await props.onSendMessage(
+      followUp,
+      declineBeforeDispatch,
+      () => {
+        if (
+          scope.aborted ||
+          Platform.OS !== "ios" ||
+          !hasUserMessage ||
+          !KeyboardController.isVisible()
+        )
+          return;
+        setSendingWithKeyboard(true);
+        dismissingKeyboard = true;
+      },
+      handoffContext,
+    );
     if (messageId === null || scope.aborted) {
       return messageId;
     }
@@ -1936,6 +1945,8 @@ function ThreadDetailBody(
                         environmentLabel={props.environmentLabel}
                         selectedThread={props.selectedThread}
                         compactBeforeSend={props.compactBeforeSend ?? null}
+                        promptCacheCold={props.promptCacheCold === true}
+                        coldCacheHandoffAvailable={props.coldCacheHandoffAvailable === true}
                         hasCompactableConversation={
                           hasCompactableConversation && !props.isCompacting
                         }

@@ -165,6 +165,10 @@ export interface ThreadComposerProps {
   } | null;
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
   readonly onFreshSession?: () => void;
+  /** A send would resume a conversation whose prompt cache expired. */
+  readonly promptCacheCold?: boolean;
+  /** The server can resume a cold thread in a new conversation primed with its summary. */
+  readonly coldCacheHandoffAvailable?: boolean;
   readonly offersSideChat?: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
@@ -199,6 +203,7 @@ export interface ThreadComposerProps {
   readonly onSendMessage: (
     followUp?: ActiveTurnComposerAction,
     stillSendable?: () => boolean,
+    handoffContext?: boolean,
   ) => Promise<MessageId | null>;
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
   readonly canSwitchProvider: boolean;
@@ -623,6 +628,30 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       }
       return;
     }
+    const coldChoice =
+      props.promptCacheCold !== true
+        ? "send"
+        : await new Promise<"send" | "handoff" | "cancel">((resolve) =>
+            Dialog.alert(
+              gt("Send to a thread whose cache expired?"),
+              props.coldCacheHandoffAvailable === true
+                ? gt(
+                    "Its prompt cache expired, so this message re-reads the whole conversation at the uncached input price. Start new conversation sends a summary of this thread instead, losing some detail.",
+                  )
+                : gt(
+                    "Its prompt cache expired, so this message re-reads the whole conversation at the uncached input price.",
+                  ),
+              [
+                { text: gt("Cancel"), style: "cancel", onPress: () => resolve("cancel") },
+                ...(props.coldCacheHandoffAvailable === true
+                  ? [{ text: gt("Start new conversation"), onPress: () => resolve("handoff") }]
+                  : []),
+                { text: gt("Send anyway"), onPress: () => resolve("send") },
+              ],
+              { cancelable: true, onDismiss: () => resolve("cancel") },
+            ),
+          );
+    if (coldChoice === "cancel") return;
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
@@ -640,7 +669,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         )
       );
     };
-    const sent = await settlePromise(() => onSendMessage(followUp, stillSendable));
+    const sent = await settlePromise(() =>
+      onSendMessage(followUp, stillSendable, coldChoice === "handoff"),
+    );
     inFlightThreadIdsRef.current.delete(threadKey);
     if (AsyncResult.isFailure(sent)) {
       console.error("[composer] send failed", squashAtomCommandFailure(sent));

@@ -21,6 +21,7 @@ import * as DateTime from "effect/DateTime";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
+import { fromServerClock } from "../clock.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 export interface EnvironmentProject extends OrchestrationProjectShell {
@@ -133,6 +134,19 @@ export function threadRuntimeIsActive(runtime: ThreadStructureRuntime | null | u
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
 }
 
+/**
+ * Client epoch ms when an idle thread's prompt cache goes cold, for a deadline store; null while
+ * it works or when its provider reports no expiry. Past it, the next message re-reads the whole
+ * conversation at the uncached input price.
+ */
+export function promptCacheColdAtMs(
+  thread: Pick<EnvironmentThreadShell, "environmentId" | "promptCacheExpiresAt" | "runtime">,
+): number | null {
+  if (threadRuntimeIsActive(thread.runtime)) return null;
+  const expiresMs = Date.parse(thread.promptCacheExpiresAt ?? "");
+  return Number.isFinite(expiresMs) ? fromServerClock(thread.environmentId, expiresMs) : null;
+}
+
 export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
   if (runtime?.status === "queued") return runtime.activeRunId === null;
   return (
@@ -176,6 +190,8 @@ export interface EnvironmentThreadShell {
   readonly blockedOnThreadWait?: boolean;
   readonly latestUserMessageAt: string | null;
   readonly latestUserAuthoredMessageAt?: string | null;
+  /** On the environment's clock; see `promptCacheColdAtMs`. */
+  readonly promptCacheExpiresAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
   readonly pendingUserInputAt?: string | null;
@@ -331,6 +347,7 @@ export function presentThreadShell(
     ...(thread.latestUserAuthoredMessageAt === undefined
       ? {}
       : { latestUserAuthoredMessageAt: nullableIso(thread.latestUserAuthoredMessageAt) }),
+    promptCacheExpiresAt: thread.promptCacheExpiresAt ?? null,
     hasPendingApprovals:
       thread.pendingRuntimeRequest !== null &&
       thread.pendingRuntimeRequest.kind !== "user_input" &&

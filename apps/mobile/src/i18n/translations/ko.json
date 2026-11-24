@@ -5601,5 +5601,10 @@
   "78ceb92a5b33a779": "명령이 실행되지 않았습니다",
   "440210447ea2814b": "여기에서 명령을 실행할 권한이 없습니다.",
   "50769d067d003ec9": "명령을 실행할 수 없습니다.",
-  "bc84f52ae9af5493": "먼저 메시지를 보내세요. 명령은 기존 스레드에서 실행됩니다."
+  "bc84f52ae9af5493": "먼저 메시지를 보내세요. 명령은 기존 스레드에서 실행됩니다.",
+  "3b4bce336a7ab8a2": "Send to a thread whose cache expired?",
+  "e73196c68e9de86b": "Its prompt cache expired, so this message re-reads the whole conversation at the uncached input price.",
+  "d88bba07909897af": "Send anyway",
+  "8abcfbcb9dd50971": "Its prompt cache expired, so this message re-reads the whole conversation at the uncached input price. Start new conversation sends a summary of this thread instead, losing some detail.",
+  "41703fb049d6701f": "Start new conversation"
 }

@@ -235,6 +235,8 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { useDeadlinePassed } from "../hooks/useDeadline";
+import { promptCacheColdAtMs } from "@t3tools/client-runtime/state/models";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useWorktreeRepositoryChoices } from "../hooks/useWorktreeRepositoryChoices";
@@ -2670,6 +2672,15 @@ export default function ChatView(props: ChatViewProps) {
     activeMessageCount > 0 && serverConfig?.environment.capabilities.freshContext === true;
   const freshSessionArmed = useFreshSessionArmed(routeThreadKey);
   const freshSessionPending = freshSessionAvailable && freshSessionArmed;
+  // Neither a handoff destination nor a fresh session resumes the cold conversation.
+  const promptCacheCold = useDeadlinePassed(
+    serverThread !== null &&
+      pendingHandoff === null &&
+      !freshSessionPending &&
+      multipleModelSelections === null
+      ? promptCacheColdAtMs(serverThread)
+      : null,
+  );
   // The context window is the current conversation's, so neither a handoff destination nor
   // the fresh session armed by /clear inherits it.
   const resumeCompactionTokens =
@@ -3168,6 +3179,8 @@ export default function ChatView(props: ChatViewProps) {
     keepFullHistory,
     freshSessionAvailable: freshSessionCommandAvailable,
     resumeCompactionTokens,
+    coldPromptCacheTokens: promptCacheCold ? (activeContextWindow?.usedTokens ?? null) : undefined,
+    coldCacheHandoffAvailable: serverConfig?.environment.capabilities.handoffContext === true,
     usageLimitsKey,
     usageLimitsOffered,
     openUsageLimits,

@@ -283,6 +283,7 @@ export const make = Effect.gen(function* () {
       triage: true,
       oneTimeSchedules: true,
       freshContext: true,
+      handoffContext: true,
       scheduledTaskThreadModes: true,
       npmReleaseLookup: true,
       voiceTranscription: isSpeechPlatformSupported(hostPlatform, hostArchitecture, hostLibc),

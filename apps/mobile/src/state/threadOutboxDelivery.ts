@@ -1033,6 +1033,7 @@ export function createThreadOutboxDelivery(): {
         createdAt: queuedMessage.createdAt,
         dispatchMode: queuedMessage.dispatchMode ?? "start",
         ...(queuedMessage.freshContext ? { freshContext: true } : {}),
+        ...(queuedMessage.handoffContext ? { handoffContext: true } : {}),
         resendAfterSocketLoss: false,
       },
     });

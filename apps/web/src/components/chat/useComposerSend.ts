@@ -159,6 +159,8 @@ import type { useQueuedRunEdit } from "./useQueuedRunEdit";
 import type { useTimelineFollow } from "./useTimelineFollow";
 import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 import type { useWorktreeSetup } from "./useWorktreeSetup";
+import { requestConfirmChoice } from "../../confirmDialog";
+import { formatContextWindowTokens } from "../../lib/contextWindow";
 
 const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
 
@@ -251,6 +253,10 @@ interface ComposerSendInput {
   /** `/clear` can arm a fresh session on this thread. */
   readonly freshSessionAvailable: boolean;
   readonly resumeCompactionTokens: number | null;
+  /** Set when a send resumes a conversation whose prompt cache expired; null if its size is unknown. */
+  readonly coldPromptCacheTokens: number | null | undefined;
+  /** The server can resume a cold thread in a new conversation primed with its summary. */
+  readonly coldCacheHandoffAvailable: boolean;
   readonly usageLimitsKey: string | null;
   readonly usageLimitsOffered: boolean;
   readonly openUsageLimits: UsageLimitsPanel["open"];
@@ -349,6 +355,8 @@ export function useComposerSend(input: ComposerSendInput) {
     keepFullHistory,
     freshSessionAvailable,
     resumeCompactionTokens,
+    coldPromptCacheTokens,
+    coldCacheHandoffAvailable,
     usageLimitsKey,
     usageLimitsOffered,
     openUsageLimits,
@@ -413,6 +421,7 @@ export function useComposerSend(input: ComposerSendInput) {
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
   const composerSendGenerationRef = useRef(0);
   const environmentUnavailableSendToastSlotRef = useRef(0);
+  const coldCacheConfirmOpenRef = useRef(false);
   // A send awaits uploads before it declines, so it reads the approvals pending by then.
   const pendingApprovalsRef = useRef(pendingApprovals);
   const respondingRequestIdsRef = useRef(respondingRequestIds);
@@ -1040,6 +1049,45 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       return;
     }
+    let handoffContext = false;
+    if (coldPromptCacheTokens !== undefined && freshArm === undefined) {
+      if (coldCacheConfirmOpenRef.current) return;
+      const costLine =
+        coldPromptCacheTokens === null
+          ? m(
+              msg(
+                "Send to a thread whose cache expired?\nIts prompt cache expired, so this message re-reads the whole conversation at the uncached input price.",
+              ),
+            )
+          : m(
+              msg(
+                "Send to a thread whose cache expired?\nIts prompt cache expired, so this message re-reads the whole conversation ({tokens} tokens) at the uncached input price.",
+                { tokens: formatContextWindowTokens(coldPromptCacheTokens) },
+              ),
+            );
+      const message = coldCacheHandoffAvailable
+        ? `${costLine}\n${m(
+            msg(
+              "Start new conversation sends a summary of this thread instead, losing some detail.",
+            ),
+          )}`
+        : costLine;
+      coldCacheConfirmOpenRef.current = true;
+      const choice = await (requestConfirmChoice(
+        message,
+        coldCacheHandoffAvailable
+          ? {
+              labels: {
+                confirm: m(msg("Send anyway")),
+                alternate: m(msg("Start new conversation")),
+              },
+            }
+          : undefined,
+      ) ?? (window.confirm(message) ? "confirm" : "cancel"));
+      coldCacheConfirmOpenRef.current = false;
+      if (choice === "cancel" || !isCurrentRouteThread()) return;
+      handoffContext = choice === "alternate";
+    }
     const threadIdForSend = activeThread.id;
     const sendSnapshot = snapshotComposerSend({
       prompt: promptForSend,
@@ -1650,6 +1698,7 @@ export function useComposerSend(input: ComposerSendInput) {
           interactionMode: DEFAULT_INTERACTION_MODE,
           dispatchMode: turnDispatchMode,
           ...(freshArm === undefined ? {} : { freshContext: true }),
+          ...(handoffContext ? { handoffContext: true } : {}),
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },

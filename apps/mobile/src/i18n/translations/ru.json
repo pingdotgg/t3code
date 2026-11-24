@@ -5695,5 +5695,10 @@
   "78ceb92a5b33a779": "Команда не выполнена",
   "440210447ea2814b": "У вас нет прав на выполнение команд здесь.",
   "50769d067d003ec9": "Не удалось выполнить команду.",
-  "bc84f52ae9af5493": "Сначала отправьте сообщение: команды выполняются в существующем треде."
+  "bc84f52ae9af5493": "Сначала отправьте сообщение: команды выполняются в существующем треде.",
+  "3b4bce336a7ab8a2": "Send to a thread whose cache expired?",
+  "e73196c68e9de86b": "Its prompt cache expired, so this message re-reads the whole conversation at the uncached input price.",
+  "d88bba07909897af": "Send anyway",
+  "8abcfbcb9dd50971": "Its prompt cache expired, so this message re-reads the whole conversation at the uncached input price. Start new conversation sends a summary of this thread instead, losing some detail.",
+  "41703fb049d6701f": "Start new conversation"
 }

@@ -132,6 +132,11 @@ export function toServerClock(environmentId: EnvironmentId, clientMs: number): n
   return clientMs + (serverClockOffsets.get(environmentId) ?? 0);
 }
 
+/** Converts the environment's epoch milliseconds to the client's clock. */
+export function fromServerClock(environmentId: EnvironmentId, serverMs: number): number {
+  return serverMs - (serverClockOffsets.get(environmentId) ?? 0);
+}
+
 export interface DeadlineStore extends ClockStore<boolean> {
   /**
    * Re-checks `Date.now()` and notifies if the deadline has passed. For callers

@@ -7090,6 +7090,110 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("puts the active provider conversation's prompt cache expiry on the shell", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:prompt-cache");
+      const nodeId = NodeId.make("node:prompt-cache");
+      yield* projectionStore.apply({
+        id: EventId.make("event:prompt-cache:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:prompt-cache"),
+          title: "Prompt cache",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const activateProviderThread = (suffix: string, seconds: number) =>
+        projectionStore.apply({
+          id: EventId.make(`event:prompt-cache:provider-thread:${suffix}`),
+          type: "provider-thread.updated",
+          threadId,
+          driver,
+          occurredAt: DateTime.add(now, { seconds }),
+          payload: {
+            id: ProviderThreadId.make(`provider-thread:prompt-cache:${suffix}`),
+            driver,
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: null,
+            lastRunOrdinal: null,
+            handoffIds: [],
+            forkedFrom: null,
+            goal: null,
+            createdAt: now,
+            updatedAt: DateTime.add(now, { seconds }),
+          },
+        });
+      const reportUsage = (ordinal: number, promptCacheExpiresAt: string) =>
+        projectionStore.apply({
+          id: EventId.make(`event:prompt-cache:turn:${ordinal}`),
+          type: "provider-turn.updated",
+          threadId,
+          nodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: ProviderTurnId.make(`provider-turn:prompt-cache:${ordinal}`),
+            providerThreadId: ProviderThreadId.make("provider-thread:prompt-cache:first"),
+            nodeId,
+            runAttemptId: null,
+            nativeTurnRef: null,
+            ordinal,
+            status: "completed",
+            startedAt: now,
+            completedAt: now,
+            tokenUsage: {
+              usedTokens: 1_000,
+              promptCacheExpiresAt,
+              updatedAt: promptCacheExpiresAt,
+            },
+          },
+        });
+      const expiries = Effect.gen(function* () {
+        const snapshot = yield* projectionStore.getShellSnapshot();
+        return [
+          snapshot.threads.find((thread) => thread.id === threadId)?.promptCacheExpiresAt,
+          (yield* projectionStore.getThreadShell(threadId))?.promptCacheExpiresAt,
+        ];
+      });
+
+      yield* activateProviderThread("first", 0);
+      yield* reportUsage(1, "2026-08-29T12:05:00.000Z");
+      yield* reportUsage(2, "2026-08-29T13:00:00.000Z");
+      assert.deepEqual(yield* expiries, ["2026-08-29T13:00:00.000Z", "2026-08-29T13:00:00.000Z"]);
+      // Another conversation never read that cache.
+      yield* activateProviderThread("second", 1);
+      assert.deepEqual(yield* expiries, [null, null]);
+    }),
+  );
+
   // regression: #17141 shell snapshot decoding blocked other database reads
   it.effect("reads the shell snapshot first and decodes it in a separate step", () =>
     Effect.gen(function* () {
