@@ -2078,6 +2078,32 @@ describe("composerDraftStore per-model sticky options", () => {
     expect(state.stickyOptionsByModelByProvider[CODEX_INSTANCE]?.["gpt-5.4"]).toBeUndefined();
   });
 
+  it("keeps Ultracode on the thread but out of the remembered defaults", () => {
+    const store = useComposerDraftStore.getState();
+    const ultracode = toSelections({ effort: "high", ultracode: true });
+
+    store.setStickyModelSelection(
+      createModelSelection(CLAUDE_AGENT_INSTANCE, "claude-opus-5-5", ultracode),
+    );
+    store.setProviderModelOptions(threadRef, CLAUDE_AGENT_DRIVER, ultracode, {
+      instanceId: CLAUDE_AGENT_INSTANCE,
+      model: "claude-opus-5-5",
+      persistSticky: true,
+    });
+
+    const state = useComposerDraftStore.getState();
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE]
+        ?.options,
+    ).toEqual(ultracode);
+    expect(state.stickyModelSelectionByProvider[CLAUDE_AGENT_INSTANCE]?.options).toEqual(
+      toSelections({ effort: "high" }),
+    );
+    expect(
+      state.stickyOptionsByModelByProvider[CLAUDE_AGENT_INSTANCE]?.["claude-opus-5-5"],
+    ).toEqual(toSelections({ effort: "high" }));
+  });
+
   it("seeds per-model memory from a persisted sticky selection on upgrade", () => {
     const persistApi = useComposerDraftStore.persist as unknown as {
       getOptions: () => {

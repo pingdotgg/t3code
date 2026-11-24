@@ -33,4 +33,22 @@ describe("chatThreadActions", () => {
       }),
     ).toEqual(PROJECT_DEFAULT_SELECTION);
   });
+
+  it("does not carry Ultracode from the current composer into a new thread", () => {
+    expect(
+      resolveNewThreadModelSelectionOverride({
+        projectDefaultSelection: null,
+        carrySelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-5-5",
+          options: [
+            { id: "effort", value: "high" },
+            { id: "ultracode", value: true },
+          ],
+        },
+        carrySourceDraftId: "draft-a",
+        destinationDraftId: "draft-b",
+      })?.options,
+    ).toEqual([{ id: "effort", value: "high" }]);
+  });
 });

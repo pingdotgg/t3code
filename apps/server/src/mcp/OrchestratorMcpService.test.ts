@@ -4822,6 +4822,24 @@ describe("OrchestratorMcpService provider resolution", () => {
             expected: { instanceId: antigravityId, model: "gemini-4-neon", options: [] },
           },
           {
+            name: "parent Ultracode is not inherited",
+            parent: {
+              instanceId: codexInstanceId,
+              model: "ultracode-model",
+              options: [
+                { id: "effort", value: "high" },
+                { id: "ultracode", value: true },
+              ],
+            },
+            target: { model: "ultracode-model" },
+            inheritedOptions: [{ id: "effort", value: "high" }],
+            expected: {
+              instanceId: codexInstanceId,
+              model: "ultracode-model",
+              options: [{ id: "effort", value: "high" }],
+            },
+          },
+          {
             name: "old Ultracode effort level",
             target: { model: "ultracode-model", options: { effort: "ultracode" } },
             expected: {
@@ -4945,7 +4963,10 @@ describe("OrchestratorMcpService provider resolution", () => {
           yield* Effect.gen(function* () {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             const capabilities = yield* service.capabilities(scope);
-            assert.deepEqual(capabilities.inheritedOptions, inherited.options);
+            assert.deepEqual(
+              capabilities.inheritedOptions,
+              "inheritedOptions" in testCase ? testCase.inheritedOptions : inherited.options,
+            );
             yield* service.delegateTask(scope, {
               task: "Review the change.",
               target: yield* decodeTarget(testCase.target),
