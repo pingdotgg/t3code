@@ -9,6 +9,8 @@ export type ThreadActionMenuId =
   | "new-thread-on-branch"
   | "filter-by-project"
   | "turn-into-project"
+  | "move-project"
+  | `move-project:${string}`
   | "project-settings"
   | "pin"
   | "unpin"
@@ -123,6 +125,9 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Other projects in this environment. The server only moves settled top-level threads. */
+  readonly moveProjectTargets?: ReadonlyArray<{ readonly id: string; readonly label: string }>;
+  readonly canMoveProject?: boolean;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -244,6 +249,20 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
+    ...(state.moveProjectTargets && state.moveProjectTargets.length > 0
+      ? [
+          {
+            id: "move-project" as const,
+            label: resolve(msg("Move to project")),
+            icon: "folder",
+            disabled: !state.canMoveProject,
+            children: state.moveProjectTargets.map((target) => ({
+              id: `${MOVE_PROJECT_PREFIX}${target.id}` as const,
+              label: target.label,
+            })),
+          },
+        ]
+      : []),
     ...(state.supports.autoSettleOptOut
       ? [
           {
@@ -321,4 +340,38 @@ export function buildThreadActionMenuItems(
             }
           : item,
       );
+}
+
+export const MOVE_PROJECT_PREFIX = "move-project:";
+
+export function moveProjectMenuState(
+  thread: {
+    readonly environmentId: string;
+    readonly projectId: string;
+    readonly settledAt: string | null;
+    readonly lineage: { readonly relationshipToParent?: string | null };
+  },
+  projects: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly id: string;
+    readonly title: string;
+    readonly isScratch?: true | undefined;
+    readonly archivedAt?: string | null | undefined;
+  }>,
+  resolve: MessageResolver = m,
+) {
+  return {
+    moveProjectTargets: projects
+      .filter(
+        (project) =>
+          project.environmentId === thread.environmentId &&
+          project.id !== thread.projectId &&
+          project.archivedAt == null,
+      )
+      .map((project) => ({
+        id: project.id,
+        label: project.isScratch ? resolve(msg("No project")) : project.title,
+      })),
+    canMoveProject: thread.settledAt != null && thread.lineage.relationshipToParent !== "subagent",
+  };
 }

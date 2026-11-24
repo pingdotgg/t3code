@@ -4513,6 +4513,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} is no longer empty.`,
         });
     }
+    const targetProjectId =
+      command.type === "thread.metadata.update" && command.projectId !== thread.projectId
+        ? command.projectId
+        : undefined;
+    if (targetProjectId !== undefined) {
+      const project = yield* projects.get(targetProjectId).pipe(mapDispatchError(command));
+      const { subagents } = yield* projectionStore
+        .getThreadRecords(command.threadId, ["subagents"])
+        .pipe(mapDispatchError(command));
+      if (
+        Option.isNone(project) ||
+        project.value.deletedAt !== null ||
+        thread.settledAt === null ||
+        thread.lineage.relationshipToParent === "subagent" ||
+        subagents.some((task) => task.childThreadId !== null)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Only a settled top-level thread without child threads can move to an existing project.`,
+        });
+      }
+    }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -5128,6 +5151,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+            ...(targetProjectId === undefined
+              ? {}
+              : { projectId: targetProjectId, branch: null, worktreePath: null }),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {

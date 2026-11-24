@@ -177,6 +177,8 @@ import { ProjectRowActions } from "./ProjectComboboxRow";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
+  MOVE_PROJECT_PREFIX,
+  moveProjectMenuState,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import {
@@ -2721,6 +2723,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              ...moveProjectMenuState(thread, projects),
               canRename: !fromSearch,
               supports: {
                 settlement: configLoaded,
@@ -2737,6 +2740,26 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
+        if (clicked.value?.startsWith(MOVE_PROJECT_PREFIX)) {
+          const result = await updateThreadMetadata({
+            environmentId: threadRef.environmentId,
+            input: {
+              threadId: threadRef.threadId,
+              projectId: ProjectId.make(clicked.value.slice(MOVE_PROJECT_PREFIX.length)),
+            },
+          });
+          if (result._tag !== "Success" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: gt("Could not move thread"),
+                description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
+              }),
+            );
+          }
+          return;
+        }
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
             clicked.value === "snooze:custom"
