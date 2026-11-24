@@ -28,6 +28,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type KeybindingCommand,
+  type KeybindingShortcut,
   type KeybindingWhenNode,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
@@ -86,6 +87,7 @@ import {
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
   groupKeybindingRows,
+  shortcutToKeybindingParts,
   type KeybindingCommandOption,
   type KeybindingGroup,
   type KeybindingRow,
@@ -100,35 +102,34 @@ import { keybindingSearchAnchorId, useSearchableSetting } from "./settingsSearch
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-function KeybindingPill({ value }: { value: string }) {
-  // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
-  const seenParts = new Map<string, number>();
-  const parts = value.split("+").map((part) => {
-    const seen = seenParts.get(part) ?? 0;
-    seenParts.set(part, seen + 1);
-    return { part, key: seen === 0 ? part : `${part}-${seen}` };
-  });
+function KeybindingPill({ shortcut }: { shortcut: KeybindingShortcut }) {
+  const isMac = navigator.platform.toLowerCase().includes("mac");
+  const parts = shortcutToKeybindingParts(shortcut);
+  const modifierParts = parts.slice(0, -1);
+  const keyPart = parts.at(-1);
+
   return (
     <KbdGroup>
-      {parts.map(({ part, key }) => (
-        <Kbd key={key}>
+      {modifierParts.map((part) => (
+        <Kbd key={part}>
           {part === "mod"
-            ? navigator.platform.toLowerCase().includes("mac")
+            ? isMac
               ? "⌘"
               : "Ctrl"
             : part === "shift"
               ? "⇧"
               : part === "alt"
-                ? navigator.platform.toLowerCase().includes("mac")
+                ? isMac
                   ? "⌥"
                   : "Alt"
                 : part === "ctrl"
                   ? "⌃"
-                  : part.length === 1
-                    ? part.toUpperCase()
-                    : part}
+                  : part}
         </Kbd>
       ))}
+      {keyPart !== undefined ? (
+        <Kbd key="key">{keyPart.length === 1 ? keyPart.toUpperCase() : keyPart}</Kbd>
+      ) : null}
     </KbdGroup>
   );
 }
@@ -148,13 +149,17 @@ function KeybindingsSearchInput({
       <InputGroupAddon>
         <SearchIcon aria-hidden className="size-3.5" />
       </InputGroupAddon>
+      {/* Native search inputs clear on Escape even during IME composition. */}
       <InputGroupInput
         ref={inputRef}
-        type="search"
+        type="text"
+        role="searchbox"
+        enterKeyHint="search"
         value={query}
         onChange={(event) => onChange(event.currentTarget.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
+          if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
+            return;
           event.preventDefault();
           if (query.length > 0) {
             event.stopPropagation();
@@ -751,6 +756,13 @@ function rowKeybindingTarget(row: KeybindingRow): ServerRemoveKeybindingInput {
   };
 }
 
+// Esc with a modifier is a shortcut to record, not a cancel.
+function isBareEscape(event: KeyboardEvent<HTMLInputElement>) {
+  return (
+    event.key === "Escape" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
+  );
+}
+
 function useKeybindingRowEditor({
   row,
   allRows,
@@ -799,9 +811,9 @@ function useKeybindingRowEditor({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (isBareEscape(event)) {
       const field = event.currentTarget;
       flushSync(() =>
         setDraft({
@@ -915,7 +927,7 @@ function KeybindingKeyControl({
               <T context="keyboard shortcut with no key assigned">Unassigned</T>
             </span>
           ) : (
-            <KeybindingPill value={row.key} />
+            <KeybindingPill shortcut={row.binding.shortcut} />
           )}
         </button>
       ) : (
@@ -1190,9 +1202,9 @@ function useNewKeybindingDraft({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (isBareEscape(event)) {
       setDraft({ keyDraft: "", isRecording: false });
       event.currentTarget.blur();
       return;

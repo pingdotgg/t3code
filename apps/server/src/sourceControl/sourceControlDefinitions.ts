@@ -1,7 +1,7 @@
 import * as AzureDevOpsDriver from "@t3tools/source-control-azure-devops/server/driver";
 import * as BitbucketDriver from "@t3tools/source-control-bitbucket/server/driver";
 import * as CursorOriginDriver from "@t3tools/source-control-cursor-origin/server/driver";
-import { makeBuiltInSourceControlDefinitions } from "@t3tools/source-control-definitions/registry";
+import { builtInSourceControlDefinitions } from "@t3tools/source-control-definitions/registry";
 import * as ForgejoDriver from "@t3tools/source-control-forgejo/server/driver";
 import * as GitCafeDriver from "@t3tools/source-control-gitcafe/server/driver";
 import * as GitHubDriver from "@t3tools/source-control-github/server/driver";
@@ -9,26 +9,21 @@ import * as GitLabDriver from "@t3tools/source-control-gitlab/server/driver";
 import * as TanStackSourceDriver from "@t3tools/source-control-tanstack-source/server/driver";
 
 /**
- * TanStack Source is in private beta, so its forge exists only on a server started with
- * `T3CODE_TANSTACK_SOURCE=1`. Read once at load: the registry below is a module constant.
+ * In the shared registry's order, which is the order hosts are listed and probed in. Feature
+ * flags leave some out; see `builtInDrivers.ts`.
  */
-const tanStackSourceEnabled = process.env.T3CODE_TANSTACK_SOURCE?.trim() === "1";
-
-/** In the shared registry's order, which is the order hosts are listed and probed in. */
 export const BUILT_IN_SOURCE_CONTROL_DRIVER_LIST = [
   GitHubDriver.driver,
   CursorOriginDriver.driver,
   GitLabDriver.driver,
   GitCafeDriver.driver,
-  ...(tanStackSourceEnabled ? [TanStackSourceDriver.driver] : []),
+  TanStackSourceDriver.driver,
   ForgejoDriver.driver,
   BitbucketDriver.driver,
   AzureDevOpsDriver.driver,
 ];
 
-export const sourceControlDefinitions = makeBuiltInSourceControlDefinitions({
-  tanStackSource: tanStackSourceEnabled,
-});
+export const sourceControlDefinitions = builtInSourceControlDefinitions;
 
 /** A host CLI command that merges or closes a change request, such as `gh pr merge`. */
 export const isChangeRequestCloseCommand = (command: string) =>
