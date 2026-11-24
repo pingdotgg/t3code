@@ -254,11 +254,12 @@ jobs:
       launch_check: ${{ matrix.launch_check || false }}
 
   # Publishing with from_run skips the build jobs, which a plain `needs` would treat as a reason
-  # to skip this one too.
+  # to skip this one too. A build GitHub cancelled, such as one no macOS runner picked up, is no
+  # failure, so it is refused here rather than publishing a release without its apps.
   release:
     name: Publish release
     needs: [preflight, desktop]
-    if: ${{ github.ref_name == 'main' && !cancelled() && !failure() }}
+    if: ${{ github.ref_name == 'main' && !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

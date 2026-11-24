@@ -18,6 +18,10 @@ at the commit that run built, run the workflow on `main` with `from_run` set to 
 publishes that build as the release, under the version it was built with, without building again.
 It refuses a run that did not build `main`'s commit.
 
+A run publishes only when every build finished. GitHub sometimes cancels a build that no runner
+picked up, most often macOS when hosted macOS runners are short; re-running the run's failed jobs
+builds the missing apps and then publishes the release.
+
 The desktop app installs the server on an SSH host from this repository's releases, choosing the
 release that matches its own version, and a host's T3 server installs its own release in its
 agentctl Sandboxes (`packages/ssh/src/remoteServerOverrides.ts`). So the fork's server changes
