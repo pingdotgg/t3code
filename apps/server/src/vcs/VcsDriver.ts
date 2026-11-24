@@ -55,12 +55,16 @@ export interface VcsDiffCheckpointsInput {
   readonly filePaths?: ReadonlyArray<string>;
   /** Folders below `cwd` left out of the diff, as in a capture. */
   readonly excludePaths?: ReadonlyArray<string>;
+  /** What `resolveTurnStart` returned for these refs, so it is not looked up again. */
+  readonly turnStart?: string;
 }
 
 export interface VcsListAuthoredPathsInput {
   readonly cwd: string;
   readonly fromCheckpointRef: CheckpointRef;
   readonly toCheckpointRef: CheckpointRef;
+  /** What `resolveTurnStart` returned for these refs, so it is not looked up again. */
+  readonly turnStart?: string;
 }
 
 export interface VcsDeleteCheckpointRefsInput {
@@ -85,6 +89,8 @@ export interface VcsCheckpointOps {
   readonly restoreCheckpoint: (
     input: VcsRestoreCheckpointInput,
   ) => Effect.Effect<boolean, VcsError>;
+  /** The commit a turn's changes are read from; `from` unless the turn switched branches. */
+  readonly resolveTurnStart: (input: VcsListAuthoredPathsInput) => Effect.Effect<string, VcsError>;
   readonly diffCheckpoints: (input: VcsDiffCheckpointsInput) => Effect.Effect<string, VcsError>;
   readonly listAuthoredPaths: (
     input: VcsListAuthoredPathsInput,

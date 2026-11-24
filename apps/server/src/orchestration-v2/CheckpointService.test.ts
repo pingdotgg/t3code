@@ -289,6 +289,7 @@ it.effect(
                       }),
                     )
                   : Effect.succeed("1\t0\tfile.ts\0"),
+              resolveTurnStart: (input) => Effect.succeed(input.fromCheckpointRef),
               listAuthoredPaths: () => Effect.succeed(null),
             }),
           ),

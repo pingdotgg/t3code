@@ -130,6 +130,7 @@ export const make = Effect.gen(function* () {
     readonly fallbackFromToHead: false;
     readonly ignoreWhitespace: boolean;
     readonly excludePaths?: ReadonlyArray<string>;
+    readonly turnStart?: string;
   }
 
   // What a pull or rebase brought in is not the turn's work. Null keeps every changed file.
@@ -155,14 +156,18 @@ export const make = Effect.gen(function* () {
     comparison: Comparison,
     maxBytes: number,
   ) {
-    const retainedFiles = yield* retainedFilePaths(comparison);
+    const resolved = {
+      ...comparison,
+      turnStart: comparison.turnStart ?? (yield* checkpointStore.resolveTurnStart(comparison)),
+    };
+    const retainedFiles = yield* retainedFilePaths(resolved);
     const pathBatches = retainedFiles === null ? [undefined] : batchFilePaths(retainedFiles);
     let diff = "";
     let remainingBytes = maxBytes;
     for (const filePaths of pathBatches) {
       const patch = yield* checkpointStore
         .diffCheckpoints({
-          ...comparison,
+          ...resolved,
           ...(filePaths === undefined ? {} : { filePaths }),
           // One extra byte distinguishes an exact fit from a truncated patch.
           maxOutputBytes: remainingBytes + 1,
@@ -208,16 +213,24 @@ export const make = Effect.gen(function* () {
         );
         if (range === undefined) return Effect.succeed([]);
         const excludePaths = input.nested.get(scope.id);
-        const comparison: Comparison = {
+        const refs = {
           cwd: scope.cwd,
           fromCheckpointRef: range.from.ref,
           toCheckpointRef: range.to.ref,
-          fallbackFromToHead: false,
-          ignoreWhitespace: input.ignoreWhitespace,
-          ...(excludePaths === undefined ? {} : { excludePaths }),
         };
-        return checkpointStore.diffCheckpoints({ ...comparison, format: "numstat" }).pipe(
-          Effect.map((numstat) => (numstat === "" ? [] : [{ scope, comparison }])),
+        return checkpointStore.resolveTurnStart(refs).pipe(
+          Effect.flatMap((turnStart) => {
+            const comparison: Comparison = {
+              ...refs,
+              fallbackFromToHead: false,
+              ignoreWhitespace: input.ignoreWhitespace,
+              turnStart,
+              ...(excludePaths === undefined ? {} : { excludePaths }),
+            };
+            return checkpointStore
+              .diffCheckpoints({ ...comparison, format: "numstat" })
+              .pipe(Effect.map((numstat) => (numstat === "" ? [] : [{ scope, comparison }])));
+          }),
           Effect.catch((cause) =>
             Effect.logWarning("checkpoint repository diff unavailable", {
               scopeId: scope.id,
