@@ -262,6 +262,12 @@ function ProviderAccount({
     (provider.auth.type === "gemini-api-key" || provider.auth.type === "agent-platform");
   const showsFlow = active || state?.phase === "failed" || state?.phase === "cancelled";
   const turnedOff = !showsFlow && !provider.enabled;
+  const compactStatus =
+    !showsFlow &&
+    !isDiscovering &&
+    !needsExternalSetup &&
+    !email &&
+    (turnedOff || signedIn || !provider.installed || !usesCredentials);
   const status = showsFlow
     ? state.message
     : turnedOff
@@ -434,7 +440,7 @@ function ProviderAccount({
         className={
           stacked
             ? "min-h-16 items-start gap-3 px-4 py-3"
-            : turnedOff
+            : compactStatus
               ? "min-h-14 flex-row items-center gap-3 px-4 py-1.5"
               : "min-h-16 flex-row items-center gap-3 px-4 py-3"
         }
@@ -444,7 +450,7 @@ function ProviderAccount({
           name={name}
           status={status}
           email={email}
-          inline={turnedOff && !stacked}
+          inline={compactStatus && !stacked}
         />
         {trailing}
       </View>
@@ -576,7 +582,12 @@ function ProviderAccountSummary({
       >
         {name}
       </Text>
-      <Text accessibilityLiveRegion="polite" textRole="footnote" className="text-foreground-muted">
+      <Text
+        accessibilityLiveRegion="polite"
+        textRole="footnote"
+        className={inline ? "min-w-0 shrink text-foreground-muted" : "text-foreground-muted"}
+        numberOfLines={inline ? 1 : undefined}
+      >
         {email ? `${status} · ${revealed ? email : "••••••@••••••"}` : status}
       </Text>
     </>

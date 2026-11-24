@@ -145,7 +145,11 @@ export function ClaudeAccount({
             {name}
           </Text>
           {status ? (
-            <Text textRole="footnote" className="text-foreground-muted">
+            <Text
+              textRole="footnote"
+              className={stacked ? "text-foreground-muted" : "min-w-0 shrink text-foreground-muted"}
+              numberOfLines={stacked ? undefined : 1}
+            >
               {status}
             </Text>
           ) : null}
