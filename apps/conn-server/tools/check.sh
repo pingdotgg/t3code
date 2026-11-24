@@ -173,6 +173,7 @@ run 2 120 "PR characterizations" node crates/conn-source-control/tools/gen-pr-ca
 run 2 60 "credential characterizations" node crates/conn-features/tools/gen-credential-cases.mjs --check
 run 2 60 "theme characterizations" node crates/conn-files/tools/gen-theme-cases.mjs --check
 run 2 60 "handoff characterizations" node crates/conn-engine/tools/gen-handoff-cases.mjs --check
+run 2 60 "composer context characterizations" node crates/conn-engine/tools/gen-composer-context-cases.mjs --check
 run 2 60 "date characterizations" node crates/conn-engine/tools/gen-date-cases.mjs --check
 run 2 120 "check-copies" node tools/check-copies.mjs
 decoded="$scratch/decoded-tags"

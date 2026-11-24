@@ -879,6 +879,124 @@ fn a_subagent_wakes_its_parent_only_after_a_completed_root_turn() {
     }
 }
 
+/// A close on an app-server that keeps serving other sessions ends the root turn but not a
+/// subagent's: the child may still run there, and the root's terminal waits for it. A close
+/// that stops the process ends both, and its terminal names the close as its cause.
+#[test]
+fn a_shared_close_leaves_a_running_subagent_open() {
+    for shared in [true, false] {
+        let mut mapper = Mapper::new(FixedEnv::default());
+        let dir = env!("CARGO_MANIFEST_DIR");
+        let ts: Value =
+            serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+        mapper.begin_turn("th", &turn_input(&ts["startTurn"][0]));
+        let _ = mapper.turn_start_result("th", &json!({"turn": {"id": "tu", "startedAt": null}}));
+        let _ = feed(
+            &mut mapper,
+            &[
+                json!({"method": "item/started", "params": {"threadId": "th", "turnId": "tu",
+                    "item": {"type": "subAgentActivity", "id": "a1", "kind": "started",
+                        "agentThreadId": "child", "agentPath": "/root/helper"}}}),
+                json!({"method": "turn/started", "params": {"threadId": "child",
+                    "turn": {"id": "ct", "status": "inProgress", "startedAt": 1}}}),
+            ],
+        );
+        mapper.begin_close();
+        let events: Vec<Value> = mapper
+            .on_close(shared)
+            .into_iter()
+            .filter_map(|o| match o {
+                Out::Event(e) => Some(serde_json::to_value(e).unwrap()),
+                _ => None,
+            })
+            .collect();
+        let ended = |kind: &str| {
+            events.iter().any(|e| {
+                e["type"] == kind
+                    && [&e["node"], &e["task"], &e["subagent"]]
+                        .iter()
+                        .any(|row| row["kind"] == "subagent" || row["origin"] == "provider_native")
+                    && [
+                        &e["node"]["status"],
+                        &e["task"]["status"],
+                        &e["subagent"]["status"],
+                    ]
+                    .iter()
+                    .any(|s| *s == "interrupted")
+            })
+        };
+        let child_turn_ended = events.iter().any(|e| {
+            e["type"] == "provider_turn.updated"
+                && e["providerTurn"]["nativeTurnRef"]["nativeId"] == "ct"
+        });
+        let root_ended = events.iter().any(|e| {
+            e["type"] == "provider_turn.updated"
+                && e["providerTurn"]["nativeTurnRef"]["nativeId"] == "tu"
+                && e["providerTurn"]["status"] == "interrupted"
+        });
+        assert!(root_ended, "shared={shared}: {events:?}");
+        // An interrupted root's terminal waits for its running child (`emitOrDeferRootTerminal`).
+        // The close says it ended the turn, so the engine never takes it for a Stop.
+        let terminal = events.iter().any(|e| {
+            e["type"] == "turn.terminal"
+                && e["status"] == "interrupted"
+                && e["cause"] == "sessionClosed"
+        });
+        assert_eq!(terminal, !shared, "shared={shared}: {events:?}");
+        assert_eq!(
+            ended("node.updated") || child_turn_ended,
+            !shared,
+            "shared={shared}: {events:?}"
+        );
+    }
+}
+
+/// Deferred root terminals wait per native root turn (`deferredRootTerminals`): a second
+/// interrupted root releases neither, and each goes out once its own descendants end.
+#[test]
+fn each_deferred_root_terminal_waits_for_its_own_descendants() {
+    let mut mapper = Mapper::new(FixedEnv::default());
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let terminals = |out: Vec<Out>| -> Vec<String> {
+        out.into_iter()
+            .filter_map(|o| match o {
+                Out::Event(e) => Some(serde_json::to_value(e).unwrap()),
+                _ => None,
+            })
+            .filter(|e| e["type"] == "turn.terminal")
+            .map(|e| e["providerTurnId"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    };
+    for (turn, child, child_turn) in [("tu", "c1", "ct1"), ("tu2", "c2", "ct2")] {
+        mapper.begin_turn("th", &turn_input(&ts["startTurn"][0]));
+        let _ = mapper.turn_start_result("th", &json!({"turn": {"id": turn, "startedAt": null}}));
+        let out = feed(
+            &mut mapper,
+            &[
+                json!({"method": "item/started", "params": {"threadId": "th", "turnId": turn,
+                    "item": {"type": "subAgentActivity", "id": child, "kind": "started",
+                        "agentThreadId": child, "agentPath": "/root/helper"}}}),
+                json!({"method": "turn/started", "params": {"threadId": child,
+                    "turn": {"id": child_turn, "status": "inProgress", "startedAt": 1}}}),
+                json!({"method": "turn/completed", "params": {"threadId": "th",
+                    "turn": {"id": turn, "status": "interrupted", "completedAt": 3}}}),
+            ],
+        );
+        assert_eq!(terminals(out), Vec::<String>::new(), "{turn}");
+    }
+    let child_ends = |child: &str, child_turn: &str| {
+        json!({"method": "turn/completed", "params": {"threadId": child,
+            "turn": {"id": child_turn, "status": "completed", "completedAt": 4}}})
+    };
+    let second = terminals(feed(&mut mapper, &[child_ends("c2", "ct2")]));
+    assert_eq!(second.len(), 1, "{second:?}");
+    assert!(second[0].ends_with(":tu2"), "{second:?}");
+    let first = terminals(feed(&mut mapper, &[child_ends("c1", "ct1")]));
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert!(first[0].ends_with(":tu"), "{first:?}");
+}
+
 /// `interruptTurn` stops what settled turns in a Stop's lineage left running, a subagent's
 /// included (`settledTurnContexts.filter(inLineage)`).
 #[test]

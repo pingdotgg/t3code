@@ -71,14 +71,15 @@ CREATE TABLE IF NOT EXISTS shell_changes (
   seq  INTEGER PRIMARY KEY,
   item TEXT NOT NULL
 );
--- Final message texts for `searchThreads`, case and accents folded (`fold.rs`). Trigram tokens
+-- Final message texts for `searchThreads` as they read (`readable_search_text`), case and
+-- accents folded (`fold.rs`). Trigram tokens
 -- make LIKE '%q%' an index lookup for queries of three or more characters. `message_keys`
 -- gives each message a stable rowid.
 CREATE VIRTUAL TABLE IF NOT EXISTS message_search USING fts5(text, tokenize = 'trigram');
 CREATE TABLE IF NOT EXISTS message_keys (
-  id         INTEGER PRIMARY KEY,
-  thread_id  TEXT NOT NULL,
-  message_id TEXT NOT NULL,
+  id          INTEGER PRIMARY KEY,
+  thread_id   TEXT NOT NULL,
+  message_id  TEXT NOT NULL,
   UNIQUE (thread_id, message_id)
 );
 CREATE TABLE IF NOT EXISTS turn_item_positions (
@@ -1286,6 +1287,22 @@ impl Store {
         keyed_rows(rows)
     }
 
+    /// Threads with a provider-native subagent still open: no process is left to end it.
+    pub(crate) fn threads_with_live_native_subagents(&self) -> StoreResult<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT thread_id FROM entities WHERE kind = 'subagents'
+                 AND json_extract(body, '$.origin') = 'provider_native'
+                 AND json_extract(body, '$.status') IN ('pending','running','waiting')",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
+    }
+
     #[cfg(test)]
     pub(crate) fn event_count(&self, thread_id: &str) -> u64 {
         self.conn
@@ -2325,6 +2342,13 @@ fn take_reserved_position(
     Ok(ordinal)
 }
 
+/// Whether `table` has `column`; SQLite compares column names without case.
+fn has_column(conn: &Connection, table: &str, column: &str) -> StoreResult<bool> {
+    conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2 COLLATE NOCASE")
+        .and_then(|mut stmt| stmt.exists([table, column]))
+        .map_err(err)
+}
+
 /// Schema steps beyond `CREATE ... IF NOT EXISTS`, by `PRAGMA user_version`.
 fn migrate(conn: &Connection) -> StoreResult<()> {
     let version: i64 = conn
@@ -2386,30 +2410,90 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
         )
         .map_err(err)?;
     }
-    if version < 5 {
-        // 5: a receipt names what it answers for and records a refusal (T3's
-        // `CommandReceiptV2`). A receipt from before names no owner, so a retry of it is
-        // refused rather than replayed for a thread nothing proves. One transaction: the
-        // columns and the version land together or not at all.
+    // A store a pre-merge build of the readable-search change wrote is at 6, with
+    // `message_keys.search_text`. The index holds that text now, so the column goes and the
+    // store is 5 again, and main's next step 6 runs on it. The refold below rebuilds its index.
+    let version = if version == 6 && has_column(conn, "message_keys", "search_text")? {
         let tx = conn.unchecked_transaction().map_err(err)?;
         tx.execute_batch(
-            "ALTER TABLE receipts ADD COLUMN owner_kind TEXT;
-             ALTER TABLE receipts ADD COLUMN owner_id TEXT;
-             ALTER TABLE receipts ADD COLUMN error TEXT;
+            "ALTER TABLE message_keys DROP COLUMN search_text;
              PRAGMA user_version = 5;",
         )
         .map_err(err)?;
         tx.commit().map_err(err)?;
+        5
+    } else {
+        version
+    };
+    if version <= 5 {
+        // 5: a receipt names what it answers for and records a refusal (T3's
+        // `CommandReceiptV2`). A receipt from before names no owner, so a retry of it is
+        // refused rather than replayed for a thread nothing proves. A store a pre-merge build
+        // wrote may lack them at 5, so each column is added where it is missing. One
+        // transaction: the columns and the version land together or not at all.
+        let tx = conn.unchecked_transaction().map_err(err)?;
+        for column in ["owner_kind", "owner_id", "error"] {
+            if !has_column(&tx, "receipts", column)? {
+                tx.execute_batch(&format!("ALTER TABLE receipts ADD COLUMN {column} TEXT"))
+                    .map_err(err)?;
+            }
+        }
+        if version < 5 {
+            tx.execute_batch("PRAGMA user_version = 5").map_err(err)?;
+        }
+        tx.commit().map_err(err)?;
     }
-    // The index holds folded text, so a search without accents finds an accented message
-    // written before the upgrade (T3 indexes with `remove_diacritics`).
+    // The index holds folded text as it reads, so a search without accents finds an accented
+    // message written before the upgrade (T3 indexes `remove_diacritics(readableSearchText)`).
     refold_message_search_once(conn, &mut |event| {
         eprintln!("conn-engine: {}", event.line())
     })?;
     Ok(())
 }
 
-/// Puts the final text of one message into `message_search`, replacing an older version.
+/// `readableSearchText` in T3's `messageSearchIndex.ts`: a message as it reads, a citation as
+/// its text and comment, and a link label without its markdown escapes (a file mention stores
+/// `__init__.py` as `[\_\_init\_\_.py](...)`). `None` when that is the stored text.
+pub(crate) fn readable_search_text(text: &str) -> Option<String> {
+    let plain = crate::citations::to_plain_text(text);
+    let readable = unescape_link_labels(&plain);
+    (readable != text).then_some(readable)
+}
+
+/// T3's `LINK_LABEL` (`(!?\[)([^\]\n]*)(\]\([^)\s]*\))`), with `\*` and `\_` in each label
+/// unescaped.
+fn unescape_link_labels(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some((before, after)) = rest.split_once('[') {
+        out.push_str(before);
+        out.push('[');
+        // `label](href)`: the label stops at `]` or a line end, the href at `)` or a space.
+        let link = after.find([']', '\n']).and_then(|end| {
+            let label = after.get(..end)?;
+            let tail = after.get(end..)?.strip_prefix("](")?;
+            let end = tail.find(|c: char| c == ')' || c.is_whitespace())?;
+            let href = tail.get(..end)?;
+            let rest = tail.get(end..)?.strip_prefix(')')?;
+            Some((label, href, rest))
+        });
+        match link {
+            Some((label, href, tail)) => {
+                out.push_str(&label.replace("\\*", "*").replace("\\_", "_"));
+                out.push_str("](");
+                out.push_str(href);
+                out.push(')');
+                rest = tail;
+            }
+            None => rest = after,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Puts the final text of one message into `message_search` as it reads, replacing an older
+/// version.
 fn index_message(
     conn: &Connection,
     thread_id: &str,
@@ -2428,11 +2512,19 @@ fn index_message(
             |row| row.get(0),
         )
         .map_err(err)?;
+    write_search_entry(conn, id, text)
+}
+
+/// The index row of the keyed message `id`: its readable text, folded. Every message write
+/// goes through here; the upgrade and the T3 import fold the same way
+/// ([`refold_message_search`]).
+fn write_search_entry(conn: &Connection, id: i64, text: &str) -> StoreResult<()> {
+    let readable = readable_search_text(text);
     conn.execute("DELETE FROM message_search WHERE rowid = ?1", [id])
         .map_err(err)?;
     conn.execute(
         "INSERT INTO message_search (rowid, text) VALUES (?1, ?2)",
-        params![id, crate::fold::fold(text)],
+        params![id, crate::fold::fold(readable.as_deref().unwrap_or(text))],
     )
     .map_err(err)?;
     Ok(())
@@ -2440,9 +2532,10 @@ fn index_message(
 
 /// The fold the search index holds, in the `meta` row `message_search_folded`: 1 was the first
 /// fold, which also took marks off other scripts' letters; 2 lowercased as Rust does; 3 folds
-/// with SQLite's own table, as T3's index (`fold.rs`). A `meta` mark, not a schema version, so
+/// with SQLite's own table, as T3's index (`fold.rs`); 4 folds the message as it reads
+/// ([`readable_search_text`]). A `meta` mark, not a schema version, so
 /// this step composes with versioned steps in any order.
-const MESSAGE_SEARCH_FOLD: i64 = 3;
+const MESSAGE_SEARCH_FOLD: i64 = 4;
 /// Messages between two progress lines of a refold.
 const REFOLD_REPORT_EVERY: u64 = 10_000;
 /// The most text a refold batch holds before it writes, with `REFOLD_BATCH_ROWS` rows at most.
@@ -2534,8 +2627,8 @@ const REFOLD_ROWS_SQL: &str = "SELECT k.id, s.text, COALESCE(json_extract(e.body
        AND e.kind = 'messages' AND e.id = k.message_id
      WHERE k.id > ?1 ORDER BY k.id";
 
-/// Folds every `message_search` text again from its message's text, so an older fold is
-/// rebuilt. It reads rows in id order while their texts fit [`REFOLD_BATCH_BYTES`] and the row
+/// Folds every `message_search` text again from its message's readable text, so an older
+/// fold is rebuilt. It reads rows in id order while their texts fit [`REFOLD_BATCH_BYTES`] and the row
 /// cap, so a store of large messages never holds more than the budget at once. `progress` hears
 /// the messages read so far after each batch. A row whose message is gone keeps its text.
 pub(crate) fn refold_message_search(
@@ -2575,7 +2668,8 @@ pub(crate) fn refold_message_search(
         };
         done += batch.len() as u64;
         for (rowid, stored, text) in batch {
-            let folded = crate::fold::fold(&text);
+            let readable = readable_search_text(&text);
+            let folded = crate::fold::fold(readable.as_deref().unwrap_or(&text));
             if folded != stored {
                 conn.execute(
                     "UPDATE message_search SET text = ?2 WHERE rowid = ?1",

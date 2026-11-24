@@ -92,8 +92,16 @@ pub struct FakeProvider {
     /// Sessions answer `await_background_tasks`; see [`Self::without_background_wait`].
     background_wait: bool,
     close_delay: std::time::Duration,
+    /// A close ends the running turn as interrupted, as a provider's close can.
+    close_interrupts: bool,
     /// What a session's `close` answers; see [`Self::with_shared_runtime`].
     pub closes_as: Arc<Mutex<Closed>>,
+    /// The event sender of the last session closed on a shared process, which may still
+    /// report what that process runs for it. Dropping it ends the session's events.
+    pub after_close: Arc<Mutex<Option<mpsc::Sender<ProviderEvent>>>>,
+    /// The last opened session's event sender, held weakly so a test can send a provider event
+    /// without keeping the session's events open.
+    pub last_events: Arc<Mutex<Option<mpsc::WeakSender<ProviderEvent>>>>,
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
     /// What `capabilities` answers: the sessions' capabilities unless a test changes them.
     capabilities: Value,
@@ -138,7 +146,10 @@ impl FakeProvider {
             steering: true,
             background_wait: true,
             close_delay: std::time::Duration::ZERO,
+            close_interrupts: false,
             closes_as: Arc::new(Mutex::new(Closed::RuntimeStopped)),
+            after_close: Arc::default(),
+            last_events: Arc::default(),
             selection_plan: None,
             capabilities: conn_provider::testing::session_capabilities(),
             process_exit: None,
@@ -172,6 +183,12 @@ impl FakeProvider {
     /// A provider whose sessions take `delay` to close, as a process given time to exit.
     pub fn with_close_delay(mut self, delay: std::time::Duration) -> Self {
         self.close_delay = delay;
+        self
+    }
+
+    /// A provider whose sessions end their running turn as interrupted when they close.
+    pub fn with_close_interrupting(mut self) -> Self {
+        self.close_interrupts = true;
         self
     }
 
@@ -240,7 +257,8 @@ struct FakeSession {
     abandoned: Arc<(Mutex<Option<String>>, tokio::sync::Notify)>,
     instance: String,
     driver: String,
-    events: mpsc::Sender<ProviderEvent>,
+    /// Gone after `close`.
+    events: Mutex<Option<mpsc::Sender<ProviderEvent>>>,
     turn: Arc<Mutex<Option<Turn>>>,
     steering: bool,
     background: Arc<AtomicBool>,
@@ -265,7 +283,10 @@ struct FakeSession {
     fail_rollbacks: Arc<AtomicUsize>,
     control_delay: std::time::Duration,
     close_delay: std::time::Duration,
+    /// A close ends the running turn as interrupted, as a provider's close can.
+    close_interrupts: bool,
     closes_as: Arc<Mutex<Closed>>,
+    after_close: Arc<Mutex<Option<mpsc::Sender<ProviderEvent>>>>,
 }
 
 impl FakeSession {
@@ -318,6 +339,7 @@ impl Provider for FakeProvider {
             crate::lock(&self.opened_policies).push(conn_contract::to_json(&input.runtime_policy));
             *crate::lock(&self.mcp_servers) = input.mcp_servers.clone();
             let (tx, mut rx) = mpsc::channel(64);
+            *crate::lock(&self.last_events) = Some(tx.downgrade());
             if let Some(exit) = self.process_exit.clone() {
                 // Events pass through a task that stops, and drops the engine's end, on exit.
                 let (out, forwarded) = mpsc::channel(64);
@@ -362,7 +384,7 @@ impl Provider for FakeProvider {
                     abandoned: Arc::default(),
                     instance: self.id.as_str().to_owned(),
                     driver: self.driver().to_owned(),
-                    events: tx,
+                    events: Mutex::new(Some(tx)),
                     turn: Arc::new(Mutex::new(None)),
                     steering: self.steering,
                     background: Arc::new(AtomicBool::new(false)),
@@ -383,7 +405,9 @@ impl Provider for FakeProvider {
                     fail_rollbacks: self.fail_rollbacks.clone(),
                     control_delay: self.control_delay,
                     close_delay: self.close_delay,
+                    close_interrupts: self.close_interrupts,
                     closes_as: self.closes_as.clone(),
+                    after_close: self.after_close.clone(),
                 }),
                 events: rx,
             })
@@ -455,6 +479,8 @@ fn terminal(turn: &Turn, status: TurnStatus, failure: Option<Value>) -> Provider
         failure: failure.map(|f| from_json(f).expect("failure")),
         retry: None,
         thread_disposition: ThreadDisposition::Reusable,
+        child_turns_continue: false,
+        cause: conn_provider::TerminalCause::Provider,
         reason: None,
     })
 }
@@ -466,6 +492,13 @@ async fn emit(tx: &mpsc::Sender<ProviderEvent>, events: impl IntoIterator<Item =
 }
 
 impl FakeSession {
+    /// The event sender; after `close`, one whose receiver is gone.
+    fn events(&self) -> mpsc::Sender<ProviderEvent> {
+        crate::lock(&self.events)
+            .clone()
+            .unwrap_or_else(|| mpsc::channel(1).0)
+    }
+
     /// `provider_thread.updated` with the roster on `pendingBackgroundTasks`, awaited tasks
     /// marked, as Claude's `emitRosterUpdate`.
     fn roster_update(&self, mut provider_thread: Value) -> ProviderEvent {
@@ -518,7 +551,7 @@ impl FakeSession {
             events.push(provider_turn(&turn, "completed"));
             events.push(terminal(&turn, TurnStatus::Completed, None));
             *crate::lock(&self.turn) = Some(turn);
-            let tx = self.events.clone();
+            let tx = self.events();
             tokio::spawn(async move { emit(&tx, events).await });
             Ok(())
         })
@@ -628,13 +661,13 @@ impl Session for FakeSession {
             // `coldstart`: a start that takes 500 ms with its provider turn shown at once, as
             // Claude's cold start. Abandoned, it ends that turn interrupted and fails.
             if text.starts_with("coldstart") {
-                emit(&self.events, [provider_turn(&turn, "running")]).await;
+                emit(&self.events(), [provider_turn(&turn, "running")]).await;
                 *crate::lock(&self.turn) = Some(turn.clone());
                 let wait = std::time::Duration::from_millis(500);
                 if self.wait_unless_abandoned(&turn.run_id, wait).await {
                     crate::lock(&self.calls).push(format!("start abandoned {}", turn.run_id));
                     emit(
-                        &self.events,
+                        &self.events(),
                         [
                             provider_turn(&turn, "interrupted"),
                             terminal(&turn, TurnStatus::Interrupted, None),
@@ -651,7 +684,7 @@ impl Session for FakeSession {
                     terminal(&turn, TurnStatus::Completed, None),
                 ];
                 tokio::spawn({
-                    let tx = self.events.clone();
+                    let tx = self.events();
                     async move { emit(&tx, done).await }
                 });
                 return Ok(());
@@ -688,7 +721,7 @@ impl Session for FakeSession {
                 })
                 .await;
             }
-            let tx = self.events.clone();
+            let tx = self.events();
             let mut started = vec![provider_turn(&turn, "running")];
             self.stuck.store(text == "stuck", Ordering::SeqCst);
             self.hook_hang.store(text == "hook-hang", Ordering::SeqCst);
@@ -985,7 +1018,7 @@ impl Session for FakeSession {
                 events.push(terminal(turn, TurnStatus::Completed, None));
                 events
             };
-            emit(&self.events, events).await;
+            emit(&self.events(), events).await;
             Ok(())
         })
     }
@@ -1018,7 +1051,7 @@ impl Session for FakeSession {
                 )
             };
             crate::lock(&self.calls).push(format!("interrupt {run}"));
-            emit(&self.events, event).await;
+            emit(&self.events(), event).await;
             tokio::time::sleep(self.control_delay).await;
             crate::lock(&self.calls).push(format!("interrupted {run}"));
             Ok(())
@@ -1064,7 +1097,7 @@ impl Session for FakeSession {
                 events.push(terminal(turn, TurnStatus::Completed, None));
                 events
             };
-            emit(&self.events, events).await;
+            emit(&self.events(), events).await;
             Ok(())
         })
     }
@@ -1157,7 +1190,7 @@ impl Session for FakeSession {
             ));
             if !matched.is_empty() {
                 let update = self.roster_update(conn_contract::to_json(&input.provider_thread));
-                emit(&self.events, [update]).await;
+                emit(&self.events(), [update]).await;
             }
             Ok(matched)
         })
@@ -1248,7 +1281,24 @@ impl Session for FakeSession {
         self.closed.fetch_add(1, Ordering::SeqCst);
         let delay = self.close_delay;
         let closed = *crate::lock(&self.closes_as);
+        let events = crate::lock(&self.events).take();
+        let ending = self
+            .close_interrupts
+            .then(|| crate::lock(&self.turn).take())
+            .flatten()
+            .zip(events.clone());
+        if closed == Closed::RuntimeShared {
+            *crate::lock(&self.after_close) = events;
+        }
         Box::pin(async move {
+            // As a real adapter does, the close says it ended the turn.
+            if let Some((turn, events)) = ending {
+                let mut ended = terminal(&turn, TurnStatus::Interrupted, None);
+                if let ProviderEvent::TurnTerminal(terminal) = &mut ended {
+                    terminal.cause = conn_provider::TerminalCause::SessionClosed;
+                }
+                emit(&events, [ended]).await;
+            }
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
             }

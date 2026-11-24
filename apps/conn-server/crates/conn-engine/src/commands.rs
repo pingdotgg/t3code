@@ -2941,8 +2941,22 @@ pub(crate) fn finish_run(
         failure,
         None,
         IdleWrite::WhileActive,
+        RunEnd::Settled,
     )
     .map(drop)
+}
+
+/// Why a run ends, which decides what happens to its live provider-native subagents.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunEnd {
+    /// The provider or the engine ended the run (a confirmed Stop, a failure, a cancel): an
+    /// interrupted, failed or cancelled run takes its open native subagents with it, as T3's
+    /// `cascadeTerminalizeRunOwnedSubagents`.
+    Settled,
+    /// The run's session went away (released, or its events ended). A native subagent still
+    /// running keeps its item open: it ends with its own row, from the provider (Codex's
+    /// shared `app-server` outlives the session) or from the orphan cleanup.
+    Detached,
 }
 
 /// When a run's end writes its provider thread `idle`.
@@ -2974,6 +2988,7 @@ pub(crate) fn finish_run_as(
     failure: Option<Value>,
     stop_reason: Option<&str>,
     idle: IdleWrite,
+    end: RunEnd,
 ) -> StoreResult<bool> {
     let Some(mut run) = tx.entity(thread_id, "runs", run_id)? else {
         return Ok(false);
@@ -3000,6 +3015,9 @@ pub(crate) fn finish_run_as(
         "cancelled" => "cancelled",
         _ => "interrupted",
     };
+    if end == RunEnd::Settled && matches!(item_status, "interrupted" | "failed" | "cancelled") {
+        crate::families::end_run_native_subagents(tx, thread_id, run_id, item_status)?;
+    }
 
     for mut message in tx.entities_where(thread_id, "messages", "runId", run_id)? {
         if message["streaming"] == true {
@@ -3015,11 +3033,25 @@ pub(crate) fn finish_run_as(
         let background = status == "completed"
             && crate::background::BACKGROUND_ITEM_TYPES
                 .contains(&item["type"].as_str().unwrap_or_default());
-        let open = !background
+        let mut open = !background
             && matches!(
                 item["status"].as_str(),
                 Some("idle" | "pending" | "running" | "waiting")
             );
+        if open
+            && end == RunEnd::Detached
+            && item["type"] == "subagent"
+            && let Some(id) = item["subagentId"].as_str()
+            && tx.entity(thread_id, "subagents", id)?.is_some_and(|row| {
+                row["origin"] == "provider_native"
+                    && matches!(
+                        row["status"].as_str(),
+                        Some("pending" | "running" | "waiting")
+                    )
+            })
+        {
+            open = false;
+        }
         if item["streaming"] == true || open {
             if item.get("streaming").is_some() {
                 item["streaming"] = json!(false);

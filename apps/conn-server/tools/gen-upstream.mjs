@@ -12,7 +12,8 @@
 //   `providers:manage`. The payload rules themselves stay by hand in scopes.rs; a test there
 //   fails when this list and the hand rules differ.
 // - tools/upkeep/http-routes.json: every (method, path) of the T3 server's HTTP API
-//   (`EnvironmentHttpApi` in packages/contracts/src/environmentHttp.ts), by reflection.
+//   (`EnvironmentHttpApi` in packages/contracts/src/environmentHttp.ts), by reflection, and
+//   the routes apps/server mounts with `HttpRouter.add`, read from its source.
 //   tools/bump-report.mjs compares it with the routes this server serves.
 // - crates/conn-contract/src/upstream.rs: `T3_SERVER_VERSION`, the `version` of
 //   apps/server/package.json. Clients compare it with their own; the Codex provider sends it
@@ -183,6 +184,56 @@ HttpApi.reflect(http.EnvironmentHttpApi, {
   },
 });
 if (routes.length === 0) throw new Error("EnvironmentHttpApi has no endpoints");
+
+// Routes the T3 server mounts outside the API with `HttpRouter.add(method, path, ...)`, such
+// as /ws and /api/preview/tunnel. A path names constants; each must resolve to a string, or
+// generation fails, so a new route is never left out.
+const ROUTER_ROOT = "apps/server/src";
+// Files whose HttpRouter.add serves another listener, not the environment's.
+const ROUTER_OTHER_LISTENERS = new Set([
+  "apps/server/src/cloud/CliTokenManager.ts", // its own loopback server for the CLI sign-in
+]);
+const sourceFiles = (dir) =>
+  NodeFS.readdirSync(inMonorepo(dir), { withFileTypes: true }).flatMap((entry) => {
+    const path = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) return entry.name === "node_modules" ? [] : sourceFiles(path);
+    return /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path] : [];
+  });
+const stringConstants = new Map();
+for (const dir of [ROUTER_ROOT, "packages/contracts/src", "packages/shared/src"]) {
+  for (const file of sourceFiles(dir)) {
+    const text = NodeFS.readFileSync(inMonorepo(file), "utf8");
+    for (const m of text.matchAll(/\bconst\s+([A-Z][A-Z0-9_]*)\s*=\s*("[^"\n]*"|`[^`\n]*`)/g)) {
+      stringConstants.set(m[1], m[2]);
+    }
+  }
+}
+function resolvePath(expression, where, seen = new Set()) {
+  const text = expression.trim();
+  if (/^"[^"]*"$/.test(text)) return text.slice(1, -1);
+  if (/^`[^`]*`$/.test(text)) {
+    return text
+      .slice(1, -1)
+      .replace(/\$\{([^}]+)\}/g, (_, inner) => resolvePath(inner, where, seen));
+  }
+  const name = /^(?:\w+\.)*([A-Z][A-Z0-9_]*)$/.exec(text)?.[1];
+  const value = name && !seen.has(name) ? stringConstants.get(name) : undefined;
+  if (value === undefined) throw new Error(`HttpRouter.add path ${text} in ${where} does not resolve to a string`);
+  return resolvePath(value, where, new Set([...seen, name]));
+}
+for (const file of sourceFiles(ROUTER_ROOT)) {
+  if (ROUTER_OTHER_LISTENERS.has(file)) continue;
+  const text = NodeFS.readFileSync(inMonorepo(file), "utf8");
+  for (const m of text.matchAll(/HttpRouter\.add\(\s*("[^"]*")\s*,\s*("[^"]*"|`[^`]*`|[\w.]+)\s*,/g)) {
+    const method = m[1].slice(1, -1);
+    const path = resolvePath(m[2], file);
+    if (path === "*") continue; // the static files and the dev proxy, served as a fallback
+    routes.push({ group: "router", method, path });
+  }
+  const calls = (text.match(/HttpRouter\.add\(/g) ?? []).length;
+  const parsed = [...text.matchAll(/HttpRouter\.add\(\s*"[^"]*"\s*,\s*("[^"]*"|`[^`]*`|[\w.]+)\s*,/g)].length;
+  if (calls !== parsed) throw new Error(`${file}: an HttpRouter.add call has a form this generator cannot read`);
+}
 routes.sort((a, b) =>
   a.path === b.path ? (a.method < b.method ? -1 : 1) : a.path < b.path ? -1 : 1,
 );
@@ -190,7 +241,7 @@ routes.sort((a, b) =>
 const routesJson = [
   "{",
   `  "generated": ${str(`${HEADER[0].slice(3)} ${HEADER[1].slice(3)}`)},`,
-  `  "source": ${str(`${HTTP_FILE} (EnvironmentHttpApi)`)},`,
+  `  "source": ${str(`${HTTP_FILE} (EnvironmentHttpApi) and HttpRouter.add in ${ROUTER_ROOT}`)},`,
   `  "routes": [`,
   routes.map((r) => `    ${JSON.stringify(r)}`).join(",\n"),
   "  ]",

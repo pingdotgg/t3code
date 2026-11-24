@@ -572,43 +572,37 @@ async fn a_v4_store_upgrades_and_refuses_its_old_retries() {
     assert!(found.to_string().contains("\"a\""), "{found}");
 }
 
-/// The upgrade from main's schema commits atomically: a failure leaves schema 4 and none of
-/// the new columns, and the next open finishes it.
+/// The receipt upgrade adds only the columns a store lacks: one a failed or partial upgrade
+/// left (here `error`) stays, the rest are added, and commands work.
 #[tokio::test(flavor = "current_thread")]
-async fn the_receipt_upgrade_is_all_or_nothing() {
-    let db = TempDb::new("upgrade-atomic");
+async fn a_partial_receipt_upgrade_finishes_on_open() {
+    let db = TempDb::new("upgrade-partial");
     {
         let (engine, _) = open(&db);
         dispatch(&engine, create("a", "c1")).await;
     }
     downgrade_to_v4(&db);
-    // A stray column makes the upgrade's last step fail.
     rusqlite::Connection::open(db.path())
         .unwrap()
-        .execute_batch("ALTER TABLE receipts ADD COLUMN error TEXT")
+        .execute_batch("ALTER TABLE receipts ADD COLUMN ERROR TEXT")
         .unwrap();
-    let mut config = EngineConfig::new(db.path());
-    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
-    assert!(SqliteEngine::open(config).is_err(), "the upgrade fails");
-    {
-        let conn = rusqlite::Connection::open(db.path()).unwrap();
-        let version: i64 = conn
-            .query_row("PRAGMA user_version", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(version, 4);
-        let added: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('receipts') WHERE name = 'owner_kind'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(added, 0, "no column of a failed upgrade stays");
-        conn.execute_batch("ALTER TABLE receipts DROP COLUMN error")
-            .unwrap();
-    }
     let (engine, _) = open(&db);
     dispatch(&engine, create("b", "c2")).await;
+    drop(engine);
+    let conn = rusqlite::Connection::open(db.path()).unwrap();
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 5);
+    let columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('receipts')
+             WHERE lower(name) IN ('owner_kind', 'owner_id', 'error')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(columns, 3);
 }
 
 /// A project command's typed refusal from planning is its receipt, as T3's
@@ -2095,6 +2089,1056 @@ async fn a_provider_that_exits_during_a_turn_fails_the_run() {
     assert_eq!(status, "failed");
 }
 
+/// t1's provider thread (the session's), once a turn has started there.
+async fn provider_thread_of_t1(engine: &SqliteEngine) -> String {
+    projection(engine, "t1").await["providerThreads"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// Writes, on t1, a running native subagent (`node:native`) of `provider_thread` with its
+/// node, turn item and child thread `child` (an open runless root turn, a command and a
+/// provider turn under it), plus a finished native one and a running app-owned one, which
+/// stay as they are. Two more running native ones belong to a newer session: `node:other`
+/// runs on another provider thread, `node:late` started after now.
+async fn seed_native_subagents(engine: &SqliteEngine, provider_thread: &str) {
+    dispatch(engine, create("child", "c-child")).await;
+    let provider_thread = provider_thread.to_owned();
+    engine
+        .inner()
+        .write(move |tx| {
+            use crate::store::Draft;
+            let now = tx.now().to_owned();
+            let later = "2999-01-01T00:00:00.000Z";
+            let sub = |id: &str, origin: &str, status: &str, child: Value, started: &str| {
+                json!({"id": id, "threadId": "t1", "runId": "run:t1:1", "parentNodeId": null,
+                       "origin": origin, "createdBy": "agent", "driver": "claudeAgent",
+                       "providerInstanceId": "claudeAgent", "providerThreadId": null,
+                       "childThreadId": child, "prompt": "p", "title": id, "model": null,
+                       "status": status, "result": null, "startedAt": started,
+                       "completedAt": null, "updatedAt": started})
+            };
+            for (row, on) in [
+                (
+                    sub(
+                        "node:native",
+                        "provider_native",
+                        "running",
+                        json!("child"),
+                        &now,
+                    ),
+                    provider_thread.as_str(),
+                ),
+                (
+                    sub(
+                        "node:done",
+                        "provider_native",
+                        "completed",
+                        json!(null),
+                        &now,
+                    ),
+                    provider_thread.as_str(),
+                ),
+                (
+                    sub("node:app", "app_owned", "running", json!(null), &now),
+                    provider_thread.as_str(),
+                ),
+                (
+                    sub(
+                        "node:other",
+                        "provider_native",
+                        "running",
+                        json!(null),
+                        &now,
+                    ),
+                    "pt:newer-session",
+                ),
+                (
+                    sub(
+                        "node:late",
+                        "provider_native",
+                        "running",
+                        json!(null),
+                        later,
+                    ),
+                    provider_thread.as_str(),
+                ),
+            ] {
+                let id = row["id"].as_str().unwrap().to_owned();
+                tx.append(Draft::new("t1", "subagent.updated", row.clone()))?;
+                tx.append(Draft::new(
+                    "t1",
+                    "node.updated",
+                    json!({
+                    "id": id, "threadId": "t1", "runId": "run:t1:1", "kind": "subagent",
+                    "status": row["status"], "startedAt": now, "completedAt": null}),
+                ))?;
+                tx.append(Draft::new(
+                    "t1",
+                    "turn-item.updated",
+                    json!({
+                    "id": format!("item:{id}"), "threadId": "t1", "runId": "run:t1:1",
+                    "nodeId": id, "status": row["status"], "type": "subagent",
+                    "subagentId": id, "providerThreadId": on,
+                    "startedAt": now, "completedAt": null, "updatedAt": now}),
+                ))?;
+            }
+            tx.append(Draft::new(
+                "child",
+                "node.updated",
+                json!({
+                "id": "node:child-root", "threadId": "child", "runId": null, "kind": "root_turn",
+                "status": "running", "startedAt": now, "completedAt": null}),
+            ))?;
+            tx.append(Draft::new(
+                "child",
+                "turn-item.updated",
+                json!({
+                "id": "item:child-cmd", "threadId": "child", "runId": null,
+                "nodeId": "node:child-root", "status": "running", "type": "command_execution",
+                "input": "ls", "startedAt": now, "completedAt": null, "updatedAt": now}),
+            ))?;
+            tx.append(Draft::new(
+                "child",
+                "provider-turn.updated",
+                json!({
+                "id": "turn:child", "threadId": "child", "runAttemptId": null,
+                "nodeId": "node:child-root", "status": "running", "startedAt": now,
+                "completedAt": null}),
+            ))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+/// `(thread, kind, id)` row's status.
+async fn row_status(engine: &SqliteEngine, thread: &str, kind: &str, id: &str) -> String {
+    let (thread, kind, id) = (thread.to_owned(), kind.to_owned(), id.to_owned());
+    engine
+        .inner()
+        .write(move |tx| tx.entity(&thread, &kind, &id))
+        .await
+        .unwrap()
+        .unwrap()["status"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// The open native subagent, its node and item, and its child's runless root turn, item and
+/// provider turn end with `status`; the finished and app-owned subagents stay as they were.
+async fn assert_orphans_ended(engine: &SqliteEngine, status: &str) {
+    for (thread, kind, id) in [
+        ("t1", "subagents", "node:native"),
+        ("t1", "nodes", "node:native"),
+        ("t1", "turnItems", "item:node:native"),
+        ("child", "nodes", "node:child-root"),
+        ("child", "turnItems", "item:child-cmd"),
+        ("child", "providerTurns", "turn:child"),
+    ] {
+        assert_eq!(
+            row_status(engine, thread, kind, id).await,
+            status,
+            "{kind} {id}"
+        );
+    }
+    // The run's own end may close the app-owned item; its subagent row is not ours to end.
+    assert_eq!(
+        row_status(engine, "t1", "subagents", "node:done").await,
+        "completed"
+    );
+    assert_eq!(
+        row_status(engine, "t1", "turnItems", "item:node:done").await,
+        "completed"
+    );
+    assert_eq!(
+        row_status(engine, "t1", "subagents", "node:app").await,
+        "running"
+    );
+    // The client moves the agent to "Previous agents" from these events' statuses.
+    let events = engine
+        .inner()
+        .db(|store| store.thread_events_after("t1", 0, 10_000))
+        .await
+        .unwrap();
+    let ended: Vec<(String, String)> = events
+        .iter()
+        .filter(|(_, e)| e["payload"]["status"] == status)
+        .map(|(_, e)| {
+            (
+                e["type"].as_str().unwrap().to_owned(),
+                e["payload"]["id"].as_str().unwrap().to_owned(),
+            )
+        })
+        .filter(|(_, id)| id.contains("native"))
+        .collect();
+    assert_eq!(
+        ended,
+        [
+            ("subagent.updated".to_owned(), "node:native".to_owned()),
+            ("node.updated".to_owned(), "node:native".to_owned()),
+            (
+                "turn-item.updated".to_owned(),
+                "item:node:native".to_owned()
+            ),
+        ]
+    );
+    let subagent = &events
+        .iter()
+        .rev()
+        .find(|(_, e)| e["type"] == "subagent.updated" && e["payload"]["id"] == "node:native")
+        .unwrap()
+        .1;
+    assert!(subagent["payload"]["completedAt"].is_string());
+    assert_eq!(subagent["nodeId"], "node:native");
+}
+
+/// No provider process survives a restart: a start ends the native subagents it finds open
+/// as cancelled (`ProviderRuntimeRecoveryService.ts`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_cancels_orphaned_native_subagents() {
+    let db = TempDb::new("orphans-restart");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        seed_native_subagents(&engine, "pt:gone").await;
+    }
+    let (engine, _) = open(&db);
+    assert_orphans_ended(&engine, "cancelled").await;
+    // No process survives a restart: a newer session's ones end too.
+    assert_eq!(
+        row_status(&engine, "t1", "subagents", "node:other").await,
+        "cancelled"
+    );
+}
+
+/// Release and recovery end a subagent thread's runless root turns and what hangs under them
+/// (`endRunlessRootTurns`), not every open row: a subagent nested there keeps its node for its
+/// own end, and a runless item outside the root turn stays too.
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_ends_only_the_runless_root_turns_of_a_subagent_thread() {
+    let db = TempDb::new("orphans-restart-root-turns");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        seed_native_subagents(&engine, "pt:gone").await;
+        engine
+            .inner()
+            .write(|tx| {
+                use crate::store::Draft;
+                let now = tx.now().to_owned();
+                tx.append(Draft::new(
+                    "child",
+                    "node.updated",
+                    json!({"id": "node:nested", "threadId": "child", "runId": null,
+                        "kind": "subagent", "status": "running", "startedAt": now,
+                        "completedAt": null}),
+                ))?;
+                tx.append(Draft::new(
+                    "child",
+                    "turn-item.updated",
+                    json!({"id": "item:loose", "threadId": "child", "runId": null,
+                        "nodeId": null, "status": "running", "type": "command_execution",
+                        "input": "ls", "startedAt": now, "completedAt": null, "updatedAt": now}),
+                ))?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+    let (engine, _) = open(&db);
+    assert_eq!(
+        row_status(&engine, "child", "nodes", "node:child-root").await,
+        "cancelled"
+    );
+    assert_eq!(
+        row_status(&engine, "child", "nodes", "node:nested").await,
+        "running"
+    );
+    assert_eq!(
+        row_status(&engine, "child", "turnItems", "item:loose").await,
+        "running"
+    );
+}
+
+/// A session whose process ends takes its native subagents with it: they end interrupted
+/// (`writeReleasedSubagentEvents` in `ProviderSessionManager.ts`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_exit_interrupts_its_native_subagents() {
+    let db = TempDb::new("orphans-exit");
+    let exit = Arc::new(tokio::sync::Notify::new());
+    let (engine, _) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent").with_process_exit(exit.clone()),
+    );
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    exit.notify_waiters();
+    // The pump stores the subagents' end after the run's.
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "subagent.updated"
+            && item["event"]["payload"]["status"] == "interrupted"
+        {
+            break;
+        }
+    }
+    assert_orphans_ended(&engine, "interrupted").await;
+    assert_newer_session_untouched(&engine).await;
+}
+
+/// A newer session's subagents stay open: one on another provider thread, one started after
+/// the release.
+async fn assert_newer_session_untouched(engine: &SqliteEngine) {
+    // The run's own end leaves their items open too: a live native subagent ends itself.
+    for id in ["node:other", "node:late"] {
+        assert_eq!(
+            row_status(engine, "t1", "turnItems", &format!("item:{id}")).await,
+            "running",
+            "{id}"
+        );
+        assert_eq!(
+            row_status(engine, "t1", "subagents", id).await,
+            "running",
+            "{id}"
+        );
+        assert_eq!(
+            row_status(engine, "t1", "nodes", id).await,
+            "running",
+            "{id}"
+        );
+    }
+}
+
+/// A closed session whose process ended interrupts its own native subagents and no newer
+/// session's.
+#[tokio::test(flavor = "current_thread")]
+async fn a_closed_session_interrupts_only_its_own_native_subagents() {
+    let db = TempDb::new("orphans-close");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    engine.inner().close_session("t1").await;
+    assert_orphans_ended(&engine, "interrupted").await;
+    assert_newer_session_untouched(&engine).await;
+}
+
+/// A session closed on a process that keeps running (Codex's shared `app-server`) leaves its
+/// native subagents open: the process may still run them. Its pump ends all the same.
+#[tokio::test(flavor = "current_thread")]
+async fn a_shared_runtime_close_leaves_native_subagents_open() {
+    let db = TempDb::new("orphans-shared");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent").with_shared_runtime());
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    engine.inner().close_session("t1").await;
+    // The pump sees the close and ends the run; wait for that, then for anything after it.
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "run.updated" && item["event"]["payload"]["status"] == "failed"
+        {
+            break;
+        }
+    }
+    engine.inner().events_stored("t1").await;
+    for (thread, kind, id) in [
+        ("t1", "subagents", "node:native"),
+        ("t1", "nodes", "node:native"),
+        ("t1", "turnItems", "item:node:native"),
+        ("child", "nodes", "node:child-root"),
+    ] {
+        assert_eq!(
+            row_status(&engine, thread, kind, id).await,
+            "running",
+            "{kind} {id}"
+        );
+    }
+}
+
+/// After that close the process still reports what it runs for the session: a subagent that
+/// ends later reaches the store, as T3's adapter keeps a child's turn context past a release.
+/// The pump reads on until the session drops its events.
+#[tokio::test(flavor = "current_thread")]
+async fn a_shared_runtime_close_still_stores_a_subagents_later_end() {
+    let db = TempDb::new("orphans-shared-late");
+    let (engine, provider) = open_with(&db, FakeProvider::new("claudeAgent").with_shared_runtime());
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    engine.inner().close_session("t1").await;
+    let late = provider
+        .after_close
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the closed session's events");
+    let mut subagent = engine
+        .inner()
+        .write(|tx| tx.entity("t1", "subagents", "node:native"))
+        .await
+        .unwrap()
+        .unwrap();
+    subagent["status"] = json!("completed");
+    subagent["completedAt"] = subagent["startedAt"].clone();
+    subagent["parentNodeId"] = json!("node:root");
+    subagent["nativeTaskRef"] = Value::Null;
+    late.send(from_json(json!({"type": "subagent.updated", "subagent": subagent})).unwrap())
+        .await
+        .unwrap();
+    drop(late);
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "subagent.updated"
+            && item["event"]["payload"]["id"] == "node:native"
+            && item["event"]["payload"]["status"] == "completed"
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        row_status(&engine, "t1", "subagents", "node:native").await,
+        "completed"
+    );
+}
+
+/// A confirmed Stop ends the run's own native subagent with it: record, node, item and its
+/// child's runless turn together (T3's `cascadeTerminalizeRunOwnedSubagents`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_confirmed_stop_ends_the_runs_native_subagents() {
+    let db = TempDb::new("orphans-stop");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "c3", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
+    let ended = until_run_ends(&mut thread).await;
+    assert_eq!(ended.last().unwrap().1["status"], "interrupted");
+    for (thread, kind, id) in [
+        ("t1", "subagents", "node:native"),
+        ("t1", "nodes", "node:native"),
+        ("t1", "turnItems", "item:node:native"),
+        ("child", "nodes", "node:child-root"),
+        ("child", "turnItems", "item:child-cmd"),
+    ] {
+        assert_eq!(
+            row_status(&engine, thread, kind, id).await,
+            "interrupted",
+            "{kind} {id}"
+        );
+    }
+    // An app-owned subagent is not the provider's to end.
+    assert_eq!(
+        row_status(&engine, "t1", "subagents", "node:app").await,
+        "running"
+    );
+}
+
+/// A Stop after the subagent's record settled still settles the open work the run's child
+/// link leads to: its item and the child's runless root turn and item (T3 keeps
+/// `linkedChildThreadIds` for the run's lifetime). Ports the `stopped` case of T3's "ends a
+/// subagent that outlived its root when the provider stream fails": the record keeps its
+/// result.
+#[tokio::test(flavor = "current_thread")]
+async fn a_confirmed_stop_after_the_record_settled_ends_the_childs_open_work() {
+    let db = TempDb::new("orphans-stop-settled");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    engine
+        .inner()
+        .write(|tx| {
+            let mut row = tx.entity("t1", "subagents", "node:native")?.unwrap();
+            row["status"] = json!("completed");
+            tx.append(crate::store::Draft::new("t1", "subagent.updated", row))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "c3", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
+    until_run_ends(&mut thread).await;
+    assert_eq!(
+        row_status(&engine, "t1", "subagents", "node:native").await,
+        "completed",
+        "a settled record keeps its result"
+    );
+    for (thread, kind, id) in [
+        ("t1", "nodes", "node:native"),
+        ("t1", "turnItems", "item:node:native"),
+        ("child", "nodes", "node:child-root"),
+        ("child", "turnItems", "item:child-cmd"),
+    ] {
+        assert_eq!(
+            row_status(&engine, thread, kind, id).await,
+            "interrupted",
+            "{kind} {id}"
+        );
+    }
+    // Each row settles once.
+    let events = engine
+        .inner()
+        .db(|store| store.thread_events_after("child", 0, 10_000))
+        .await
+        .unwrap();
+    let ends = events
+        .iter()
+        .filter(|(_, e)| {
+            e["payload"]["id"] == "node:child-root" && e["payload"]["status"] == "interrupted"
+        })
+        .count();
+    assert_eq!(ends, 1);
+}
+
+/// A failed root whose native children still run (`childTurnsContinue`) leaves them running:
+/// they settle without it (`RunExecutionService` skips the cascade).
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_root_whose_children_continue_leaves_them_running() {
+    let db = TempDb::new("orphans-failed-continue");
+    let (engine, provider) = open_with(&db, FakeProvider::new("claudeAgent"));
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    let events = provider
+        .last_events
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(tokio::sync::mpsc::WeakSender::upgrade)
+        .expect("the session's events");
+    events
+        .send(
+            from_json(
+                json!({"type": "turn.terminal", "providerThreadId": provider_thread,
+                "providerTurnId": "turn:run:t1:1", "runOrdinal": 1, "status": "failed",
+                "failure": null, "threadDisposition": "reusable", "childTurnsContinue": true}),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    drop(events);
+    let ended = until_run_ends(&mut thread).await;
+    assert_eq!(ended.last().unwrap().1["status"], "failed");
+    for (thread, kind, id) in [
+        ("t1", "subagents", "node:native"),
+        ("t1", "nodes", "node:native"),
+        ("t1", "turnItems", "item:node:native"),
+        ("child", "nodes", "node:child-root"),
+    ] {
+        assert_eq!(
+            row_status(&engine, thread, kind, id).await,
+            "running",
+            "{kind} {id}"
+        );
+    }
+}
+
+/// A Stop the provider confirmed before a close keeps its status: the close stores the
+/// terminals already received before it detaches the run.
+#[tokio::test(flavor = "current_thread")]
+async fn a_close_keeps_a_stop_the_provider_already_confirmed() {
+    let db = TempDb::new("close-after-stop");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let inner = engine.inner();
+    tokio::join!(biased;
+        inner.clone().interrupt("t1".to_owned(), "run:t1:1".to_owned()),
+        inner.close_session("t1")
+    );
+    assert_eq!(
+        row_status(&engine, "t1", "runs", "run:t1:1").await,
+        "interrupted"
+    );
+}
+
+/// Starts a hanging run on `t1` with the native subagents of [`seed_native_subagents`].
+async fn hanging_run_with_subagents(
+    engine: &SqliteEngine,
+) -> Subscription<conn_contract::ThreadStreamItem, conn_contract::GetThreadProjectionError> {
+    dispatch(engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(engine).await;
+    seed_native_subagents(engine, &provider_thread).await;
+    thread
+}
+
+async fn stop_t1<E: serde::Serialize>(
+    engine: &SqliteEngine,
+    thread: &mut Subscription<conn_contract::ThreadStreamItem, E>,
+) {
+    dispatch(
+        engine,
+        json!({"type": "run.interrupt", "commandId": "c3", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
+    let ended = until_run_ends(thread).await;
+    assert_eq!(ended.last().unwrap().1["status"], "interrupted");
+}
+
+/// Ports T3's "ends a nested native subagent and its thread when the root run is
+/// interrupted": a native subagent nested on the child thread (no run) and its own thread's
+/// root turn end with the run that owns them.
+#[tokio::test(flavor = "current_thread")]
+async fn a_confirmed_stop_ends_a_nested_native_subagent_and_its_thread() {
+    let db = TempDb::new("orphans-stop-nested");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    let mut thread = hanging_run_with_subagents(&engine).await;
+    dispatch(&engine, create("grandchild", "c-grandchild")).await;
+    engine
+        .inner()
+        .write(|tx| {
+            use crate::store::Draft;
+            let now = tx.now().to_owned();
+            tx.append(Draft::new(
+                "child",
+                "subagent.updated",
+                json!({"id": "node:nested", "threadId": "child", "runId": null,
+                    "parentNodeId": null, "origin": "provider_native", "createdBy": "agent",
+                    "driver": "claudeAgent", "providerInstanceId": "claudeAgent",
+                    "providerThreadId": null, "childThreadId": "grandchild", "prompt": "p",
+                    "title": "nested", "model": null, "status": "running", "result": null,
+                    "startedAt": now, "completedAt": null, "updatedAt": now}),
+            ))?;
+            tx.append(Draft::new(
+                "grandchild",
+                "node.updated",
+                json!({"id": "node:grandchild-root", "threadId": "grandchild", "runId": null,
+                    "kind": "root_turn", "status": "running", "startedAt": now,
+                    "completedAt": null}),
+            ))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    stop_t1(&engine, &mut thread).await;
+    assert_eq!(
+        row_status(&engine, "child", "subagents", "node:nested").await,
+        "interrupted"
+    );
+    assert_eq!(
+        row_status(&engine, "grandchild", "nodes", "node:grandchild-root").await,
+        "interrupted"
+    );
+    // Each cascade event belongs to the run that owns it; the rows keep their own `runId`
+    // (`RunExecutionService.ts`: `runId: row.runId ?? run.id`).
+    for (thread_id, event_type, id) in [
+        ("child", "subagent.updated", "node:nested"),
+        ("grandchild", "node.updated", "node:grandchild-root"),
+    ] {
+        let events = engine
+            .inner()
+            .db(move |store| store.thread_events_after(thread_id, 0, 10_000))
+            .await
+            .unwrap();
+        let (_, ended) = events
+            .iter()
+            .rev()
+            .find(|(_, e)| e["type"] == event_type && e["payload"]["id"] == id)
+            .unwrap();
+        assert_eq!(ended["payload"]["status"], "interrupted");
+        assert_eq!(ended["runId"], "run:t1:1", "{event_type} {id}");
+        assert_eq!(ended["payload"]["runId"], Value::Null, "{event_type} {id}");
+    }
+}
+
+/// The child's root turn settled while one of its items is still open: the item ends on its
+/// own.
+#[tokio::test(flavor = "current_thread")]
+async fn a_confirmed_stop_ends_an_open_item_under_a_settled_child_turn() {
+    let db = TempDb::new("orphans-stop-open-item");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    let mut thread = hanging_run_with_subagents(&engine).await;
+    engine
+        .inner()
+        .write(|tx| {
+            let mut node = tx.entity("child", "nodes", "node:child-root")?.unwrap();
+            node["status"] = json!("completed");
+            tx.append(crate::store::Draft::new("child", "node.updated", node))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    stop_t1(&engine, &mut thread).await;
+    assert_eq!(
+        row_status(&engine, "child", "nodes", "node:child-root").await,
+        "completed"
+    );
+    assert_eq!(
+        row_status(&engine, "child", "turnItems", "item:child-cmd").await,
+        "interrupted"
+    );
+}
+
+/// T3 picks a child thread's open nodes and items by run, not by kind: any node or item with
+/// no run or with the root run ends, and a streaming item stops streaming.
+#[tokio::test(flavor = "current_thread")]
+async fn a_confirmed_stop_ends_every_open_child_node_and_item_of_the_run() {
+    let db = TempDb::new("orphans-stop-owned-rows");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    let mut thread = hanging_run_with_subagents(&engine).await;
+    engine
+        .inner()
+        .write(|tx| {
+            use crate::store::Draft;
+            let now = tx.now().to_owned();
+            tx.append(Draft::new(
+                "child",
+                "node.updated",
+                json!({"id": "node:child-tool", "threadId": "child", "runId": null,
+                    "kind": "tool", "status": "running", "startedAt": now, "completedAt": null}),
+            ))?;
+            tx.append(Draft::new(
+                "child",
+                "turn-item.updated",
+                json!({"id": "item:child-text", "threadId": "child", "runId": "run:t1:1",
+                    "nodeId": null, "status": "running", "type": "assistant_message",
+                    "text": "partial", "streaming": true, "startedAt": now,
+                    "completedAt": null, "updatedAt": now}),
+            ))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    stop_t1(&engine, &mut thread).await;
+    assert_eq!(
+        row_status(&engine, "child", "nodes", "node:child-tool").await,
+        "interrupted"
+    );
+    let item = engine
+        .inner()
+        .write(|tx| tx.entity("child", "turnItems", "item:child-text"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(item["status"], "interrupted");
+    assert_eq!(item["streaming"], false);
+}
+
+/// A run's chain of nested native subagents is followed to its end, however long.
+#[tokio::test(flavor = "current_thread")]
+async fn a_confirmed_stop_follows_a_long_chain_of_nested_subagents() {
+    const DEPTH: usize = 300;
+    let db = TempDb::new("orphans-stop-chain");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    let mut thread = hanging_run_with_subagents(&engine).await;
+    for n in 0..DEPTH {
+        dispatch(
+            &engine,
+            create(&format!("chain{n}"), &format!("c-chain{n}")),
+        )
+        .await;
+    }
+    engine
+        .inner()
+        .write(|tx| {
+            use crate::store::Draft;
+            let now = tx.now().to_owned();
+            // `child` (the run's own subagent thread) leads to chain0, chain0 to chain1, ...
+            for n in 0..DEPTH {
+                let owner = if n == 0 {
+                    "child".to_owned()
+                } else {
+                    format!("chain{}", n - 1)
+                };
+                tx.append(Draft::new(
+                    &owner,
+                    "subagent.updated",
+                    json!({"id": format!("node:chain{n}"), "threadId": owner, "runId": null,
+                        "parentNodeId": null, "origin": "provider_native", "createdBy": "agent",
+                        "driver": "claudeAgent", "providerInstanceId": "claudeAgent",
+                        "providerThreadId": null, "childThreadId": format!("chain{n}"),
+                        "prompt": "p", "title": "chain", "model": null, "status": "running",
+                        "result": null, "startedAt": now, "completedAt": null, "updatedAt": now}),
+                ))?;
+            }
+            let last = format!("chain{}", DEPTH - 1);
+            tx.append(Draft::new(
+                &last,
+                "node.updated",
+                json!({"id": "node:deepest-root", "threadId": last, "runId": null,
+                    "kind": "root_turn", "status": "running", "startedAt": now,
+                    "completedAt": null}),
+            ))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    stop_t1(&engine, &mut thread).await;
+    assert_eq!(
+        row_status(
+            &engine,
+            &format!("chain{}", DEPTH - 1),
+            "nodes",
+            "node:deepest-root"
+        )
+        .await,
+        "interrupted"
+    );
+}
+
+/// The provider confirmed a Stop and its terminal waits in the channel while the pump is held
+/// by a slow write. The pump stores it in order: the run ends interrupted, not failed.
+#[tokio::test(flavor = "current_thread")]
+async fn a_close_behind_a_slow_write_keeps_a_confirmed_stop() {
+    let ended =
+        close_behind_a_slow_write(FakeProvider::new("claudeAgent"), Behind::ConfirmedStop).await;
+    assert_eq!(ended, "interrupted");
+}
+
+/// No Stop: the provider's close itself ends the turn as interrupted while the pump is held by
+/// a slow write. The close names itself as the cause, so the run is detached: it fails as a
+/// session that ended during the turn.
+#[tokio::test(flavor = "current_thread")]
+async fn a_close_does_not_count_its_own_interrupt_as_a_stop() {
+    let provider = FakeProvider::new("claudeAgent").with_close_interrupting();
+    let ended = close_behind_a_slow_write(provider, Behind::Nothing).await;
+    assert_eq!(ended, "failed");
+}
+
+/// A continuation request the pump read ahead and dispatched waits in the channel with the
+/// message when the session closes. The close's own interrupted end still detaches the run.
+#[tokio::test(flavor = "current_thread")]
+async fn a_close_after_a_read_ahead_continuation_detaches_the_run() {
+    let provider = FakeProvider::new("claudeAgent").with_close_interrupting();
+    let ended = close_behind_a_slow_write(provider, Behind::Continuation).await;
+    assert_eq!(ended, "failed");
+}
+
+/// A Stop the provider never confirmed is not confirmed by the close: the close's own
+/// interrupted end detaches the run, which fails.
+#[tokio::test(flavor = "current_thread")]
+async fn a_stop_ended_only_by_the_close_is_not_a_confirmed_stop() {
+    let db = TempDb::new("close-unconfirmed-stop");
+    let (engine, _) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent").with_close_interrupting(),
+    );
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "stuck")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "c3", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
+    // The provider did not confirm it: the Stop is marked unresponsive.
+    loop {
+        let item = next(&mut thread).await;
+        let payload = &item["event"]["payload"];
+        if payload["type"] == "run_interrupt_request" && payload["unresponsiveAt"].is_string() {
+            break;
+        }
+    }
+    engine.inner().close_session("t1").await;
+    let ended = until_run_ends(&mut thread).await;
+    assert_eq!(ended.last().unwrap().1["status"], "failed");
+}
+
+/// What waits in the channel behind the assistant message in [`close_behind_a_slow_write`].
+#[derive(Clone, Copy, Debug)]
+enum Behind {
+    Nothing,
+    /// The provider's confirmation of a Stop.
+    ConfirmedStop,
+    /// A continuation request, which the pump reads ahead of the message's write.
+    Continuation,
+}
+
+/// Holds the store, sends an assistant message and `behind` on the running turn, closes the
+/// session, then lets the store go. The run's end status.
+async fn close_behind_a_slow_write(provider: FakeProvider, behind: Behind) -> String {
+    let db = TempDb::new(&format!("close-slow-write-{behind:?}"));
+    let (engine, provider) = open_with(&db, provider);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    // Hold the store.
+    let (held, holding) = tokio::sync::oneshot::channel();
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    let inner = engine.inner().clone();
+    let blocker = tokio::spawn(async move {
+        inner
+            .write(move |_| {
+                let _ = held.send(());
+                let _ = hold.recv();
+                Ok(())
+            })
+            .await
+    });
+    holding.await.unwrap();
+    let events = provider
+        .last_events
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(tokio::sync::mpsc::WeakSender::upgrade)
+        .expect("the session's events");
+    let now = "2026-01-01T00:00:00.000Z";
+    let mut sent = vec![
+        json!({"type": "message.updated", "message": {"createdBy": "agent",
+        "creationSource": "provider", "id": "message:slow", "threadId": "t1",
+        "runId": "run:t1:1", "nodeId": null, "role": "assistant", "text": "x",
+        "attachments": [], "streaming": false, "createdAt": now, "updatedAt": now}}),
+    ];
+    match behind {
+        Behind::Nothing => {}
+        Behind::ConfirmedStop => sent.push(
+            json!({"type": "turn.terminal", "providerThreadId": provider_thread,
+            "providerTurnId": "turn:run:t1:1", "runOrdinal": 1, "status": "interrupted",
+            "failure": null, "threadDisposition": "reusable"}),
+        ),
+        Behind::Continuation => sent
+            .push(json!({"type": "continuation.requested", "threadId": "t1",
+            "providerThreadId": provider_thread, "detail": "Subagent completed: helper"})),
+    }
+    for event in sent {
+        events.send(from_json(event).unwrap()).await.unwrap();
+    }
+    drop(events);
+    let inner = engine.inner().clone();
+    let closing = tokio::spawn(async move { inner.close_session("t1").await });
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while provider.closed.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the close reached the session");
+    release.send(()).unwrap();
+    blocker.await.unwrap().unwrap();
+    closing.await.unwrap();
+    let ended = until_run_ends(&mut thread).await;
+    ended.last().unwrap().1["status"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// A clean stop leaves them open for the next start, which cancels them.
+#[tokio::test(flavor = "current_thread")]
+async fn a_shutdown_leaves_native_subagents_for_the_next_start() {
+    let db = TempDb::new("orphans-shutdown");
+    {
+        let exit = Arc::new(tokio::sync::Notify::new());
+        let (engine, _) = open_with(
+            &db,
+            FakeProvider::new("claudeAgent").with_process_exit(exit.clone()),
+        );
+        dispatch(&engine, create("t1", "c1")).await;
+        let mut thread = engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut thread).await;
+        dispatch(&engine, message("t1", "c2", "hang")).await;
+        until_provider_turn(&mut thread).await;
+        let provider_thread = provider_thread_of_t1(&engine).await;
+        seed_native_subagents(&engine, &provider_thread).await;
+        engine.begin_shutdown();
+        exit.notify_waiters();
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        engine.shutdown().await;
+        assert_eq!(
+            row_status(&engine, "t1", "subagents", "node:native").await,
+            "running"
+        );
+        assert_eq!(
+            row_status(&engine, "child", "nodes", "node:child-root").await,
+            "running"
+        );
+    }
+    let (engine, _) = open(&db);
+    assert_orphans_ended(&engine, "cancelled").await;
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn restart_continuations_stop_after_three_in_a_row() {
     let db = TempDb::new("restart-loop");
@@ -2166,6 +3210,59 @@ async fn a_restart_holds_an_undelivered_message_for_the_user() {
     let p = run_to_end(&engine, "t1", "run:t1:1").await;
     assert_eq!(p["runs"][0]["status"], "completed");
     assert_eq!(p["messages"][1]["text"], "echo: late");
+}
+
+/// A store the pre-merge branch wrote is at version 6 with `message_keys.search_text` and no
+/// receipt owners (that branch numbered its search step 5 and had no receipts step). It opens
+/// at 5 without the column, gets the receipt columns, and commands and their retries work.
+#[tokio::test(flavor = "current_thread")]
+async fn a_version_6_store_without_receipt_owners_gets_them() {
+    let db = TempDb::new("receipt-owners-v6");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+    }
+    {
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE receipts DROP COLUMN owner_kind;
+             ALTER TABLE receipts DROP COLUMN owner_id;
+             ALTER TABLE receipts DROP COLUMN error;
+             ALTER TABLE message_keys ADD COLUMN search_text TEXT;
+             PRAGMA user_version = 6;",
+        )
+        .unwrap();
+    }
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t2", "c2")).await;
+    dispatch(&engine, message("t2", "c3", "hello")).await;
+    let retried = engine
+        .dispatch(from_json(create("t2", "c2")).unwrap())
+        .await;
+    assert!(retried.is_ok(), "{retried:?}");
+    drop(engine);
+    let conn = rusqlite::Connection::open(db.path()).unwrap();
+    let columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('receipts')
+             WHERE name IN ('owner_kind', 'owner_id', 'error')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(columns, 3);
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 5);
+    let search_text: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('message_keys') WHERE name = 'search_text'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(search_text, 0);
 }
 
 /// An inert rehearsal copy (`recover_runs` off) leaves a run it found active as it was: no
@@ -8719,6 +9816,207 @@ async fn search(engine: &SqliteEngine, query: &str) -> Vec<String> {
         .collect()
 }
 
+/// `serializeAssistantCitation`: a quote of `thread:quoted`'s answer, as the client writes it.
+pub(crate) fn citation(text: &str, comment: &str, prefix: &str, suffix: &str) -> String {
+    // `URLSearchParams` encoding: spaces as `+`, unreserved bytes as they are.
+    let form = |value: &str| {
+        value
+            .bytes()
+            .map(|b| match b {
+                b' ' => "+".to_owned(),
+                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'*' => {
+                    char::from(b).to_string()
+                }
+                _ => format!("%{b:02X}"),
+            })
+            .collect::<String>()
+    };
+    let end = text.encode_utf16().count();
+    format!(
+        "[Assistant quote](t3-citation://v1/environment%3Alocal/thread%3Aquoted/quoted-answer?text={}&comment={}&start=0&end={end}&prefix={}&suffix={})",
+        form(text),
+        form(comment),
+        form(prefix),
+        form(suffix)
+    )
+}
+
+/// Ports T3's "matches the readable text of quotes and their comments" and "finds accented,
+/// CJK, and apostrophe words of a quote through the index" (`ThreadSearch.test.ts`): search
+/// reads a citation as its text and comment, never its hidden link.
+#[tokio::test(flavor = "current_thread")]
+async fn search_reads_a_citation_as_its_text_and_comment() {
+    let db = TempDb::new("search-citation");
+    let (engine, _) = open(&db);
+    write_citations(&engine).await;
+    assert_citation_search(&engine).await;
+}
+
+/// Stores whose index holds older text read it again on open, once: main at schema 4 or 5
+/// with fold 3 (the raw link folded), and a pre-merge build of readable search at 6 (its
+/// `search_text` column, readable text unfolded). All end at 5 with the folded readable index.
+#[tokio::test(flavor = "current_thread")]
+async fn an_older_search_index_is_read_again_on_upgrade() {
+    for (from, fold, search_text) in [(4, Some(3), false), (5, Some(3), false), (6, None, true)] {
+        let db = TempDb::new(&format!("search-upgrade-{from}"));
+        {
+            let (engine, _) = open(&db);
+            write_citations(&engine).await;
+        }
+        {
+            let conn = rusqlite::Connection::open(db.path()).unwrap();
+            // A store at 4 has no receipt owners yet (step 5).
+            if from == 4 {
+                conn.execute_batch(
+                    "ALTER TABLE receipts DROP COLUMN owner_kind;
+                     ALTER TABLE receipts DROP COLUMN owner_id;
+                     ALTER TABLE receipts DROP COLUMN error;",
+                )
+                .unwrap();
+            }
+            if search_text {
+                conn.execute_batch("ALTER TABLE message_keys ADD COLUMN search_text TEXT")
+                    .unwrap();
+            }
+            let mark = match fold {
+                Some(fold) => format!(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('message_search_folded', {fold});"
+                ),
+                None => "DELETE FROM meta WHERE key = 'message_search_folded';".to_owned(),
+            };
+            conn.execute_batch(&format!(
+                "DELETE FROM message_search;
+                 INSERT INTO message_search (rowid, text)
+                   SELECT k.id, lower(json_extract(e.body, '$.text')) FROM message_keys k
+                   JOIN entities e
+                     ON e.thread_id = k.thread_id AND e.kind = 'messages' AND e.id = k.message_id;
+                 {mark}
+                 PRAGMA user_version = {from};"
+            ))
+            .unwrap();
+            let old: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM message_search WHERE message_search MATCH '\"beacon01\"'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                old, 1,
+                "from {from}: the old index holds the hidden context"
+            );
+        }
+        let (engine, _) = open(&db);
+        assert_citation_search(&engine).await;
+        drop(engine);
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 5, "from {from}");
+        let column: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('message_keys') WHERE name = 'search_text'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(column, 0, "from {from}");
+    }
+}
+
+/// `t1`: a quote with hidden context and a comment, then plain words; `t2`: a quote with
+/// accented, CJK and Cyrillic words; `t3`: a quote of accented words with hidden context, then
+/// an accented word of its own. Written as T3's tests apply them, without a turn: the
+/// fake provider would echo the provider's expansion, whose JSON carries the hidden context.
+async fn write_citations(engine: &SqliteEngine) {
+    let quote = citation(
+        "A lighthouse guides ships safely through the darkness.",
+        "what are you talking about",
+        "beacon01",
+        "harbor",
+    );
+    let accented = citation(
+        "The kittiwake's résumé mentions 灯台の光 twice.",
+        "naïve question в логах",
+        "",
+        "",
+    );
+    let accented_quote = citation("Le café lumière ferme tard.", "", "beacon02", "quai");
+    for (thread, text) in [
+        ("t1", format!("{quote} quiet silver lantern")),
+        ("t2", accented),
+        ("t3", format!("{accented_quote} Déjà vu")),
+    ] {
+        dispatch(engine, create(thread, &format!("{thread}:c1"))).await;
+        let thread = thread.to_owned();
+        engine
+            .inner()
+            .write(move |tx| {
+                let now = tx.now().to_owned();
+                tx.append(crate::store::Draft::new(
+                    &thread,
+                    "message.updated",
+                    json!({"createdBy": "user", "creationSource": "web",
+                        "id": format!("message:{thread}"), "threadId": thread, "runId": null,
+                        "nodeId": null, "role": "user", "text": text, "attachments": [],
+                        "streaming": false, "createdAt": now, "updatedAt": now}),
+                ))?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+}
+
+async fn assert_citation_search(engine: &SqliteEngine) {
+    assert_eq!(search(engine, "what are you talking about").await, ["t1"]);
+    assert_eq!(search(engine, "ships safely through").await, ["t1"]);
+    assert_eq!(search(engine, "lantern").await, ["t1"]);
+    // The hidden selection context and the link's ids are not text the reader sees.
+    for hidden in ["beacon01", "harbor", "quoted-answer", "t3-citation"] {
+        assert_eq!(
+            search(engine, hidden).await,
+            Vec::<String>::new(),
+            "{hidden}"
+        );
+    }
+    let found = call(
+        engine,
+        "orchestration.searchThreads",
+        json!({"query": "talking about"}),
+    )
+    .await
+    .unwrap();
+    let snippet = found["matches"][0]["snippet"].as_str().unwrap();
+    assert!(
+        snippet.contains("Comment: what are you talking about") && !snippet.contains("t3-citation"),
+        "{snippet}"
+    );
+    for query in [
+        "kittiwake's",
+        "kittiwake’s",
+        "résumé",
+        "灯台の光",
+        "naïve",
+        "логах в",
+    ] {
+        assert_eq!(search(engine, query).await, ["t2"], "{query}");
+    }
+    // The index holds the readable text folded: a quote's accented words and the message's
+    // own are found without accents, its hidden context is not.
+    for query in ["cafe lumiere", "deja vu"] {
+        assert_eq!(search(engine, query).await, ["t3"], "{query}");
+    }
+    for hidden in ["beacon02", "quai"] {
+        assert_eq!(
+            search(engine, hidden).await,
+            Vec::<String>::new(),
+            "{hidden}"
+        );
+    }
+}
+
 /// T3 "ThreadSearch short words outside ASCII: finds them in any case or accent", plus the
 /// ordinary message of audit 9.5: a query without accents finds an accented message, on a
 /// store indexed before folding (after the migration) and for a message sent after it.
@@ -9497,6 +10795,52 @@ async fn a_scheduled_fresh_run_keeps_a_busy_session_open() {
         "closing the busy session would end its work"
     );
     assert_eq!(count(&provider.sessions), 2);
+}
+
+/// A busy session a fresh schedule moved aside still ends its native subagents when its
+/// process exits on its own, though it is no longer the thread's current session.
+#[tokio::test(flavor = "current_thread")]
+async fn a_detached_session_that_exits_interrupts_its_native_subagents() {
+    let db = TempDb::new("fresh-scheduled-exit");
+    let exit = Arc::new(tokio::sync::Notify::new());
+    let (engine, provider) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent").with_process_exit(exit.clone()),
+    );
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    let fire = |command: &str, text: &str| {
+        fresh_message(
+            "t1",
+            command,
+            text,
+            json!({"scheduledTaskId": "task:busy", "dispatchMode": {"type": "queue_after_active"}}),
+        )
+    };
+    dispatch(&engine, fire("c2", "background-hold")).await;
+    until_run_ends(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    dispatch(&engine, fire("c3", "second")).await;
+    let ended = until_run_ends(&mut thread).await;
+    assert_eq!(ended.last().unwrap().1["id"], "run:t1:2");
+    assert_eq!(count(&provider.sessions), 2);
+    assert_eq!(count(&provider.closed), 0);
+    exit.notify_waiters();
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "subagent.updated"
+            && item["event"]["payload"]["id"] == "node:native"
+            && item["event"]["payload"]["status"] == "interrupted"
+        {
+            break;
+        }
+    }
+    assert_orphans_ended(&engine, "interrupted").await;
 }
 
 /// Force stop ends every session of the thread: the current one and one a fresh schedule

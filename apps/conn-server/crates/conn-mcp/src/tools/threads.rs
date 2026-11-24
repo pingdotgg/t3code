@@ -28,6 +28,27 @@ fn thread_id(args: &Args) -> &str {
     str_arg(args, "threadId").unwrap_or_default()
 }
 
+/// `threadId` and its projection, also in a thread chip's form:
+/// `t3-context://v1/thread/thread_<id>` names the thread `<id>`
+/// (`toKindScopedComposerContextId`). An id that is a thread here stays as given.
+async fn chip_thread(cx: &Cx<'_>, args: &Args) -> Result<(String, Value), ToolError> {
+    let id = thread_id(args);
+    let found = cx.projection(id).await;
+    if let Some(bare) = id.strip_prefix("thread_").filter(|bare| !bare.is_empty())
+        && matches!(
+            found,
+            Err(ToolError::Failure {
+                code: "thread_not_found",
+                ..
+            })
+        )
+        && let Ok(projection) = cx.projection(bare).await
+    {
+        return Ok((bare.to_owned(), projection));
+    }
+    Ok((id.to_owned(), found?))
+}
+
 /// The thread a tool acts on: `threadId`, or the caller's own thread.
 fn target_id<'a>(cx: &'a Cx<'_>, args: &'a Args) -> Result<&'a str, ToolError> {
     str_arg(args, "threadId")
@@ -112,8 +133,7 @@ pub(super) async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
 }
 
 pub(super) async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    let id = thread_id(args);
-    let projection = cx.projection(id).await?;
+    let (_, projection) = chip_thread(cx, args).await?;
     let view_name = str_arg(args, "view").unwrap_or("messages");
     let limit = u64_arg(args, "limit").map_or(DEFAULT_READ_LIMIT, |l| l.min(100) as usize);
     let max_chars =
@@ -776,9 +796,10 @@ pub(super) fn normalize_selection(mut selection: Value) -> Value {
 }
 
 pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    let id = thread_id(args);
-    cx.writes_threads(&[str_arg(args, "threadId")]).await?;
-    let projection = cx.projection(id).await?;
+    let (id, projection) = chip_thread(cx, args).await?;
+    let id = id.as_str();
+    cx.writes_threads(&[str_arg(args, "threadId").map(|_| id)])
+        .await?;
     let fresh = bool_arg(args, "freshContext") == Some(true);
     // A fresh send never joins a running turn, so it needs none to steer or restart.
     let mode = match str_arg(args, "mode").unwrap_or("auto") {

@@ -120,6 +120,9 @@ pub struct Mapper<E: Env> {
     echo_mode: EchoMode,
     /// Claude's pending `ScheduleWakeup` (`scheduledWakeupsByNativeThread`).
     scheduled: wakes::Scheduled,
+    /// The session began to close: a turn ended from now on ends by the close
+    /// ([`conn_provider::TerminalCause::SessionClosed`]).
+    closing: bool,
     /// The picker's models for the turn's catalog ([`Self::set_catalog`]).
     catalog: Vec<Value>,
 }
@@ -365,6 +368,7 @@ impl<E: Env> Mapper<E> {
             wakes: wakes::Wakes::default(),
             echo_mode: EchoMode::Unknown,
             scheduled: wakes::Scheduled::default(),
+            closing: false,
             catalog: Vec::new(),
         }
     }
@@ -382,6 +386,11 @@ impl<E: Env> Mapper<E> {
         } else {
             crate::catalog::resolve_slug_in(&self.catalog, value)
         }
+    }
+
+    /// The session began to close: the turns it ends from now on end by the close.
+    pub fn begin_close(&mut self) {
+        self.closing = true;
     }
 
     /// A new CLI process: its `modelUsage` starts from nothing (`modelLedger: new Map()`).
@@ -1478,6 +1487,12 @@ impl<E: Env> Mapper<E> {
             failure: failure.and_then(|f| from_json(f).ok()),
             retry,
             thread_disposition: ThreadDisposition::Reusable,
+            child_turns_continue: false,
+            cause: if self.closing {
+                conn_provider::TerminalCause::SessionClosed
+            } else {
+                conn_provider::TerminalCause::Provider
+            },
             reason: None,
         })));
     }

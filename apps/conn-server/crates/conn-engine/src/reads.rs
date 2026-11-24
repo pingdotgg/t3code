@@ -696,7 +696,9 @@ impl Store {
                 continue;
             }
             let message = &hit["message"];
-            let text = link_labels(message["text"].as_str().unwrap_or_default());
+            let stored = message["text"].as_str().unwrap_or_default();
+            let readable = crate::store::readable_search_text(stored);
+            let text = link_labels(readable.as_deref().unwrap_or(stored));
             let Some(at) = search.accept(&text) else {
                 continue;
             };

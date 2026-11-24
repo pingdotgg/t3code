@@ -214,6 +214,7 @@ const QUERY_METHODS = new Set([
   "setPermissionMode",
   "applyFlagSettings",
   "setMcpServers",
+  "reconnectMcpServer",
   "stopTask",
   "backgroundTasks",
   "initializationResult",

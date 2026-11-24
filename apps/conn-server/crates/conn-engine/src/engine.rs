@@ -421,8 +421,12 @@ impl SqliteEngine {
         // copy cancels everything.
         store.reconcile_after_process_loss(config.recover_runs)?;
         let effects_wake = store.effects_wake.clone();
-        let (unfinished, pending_rollbacks) = if config.recover_runs {
-            (store.unfinished_runs()?, store.unsettled_rollbacks()?)
+        let (unfinished, pending_rollbacks, orphaned) = if config.recover_runs {
+            (
+                store.unfinished_runs()?,
+                store.unsettled_rollbacks()?,
+                store.threads_with_live_native_subagents()?,
+            )
         } else {
             Default::default()
         };
@@ -444,6 +448,10 @@ impl SqliteEngine {
                 &pending.phase,
                 pending.snapshot.as_ref(),
             )?;
+        }
+        // No provider process survives a restart: open native subagents never report an end.
+        for thread_id in &orphaned {
+            crate::families::end_orphaned_native_subagents(&mut tx, thread_id, "cancelled", None)?;
         }
         let mut effects = vec![];
         // T3 holds the prompts queued in a thread the previous process left unfinished, also
