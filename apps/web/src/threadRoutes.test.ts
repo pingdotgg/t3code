@@ -153,6 +153,17 @@ describe("threadRoutes", () => {
         draftThreadExists: false,
       }),
     ).toBe("missing");
+    // A link to an environment this app has no connection to never bootstraps.
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: false,
+        serverThreadExists: false,
+        serverThreadDeleted: false,
+        unlistedThreadDetail: EMPTY_ENVIRONMENT_THREAD_STATE,
+        draftThreadExists: false,
+        environmentUnreachable: true,
+      }),
+    ).toBe("unreachable");
   });
 
   it("opens an unlisted server thread once its detail arrives, without waiting for the shell", () => {

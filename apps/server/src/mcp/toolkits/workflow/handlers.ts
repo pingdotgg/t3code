@@ -41,7 +41,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
         return yield* workflows.get(runId).pipe(Effect.mapError(refused));
       }),
     ),
-    McpToolAccess.writes((input) =>
+    McpToolAccess.writesOwnerWork("start or change workflow runs, or read hook paths", (input) =>
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
         // A hook's path holds its secret, and posting to it starts a run.
