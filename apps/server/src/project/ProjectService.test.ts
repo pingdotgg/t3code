@@ -634,7 +634,7 @@ it.layer(layerTest)("ProjectService", (it) => {
     }),
   );
 
-  it.effect("saves a project's default model where Settings reads it once folded", () =>
+  it.effect("saves a project's default model in its Settings overrides", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;
       const settings = yield* ServerSettings.ServerSettingsService;
@@ -645,7 +645,6 @@ it.layer(layerTest)("ProjectService", (it) => {
         options: [{ id: "effort", value: "medium" }],
       };
       yield* settings.updateSettings({
-        projectSettingsFolded: true,
         projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "worktree" } },
       });
       yield* service.create({
