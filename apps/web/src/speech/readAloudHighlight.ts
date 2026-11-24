@@ -11,6 +11,8 @@ const UNSPOKEN_SELECTOR =
 const FOLLOW_PAUSE_MS = 3_000;
 /** The word stays in the middle of the timeline; leaving that band scrolls it to 40%. */
 const FOLLOW_BAND = { top: 0.2, bottom: 0.8, target: 0.4 };
+/** The elements read aloud as one block each; matches `rehypeSpeechOffsets`. */
+const SPEECH_BLOCK_SELECTOR = "p, li, h1, h2, h3, h4, h5, h6, tr";
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
 
 const roots = new Map<string, HTMLElement>();
@@ -81,7 +83,7 @@ function paint() {
   follow(wordRange ?? blockRange);
 }
 
-/** The innermost tagged element that holds the whole block. */
+/** The element that renders the block: by its markdown range, else by its text. */
 function blockElement(root: HTMLElement, block: ReadAloudHighlight["block"]) {
   let best: { element: HTMLElement; start: number } | null = null;
   for (const element of root.querySelectorAll<HTMLElement>("[data-speech-start]")) {
@@ -91,7 +93,22 @@ function blockElement(root: HTMLElement, block: ReadAloudHighlight["block"]) {
     if (start <= block.start && end >= block.end && (!best || start >= best.start))
       best = { element, start };
   }
-  return best ? best.element : null;
+  return best ? best.element : blockElementByText(root, block);
+}
+
+/**
+ * Words writes source positions only on list items, so paragraphs, headings and table rows
+ * carry no range. Take the first innermost block whose text holds the block's first and last words.
+ */
+function blockElementByText(root: HTMLElement, block: ReadAloudHighlight["block"]) {
+  for (const element of root.querySelectorAll<HTMLElement>(SPEECH_BLOCK_SELECTOR)) {
+    if (element.querySelector(SPEECH_BLOCK_SELECTOR)) continue;
+    const text = spokenText(element);
+    const first = locate(text, block.first);
+    const last = locate(text, block.last);
+    if (first && last && first.start <= last.start) return element;
+  }
+  return null;
 }
 
 type SpokenText = {
