@@ -367,7 +367,7 @@ pub async fn provision(
         Some(request.base_ref.clone()),
         &STAGE_ORDER,
     );
-    let mut created: Option<(PathBuf, String)> = None;
+    let mut created: Option<(worktree::Claim, String)> = None;
     let mut dropped = FinishOnDrop {
         setups,
         thread,
@@ -377,14 +377,14 @@ pub async fn provision(
     dropped.armed = false;
     if let Err(error) = &result {
         let left = match created {
-            Some((path, branch)) => {
-                worktree::discard(request.project_root.as_path(), &path, &branch)
+            Some((claim, branch)) => {
+                worktree::discard_claim(request.project_root.as_path(), &claim, &branch)
                     .await
                     .err()
                     .map(|e| {
                         format!(
                             "The worktree at {} could not be removed: {e}",
-                            path.display()
+                            claim.path.display()
                         )
                     })
             }
@@ -407,7 +407,7 @@ async fn provision_stages(
     setups: &WorktreeSetups,
     request: &ProvisionRequest,
     cancel: &Notify,
-    created: &mut Option<(PathBuf, String)>,
+    created: &mut Option<(worktree::Claim, String)>,
 ) -> Result<ProvisionedWorktree, ProvisionError> {
     let thread = request.thread_id.as_str();
     let root = request.project_root.as_path();
@@ -443,12 +443,22 @@ async fn provision_stages(
         ),
     )
     .await;
-    // Known before the checkout ran: a cancel during it (a slow `post-checkout` hook) still
-    // removes the checkout and its branch.
-    if let Some(path) = claimed {
-        *created = Some((path, branch.clone()));
-    }
-    let worktree = made?;
+    // A cancel during the checkout removes what it started. A failed checkout (a failing
+    // `post-checkout` hook) keeps it, as Git does: the hook may have written files.
+    let worktree = match made {
+        Err(ProvisionError::Cancelled) => {
+            *created = claimed.map(|claim| (claim, branch.clone()));
+            return Err(ProvisionError::Cancelled);
+        }
+        made => made?,
+    };
+    *created = Some((
+        worktree::Claim {
+            path: worktree.path.clone(),
+            lock_reason: None,
+        },
+        branch.clone(),
+    ));
     let path_text = worktree.path.to_string_lossy().into_owned();
     setups.update(thread, |s| {
         s.worktree_path = Some(path_text.clone());

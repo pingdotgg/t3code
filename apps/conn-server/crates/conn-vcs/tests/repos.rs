@@ -764,6 +764,105 @@ async fn a_worktree_cleanup_cannot_remove_keeps_its_branch_and_says_so() {
     git(&fx.work, &["worktree", "unlock", &path]);
 }
 
+/// T3 and Git keep the checkout when its `post-checkout` hook fails: only a cancel abandons it.
+#[tokio::test]
+async fn a_failed_post_checkout_hook_keeps_the_checkout_and_its_files() {
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, WorktreeSetups};
+    use std::os::unix::fs::PermissionsExt;
+
+    let fx = Fixture::new("hook-fails");
+    let hook = fx.work.join(".git/hooks/post-checkout");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(&hook, "#!/bin/sh\necho kept > hook-notes.txt\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let setups = WorktreeSetups::new();
+    let result = setup::provision(
+        &setups,
+        ProvisionRequest {
+            thread_id: "hook".into(),
+            project_root: fx.work.clone(),
+            base_ref: "main".into(),
+            branch: Some("feature-hook".into()),
+            start_from_origin: false,
+            setup_script: None,
+            worktrees_dir: fx.root.path().join("worktrees"),
+        },
+    )
+    .await;
+    assert!(
+        matches!(result, Err(ProvisionError::Failed(_))),
+        "{result:?}"
+    );
+    let path = worktree::list_worktrees(&fx.work)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|w| w.ref_name.as_deref() == Some("feature-hook"))
+        .expect("the checkout was removed")
+        .path;
+    assert_eq!(
+        std::fs::read_to_string(path.join("hook-notes.txt")).unwrap(),
+        "kept\n"
+    );
+    assert!(
+        !git(&fx.work, &["worktree", "list", "--porcelain"]).contains("locked"),
+        "the kept checkout stayed locked"
+    );
+}
+
+/// T3's lock reason: a cancel while Git still populates the checkout (here a slow smudge
+/// filter) removes the partial checkout and its branch, so a retry can reuse the name.
+#[tokio::test]
+async fn a_cancel_while_git_populates_the_checkout_removes_it() {
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, WorktreeSetups};
+
+    let fx = Fixture::new("populating");
+    write(&fx.work, ".gitattributes", "*.slow filter=slow\n");
+    write(&fx.work, "big.slow", "data\n");
+    commit_all(&fx.work, "slow file");
+    let pid = fx.root.path().join("filter.pid");
+    git(
+        &fx.work,
+        &[
+            "config",
+            "filter.slow.smudge",
+            &format!("sh -c 'echo $$ > {}; sleep 31; cat'", pid.display()),
+        ],
+    );
+    let setups = WorktreeSetups::new();
+    let request = |thread: &str| ProvisionRequest {
+        thread_id: thread.into(),
+        project_root: fx.work.clone(),
+        base_ref: "main".into(),
+        branch: Some("feature-slow".into()),
+        start_from_origin: false,
+        setup_script: None,
+        worktrees_dir: fx.root.path().join("worktrees"),
+    };
+    let run = {
+        let setups = setups.clone();
+        let request = request("slow");
+        tokio::spawn(async move { setup::provision(&setups, request).await })
+    };
+    read_pid(&pid).await;
+    assert!(setups.cancel("slow"));
+    let result = run.await.unwrap();
+    assert!(
+        matches!(result, Err(ProvisionError::Cancelled)),
+        "{result:?}"
+    );
+    let left = setups.get("slow").unwrap().error;
+    assert_eq!(left, None, "the cleanup left something");
+    assert!(
+        !git(&fx.work, &["worktree", "list", "--porcelain"]).contains("feature-slow"),
+        "the partial checkout stayed registered"
+    );
+    assert!(
+        !git(&fx.work, &["branch", "--list", "feature-slow"]).contains("feature-slow"),
+        "the branch stayed"
+    );
+}
+
 /// Reads a PID the script wrote, waiting up to 10 s for the file.
 async fn read_pid(path: &std::path::Path) -> u32 {
     for _ in 0..200 {

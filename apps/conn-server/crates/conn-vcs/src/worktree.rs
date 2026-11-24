@@ -123,12 +123,20 @@ pub async fn create_worktree(input: &CreateWorktree) -> VcsResult<Worktree> {
     create_worktree_claiming(input, &mut None).await
 }
 
-/// [`create_worktree`], reporting the checkout's path in `claimed` once its new branch exists
-/// and before `git worktree add` runs (T3's `onWorktreeClaimed`). A caller that stops this
-/// future during the checkout (a slow `post-checkout` hook) then knows what to remove.
+/// A checkout [`create_worktree_claiming`] started: its path, and the lock reason Git holds on
+/// its registration until the checkout ends (`None` when this Git cannot set one).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Claim {
+    pub path: PathBuf,
+    pub lock_reason: Option<String>,
+}
+
+/// [`create_worktree`], reporting the checkout in `claimed` once its new branch exists and
+/// before `git worktree add` runs. A caller that stops this future during the checkout then
+/// knows what to remove with [`discard_claim`].
 pub async fn create_worktree_claiming(
     input: &CreateWorktree,
-    claimed: &mut Option<PathBuf>,
+    claimed: &mut Option<Claim>,
 ) -> VcsResult<Worktree> {
     let cwd = input.cwd.as_path();
     refuse_option_like(cwd, &input.ref_name)?;
@@ -146,6 +154,14 @@ pub async fn create_worktree_claiming(
         input.ref_name.clone()
     };
 
+    // Git writes the lock during registration, before the checkout or any hook runs, so a
+    // checkout killed midway still carries a reason that proves it is ours.
+    let lock_reason = match &input.new_ref_name {
+        Some(_) => supports_lock_reason(cwd)
+            .await
+            .then(|| format!("t3-create-{}", conn_support::uuid_v4())),
+        None => None,
+    };
     if let Some(new) = &input.new_ref_name {
         git(
             OPERATION,
@@ -174,7 +190,10 @@ pub async fn create_worktree_claiming(
     }
 
     if input.new_ref_name.is_some() {
-        *claimed = Some(path.clone());
+        *claimed = Some(Claim {
+            path: path.clone(),
+            lock_reason: lock_reason.clone(),
+        });
     }
     let workers = repo::config_get(cwd, "checkout.workers")
         .await
@@ -188,15 +207,26 @@ pub async fn create_worktree_claiming(
             format!("checkout.workers={workers}"),
             "worktree".into(),
             "add".into(),
+        ]
+        .into_iter()
+        .chain(
+            lock_reason
+                .iter()
+                .flat_map(|reason| ["--lock".to_owned(), "--reason".into(), reason.clone()]),
+        )
+        .chain([
             "--".into(),
             path.to_string_lossy().into_owned(),
             target.clone(),
-        ],
+        ]),
     )
     .timeout(Duration::from_secs(3600))
     .max_stdout(1_000_000, OnLimit::Truncate)
     .run()
     .await;
+    if let Some(reason) = &lock_reason {
+        let _ = unlock_registration(cwd, reason).await;
+    }
     if let Err(error) = added {
         if let Some(new) = &input.new_ref_name {
             let _ = git(OPERATION, cwd, ["branch", "-D", "--", new.as_str()])
@@ -366,6 +396,61 @@ pub async fn delete_branch(cwd: &Path, branch: &str, removal: Removal) -> VcsRes
 pub async fn discard(cwd: &Path, path: &Path, branch: &str) -> VcsResult<()> {
     remove_worktree(cwd, path, Removal::Force).await?;
     delete_branch(cwd, branch, Removal::Force).await
+}
+
+/// Whether this Git takes `git worktree add --lock --reason`.
+async fn supports_lock_reason(cwd: &Path) -> bool {
+    match git(OPERATION, cwd, ["worktree", "add", "-h"])
+        .allow_exit(&[129])
+        .run()
+        .await
+    {
+        Ok(out) => out.stdout_text().contains("--reason") || out.stderr.contains("--reason"),
+        Err(e) => e.stderr().contains("--reason"),
+    }
+}
+
+/// Unlocks the worktree whose lock carries `reason` and returns its path, if one does.
+async fn unlock_registration(cwd: &Path, reason: &str) -> VcsResult<Option<PathBuf>> {
+    let out = git(
+        "GitVcsDriver.listWorktrees",
+        cwd,
+        ["worktree", "list", "--porcelain", "-z"],
+    )
+    .text()
+    .await?;
+    let mut current = None;
+    for field in out.split('\0') {
+        if let Some(path) = field.strip_prefix("worktree ") {
+            current = Some(PathBuf::from(path));
+        } else if field.strip_prefix("locked ") == Some(reason)
+            && let Some(path) = current.take()
+        {
+            git(
+                "GitVcsDriver.createWorktree.unlock",
+                cwd,
+                [
+                    "worktree".to_owned(),
+                    "unlock".into(),
+                    "--".into(),
+                    path.to_string_lossy().into_owned(),
+                ],
+            )
+            .run()
+            .await?;
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+/// [`discard`] for a checkout a cancel cut short: first unlocks it when Git still holds the
+/// claim's lock, since `git worktree remove --force` refuses a locked worktree.
+pub async fn discard_claim(cwd: &Path, claim: &Claim, branch: &str) -> VcsResult<()> {
+    if let Some(reason) = &claim.lock_reason {
+        unlock_registration(cwd, reason).await?;
+    }
+    discard(cwd, &claim.path, branch).await
 }
 
 /// Every live worktree of the repository, the main checkout first.
