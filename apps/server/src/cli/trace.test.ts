@@ -72,3 +72,26 @@ it("prints durations that round up to a second in seconds", () => {
     .find((line) => line.startsWith("rpc"));
   assert.deepStrictEqual(row?.trim().split(/\s+/).slice(3, 6), ["999ms", "1s", "1s"]);
 });
+
+it("keeps sub-millisecond windows and rates without rounding printed dates", () => {
+  const summarizer = makeTraceSpanSummary(1_795_478_399_998.25);
+  ["1795478399998000000", "1795478399998999950", "1795478399999999999"]
+    .map((endTimeUnixNano) => JSON.stringify({ name: "rpc", durationMs: 1, endTimeUnixNano }))
+    .forEach(summarizer.addLine);
+  const summary = summarizer.finish();
+  const formatted = formatTraceSummary(summary, 25);
+  const row = formatted.split("\n").find((line) => line.startsWith("rpc"));
+
+  assert.strictEqual(summary.spanCount, 2);
+  assert.strictEqual(row?.trim().split(/\s+/)[2], "120000.0");
+  assert.include(formatted, "from 2026-11-23T23:59:59.998Z to 2026-11-23T23:59:59.999Z");
+});
+
+it("prints end times in other numeric spellings as before", () => {
+  const summarizer = makeTraceSpanSummary();
+  summarizer.addLine(
+    JSON.stringify({ name: "rpc", durationMs: 1, endTimeUnixNano: "1795478400001e6" }),
+  );
+
+  assert.include(formatTraceSummary(summarizer.finish(), 25), "to 2026-11-24T00:00:00.001Z");
+});
