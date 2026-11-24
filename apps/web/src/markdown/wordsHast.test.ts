@@ -168,6 +168,11 @@ describe("wordsHast", () => {
     expect(wordsHtml(markdown, { breaks: true })).toBe(
       '<p dir="ltr">one<br>\ntwo <strong>three<br>\nfour</strong></p>\n<ul dir="ltr">\n<li>item<br>\nnext\n<ul>\n<li>sub</li>\n</ul>\n</li>\n</ul>\n<pre><code>kept\nlines\n</code></pre>',
     );
+    const rawHtml =
+      '<p align="center">\n  <img src="https://x.dev/a.png" width="400">\n</p>\n\n<ul>\n<li>\none\ntwo\n</li>\n</ul>';
+    expect(wordsHtml(rawHtml, { breaks: true })).toBe(
+      '<p align="center">\n  <img src="https://x.dev/a.png" width="400" data-standalone>\n</p>\n<ul dir="ltr">\n<li>\none\ntwo\n</li>\n</ul>',
+    );
   });
 
   it("keeps the composer's tildes and list numbers in user messages", () => {

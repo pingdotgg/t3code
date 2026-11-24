@@ -114,10 +114,12 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let afterHeading = false;
   let definitionChars = 0;
   let openWrappers = 0;
+  let heldCut = 0;
   const flush = () => {
     chunks.push({ text: lines.join("\n"), lines: lines.length });
     lines = [];
     chars = 0;
+    heldCut = 0;
   };
   for (const line of text.split("\n")) {
     if (closes !== null) {
@@ -127,12 +129,12 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       closes = (next) => FRONTMATTER_CLOSE.test(next) || ++seen >= FRONTMATTER_MAX_LINES;
     } else {
       if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
-      const cut =
+      const cutPoint =
         chars >= targetChars &&
-        openWrappers === 0 &&
         (ATX_HEADING.test(line) ||
           (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
-      if (cut) flush();
+      if (cutPoint && openWrappers === 0) flush();
+      else if (cutPoint) heldCut = lines.length;
       closes = blockCloser(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading or
       // another definition.
@@ -149,6 +151,14 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     first = false;
     lines.push(line);
     chars += line.length + 1;
+    // A piece too large to render goes back to the last cut a wrapper held.
+    if (heldCut > 0 && chars - 1 > LARGE_MARKDOWN_CHUNK_MAX_CHARS) {
+      const rest = lines.splice(heldCut);
+      flush();
+      lines = rest;
+      chars = rest.reduce((sum, kept) => sum + kept.length + 1, 0);
+      openWrappers = 0;
+    }
     afterBlankLine = line.trim() === "";
     afterHeading = closes === null && (ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
