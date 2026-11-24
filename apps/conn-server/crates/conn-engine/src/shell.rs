@@ -227,6 +227,13 @@ pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
             history.push(id);
         }
     }
+    // `activeProviderGoalForShell`.
+    let goal = thread
+        .get("activeProviderThreadId")
+        .and_then(|id| provider_threads.iter().find(|pt| pt.get("id") == Some(id)))
+        .and_then(|pt| pt.get("goal"))
+        .cloned()
+        .unwrap_or(Value::Null);
     let pending_background = pending_background_tasks(
         tx,
         thread_id,
@@ -294,7 +301,7 @@ pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
         "hasActionableProposedPlan": false,
         "pendingBackgroundTasks": pending_background,
         "providerInstanceHistory": history,
-        "goal": null,
+        "goal": goal,
         "itemCount": item_count,
         "visibleItemCount": item_count,
         "createdAt": field("createdAt"),

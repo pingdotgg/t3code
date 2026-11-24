@@ -2,6 +2,7 @@
 //! effects to run after the commit. To support a new command, add one function and one line
 //! in [`handler`].
 
+use conn_provider::goal::GoalCommand;
 use conn_support::ids::join_id;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -55,6 +56,10 @@ pub(crate) enum Effect {
     CloseSession {
         thread_id: String,
     },
+    /// Ends every provider session of a deleted thread, the ones a fresh run moved aside too.
+    CloseThreadSessions {
+        thread_id: String,
+    },
     /// Sends a model selection to the thread's running provider turn
     /// (`provider-session.apply-model-selection`). The provider applies what it can live; the
     /// rest waits for the next turn.
@@ -98,6 +103,7 @@ impl Effect {
             | Self::StopBackgroundWork { thread_id, .. }
             | Self::Respond { thread_id, .. }
             | Self::CloseSession { thread_id }
+            | Self::CloseThreadSessions { thread_id }
             | Self::ApplyModelSelection { thread_id, .. }
             | Self::CleanupHtmlAttachments { thread_id, .. }
             | Self::ThreadClosed { thread_id, .. } => Some(thread_id),
@@ -370,7 +376,11 @@ enum Delivery {
 
 /// `resolveDeliveryIntent` in `CommandPolicy.ts`, for one provider that may or may not steer:
 /// we steer into a running provider turn and let the provider decline (then it queues).
-fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>), CommandError> {
+fn delivery(
+    tx: &Tx<'_>,
+    c: &mut MessageDispatch,
+    goal: Option<&GoalCommand>,
+) -> Result<(Delivery, Option<Value>), CommandError> {
     let active = active_run(tx, &c.thread_id)?;
     let Some(active) = active else {
         return Ok((Delivery::Start, None));
@@ -403,11 +413,30 @@ fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>
             }
         }
         "start_immediately" => match c.delivery_intent.as_deref() {
-            Some("steer" | "restart" | "auto") => Some(active),
+            Some("steer" | "restart" | "auto") => Some(active.clone()),
             _ => None,
         },
         _ => None,
     };
+    if let Some(goal) = goal {
+        let target = match c.dispatch_mode.kind.as_str() {
+            "queue_after_active" if c.delivery_intent.is_some() => Some(active),
+            _ => steer_target.clone(),
+        };
+        if let Some(target) = target {
+            let stops = goal_stops_run(tx, &c.thread_id, goal, &target)?;
+            // A goal stays its own run: never a steer, now or once the turn runs.
+            c.dispatch_mode = DispatchMode {
+                kind: "queue_after_active".into(),
+                target_run_id: None,
+            };
+            return Ok(if stops {
+                (Delivery::Queue { first: true }, Some(target))
+            } else {
+                (Delivery::Queue { first: false }, None)
+            });
+        }
+    }
     let restart =
         c.dispatch_mode.kind == "restart_active" || c.delivery_intent.as_deref() == Some("restart");
     Ok(match steer_target {
@@ -416,6 +445,64 @@ fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>
         Some(target) if turn_running(&target)? => (Delivery::Steer(target), None),
         _ => (Delivery::Queue { first: false }, None),
     })
+}
+
+/// `isNativeMaintenanceCommand`: compaction and sign-out, which take no steering input.
+fn is_native_maintenance(message: &Value) -> bool {
+    let text =
+        conn_support::text::js_trim(message["text"].as_str().unwrap_or_default()).to_lowercase();
+    message["attachments"].as_array().is_none_or(Vec::is_empty)
+        && matches!(text.as_str(), "/compact" | "/logout")
+}
+
+/// `goalDriverFor` and `ensureGoalCommandSupported`: the `/goal` in a message sent to
+/// `instance`, when that provider runs native goals. A control it cannot run is refused.
+fn native_goal(
+    tx: &Tx<'_>,
+    text: &str,
+    has_attachments: bool,
+    instance: &str,
+) -> Result<Option<GoalCommand>, CommandError> {
+    let Some(goal) = conn_provider::goal::parse_command(text, has_attachments) else {
+        return Ok(None);
+    };
+    match tx.driver(instance).as_deref() {
+        Some("claudeAgent") if matches!(goal, GoalCommand::Pause | GoalCommand::Resume) => {
+            reject("Claude goals cannot be paused or resumed. Send /goal clear to remove the goal.")
+        }
+        Some("codex" | "claudeAgent") => Ok(Some(goal)),
+        _ => Ok(None),
+    }
+}
+
+/// The goal rule of `dispatchMessage` and `promoteQueuedMessageToSteer` for a native `/goal`
+/// aimed at `target`: whether it stops the run (`goalCommandStopsActiveRun`), from the goal on
+/// the run's provider thread. A run that is only finishing is never stopped, nor a compaction
+/// or sign-out.
+fn goal_stops_run(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    goal: &GoalCommand,
+    target: &Value,
+) -> Result<bool, CommandError> {
+    let provider_thread = match target["providerThreadId"].as_str() {
+        Some(id) => tx.entity(thread_id, "providerThreads", id)?,
+        None => None,
+    };
+    let live = matches!(
+        target["status"].as_str(),
+        Some("preparing" | "starting" | "running")
+    );
+    let goal_status = provider_thread
+        .as_ref()
+        .and_then(|pt| pt["goal"]["status"].as_str());
+    let maintenance = match target["userMessageId"].as_str() {
+        Some(id) => tx
+            .entity(thread_id, "messages", id)?
+            .is_some_and(|m| is_native_maintenance(&m)),
+        None => false,
+    };
+    Ok(live && goal.stops_active_run(goal_status) && !maintenance)
 }
 
 pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
@@ -434,6 +521,17 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
                 target_run_id: None,
             };
         }
+    }
+    // A user's fresh send supersedes a pending fork, or the next send would bring the
+    // parent's context back; a schedule's is a side conversation and was refused above.
+    if fresh && let Some(mut transfer) = crate::fork::pending_fork(tx, &c.thread_id)? {
+        transfer["status"] = json!("superseded");
+        transfer["error"] = json!("Superseded by a fresh session.");
+        transfer["updatedAt"] = json!(tx.now());
+        tx.append(
+            Draft::new(&c.thread_id, "context-transfer.updated", transfer)
+                .command(Some(&c.command_id)),
+        )?;
     }
     crate::fork::ensure_native_fork(
         tx,
@@ -455,7 +553,16 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             c.dispatch_mode.kind
         ));
     }
-    let (delivery, interrupt) = delivery(tx, &c)?;
+    let instance = normalize_model_selection(
+        c.model_selection
+            .as_ref()
+            .unwrap_or(&thread["modelSelection"]),
+    )["instanceId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let goal = native_goal(tx, &c.text, !c.attachments.is_empty(), &instance)?;
+    let (delivery, interrupt) = delivery(tx, &mut c, goal.as_ref())?;
     if let Delivery::Steer(target) = delivery {
         return steer_into(tx, &c, &target);
     }
@@ -768,8 +875,8 @@ fn queued_provider_thread(run: &Value, thread: &Value) -> Value {
     }
 }
 
-/// T3's refusals of a fresh start (`dispatchMessage`): not while a fork is still being
-/// applied, and not while the current session runs background work that a new session would
+/// T3's refusals of a fresh start (`dispatchMessage`): not a schedule's while a fork is still
+/// being applied (a user's supersedes the fork), and not while the current session runs background work that a new session would
 /// end, unless a schedule sent it (nobody is there to wait or press Stop).
 fn fresh_context_allowed(
     tx: &Tx<'_>,
@@ -779,7 +886,7 @@ fn fresh_context_allowed(
     if !crate::merge_back::pending(tx, &c.thread_id)?.is_empty() {
         return reject("Send a message without /clear to apply the merged context first.");
     }
-    if crate::fork::pending_fork(tx, &c.thread_id)?.is_some() {
+    if c.scheduled_task_id.is_some() && crate::fork::pending_fork(tx, &c.thread_id)?.is_some() {
         return reject("A fresh session can't start while a fork or merge is still being applied.");
     }
     if c.scheduled_task_id.is_some() {
@@ -1158,6 +1265,29 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let Some(message) = tx.entity(&c.thread_id, "messages", &message_id)? else {
         return reject(format!("Message {message_id} does not exist."));
     };
+    let has_attachments = message["attachments"]
+        .as_array()
+        .is_some_and(|a| !a.is_empty());
+    // A queued message goes to the provider its run selected (`queuedRunModelSelection`).
+    let instance = normalize_model_selection(&queued["modelSelection"])["instanceId"]
+        .as_str()
+        .or_else(|| queued["providerInstanceId"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    if let Some(goal) = native_goal(
+        tx,
+        message["text"].as_str().unwrap_or_default(),
+        has_attachments,
+        &instance,
+    )? {
+        // A goal keeps its own run, first in the queue, and stops the turn it ends or replaces.
+        queue_first(tx, &c.thread_id, &queued)?;
+        return Ok(if goal_stops_run(tx, &c.thread_id, &goal, &target)? {
+            stop_run(tx, &c.thread_id, &target, None, false)?
+        } else {
+            vec![]
+        });
+    }
     finish_run(tx, &c.thread_id, &c.queued_run_id, "cancelled", None)?;
     let dispatch = MessageDispatch {
         command_id: String::new(),
@@ -1200,6 +1330,23 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
     }
     effects.truncate(1);
     Ok(effects)
+}
+
+/// Moves a queued run to the front; the others follow in their order (`stopRunForQueuedCommand`).
+fn queue_first(tx: &mut Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<()> {
+    let others = queued_runs(tx, thread_id)?
+        .into_iter()
+        .filter(|r| r["id"] != run["id"]);
+    let positions = std::iter::once(run.clone()).chain(others).zip(1_u64..);
+    for (mut run, position) in positions {
+        if run["queuePosition"] == position {
+            continue;
+        }
+        run["queuePosition"] = json!(position);
+        let id = run["id"].as_str().unwrap_or_default().to_owned();
+        tx.append(Draft::new(thread_id, "run.updated", run).run(Some(&id)))?;
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -1778,7 +1925,7 @@ fn thread_delete(tx: &mut Tx<'_>, command: Value) -> Outcome {
         let run_id = run["id"].as_str().unwrap_or_default();
         finish_run(tx, &c.thread_id, run_id, "cancelled", None)?;
     }
-    effects.push(Effect::CloseSession {
+    effects.push(Effect::CloseThreadSessions {
         thread_id: c.thread_id.clone(),
     });
     patch_thread(tx, &c.thread_id, "thread.deleted", true, |t, now| {

@@ -82,10 +82,9 @@ pub(crate) async fn subscribe_shell(
     let (first, mut cursor) = inner
         .db(move |store| -> Result<(Vec<Value>, u64), String> {
             let high = store.high_water();
-            let imported = store.imported_through();
-            let resumed = match after.filter(|after| can_replay(*after, high, imported)) {
-                Some(after) => store.shell_changes_since(after)?,
-                None => None,
+            let resumed = match after {
+                Some(after) if store.shell_resumable(after)? => store.shell_changes_since(after)?,
+                _ => None,
             };
             Ok(match resumed {
                 Some(items) => (items, high),

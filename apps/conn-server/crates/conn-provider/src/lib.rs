@@ -17,6 +17,7 @@
 //!
 //! To add a provider: make a crate that depends on this one and implements both traits.
 
+pub mod goal;
 pub mod manifest;
 pub mod mcp_apps;
 mod set;

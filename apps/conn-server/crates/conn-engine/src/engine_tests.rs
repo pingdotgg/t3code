@@ -628,6 +628,35 @@ async fn a_failed_turn_shows_its_error() {
     );
 }
 
+/// `activeProviderGoalForShell`: the shell shows the goal of the thread's active provider
+/// thread, as the GPUI thread list and the desktop goal banner read it.
+#[tokio::test(flavor = "current_thread")]
+async fn the_shell_shows_the_active_provider_threads_goal() {
+    let db = TempDb::new("goal");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    assert_eq!(
+        engine.shell_snapshot().await.unwrap()["threads"][0]["goal"],
+        Value::Null
+    );
+    dispatch(&engine, message("t1", "c2", "goal")).await;
+    until_run_ends(&mut thread).await;
+    let active = json!({"objective": "Ship the feature", "status": "active", "tokensUsed": 12,
+        "tokenBudget": null, "timeUsedSeconds": 3});
+    let shell = engine.shell_snapshot().await.unwrap();
+    assert_eq!(shell["threads"][0]["goal"], active);
+    // The next ordinary turn's running row keeps the stored goal.
+    dispatch(&engine, message("t1", "c3", "hello")).await;
+    until_run_ends(&mut thread).await;
+    let shell = engine.shell_snapshot().await.unwrap();
+    assert_eq!(shell["threads"][0]["goal"], active);
+}
+
 /// `RunExecutionService`'s provider stop reason: a turn a hook stopped ends completed, with
 /// the hook's reason kept as a "Stopped by the provider" warning on its run. The work log
 /// shows it after a reload; an ordinary completed turn gets none.
@@ -1374,6 +1403,349 @@ async fn a_steer_reaches_the_running_turn() {
         ]
     );
     assert_eq!(p["messages"][1]["runId"], "run:t1:1");
+}
+
+/// `dispatchMessage` and `goalCommandStopsActiveRun`: a native `/goal` never joins a running
+/// turn. One that changes no running goal waits in the queue; one that starts goal work
+/// stops the run and goes first.
+#[tokio::test(flavor = "current_thread")]
+async fn a_goal_command_never_steers_a_running_turn() {
+    let db = TempDb::new("goal-steer");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let steer = json!({"type": "steer_active", "targetRunId": "run:t1:1"});
+    dispatch(
+        &engine,
+        message_with("t1", "c3", "/goal clear", steer.clone(), None),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".to_owned(), "running".to_owned()),
+            ("run:t1:2".to_owned(), "queued".to_owned())
+        ]
+    );
+    assert!(
+        !local_item_texts(&p).iter().any(|t| t.contains("steer")),
+        "{:?}",
+        local_item_texts(&p)
+    );
+    // A queued goal stays its own run: it never becomes a steer once the turn runs.
+    assert!(
+        p["runs"][1]["steerWhenReadyRunId"].is_null(),
+        "{}",
+        p["runs"][1]
+    );
+    dispatch(
+        &engine,
+        message_with("t1", "c4", "/goal Ship the feature", steer, None),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let goal_run = p["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["userMessageId"] == "message:c4")
+        .unwrap()
+        .clone();
+    assert_eq!(goal_run["queuePosition"], 1, "{goal_run}");
+    // The goal stops the run it replaces.
+    loop {
+        let item = next(&mut thread).await;
+        let run = &item["event"]["payload"];
+        if item["event"]["type"] == "run.updated" && run["id"] == "run:t1:1" {
+            if run["status"] == "interrupted" {
+                break;
+            }
+            assert_eq!(run["status"], "running", "{run}");
+        }
+    }
+}
+
+/// Waits on the thread stream until `run` ends, and returns its final status.
+async fn until_run_status<E: serde::Serialize>(
+    stream: &mut Subscription<conn_contract::ThreadStreamItem, E>,
+    run: &str,
+) -> String {
+    loop {
+        let item = next(stream).await;
+        let payload = &item["event"]["payload"];
+        if item["event"]["type"] == "run.updated"
+            && payload["id"] == run
+            && ["completed", "interrupted", "failed", "cancelled"]
+                .contains(&payload["status"].as_str().unwrap_or_default())
+        {
+            return payload["status"].as_str().unwrap_or_default().to_owned();
+        }
+    }
+}
+
+/// `isNativeMaintenanceCommand` is only `/compact` and `/logout`: a running `/goal` turn is goal
+/// work, so a Clear sent into it while its goal is active stops it and goes first.
+#[tokio::test(flavor = "current_thread")]
+async fn a_goal_clear_stops_the_running_goal_turn() {
+    let db = TempDb::new("goal-clear-running");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "/goal Ship the feature")).await;
+    until_provider_turn(&mut thread).await;
+    // The goal row is stored before the Clear is decided.
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "provider-thread.updated"
+            && item["event"]["payload"]["goal"]["status"] == "active"
+        {
+            break;
+        }
+    }
+    dispatch(
+        &engine,
+        message_with(
+            "t1",
+            "c3",
+            "/goal clear",
+            json!({"type": "start_immediately"}),
+            Some("auto"),
+        ),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][1]["queuePosition"], 1, "{}", p["runs"][1]);
+    assert_eq!(
+        until_run_status(&mut thread, "run:t1:1").await,
+        "interrupted"
+    );
+}
+
+/// `promotes a queued goal by stopping the running turn` (`SteeringCompletion`): the goal
+/// keeps its own run, goes first and stops the turn; it is never steered in as chat.
+#[tokio::test(flavor = "current_thread")]
+async fn promoting_a_queued_goal_stops_the_running_turn() {
+    let db = TempDb::new("goal-promote");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let queue = json!({"type": "queue_after_active"});
+    dispatch(
+        &engine,
+        message_with("t1", "c3", "queued", queue.clone(), None),
+    )
+    .await;
+    dispatch(
+        &engine,
+        message_with("t1", "c4", "/goal ship it", queue, None),
+    )
+    .await;
+    dispatch(
+        &engine,
+        json!({"type": "queued-message.promote-to-steer", "commandId": "promote",
+            "threadId": "t1", "queuedRunId": "run:t1:3", "targetRunId": "run:t1:1"}),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert!(
+        !local_item_texts(&p).iter().any(|t| t.contains("steer")),
+        "{:?}",
+        local_item_texts(&p)
+    );
+    assert_eq!(
+        until_run_status(&mut thread, "run:t1:1").await,
+        "interrupted"
+    );
+    // The goal starts next; the other queued message still waits.
+    loop {
+        let item = next(&mut thread).await;
+        let run = &item["event"]["payload"];
+        if item["event"]["type"] == "run.updated" && run["id"] == "run:t1:3" {
+            assert_ne!(run["status"], "cancelled", "{run}");
+            if run["status"] == "running" {
+                break;
+            }
+        }
+    }
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][1]["status"], "queued", "{}", p["runs"][1]);
+}
+
+/// `providerTurnOrdinal`: a run's first provider turn follows the highest ordinal on its
+/// provider thread. A goal run Codex continued has two turns, so the next run's turn is the
+/// third, and a rollback to the goal's checkpoint counts it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_run_after_a_continued_goal_run_gets_the_next_turn_ordinal() {
+    let db = TempDb::new("goal-ordinals");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "goal-continued")).await;
+    until_run_ends(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "hello")).await;
+    until_run_ends(&mut thread).await;
+    let p = projection(&engine, "t1").await;
+    let mut ordinals: Vec<(String, Value)> = p["providerTurns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| (t["id"].as_str().unwrap().to_owned(), t["ordinal"].clone()))
+        .collect();
+    ordinals.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        ordinals,
+        [
+            ("turn:run:t1:1".to_owned(), json!(1)),
+            ("turn:run:t1:1:2".to_owned(), json!(2)),
+            ("turn:run:t1:2".to_owned(), json!(3)),
+        ]
+    );
+}
+
+/// `runningProviderThread`: the turn gets the provider thread row the engine stores, goal and
+/// all. Codex shows a goal change only against that row, so a Clear after a Pause clears it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_goal_clear_after_a_pause_clears_the_goal_row() {
+    let db = TempDb::new("goal-pause-clear");
+    let (engine, _) = open_with(&db, FakeProvider::new("codex").with_driver("codex"));
+    let mut create = create("t1", "c1");
+    create["modelSelection"] = json!({"instanceId": "codex", "model": "gpt-5"});
+    dispatch(&engine, create).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "goal")).await;
+    until_run_ends(&mut thread).await;
+    assert_eq!(shell_goal_status(&engine).await, "active");
+    dispatch(&engine, message("t1", "c3", "/goal pause")).await;
+    until_run_ends(&mut thread).await;
+    assert_eq!(shell_goal_status(&engine).await, "paused");
+    dispatch(&engine, message("t1", "c4", "/goal clear")).await;
+    until_run_ends(&mut thread).await;
+    assert_eq!(shell_goal_status(&engine).await, Value::Null);
+}
+
+async fn shell_goal_status(engine: &SqliteEngine) -> Value {
+    engine.shell_snapshot().await.unwrap()["threads"][0]["goal"]["status"].clone()
+}
+
+/// An engine with a running `hang` turn on t1, on the instance `instance`.
+async fn hanging_turn(
+    db: &TempDb,
+    providers: Vec<FakeProvider>,
+    instance: &str,
+) -> (
+    SqliteEngine,
+    Subscription<conn_contract::ThreadStreamItem, conn_contract::GetThreadProjectionError>,
+) {
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = providers
+        .into_iter()
+        .map(|p| Arc::new(p) as Arc<dyn conn_provider::Provider>)
+        .collect();
+    let engine = SqliteEngine::open(config).unwrap();
+    let mut create = create("t1", "c1");
+    create["modelSelection"] = json!({"instanceId": instance, "model": "m"});
+    dispatch(&engine, create).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    (engine, thread)
+}
+
+/// `goalDriverFor(command, modelSelection.instanceId)`: the message's own provider decides
+/// whether `/goal` is a goal. A Codex goal sent into another provider's turn stops it and goes
+/// first; it never steers in as chat.
+#[tokio::test(flavor = "current_thread")]
+async fn a_codex_goal_into_another_providers_turn_stops_it() {
+    let db = TempDb::new("goal-other-provider");
+    let (engine, mut thread) = hanging_turn(
+        &db,
+        vec![
+            FakeProvider::new("grok").with_driver("grok"),
+            FakeProvider::new("codex").with_driver("codex"),
+        ],
+        "grok",
+    )
+    .await;
+    let mut goal = message_with(
+        "t1",
+        "c3",
+        "/goal Ship the feature",
+        json!({"type": "steer_active", "targetRunId": "run:t1:1"}),
+        None,
+    );
+    goal["modelSelection"] = json!({"instanceId": "codex", "model": "gpt-5"});
+    dispatch(&engine, goal).await;
+    let p = projection(&engine, "t1").await;
+    assert!(
+        !local_item_texts(&p).iter().any(|t| t.contains("steer")),
+        "{:?}",
+        local_item_texts(&p)
+    );
+    assert_eq!(p["runs"][1]["queuePosition"], 1, "{}", p["runs"]);
+    assert_eq!(
+        until_run_status(&mut thread, "run:t1:1").await,
+        "interrupted"
+    );
+}
+
+/// `ensureGoalCommandSupported`: Claude goals cannot be paused or resumed. The send is refused
+/// before it can stop the running turn.
+#[tokio::test(flavor = "current_thread")]
+async fn a_claude_goal_resume_is_refused_before_it_stops_work() {
+    let db = TempDb::new("goal-claude-resume");
+    let (engine, _thread) =
+        hanging_turn(&db, vec![FakeProvider::new("claudeAgent")], "claudeAgent").await;
+    for (command, text) in [("c3", "/goal resume"), ("c4", "/goal pause")] {
+        let message = message_with(
+            "t1",
+            command,
+            text,
+            json!({"type": "steer_active", "targetRunId": "run:t1:1"}),
+            None,
+        );
+        assert_eq!(
+            refused(&engine, message).await,
+            "Claude goals cannot be paused or resumed. Send /goal clear to remove the goal."
+        );
+    }
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        run_statuses(&p),
+        [("run:t1:1".to_owned(), "running".to_owned())]
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -2437,7 +2809,14 @@ async fn older_settled_threads_page_and_trim() {
     let (engine, _) = open(&db);
     for n in 0..30 {
         let id = format!("s{n:02}");
-        dispatch(&engine, create(&id, &format!("c{id}"))).await;
+        let mut command = create(&id, &format!("c{id}"));
+        // One older settled thread and one in the shell share a title word.
+        match n {
+            3 => command["title"] = json!("Osprey release notes"),
+            27 => command["title"] = json!("Osprey launch"),
+            _ => {}
+        }
+        dispatch(&engine, command).await;
         dispatch(
             &engine,
             json!({"type": "thread.settle", "commandId": format!("x{id}"), "threadId": id,
@@ -2459,6 +2838,37 @@ async fn older_settled_threads_page_and_trim() {
         "2026-01-01T00:00:05.000Z"
     );
     assert_eq!(snapshot["olderSettled"]["counts"][0]["count"], 5);
+
+    // The phone's HTTP reload trims as the socket does, and a current cursor keeps its rows.
+    let query = |omit: bool, resume_from: Option<u64>| crate::HttpShellQuery {
+        omit_idle_subagents: omit,
+        omit_older_settled: omit,
+        resume_from,
+    };
+    let http = engine.http_shell_snapshot(query(true, None)).await.unwrap();
+    assert_eq!(http, Some(snapshot.clone()));
+    let full = engine
+        .http_shell_snapshot(query(false, None))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(full["threads"].as_array().unwrap().len(), 30);
+    assert!(full.get("olderSettled").is_none());
+    let sequence = snapshot["snapshotSequence"].as_u64().unwrap();
+    assert_eq!(
+        engine
+            .http_shell_snapshot(query(true, Some(sequence)))
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        engine
+            .http_shell_snapshot(query(true, Some(sequence + 1)))
+            .await
+            .unwrap(),
+        Some(snapshot.clone())
+    );
 
     let page = call(
         &engine,
@@ -2482,6 +2892,268 @@ async fn older_settled_threads_page_and_trim() {
     .await
     .unwrap();
     assert_eq!(counts["counts"][0]["count"], 5);
+
+    // The scheduled-task picker searches the omitted thread by title (`searchOlderSettled`):
+    // only older settled rows come back, in the requested projects.
+    let search = |query: &str, projects: Value, titles_only: bool| {
+        let engine = &engine;
+        let query = query.to_owned();
+        async move {
+            call(
+                engine,
+                "orchestration.searchThreads",
+                json!({"query": query, "titlesOnly": titles_only, "projectIds": projects,
+                       "olderSettledBefore": "2026-01-01T00:00:05.000Z"}),
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let ids = |found: &Value| -> Vec<Value> {
+        found["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].clone())
+            .collect()
+    };
+    let found = search("osprey release", json!([project_id()]), true).await;
+    assert_eq!(ids(&found), [json!("s03")]);
+    assert_eq!(found["matches"], json!([]));
+    assert!(found["snapshotSequence"].as_u64().is_some());
+    assert_eq!(
+        ids(&search("Osprey", json!([project_id()]), true).await),
+        [json!("s03")]
+    );
+    assert!(ids(&search("osprey", json!(["another-project"]), true).await).is_empty());
+    // A mixed query still searches messages; without the cutoff no rows come back.
+    let mixed = search("osprey notes", json!([project_id()]), false).await;
+    assert_eq!(ids(&mixed), [json!("s03")]);
+    let plain = call(
+        &engine,
+        "orchestration.searchThreads",
+        json!({"query": "osprey"}),
+    )
+    .await
+    .unwrap();
+    assert!(plain.get("threads").is_none());
+}
+
+async fn settle_threads(engine: &SqliteEngine, ids: impl IntoIterator<Item = String>) {
+    for (n, id) in ids.into_iter().enumerate() {
+        dispatch(engine, create(&id, &format!("c{id}"))).await;
+        dispatch(
+            engine,
+            json!({"type": "thread.settle", "commandId": format!("x{id}"), "threadId": id,
+                   "settledAt": format!("2026-01-01T00:00:{n:02}.000Z")}),
+        )
+        .await;
+    }
+}
+
+fn trimmed_query(resume_from: Option<u64>) -> crate::HttpShellQuery {
+    crate::HttpShellQuery {
+        omit_idle_subagents: true,
+        omit_older_settled: true,
+        resume_from,
+    }
+}
+
+/// The trimmed shell over the socket, which the HTTP route must match.
+async fn trimmed_shell(engine: &SqliteEngine) -> Value {
+    let mut shell = engine
+        .subscribe_shell(
+            from_json(json!({"omitOlderSettled": true, "omitIdleSubagents": true})).unwrap(),
+        )
+        .await
+        .unwrap();
+    let snapshot = next(&mut shell).await["snapshot"].clone();
+    let http = engine
+        .http_shell_snapshot(trimmed_query(None))
+        .await
+        .unwrap();
+    assert_eq!(http, Some(snapshot.clone()), "HTTP and the socket agree");
+    snapshot
+}
+
+fn shell_ids(snapshot: &Value) -> Vec<String> {
+    snapshot["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// `shellTrimFacts`: with fewer than 25 settled threads the oldest is the cut, so none is older.
+#[tokio::test(flavor = "current_thread")]
+async fn a_small_project_keeps_every_settled_thread() {
+    for (settled, shown, older) in [(1, 1, 0), (24, 24, 0), (25, 25, 0), (26, 25, 1)] {
+        let db = TempDb::new(&format!("settled-small-{settled}"));
+        let (engine, _) = open(&db);
+        settle_threads(&engine, (0..settled).map(|n| format!("s{n:02}"))).await;
+        let snapshot = trimmed_shell(&engine).await;
+        assert_eq!(shell_ids(&snapshot).len(), shown, "{settled} settled");
+        let counted: u64 = snapshot["olderSettled"]["counts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["count"].as_u64())
+            .sum();
+        assert_eq!(counted, older, "{settled} settled");
+        let oldest_kept = 0.max(settled as i64 - 25);
+        assert_eq!(
+            snapshot["olderSettled"]["before"],
+            format!("2026-01-01T00:00:{oldest_kept:02}.000Z"),
+            "{settled} settled"
+        );
+    }
+}
+
+/// `remoteTaskParentIds`: the owner of a task in a linked environment stays in a trimmed shell,
+/// an idle subagent or an older settled thread alike.
+#[tokio::test(flavor = "current_thread")]
+async fn the_owner_of_a_remote_task_stays_in_a_trimmed_shell() {
+    let db = TempDb::new("settled-remote");
+    let (engine, _) = open(&db);
+    settle_threads(&engine, (0..26).map(|n| format!("s{n:02}"))).await;
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(&engine, delegate("d1", "look around", None)).await;
+    let child = "thread:delegated-task:d1";
+    run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    let before = shell_ids(&trimmed_shell(&engine).await);
+    assert!(!before.contains(&"s00".to_owned()));
+    assert!(!before.contains(&child.to_owned()));
+    for owner in ["s00", child] {
+        let row = json!({"id": format!("node:remote:{owner}"), "threadId": owner,
+            "origin": "app_owned", "childThreadId": null, "status": "running",
+            "remoteChild": {"environmentId": "env:b", "threadId": "thread:b", "label": "B"}});
+        let inner = engine.inner().clone();
+        let owner = owner.to_owned();
+        inner
+            .write(move |tx| {
+                tx.append(crate::store::Draft::new(&owner, "subagent.updated", row))
+                    .map(|_| ())
+            })
+            .await
+            .unwrap();
+    }
+    let after = shell_ids(&trimmed_shell(&engine).await);
+    assert!(after.contains(&"s00".to_owned()), "{after:?}");
+    assert!(after.contains(&child.to_owned()), "{after:?}");
+}
+
+async fn head_sequence(engine: &SqliteEngine) -> u64 {
+    engine.shell_snapshot().await.unwrap()["snapshotSequence"]
+        .as_u64()
+        .unwrap()
+}
+
+/// `canResumeShellFrom`: at most 1,000 events and 8 MiB of them behind, for the socket and
+/// the HTTP route alike.
+#[tokio::test(flavor = "current_thread")]
+async fn a_shell_resumes_at_most_a_thousand_events_back() {
+    let db = TempDb::new("shell-resume-cap");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let append = |count: usize, output: String| {
+        let inner = engine.inner().clone();
+        async move {
+            inner
+                .write(move |tx| {
+                    for n in 0..count {
+                        let item = json!({"id": format!("turn-item:x{n}"), "threadId": "t1",
+                            "runId": null, "nodeId": null, "providerThreadId": null,
+                            "providerTurnId": null, "nativeItemRef": null, "parentItemId": null,
+                            "ordinal": n, "status": "completed", "title": null, "startedAt": null,
+                            "completedAt": null, "updatedAt": "2026-01-01T00:00:00.000Z",
+                            "type": "command_execution", "input": "ls", "output": output});
+                        tx.append(crate::store::Draft::new("t1", "turn-item.updated", item))?;
+                    }
+                    Ok(())
+                })
+                .await
+                .unwrap()
+        }
+    };
+    let resumes = |after: u64| {
+        let engine = &engine;
+        async move {
+            let http = engine
+                .http_shell_snapshot(trimmed_query(Some(after)))
+                .await
+                .unwrap()
+                .is_none();
+            let mut shell = engine
+                .subscribe_shell(
+                    from_json(json!({"afterSequence": after, "httpSnapshotFallback": true,
+                        "requestCompletionMarker": true}))
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+            let socket = next(&mut shell).await["kind"] != "snapshot-required";
+            assert_eq!(http, socket, "HTTP and the socket agree at {after}");
+            http
+        }
+    };
+    let start = head_sequence(&engine).await;
+    append(1001, String::new()).await;
+    let head = head_sequence(&engine).await;
+    assert_eq!(head - start, 1001);
+    assert!(resumes(head).await);
+    assert!(resumes(head - 1000).await);
+    assert!(!resumes(head - 1001).await);
+    // Nine events of 1 MiB each are past the budget.
+    append(9, "x".repeat(1024 * 1024)).await;
+    let big = head_sequence(&engine).await;
+    assert!(resumes(big - 7).await);
+    assert!(!resumes(big - 9).await);
+}
+
+/// `searchOlderSettled`: message hits outside the older settled rows do not use up its five.
+#[tokio::test(flavor = "current_thread")]
+async fn older_settled_search_skips_ineligible_message_hits() {
+    let db = TempDb::new("settled-search-eligible");
+    let (engine, _) = open(&db);
+    let ids: Vec<String> = (0..30).map(|n| format!("s{n:02}")).collect();
+    for id in &ids {
+        dispatch(&engine, create(id, &format!("c{id}"))).await;
+    }
+    // Oldest first: the older settled thread's hit ranks below five newer ones.
+    for id in ["s00", "s25", "s26", "s27", "s28", "s29"] {
+        dispatch(&engine, message(id, &format!("m{id}"), "zebrafish")).await;
+        run_to_end(&engine, id, &format!("run:{id}:1")).await;
+    }
+    for (n, id) in ids.iter().enumerate() {
+        dispatch(
+            &engine,
+            json!({"type": "thread.settle", "commandId": format!("x{id}"), "threadId": id,
+                   "settledAt": format!("2026-01-01T00:00:{n:02}.000Z")}),
+        )
+        .await;
+    }
+    let found = call(
+        &engine,
+        "orchestration.searchThreads",
+        json!({"query": "zebrafish", "olderSettledBefore": "2026-01-01T00:00:05.000Z"}),
+    )
+    .await
+    .unwrap();
+    let threads: Vec<_> = found["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].clone())
+        .collect();
+    assert_eq!(threads, [json!("s00")], "{}", found["matches"]);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -4123,6 +4795,59 @@ async fn live_command_output_reaches_subscribers() {
     );
 }
 
+/// `CommandOutputHub.test.ts` "an interrupted command ends the stream with the output it
+/// printed": the live tail goes before the settled item, which has no `output`.
+#[tokio::test(flavor = "current_thread")]
+async fn an_interrupted_command_ends_on_the_output_it_printed() {
+    let db = TempDb::new("output-interrupted");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let item = |status: &str| {
+        json!({"id": "turn-item:cmd", "threadId": "t1", "runId": "run:t1:1", "nodeId": "node:run:t1:1:root",
+            "providerThreadId": null, "providerTurnId": null, "nativeItemRef": null, "parentItemId": null,
+            "ordinal": 0, "status": status, "title": null, "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": null, "updatedAt": "2026-01-01T00:00:00.000Z", "type": "command_execution",
+            "input": "serve"})
+    };
+    let write = |value: Value| {
+        let inner = engine.inner().clone();
+        async move {
+            inner
+                .write(move |tx| {
+                    tx.append(crate::store::Draft::new("t1", "turn-item.updated", value))
+                        .map(|_| ())
+                })
+                .await
+                .unwrap()
+        }
+    };
+    write(item("running")).await;
+    let hub = &engine.inner().command_output;
+    hub.append("t1", "turn-item:cmd", "waiting for server\n");
+    let mut output = engine
+        .open_stream(
+            "orchestration.subscribeCommandOutput",
+            json!({"threadId": "t1", "itemId": "turn-item:cmd"}),
+        )
+        .await
+        .unwrap();
+    frame(&mut output).await;
+    hub.finish("t1", "turn-item:cmd");
+    write(item("interrupted")).await;
+    assert_eq!(
+        frame(&mut output).await,
+        json!({"kind": "replace", "text": "waiting for server\n", "truncated": false, "running": false})
+    );
+    assert!(output.recv().await.is_none());
+}
+
 fn snooze(command: &str, thread: &str, until: &str) -> Value {
     json!({"type": "thread.snooze", "commandId": command, "threadId": thread, "snoozedUntil": until})
 }
@@ -4376,6 +5101,133 @@ async fn a_scheduled_fresh_run_is_a_side_conversation() {
     assert_eq!(
         provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
         3
+    );
+}
+
+/// `ProviderSwitch.integration.test.ts` "starts a scheduled fresh run while the previous run's
+/// session still has background work": the busy session stays open and the second fire
+/// starts its own native thread in a new session.
+#[tokio::test(flavor = "current_thread")]
+async fn a_scheduled_fresh_run_keeps_a_busy_session_open() {
+    let db = TempDb::new("fresh-scheduled-busy");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let fire = |command: &str, text: &str| {
+        fresh_message(
+            "t1",
+            command,
+            text,
+            json!({"scheduledTaskId": "task:busy", "dispatchMode": {"type": "queue_after_active"}}),
+        )
+    };
+    dispatch(&engine, fire("c2", "background-hold")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(&engine, fire("c3", "second")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    let native = |run: usize| {
+        let id = &p["runs"][run]["providerThreadId"];
+        p["providerThreads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| &t["id"] == id)
+            .map(|t| t["nativeThreadRef"].clone())
+            .unwrap()
+    };
+    assert!(!native(1).is_null());
+    assert_ne!(native(1), native(0));
+    assert_eq!(
+        count(&provider.closed),
+        0,
+        "closing the busy session would end its work"
+    );
+    assert_eq!(count(&provider.sessions), 2);
+}
+
+/// Force stop ends every session of the thread: the current one and one a fresh schedule
+/// moved aside while it still ran background work.
+#[tokio::test(flavor = "current_thread")]
+async fn force_stop_closes_a_detached_busy_session() {
+    let db = TempDb::new("fresh-scheduled-force-stop");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    let fire = |command: &str, text: &str| {
+        fresh_message(
+            "t1",
+            command,
+            text,
+            json!({"scheduledTaskId": "task:busy", "dispatchMode": {"type": "queue_after_active"}}),
+        )
+    };
+    dispatch(&engine, fire("c2", "background-hold")).await;
+    until_run_ends(&mut thread).await;
+    dispatch(&engine, fire("c3", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    assert_eq!(count(&provider.sessions), 2);
+    assert_eq!(count(&provider.closed), 0);
+    let stopped = call(
+        &engine,
+        "orchestration.forceStopThread",
+        json!({"threadId": "t1"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(stopped["outcome"], "killed");
+    assert_eq!(
+        count(&provider.closed),
+        2,
+        "the detached session closes too"
+    );
+}
+
+/// `ThreadFork.execution.test.ts` "a fresh send in a fork that has not run yet starts without
+/// the fork's context": a schedule's fresh send is refused, the user's supersedes the fork.
+#[tokio::test(flavor = "current_thread")]
+async fn a_user_fresh_send_in_a_fork_supersedes_the_fork() {
+    let db = TempDb::new("fresh-fork");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "work")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(
+        &engine,
+        json!({
+            "type": "thread.fork", "commandId": "f1", "sourceThreadId": "t1",
+            "targetThreadId": "t2", "sourcePoint": {"type": "run", "runId": "run:t1:1"},
+            "createdBy": "user", "creationSource": "web",
+        }),
+    )
+    .await;
+    let scheduled = refused(
+        &engine,
+        fresh_message(
+            "t2",
+            "c3",
+            "scheduled",
+            json!({"scheduledTaskId": "task:fork"}),
+        ),
+    )
+    .await;
+    assert!(scheduled.contains("still being applied"), "{scheduled}");
+    dispatch(&engine, fresh_message("t2", "c4", "start over", json!({}))).await;
+    let p = run_to_end(&engine, "t2", "run:t2:1").await;
+    assert_eq!(p["runs"][0]["freshContext"], true);
+    let forks: Vec<_> = p["contextTransfers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["type"] == "fork")
+        .map(|t| t["status"].clone())
+        .collect();
+    assert_eq!(forks, [json!("superseded")]);
+    assert!(
+        provider.forks.lock().unwrap().is_empty(),
+        "nothing forks natively"
     );
 }
 
