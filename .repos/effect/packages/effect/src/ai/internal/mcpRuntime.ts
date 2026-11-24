@@ -1,7 +1,5 @@
 /**
  * Runtime descriptors for MCP protocol adapters.
- *
- * @internal
  */
 import type { NonEmptyReadonlyArray } from "../../Array.ts"
 import * as Cause from "../../Cause.ts"
@@ -128,6 +126,7 @@ export interface HandlerInstallationOptions {
   readonly getListChangeRevision?: () => number
   readonly subscribeServerNotifications: McpProtocol.HandlerInstallationContext["subscribeServerNotifications"]
   readonly sendNotification?: NonNullable<McpProtocol.HandlerInstallationContext["sendNotification"]>
+  readonly awaitClientEnd?: McpProtocol.HandlerInstallationContext["awaitClientEnd"]
   readonly markSubscriptionCancelled?: NonNullable<
     McpProtocol.HandlerInstallationContext["markSubscriptionCancelled"]
   >
@@ -163,6 +162,7 @@ export interface ServerRuntimeShape {
   readonly clientRpcs: McpProtocolRegistry.ProtocolRegistry<PublicMcpProtocol.AnyProtocolAdapter>["clientRpcs"]
   readonly selectProtocol: (offeredVersion: string) => PublicMcpProtocol.AnyProtocolAdapter
   readonly protocolForInternalTag: (tag: string) => PublicMcpProtocol.AnyProtocolAdapter
+  readonly methodForInternalTag: (tag: string) => string
   readonly routeClientRequest: (
     protocol: PublicMcpProtocol.AnyProtocolAdapter,
     request: RpcMessage.RequestEncoded
@@ -332,6 +332,7 @@ export const make = Effect.fnUntraced(function*(
     clientRpcs: registry.clientRpcs,
     selectProtocol: registry.select,
     protocolForInternalTag: registry.protocolForInternalTag,
+    methodForInternalTag: registry.methodForInternalTag,
     routeClientRequest: registry.routeClientRequest,
     prepareRequest: Effect.fnUntraced(function*(clientId, headers, request) {
       const metadata = asRecord(request.payload)?._meta
@@ -518,6 +519,7 @@ export const make = Effect.fnUntraced(function*(
       const installationContext: McpProtocol.HandlerInstallationContext = {
         subscribeServerNotifications: options.subscribeServerNotifications,
         getListChangeRevision: options.getListChangeRevision,
+        awaitClientEnd: options.awaitClientEnd,
         ...(options.sendNotification === undefined ? {} : { sendNotification: options.sendNotification }),
         ...(options.markSubscriptionCancelled === undefined
           ? {}

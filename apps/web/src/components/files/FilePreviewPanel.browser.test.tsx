@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   optimistic: null as ProjectReadFileResult | null,
   writeFile: vi.fn(),
   assetUrl: { _tag: "Loading" } as import("~/assets/assetUrls").AssetUrlState,
+  assetResources: [] as Array<import("@t3tools/contracts").AssetResource>,
   mintUrl: vi.fn<() => Promise<string | null>>(),
   browserAssetMints: 0,
   openedBrowserUrls: [] as string[],
@@ -66,7 +67,13 @@ vi.mock(import("~/hooks/useWorkspaceMutationRefresh"), () => ({
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
   ...(await original()),
   useAssetUrlRefresh: () => state.mintUrl,
-  useAssetUrlState: () => state.assetUrl,
+  useAssetUrlState: (
+    _environmentId: unknown,
+    resource: import("@t3tools/contracts").AssetResource | null,
+  ) => {
+    if (resource) state.assetResources.push(resource);
+    return state.assetUrl;
+  },
 }));
 vi.mock(import("~/browser/previewRuntime"), async (original) => ({
   ...(await original()),
@@ -174,6 +181,7 @@ function setup() {
   state.file = null;
   state.optimistic = null;
   state.assetUrl = { _tag: "Loading" };
+  state.assetResources = [];
   state.openedBrowserUrls = [];
   let mints = 0;
   state.mintUrl.mockReset().mockImplementation(async () => `/assets/report.docx?mint=${++mints}`);
@@ -579,16 +587,38 @@ describe("rendered Markdown task saves", () => {
       style.textContent = appCss;
       document.head.append(style);
       using _style = { [Symbol.dispose]: () => style.remove() };
+      if (truncated) {
+        state.assetUrl = {
+          _tag: "Success",
+          url: "/assets/tasks.md",
+          expiresAt: Number.MAX_SAFE_INTEGER,
+        };
+      }
+      const realFetch = globalThis.fetch;
+      using _fetch = vi
+        .spyOn(globalThis, "fetch")
+        .mockImplementation((input, init) =>
+          new URL(String(input), location.href).pathname === "/assets/tasks.md"
+            ? Promise.resolve(
+                new Response("- [ ] Keep the rest of this file\n\nPast the first megabyte\n"),
+              )
+            : realFetch(input, init),
+        );
       await using screen = await render(
         <div className="flex h-150 w-225">
           {markdownPreview(truncated, undefined, relativePath)}
         </div>,
       );
-      const checkbox = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+      if (truncated) {
+        await expect.element(screen.getByText("Past the first megabyte")).toBeVisible();
+      }
+      const task = screen.getByRole("checkbox", { name: "Read only task" });
+      await expect.element(task).toBeVisible();
+      const checkbox = task.element().querySelector<HTMLInputElement>('input[type="checkbox"]')!;
       expect(checkbox).not.toBeNull();
       expect(checkbox.disabled).toBe(true);
       expect(checkbox.readOnly).toBe(true);
-      await userEvent.click(screen.getByLabelText("Read only task"));
+      await userEvent.click(task);
       await expect
         .element(page.getByText("Read only", { exact: true }))
         .toHaveTextContent("Read only");
@@ -624,6 +654,8 @@ describe("rendered Markdown task saves", () => {
   it("still toggles and saves tasks from a complete read", async () => {
     using _settings = setup();
     await using screen = await render(markdownPreview(false));
+    // The virtualized list mounts its pieces after measuring the viewport.
+    await expect.element(screen.getByRole("checkbox")).toBeInTheDocument();
     using _timers = fakeTimers();
     const checkbox = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     expect(checkbox).not.toBeNull();
@@ -746,5 +778,21 @@ describe("rendered Markdown select all", () => {
     // A toggled checkbox keeps focus on an input inside the preview.
     await userEvent.click(screen.getByRole("checkbox"));
     await expectFileOnlySelection();
+  });
+});
+
+describe("rendered Markdown relative images", () => {
+  it.each([
+    ["2026-11-23T14:05/README.md", "/workspace/2026-11-23T14:05/diagram.png"],
+    ["/README.md", "/diagram.png"],
+  ])("resolves relative images in %s against its folder", async (relativePath, expectedPath) => {
+    using _settings = setup();
+    await using _screen = await render(
+      markdownPreview(false, "![diagram](diagram.png)\n", relativePath),
+    );
+    await vi.waitFor(() => expect(state.assetResources).not.toHaveLength(0));
+    expect(state.assetResources).toContainEqual(
+      expect.objectContaining({ _tag: "media-file", path: expectedPath }),
+    );
   });
 });

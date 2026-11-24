@@ -23,6 +23,7 @@ export interface AndroidHeaderAction {
   readonly selected?: boolean;
   readonly subtitle?: string;
   readonly destructive?: boolean;
+  readonly iconScale?: number;
   readonly overflowOnly?: boolean;
 }
 
@@ -32,6 +33,7 @@ export function AndroidHeaderIconButton(props: {
   readonly onPress?: () => void;
   readonly disabled?: boolean;
   readonly selected?: boolean;
+  readonly iconScale?: number;
 }) {
   return <IconButton {...props} tintColorClassName="accent-header-foreground" />;
 }
@@ -148,6 +150,7 @@ export function AndroidScreenHeader(props: {
                     disabled={action.disabled}
                     selected={action.selected}
                     icon={action.icon}
+                    iconScale={action.iconScale}
                     onPress={action.onPress}
                   />
                 ),
