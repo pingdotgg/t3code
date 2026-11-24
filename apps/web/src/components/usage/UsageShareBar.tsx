@@ -1,4 +1,5 @@
 import { formatPercent } from "@t3tools/shared/usageFormat";
+import { useMessages } from "gt-react";
 import type { ReactNode } from "react";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -20,6 +21,7 @@ export function UsageShareBar({
   readonly format: (value: number) => string;
   readonly aside?: ReactNode;
 }) {
+  const m = useMessages();
   const visible = segments.filter((segment) => segment.value > 0);
   const total = visible.reduce((sum, segment) => sum + segment.value, 0);
   if (total <= 0) return null;
@@ -43,7 +45,7 @@ export function UsageShareBar({
               }
             />
             <TooltipPopup>
-              {segment.label} · {format(segment.value)} · {formatPercent(segment.value / total)}
+              {m(segment.label)} · {format(segment.value)} · {formatPercent(segment.value / total)}
             </TooltipPopup>
           </Tooltip>
         ))}
@@ -56,7 +58,7 @@ export function UsageShareBar({
               className="size-2 rounded-xs"
               style={{ backgroundColor: segment.color }}
             />
-            <span className="text-muted-foreground">{segment.label}</span>{" "}
+            <span className="text-muted-foreground">{m(segment.label)}</span>{" "}
             <span className="text-foreground tabular-nums">{format(segment.value)}</span>
             <span className="sr-only">, {formatPercent(segment.value / total)}</span>
           </li>

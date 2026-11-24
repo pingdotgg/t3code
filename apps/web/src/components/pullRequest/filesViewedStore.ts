@@ -9,6 +9,9 @@ import type {
   PullRequestRef,
 } from "@t3tools/contracts";
 
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import {
   pullRequestEnvironment,
@@ -243,7 +246,8 @@ const filesViewedStore = createFilesViewedStore({
       { reportFailure: false },
     ),
   refresh: (target) => appAtomRegistry.refresh(filesViewedAtom(target)),
-  reportFailure: () => toastManager.add({ type: "error", title: "Could not update viewed files" }),
+  reportFailure: () =>
+    toastManager.add({ type: "error", title: m(msg("Could not update viewed files")) }),
 });
 
 export function filesViewedScope(target: FilesViewedTarget): FilesViewedScopeHandle {

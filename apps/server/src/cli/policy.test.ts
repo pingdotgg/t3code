@@ -1,12 +1,16 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { Command } from "effect/cli";
 
+import { cli } from "../binCli.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import {
   makePersistedServerRuntimeState,
@@ -16,7 +20,7 @@ import { describeRunningServer } from "./policy.ts";
 
 const encodeState = Schema.encodeEffect(Schema.fromJsonString(PersistedServerRuntimeState));
 
-it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))((it) =>
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))((it) => {
   it.effect("tells whether the running server loaded the installed policy", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -53,5 +57,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))((it) =>
       assert.include(yield* running(null, null), "runs without a policy, as installed");
       assert.include(yield* running(undefined), "does not report which policy it loaded");
     }),
-  ),
-);
+  );
+
+  it.effect("templates reads a ~/ --policy file from the home directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-policy-templates-" });
+      yield* fs.writeFileString(
+        path.join(home, "policy.json"),
+        JSON.stringify({ schemaVersion: 1, organization: "Tilde Corp" }),
+      );
+
+      yield* Command.runWith(cli, { version: "0.0.0" })([
+        "policy",
+        "templates",
+        home,
+        "--policy=~/policy.json",
+      ]).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, home),
+        Effect.provide(NetService.layer),
+      );
+
+      assert.include(
+        yield* fs.readFileString(path.join(home, "macos", "t3code.mobileconfig")),
+        "Tilde Corp",
+      );
+    }),
+  );
+});
