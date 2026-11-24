@@ -9,6 +9,7 @@ import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
 import { RESTORE_OOMD_WATCH_SCRIPT } from "./cloud/userManagerOom.ts";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 import { isNoCopyOnWrite, markNoCopyOnWrite } from "./noCopyOnWrite.ts";
 
 import type {
@@ -137,8 +138,10 @@ export interface ServiceUnit {
   readonly reload: () => Promise<void>;
 }
 
+const SCHTASKS = () => windowsSystem32Path(process.env, "schtasks.exe");
+
 const runSchtasks = (...args: ReadonlyArray<string>) =>
-  NodeUtil.promisify(NodeChildProcess.execFile)("schtasks", args, {
+  NodeUtil.promisify(NodeChildProcess.execFile)(SCHTASKS(), args, {
     windowsHide: true,
     timeout: 30_000,
   });
@@ -880,7 +883,7 @@ export async function stateDirOwned(baseDir: string): Promise<boolean> {
   if (!Number.isFinite(recordedAt)) return true;
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const platform = process.platform;
-  const { command, args, env } = legacyOwnerStartTimeCommand(pid, platform);
+  const { command, args, env } = legacyOwnerStartTimeCommand(pid, platform, process.env);
   const output = await new Promise<string | undefined>((resolve) =>
     NodeChildProcess.execFile(
       command,
@@ -1654,7 +1657,7 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
     // lets the next repeating trigger start the service again.
     if (windows && options.serviceUnit !== undefined) {
       const taskName = serviceTaskName(process.env.USERDOMAIN ?? "", process.env.USERNAME ?? "");
-      NodeChildProcess.spawnSync("schtasks", ["/End", "/TN", taskName], {
+      NodeChildProcess.spawnSync(SCHTASKS(), ["/End", "/TN", taskName], {
         stdio: "ignore",
         windowsHide: true,
       });

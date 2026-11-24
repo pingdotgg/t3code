@@ -235,7 +235,8 @@ If that port is already in use, choose another with
 
 [app.t3.codes](https://app.t3.codes) needs an HTTPS endpoint. It connects directly
 to your server; a hosted pairing link does not make an unreachable backend
-reachable or convert HTTP to HTTPS.
+reachable or convert HTTP to HTTPS. Opening a hosted pairing link shows the
+server address and asks you to confirm before adding it.
 
 For a plain HTTP LAN endpoint, use the direct pairing URL in a browser that can
 open it, or pair from the desktop app. On mobile, an IP address entered without a

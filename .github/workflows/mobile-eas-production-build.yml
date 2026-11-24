@@ -1,0 +1,196 @@
+name: Mobile EAS Production Build
+
+# One store build and its build record, called per platform by
+# mobile-eas-production.yml. The build job runs dependency and build scripts with
+# a read-only token. Only the record job, on a fresh runner that runs none of
+# them, gets the token that can push tags. The caller's concurrency group covers
+# both jobs, so a queued run for the same fingerprint starts after the tag exists.
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        description: android or ios
+        required: true
+        type: string
+      profile:
+        description: eas.json build and submit profile
+        required: true
+        type: string
+      sha:
+        description: Commit to build and tag
+        required: true
+        type: string
+      tag:
+        description: Build record tag, without refs/tags/
+        required: true
+        type: string
+    secrets:
+      EXPO_PRODUCTION_TOKEN:
+        required: true
+      MOBILE_SOURCEMAPS_R2:
+        required: false
+
+jobs:
+  # ARM-only, without release lint (see the production profile in eas.json),
+  # with Gradle, ccache, and pnpm state on a sticky disk.
+  android:
+    name: Build
+    if: ${{ !cancelled() && inputs.platform == 'android' }}
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      submitted: ${{ steps.submit.outcome == 'success' }}
+    env:
+      APP_VARIANT: production
+      NODE_OPTIONS: --max-old-space-size=8192
+      EXPO_TOKEN: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
+      BUILD_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+
+      # The steps below run dependency and build scripts; they get no token.
+      - name: Drop checkout credentials
+        uses: ./.github/actions/drop-checkout-credentials
+
+      # A queued run can follow a build of the same fingerprint; manual runs always build.
+      - id: record
+        name: Check build record
+        env:
+          FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          if [ "$FORCE" != "true" ] && [ -n "$(git tag -l "$BUILD_TAG")" ]; then
+            echo "built=true" >> "$GITHUB_OUTPUT"
+            echo ":white_check_mark: android: \`$BUILD_TAG\` was built by an earlier run" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Build
+        if: steps.record.outputs.built != 'true'
+        uses: ./.github/actions/eas-local-build
+        with:
+          platform: android
+          profile: production
+          environment: production
+          expo-token: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
+          output: ${{ runner.temp }}/t3code.aab
+          sourcemaps-r2: ${{ secrets.MOBILE_SOURCEMAPS_R2 }}
+
+      - name: Check ABIs
+        if: steps.record.outputs.built != 'true'
+        run: |
+          abis="$(unzip -Z1 "$RUNNER_TEMP/t3code.aab" | sed -n 's|^base/lib/\([^/]*\)/.*|\1|p' | sort -u | paste -sd, -)"
+          echo "### Android $BUILD_TAG: \`$abis\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$abis" != "arm64-v8a,armeabi-v7a" ]; then
+            echo "::error::Expected only ARM native libraries in the AAB, found $abis"
+            exit 1
+          fi
+
+      # A --path submission doesn't keep its archive on EAS; this is the only downloadable copy.
+      - name: Keep the AAB
+        if: steps.record.outputs.built != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-store-aab-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/t3code.aab
+          retention-days: 14
+          if-no-files-found: error
+
+      - id: submit
+        name: Submit to Google Play
+        if: steps.record.outputs.built != 'true'
+        working-directory: apps/mobile
+        run: eas submit --platform android --profile production --path "$RUNNER_TEMP/t3code.aab" --non-interactive
+
+  # No sticky disk: it mounts ext4 and only works on Linux runners.
+  ios:
+    name: Build
+    if: ${{ !cancelled() && inputs.platform == 'ios' }}
+    runs-on: blacksmith-12vcpu-macos-27
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      submitted: ${{ steps.submit.outcome == 'success' }}
+    env:
+      APP_VARIANT: production
+      NODE_OPTIONS: --max-old-space-size=8192
+      EXPO_TOKEN: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
+      PROFILE: ${{ inputs.profile }}
+      BUILD_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+
+      # The steps below run dependency and build scripts; they get no token.
+      - name: Drop checkout credentials
+        uses: ./.github/actions/drop-checkout-credentials
+
+      # A queued run can follow a build of the same fingerprint; manual runs always build.
+      - id: record
+        name: Check build record
+        env:
+          FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          if [ "$FORCE" != "true" ] && [ -n "$(git tag -l "$BUILD_TAG")" ]; then
+            echo "built=true" >> "$GITHUB_OUTPUT"
+            echo ":white_check_mark: ios: \`$BUILD_TAG\` was built by an earlier run" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Build
+        if: steps.record.outputs.built != 'true'
+        uses: ./.github/actions/eas-local-build
+        with:
+          platform: ios
+          profile: ${{ env.PROFILE }}
+          environment: production
+          expo-token: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
+          output: ${{ runner.temp }}/t3code.ipa
+          sourcemaps-r2: ${{ secrets.MOBILE_SOURCEMAPS_R2 }}
+
+      - id: submit
+        name: Submit to App Store Connect
+        if: steps.record.outputs.built != 'true'
+        working-directory: apps/mobile
+        run: eas submit --platform ios --profile "$PROFILE" --path "$RUNNER_TEMP/t3code.ipa" --non-interactive
+
+  # The tag means "delivered", so it follows the submit. If it can't be
+  # pushed, the next merge rebuilds with a new build number; nothing is lost.
+  record:
+    name: Record build
+    needs: [android, ios]
+    if: ${{ !cancelled() && (needs.android.outputs.submitted == 'true' || needs.ios.outputs.submitted == 'true') }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: write # pushes the build record tag
+    env:
+      BUILD_TAG: ${{ inputs.tag }}
+    steps:
+      # The workflow's own commit, so the action below is this workflow's. The
+      # built commit is passed as data.
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Record build
+        uses: ./.github/actions/record-build-tag
+        with:
+          tag: ${{ inputs.tag }}
+          commit: ${{ inputs.sha }}
+          token: ${{ github.token }}
+
+      - name: Summarize
+        env:
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          echo ":rocket: $PLATFORM: submitted and recorded \`$BUILD_TAG\`" >> "$GITHUB_STEP_SUMMARY"
