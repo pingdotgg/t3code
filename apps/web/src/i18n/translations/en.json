@@ -6231,26 +6231,6 @@
   ],
   "216ab7514aea1d61": "Start without an agent",
   "501ce2d99da8bfd1": "Set up one agent to start.",
-  "71f3822326109c8e": [
-    "T3 Code collects anonymous usage data to improve the app. To opt out, see the",
-    " ",
-    {
-      "t": "a",
-      "i": 1,
-      "c": "privacy policy"
-    },
-    "."
-  ],
-  "b33f35083757b42c": [
-    "See the",
-    " ",
-    {
-      "t": "a",
-      "i": 1,
-      "c": "privacy policy"
-    },
-    "."
-  ],
   "f77d000c0710f066": "Turn on",
   "4ed27bf946e504db": "Set up",
   "7a26eaacff0607f7": [
@@ -11151,57 +11131,7 @@
   "a899361f5deb3476": "Any local files",
   "8c92f29a2b29adb5": "Uncommitted changes",
   "deb572d6e83f3818": "Edited tracked files",
-  "83729e5228731819": "Traces endpoint",
-  "8739ffcda2007458": "Metrics endpoint",
-  "5c90c5ba936fb908": "Logs endpoint",
-  "5e29f3c15d14bbce": "Set by environment",
-  "4136ff89bb436dcc": "Set by desktop",
-  "7271a3d01a7593ee": "Off",
-  "dc827550691bafd1": "Connected · {ms} ms",
-  "11b77b0add59d7b4": "Rejected · HTTP {status}",
-  "10cf4b8e7ecc020b": "Timed out",
-  "523b72ed9d712100": "OpenTelemetry export",
-  "ecaa5a9da2c44a47": "Choose one environment to configure its telemetry exports.",
-  "5548e6d2e9b8cc64": "Saved. Restart the server to apply.",
-  "23029f9ce3382536": "This connection lacks permission to change settings on {environment}.",
-  "a5f1fe10ef6373fd": "Enter an HTTP or HTTPS endpoint, or leave empty to disable export.",
-  "5b928a84a624e831": "Running: {url}",
-  "b07718fe86a16cc6": "Running: Disabled",
-  "6d0831556a517821": "Send traces, metrics, and logs to an OTLP HTTP receiver. Restart the server to apply. Environment variables override these settings.",
   "f7c3ae7a79ede728": "Test",
-  "b93d2ec53e944576": [
-    "Running: ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " from",
-    " ",
-    {
-      "t": "code",
-      "i": 2,
-      "c": {
-        "i": 3,
-        "k": "_gt_value_3",
-        "v": "v"
-      }
-    }
-  ],
-  "ae9958ee0d8ed8e8": [
-    "Running: Disabled from",
-    " ",
-    {
-      "t": "code",
-      "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
-    }
-  ],
-  "97585565390197f6": "Discard",
   "c0fce4a3555c5c17": "Connect",
   "0d1eba54ff075d77": "Use it",
   "035dc7d3b0f3e526": "Thread titles and other generated text",
@@ -11938,7 +11868,6 @@
   "df9fa3a9cb004b9b": "onboarding setup first run getting started agents import projects",
   "3188bc3b3c4508bc": "Privacy policy",
   "901a823214edc8c4": "telemetry analytics usage data tracking legal opt out",
-  "82136480255a5106": "OTel OTLP telemetry export endpoints logs traces metrics Grafana",
   "659d081051faf7ff": "logs traces processes resource history failures spans cpu memory",
   "5eaeacfa9f82051a": "report bug problem t3 team send feedback agents tools automatic when i ask",
   "f537f91e1ee41d47": "keyboard shortcuts hotkeys commands bindings json",

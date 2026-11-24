@@ -1,16 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Tracer from "effect/Tracer";
-import { FetchHttpClient } from "effect/http";
-import { vi } from "vite-plus/test";
 
 import {
-  layer,
   nonInterferingTracer,
   RelayClientTracer,
   withLocalTracing,
@@ -92,52 +87,6 @@ describe("nonInterferingTracer", () => {
       expect(text).not.toContain("studio-mac");
       expect(text).not.toContain("private.mjs");
     }),
-  );
-});
-
-it.effect.each([true, false])("filters relay exports at flush (%s)", (enabledAtFlush) => {
-  const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
-  let enabled = true;
-  return Effect.logWarning("private error detail").pipe(
-    Effect.withSpan("relay.request", {
-      attributes: {
-        "url.full": "http://studio-mac.local:3773/api/threads?cursor=secret",
-        "url.path": "/api/threads",
-        "url.query": "cursor=secret",
-        "server.address": "studio-mac.local",
-        "server.port": 3773,
-      },
-    }),
-    withRelayClientTracing,
-    Effect.andThen(Effect.sync(() => (enabled = enabledAtFlush))),
-    Layer.effectDiscard,
-    Layer.provide(
-      layer(
-        { tracesUrl: "https://traces.example.com", tracesDataset: "relay", tracesToken: "token" },
-        { serviceName: "t3code-test", runtime: "node", serviceInstanceId: "id", client: "test" },
-        { isEnabled: () => enabled },
-      ),
-    ),
-    Layer.provide(FetchHttpClient.layer),
-    Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)),
-    Layer.provide(
-      ConfigProvider.layer(
-        ConfigProvider.fromEnvRecord({ OTEL_RESOURCE_ATTRIBUTES: "host.name=private-host" }),
-      ),
-    ),
-    Layer.build,
-    Effect.scoped,
-    Effect.andThen(
-      Effect.sync(() => {
-        expect(fetchFn).toHaveBeenCalledTimes(Number(enabledAtFlush));
-        if (!enabledAtFlush) return;
-        const sent = new TextDecoder().decode(fetchFn.mock.calls[0]?.[1]?.body as Uint8Array);
-        expect(sent).toContain("/api/threads");
-        expect(sent).not.toMatch(
-          /studio-mac|cursor=secret|server\.port|private error detail|private-host/,
-        );
-      }),
-    ),
   );
 });
 

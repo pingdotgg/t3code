@@ -1,19 +1,5 @@
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
-import {
-  makeLocalFileTracer,
-  makeTraceSink,
-  nodeProcessRuntimeAttributes,
-  processServiceInstanceId,
-  type SignalExport,
-} from "@t3tools/shared/observability";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as SharedObservability from "@t3tools/shared/observability";
-import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { releaseChannelOf, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
-import {
-  parsePersistedServerObservabilitySettings,
-  type PersistedServerObservabilitySettings,
-} from "@t3tools/shared/serverSettings";
+import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -30,9 +16,6 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Tracer from "effect/Tracer";
-import { OtlpExporter, OtlpLogger, OtlpTracer } from "effect/observability";
-
-import desktopPackageJson from "../../package.json" with { type: "json" };
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
@@ -330,68 +313,6 @@ export const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(
   } satisfies RotatingLogFileWriter;
 });
 
-const noPersistedObservabilitySettings: PersistedServerObservabilitySettings = {
-  otlpTracesUrl: undefined,
-  otlpMetricsUrl: undefined,
-  otlpLogsUrl: undefined,
-};
-
-const readPersistedObservabilitySettings: Effect.Effect<
-  PersistedServerObservabilitySettings,
-  never,
-  FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment
-> = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const raw = yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(Effect.option);
-  return Option.isNone(raw)
-    ? noPersistedObservabilitySettings
-    : parsePersistedServerObservabilitySettings(raw.value);
-});
-
-const resolveOtlpEndpoints = Effect.gen(function* () {
-  const otel = yield* OtelEnvironment.load;
-  if (otel.disabled) {
-    return {
-      traces: undefined,
-      metrics: undefined,
-      logs: undefined,
-      warnings: otel.warnings,
-      resourceAttributes: otel.resourceAttributes,
-    };
-  }
-
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const persisted = yield* readPersistedObservabilitySettings;
-  const signalExport: SignalExport = {
-    protocol: environment.otlpProtocol,
-    headers: Option.getOrUndefined(environment.otlpHeaders),
-    exportIntervalMs: environment.otlpExportIntervalMs,
-  };
-  return {
-    traces: OtelEnvironment.resolveSignalEndpoint(
-      otel,
-      "traces",
-      { url: Option.getOrUndefined(environment.otlpTracesUrl), export: signalExport },
-      { bootstrapUrl: undefined, settingsUrl: persisted.otlpTracesUrl },
-    ),
-    metrics: OtelEnvironment.resolveSignalEndpoint(
-      otel,
-      "metrics",
-      { url: Option.getOrUndefined(environment.otlpMetricsUrl), export: signalExport },
-      { bootstrapUrl: undefined, settingsUrl: persisted.otlpMetricsUrl },
-    ),
-    logs: OtelEnvironment.resolveSignalEndpoint(
-      otel,
-      "logs",
-      { url: Option.getOrUndefined(environment.otlpLogsUrl), export: signalExport },
-      { bootstrapUrl: undefined, settingsUrl: persisted.otlpLogsUrl },
-    ),
-    warnings: otel.warnings,
-    resourceAttributes: otel.resourceAttributes,
-  };
-});
-
 const writeDevelopmentConsoleOutput = (
   streamName: "stdout" | "stderr",
   chunk: Uint8Array,
@@ -599,54 +520,12 @@ const layerBackendOutputLogFactory = Layer.effect(
   }),
 );
 
-const layerTelemetry = Layer.unwrap(
+const layerLocalDiagnostics = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const endpoints = yield* resolveOtlpEndpoints;
-    // Unpackaged runs launch a script, so Electron reports its own version.
-    const serviceVersion = environment.isPackaged
-      ? environment.appVersion
-      : desktopPackageJson.version;
-    const resource = {
-      serviceName: "t3code-desktop",
-      serviceVersion,
-      attributes: {
-        "service.namespace": "t3code",
-        "service.runtime": "desktop",
-        "t3code.desktop.mode": environment.isDevelopment ? "development" : "packaged",
-        "service.instance.id": processServiceInstanceId(endpoints.resourceAttributes),
-        ...releaseResourceAttributes(
-          environment.isDevelopment ? "dev" : releaseChannelOf(serviceVersion),
-          endpoints.resourceAttributes,
-        ),
-        "host.name": endpoints.resourceAttributes["host.name"] || (yield* HostProcess.Hostname),
-        ...nodeProcessRuntimeAttributes(),
-      },
-    };
-
-    // Logger.layer replaces the logger set. tracerLogger would duplicate OTLP in-span messages.
-    const layerLogger = Logger.layer(
-      endpoints.logs === undefined
-        ? [Logger.consolePretty(), Logger.tracerLogger]
-        : [
-            Logger.consolePretty(),
-            OtlpLogger.make({
-              url: endpoints.logs.url,
-              exportInterval: `${endpoints.logs.export.exportIntervalMs} millis`,
-              headers: endpoints.logs.export.headers,
-              resource,
-            }),
-          ],
-      { mergeWithExisting: false },
-    ).pipe(
-      Layer.provide(OtlpExporter.layerFlusher),
-      Layer.provide(
-        SharedObservability.layerOtlpSerialization(
-          endpoints.logs?.export.protocol ?? environment.otlpProtocol,
-        ),
-      ),
-    );
-
+    const layerLogger = Logger.layer([Logger.consolePretty(), Logger.tracerLogger], {
+      mergeWithExisting: false,
+    });
     const layerTracer = Layer.unwrap(
       Effect.gen(function* () {
         const tracePath = environment.path.join(environment.logDir, "desktop.trace.ndjson");
@@ -658,46 +537,24 @@ const layerTelemetry = Layer.unwrap(
         });
         // Unscoped: Electron can exit without closing the app scope, e.g. when the display drops.
         process.once("exit", sink.flushSync);
-        const delegate =
-          endpoints.traces === undefined
-            ? undefined
-            : yield* OtlpTracer.make({
-                url: endpoints.traces.url,
-                exportInterval: `${endpoints.traces.export.exportIntervalMs} millis`,
-                headers: endpoints.traces.export.headers,
-                resource,
-              }).pipe(
-                Effect.provide(
-                  SharedObservability.layerOtlpSerialization(endpoints.traces.export.protocol),
-                ),
-              );
         const tracer = yield* makeLocalFileTracer({
           filePath: tracePath,
           maxBytes: DESKTOP_LOG_FILE_MAX_BYTES,
           maxFiles: DESKTOP_LOG_FILE_MAX_FILES,
           batchWindowMs: DESKTOP_TRACE_BATCH_WINDOW_MS,
           sink,
-          ...(delegate ? { delegate } : {}),
         });
 
         return Layer.succeed(Tracer.Tracer, tracer);
       }),
-    ).pipe(Layer.provide(OtlpExporter.layerFlusher));
-
-    const layerOtelWarnings = Layer.effectDiscard(
-      Effect.forEach(endpoints.warnings, (warning) => Effect.logWarning(warning)),
     );
-
-    return layerOtelWarnings.pipe(
-      Layer.provideMerge(Layer.mergeAll(layerLogger, layerTracer)),
-      Layer.provide(OtelEnvironment.layerResourceAttributes(endpoints.resourceAttributes)),
-    );
+    return Layer.mergeAll(layerLogger, layerTracer);
   }),
 );
 
 export const layer = Layer.mergeAll(
   layerBackendOutputLogFactory,
-  layerTelemetry,
+  layerLocalDiagnostics,
   Layer.succeed(References.MinimumLogLevel, "Info"),
   Layer.succeed(Tracer.MinimumTraceLevel, "Info"),
   Layer.succeed(References.TracerTimingEnabled, true),

@@ -6230,26 +6230,6 @@
   ],
   "216ab7514aea1d61": "Commencer sans agent",
   "501ce2d99da8bfd1": "Configurez un agent pour commencer.",
-  "71f3822326109c8e": [
-    "T3 Code collecte des données d’utilisation anonymes pour améliorer l’app. Pour vous désinscrire, consultez la",
-    " ",
-    {
-      "t": "a",
-      "i": 1,
-      "c": "politique de confidentialité"
-    },
-    "."
-  ],
-  "b33f35083757b42c": [
-    "Consultez la",
-    " ",
-    {
-      "t": "a",
-      "i": 1,
-      "c": "politique de confidentialité"
-    },
-    "."
-  ],
   "f77d000c0710f066": "Activer",
   "4ed27bf946e504db": "Configurer",
   "7a26eaacff0607f7": [
@@ -11141,57 +11121,7 @@
   "a899361f5deb3476": "Tous les fichiers locaux",
   "8c92f29a2b29adb5": "Modifications non commitées",
   "deb572d6e83f3818": "Fichiers suivis modifiés",
-  "83729e5228731819": "Point de terminaison des traces",
-  "8739ffcda2007458": "Point de terminaison des métriques",
-  "5c90c5ba936fb908": "Point de terminaison des journaux",
-  "5e29f3c15d14bbce": "Défini par l’environnement",
-  "4136ff89bb436dcc": "Défini par le bureau",
-  "7271a3d01a7593ee": "Désactivé",
-  "dc827550691bafd1": "Connecté · {ms} ms",
-  "11b77b0add59d7b4": "Refusé · HTTP {status}",
-  "10cf4b8e7ecc020b": "Délai dépassé",
-  "523b72ed9d712100": "Export OpenTelemetry",
-  "ecaa5a9da2c44a47": "Choisissez un environnement pour configurer ses exports de télémétrie.",
-  "5548e6d2e9b8cc64": "Enregistré. Redémarrez le serveur pour appliquer.",
-  "23029f9ce3382536": "Cette connexion n’est pas autorisée à modifier les paramètres sur {environment}.",
-  "a5f1fe10ef6373fd": "Saisissez un point de terminaison HTTP ou HTTPS, ou laissez vide pour désactiver l’export.",
-  "5b928a84a624e831": "En cours : {url}",
-  "b07718fe86a16cc6": "Exécution : désactivée",
-  "6d0831556a517821": "Envoie les traces, métriques et journaux à un récepteur OTLP HTTP. Redémarrez le serveur pour appliquer. Les variables d’environnement remplacent ces paramètres.",
   "f7c3ae7a79ede728": "Tester",
-  "b93d2ec53e944576": [
-    "En cours : ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " depuis",
-    " ",
-    {
-      "t": "code",
-      "i": 2,
-      "c": {
-        "i": 3,
-        "k": "_gt_value_3",
-        "v": "v"
-      }
-    }
-  ],
-  "ae9958ee0d8ed8e8": [
-    "Exécution : désactivée depuis",
-    " ",
-    {
-      "t": "code",
-      "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
-    }
-  ],
-  "97585565390197f6": "Abandonner",
   "c0fce4a3555c5c17": "Connexion",
   "0d1eba54ff075d77": "L’utiliser",
   "035dc7d3b0f3e526": "Titres des fils et autres textes générés",
@@ -11928,7 +11858,6 @@
   "df9fa3a9cb004b9b": "prise en main configuration premier lancement démarrer agents importer projets",
   "3188bc3b3c4508bc": "Politique de confidentialité",
   "901a823214edc8c4": "télémétrie analytique données d’utilisation suivi mentions légales refuser",
-  "82136480255a5106": "OTel OTLP télémétrie export points de terminaison journaux traces métriques Grafana",
   "659d081051faf7ff": "journaux traces processus historique des ressources échecs spans cpu mémoire",
   "5eaeacfa9f82051a": "rapport bug problème t3 équipe envoyer retour agents outils automatique à ma demande",
   "f537f91e1ee41d47": "raccourcis clavier touches commandes associations json",

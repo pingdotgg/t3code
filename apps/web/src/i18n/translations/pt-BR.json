@@ -6229,26 +6229,6 @@
   ],
   "216ab7514aea1d61": "Começar sem agente",
   "501ce2d99da8bfd1": "Configure um agente para começar.",
-  "71f3822326109c8e": [
-    "O T3 Code coleta dados de uso anônimos para melhorar o app. Para recusar, consulte a",
-    " ",
-    {
-      "t": "a",
-      "i": 1,
-      "c": "política de privacidade"
-    },
-    "."
-  ],
-  "b33f35083757b42c": [
-    "Consulte a",
-    " ",
-    {
-      "t": "a",
-      "i": 1,
-      "c": "política de privacidade"
-    },
-    "."
-  ],
   "f77d000c0710f066": "Ativar",
   "4ed27bf946e504db": "Configurar",
   "7a26eaacff0607f7": [
@@ -11141,57 +11121,7 @@
   "a899361f5deb3476": "Quaisquer arquivos locais",
   "8c92f29a2b29adb5": "Alterações sem commit",
   "deb572d6e83f3818": "Arquivos rastreados editados",
-  "83729e5228731819": "Endpoint de traces",
-  "8739ffcda2007458": "Endpoint de métricas",
-  "5c90c5ba936fb908": "Endpoint de logs",
-  "5e29f3c15d14bbce": "Definido pelo ambiente",
-  "4136ff89bb436dcc": "Definido pelo desktop",
-  "7271a3d01a7593ee": "Desativado",
-  "dc827550691bafd1": "Conectado · {ms} ms",
-  "11b77b0add59d7b4": "Rejeitado · HTTP {status}",
-  "10cf4b8e7ecc020b": "Tempo esgotado",
-  "523b72ed9d712100": "Exportação OpenTelemetry",
-  "ecaa5a9da2c44a47": "Escolha um ambiente para configurar as exportações de telemetria dele.",
-  "5548e6d2e9b8cc64": "Salvo. Reinicie o servidor para aplicar.",
-  "23029f9ce3382536": "Esta conexão não tem permissão para alterar configurações em {environment}.",
-  "a5f1fe10ef6373fd": "Informe um endpoint HTTP ou HTTPS ou deixe vazio para desativar a exportação.",
-  "5b928a84a624e831": "Em execução: {url}",
-  "b07718fe86a16cc6": "Em execução: desativado",
-  "6d0831556a517821": "Envia traces, métricas e logs a um receptor OTLP HTTP. Reinicie o servidor para aplicar. Variáveis de ambiente substituem estas configurações.",
   "f7c3ae7a79ede728": "Testar",
-  "b93d2ec53e944576": [
-    "Em execução: ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " de",
-    " ",
-    {
-      "t": "code",
-      "i": 2,
-      "c": {
-        "i": 3,
-        "k": "_gt_value_3",
-        "v": "v"
-      }
-    }
-  ],
-  "ae9958ee0d8ed8e8": [
-    "Em execução: desativado por",
-    " ",
-    {
-      "t": "code",
-      "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
-    }
-  ],
-  "97585565390197f6": "Descartar",
   "c0fce4a3555c5c17": "Conectar",
   "0d1eba54ff075d77": "Usar",
   "035dc7d3b0f3e526": "Títulos de threads e outros textos gerados",
@@ -11928,7 +11858,6 @@
   "df9fa3a9cb004b9b": "integração configuração primeira execução primeiros passos agentes importar projetos",
   "3188bc3b3c4508bc": "Política de privacidade",
   "901a823214edc8c4": "telemetria analytics dados de uso rastreamento legal desativar",
-  "82136480255a5106": "OTel OTLP telemetria exportar endpoints logs traces métricas Grafana",
   "659d081051faf7ff": "logs traces processos histórico de recursos falhas spans cpu memória",
   "5eaeacfa9f82051a": "relatório bug problema t3 equipe enviar feedback agentes ferramentas automático quando eu pedir",
   "f537f91e1ee41d47": "atalhos de teclado teclas de atalho comandos bindings json",

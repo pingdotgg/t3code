@@ -1,4 +1,3 @@
-import { Observe } from "expo-observe";
 import { T, useGT } from "gt-react-native";
 import { Component, type ReactNode } from "react";
 import { ScrollView, View } from "react-native";
@@ -67,8 +66,6 @@ export class RenderErrorBoundary extends Component<
   }
 
   override componentDidCatch(error: unknown, info: { componentStack?: string }) {
-    // A caught render error never reaches Observe's global handler.
-    Observe.reportError(error);
     this.setState({ componentStack: info.componentStack });
   }
 

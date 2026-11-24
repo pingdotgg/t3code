@@ -11,15 +11,9 @@ import * as Schema from "effect/Schema";
 import { USER_COMMANDS_FILE_NAME, type OtlpEndpointSource } from "@t3tools/contracts";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
 import { markNoCopyOnWrite } from "./noCopyOnWrite.ts";
-import {
-  DEFAULT_SIGNAL_EXPORT,
-  nodeProcessRuntimeAttributes,
-  processServiceInstanceId,
-  type SignalExport,
-} from "@t3tools/shared/observability";
+import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { type ReleaseChannel, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
-import packageJson from "../package.json" with { type: "json" };
+import type { ReleaseChannel } from "@t3tools/shared/releaseResource";
 
 // Official release workflows set this telemetry channel; other builds report dev.
 // Unlike __T3CODE_BUILD_CHANNEL__, this is not the sign-in page's latest/nightly channel.
@@ -54,7 +48,6 @@ export interface ServerDerivedPaths {
   readonly providerLogsDir: string;
   readonly providerEventLogPath: string;
   readonly terminalLogsDir: string;
-  readonly anonymousIdPath: string;
   readonly environmentIdPath: string;
   readonly serverRuntimeStatePath: string;
   readonly secretsDir: string;
@@ -123,23 +116,6 @@ export class ServerConfig extends Context.Service<
 
 export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
 
-export const otlpResource = (
-  config: Pick<ServerConfig["Service"], "mode" | "otelEnvironment">,
-  hostName: string,
-) => ({
-  serviceName: "t3code-server",
-  serviceVersion: packageJson.version,
-  attributes: {
-    "service.namespace": "t3code",
-    "service.runtime": "t3-server",
-    "t3code.server.managed_by": config.mode === "desktop" ? "desktop" : "standalone",
-    "service.instance.id": processServiceInstanceId(config.otelEnvironment.resourceAttributes),
-    ...releaseResourceAttributes(telemetryChannel, config.otelEnvironment.resourceAttributes),
-    "host.name": config.otelEnvironment.resourceAttributes["host.name"] || hostName,
-    ...nodeProcessRuntimeAttributes(),
-  },
-});
-
 export const layer = (config: ServerConfig["Service"]) => Layer.succeed(ServerConfig, make(config));
 
 export const deriveServerPaths = Effect.fn(function* (
@@ -175,7 +151,6 @@ export const deriveServerPaths = Effect.fn(function* (
     providerLogsDir,
     providerEventLogPath: join(providerLogsDir, "events.log"),
     terminalLogsDir: join(logsDir, "terminals"),
-    anonymousIdPath: join(stateDir, "anonymous-id"),
     environmentIdPath: join(stateDir, "environment-id"),
     serverRuntimeStatePath: join(stateDir, "server-runtime.json"),
     secretsDir: join(stateDir, "secrets"),
@@ -202,7 +177,6 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
       fs.makeDirectory(path.dirname(derivedPaths.keybindingsConfigPath), { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.settingsPath), { recursive: true }),
       fs.makeDirectory(derivedPaths.providerStatusCacheDir, { recursive: true }),
-      fs.makeDirectory(path.dirname(derivedPaths.anonymousIdPath), { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.serverRuntimeStatePath), { recursive: true }),
     ],
     { concurrency: "unbounded" },

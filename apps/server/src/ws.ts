@@ -198,7 +198,6 @@ import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as NpmRelease from "./cloud/npmRelease.ts";
-import * as RelayTracing from "./cloud/relayTracing.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -264,8 +263,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
-import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
-import type { TelemetryOwner } from "./telemetry/Identify.ts";
+import { commandFeatureUsage } from "./telemetry/FeatureUsage.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
@@ -279,7 +277,6 @@ import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
-import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as TextGenerators from "./textGeneration/TextGenerators.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
@@ -298,7 +295,6 @@ import {
   SOCKET_FRAME_PARTS_QUERY_PARAM,
   splitLargeSocketFrames,
 } from "@t3tools/shared/socketFrameParts";
-import { isTelemetryIdHash } from "@t3tools/shared/telemetryId";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -877,28 +873,6 @@ function readClientAnalyticsProps(request: HttpServerRequest.HttpServerRequest) 
     ...(hasDeviceModel ? { deviceModel, clientDeviceModel: deviceModel } : {}),
     ...(isClientConnectionMethod(connectionMethod) ? { connectionMethod } : {}),
   };
-}
-
-/**
- * Owners a connecting client reports: its hashed T3 Connect account and its
- * hashed device id. Only hashes are accepted, so a raw id never reaches analytics.
- */
-function readClientOwners(
-  request: HttpServerRequest.HttpServerRequest,
-): ReadonlyArray<TelemetryOwner> {
-  const url = requestUrl(request);
-  if (Option.isNone(url)) {
-    return [];
-  }
-  const params = url.value.searchParams;
-  return (
-    [
-      ["connect", params.get("clientOwner")],
-      ["device", params.get("clientDevice")],
-    ] as const
-  ).flatMap(([source, ownerId]) =>
-    ownerId !== null && isTelemetryIdHash(ownerId) ? [{ source, ownerId }] : [],
-  );
 }
 
 const enrichProjectShells = Effect.fn("ws.orchestrationV2.enrichProjectShells")(
@@ -1592,10 +1566,6 @@ export const layerWsRpc = (
       const storageCleanup = yield* StorageCleanup.StorageCleanup;
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const relayTracingAllowed = RelayTracing.allowedFor(
-        yield* HostProcess.Environment,
-        serverSettings.managedPolicy,
-      );
       const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
@@ -1628,7 +1598,6 @@ export const layerWsRpc = (
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const secretCheck = yield* SecretCheck.SecretCheck;
-      const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
       const textGenerators = yield* TextGenerators.TextGenerators;
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
@@ -1954,7 +1923,6 @@ export const layerWsRpc = (
                 }
               : {}),
             otlpLogsEnabled: config.otlpLogsUrl !== undefined,
-            relayTracingAllowed,
           },
           settings,
           ...(serverSettings.managedPolicy === undefined
@@ -2864,7 +2832,8 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetUsageSummary]: (input) => usage.readSummary(input),
         [WS_METHODS.serverRefreshUsageRates]: (_input) => usage.refreshRates,
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
-        [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
+        [WS_METHODS.serverCheckOtlpEndpoint]: () =>
+          Effect.succeed({ _tag: "Unreachable", timedOut: false }),
         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),
         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
@@ -3821,7 +3790,6 @@ export const layer = Layer.unwrap(
         }
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const sessions = yield* SessionStore.SessionStore;
-        const analytics = yield* AnalyticsService.AnalyticsService;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request, "rpc").pipe(
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
             failEnvironmentAuthInvalid(
@@ -3840,31 +3808,13 @@ export const layer = Layer.unwrap(
           ];
         }
         const clientAnalyticsProps = readClientAnalyticsProps(request);
-        yield* analytics.recordOwners(readClientOwners(request), "client");
         const reportProfiles = yield* serverBrowser.profileReporter;
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
             Effect.provideService(RpcServer.Protocol, withOutputWindow(protocol)),
             Effect.provide(
-              Layer.merge(
-                RpcAuthorization.layer(session.scopes, (method, payload) => {
-                  // Anonymous product signal: the feature and its enum variant,
-                  // credited to the connecting client's surface only.
-                  const usage = featureUsage(method, payload);
-                  return usage === undefined
-                    ? Effect.void
-                    : analytics
-                        .record("feature.used", {
-                          ...usage,
-                          ...(clientAnalyticsProps.surface === undefined
-                            ? {}
-                            : { surface: clientAnalyticsProps.surface }),
-                        })
-                        .pipe(Effect.ignore);
-                }),
-                rpcInstrumentationLayer,
-              ),
+              Layer.merge(RpcAuthorization.layer(session.scopes), rpcInstrumentationLayer),
             ),
             Effect.forkScoped,
           );
@@ -3902,7 +3852,6 @@ export const layer = Layer.unwrap(
               Layer.provide(
                 Layer.succeed(IssueTrackerConnections.IssueTrackerConnections, issueTrackers),
               ),
-              Layer.provide(OtlpEndpointCheck.layer),
               Layer.provide(
                 Layer.succeed(
                   PullRequestReviewGuideService.PullRequestReviewGuideService,

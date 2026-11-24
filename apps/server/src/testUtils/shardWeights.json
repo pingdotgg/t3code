@@ -60,7 +60,6 @@
   "src/mcpApps/McpAppModelContext.test.ts": 1,
   "src/mcpApps/McpAppRequests.test.ts": 1.3,
   "src/observability/DefectReporter.test.ts": 1.2,
-  "src/observability/OtlpEndpointCheck.test.ts": 0.5,
   "src/orchestration-v2/Adapters/AcpAdapterV2.test.ts": 25.5,
   "src/orchestration-v2/Adapters/AcpRegistryAdapterV2.test.ts": 1.3,
   "src/orchestration-v2/Adapters/AntigravityAdapterV2.test.ts": 1.1,

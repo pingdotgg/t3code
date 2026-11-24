@@ -22,7 +22,6 @@ import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
-import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 
 const assertSameCallback = (actual: string | null, expected: string | null) => {
@@ -37,7 +36,6 @@ const instanceId = ProviderInstanceId.make("managed-codex-test");
 const makeHarnessFor = Effect.fnUntraced(function* (
   instanceId: ProviderInstanceId,
   bytes: Map<string, Uint8Array> = new Map(),
-  failAnalytics = false,
 ) {
   const environmentId = environmentIds.get(bytes) ?? EnvironmentId.make(NodeCrypto.randomUUID());
   environmentIds.set(bytes, environmentId);
@@ -224,27 +222,11 @@ const makeHarnessFor = Effect.fnUntraced(function* (
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("mock address");
   origin = `http://127.0.0.1:${address.port}`;
-  const analyticsEvents: {
-    event: string;
-    properties: Readonly<Record<string, unknown>> | undefined;
-  }[] = [];
-  const analytics = AnalyticsService.AnalyticsService.of({
-    record: (event, properties) =>
-      failAnalytics
-        ? Effect.die("analytics unavailable")
-        : Effect.sync(() => {
-            analyticsEvents.push({ event, properties });
-            return true;
-          }),
-    flush: Effect.void,
-    recordOwners: () => Effect.void,
-  });
   const auth = yield* makeCodexChatGptAuth({
     instanceId,
     discoveryUrl: `${origin}/discovery`,
     resource: `${origin}/v1`,
   }).pipe(
-    Effect.provideService(AnalyticsService.AnalyticsService, analytics),
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
   );
@@ -300,7 +282,6 @@ const makeHarnessFor = Effect.fnUntraced(function* (
     rotateSigningKey: () => {
       signingKey = signingKeyFor("rotated");
     },
-    analyticsEvents,
     secrets,
     environmentId,
     bytes,
@@ -315,7 +296,7 @@ const makeHarnessFor = Effect.fnUntraced(function* (
         },
         "owner",
         { discoveryUrl: `${origin}/discovery`, resource: `${origin}/v1` },
-      ).pipe(Stream.provideService(AnalyticsService.AnalyticsService, analytics)),
+      ),
     finishCallback: (state: { authorizationUrl: string | null }) =>
       Effect.promise(() => fetch(prepareCallback(state))),
     destination: Effect.gen(function* () {
@@ -337,7 +318,6 @@ const makeHarnessFor = Effect.fnUntraced(function* (
         discoveryUrl: `${origin}/discovery`,
         resource: `${origin}/v1`,
       }).pipe(
-        Effect.provideService(AnalyticsService.AnalyticsService, analytics),
         Effect.provideService(ServerSecretStore.ServerSecretStore, destinationStore),
         Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
       );
@@ -1581,24 +1561,6 @@ it.effect("primary completes OAuth and destination imports and owns the refresh 
       );
       assert.isTrue(stopped);
       assert.strictEqual(imported.phase, "succeeded");
-      assert.deepStrictEqual(
-        h.analyticsEvents.map(({ event }) => event),
-        [
-          "chatgpt.auth.started",
-          "chatgpt.auth.completed",
-          "chatgpt.transfer.started",
-          "chatgpt.transfer.completed",
-        ],
-      );
-      assert.isTrue(
-        h.analyticsEvents.every(({ properties }) => properties?.flow === "primary_handoff"),
-      );
-      assert.strictEqual(h.analyticsEvents[1]?.properties?.outcome, "succeeded");
-      assert.strictEqual(h.analyticsEvents[3]?.properties?.outcome, "succeeded");
-      assert.notProperty(h.analyticsEvents[1]?.properties ?? {}, "connectedAccountCount");
-      assert.strictEqual(h.analyticsEvents[1]?.properties?.intent, "different_account");
-      assert.strictEqual(h.analyticsEvents[3]?.properties?.connectedAccountCount, 1);
-      assert.strictEqual(h.analyticsEvents[3]?.properties?.savedConnectionCount, 1);
       const saved = Option.getOrThrow(yield* destination.auth.read);
       assert.strictEqual(saved.clientId, result.profile.registration.clientId);
       assert.strictEqual(saved.refreshToken, "initial-refresh");
@@ -1725,17 +1687,6 @@ it.effect(
     ),
 );
 
-it.effect("telemetry failures do not fail a verified ChatGPT sign-in", () =>
-  provision(
-    Effect.gen(function* () {
-      const h = yield* makeHarnessFor(instanceId, new Map(), true);
-      yield* h.signIn;
-      const state = yield* h.phase("succeeded");
-      assert.strictEqual(state.phase, "succeeded");
-      assert.isTrue(Option.isSome(yield* h.auth.read));
-    }),
-  ),
-);
 it.effect("a running session renews its bound profile but refuses a replacement sign-in", () =>
   provision(
     Effect.gen(function* () {

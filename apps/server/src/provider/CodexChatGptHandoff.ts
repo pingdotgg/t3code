@@ -42,7 +42,6 @@ export function subscribeChatGptHandoff(
         ...endpoints,
         instanceId: input.instanceId,
         reconnectProfile: input.profile,
-        telemetryFlow: "primary_handoff",
         defaultReturnUrl: input.returnUrl,
       }).pipe(
         Effect.provideService(ServerSecretStore.ServerSecretStore, store),

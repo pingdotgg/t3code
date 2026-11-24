@@ -50,7 +50,6 @@ import { formatCpuTime } from "./ResourceTelemetryDiagnostics.logic";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { TelemetryExportSettings } from "./TelemetryExportSettings";
 
 const NUMBER_FORMAT = new Intl.NumberFormat();
 
@@ -879,18 +878,6 @@ function DiagnosticsSettingsBody() {
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;
   const isResourceInitialLoading = isResourcePending && resourceData === null;
-  // Wait for initial tables to stabilize search targets; later loads must preserve export drafts.
-  const [exportFormEnvironmentId, setExportFormEnvironmentId] =
-    useState<typeof environmentId>(null);
-  if (
-    exportFormEnvironmentId !== environmentId &&
-    canReadDiagnostics &&
-    !isInitialLoading &&
-    !isProcessInitialLoading &&
-    !isResourceInitialLoading
-  ) {
-    setExportFormEnvironmentId(environmentId);
-  }
   const signalProcess = async (pid: number, signal: ServerProcessSignal) => {
     const targetEnvironmentId = environmentId;
     const process = processData?.processes.find((entry) => entry.pid === pid);
@@ -1442,7 +1429,6 @@ function DiagnosticsSettingsBody() {
           />
         )}
       </SettingsSection>
-      {exportFormEnvironmentId === environmentId && <TelemetryExportSettings />}
     </SettingsPageContainer>
   );
 }

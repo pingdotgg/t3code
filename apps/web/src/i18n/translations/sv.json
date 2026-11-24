@@ -6230,26 +6230,6 @@
   ],
   "216ab7514aea1d61": "Starta utan agent",
   "501ce2d99da8bfd1": "Konfigurera en agent för att starta.",
-  "71f3822326109c8e": [
-    "T3 Code samlar in anonym användningsdata för att förbättra appen. Se",
-    " ",
-    {
-      "t": "a",
-      "i": 1,
-      "c": "integritetspolicyn"
-    },
-    " för att välja bort det."
-  ],
-  "b33f35083757b42c": [
-    "Se",
-    " ",
-    {
-      "t": "a",
-      "i": 1,
-      "c": "integritetspolicyn"
-    },
-    "."
-  ],
   "f77d000c0710f066": "Aktivera",
   "4ed27bf946e504db": "Konfigurera",
   "7a26eaacff0607f7": [
@@ -11149,57 +11129,7 @@
   "a899361f5deb3476": "Alla lokala filer",
   "8c92f29a2b29adb5": "Ej committade ändringar",
   "deb572d6e83f3818": "Redigerade spårade filer",
-  "83729e5228731819": "Slutpunkt för spårningar",
-  "8739ffcda2007458": "Slutpunkt för mätvärden",
-  "5c90c5ba936fb908": "Slutpunkt för loggar",
-  "5e29f3c15d14bbce": "Angiven av miljön",
-  "4136ff89bb436dcc": "Angiven av skrivbordsappen",
-  "7271a3d01a7593ee": "Av",
-  "dc827550691bafd1": "Ansluten · {ms} ms",
-  "11b77b0add59d7b4": "Avvisad · HTTP {status}",
-  "10cf4b8e7ecc020b": "Tidsgränsen överskreds",
-  "523b72ed9d712100": "OpenTelemetry-export",
-  "ecaa5a9da2c44a47": "Välj en miljö för att konfigurera dess telemetriexport.",
-  "5548e6d2e9b8cc64": "Sparat. Starta om servern för att tillämpa.",
-  "23029f9ce3382536": "Den här anslutningen saknar behörighet att ändra inställningar på {environment}.",
-  "a5f1fe10ef6373fd": "Ange en HTTP- eller HTTPS-slutpunkt, eller lämna tomt för att inaktivera export.",
-  "5b928a84a624e831": "Körs: {url}",
-  "b07718fe86a16cc6": "Körning: inaktiverad",
-  "6d0831556a517821": "Skicka spårningar, mätvärden och loggar till en OTLP HTTP-mottagare. Starta om servern för att tillämpa. Miljövariabler åsidosätter de här inställningarna.",
   "f7c3ae7a79ede728": "Testa",
-  "b93d2ec53e944576": [
-    "Körs: ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " från",
-    " ",
-    {
-      "t": "code",
-      "i": 2,
-      "c": {
-        "i": 3,
-        "k": "_gt_value_3",
-        "v": "v"
-      }
-    }
-  ],
-  "ae9958ee0d8ed8e8": [
-    "Körning: inaktiverad från",
-    " ",
-    {
-      "t": "code",
-      "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
-    }
-  ],
-  "97585565390197f6": "Kasta",
   "c0fce4a3555c5c17": "Anslut",
   "0d1eba54ff075d77": "Använd den",
   "035dc7d3b0f3e526": "Trådtitlar och annan genererad text",
@@ -11936,7 +11866,6 @@
   "df9fa3a9cb004b9b": "introduktion konfiguration första start kom igång agenter importera projekt",
   "3188bc3b3c4508bc": "Integritetspolicy",
   "901a823214edc8c4": "telemetri analys användningsdata spårning juridiskt avböj",
-  "82136480255a5106": "OTel OTLP telemetri export slutpunkter loggar spår mätvärden Grafana",
   "659d081051faf7ff": "loggar spår processer resurshistorik fel spans cpu minne",
   "5eaeacfa9f82051a": "rapport bugg problem t3 team skicka återkoppling agenter verktyg automatiskt när jag ber om det",
   "f537f91e1ee41d47": "kortkommandon snabbtangenter kommandon tangentbindningar json",

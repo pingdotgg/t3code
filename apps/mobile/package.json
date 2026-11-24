@@ -108,7 +108,6 @@
     "expo-linking": "~58.0.16",
     "expo-network": "~58.0.4",
     "expo-notifications": "~58.1.8",
-    "expo-observe": "~58.0.18",
     "expo-paste-input": "^0.2.2",
     "expo-quick-actions": "^6.0.2",
     "expo-secure-store": "~58.0.2",
