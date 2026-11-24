@@ -1770,7 +1770,7 @@ export type Wire165 = {
 export type Wire166 = { readonly [x: string]: unknown };
 
 export type Wire167 = {
-  readonly kind: "cliproxy";
+  readonly kind: "cliproxy" | "http";
   readonly label?: Wire8;
   readonly url: string;
   readonly managementKey?: Wire136;
@@ -3202,6 +3202,7 @@ export type ServerSettings = {
   readonly guestSharingEnabled?: Wire6;
   readonly linkedEnvironmentsEnabled?: Wire6;
   readonly workflowsEnabled?: Wire6;
+  readonly workflowSkippedRunsKept?: number | undefined;
   readonly promptSuggestionsEnabled?: Wire6;
   readonly sidebarAutoSettleKeepPullRequests?: Wire6;
   readonly sidebarAutoSettleOnMerge?: Wire6;
@@ -3394,6 +3395,7 @@ export type ServerSettingsPatch = {
   readonly guestSharingEnabled?: boolean;
   readonly linkedEnvironmentsEnabled?: boolean;
   readonly workflowsEnabled?: boolean;
+  readonly workflowSkippedRunsKept?: number;
   readonly promptSuggestionsEnabled?: boolean;
   readonly backgroundActivity?: {
     readonly schemaVersion?: 1;

@@ -519,6 +519,77 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
   ),
 );
 
+it.live("keeps a checkout that gained work while its folder's remove command waited its turn", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, repository } = yield* fixture;
+      const shop = path.join(tmp, "shop");
+      const api = yield* repository("shop/api");
+      const ran = path.join(tmp, "ran");
+      // The project's teardown clears a checkout's drafts.
+      yield* fileSystem.writeFileString(
+        path.join(shop, "t3.json"),
+        JSON.stringify({
+          worktreeLayout: {
+            create: `mkdir -p "$T3_WORKTREE_PROJECT_PATH" && git -C "$T3_PROJECT_ROOT/api" worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH/api"`,
+            remove: `echo "$T3_WORKTREE_ROOT" >> "${ran}"; rm -f "$T3_WORKTREE_PROJECT_PATH/api/draft.txt"`,
+          },
+        }),
+      );
+      state.workspaceRoot = shop;
+      state.trackedFolders = tracked(api);
+      yield* approveLayoutCommands;
+      const first = (yield* create("first")).taskFolder;
+      const second = (yield* create("second")).taskFolder;
+      const draft = path.join(second.root, "api", "draft.txt");
+      const taskFolders = yield* TaskFolders.TaskFolders;
+
+      // The first removal's command holds the project's turn until it is let go.
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      state.onLayoutCommand = Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Deferred.await(finish)),
+      );
+      const holding = yield* taskFolders
+        .remove({ root: first.root, force: true, forget: true, projectCommands: "permitted" })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+
+      // The second removal finds its checkout clean, then waits for the first one's command.
+      const inspected = yield* Deferred.make<void>();
+      const waiting = yield* taskFolders
+        .remove({
+          root: second.root,
+          force: false,
+          forget: true,
+          projectCommands: "permitted",
+          inspect: () =>
+            fileSystem.exists(draft).pipe(
+              Effect.orElseSucceed(() => true),
+              Effect.map((hasDraft) => ({
+                keep: hasDraft ? "has a draft" : null,
+                force: false,
+              })),
+              Effect.tap(() => Deferred.succeed(inspected, undefined)),
+            ),
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(inspected);
+      yield* fileSystem.writeFileString(draft, "work in progress\n");
+      yield* Deferred.succeed(finish, undefined);
+
+      yield* Fiber.join(holding);
+      const removal = yield* Fiber.join(waiting);
+      assert.equal(yield* fileSystem.readFileString(ran), `${first.root}\n`);
+      assert.equal(yield* fileSystem.readFileString(draft), "work in progress\n");
+      assert.deepInclude(removal.kept, {
+        path: path.join(second.root, "api"),
+        reason: "has a draft",
+      });
+    }),
+  ),
+);
+
 it.live("leaves a project's layout commands out for a request that may not run them", () =>
   withState((state) =>
     Effect.gen(function* () {

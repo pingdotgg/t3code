@@ -147,6 +147,10 @@
       "types": "./src/schemaYaml.ts",
       "import": "./src/schemaYaml.ts"
     },
+    "./grepOutput": {
+      "types": "./src/grepOutput.ts",
+      "import": "./src/grepOutput.ts"
+    },
     "./toolActivity": {
       "types": "./src/toolActivity.ts",
       "import": "./src/toolActivity.ts"

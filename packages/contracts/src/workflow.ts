@@ -34,6 +34,8 @@ export const WorkflowRun = Schema.Struct({
   parentRunId: Schema.NullOr(Schema.String),
   /** The step of that run this one was invoked as. */
   parentStep: Schema.NullOr(Schema.String),
+  /** What the workflow tagged the run with, for filtering. Absent for a run with no tags. */
+  tags: Schema.optional(Schema.Array(Schema.String)),
   startedAt: Schema.String,
   updatedAt: Schema.String,
   endedAt: Schema.NullOr(Schema.String),
@@ -66,6 +68,8 @@ export const WorkflowQuestion = Schema.Struct({
   name: Schema.String,
   /** What `ask` was given: a title, the choices, and data to lay out. */
   request: Schema.Json,
+  /** The kind of question its workflow declared for it. Absent for a question asked without one. */
+  kind: Schema.optional(Schema.String),
   askedAt: Schema.String,
   /** The run's latest agent thread, for talking it through before answering. */
   thread: Schema.NullOr(
@@ -89,6 +93,8 @@ export const WorkflowSummary = Schema.Struct({
   version: Schema.Number,
   /** In words: "every 1h", "daily at 09:00", "webhook issues". Empty when only started by hand. */
   triggers: Schema.Array(Schema.String),
+  /** The kinds of question it declares, in that order, each with its label. Absent when none. */
+  asks: Schema.optional(Schema.Array(Schema.Struct({ kind: Schema.String, label: Schema.String }))),
 });
 export type WorkflowSummary = typeof WorkflowSummary.Type;
 

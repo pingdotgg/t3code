@@ -29,6 +29,7 @@ import {
   sleep,
   step,
   stop,
+  tags,
   text,
   title,
   wait,
@@ -36,6 +37,9 @@ import {
 } from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
+import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import {
   Issue,
@@ -581,6 +585,54 @@ const triggered = [
   ),
 ];
 
+const sorted = [
+  /** Tags its run, then asks a question of the kind it was started with, or of none. */
+  workflow(
+    "sorter",
+    {
+      version: 1,
+      payload: Schema.Struct({
+        tags: Schema.Array(Schema.String),
+        kind: Schema.optional(Schema.String),
+      }),
+      asks: { feature: "Feature wanted?", intended: "Bug or intended?" },
+    },
+    Effect.fn(function* (payload) {
+      yield* tags(payload.tags);
+      const question = { title: "Which way?", choices: ["Yes", "No"] } as const;
+      yield* ask(
+        "sort",
+        payload.kind === undefined ? question : { ...question, kind: payload.kind },
+      );
+    }),
+  ),
+  /** Finds runs by their tag, or by the kind of question they have open. */
+  workflow(
+    "finder",
+    {
+      version: 1,
+      payload: Schema.Struct({
+        kind: Schema.optional(Schema.String),
+        tag: Schema.optional(Schema.String),
+      }),
+      returns: Schema.Array(Schema.String),
+    },
+    (payload) =>
+      step(
+        "find",
+        { returns: Schema.Array(Schema.String) },
+        Effect.map(
+          runs({
+            workflow: "sorter",
+            ...(payload.kind === undefined ? {} : { kind: payload.kind }),
+            ...(payload.tag === undefined ? {} : { tag: payload.tag }),
+          }),
+          (found) => found.map((run) => `${run.key} ${run.tags.join("+")}`).toSorted(),
+        ),
+      ),
+  ),
+];
+
 const PROJECT = "/home/me/app";
 const triage = workflow(
   "triage",
@@ -702,7 +754,12 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
   const path = yield* Path.Path;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflows-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
-  yield* Effect.provide(WorkflowsMigration, database);
+  yield* Effect.provide(
+    Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration).pipe(
+      Effect.andThen(WorkflowRunTagsMigration),
+    ),
+    database,
+  );
   const counts = yield* Ref.make<Record<string, number>>({});
   const failures = yield* Ref.make(0);
   const latch: Latch = {
@@ -722,6 +779,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
     ...triggered,
     ...family,
     ...control,
+    ...sorted,
   ];
   const engineOf = (registered: typeof all) =>
     WorkflowEngine.layer(registered, store).pipe(
@@ -2021,6 +2079,47 @@ it("hooks of different workflows never share an id", () => {
   assert.equal(Workflows.hookId("inbound", "push"), "wf-inbound.push");
 });
 
+it.effect("the sweep deletes skipped runs past the number the settings keep", () =>
+  Effect.gen(function* () {
+    const exposed = exposedStore();
+    const { boot } = yield* harness(exposed.layer);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const store = yield* exposed.store;
+        const [hook] = yield* workflows.hooks;
+        const [hookId, token] = hook!.path.split("/").slice(-2).map(decodeURIComponent);
+        const deliver = (body: string, delivery: string) =>
+          Effect.map(
+            workflows.deliver({
+              hookId: hookId!,
+              token: token!,
+              request: { method: "POST", headers: { "x-delivery": delivery }, query: "", body },
+            }),
+            Option.getOrThrow,
+          );
+        const ping = yield* deliver("ping", "d1");
+        yield* workflows.waitFor(ping.runId, status("skipped"));
+        const hello = yield* deliver("hello", "d2");
+        yield* workflows.waitFor(hello.runId, status("completed"));
+        assert.isNull((yield* store.run(ping.runId))?.input_json);
+
+        // Deleted once its engine journal is, which waits an hour after the run ends.
+        yield* workflows.sweep;
+        assert.isDefined(yield* store.run(ping.runId));
+        yield* TestClock.adjust("2 hours");
+        yield* workflows.sweep;
+        assert.isUndefined(yield* store.run(ping.runId));
+        assert.isDefined(yield* store.run(hello.runId));
+      }),
+    ).pipe(
+      Effect.provide(
+        ServerSettings.ServerSettingsService.layerTest({ workflowSkippedRunsKept: 0 }),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("a request to a hook starts a run, its retry is the same run, and a bad token none", () =>
   Effect.gen(function* () {
     const { boot } = yield* harness();
@@ -2151,6 +2250,97 @@ it.effect("a step finds runs by their key, wakes everyone at a key, and cancels 
         const left = yield* keeper("leave");
         assert.equal(left.status, "paused");
         assert.include(left.detail ?? "", "cannot cancel itself");
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it("tags refuses a list with a gap in it", () => {
+  // The same list `tags([, "pr"])` makes: a first entry that was never set.
+  const gapped = new Array<string>(2);
+  gapped[1] = "pr";
+  assert.throws(() => tags(gapped), /tags takes one list of words/);
+});
+
+it.effect("questions carry their kind and runs their tags, and both can be filtered by", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const sort = (key: string, runTags: ReadonlyArray<string>, kind?: string) =>
+          workflows.start(
+            "sorter",
+            { tags: runTags, ...(kind === undefined ? {} : { kind }) },
+            { idempotencyKey: key },
+          );
+        const [feature, intended, plain] = yield* Effect.all([
+          sort("a", ["pr", "backlog"], "feature"),
+          sort("b", ["pr"], "intended"),
+          sort("c", []),
+        ]);
+        for (const run of [feature, intended, plain]) {
+          yield* workflows.waitFor(run.runId, status("waiting"));
+        }
+        const snapshot = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        // The page reads the labels and their order from what the workflow declares.
+        assert.deepStrictEqual(
+          snapshot.workflows.find((workflow) => workflow.name === "sorter")?.asks,
+          [
+            { kind: "feature", label: "Feature wanted?" },
+            { kind: "intended", label: "Bug or intended?" },
+          ],
+        );
+        assert.deepStrictEqual(
+          snapshot.questions.map((question) => [question.runId, question.kind]),
+          [
+            [feature.runId, "feature"],
+            [intended.runId, "intended"],
+            [plain.runId, undefined],
+          ],
+        );
+        assert.deepStrictEqual(
+          [feature, intended, plain].map(
+            (run) => snapshot.runs.find((listed) => listed.runId === run.runId)?.tags,
+          ),
+          [["pr", "backlog"], ["pr"], undefined],
+        );
+        assert.deepStrictEqual(
+          (yield* workflows.list({ tag: "backlog" })).map((run) => run.runId),
+          [feature.runId],
+        );
+        assert.deepStrictEqual(
+          (yield* workflows.list({ tag: "pr", status: "completed" })).map((run) => run.runId),
+          [],
+        );
+        const find = Effect.fn(function* (
+          key: string,
+          filter: { readonly kind?: string; readonly tag?: string },
+        ) {
+          const run = yield* workflows.start("finder", filter, { idempotencyKey: key });
+          return (yield* workflows.waitFor(run.runId, status("completed", "paused"))).result;
+        });
+        assert.deepStrictEqual(yield* find("by-tag", { tag: "pr" }), ["a pr+backlog", "b pr"]);
+        assert.deepStrictEqual(yield* find("by-kind", { kind: "intended" }), ["b pr"]);
+        // Answered, the question is no longer open, so its run is no longer one of that kind.
+        yield* workflows.answer(intended.runId, "sort", { choice: "Yes" });
+        yield* workflows.waitFor(intended.runId, status("completed"));
+        assert.deepStrictEqual(yield* find("by-kind-after", { kind: "intended" }), []);
+
+        // A kind the workflow does not declare is asked all the same, and kept as it was written.
+        const typo = yield* sort("d", [], "feture");
+        yield* workflows.waitFor(typo.runId, status("waiting"));
+        const after = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        assert.equal(
+          after.questions.find((question) => question.runId === typo.runId)?.kind,
+          "feture",
+        );
+        assert.deepStrictEqual(yield* find("by-typo", { kind: "feture" }), ["d "]);
+        yield* workflows.answer(typo.runId, "sort", { choice: "No" });
+        assert.equal(
+          (yield* workflows.waitFor(typo.runId, status("completed"))).status,
+          "completed",
+        );
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
