@@ -293,7 +293,7 @@ function ConversationCard({
       <div className="px-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
+            <h2 className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
               {event.kind === "review" ? (
                 <T>
                   <Var>
@@ -315,7 +315,7 @@ function ConversationCard({
                 </>
               )}
               {event.reviewState ? <ReviewStateBadge state={event.reviewState} /> : null}
-            </div>
+            </h2>
             <PullRequestMetaLine className="mt-1 flex-wrap text-2xs text-muted-foreground">
               <span>
                 <RelativeTime timestamp={event.at} />
@@ -749,7 +749,7 @@ function ReviewVerdictEvent({
       />
       <div className="flex min-w-0 flex-wrap items-center gap-2 py-1.5">
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
+          <h2 className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
             <ActorName actor={event.actor} />
             <Tooltip disabled={!stale}>
               <TooltipTrigger
@@ -775,7 +775,7 @@ function ReviewVerdictEvent({
               </TooltipTrigger>
               <TooltipPopup>{pullRequestReviewOutcomeStaleLabel(outcome, resolve)}</TooltipPopup>
             </Tooltip>
-          </div>
+          </h2>
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <PullRequestMetaLine className="flex-wrap text-2xs text-muted-foreground">
               <span>
@@ -971,7 +971,12 @@ export function PullRequestTimelineTab({
 
   if (events.length === 0) {
     return (
-      <div ref={scrollerRef} className="scrollbar-gutter-both h-full overflow-y-auto px-4 py-5">
+      <div
+        ref={scrollerRef}
+        tabIndex={-1}
+        data-workspace-focus-default
+        className="scrollbar-gutter-both h-full overflow-y-auto px-4 py-5 outline-none"
+      >
         <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
           <PullRequestGlyph.pullRequest className="mb-2 size-5" />
           <p className="text-xs">
@@ -995,7 +1000,9 @@ export function PullRequestTimelineTab({
       keyExtractor={rowKey}
       renderItem={renderRow}
       estimatedItemSize={140}
-      className="scrollbar-gutter-both h-full px-4"
+      tabIndex={-1}
+      data-workspace-focus-default
+      className="scrollbar-gutter-both h-full px-4 outline-none"
       contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:left-[15px] before:top-6 before:w-px before:bg-border/45"
       ListHeaderComponent={
         anchor !== null && targetIndex < 0 && revealUrl === undefined ? (

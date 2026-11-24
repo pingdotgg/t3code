@@ -14,6 +14,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { BUILT_IN_DRIVERS } from "../provider/builtInDrivers.ts";
 import * as ManagedPolicy from "./ManagedPolicy.ts";
 import { disallowedDriverReason, providerHostEnvironment } from "./managedProviders.ts";
+import * as ManagedSettings from "./managedSettings.ts";
 
 it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
   const loadFrom = (contents: string | undefined) =>
@@ -54,17 +55,39 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
     }),
   );
 
+  it("lists only settings a policy can manage", () => {
+    const listed = ManagedSettings.listManageableSettings();
+    const paths = listed.map(([path]) => path);
+    assert.include(paths, "storageCleanup.logsAfterDays");
+    assert.include(paths, "backgroundActivity.baseProfile");
+    assert.include(paths, "backgroundActivity.overrides.pauseWhenOnBattery");
+    assert.notInclude(paths, "backgroundActivity.overrides");
+    assert.notInclude(paths, "projectSettingsOverrides");
+    assert.notInclude(paths, "compactIdleThreads");
+    assert.notOk(paths.some((path) => path.startsWith("observability")));
+    for (const [path, value] of listed) {
+      if (value === undefined) continue;
+      const managed = ManagedSettings.makeManagedSettings({ [path]: { value, locked: false } });
+      assert.equal(managed._tag, "Valid", path);
+    }
+  });
+
   it.effect("tells clients which capabilities the policy switches off", () =>
     Effect.gen(function* () {
       const policy = yield* loadFrom(
         JSON.stringify({
           schemaVersion: 1,
           organization: "Example Corp",
-          limits: { webhookTasks: false, telemetry: true },
+          limits: { webhookTasks: false, telemetry: true, previewTunnel: false },
         }),
       );
-      assert.deepEqual(policy.summary?.limits, { webhookTasks: false, telemetry: true });
+      assert.deepEqual(policy.summary?.limits, {
+        webhookTasks: false,
+        telemetry: true,
+        previewTunnel: false,
+      });
       assert.equal(ManagedPolicy.deniedBy(policy, "webhookTasks"), "Example Corp");
+      assert.equal(ManagedPolicy.deniedBy(policy, "previewTunnel"), "Example Corp");
       assert.isUndefined(ManagedPolicy.deniedBy(policy, "telemetry"));
     }),
   );

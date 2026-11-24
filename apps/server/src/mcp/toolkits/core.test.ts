@@ -416,6 +416,47 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
   ),
 );
 
+it.effect("captures send_to_user results for providers that drop MCP outputs", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+    const draft = "### Status\n\nAll checks passed.";
+    const result = yield* server
+      .callTool({ name: "send_to_user", arguments: { message: draft } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).not.toBe(true);
+    expect(yield* mcpSessions.takeToolResult(threadId, "send_to_user", { message: draft })).toEqual(
+      { sentMessage: draft },
+    );
+    expect(yield* mcpSessions.takeToolResult(threadId, "send_to_user", { message: draft })).toBe(
+      undefined,
+    );
+
+    const invalid = yield* server
+      .callTool({ name: "send_to_user", arguments: { message: "" } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+        Effect.flip,
+      );
+    expect(invalid).toMatchObject({ _tag: "InvalidParams" });
+    expect(yield* mcpSessions.takeToolResult(threadId, "send_to_user", { message: "" })).toEqual({
+      isError: true,
+    });
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerMessageToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provideMerge(McpProviderSessions.layer),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+      ),
+    ),
+  ),
+);
+
 it.effect("records only failed calls of tools that hand off no work", () => {
   // Recording runs detached from the tool response, so the first event is awaited.
   const recorded = Deferred.makeUnsafe<{ event: string; properties: object }>();
@@ -459,9 +500,7 @@ it.effect("records only failed calls of tools that hand off no work", () => {
             AnalyticsService.AnalyticsService,
             AnalyticsService.AnalyticsService.of({
               record: (event, properties) =>
-                Deferred.succeed(recorded, { event, properties: properties ?? {} }).pipe(
-                  Effect.asVoid,
-                ),
+                Deferred.succeed(recorded, { event, properties: properties ?? {} }),
               flush: Effect.void,
               recordOwners: () => Effect.void,
             }),
@@ -473,7 +512,10 @@ it.effect("records only failed calls of tools that hand off no work", () => {
 });
 
 // A thread read whose runs or messages are bounded by nothing but the thread.
-const historyReads = (reads: Array<string>) => {
+const historyReads = (
+  reads: Array<string>,
+  queued?: { readonly attachments: ReadonlyArray<unknown>; readonly dispatched: Array<unknown> },
+) => {
   const record = (
     fields: ReadonlyArray<string>,
     filter: ProjectionStore.ProjectionRecordFilter | undefined,
@@ -499,9 +541,20 @@ const historyReads = (reads: Array<string>) => {
     getProjectThreadRecords: (_target, fields, filter) =>
       Effect.sync(() => record(fields, filter)).pipe(Effect.as(projection as never)),
     getThreadRecords: (_id, fields, filter) =>
-      Effect.sync(() => record(fields, filter)).pipe(Effect.as(projection as never)),
-    getMessagesById: () => Effect.succeed(new Map()),
-    dispatch: () => Effect.succeed({ sequence: 1 } as never),
+      Effect.sync(() => record(fields, filter)).pipe(
+        Effect.as({
+          ...projection,
+          runs:
+            queued === undefined
+              ? projection.runs
+              : [{ id: "run:queued", status: "queued", userMessageId: "message:queued" }],
+        } as never),
+      ),
+    getMessagesById: () =>
+      Effect.succeed(new Map(queued === undefined ? [] : [["message:queued", queued]]) as never),
+    hasReceipt: () => Effect.succeed(false),
+    dispatch: (command) =>
+      Effect.sync(() => queued?.dispatched.push(command)).pipe(Effect.as({ sequence: 1 } as never)),
   });
 };
 
@@ -532,6 +585,8 @@ it.effect("t3_queue list and read load only the queued runs and their messages",
 
 it.effect("handoff analytics read only the caller's active run and its message", () => {
   const reads: Array<string> = [];
+  const attachments = [{ type: "image", id: "shot", name: "shot.png" }];
+  const dispatched: Array<unknown> = [];
   const recorded = Deferred.makeUnsafe<void>();
   return Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -546,17 +601,30 @@ it.effect("handoff analytics read only the caller's active run and its message",
       );
     yield* Deferred.await(recorded);
     expect(reads).toEqual([]);
+    // The edit keeps the queued image, so `/logout` stays an ordinary prompt and is not refused.
+    const attached = yield* server
+      .callTool({
+        name: "t3_queue",
+        arguments: { action: "edit", queuedRunId: "run:queued", text: " /LOGOUT " },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(attached.isError).not.toBe(true);
+    expect(dispatched).toMatchObject([{ text: "Edited" }, { text: " /LOGOUT ", attachments }]);
+    expect(dispatched[0]).not.toHaveProperty("attachments");
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
-        Layer.provide(historyReads(reads)),
+        Layer.provide(historyReads(reads, { attachments, dispatched })),
         Layer.provide(
           Layer.succeed(
             AnalyticsService.AnalyticsService,
             AnalyticsService.AnalyticsService.of({
-              record: () => Deferred.succeed(recorded, undefined).pipe(Effect.asVoid),
+              record: () => Deferred.succeed(recorded, undefined).pipe(Effect.as(true)),
               flush: Effect.void,
               recordOwners: () => Effect.void,
             }),
@@ -1245,6 +1313,52 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
                 } as never),
               stopWorkflow: () => Effect.die("workflow stop must not dispatch above the ceiling"),
               interruptThread: () => Effect.die("interrupt must not dispatch above the ceiling"),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+          Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+          Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+          Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+          Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        ),
+      ),
+    ),
+);
+
+it.effect(
+  "t3_background_wait marks work from a turn Claude started before T3 started its run",
+  () =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({ name: "t3_background_wait", arguments: { taskIds: ["checks"] } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, {
+            ...scope,
+            capabilities: new Set<McpInvocationContext.McpCapability>([
+              "orchestration",
+              "background-wait",
+            ]),
+          }),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.structuredContent).toEqual({ matched: ["checks"], unmatched: [] });
+    }).pipe(
+      Effect.provide(
+        layerOrchestratorToolkit.pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: (id) =>
+                Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { activeRunId: null })),
+              awaitBackgroundTasks: ({ taskIds }) =>
+                Effect.succeed({ matched: taskIds, unmatched: [] }),
             }),
           ),
           Layer.provide(ServerSettings.layerTest()),

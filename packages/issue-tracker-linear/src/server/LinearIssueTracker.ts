@@ -11,7 +11,6 @@ import {
   type IssueComment,
   type IssueEvent,
   type IssueExternalTemplate,
-  type IssueInvolvement,
   type IssueLinkedPullRequest,
   type IssueReaction,
   type IssueReactionContent,
@@ -22,16 +21,18 @@ import {
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
+  type IssueInvolvementFilter,
   type StandaloneIssueTrackerApi,
   type TrackerIssueSummary,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
+import { LINEAR_HOST, parseLinearIssueUrl } from "../shared/issueUrl.ts";
 import * as LinearApi from "./LinearApi.ts";
 
 const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
   tracker: LinearApi.KIND,
   displayName: "Linear",
-  host: "linear.app",
+  host: LINEAR_HOST,
   scopeNoun: "team",
   credential: {
     label: "Personal API key",
@@ -307,10 +308,7 @@ export function toTemplate(
   };
 }
 
-function involvementFilter(input: {
-  readonly involvement: IssueInvolvement;
-  readonly viewer: string;
-}): LinearApi.IssueFilter {
+function involvementFilter(input: IssueInvolvementFilter): LinearApi.IssueFilter {
   switch (input.involvement) {
     case "assigned":
       return { assignee: { displayName: { eq: input.viewer } } };
@@ -418,18 +416,13 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
       kind: LinearApi.KIND,
       capabilities: CAPABILITIES,
       standalone: DESCRIPTOR,
-      parseIssueUrl: (url) => {
-        if (url.protocol !== "https:" || url.host.toLowerCase() !== DESCRIPTOR.host) return null;
-        const [, workspace, resource, key] = url.pathname.split("/");
-        if (!workspace || resource !== "issue" || key === undefined) return null;
-        const scope = /^([A-Z][A-Z0-9_]*)-[1-9][0-9]*$/.exec(key)?.[1];
-        return scope === undefined ? null : { host: DESCRIPTOR.host, workspace, scope, key };
-      },
+      parseIssueUrl: parseLinearIssueUrl,
 
       probeCredential: (token) =>
         linear.viewer(token).pipe(
           Effect.map((data) => ({
             account: userName(data.viewer),
+            workspace: data.workspace,
             scopes: data.teams.map((team) => ({ key: team.key, name: team.name })),
           })),
         ),
@@ -437,12 +430,17 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
       // The id, not the display name: it is what the involvement filters compare against.
       getViewer: () => linear.viewer().pipe(Effect.map((data) => toActor(data.viewer).login)),
 
-      listIssues: (input) => {
-        // `ENG-12`, `#12` or `12` asks for one issue of this team by number.
+      listIssues: Effect.fn("LinearIssueTracker.listIssues")((input) => {
+        const team = input.scope.trim().toUpperCase();
+        // A qualified issue number applies only to its own team. Text can match anywhere.
         const reference =
           input.query === undefined
             ? null
-            : /^(?:[A-Za-z][A-Za-z0-9]*-|#)?(\d+)$/.exec(input.query.trim());
+            : /^(?:([A-Za-z][A-Za-z0-9]*)-|#)?(\d+)$/.exec(input.query.trim());
+        const number =
+          reference !== null && (reference[1] === undefined || reference[1].toUpperCase() === team)
+            ? Number(reference[2])
+            : undefined;
         // Each is its own clause: an assignee filter must narrow "assigned to me", not replace it.
         const clauses: LinearApi.IssueFilter[] = [
           ...(input.assignee === undefined
@@ -451,7 +449,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
           ...(input.labels ?? []).map((name) => ({ labels: { some: { name: { eq: name } } } })),
         ];
         const filter: LinearApi.IssueFilter = {
-          team: { key: { eq: input.scope.trim().toUpperCase() } },
+          team: { key: { eq: team } },
           ...involvementFilter(input),
           ...(input.state === "all"
             ? {}
@@ -470,7 +468,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
                 or: [
                   { title: { containsIgnoreCase: input.query } },
                   { description: { containsIgnoreCase: input.query } },
-                  ...(reference === null ? [] : [{ number: { eq: Number(reference[1]) } }]),
+                  ...(number === undefined ? [] : [{ number: { eq: number } }]),
                 ],
               }),
         };
@@ -487,20 +485,28 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
               nextCursor: page.nextCursor,
             })),
           );
-      },
+      }),
 
       getIssue: Effect.fn("LinearIssueTracker.getIssue")(function* (input) {
         const identifier = yield* requireIdentifier("getIssue", input.key);
         // One read of the viewer: the id matches reactions, the handle is what the client sees.
-        const [issue, me] = yield* Effect.all([
-          linear.getIssue(identifier, COMMENTS_PAGE),
-          linear.viewer().pipe(
-            Effect.map((data) => data.viewer),
-            Effect.orElseSucceed(() => null),
-          ),
-        ]);
+        // A missing issue interrupts it rather than waiting for it.
+        const [issue, me] = yield* Effect.all(
+          [
+            linear.getIssue(identifier, COMMENTS_PAGE).pipe(
+              Effect.filterOrElse(
+                (issue) => issue !== null,
+                () => notFound("getIssue"),
+              ),
+            ),
+            linear.viewer().pipe(
+              Effect.map((data) => data.viewer),
+              Effect.orElseSucceed(() => null),
+            ),
+          ],
+          { concurrency: 2 },
+        );
         const viewer = me?.id ?? null;
-        if (issue === null) return yield* notFound("getIssue");
         return {
           ...toSummary(issue, issue.comments.nodes.length),
           body: issue.description ?? "",
@@ -519,10 +525,14 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
 
       getComments: Effect.fn("LinearIssueTracker.getComments")(function* (input) {
         const identifier = yield* requireIdentifier("getComments", input.key);
-        const [page, viewer] = yield* Effect.all([
-          linear.getComments({ identifier, first: COMMENTS_PAGE, after: input.cursor }),
-          viewerId,
-        ]);
+        const page = yield* linear.getComments({
+          identifier,
+          first: COMMENTS_PAGE,
+          after: input.cursor,
+        });
+        const viewer = page.nodes.some((comment) => comment.reactions.length > 0)
+          ? yield* viewerId
+          : null;
         return {
           comments: page.nodes.map((comment) => toComment(comment, viewer)),
           nextCursor: page.nextCursor,
