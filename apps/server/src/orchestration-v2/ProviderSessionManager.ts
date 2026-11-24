@@ -505,7 +505,8 @@ export const layerWithOptions = (
           );
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
-          if (Option.isNone(serverSettings)) return { browser: true, device: false };
+          if (Option.isNone(serverSettings))
+            return { browser: true, device: false, toolInjection: true };
           return yield* Effect.gen(function* () {
             const settings = yield* serverSettings.value.getSettings;
             const thread = yield* projectionStore.getThread(threadId);
@@ -527,19 +528,22 @@ export const layerWithOptions = (
                     settings.enableDeviceSupport &&
                     !deviceOverridden &&
                     settings.enableAgentDeviceAccess,
+                  // The project row is unreadable, so a project override cannot be confirmed: keep T3's tools.
+                  toolInjection: settings.enableAgentToolInjection,
                 };
             }
             const effective = resolveProjectSettings(settings, thread.projectId).settings;
             return {
               browser: effective.enableAgentBrowserAccess,
               device: settings.enableDeviceSupport && effective.enableAgentDeviceAccess,
+              toolInjection: effective.enableAgentToolInjection,
             };
           }).pipe(
             Effect.catch((cause) =>
               Effect.logWarning(
                 "Could not resolve agent access; withholding browser and device tools.",
                 { threadId, cause },
-              ).pipe(Effect.as({ browser: false, device: false })),
+              ).pipe(Effect.as({ browser: false, device: false, toolInjection: true })),
             ),
           );
         },
@@ -590,6 +594,8 @@ export const layerWithOptions = (
       interface PreparedMcpCredential {
         readonly mcpCredentialId: string | undefined;
         readonly issued: boolean;
+        /** False when agent tool injection is disabled for the thread; adapters skip T3's own tool surface. */
+        readonly toolInjection: boolean;
       }
       /** ACP and OpenCode consume credentials during openSession; reserve them against revocation until publication. */
       const mcpCredentialReservations = new Map<string, number>();
@@ -617,15 +623,28 @@ export const layerWithOptions = (
         providerInstanceId: ProviderInstanceId,
       ): Effect.Effect<PreparedMcpCredential> =>
         options.configureMcp === false
-          ? mcpSessions
-              .clear(threadId)
-              .pipe(Effect.as<PreparedMcpCredential>({ mcpCredentialId: undefined, issued: false }))
+          ? mcpSessions.clear(threadId).pipe(
+              Effect.as<PreparedMcpCredential>({
+                mcpCredentialId: undefined,
+                issued: false,
+                toolInjection: true,
+              }),
+            )
           : mcpPrepareLock.withLock(
               threadId,
               Effect.gen(function* () {
                 // Live providers build MCP clients once; reuse credentials across workspace handoffs.
-                const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
-                  yield* agentAccessSettings(threadId);
+                const {
+                  browser: browserToolsAvailable,
+                  device: deviceToolsAvailable,
+                  toolInjection,
+                } = yield* agentAccessSettings(threadId);
+                if (!toolInjection) {
+                  // Revoke so a credential from before the setting flipped stops authorizing calls.
+                  yield* mcpSessionRegistry.revokeThread(threadId);
+                  yield* mcpSessions.clear(threadId);
+                  return { mcpCredentialId: undefined, issued: false, toolInjection: false };
+                }
                 const capabilities = new Set<
                   import("../mcp/McpInvocationContext.ts").McpCapability
                 >(["orchestration", "worktree", "pull-requests", "issues"]);
@@ -670,7 +689,11 @@ export const layerWithOptions = (
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {
-                    return { mcpCredentialId: existing.providerSessionId, issued: false };
+                    return {
+                      mcpCredentialId: existing.providerSessionId,
+                      issued: false,
+                      toolInjection: true,
+                    };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
                 }
@@ -692,7 +715,11 @@ export const layerWithOptions = (
                     ),
                 });
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
-                return { mcpCredentialId: credential.config.providerSessionId, issued: true };
+                return {
+                  mcpCredentialId: credential.config.providerSessionId,
+                  issued: true,
+                  toolInjection: true,
+                };
               }),
             );
       const clearMcpSession = (threadId: ThreadId, mcpCredentialId?: string) =>
@@ -3314,6 +3341,7 @@ export const layerWithOptions = (
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
                     promptSuggestions: promptSuggestionsEnabled,
+                    agentToolInjection: prepared.toolInjection,
                     ...(input.resumeFromSession === undefined
                       ? {}
                       : { resumeFromSession: input.resumeFromSession }),

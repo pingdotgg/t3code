@@ -1,4 +1,7 @@
 {
+  "fecbd2247aeb925a": "T3 tools",
+  "e961e353b7f25af3": "T3 tools for agents",
+  "8a1f7667cbfed64e": "Give agents T3's tools for delegation, pull requests, and scheduled tasks. Applies when the agent session next starts.",
   "4bcfa3b976a421cf": "Discussion annexe",
   "23be753133ae6950": "Fil",
   "0001ae5846061bb6": "Fil sur {machine}",

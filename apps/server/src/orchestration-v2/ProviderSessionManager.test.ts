@@ -862,6 +862,8 @@ function runBrowserAccessScenario(input: {
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
   readonly delegatedBy?: ThreadId;
+  readonly enableAgentToolInjection?: boolean;
+  readonly toolInjectionOverride?: boolean;
 }) {
   return Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -919,12 +921,18 @@ function runBrowserAccessScenario(input: {
             ...(input.enableDeviceSupport === undefined
               ? {}
               : { enableDeviceSupport: input.enableDeviceSupport }),
+            ...(input.enableAgentToolInjection === undefined
+              ? {}
+              : { enableAgentToolInjection: input.enableAgentToolInjection }),
             projectSettingsOverrides: {
               [projectId]: {
                 enableAgentBrowserAccess: input.projectOverride,
                 ...(input.deviceOverride === undefined
                   ? {}
                   : { enableAgentDeviceAccess: input.deviceOverride }),
+                ...(input.toolInjectionOverride === undefined
+                  ? {}
+                  : { enableAgentToolInjection: input.toolInjectionOverride }),
               },
             },
           }),
@@ -2887,6 +2895,38 @@ it.effect("ProviderSessionManagerV2 fails browser access closed for a missing pr
     assert.isDefined(captured);
     assert.equal(captured?.browserToolsAvailable, false);
   }),
+);
+
+it.effect("ProviderSessionManagerV2 withholds the MCP credential when tool injection is off", () =>
+  Effect.gen(function* () {
+    const captured = yield* runBrowserAccessScenario({
+      enableAgentBrowserAccess: true,
+      projectOverride: true,
+      enableAgentToolInjection: false,
+    });
+    assert.isUndefined(captured);
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 honors a project tool-injection override in both directions",
+  () =>
+    Effect.gen(function* () {
+      const optOut = yield* runBrowserAccessScenario({
+        enableAgentBrowserAccess: true,
+        projectOverride: true,
+        enableAgentToolInjection: true,
+        toolInjectionOverride: false,
+      });
+      assert.isUndefined(optOut);
+      const optIn = yield* runBrowserAccessScenario({
+        enableAgentBrowserAccess: true,
+        projectOverride: true,
+        enableAgentToolInjection: false,
+        toolInjectionOverride: true,
+      });
+      assert.isDefined(optIn);
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persistence fails", () =>

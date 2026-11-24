@@ -510,10 +510,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               }),
           ),
         );
-      // Always inject the permission hook even without MCP credentials; otherwise Supervised becomes unrestricted.
-      const extensionPath = yield* provideCacheFs(
-        materializePiT3McpExtension(host.paths.providerStatusCacheDir),
-      );
+      // Inject the permission hook even without MCP credentials; otherwise Supervised becomes unrestricted.
+      // Agent tool injection disabled means the user asked for none of T3's injected surface, the hook included.
+      const extensionPath =
+        input.agentToolInjection === false
+          ? undefined
+          : yield* provideCacheFs(materializePiT3McpExtension(host.paths.providerStatusCacheDir));
       const resolvedLaunchArgs = resolvePiLaunchArgs(options.settings.launchArgs);
       if (!resolvedLaunchArgs.ok) {
         return yield* protocolError(resolvedLaunchArgs.message);

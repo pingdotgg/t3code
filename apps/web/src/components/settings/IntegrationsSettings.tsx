@@ -1141,6 +1141,52 @@ function AgentBrowserAccessSetting() {
   );
 }
 
+function AgentToolInjectionSetting() {
+  const searchableSetting = useSearchableSetting();
+  const gt = useGT();
+  const { scope } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["enableAgentToolInjection"]}
+      {...searchableSetting("agent-tool-injection")}
+      description={
+        isProjectScope
+          ? gt(
+              "Agents in this project get T3's tools for delegation, pull requests, and scheduled tasks. Applies when the agent session next starts.",
+            )
+          : gt(
+              "Agents get T3's tools for delegation, pull requests, and scheduled tasks. Projects can override it.",
+            )
+      }
+      resetAction={
+        settings.enableAgentToolInjection !== DEFAULT_SERVER_SETTINGS.enableAgentToolInjection ? (
+          <SettingResetButton
+            ariaLabel={gt("Reset T3 tools for agents to default")}
+            onClick={() =>
+              updateSettings({
+                enableAgentToolInjection: DEFAULT_SERVER_SETTINGS.enableAgentToolInjection,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["enableAgentToolInjection"]}
+          aria-label={gt("T3 tools for agents")}
+          checked={settings.enableAgentToolInjection}
+          onCheckedChange={(enabled) => updateSettings({ enableAgentToolInjection: enabled })}
+        />
+      }
+    />
+  );
+}
+
 function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled: boolean }) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
@@ -1695,6 +1741,7 @@ export function BrowserSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="browser-agent-access" title={gt("Agent access")}>
         <AgentBrowserAccessSetting />
+        <AgentToolInjectionSetting />
       </SettingsSection>
       <SettingsSection id="browser" title={gt("Browsing")}>
         <SettingsUnavailableGroup message={desktopOnlyMessage}>

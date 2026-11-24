@@ -571,6 +571,8 @@ export interface ProviderAdapterV2OpenSessionInput {
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   /** Labs flag, read live: emit `prompt_suggestion.updated` after completed turns, where the provider can. */
   readonly promptSuggestions?: Effect.Effect<boolean>;
+  /** False when agent tool injection is disabled for the thread: do not append T3's own tool surface. */
+  readonly agentToolInjection?: boolean;
   readonly resumeFromSession?: OrchestrationV2ProviderSession;
   readonly initialNativeThreadId?: string;
   readonly initialProviderItemIdentityVersion?: 2;

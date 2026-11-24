@@ -569,6 +569,7 @@ const openRuntime = Effect.fnUntraced(function* (
   forkFake?: FakePi,
   continuationRequests?: PiAdapterV2Options["continuationRequests"],
   initialNativeThreadId?: string,
+  options?: { readonly agentToolInjection?: boolean },
 ) {
   const adapter = yield* makeAdapter(fake, "", forkFake, continuationRequests);
   const runtime = yield* adapter.openSession({
@@ -577,6 +578,9 @@ const openRuntime = Effect.fnUntraced(function* (
     modelSelection: modelSelection(model),
     runtimePolicy,
     ...(initialNativeThreadId === undefined ? {} : { initialNativeThreadId }),
+    ...(options?.agentToolInjection === undefined
+      ? {}
+      : { agentToolInjection: options.agentToolInjection }),
   });
   const emitted = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   yield* runtime.events.pipe(
@@ -2177,6 +2181,32 @@ describe("PiAdapterV2", () => {
       assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
       assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
       assert.equal(spawn.env.T3CODE_THREAD_ID, THREAD_ID);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("does not append the T3 extension when agent tool injection is disabled", () =>
+    Effect.gen(function* () {
+      // The server clears the session record before opening; keep one to prove the flag alone decides.
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-pi-mcp"),
+        threadId: THREAD_ID,
+        providerSessionId: "mcp-session-pi",
+        providerInstanceId: PI_INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer secret-pi-token",
+        browserToolsAvailable: true,
+      });
+      const fake = yield* makeFakePi;
+      yield* openRuntime(fake, "default", THREAD_ID, SESSION_ID, undefined, undefined, undefined, {
+        agentToolInjection: false,
+      });
+      const spawn = fake.lastSpawn();
+      assert.notInclude(spawn.args, "--extension");
+      assert.isFalse(spawn.args.some((arg) => arg?.startsWith("--extension=")));
+      assert.isUndefined(spawn.env.T3_PI_MCP_EXTENSION_PATH);
+      assert.isUndefined(spawn.env.T3_MCP_URL);
+      assert.isUndefined(spawn.env.T3_MCP_BEARER_TOKEN);
+      assert.isUndefined(spawn.env.T3_PI_RUNTIME_MODE);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

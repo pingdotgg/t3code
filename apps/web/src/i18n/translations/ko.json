@@ -1,4 +1,9 @@
 {
+  "47a2216d25dda0ad": "Agents in this project get T3's tools for delegation, pull requests, and scheduled tasks. Applies when the agent session next starts.",
+  "f65377a8294f9582": "Agents get T3's tools for delegation, pull requests, and scheduled tasks. Projects can override it.",
+  "0c357e3b5319a39c": "Reset T3 tools for agents to default",
+  "e961e353b7f25af3": "T3 tools for agents",
+  "608d6ec59f88d873": "disable t3 tools delegation subagents pull requests issues scheduled tasks mcp inject native",
   "4bcfa3b976a421cf": "사이드 채팅",
   "23be753133ae6950": "스레드",
   "0001ae5846061bb6": "{machine}의 스레드",

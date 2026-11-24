@@ -61,6 +61,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "defaultRuntimeMode",
     "responseStreamingMode",
     "enableAgentBrowserAccess",
+    "enableAgentToolInjection",
     "sidebarAutoSettleOnMerge",
     "sidebarAutoSettleAfterDays",
   ],
@@ -405,6 +406,21 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     value={uniform("enableAgentBrowserAccess")}
                     disabled={disabledFor("enableAgentBrowserAccess")}
                     onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
+                  />
+                </SettingsSection>
+                <SettingsSection title={gt("T3 tools")}>
+                  <SettingsSwitchRow
+                    icon="wrench.and.screwdriver"
+                    label={gt("T3 tools for agents")}
+                    subtitle={managedSubtitle(
+                      "enableAgentToolInjection",
+                      gt(
+                        "Give agents T3's tools for delegation, pull requests, and scheduled tasks. Applies when the agent session next starts.",
+                      ),
+                    )}
+                    value={uniform("enableAgentToolInjection")}
+                    disabled={disabledFor("enableAgentToolInjection")}
+                    onValueChange={(value) => write({ enableAgentToolInjection: value })}
                   />
                 </SettingsSection>
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />

@@ -1123,6 +1123,17 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("allow disable enable open drive preview tools sessions project override")],
   },
   {
+    id: "agent-tool-injection",
+    title: msg("T3 tools for agents"),
+    to: "/settings/browser",
+    scope: "project-defaults",
+    searchTerms: [
+      msg(
+        "disable t3 tools delegation subagents pull requests issues scheduled tasks mcp inject native",
+      ),
+    ],
+  },
+  {
     id: "device-sources",
     title: msg("Device sources"),
     to: "/settings/devices",

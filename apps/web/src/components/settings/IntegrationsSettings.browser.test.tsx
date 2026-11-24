@@ -145,3 +145,17 @@ it.each([
     .element(page.getByRole("menuitem", { name: "Set as default" }))
     .toHaveAttribute("aria-disabled", "true");
 });
+
+it("shows the T3 tools toggle as a project-overridable server setting", async () => {
+  await ensureClientSettingsHydrated();
+  await using screen = await render(
+    <SettingsScopeProvider search={{ project: group!.projectKey }} onChange={() => {}}>
+      <BrowserSettingsPanel />
+    </SettingsScopeProvider>,
+    { router: "/settings/browser" },
+  );
+
+  const toggle = screen.getByRole("switch", { name: "T3 tools for agents" });
+  await expect.element(toggle).toBeEnabled();
+  expect(isInert(toggle.element())).toBe(false);
+});
