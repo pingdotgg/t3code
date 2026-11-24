@@ -337,6 +337,19 @@ class AcpModelSelectionError extends Schema.TaggedError<AcpModelSelectionError>(
   }
 }
 
+const isAcpModelSelectionError = Schema.is(AcpModelSelectionError);
+const isProviderCompactionUnsupportedError = Schema.is(
+  ProviderAdapter.ProviderCompactionUnsupportedError,
+);
+
+/**
+ * Turn-start refusals that leave the session usable. Other start failures, such as a session that
+ * cannot be reopened or a setup step that fails, can mean the agent lost the session, so the
+ * server keeps its recovery for them.
+ */
+const refusedWithSessionIntact = (cause: unknown) =>
+  isAcpModelSelectionError(cause) || isProviderCompactionUnsupportedError(cause);
+
 /** A prompt-steered turn spans several prompts, each reporting its own usage. */
 function addAcpUsage(
   total: EffectAcpSchema.Usage | undefined,
@@ -10056,6 +10069,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     providerThreadId: turnInput.providerThread.id,
                     runId: turnInput.runId,
                     cause,
+                    // The prompt is sent from a forked fiber, and its failures settle the turn
+                    // instead of reaching here, so no prompt was sent when this fails.
+                    ...(refusedWithSessionIntact(cause) ? { refusedBeforePrompt: true } : {}),
                   }),
               ),
             ),

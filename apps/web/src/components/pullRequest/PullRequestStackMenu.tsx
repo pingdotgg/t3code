@@ -30,7 +30,7 @@ import { PullRequestStackLayers } from "./PullRequestStackLayers";
 import { PullRequestStackHeader } from "./PullRequestStackHeader";
 import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
 import { PullRequestGlyph } from "./pullRequestIcons";
-import { readableFailure } from "./pullRequestDetail.logic";
+import { mergeHeadPin, readableFailure } from "./pullRequestDetail.logic";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
@@ -40,6 +40,7 @@ export function PullRequestStackMenu({
   stack,
   reference,
   environmentId,
+  shownHeadSha,
   stale,
   canMerge,
   canRebase,
@@ -56,6 +57,8 @@ export function PullRequestStackMenu({
   stack: PullRequestStack;
   reference: PullRequestRef;
   environmentId: EnvironmentId;
+  /** The head of `reference` the reader was shown; the stack read can run ahead of it. */
+  shownHeadSha: string | undefined;
   stale: boolean;
   canMerge: boolean;
   canRebase: boolean;
@@ -115,6 +118,7 @@ export function PullRequestStackMenu({
         number: target.number,
         stackNumber: stack.number,
         expectedStackHeads: actionHeads,
+        ...mergeHeadPin(action, shownHeadSha),
         action,
         ...(action === "merge" ? { mergeMethod } : { updateMethod: "rebase" }),
       },
