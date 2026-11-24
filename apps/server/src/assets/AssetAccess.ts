@@ -749,7 +749,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         version: 1,
         kind: "attachment",
         attachmentId: input.resource.attachmentId,
-        ...(isGenericFile && !isVideo && inlinePreviewMimeType === undefined
+        ...(input.resource.disposition === "attachment" ||
+        (isGenericFile && !isVideo && inlinePreviewMimeType === undefined)
           ? { download: true }
           : {}),
         ...(input.resource.fileName !== undefined ? { fileName: input.resource.fileName } : {}),
