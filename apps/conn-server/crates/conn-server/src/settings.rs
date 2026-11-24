@@ -974,6 +974,39 @@ pub fn worktree_submodules(
         .map(str::to_owned)
 }
 
+/// `resolveServerBackgroundActivitySettings(..).automaticGitFetchInterval`: with the default
+/// `backgroundActivity`, the legacy top-level field; else a custom profile's override, or the
+/// (base) profile's preset. The client saves a custom interval only as an override.
+pub fn automatic_git_fetch_interval(settings: &Map<String, Value>) -> std::time::Duration {
+    let millis = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_f64)
+            .filter(|ms| ms.is_finite() && *ms >= 0.0)
+    };
+    let preset = |profile: &str| {
+        BACKGROUND_PRESETS
+            .iter()
+            .find(|(name, _, _)| *name == profile)
+            .map_or(30_000.0, |(_, fetch, _)| *fetch as f64)
+    };
+    let activity = settings.get("backgroundActivity");
+    let field = |key: &str| activity.and_then(|a| a.get(key));
+    let profile = field("profile")
+        .and_then(Value::as_str)
+        .unwrap_or("balanced");
+    let base = field("baseProfile").and_then(Value::as_str);
+    let overrides = field("overrides").and_then(Value::as_object);
+    let ms = if profile == "balanced" && base.is_none() && overrides.is_none_or(|o| o.is_empty()) {
+        millis(settings.get("automaticGitFetchInterval")).unwrap_or(preset("balanced"))
+    } else if profile == "custom" {
+        millis(overrides.and_then(|o| o.get("automaticGitFetchInterval")))
+            .unwrap_or_else(|| preset(base.unwrap_or("balanced")))
+    } else {
+        preset(profile)
+    };
+    std::time::Duration::from_millis(ms as u64)
+}
+
 /// `resolveProjectProviderInstanceEnabled`: the project's `providerInstances[id].enabled`
 /// override when set, else the machine-wide `resolveProviderInstanceEnabled` of the instance's
 /// entry (an explicit `false` on the envelope or in its `config` wins; then the envelope, the

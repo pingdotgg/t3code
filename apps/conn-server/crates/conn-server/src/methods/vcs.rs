@@ -18,7 +18,7 @@ use conn_contract::{
 };
 use conn_vcs::{
     VcsError, VcsHub, WorktreeSetups,
-    hub::{Remote, Sink},
+    hub::{Remote, RemotePolicy, RemotePolicySource, Sink},
     refs, review, worktree,
 };
 use serde::Serialize;
@@ -148,8 +148,67 @@ async fn known_workspace(snapshot: OrchestrationV2ShellSnapshot, real: PathBuf) 
     .unwrap_or(false)
 }
 
+/// The remote refresh settings for folders as callers gave them, from this environment's
+/// settings, projects and client leases (`VcsAutomaticFetchInterval`, `VcsAutoPullPolicy`,
+/// `BackgroundPolicy`).
+struct SettingsPolicy {
+    environment: std::sync::Arc<crate::environment::Environment>,
+    engine: Option<std::sync::Arc<dyn conn_engine::Engine>>,
+    activity: super::provider::ProviderStatus,
+}
+
+impl RemotePolicySource for SettingsPolicy {
+    fn policy<'a>(
+        &'a self,
+        cwds: &'a [String],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RemotePolicy> + Send + 'a>> {
+        Box::pin(async move {
+            let settings = self.environment.settings.raw();
+            // `findActiveByWorkspaceRoot`: the stored root, matched as a string.
+            let projects = match &self.engine {
+                Some(engine) => engine.projects_snapshot().await.unwrap_or_default(),
+                None => Vec::new(),
+            };
+            let auto_pull = cwds.iter().any(|cwd| {
+                projects
+                    .iter()
+                    .find(|p| {
+                        p["deletedAt"].is_null()
+                            && p["workspaceRoot"].as_str() == Some(cwd.as_str())
+                    })
+                    .is_some_and(|project| {
+                        let overridden = project["id"].as_str().and_then(|id| {
+                            settings
+                                .get("projectSettingsOverrides")?
+                                .get(id)?
+                                .get("defaultAutoPull")?
+                                .as_bool()
+                        });
+                        overridden
+                            .or_else(|| settings.get("defaultAutoPull")?.as_bool())
+                            .unwrap_or(false)
+                    })
+            });
+            RemotePolicy {
+                fetch_interval: crate::settings::automatic_git_fetch_interval(&settings),
+                auto_pull,
+                background: cwds
+                    .iter()
+                    .any(|cwd| self.activity.wants_vcs(cwd, &settings)),
+            }
+        })
+    }
+}
+
 pub fn register(table: &mut MethodTable, deps: &Deps) {
     let shared = deps.vcs.clone();
+    if let Some(environment) = deps.environment.clone() {
+        shared.hub.set_policy(std::sync::Arc::new(SettingsPolicy {
+            environment,
+            engine: deps.engine.clone(),
+            activity: deps.provider_status.clone(),
+        }));
+    }
     let environment = deps.environment.clone();
     let worktrees_dir = move || {
         environment
@@ -713,6 +772,152 @@ mod tests {
             initialized(),
             "an alias is no project, so submodules are recursive"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `VcsAutomaticFetchInterval` resolves the background profile and its overrides, as the
+    /// client saves them; `VcsAutoPullPolicy` finds the project by the folder as given.
+    #[tokio::test(flavor = "current_thread")]
+    async fn refresh_status_follows_the_saved_fetch_interval_and_the_exact_root() {
+        let root = std::env::temp_dir().join(format!(
+            "conn-server-vcs-refresh-{}",
+            crate::auth::random_hex(6)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let root = std::fs::canonicalize(&root).unwrap();
+        let (origin, repo, other) = (
+            root.join("origin.git"),
+            root.join("repo"),
+            root.join("other"),
+        );
+        git(
+            &root,
+            &[
+                "init",
+                "-q",
+                "--bare",
+                "-b",
+                "main",
+                &origin.to_string_lossy(),
+            ],
+        );
+        git(
+            &root,
+            &[
+                "clone",
+                "-q",
+                &origin.to_string_lossy(),
+                &repo.to_string_lossy(),
+            ],
+        );
+        std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-qm", "init"]);
+        git(&repo, &["push", "-q", "origin", "main"]);
+        git(
+            &root,
+            &[
+                "clone",
+                "-q",
+                &origin.to_string_lossy(),
+                &other.to_string_lossy(),
+            ],
+        );
+        std::fs::write(other.join("b.txt"), "b\n").unwrap();
+        git(&other, &["add", "."]);
+        git(&other, &["commit", "-qm", "upstream"]);
+        git(&other, &["push", "-q", "origin", "main"]);
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(&repo, &alias).unwrap();
+        let rev = |name: &str| {
+            let out = Command::new("git")
+                .args(["rev-parse", name])
+                .current_dir(&repo)
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap().trim().to_owned()
+        };
+        let (before, upstream) = (rev("HEAD"), {
+            let out = Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&other)
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap().trim().to_owned()
+        });
+
+        let engine: Arc<dyn conn_engine::Engine> = Arc::new(
+            conn_engine::SqliteEngine::open(conn_engine::EngineConfig::new(
+                root.join("engine.sqlite"),
+            ))
+            .unwrap(),
+        );
+        let environment = Arc::new(
+            Environment::load(&root.join("state"), None, repo.clone(), Default::default()).unwrap(),
+        );
+        // What the Background activity dialog sends when fetching is set to 0 seconds.
+        environment
+            .settings
+            .update(
+                json!({"defaultAutoPull": true, "backgroundActivity": {
+                    "schemaVersion": 1, "profile": "custom", "baseProfile": "balanced",
+                    "overrides": {
+                        "automaticGitFetchInterval": 0, "providerHealthRefreshInterval": 300000,
+                        "hostPowerMonitorActiveInterval": 30000,
+                        "hostPowerMonitorIdleInterval": 300000, "pauseWhenHostLocked": true,
+                        "pauseWhenHostLowPower": true, "pauseWhenClientLowPower": true,
+                        "pauseWhenOnBattery": false}}}),
+                None,
+            )
+            .unwrap();
+        let deps = Deps {
+            engine: Some(engine),
+            environment: Some(environment.clone()),
+            ..Deps::default()
+        };
+        let mut table = MethodTable::new();
+        register(&mut table, &deps);
+        super::super::projects::register(&mut table, &deps);
+        unary(
+            &table,
+            "projects.mutate",
+            json!({"type": "project.create", "commandId": "c1", "projectId": "p1",
+                   "title": "Project", "workspaceRoot": repo.to_string_lossy()}),
+        )
+        .await
+        .unwrap();
+        let refresh = |cwd: &Path| {
+            unary(
+                &table,
+                "vcs.refreshStatus",
+                json!({ "cwd": cwd.to_string_lossy() }),
+            )
+        };
+
+        refresh(&repo).await.unwrap();
+        assert_eq!(
+            (rev("refs/remotes/origin/main"), rev("HEAD")),
+            (before.clone(), before.clone()),
+            "fetching is off"
+        );
+
+        environment
+            .settings
+            .update(
+                json!({"backgroundActivity": {"schemaVersion": 1, "profile": "balanced",
+                       "overrides": {}}}),
+                None,
+            )
+            .unwrap();
+        refresh(&alias).await.unwrap();
+        assert_eq!(rev("refs/remotes/origin/main"), upstream, "fetched");
+        assert_eq!(
+            rev("HEAD"),
+            before,
+            "an alias is no project, so it does not pull"
+        );
+        refresh(&repo).await.unwrap();
+        assert_eq!(rev("HEAD"), upstream, "the project pulls");
         let _ = std::fs::remove_dir_all(&root);
     }
 

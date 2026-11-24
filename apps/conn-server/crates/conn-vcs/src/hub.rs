@@ -7,7 +7,8 @@
 //!
 //! Here: one ticker task for all subscribed folders. Every [`TICK`] it stats `HEAD` and the
 //! index of each folder; a change in either (checkout, commit, stage) refreshes that folder.
-//! Remote status is read every [`REMOTE_INTERVAL`] with a fetch, backing off on failure. No
+//! Remote status is read once, then every fetch interval with a fetch while a client lease
+//! lets the work run ([`RemotePolicy`]), backing off on failure. No
 //! watcher threads, no per-folder tasks; the ticker ends when the last subscriber leaves.
 //! State is one entry per subscribed folder, removed with its last subscriber.
 //!
@@ -65,6 +66,8 @@ impl<T: Send> Sink<T> for tokio::sync::mpsc::Sender<T> {
 struct StatusSub {
     sink: Box<dyn Sink<VcsStatusStreamEvent>>,
     remote: bool,
+    /// The folder as the subscriber gave it, which settings and leases name.
+    cwd: String,
 }
 
 #[derive(Clone, PartialEq)]
@@ -86,6 +89,12 @@ struct Entry {
     next_remote: Option<Instant>,
     remote_failures: u32,
     remote_busy: bool,
+    /// The next poll reads remote status even when fetching is off or work is paused
+    /// (`needsInitialRefresh`).
+    remote_initial: bool,
+    /// The next poll rereads remote status after a checkout, with no fetch and no pull
+    /// (`reconcileCheckedOutRef`).
+    remote_reread: bool,
 }
 
 impl Entry {
@@ -100,6 +109,27 @@ impl Entry {
 
     fn wants_remote(&self) -> bool {
         self.status_subs.iter().any(|s| s.remote)
+    }
+
+    /// The folders, as given, of the subscribers that want remote status (`demandCwds`).
+    fn demand_cwds(&self) -> Vec<String> {
+        let mut cwds: Vec<String> = Vec::new();
+        for sub in self.status_subs.iter().filter(|s| s.remote) {
+            if !cwds.contains(&sub.cwd) {
+                cwds.push(sub.cwd.clone());
+            }
+        }
+        cwds
+    }
+
+    fn remote_now(&mut self) {
+        self.next_remote = Some(Instant::now());
+        self.remote_initial = true;
+    }
+
+    fn reread_now(&mut self) {
+        self.next_remote = Some(Instant::now());
+        self.remote_reread = true;
     }
 
     fn publish_status(&mut self, event: &VcsStatusStreamEvent) {
@@ -132,9 +162,57 @@ pub enum Remote {
     Cached,
 }
 
+/// The settings that shape a folder's remote refresh: `automaticGitFetchInterval`
+/// (`VcsAutomaticFetchInterval`; zero turns fetching off) and `defaultAutoPull` for the
+/// project at that folder (`VcsAutoPullPolicy`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RemotePolicy {
+    pub fetch_interval: Duration,
+    pub auto_pull: bool,
+    /// `shouldRunScopeWork` for `vcs-status`: a client lease lets periodic work run now.
+    /// Explicit refreshes ignore it.
+    pub background: bool,
+}
+
+impl Default for RemotePolicy {
+    /// T3's defaults: fetch every 30 s, no automatic pull.
+    fn default() -> Self {
+        Self {
+            fetch_interval: REMOTE_INTERVAL,
+            auto_pull: false,
+            background: true,
+        }
+    }
+}
+
+impl RemotePolicy {
+    fn fetches(self) -> bool {
+        !self.fetch_interval.is_zero()
+    }
+
+    /// How long until the next background read (`activeInterval`).
+    fn poll_interval(self) -> Duration {
+        if self.fetches() {
+            self.fetch_interval
+        } else {
+            REMOTE_INTERVAL
+        }
+    }
+}
+
+/// Reads [`RemotePolicy`] for folders as callers gave them (`policyCwds`); the server answers
+/// from its settings, projects and client leases. Any one folder may enable a pull or work.
+pub trait RemotePolicySource: Send + Sync {
+    fn policy<'a>(
+        &'a self,
+        cwds: &'a [String],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RemotePolicy> + Send + 'a>>;
+}
+
 #[derive(Clone, Default)]
 pub struct VcsHub {
     state: Arc<Mutex<State>>,
+    policy: Arc<std::sync::OnceLock<Arc<dyn RemotePolicySource>>>,
 }
 
 /// `realpath`, falling back to the path as given.
@@ -176,6 +254,19 @@ impl VcsHub {
         Self::default()
     }
 
+    /// Sets where remote refreshes read their settings, once; without it they use
+    /// [`RemotePolicy::default`].
+    pub fn set_policy(&self, source: Arc<dyn RemotePolicySource>) {
+        let _ = self.policy.set(source);
+    }
+
+    async fn policy(&self, cwds: &[String]) -> RemotePolicy {
+        match self.policy.get() {
+            Some(source) => source.policy(cwds).await,
+            None => RemotePolicy::default(),
+        }
+    }
+
     fn with<R>(&self, f: impl FnOnce(&mut State) -> R) -> R {
         f(&mut crate::lock(&self.state))
     }
@@ -193,6 +284,7 @@ impl VcsHub {
         wanted: Remote,
         sink: Box<dyn Sink<VcsStatusStreamEvent>>,
     ) -> VcsResult<()> {
+        let raw = cwd.to_owned();
         let cwd = normalize(cwd);
         let watched = watched_paths(&cwd).await;
         let before = stamp(&watched);
@@ -222,7 +314,7 @@ impl VcsHub {
             });
             let remote = entry.remote.as_ref().and_then(|r| r.value.clone());
             if wanted == Remote::Read && entry.remote.is_none() {
-                entry.next_remote = Some(Instant::now());
+                entry.remote_now();
             }
             let event = VcsStatusStreamEvent::Snapshot(VcsStatusStreamEventSnapshot {
                 tag: lit::Snapshot,
@@ -233,6 +325,7 @@ impl VcsHub {
                 entry.status_subs.push(StatusSub {
                     sink,
                     remote: wanted == Remote::Read,
+                    cwd: raw,
                 });
             }
             remote
@@ -308,7 +401,7 @@ impl VcsHub {
                     },
                 ));
                 if entry.wants_remote() {
-                    entry.next_remote = Some(Instant::now());
+                    entry.reread_now();
                 }
             }
             if entry.local.as_ref() != Some(local) {
@@ -354,6 +447,7 @@ impl VcsHub {
     /// `vcs.refreshStatus`: local status, and with [`Remote::Read`] a fetch (waited on for at
     /// most 5 s) and remote status. Publishes both.
     pub async fn refresh_status(&self, cwd: &str, remote: Remote) -> VcsResult<VcsStatusResult> {
+        let raw = [cwd.to_owned()];
         let cwd = normalize(cwd);
         let local = self.refresh_local_at(&cwd).await?;
         if remote == Remote::Cached || !local.is_repo {
@@ -364,13 +458,52 @@ impl VcsHub {
             });
             return Ok(status::merge(local, remote));
         }
-        let fetched = self.start_fetch(&cwd);
-        if let Some(done) = fetched {
+        let policy = self.policy(&raw).await;
+        if policy.fetches()
+            && let Some(done) = self.start_fetch(&cwd)
+        {
             let _ = tokio::time::timeout(FETCH_WAIT, done).await;
         }
         let remote = status::remote_status(&cwd).await?;
+        // Without a fetch, the cached behind count cannot justify an automatic pull.
+        if policy.fetches()
+            && policy.auto_pull
+            && let Some(pulled) = self.auto_pull(&cwd, &local, remote.as_ref()).await
+        {
+            return Ok(pulled);
+        }
         self.publish_remote(&cwd, local.ref_name.clone(), remote.clone());
         Ok(status::merge(local, remote))
+    }
+
+    /// `maybeAutoPull`: fast-forwards a clean default branch that is only behind its upstream,
+    /// then rereads and publishes both parts. `None` when the folder is not eligible.
+    async fn auto_pull(
+        &self,
+        cwd: &Path,
+        read: &VcsStatusLocalResult,
+        remote: Option<&VcsStatusRemoteResult>,
+    ) -> Option<VcsStatusResult> {
+        let remote = remote?;
+        if !remote.has_upstream || remote.ahead_count > 0 || remote.behind_count <= 0 {
+            return None;
+        }
+        let local = self.refresh_local_at(cwd).await.ok()?;
+        if !local.is_repo
+            || !local.is_default_ref
+            || local.has_working_tree_changes
+            || local.ref_name != read.ref_name
+        {
+            return None;
+        }
+        if let Err(error) = crate::refs::pull(cwd).await {
+            eprintln!("conn-vcs: automatic project pull failed: {error}");
+        }
+        // A pull can fail after it changed local state: reread both parts either way.
+        let local = self.refresh_local_at(cwd).await.ok()?;
+        let remote = status::remote_status(cwd).await.ok()?;
+        self.publish_remote(cwd, local.ref_name.clone(), remote.clone());
+        Some(status::merge(local, remote))
     }
 
     fn publish_remote(
@@ -462,15 +595,17 @@ impl VcsHub {
                             let remote_due = e.wants_remote()
                                 && !e.remote_busy
                                 && e.next_remote.is_none_or(|t| t <= now);
-                            if remote_due {
+                            let remote = remote_due.then(|| {
                                 e.remote_busy = true;
-                            }
+                                let reread = std::mem::take(&mut e.remote_reread);
+                                (e.demand_cwds(), e.remote_initial, reread)
+                            });
                             (
                                 cwd.clone(),
                                 e.watched.clone(),
                                 e.stamp.clone(),
                                 !e.status_subs.is_empty(),
-                                remote_due,
+                                remote,
                             )
                         })
                         .collect::<Vec<_>>(),
@@ -479,7 +614,7 @@ impl VcsHub {
             let Some(work) = work else {
                 return;
             };
-            for (cwd, watched, old, detailed, remote_due) in work {
+            for (cwd, watched, old, detailed, remote) in work {
                 let now = stamp(&watched);
                 if now != old {
                     if detailed {
@@ -498,16 +633,41 @@ impl VcsHub {
                         });
                     }
                 }
-                if remote_due {
+                if let Some((demand, initial, reread)) = remote {
                     let hub = self.clone();
-                    tokio::spawn(async move { hub.poll_remote(cwd).await });
+                    tokio::spawn(
+                        async move { hub.poll_remote(cwd, demand, initial, reread).await },
+                    );
                 }
             }
         }
     }
 
-    async fn poll_remote(&self, cwd: PathBuf) {
-        if let Some(done) = self.start_fetch(&cwd) {
+    async fn poll_remote(&self, cwd: PathBuf, demand: Vec<String>, initial: bool, reread: bool) {
+        // A reread after a checkout runs whatever the gate says, but fetches and pulls nothing.
+        let policy = if reread && !initial {
+            RemotePolicy {
+                fetch_interval: Duration::ZERO,
+                auto_pull: false,
+                background: true,
+            }
+        } else {
+            self.policy(&demand).await
+        };
+        // `refreshRemoteStatusIfEnabled`: after the first read, nothing while fetching is off
+        // or no client lets the work run.
+        if !initial && !reread && !(policy.fetches() && policy.background) {
+            self.with(|s| {
+                if let Some(entry) = s.entries.get_mut(&cwd) {
+                    entry.remote_busy = false;
+                    entry.next_remote = Some(Instant::now() + policy.poll_interval());
+                }
+            });
+            return;
+        }
+        if policy.fetches()
+            && let Some(done) = self.start_fetch(&cwd)
+        {
             let _ = done.await;
         }
         let branch = repo::current_branch(&cwd).await;
@@ -517,20 +677,40 @@ impl VcsHub {
         };
         let ok = result.is_ok();
         if let Ok((branch, remote)) = result {
-            self.publish_remote(&cwd, branch, remote);
+            let pulled = if policy.fetches() && policy.auto_pull {
+                let read = self.with(|s| s.entries.get(&cwd).and_then(|e| e.local.clone()));
+                match read {
+                    Some(read) if read.ref_name == branch => {
+                        self.auto_pull(&cwd, &read, remote.as_ref()).await
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if pulled.is_none() {
+                self.publish_remote(&cwd, branch, remote);
+            }
         }
+        let interval = policy.poll_interval();
         self.with(|s| {
             if let Some(entry) = s.entries.get_mut(&cwd) {
                 entry.remote_busy = false;
+                entry.remote_reread |= reread && !ok;
                 if ok {
                     entry.remote_failures = 0;
-                    entry.next_remote = Some(Instant::now() + REMOTE_INTERVAL);
+                    entry.remote_initial = false;
+                    entry.next_remote = Some(Instant::now() + interval);
                 } else {
                     entry.remote_failures += 1;
-                    let backoff = REMOTE_INTERVAL
+                    let backoff = interval
                         .saturating_mul(1 << (entry.remote_failures - 1).min(10))
                         .min(REMOTE_MAX_BACKOFF);
-                    entry.next_remote = Some(Instant::now() + backoff.max(REMOTE_INTERVAL));
+                    entry.next_remote = Some(Instant::now() + backoff.max(interval));
+                }
+                if entry.remote_reread && !reread {
+                    // A checkout while this poll ran.
+                    entry.next_remote = Some(Instant::now());
                 }
             }
         });

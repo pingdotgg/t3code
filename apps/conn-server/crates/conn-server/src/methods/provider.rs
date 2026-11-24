@@ -166,6 +166,8 @@ struct Lease {
     low_power: bool,
     /// `provider-status` scopes: `None` for every instance, else the instance id.
     scopes: Vec<Option<String>>,
+    /// The folders of its `vcs-status` scopes, as the client named them.
+    vcs_scopes: Vec<String>,
 }
 
 impl Lease {
@@ -231,6 +233,13 @@ impl ProviderStatus {
             .filter(|scope| scope["type"] == "provider-status")
             .map(|scope| scope["instanceId"].as_str().map(str::to_owned))
             .collect();
+        let vcs_scopes = input["scopes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|scope| scope["type"] == "vcs-status")
+            .filter_map(|scope| scope["cwd"].as_str().map(str::to_owned))
+            .collect();
         let lease = Lease {
             client_id: client_id.to_owned(),
             since: now,
@@ -239,6 +248,7 @@ impl ProviderStatus {
                 && (input["focused"] == true || input["recentlyInteracted"] == true),
             low_power: input["lowPowerMode"] == "true",
             scopes,
+            vcs_scopes,
         };
         let mut leases = self.leases();
         leases.retain(|l| l.active_at(&now) && l.client_id != lease.client_id);
@@ -275,6 +285,35 @@ impl ProviderStatus {
                     .scopes
                     .iter()
                     .any(|s| s.as_deref().is_none_or(|id| id == instance_id))
+        })
+    }
+}
+
+impl ProviderStatus {
+    /// `shouldRunScopeWork` for `vcs-status` at `cwd`: an active lease with that scope, not
+    /// held back by its low power mode, in the foreground unless the profile is `performance`.
+    /// No host power state is read, as for the provider probe.
+    pub fn wants_vcs(&self, cwd: &str, settings: &serde_json::Map<String, Value>) -> bool {
+        self.wants_vcs_at(
+            cwd,
+            is_performance(settings),
+            pause_when_client_low_power(settings),
+            &Mark::now(),
+        )
+    }
+
+    fn wants_vcs_at(
+        &self,
+        cwd: &str,
+        performance: bool,
+        pause_on_low_power: bool,
+        now: &Mark,
+    ) -> bool {
+        self.leases().iter().any(|lease| {
+            lease.active_at(now)
+                && lease.vcs_scopes.iter().any(|scope| scope == cwd)
+                && !(pause_on_low_power && lease.low_power)
+                && (performance || lease.foreground)
         })
     }
 }
@@ -476,14 +515,34 @@ fn performance_profile(deps: &Deps) -> bool {
     };
     // `raw()` is a `Map`: indexing it with a missing key panics, so read with `get`. Orbit's
     // settings hold neither key, and the panic aborted the server at the first 5-minute tick.
-    let settings = environment.settings.raw();
-    let is_performance =
-        |value: Option<&Value>| value.and_then(Value::as_str) == Some("performance");
-    is_performance(
+    is_performance(&environment.settings.raw())
+}
+
+/// `resolveServerBackgroundActivitySettings(..).profile == "performance"`: a custom profile
+/// resolves to its `baseProfile`; the default `backgroundActivity` defers to the legacy
+/// `backgroundActivityProfile`.
+fn is_performance(settings: &serde_json::Map<String, Value>) -> bool {
+    let activity = settings.get("backgroundActivity");
+    let field = |key: &str| activity.and_then(|a| a.get(key));
+    let profile = field("profile")
+        .and_then(Value::as_str)
+        .unwrap_or("balanced");
+    let base = field("baseProfile").and_then(Value::as_str);
+    let is_default = profile == "balanced"
+        && base.is_none()
+        && field("overrides")
+            .and_then(Value::as_object)
+            .is_none_or(|o| o.is_empty());
+    let resolved = if is_default {
         settings
-            .get("backgroundActivity")
-            .and_then(|activity| activity.get("profile")),
-    ) || is_performance(settings.get("backgroundActivityProfile"))
+            .get("backgroundActivityProfile")
+            .and_then(Value::as_str)
+    } else if profile == "custom" {
+        base
+    } else {
+        Some(profile)
+    };
+    resolved == Some("performance")
 }
 
 /// The periodic probe (`refreshOnInterval`): only the providers a client wants
@@ -825,6 +884,22 @@ mod tests {
                 json!({"backgroundActivity": {"profile": "balanced"}}),
                 false,
             ),
+            // What the Background activity dialog saves for its Performance choice.
+            (
+                json!({"backgroundActivity": {"profile": "custom", "baseProfile": "performance",
+                       "overrides": {"automaticGitFetchInterval": 15000}}}),
+                true,
+            ),
+            (
+                json!({"backgroundActivity": {"profile": "custom", "overrides": {}}}),
+                false,
+            ),
+            // A set `backgroundActivity` wins over the legacy field.
+            (
+                json!({"backgroundActivity": {"profile": "battery-saver"},
+                       "backgroundActivityProfile": "performance"}),
+                false,
+            ),
             (json!({"backgroundActivity": "performance"}), false),
             (json!({"backgroundActivity": {}}), false),
         ] {
@@ -884,6 +959,19 @@ mod tests {
             "recentlyInteracted": true, "scopes": [{"type": "thread", "threadId": "t"}]}),
         );
         assert!(!status.wants("grok", false));
+        // `vcs-status` names a folder exactly; a client in low power mode holds it back.
+        let now = Mark::now();
+        status.report_activity(
+            &json!({"clientId": "web-1", "visible": true, "focused": true,
+            "recentlyInteracted": false, "scopes": [{"type": "vcs-status", "cwd": "/repo"}]}),
+        );
+        assert!(status.wants_vcs_at("/repo", false, true, &now));
+        assert!(!status.wants_vcs_at("/repo/", false, true, &now));
+        status.report_activity(&json!({"clientId": "web-1", "visible": false,
+            "lowPowerMode": "true", "scopes": [{"type": "vcs-status", "cwd": "/repo"}]}));
+        assert!(!status.wants_vcs_at("/repo", true, true, &now));
+        assert!(status.wants_vcs_at("/repo", true, false, &now));
+        assert!(!status.wants_vcs_at("/repo", false, false, &now));
         for n in 0..100 {
             status.report_activity(&json!({"clientId": format!("c{n}"), "scopes": []}));
         }
