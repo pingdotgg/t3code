@@ -252,11 +252,20 @@ function recorderThreadConfigKeys(transcript: CodexAppServerReplayTranscript): R
 /**
  * `cwd`, `model`, host-supplied MCP servers (machine-local URLs, short-lived
  * authorization headers) and the T3 thread id vary per machine or run, and
- * recorder-only keys are not the client's.
+ * recorder-only keys are not the client's. The config read before a thread
+ * request carries the same `cwd`.
  */
 function normalizeThreadRequest(frame: unknown, ignoredConfigKeys: ReadonlySet<string>): unknown {
   if (typeof frame !== "object" || frame === null) return frame;
   const record = frame as Record<string, unknown>;
+  if (
+    record.method === "config/read" &&
+    typeof record.params === "object" &&
+    record.params !== null
+  ) {
+    const { cwd: _cwd, ...params } = record.params as Record<string, unknown>;
+    return { ...record, params };
+  }
   if (
     (record.method !== "thread/start" &&
       record.method !== "thread/resume" &&

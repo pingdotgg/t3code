@@ -15,6 +15,7 @@ async function wordFile(
   body: string,
   parts: Partial<Record<"styles" | "numbering" | "header" | "footer" | "footnotes", string>> = {},
   section = "",
+  extraRels = "",
 ) {
   const zip = new JSZip();
   zip.file(
@@ -31,7 +32,7 @@ async function wordFile(
       parts,
     )
       .map((part) => relationship(part, `${part}.xml`))
-      .join("")}</Relationships>`,
+      .join("")}${extraRels}</Relationships>`,
   );
   for (const [part, xml] of Object.entries(parts)) zip.file(`word/${part}.xml`, xml);
   zip.file(
@@ -147,5 +148,87 @@ describe("Word preview limits", () => {
     expect(await result.part("word/footer.xml")).toBe(footer);
     expect(await result.part("word/footnotes.xml")).toBe(footnotes);
     expect(await result.part("word/document.xml")).toContain("Body");
+  });
+
+  it("drops a malformed external hyperlink relationship while keeping body text", async () => {
+    const result = await prepared(
+      await wordFile(
+        paragraph("Body text"),
+        {},
+        "",
+        `<Relationship Id="badLink" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="http://[placeholder]/" TargetMode="External"/>`,
+      ),
+    );
+    expect(result.truncated).toBe(false);
+    expect(await result.part("word/document.xml")).toContain("Body text");
+    expect(await result.part("word/_rels/document.xml.rels")).not.toContain("badLink");
+  });
+});
+
+async function workbookFile(
+  target: string,
+  sheetPath: string,
+  extraRels = "",
+  targetMode = "Internal",
+) {
+  const zip = new JSZip();
+  zip.file(
+    "[Content_Types].xml",
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>`,
+  );
+  zip.file(
+    "_rels/.rels",
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationship("officeDocument", "xl/workbook.xml")}</Relationships>`,
+  );
+  zip.file(
+    "xl/workbook.xml",
+    `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ${R}><sheets><sheet name="Sample" sheetId="1" r:id="sheet"/></sheets></workbook>`,
+  );
+  zip.file(
+    "xl/_rels/workbook.xml.rels",
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="sheet" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${target}" TargetMode="${targetMode}"/>${extraRels}</Relationships>`,
+  );
+  zip.file(
+    sheetPath,
+    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><v>42</v></c></row></sheetData></worksheet>`,
+  );
+  return zip.generateAsync({ type: "arraybuffer" });
+}
+
+describe("Workbook relationship targets", () => {
+  it.each(["sheet 1.xml", "sheet%201.xml", "sheet#1.xml"])(
+    "prepares a worksheet whose ZIP name matches its target literally (%s)",
+    async (name) => {
+      const result = await prepareOffice(
+        await workbookFile(`worksheets/${name}`, `xl/worksheets/${name}`),
+        "xlsx",
+      );
+      const zip = await JSZip.loadAsync(result.bytes);
+      expect(result.truncated).toBe(false);
+      expect(await zip.file(`xl/worksheets/${name}`)?.async("string")).toContain("42");
+    },
+  );
+
+  it("refuses a worksheet whose relationship is external", async () => {
+    await expect(
+      prepareOffice(
+        await workbookFile("worksheets/sheet2.xml", "xl/worksheets/sheet2.xml", "", "External"),
+        "xlsx",
+      ),
+    ).rejects.toMatchObject({ code: "workbook-sheet-count" });
+  });
+
+  it("handles a malformed external relationship in workbook relationships", async () => {
+    const result = await prepareOffice(
+      await workbookFile(
+        "worksheets/sheet1.xml",
+        "xl/worksheets/sheet1.xml",
+        `<Relationship Id="ext" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLinkPath" Target="http://[placeholder]/" TargetMode="External"/>`,
+      ),
+      "xlsx",
+    );
+    const zip = await JSZip.loadAsync(result.bytes);
+    expect(result.truncated).toBe(false);
+    expect(await zip.file("xl/worksheets/sheet1.xml")?.async("string")).toContain("42");
   });
 });

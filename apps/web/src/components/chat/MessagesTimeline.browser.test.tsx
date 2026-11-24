@@ -1,6 +1,5 @@
 import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
-import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
 import {
@@ -18,7 +17,7 @@ import {
   ThreadId,
   type OrchestrationV2Subagent,
 } from "@t3tools/contracts";
-import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import { type LegendListRef } from "@legendapp/list/react";
 import {
   createRef,
   Profiler,
@@ -35,7 +34,6 @@ import "~/index.css";
 
 import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
-import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../../lib/workspaceFocus";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
@@ -44,11 +42,12 @@ import {
   type PendingApproval,
   deriveTimelineEntriesFromVisibleTurnItems,
 } from "../../session-logic";
-import type { Root } from "mdast";
 import { ViewedImagesTimelineRow } from "./TimelineWorkEntryRow";
-import { remarkThoughtPreview, THOUGHT_PREVIEW_MAX_LENGTH } from "./TimelineWorkEntryRow.logic";
+import { THOUGHT_PREVIEW_MAX_LENGTH, thoughtPreviewMarkdown } from "./TimelineWorkEntryRow.logic";
+import { wordsHast } from "~/markdown/wordsHast";
 import { TimelineRowCtx } from "./timelineRowContext";
-import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
+import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 import { toastManager } from "../ui/toast";
 import type { CitedHistory } from "./citationProcedure";
@@ -77,15 +76,17 @@ vi.mock(import("~/state/query"), async (original) => ({
   })) as never,
 }));
 
-const stubbedAsset = vi.hoisted(() => ({ url: "" }));
+const stubbedAsset = vi.hoisted(() => ({ url: "", failed: false }));
 vi.mock(import("~/assets/assetUrls"), async (original) => {
   const actual = await original();
   return {
     ...actual,
     useAssetUrlState: ((...args: Parameters<typeof actual.useAssetUrlState>) =>
-      stubbedAsset.url
-        ? { _tag: "Success", url: stubbedAsset.url }
-        : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
+      stubbedAsset.failed
+        ? { _tag: "Failure" }
+        : stubbedAsset.url
+          ? { _tag: "Success", url: stubbedAsset.url }
+          : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
     useAssetUrls: ((...args: Parameters<typeof actual.useAssetUrls>) =>
       stubbedAsset.url
         ? args[1].map(() => stubbedAsset.url)
@@ -109,7 +110,6 @@ function baseProps(): Omit<TimelineProps, "timelineEntries"> {
     turnDiffSummaries: [],
     runs: [],
     routeThreadKey: `environment-local:thread-${Math.random().toString(36).slice(2)}`,
-    onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: async () => {},
     supportsConversationRollback: false,
@@ -445,7 +445,8 @@ describe("MessagesTimeline work rows", () => {
         expect(screen.text()).toContain("Follow-up explanation");
         expect(screen.text()).not.toContain("Old interrupted progress");
         await click(screen.buttons("Open Simplify delivery")[0]!);
-        expect(onOpenThread).toHaveBeenCalledWith(childThreadId);
+        // A subagent's card says how it was clicked, so it opens beside the thread or in its place.
+        expect(onOpenThread).toHaveBeenCalledWith(childThreadId, undefined, "primary");
       } else if (source === "legacy") {
         expect(screen.text()).toContain("Old interrupted progress");
       } else {
@@ -454,6 +455,28 @@ describe("MessagesTimeline work rows", () => {
       }
     },
   );
+
+  it("keeps expanded tool output outside the row's toggle button", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      work("tool-command", {
+        label: "Ran command",
+        tone: "tool",
+        itemType: "command_execution",
+        command: "npm test",
+        detail: "TOOL_OUTPUT_MARKER",
+      }),
+    ]);
+    const toggle = screen.button(/npm test/);
+    await click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const output = [...document.querySelectorAll("pre")].find((pre) =>
+      pre.textContent?.includes("TOOL_OUTPUT_MARKER"),
+    );
+    expect(output).toBeDefined();
+    expect(output!.closest('[role="button"]')).toBeNull();
+    expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).toContain(output);
+  });
 });
 
 describe("MessagesTimeline messages", () => {
@@ -600,6 +623,48 @@ describe("MessagesTimeline messages", () => {
     expect(viewport).toHaveAttribute("data-workspace-keyboard-focus");
     await userEvent.keyboard("{PageUp}");
     await vi.waitFor(() => expect(viewport.scrollTop).toBeLessThan(atEnd));
+  });
+
+  it("keeps the visible sentence in a long message when the chat width changes", async () => {
+    setup();
+    const size = { width: window.innerWidth, height: window.innerHeight };
+    onTestFinished(() => page.viewport(size.width, size.height));
+    await page.viewport(1200, 1400);
+    const props = { ...baseProps(), liveFollowEnabled: false };
+    const paragraphs = Array.from(
+      { length: 30 },
+      (_, index) =>
+        `Paragraph ${index + 1}. ${"A side panel should not move the sentence being read out of view. ".repeat(5)}`,
+    );
+    await using screen = await renderTimeline(
+      [message(paragraphs.join("\n\n"), { role: "assistant" })],
+      props,
+    );
+    screen.container.style.width = "900px";
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const target = page.getByText(paragraphs[15]!.trim(), { exact: true }).element();
+    await vi.waitFor(() => {
+      expect(viewport.scrollHeight).toBeGreaterThan(1000);
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+    });
+    await props.listRef.current!.scrollToOffset({
+      offset:
+        viewport.scrollTop +
+        target.getBoundingClientRect().top -
+        viewport.getBoundingClientRect().top -
+        24,
+      animated: false,
+    });
+    viewport.dispatchEvent(new Event("scroll"));
+    const before = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    expect(Math.abs(before - 24)).toBeLessThan(2);
+    for (const width of [500, 900]) {
+      screen.container.style.width = `${width}px`;
+      await vi.waitFor(() => {
+        const after = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+        expect(Math.abs(after - before)).toBeLessThan(30);
+      });
+    }
   });
 
   it("disables the minimap's next turn button at the bottom of the thread", async () => {
@@ -863,6 +928,30 @@ describe("MessagesTimeline messages", () => {
     expect(screen.text()).toContain(source);
     expect(screen.container.querySelector("script, img")).toBeNull();
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
+  });
+
+  it("shows the spaces typed at the start of user lines, where find also matches them", async () => {
+    const source = "Plan\n   Step one\n\tDetail";
+    await using screen = await renderTimeline([
+      message(source),
+      message(source, { role: "assistant" }, "assistant-1"),
+    ]);
+    const [user, assistant] = screen.container.querySelectorAll<HTMLElement>(
+      "[data-timeline-row-kind=message]",
+    );
+    expect(user?.querySelector<HTMLElement>("[data-user-message-body]")?.innerText).toBe(source);
+    expect(assistant?.querySelector<HTMLElement>(".chat-markdown")?.innerText).toBe(
+      "Plan Step one Detail",
+    );
+    const query = "   Step one";
+    const indexed = searchableMessageSegments({ role: "user", text: source, streaming: false });
+    const ranges = collectThreadFindRanges(screen.container, query);
+    expect(ranges.map(({ rowId, range }) => [rowId, range.toString()])).toEqual([
+      [user?.closest("[data-timeline-row-id]")?.getAttribute("data-timeline-row-id"), query],
+    ]);
+    expect(
+      indexed?.reduce((count, segment) => count + countThreadSearchOccurrences(segment, query), 0),
+    ).toBe(ranges.length);
   });
 
   it("keeps single tildes in user paths literal without changing double tildes or assistant text", async () => {
@@ -1752,6 +1841,47 @@ describe("MessagesTimeline attachments", () => {
     );
   });
 
+  it("keeps an unavailable viewed image inside the 10rem work-log strip", async () => {
+    stubbedAsset.failed = true;
+    onTestFinished(() => {
+      stubbedAsset.failed = false;
+    });
+    await using screen = await renderElement(
+      <TimelineRowCtx
+        value={
+          {
+            threadRef: { environmentId: ENVIRONMENT_ID, threadId: ThreadId.make("thread-1") },
+            workspaceRoot: "/repo",
+          } as never
+        }
+      >
+        <ViewedImagesTimelineRow
+          row={{
+            kind: "viewed-images",
+            id: "viewed",
+            createdAt: CREATED_AT,
+            paths: ["/repo/step-1.jpg", "/repo/step-3.jpg"],
+          }}
+        />
+      </TimelineRowCtx>,
+    );
+    const frame = await vi.waitFor(() => {
+      const element = screen.container.querySelector<HTMLElement>(
+        '[data-image-gallery] [role="alert"]',
+      );
+      expect(element).toBeTruthy();
+      return element!;
+    });
+    const size = await vi.waitFor(() => {
+      const rect = frame.getBoundingClientRect();
+      expect(rect.width).toBeGreaterThan(0);
+      return rect;
+    });
+    expect(size.height).toBeLessThanOrEqual(161);
+    expect(size.width).toBeLessThanOrEqual(285);
+    expect(Math.abs(size.width / size.height - 16 / 9)).toBeLessThan(0.02);
+  });
+
   it("opens an image from an expanded tool row as a gallery of the turn's viewed images", async () => {
     stubbedAsset.url =
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
@@ -1814,6 +1944,99 @@ describe("MessagesTimeline thread find", () => {
     return { navigations, element };
   }
   const released = { source: "command", releasesFollow: true };
+
+  it("reveals the previous match in a table without scrolling a sibling table", async () => {
+    setup();
+    const columns = Array.from({ length: 12 }, (_, index) => `DiagnosticsColumn${index}`);
+    const cells = ["needle", ...columns.slice(1, -1), "needle"];
+    const table = [columns, columns.map(() => "---"), cells]
+      .map((row) => `| ${row.join(" | ")} |`)
+      .join("\n");
+    const entry = message(`${table}\n\n${table}`);
+    const props = {
+      ...baseProps(),
+      timelineEntries: [entry],
+      liveFollowEnabled: false,
+      findOpen: true,
+      findExpanded: true,
+      findQuery: "needle",
+    };
+    const element = (occurrence: number, navigationId: number) => (
+      <MessagesTimeline
+        {...props}
+        activeFindMatch={{ entryId: entry.id, runId: null, occurrence }}
+        findNavigationId={navigationId}
+      />
+    );
+    await using screen = await renderElement(element(1, 1));
+    const [viewport, sibling] = await vi.waitFor(() => {
+      const tables = screen.container.querySelectorAll<HTMLElement>(
+        '.chat-markdown-table-container [data-slot="scroll-area-viewport"]',
+      );
+      expect(tables).toHaveLength(2);
+      return [tables[0]!, tables[1]!] as const;
+    });
+    viewport.scrollLeft = viewport.scrollWidth;
+    sibling.scrollLeft = sibling.scrollWidth;
+    const siblingOffset = sibling.scrollLeft;
+    const clip = viewport.getBoundingClientRect();
+    expect(viewport.querySelector("td")!.getBoundingClientRect().right).toBeLessThan(clip.left);
+    expect(siblingOffset).toBeGreaterThan(0);
+
+    await screen.rerender(element(0, 2));
+    await vi.waitFor(() => {
+      const [match] = CSS.highlights.get("t3-thread-find-active") ?? [];
+      if (!(match instanceof Range)) throw new Error("Missing active match range");
+      expect(match.startContainer.parentElement?.closest("td")).toBe(viewport.querySelector("td"));
+      expect(match.getBoundingClientRect().left).toBeGreaterThanOrEqual(clip.left - 1);
+    });
+    expect(sibling.scrollLeft).toBe(siblingOffset);
+  });
+
+  it("reveals a match in a nested table clipped by the outer table", async () => {
+    setup();
+    const columns = Array.from({ length: 12 }, (_, index) => `<td>DiagnosticsColumn${index}</td>`);
+    const entry = message(
+      `<table><tbody><tr>${columns.join("")}<td><table><tbody><tr><td>needle</td></tr></tbody></table></td></tr></tbody></table>`,
+      { role: "assistant" },
+    );
+    const props = {
+      ...baseProps(),
+      timelineEntries: [entry],
+      liveFollowEnabled: false,
+      findOpen: true,
+      findExpanded: true,
+      findQuery: "needle",
+    };
+    await using screen = await renderElement(<MessagesTimeline {...props} />);
+    const outerViewport = await vi.waitFor(() => {
+      const viewport = screen.container.querySelector(
+        '.chat-markdown-table-container [data-slot="scroll-area-viewport"]',
+      );
+      const nestedCell = viewport?.querySelector("table table td");
+      expect(nestedCell?.textContent).toBe("needle");
+      expect(nestedCell!.getBoundingClientRect().left).toBeGreaterThan(
+        viewport!.getBoundingClientRect().right,
+      );
+      return viewport!;
+    });
+
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        activeFindMatch={{ entryId: entry.id, runId: null, occurrence: 0 }}
+        findNavigationId={1}
+      />,
+    );
+    await vi.waitFor(() => {
+      const [match] = CSS.highlights.get("t3-thread-find-active") ?? [];
+      if (!(match instanceof Range)) throw new Error("Missing active match range");
+      const bounds = match.getBoundingClientRect();
+      const clip = outerViewport.getBoundingClientRect();
+      expect(bounds.left).toBeGreaterThanOrEqual(clip.left - 1);
+      expect(bounds.right).toBeLessThanOrEqual(clip.right + 1);
+    });
+  });
 
   it("releases follow once when it starts showing a thread whose find is open", async () => {
     setup();
@@ -1986,49 +2209,22 @@ describe("compact reasoning math", () => {
     ["hard  \nbreak\\\nagain", [["text", "hard break again"]]],
     ["<div>only html</div>", [["text", "Reasoning"]]],
   ])("keeps formulas while flattening compact reasoning previews: %j", (source, expected) => {
-    const tree = parseMarkdownWithMath(source);
-    remarkThoughtPreview("Reasoning")(tree);
-    expect(tree.children.map((node) => [node.type, "value" in node ? node.value : null])).toEqual(
-      expected,
-    );
-  });
-
-  it("stops reading the tree once the preview is full", () => {
-    const beyondCap = (): string => {
-      throw new Error("read beyond cap");
-    };
-    const head = "x".repeat(THOUGHT_PREVIEW_MAX_LENGTH - 2);
-    const tree: Root = {
-      type: "root",
-      children: [
-        {
-          type: "paragraph",
-          children: [
-            { type: "text", value: head },
-            { type: "strong", children: [{ type: "text", value: "yz beyond" }] },
-            {
-              type: "inlineMath",
-              get value() {
-                return beyondCap();
-              },
-            },
-          ],
-        },
-        {
-          type: "paragraph",
-          children: [
-            {
-              type: "text",
-              get value() {
-                return beyondCap();
-              },
-            },
-          ],
-        },
-      ],
-    };
-    remarkThoughtPreview("Reasoning")(tree);
-    expect(tree.children).toEqual([{ type: "text", value: `${head}yz` }]);
+    const tree = wordsHast(source, {
+      math: true,
+      breaks: false,
+      escapeHtml: false,
+      insights: false,
+      extensions: thoughtPreviewMarkdown("Reasoning"),
+    });
+    expect(
+      tree.children.map((node) =>
+        node.type === "text"
+          ? ["text", node.value]
+          : node.type === "element" && node.children[0]?.type === "element"
+            ? ["inlineMath", String(node.children[0].properties.ariaLabel).trim()]
+            : [node.type, null],
+      ),
+    ).toEqual(expected);
   });
 });
 
@@ -2104,73 +2300,6 @@ it("renders automatic compaction as one live divider that finishes with its reas
     .toBeVisible();
   expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
   expect(container.textContent).not.toContain("Compacting before");
-});
-
-function TimelineChangedFilesCard() {
-  const [expanded, setExpanded] = useState(true);
-  return (
-    <ChangedFilesCard
-      runId={RunId.make("run-1")}
-      files={["src/a.ts", "src/b.ts", "src/c.ts"].map((path) => ({
-        path,
-        kind: "modified",
-        additions: 1,
-        deletions: 0,
-      }))}
-      totals={{ count: 3, additions: 3, deletions: 0 }}
-      allDirectoriesExpanded={expanded}
-      resolvedTheme="light"
-      onToggleAllDirectories={() => setExpanded((value) => !value)}
-      onOpenTurnDiff={() => {}}
-    />
-  );
-}
-
-function ChangedFilesTimeline() {
-  return (
-    <LegendList
-      data={["files", "after"]}
-      keyExtractor={(item) => item}
-      estimatedItemSize={100}
-      recycleItems={false}
-      className="h-[600px]"
-      renderItem={({ item }) =>
-        item === "files" ? <TimelineChangedFilesCard /> : <div data-testid="after">After</div>
-      }
-    />
-  );
-}
-
-describe("ChangedFilesCard", () => {
-  it.each(["folder", "all folders"])(
-    "measures %s collapse and expansion in the same commit",
-    async (toggle) => {
-      await using screen = await render(<ChangedFilesTimeline />);
-      const after = () =>
-        screen.container.querySelector('[data-testid="after"]')!.getBoundingClientRect().top;
-      const cardBottom = () =>
-        screen.container.querySelector("[data-changed-files-state]")!.getBoundingClientRect()
-          .bottom;
-      await vi.waitFor(() => expect(after()).toBe(cardBottom()));
-      const topBefore = after();
-      const button = () =>
-        screen.container.querySelector<HTMLButtonElement>(
-          toggle === "folder"
-            ? '[data-changed-file-row="src"] button'
-            : 'button[aria-label$="all folders"]',
-        )!;
-      await act(() => {
-        flushSync(() => button().click());
-        expect(screen.container.textContent).not.toContain("a.ts");
-        expect(after()).toBe(topBefore - 3 * 28);
-      });
-      await act(() => {
-        flushSync(() => button().click());
-        expect(screen.container.textContent).toContain("a.ts");
-        expect(after()).toBe(topBefore);
-      });
-    },
-  );
 });
 
 it("keeps concurrent approvals actionable outside collapsed work and restores settled rows", async () => {

@@ -20,6 +20,9 @@ const LIST_TIMEOUT_SECONDS = 40;
 const SIMULATOR_LIST_FAILED =
   /^\[apple-utils\] (?:Failed to (?:run `xcrun simctl list devices|parse JSON output:|list devices:)|`xcrun simctl list devices --json` did not respond within )/;
 // The hub passes numeric display IDs that Xcode 26 rejects; iOS 27 needs them for multiple displays.
+// expo-device-hub 0.22.1 returns no Android devices when avdmanager fails, before it runs adb.
+const AVDMANAGER_LIST_FAILED = "[android-utils] Failed to run `avdmanager list avd`";
+const GETPROP_LINE = /^\[([^\]]+)\]: \[(.*)\]$/;
 const runsOnXcode26Runtime = (version: string) => Number(/^iOS (\d+)/.exec(version)?.[1]) <= 26;
 const DEFAULT_DISPLAY_SCREENSHOT = `f=$(mktemp -t t3-screenshot) || exit 1
 trap 'rm -f "$f"' 0
@@ -72,13 +75,19 @@ const vendorPrefix = (platform: DevicePlatform) =>
 export const makeDeviceHubOperations = (options: {
   readonly hostId: DeviceHostId;
   readonly origin: string;
+  readonly token?: string | undefined;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
   /** Android gates listing AVDs, which the hub does not report until they boot. */
   readonly platformAvailable: (platform: DevicePlatform) => Effect.Effect<boolean>;
 }): DeviceOperations => {
   const { hostId, origin, run } = options;
-  const httpClient = options.http.pipe(HttpClient.withScope);
+  const { token } = options;
+  const httpClient = (
+    token === undefined
+      ? options.http
+      : options.http.pipe(HttpClient.mapRequest(HttpClientRequest.bearerToken(token)))
+  ).pipe(HttpClient.withScope);
 
   const fetchJson = Effect.fn("DeviceHubOperations.fetchJson")(function* <A, I>(
     request: HttpClientRequest.HttpClientRequest,
@@ -121,6 +130,51 @@ export const makeDeviceHubOperations = (options: {
       Effect.flatMap((request) => hubJson(request, HubActionResult, "attach stream", BOOT_TIMEOUT)),
     );
 
+  // Mirrors the hub's own adb discovery for when it skips it.
+  const listAdbDevices = Effect.gen(function* () {
+    const listed = yield* run("adb", ["devices", "-l"]);
+    if (listed.code !== 0) return undefined;
+    const serials = listed.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim().split(/\s+/))
+      .flatMap(([serial, state]) => (serial && state === "device" ? [serial] : []));
+    return yield* Effect.forEach(serials, (serial) =>
+      Effect.gen(function* () {
+        const getprop = yield* run("adb", ["-s", serial, "shell", "getprop"]);
+        const props = new Map(
+          getprop.stdout.split(/\r?\n/).flatMap((line) => {
+            const match = GETPROP_LINE.exec(line.trim());
+            return match ? [[match[1]!, match[2]!] as const] : [];
+          }),
+        );
+        const emulator = props.get("ro.kernel.qemu") === "1" || props.get("ro.boot.qemu") === "1";
+        const avdName = emulator
+          ? (yield* run("adb", ["-s", serial, "emu", "avd", "name"])).stdout
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .find((line) => line && line !== "OK" && !line.startsWith("KO"))
+          : undefined;
+        const model = props.get("ro.product.model");
+        const manufacturer = props.get("ro.product.manufacturer");
+        const release = props.get("ro.build.version.release");
+        return {
+          id: serial,
+          name: emulator
+            ? (avdName ?? serial)
+            : model
+              ? [manufacturer, model].filter(Boolean).join(" ")
+              : serial,
+          platform: "android",
+          version: release
+            ? `Android ${/^\d+$/.test(release) ? `${release}.0` : release}`
+            : "Android",
+          booted: true,
+          physical: !emulator,
+        } satisfies HostDevice;
+      }),
+    );
+  });
+
   const list: DeviceOperations["list"] = Effect.gen(function* () {
     const listed = yield* fetchJson(
       HttpClientRequest.get(`${origin}/api/devices`),
@@ -161,6 +215,15 @@ export const makeDeviceHubOperations = (options: {
       }) ?? [];
     let androidDiscoveryIncomplete = false;
     if (androidAvailable) {
+      if (hubList.errors?.some((error) => error.message.startsWith(AVDMANAGER_LIST_FAILED))) {
+        const adbDevices = yield* listAdbDevices;
+        if (adbDevices === undefined) {
+          androidDiscoveryIncomplete = true;
+          details.push("Could not list Android devices (adb devices -l).");
+        } else {
+          devices.push(...adbDevices);
+        }
+      }
       const avds = yield* run("emulator", ["-list-avds"]);
       // Discovered devices stay listed; the AVDs that could not be listed are a warning.
       if (avds.code !== 0) {
