@@ -30,8 +30,7 @@ import {
   useReportFailure,
   useStartConversation,
 } from "./state";
-
-const RATINGS = ["again", "hard", "good", "easy"] as const;
+import { RATINGS, studyKey } from "./studyKeys";
 
 function downloadCsv(fileName: string, csv: string) {
   // Excel reads a UTF-8 CSV as its local code page without the mark.
@@ -90,14 +89,13 @@ function StudySession(props: {
     setDone((count) => count + 1);
   };
   const onKey = useStableCallback((event: KeyboardEvent) => {
-    if (event.target instanceof HTMLElement && event.target.closest("input, textarea")) return;
-    if (event.key === "Escape") props.onClose();
-    else if (event.key === " " || event.key === "Enter") {
+    const key = studyKey(event);
+    if (key === undefined) return;
+    if (key === "close") props.onClose();
+    else if (key === "flip") {
       event.preventDefault();
       flip();
-    } else if (flippedAt !== null && /^[1-4]$/.test(event.key)) {
-      void rate(RATINGS[Number(event.key) - 1]!);
-    }
+    } else if (flippedAt !== null) void rate(key);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the session's window-wide keyboard shortcuts
   useEffect(() => {
