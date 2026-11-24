@@ -12801,5 +12801,47 @@
   "012c67c7f1a99e33": "Fusion automatique de la pile",
   "4a18481bea4b4ad5": "Nouvel appareil connecté à {environmentLabel}",
   "4144ab6aa487528a": "{device} s’est connecté via {product}. Ce n’était pas vous ? Vérifiez-le.",
-  "a10cfdb27152c757": "{count, plural, one {{count} appareil s’est connecté} other {{count} appareils se sont connectés}} via {product}. Ce n’était pas vous ? Vérifiez-les."
+  "a10cfdb27152c757": "{count, plural, one {{count} appareil s’est connecté} other {{count} appareils se sont connectés}} via {product}. Ce n’était pas vous ? Vérifiez-les.",
+  "e0856d6a402ad821": "La politique de {organization} n’autorise pas les commandes de disposition des worktrees des projets.",
+  "206811f6f441bfc7": "Ce projet prépare ses worktrees avec sa propre commande, que personne n’a approuvée telle qu’elle est écrite actuellement. Cette connexion ne peut pas l’approuver : approuvez-la depuis un client qui peut utiliser le terminal.",
+  "b8087c9a70c26da9": "Impossible d’approuver la commande de disposition des worktrees.",
+  "49eda70cfd56e621": "S’exécute au démarrage d’un fil dans un worktree et à la restauration de son dossier",
+  "188ccaa1199f5611": "S’exécute à la suppression du worktree d’un fil",
+  "7e8476e7306acabe": "Autoriser ce projet à exécuter ses commandes de worktree ?",
+  "8e11914556fd8b13": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " prépare les fils en worktree avec ses propres commandes issues de ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "t3.json"
+    },
+    ". Elles s’exécutent sur la machine de cet environnement avec vos autorisations, hors de tout bac à sable d’agent. La question vous sera reposée chaque fois que leur texte changera."
+  ],
+  "46807acd02a4ff72": "Approuver et continuer",
+  "a9cb97fca6a6576b": "Commande de création",
+  "90f45a354884ccdd": "Commande de suppression",
+  "78e308ada516928b": "Impossible d’approuver la commande",
+  "a0c772d32a233da6": "Impossible de révoquer l’approbation",
+  "0cdc8cdbed3e5eae": "Disposition des worktrees",
+  "c17b25519e2b194e": "Impossible de charger les commandes de disposition des worktrees",
+  "5ccd5614c65f8d1f": "Révoquer l’approbation de la commande {kind}",
+  "80c3794a5fa12f3a": "Approuver la commande {kind}",
+  "f206891e124c77b0": [
+    "Le ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "t3.json"
+    },
+    " de ce projet prépare les fils en worktree avec ses propres commandes. Elles s’exécutent sur la machine de cet environnement avec vos autorisations, et uniquement telles qu’approuvées ici : une commande dont le texte change doit être approuvée de nouveau."
+  ],
+  "f6a91589456cca50": "Approuvée",
+  "c92657bb7f2293ff": "Approbation requise",
+  "f1e5c1be1ac92361": "Approuver",
+  "fcb5f3c4d4753326": "Cette connexion ne peut pas approuver de commandes. Utilisez un client qui peut utiliser le terminal."
 }
