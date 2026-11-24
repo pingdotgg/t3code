@@ -18,6 +18,15 @@ import type {
 } from "@t3tools/contracts";
 
 import { createAnnotationIdSource } from "./AnnotationIds.ts";
+import {
+  FRAME_PICK_MESSAGE_KEY,
+  installFramePickAgent,
+  type FramePickCapture,
+  type FramePickDelivery,
+  type FramePickHit,
+  type FramePickRelay,
+  type FramePickUp,
+} from "./FramePickAgent.ts";
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import {
   addStrokePoint,
@@ -162,6 +171,16 @@ interface AnnotationSession {
   setSendEnabled: (enabled: boolean) => void;
   handleOverlayKey: (event: KeyboardEvent) => void;
 }
+
+interface RemoteTarget {
+  readonly label: string;
+  readonly styles: CSSStyleDeclaration;
+  readonly capture: () => Promise<PickedElementPayload>;
+  readonly setStyle: (property: string, value: string) => void;
+  readonly restoreStyles: () => void;
+}
+
+const remoteTargets = new WeakMap<Element, RemoteTarget>();
 
 let activeSession: AnnotationSession | null = null;
 let annotationTheme: DesktopPreviewAnnotationTheme | null = null;
@@ -334,6 +353,8 @@ function pickFromPoint(clientX: number, clientY: number): Element | null {
 }
 
 function describeRawElement(element: Element): string {
+  const remote = remoteTargets.get(element);
+  if (remote) return remote.label;
   const tag = element.tagName.toLowerCase();
   const id = element.id ? `#${element.id}` : "";
   const classes =
@@ -469,6 +490,8 @@ const HTML_PREVIEW_MAX_CHARS = 500;
 
 /** Preserve the tag, HTML, and crop rect when React context lookup fails or stalls. */
 async function captureElement(element: Element): Promise<PickedElementPayload> {
+  const remote = remoteTargets.get(element);
+  if (remote) return remote.capture();
   const base = {
     pageUrl: location.href,
     pageTitle: document.title?.trim() || null,
@@ -959,6 +982,7 @@ function startAnnotation(
   };
 
   const removeSelected = (target: SelectedElement): void => {
+    remoteTargets.get(target.element)?.restoreStyles();
     if (target.element instanceof HTMLElement || target.element instanceof SVGElement) {
       for (const [property, baseline] of target.baselineStyles) {
         if (baseline) target.element.style.setProperty(property, baseline);
@@ -1007,6 +1031,20 @@ function startAnnotation(
 
   const setStyleForSelected = (property: string, value: string): void => {
     for (const target of selected.values()) {
+      const remote = remoteTargets.get(target.element);
+      if (remote) {
+        const key = `${target.id}:${property}`;
+        styleChanges.set(key, {
+          targetId: target.id,
+          selector: null,
+          property,
+          previousValue:
+            styleChanges.get(key)?.previousValue ?? remote.styles.getPropertyValue(property).trim(),
+          value,
+        });
+        remote.setStyle(property, value);
+        continue;
+      }
       if (!(target.element instanceof HTMLElement || target.element instanceof SVGElement))
         continue;
       if (!target.baselineStyles.has(property)) {
@@ -1227,7 +1265,7 @@ function startAnnotation(
   const syncStyleControls = (): void => {
     const first = selected.values().next().value as SelectedElement | undefined;
     if (!first) return;
-    const computed = getComputedStyle(first.element);
+    const computed = remoteTargets.get(first.element)?.styles ?? getComputedStyle(first.element);
     const rect = first.element.getBoundingClientRect();
     aspectRatio = rect.height > 0 ? rect.width / rect.height : 1;
     widthInput.value = String(Math.round(rect.width));
@@ -1404,7 +1442,7 @@ function startAnnotation(
   dragHandle.addEventListener("pointerup", onEditorPointerUp);
   dragHandle.addEventListener("pointercancel", onEditorPointerUp);
 
-  const repaint = (): void => {
+  const repaintSelection = (): void => {
     for (const target of selected.values()) updateSelectedVisual(target);
     queueEditorLayout();
   };
@@ -1414,6 +1452,11 @@ function startAnnotation(
       if (!target.element.isConnected) target.rect = { x: 0, y: 0, width: 0, height: 0 };
     }
     repaint();
+  };
+  let frameRelay: FramePickRelay | null = null;
+  const repaint = (): void => {
+    repaintSelection();
+    frameRelay?.send([], { kind: "refresh" });
   };
   // A scrollbar appearing narrows the viewport without a window resize.
   const rootResizeObserver = new ResizeObserver(repaint);
@@ -1491,6 +1534,10 @@ function startAnnotation(
     return candidates.length;
   };
 
+  let forwardedHit: Element | null | undefined;
+  const pickAt = (clientX: number, clientY: number): Element | null =>
+    forwardedHit === undefined ? pickFromPoint(clientX, clientY) : forwardedHit;
+
   const clearHoverOutline = (): void => {
     hoverOutline.style.display = "none";
   };
@@ -1501,7 +1548,7 @@ function startAnnotation(
       return;
     }
     if (tool === "select" && dragStart === null) {
-      const target = pickFromPoint(event.clientX, event.clientY);
+      const target = pickAt(event.clientX, event.clientY);
       if (target) positionBox(hoverOutline, visibleElementRect(target));
       else clearHoverOutline();
       return;
@@ -1535,7 +1582,7 @@ function startAnnotation(
     event.preventDefault();
     event.stopPropagation();
     if (tool === "select") {
-      const target = pickFromPoint(event.clientX, event.clientY);
+      const target = pickAt(event.clientX, event.clientY);
       if (target) toggleSelected(target, event.shiftKey);
       return;
     }
@@ -1672,6 +1719,11 @@ function startAnnotation(
     finished = true;
     rootResizeObserver.disconnect();
     restoreStyles();
+    frameRelay?.send([], { kind: "stop" });
+    frameRelay?.dispose();
+    frameRelay = null;
+    for (const settle of pendingCaptures.values()) settle(null);
+    pendingCaptures.clear();
     window.removeEventListener("pointermove", onPointerMove, true);
     window.removeEventListener("pointerdown", onPointerDown, true);
     window.removeEventListener("pointerup", onPointerUp, true);
@@ -1836,6 +1888,138 @@ function startAnnotation(
     event.preventDefault();
     submitAnnotation(submission);
   };
+
+  const mirrors = new Map<string, HTMLDivElement>();
+  const pendingCaptures = new Map<string, (capture: FramePickCapture | null) => void>();
+  const mirrorKey = (path: ReadonlyArray<number>, id: string | null): string =>
+    `${path.join(".")}#${id ?? "hover"}`;
+
+  const captureRemote = async (
+    path: ReadonlyArray<number>,
+    frames: ReadonlyArray<string>,
+    id: string,
+    label: string,
+  ): Promise<PickedElementPayload> => {
+    const requestId = nextId("capture");
+    const capture = await withCaptureTimeout(
+      new Promise<FramePickCapture | null>((resolve) => {
+        pendingCaptures.set(requestId, resolve);
+        frameRelay?.send(path, { kind: "capture", requestId, id });
+      }),
+      ELEMENT_CONTEXT_TIMEOUT_MS,
+    );
+    pendingCaptures.delete(requestId);
+    return {
+      pageUrl: location.href,
+      pageTitle: document.title?.trim() || null,
+      tagName: capture?.tagName ?? label.split(/[#.]/)[0] ?? "",
+      pickedAt: new Date().toISOString(),
+      selector: [...frames, capture?.selector ?? label].join(" >>> "),
+      htmlPreview: capture?.htmlPreview ?? "",
+      componentName: null,
+      source: null,
+      stack: [],
+      styles: "",
+    };
+  };
+
+  const mirrorFor = (
+    path: ReadonlyArray<number>,
+    frames: ReadonlyArray<string>,
+    hit: FramePickHit,
+  ): Element => {
+    const key = mirrorKey(path, hit.id);
+    let mirror = mirrors.get(key);
+    if (!mirror) {
+      mirror = document.createElement("div");
+      mirror.setAttribute(OVERLAY_ATTRIBUTE, "");
+      mirror.style.cssText = "position:fixed;left:0;top:0;visibility:hidden;pointer-events:none";
+      root.appendChild(mirror);
+      mirrors.set(key, mirror);
+    }
+    positionBox(mirror, hit.rect);
+    const styles = document.createElement("div").style;
+    for (const [property, value] of Object.entries(hit.styles ?? {}))
+      styles.setProperty(property, value);
+    const id = hit.id;
+    remoteTargets.set(mirror, {
+      label: hit.label,
+      styles,
+      capture: () => captureRemote(path, frames, id ?? "", hit.label),
+      setStyle: (property, value) => {
+        if (id !== null) frameRelay?.send(path, { kind: "style", id, property, value });
+      },
+      restoreStyles: () => {
+        if (id !== null) frameRelay?.send(path, { kind: "restore", id });
+      },
+    });
+    return mirror;
+  };
+
+  const forwardedPointerHandlers = {
+    pointermove: onPointerMove,
+    pointerdown: onPointerDown,
+    pointerup: onPointerUp,
+    pointerout: onPointerOut,
+  };
+
+  const forwardPointer = (
+    up: Extract<FramePickUp, { kind: "pointer" }>,
+    path: ReadonlyArray<number>,
+    frames: ReadonlyArray<string>,
+  ): void => {
+    if (!Object.hasOwn(forwardedPointerHandlers, up.type)) return;
+    if (!Number.isFinite(up.x) || !Number.isFinite(up.y)) return;
+    const handler = forwardedPointerHandlers[up.type];
+    const forwarded = {
+      type: up.type,
+      clientX: up.x,
+      clientY: up.y,
+      button: up.button,
+      shiftKey: up.shiftKey,
+      target: document.documentElement,
+      relatedTarget: null,
+      preventDefault: () => undefined,
+      stopPropagation: () => undefined,
+    } as unknown as PointerEvent;
+    forwardedHit = up.hit ? mirrorFor(path, frames, up.hit) : null;
+    try {
+      handler(forwarded);
+    } finally {
+      forwardedHit = undefined;
+    }
+  };
+
+  const forwardKey = (key: string): void => {
+    onKeyDown({
+      key,
+      code: key,
+      isTrusted: false,
+      isComposing: false,
+      keyCode: 0,
+      preventDefault: () => undefined,
+      stopPropagation: () => undefined,
+      stopImmediatePropagation: () => undefined,
+    } as unknown as KeyboardEvent);
+  };
+
+  const onFrameDelivery = ({ up, path, frames }: FramePickDelivery): void => {
+    if (finished) return;
+    if (up.kind === "pointer") forwardPointer(up, path, frames);
+    else if (up.kind === "key") forwardKey(up.key);
+    else if (up.kind === "rects") {
+      for (const entry of up.rects) {
+        const mirror = mirrors.get(mirrorKey(path, entry.id));
+        if (mirror) positionBox(mirror, entry.rect);
+      }
+      repaintSelection();
+    } else if (up.kind === "captured") {
+      pendingCaptures.get(up.requestId)?.(up.capture);
+    }
+  };
+
+  frameRelay = installFramePickAgent(FRAME_PICK_MESSAGE_KEY, onFrameDelivery);
+  frameRelay.send([], { kind: "start" });
 
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });

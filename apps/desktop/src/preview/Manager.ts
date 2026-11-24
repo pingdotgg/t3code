@@ -91,6 +91,7 @@ import {
   START_PICK_CHANNEL,
   THUMB_PRESS_CHANNEL,
 } from "./GuestProtocol.ts";
+import { watchFramesForPick } from "./FramePickInjection.ts";
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS, type RecordingInputOptions } from "./RecordingInput.ts";
@@ -2357,6 +2358,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             wc.ipc.removeListener(ANNOTATION_VOICE_EVENT_CHANNEL, onVoiceEvent);
             wc.off("destroyed", onDestroyed);
             wc.off("did-start-navigation", onNavigated);
+            stopWatchingFrames();
           }).pipe(Effect.ignore);
           // A newer session may already own the slot when this one is cancelled.
           yield* Ref.update(pickSessionsRef, (sessions) =>
@@ -2367,6 +2369,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               : sessions,
           );
         });
+        let stopWatchingFrames = (): void => undefined;
         let settled = false;
         const claimSettle = (): boolean => {
           if (settled) return false;
@@ -2510,6 +2513,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               annotationSendEnabled.get(tabId) === true,
               voice,
             );
+            stopWatchingFrames = watchFramesForPick(wc);
           });
         });
         runFork(
