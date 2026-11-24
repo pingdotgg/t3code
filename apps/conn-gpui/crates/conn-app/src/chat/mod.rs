@@ -20,6 +20,9 @@ pub(crate) use self::composer_state::{
 mod draft_hero;
 mod icons;
 mod inline_code;
+mod link_menu;
+mod link_preview;
+pub(crate) use self::link_menu::LinkedPullRequest;
 pub(crate) mod markdown;
 mod provider_banner;
 mod question_logic;
@@ -162,6 +165,8 @@ pub(crate) enum ChatEvent {
     },
     /// Open a workspace-relative file in the right panel's File preview tab.
     OpenFile(String),
+    /// Show a web link in the Browser panel (`Open in integrated browser`).
+    OpenInBrowser(String),
     /// Switch the thread's runtime permission mode (`thread.runtime-mode.set`).
     RuntimeModeSelected(String),
     /// Switch the thread's interaction mode (`thread.interaction-mode.set`).
@@ -249,6 +254,20 @@ pub(crate) struct ChatView {
     _input_sub: Subscription,
     /// Live connection for card actions (answers, secrets, omitted tool output).
     connection: Option<conn_client::Connection>,
+    /// The right-click menu of a web link in a message.
+    link_menu: Option<link_menu::LinkMenu>,
+    /// The open link menu takes the keyboard while it is open.
+    link_menu_focus: gpui_kit::FocusHandle,
+    link_menu_focus_pending: bool,
+    /// Pull requests the open thread links, to offer `Unlink from thread` on their links.
+    linked_pull_requests: Vec<link_menu::LinkedPullRequest>,
+    /// The editor picked in the `Open in` card, for `Open in <editor>` on a file link.
+    preferred_editor: Option<crate::header::details_card::EditorTarget>,
+    link_command_seq: u64,
+    /// The thread's project, which routes the reads behind a link's hover card.
+    project_id: Option<String>,
+    /// The hover card of a pull request or issue link in a message.
+    link_preview: link_preview::LinkPreview,
     /// Height of the composer lane, measured while painting. The timeline scrolls behind the
     /// composer, so its last row keeps this much room below it.
     composer_height: Rc<std::cell::Cell<f32>>,
@@ -460,6 +479,14 @@ impl ChatView {
             composer,
             _input_sub: input_sub,
             connection,
+            link_menu: None,
+            link_menu_focus: cx.focus_handle(),
+            link_menu_focus_pending: false,
+            linked_pull_requests: Vec::new(),
+            preferred_editor: None,
+            link_command_seq: 0,
+            project_id: None,
+            link_preview: link_preview::LinkPreview::default(),
             composer_height: Rc::new(std::cell::Cell::new(0.0)),
             composer_height_applied: 0.0,
             attachment_images: std::cell::RefCell::new(HashMap::new()),
@@ -903,6 +930,7 @@ impl ChatView {
         project_id: Option<String>,
         cx: &mut Context<'_, Self>,
     ) {
+        self.project_id.clone_from(&project_id);
         self.composer
             .update(cx, |c, cx| c.set_project_id(project_id, cx));
     }
@@ -914,6 +942,14 @@ impl ChatView {
             self.workspace_root = root;
             cx.notify();
         }
+    }
+
+    /// The editor the `Open in` card picked; `None` lets the file menu use the first installed.
+    pub(crate) fn set_preferred_editor(
+        &mut self,
+        editor: Option<crate::header::details_card::EditorTarget>,
+    ) {
+        self.preferred_editor = editor;
     }
 
     /// `Read /private/tmp/x/src/main.rs` → `Read src/main.rs` under root `/tmp/x`.
@@ -1031,6 +1067,7 @@ impl ChatView {
         self.changed_files_expanded.clear();
         self.changed_files_dir_overrides.clear();
         self.fetched_details.clear();
+        self.link_preview.hover.dismiss();
     }
 
     /// Markdown options shared by assistant rows and plan cards (copy/wrap code, file links).
@@ -1038,6 +1075,8 @@ impl ChatView {
         let entity_copy = cx.entity().downgrade();
         let entity_wrap = cx.entity().downgrade();
         let entity_file = cx.entity().downgrade();
+        let entity_link = cx.entity().downgrade();
+        let entity_hover = cx.entity().downgrade();
         markdown::MarkdownOptions {
             heading_style: markdown::HeadingStyle::Scale,
             copied_code_key: self.copied_code_key.as_deref(),
@@ -1053,6 +1092,19 @@ impl ChatView {
                 let _ = entity_file.update(cx, |_view, cx| {
                     cx.emit(ChatEvent::OpenFile(path));
                 });
+            })),
+            on_link_menu: Some(Rc::new(move |target, position, window, cx| {
+                let _ = entity_link.update(cx, |view, cx| match &target {
+                    markdown::LinkMenuTarget::Web(url) => {
+                        view.open_link_menu(url, position, window, cx);
+                    }
+                    markdown::LinkMenuTarget::File(path) => {
+                        view.open_file_menu(path, position, window, cx);
+                    }
+                });
+            })),
+            on_link_hover: Some(Rc::new(move |event, _window, cx| {
+                let _ = entity_hover.update(cx, |view, cx| view.link_hover(event, cx));
             })),
             prose: None,
         }
@@ -3405,6 +3457,14 @@ impl Render for ChatView {
                 .child(self.composer.clone()),
         );
 
+        let link_menu = {
+            let tokens = self.tokens.clone();
+            self.render_link_menu(window, &tokens, cx)
+        };
+        let link_preview = {
+            let tokens = self.tokens.clone();
+            self.render_link_preview(window, &tokens, cx)
+        };
         div()
             .flex()
             .flex_col()
@@ -3414,6 +3474,8 @@ impl Render for ChatView {
             .relative()
             .child(div().absolute().inset_0().flex().flex_col().child(timeline))
             .child(composer_lane)
+            .when_some(link_menu, |root, menu| root.child(menu))
+            .when_some(link_preview, |root, card| root.child(card))
             .when_some(provider_banner, |root, banner| {
                 root.child(
                     div()

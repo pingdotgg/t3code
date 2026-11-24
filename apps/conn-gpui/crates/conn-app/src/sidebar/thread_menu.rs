@@ -9,7 +9,7 @@
 use conn_state::{ShellState, ThreadShell};
 use conn_theme::Tokens;
 use gpui_kit::{
-    AnyElement, Context, FocusHandle, InteractiveElement as _, IntoElement as _, MouseButton,
+    AnyElement, Context, FocusHandle, Hsla, InteractiveElement as _, IntoElement as _, MouseButton,
     ParentElement as _, Pixels, Point, SharedString, StatefulInteractiveElement as _, Styled as _,
     TestSupportExt as _, anchored, deferred, div, px,
 };
@@ -32,6 +32,31 @@ pub(crate) const MENU_ICON_PX: f32 = 16.0;
 /// Row icons draw at 80% opacity; disabled rows at 64%.
 pub(crate) const MENU_ICON_OPACITY: f32 = 0.8;
 pub(crate) const MENU_DISABLED_OPACITY: f32 = 0.64;
+
+/// The highlight of a menu row under the pointer or the keyboard. Conn's menus are native macOS
+/// menus, which paint the row in the accent colour with white text, so every GPUI menu does the
+/// same: the theme's solid `primary` role (`--primary`) and its foreground.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct MenuHighlight {
+    pub(crate) bg: Hsla,
+    /// Text and icon colour of a highlighted row, destructive rows included.
+    pub(crate) fg: Hsla,
+}
+
+impl MenuHighlight {
+    #[must_use]
+    pub(crate) fn new(tokens: &Tokens) -> Self {
+        Self {
+            bg: hsla(tokens.primary),
+            fg: hsla(tokens.primary_foreground),
+        }
+    }
+
+    /// The `:hover` style of a pointer-only menu row.
+    pub(crate) fn hover_style(self, style: gpui_kit::StyleRefinement) -> gpui_kit::StyleRefinement {
+        style.bg(self.bg).text_color(self.fg)
+    }
+}
 
 /// One thread action (`ThreadActionMenuId`), limited to what `conn-gpui` ships.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -448,7 +473,7 @@ fn render_menu_list(
     let fg = hsla(tokens.popover_foreground);
     let destructive = hsla(tokens.destructive);
     let muted = hsla(tokens.muted_foreground);
-    let highlight = hsla(tokens.shell_highlight);
+    let highlight = MenuHighlight::new(tokens);
     let separator = hsla_alpha(tokens.foreground, 0.08);
     let (menu_ax_id, menu_ax_label) = match level {
         MenuLevel::Root if anchor.draft => ("thread-menu", "Draft actions"),
@@ -473,15 +498,25 @@ fn render_menu_list(
         if item.separator_before && idx > 0 {
             list = list.child(div().mx(px(-4.0)).my(px(4.0)).h(px(1.0)).bg(separator));
         }
-        let text_color = if item.destructive { destructive } else { fg };
-        let icon_color = if item.destructive {
+        let has_children = !item.children.is_empty();
+        let hover_intent = submenu_hover_intent(level, has_children);
+        let highlighted = highlighted_row == Some(idx) && !item.disabled;
+        // The row that opened the submenu stays lit while the submenu is open.
+        let lit = highlighted || (has_children && anchor.copy_open);
+        let text_color = if lit {
+            highlight.fg
+        } else if item.destructive {
+            destructive
+        } else {
+            fg
+        };
+        let icon_color = if lit {
+            highlight.fg
+        } else if item.destructive {
             destructive
         } else {
             muted.opacity(MENU_ICON_OPACITY)
         };
-        let has_children = !item.children.is_empty();
-        let hover_intent = submenu_hover_intent(level, has_children);
-        let highlighted = highlighted_row == Some(idx) && !item.disabled;
         let action = item.action;
         let thread_id = anchor.thread_id.clone();
         let is_draft = anchor.draft;
@@ -516,7 +551,11 @@ fn render_menu_list(
             row = row.child(icons::concept(
                 "superhero/chevron-right.svg",
                 MENU_ICON_PX,
-                fg.opacity(MENU_ICON_OPACITY),
+                if lit {
+                    highlight.fg
+                } else {
+                    fg.opacity(MENU_ICON_OPACITY)
+                },
             ));
         }
 
@@ -527,7 +566,7 @@ fn render_menu_list(
             row = row.opacity(MENU_DISABLED_OPACITY);
         } else {
             if highlighted {
-                row = row.bg(highlight);
+                row = row.bg(highlight.bg);
             }
             row = row
                 .cursor_pointer()
@@ -556,7 +595,7 @@ fn render_menu_list(
         }
 
         if has_children && anchor.copy_open {
-            row = row.bg(highlight);
+            row = row.bg(highlight.bg);
             let submenu = render_menu_list(
                 "thread-menu-copy",
                 &item.children,

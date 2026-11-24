@@ -155,11 +155,11 @@ pub(super) struct GlyphSpec {
 
 /// Parsed pull request reference ready for `thread.pull-request.link`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct ParsedPullRequestRef {
-    pub(super) host: String,
-    pub(super) repository: String,
-    pub(super) number: i64,
-    pub(super) url: String,
+pub(crate) struct ParsedPullRequestRef {
+    pub(crate) host: String,
+    pub(crate) repository: String,
+    pub(crate) number: i64,
+    pub(crate) url: String,
 }
 
 /// Result of resolving the user's input in the Link pull request dialog.
@@ -214,7 +214,7 @@ pub(super) fn pull_request_key(link: &ThreadPullRequestLink) -> String {
 
 /// Filters out `stack-dismissed` tombstones (`visibleThreadPullRequests`).
 #[must_use]
-pub(super) fn visible_thread_pull_requests(
+pub(crate) fn visible_thread_pull_requests(
     links: &[ThreadPullRequestLink],
 ) -> Vec<ThreadPullRequestLink> {
     links
@@ -638,7 +638,7 @@ pub(super) fn format_diff_count(count: i64) -> String {
 /// Formats an ISO-8601 timestamp relative to `now_ms` matching Conn's `RelativeTime`
 /// (`timestampFormat.ts`: `just now`, `{m}m ago`, `{h}h ago`, `{d}d ago`).
 #[must_use]
-pub(super) fn format_relative_time(iso: &str, now_ms: i64) -> Option<String> {
+pub(crate) fn format_relative_time(iso: &str, now_ms: i64) -> Option<String> {
     let at_ms = parse_date_ms(iso)?;
     let elapsed_ms = (now_ms - at_ms).max(0);
     let seconds = elapsed_ms / 1_000;
@@ -658,7 +658,7 @@ pub(super) fn format_relative_time(iso: &str, now_ms: i64) -> Option<String> {
 
 /// Current Unix wall-clock time in milliseconds.
 #[must_use]
-pub(super) fn now_epoch_ms() -> i64 {
+pub(crate) fn now_epoch_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
@@ -863,7 +863,7 @@ pub(super) fn find_project_for_link(
 
 /// Parses a pull request URL across GitHub/GHE/Forgejo/Gitea, GitLab, Bitbucket, and Azure DevOps.
 #[must_use]
-pub(super) fn parse_change_request_url(raw: &str) -> Option<ParsedPullRequestRef> {
+pub(crate) fn parse_change_request_url(raw: &str) -> Option<ParsedPullRequestRef> {
     let trimmed = raw.trim();
     let parsed = url::Url::parse(trimmed).ok()?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {

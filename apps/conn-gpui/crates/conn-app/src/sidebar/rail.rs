@@ -39,7 +39,8 @@ use crate::icons;
 use crate::panels::chrome::ConnTooltipExt as _;
 use crate::shell::WORKSPACE_RAIL_WIDTH_PX;
 use crate::sidebar::thread_menu::{
-    MENU_FONT_PX, MENU_ICON_PX, MENU_LINE_PX, MENU_ROW_HEIGHT_PX, MENU_ROW_RADIUS_PX, menu_surface,
+    MENU_FONT_PX, MENU_ICON_PX, MENU_LINE_PX, MENU_ROW_HEIGHT_PX, MENU_ROW_RADIUS_PX,
+    MenuHighlight, menu_surface,
 };
 use crate::sidebar::workspace_order::{self, Gesture, Pickup};
 use crate::theme::{hsla, hsla_alpha};
@@ -177,7 +178,7 @@ pub(crate) fn render_rail_menu(
     cx: &mut Context<'_, ConnApp>,
 ) -> AnyElement {
     let destructive = hsla(tokens.destructive);
-    let highlight = hsla(tokens.shell_highlight);
+    let highlight = MenuHighlight::new(tokens);
     let workspace_id = anchor.workspace_id.clone();
     let workspace_name = anchor.workspace_name.clone();
     let edit_id = anchor.workspace_id.clone();
@@ -204,8 +205,12 @@ pub(crate) fn render_rail_menu(
         .line_height(px(MENU_LINE_PX))
         .text_color(fg)
         .cursor_pointer()
-        .hover(move |s| s.bg(highlight))
-        .child(icons::concept("superhero/edit.svg", MENU_ICON_PX, fg))
+        .group("rail-menu-edit")
+        .hover(move |s| highlight.hover_style(s))
+        .child(
+            icons::concept("superhero/edit.svg", MENU_ICON_PX, fg)
+                .group_hover("rail-menu-edit", move |s| s.text_color(highlight.fg)),
+        )
         .child(div().flex_1().min_w_0().truncate().child("Edit…"))
         .on_click(cx.listener(move |app, _, window, cx| {
             cx.stop_propagation();
@@ -232,12 +237,12 @@ pub(crate) fn render_rail_menu(
         .line_height(px(MENU_LINE_PX))
         .text_color(destructive)
         .cursor_pointer()
-        .hover(move |s| s.bg(highlight))
-        .child(icons::concept(
-            "superhero/delete.svg",
-            MENU_ICON_PX,
-            destructive,
-        ))
+        .group("rail-menu-remove")
+        .hover(move |s| highlight.hover_style(s))
+        .child(
+            icons::concept("superhero/delete.svg", MENU_ICON_PX, destructive)
+                .group_hover("rail-menu-remove", move |s| s.text_color(highlight.fg)),
+        )
         .child(
             div()
                 .flex_1()

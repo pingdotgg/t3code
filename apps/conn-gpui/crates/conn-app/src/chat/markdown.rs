@@ -21,6 +21,7 @@ use syntect::util::LinesWithEndings;
 use super::color::{SyntaxRole, hsla, hsla_alpha, prose_foreground};
 use super::icons;
 use super::inline_code::{self, Built, ChipPlan, InlineCodeText};
+use super::link_preview::{LinkHoverEvent, Rect, is_previewable, link_anchor};
 use crate::a11y::ConnA11yExt as _;
 
 /// Body text size matching Conn's `text-sm` (`14px`) with relaxed (`1.625`) leading.
@@ -108,7 +109,28 @@ pub(crate) struct MarkdownOptions<'a> {
     pub(crate) workspace_root: Option<&'a str>,
     /// Optional callback invoked when a user clicks a workspace file link or inline file path.
     pub(crate) on_open_file: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
+    /// Optional callback invoked with the link and the window position when a user right-clicks a
+    /// web link or a workspace file link (Conn's link and file context menus).
+    pub(crate) on_link_menu: Option<LinkMenuCallback>,
+    /// Optional callback invoked as the pointer moves on and off a pull request or issue link
+    /// (the hover preview card).
+    pub(crate) on_link_hover: Option<LinkHoverCallback>,
 }
+
+/// Tells the chat where the pointer is relative to the preview-able links of a paragraph.
+pub(crate) type LinkHoverCallback = Rc<dyn Fn(LinkHoverEvent, &mut Window, &mut App)>;
+
+/// What a right-click landed on: a web link (its URL) or a workspace file link (its
+/// workspace-relative path, with a `:line` suffix when the link has one).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LinkMenuTarget {
+    Web(String),
+    File(String),
+}
+
+/// Opens the context menu for `target` at the window position.
+pub(crate) type LinkMenuCallback =
+    Rc<dyn Fn(LinkMenuTarget, gpui_kit::Point<gpui_kit::Pixels>, &mut Window, &mut App)>;
 
 impl MarkdownOptions<'_> {
     fn prose_color(&self, tokens: &Tokens) -> Hsla {
@@ -134,6 +156,8 @@ impl fmt::Debug for MarkdownOptions<'_> {
                 &self.on_toggle_wrap_code.is_some(),
             )
             .field("has_on_open_file", &self.on_open_file.is_some())
+            .field("has_on_link_menu", &self.on_link_menu.is_some())
+            .field("has_on_link_hover", &self.on_link_hover.is_some())
             .finish()
     }
 }
@@ -1134,6 +1158,11 @@ fn render_inline_spans(
     let prose = options.prose.map(|prose| prose.color);
     let workspace_root = options.workspace_root.map(str::to_owned);
     let on_open_file = options.on_open_file.clone();
+    let callbacks = LinkCallbacks {
+        on_open_file: options.on_open_file.clone(),
+        on_link_menu: options.on_link_menu.clone(),
+        on_link_hover: options.on_link_hover.clone(),
+    };
     if spans.iter().any(|span| span.style.code) {
         let spans = spans.to_vec();
         let owned_tokens = tokens.clone();
@@ -1149,7 +1178,14 @@ fn render_inline_spans(
                 Some(window),
             );
             let layout = styled.layout().clone();
-            let inner = interactive_inline_text(&span_id, styled, ranges, targets, on_open_file);
+            let inner = interactive_inline_text(
+                &span_id,
+                styled,
+                ranges,
+                targets,
+                callbacks.clone(),
+                layout.clone(),
+            );
             Built {
                 inner,
                 layout,
@@ -1166,21 +1202,44 @@ fn render_inline_spans(
         on_open_file.is_some(),
         None,
     );
-    interactive_inline_text(span_id, styled, ranges, targets, on_open_file)
+    let layout = styled.layout().clone();
+    interactive_inline_text(span_id, styled, ranges, targets, callbacks, layout)
 }
 
-/// `styled`, made clickable over `ranges` (URLs and workspace file paths) when there are any.
+/// What a paragraph tells the chat about its links.
+#[derive(Clone)]
+struct LinkCallbacks {
+    on_open_file: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
+    on_link_menu: Option<LinkMenuCallback>,
+    on_link_hover: Option<LinkHoverCallback>,
+}
+
+/// `styled`, made clickable over `ranges` (URLs and workspace file paths) when there are any. A
+/// right-click on a web link or a workspace file link asks `on_link_menu` for its menu. The
+/// pointer over a pull request or issue link goes to `on_link_hover` (the preview card).
 fn interactive_inline_text(
     span_id: &str,
     styled: StyledText,
     ranges: Vec<Range<usize>>,
     targets: Vec<ClickTarget>,
-    on_open_file: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
+    callbacks: LinkCallbacks,
+    layout: gpui_kit::TextLayout,
 ) -> AnyElement {
     if ranges.is_empty() {
         return styled.into_any_element();
     }
-    InteractiveText::new(SharedString::from(format!("inline-{span_id}")), styled)
+    let LinkCallbacks {
+        on_open_file,
+        on_link_menu,
+        on_link_hover,
+    } = callbacks;
+    let menu_targets = menu_targets(&ranges, &targets);
+    let hover_links: Rc<Vec<(Range<usize>, String)>> = Rc::new(if on_link_hover.is_some() {
+        hover_targets(&ranges, &targets)
+    } else {
+        Vec::new()
+    });
+    let text = InteractiveText::new(SharedString::from(format!("inline-{span_id}")), styled)
         .on_click(ranges, move |ix, window, cx| {
             let Some(target) = targets.get(ix) else {
                 return;
@@ -1193,8 +1252,152 @@ fn interactive_inline_text(
                     }
                 }
             }
+        });
+    // Capture phase: `InteractiveText` records a press of any button and opens the link on
+    // release, so a right-click on a link must stop before the text sees it. Without a menu
+    // callback (the question panel, task details) the right-click does nothing.
+    //
+    // Hover: `InteractiveText::on_hover` is not used. It runs only while the pointer is over a
+    // glyph of the text and never reports the pointer leaving the element, so a card would stay
+    // open. The wrapper reads every mouse move the same way the right-click handler does (the
+    // byte under the pointer, from the text layout) and `on_hover(false)` ends it on leaving.
+    let press_layout = layout.clone();
+    let press_links = hover_links.clone();
+    let press_hover = on_link_hover.clone();
+    let mut wrapper = div()
+        .id(SharedString::from(format!("inline-links-{span_id}")))
+        .capture_any_mouse_down(move |event, window, cx| {
+            let Ok(index) = press_layout.index_for_position(event.position) else {
+                return;
+            };
+            if event.button != gpui_kit::MouseButton::Right {
+                // A press on a pull request or issue link opens it: the card gives way.
+                if let Some(on_hover) = &press_hover
+                    && hover_link_at(&press_links, index).is_some()
+                {
+                    on_hover(LinkHoverEvent::Press, window, cx);
+                }
+                return;
+            }
+            if let Some(target) = link_at(&menu_targets, index) {
+                cx.stop_propagation();
+                if let Some(on_link_menu) = &on_link_menu {
+                    on_link_menu(target.clone(), event.position, window, cx);
+                }
+            }
+        });
+    if let Some(on_hover) = on_link_hover
+        && !hover_links.is_empty()
+    {
+        let source = span_id.to_owned();
+        let move_hover = on_hover.clone();
+        let move_source = source.clone();
+        wrapper = wrapper
+            .on_mouse_move(move |event, window, cx| {
+                let found = layout
+                    .index_for_position(event.position)
+                    .ok()
+                    .and_then(|index| hover_link_at(&hover_links, index));
+                let Some((range, url)) = found else {
+                    move_hover(
+                        LinkHoverEvent::Leave {
+                            source: move_source.clone(),
+                        },
+                        window,
+                        cx,
+                    );
+                    return;
+                };
+                let corner = |index: usize| {
+                    layout
+                        .position_for_index(index)
+                        .map(|p| (f32::from(p.x), f32::from(p.y)))
+                };
+                let bounds = layout.bounds();
+                let text = Rect {
+                    x: f32::from(bounds.origin.x),
+                    y: f32::from(bounds.origin.y),
+                    w: f32::from(bounds.size.width),
+                    h: f32::from(bounds.size.height),
+                };
+                let anchor = link_anchor(
+                    corner(range.start),
+                    corner(range.end),
+                    f32::from(layout.line_height()),
+                    (f32::from(event.position.x), f32::from(event.position.y)),
+                    text,
+                );
+                move_hover(
+                    LinkHoverEvent::Enter {
+                        source: move_source.clone(),
+                        url: url.clone(),
+                        anchor,
+                    },
+                    window,
+                    cx,
+                );
+            })
+            .on_hover(move |hovered, window, cx| {
+                if !*hovered {
+                    on_hover(
+                        LinkHoverEvent::Leave {
+                            source: source.clone(),
+                        },
+                        window,
+                        cx,
+                    );
+                }
+            });
+    }
+    wrapper.child(text).into_any_element()
+}
+
+/// The pull request and issue links that get a hover card: the click targets that are URLs
+/// `link_preview` can read.
+fn hover_targets(ranges: &[Range<usize>], targets: &[ClickTarget]) -> Vec<(Range<usize>, String)> {
+    ranges
+        .iter()
+        .zip(targets)
+        .filter_map(|(range, target)| match target {
+            ClickTarget::Url(url) if is_previewable(url) => Some((range.clone(), url.clone())),
+            ClickTarget::Url(_) | ClickTarget::WorkspaceFile(_) => None,
         })
-        .into_any_element()
+        .collect()
+}
+
+/// The hover link whose text covers byte `index` of the paragraph.
+fn hover_link_at(
+    links: &[(Range<usize>, String)],
+    index: usize,
+) -> Option<&(Range<usize>, String)> {
+    links.iter().find(|(range, _)| range.contains(&index))
+}
+
+/// The links that open a context menu on a right-click: every click target, web link or
+/// workspace file, so none of them falls through to its left-click action.
+fn menu_targets(
+    ranges: &[Range<usize>],
+    targets: &[ClickTarget],
+) -> Vec<(Range<usize>, LinkMenuTarget)> {
+    ranges
+        .iter()
+        .zip(targets)
+        .map(|(range, target)| {
+            let target = match target {
+                ClickTarget::Url(url) => LinkMenuTarget::Web(url.clone()),
+                ClickTarget::WorkspaceFile(path) => LinkMenuTarget::File(path.clone()),
+            };
+            (range.clone(), target)
+        })
+        .collect()
+}
+
+/// The link whose text covers byte `index` of the paragraph.
+fn link_at(links: &[(Range<usize>, LinkMenuTarget)], index: usize) -> Option<&LinkMenuTarget> {
+    links
+        .iter()
+        .find(|(range, _)| range.contains(&index))
+        .map(|(_, target)| target)
 }
 
 /// Builds the paragraph text and runs. With a `chip_window`, an inline code span becomes a run
@@ -1524,6 +1727,41 @@ fn looks_like_file_path(rel: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_right_click_finds_the_link_under_the_pointer() {
+        let web = |url: &str| LinkMenuTarget::Web(url.to_owned());
+        let file = |path: &str| LinkMenuTarget::File(path.to_owned());
+        let links = vec![
+            (4..10, web("https://a.test")),
+            (14..20, file("src/foo.rs:42")),
+        ];
+        assert_eq!(link_at(&links, 4), Some(&web("https://a.test")));
+        assert_eq!(link_at(&links, 9), Some(&web("https://a.test")));
+        assert_eq!(
+            link_at(&links, 10),
+            None,
+            "the range end is outside the link"
+        );
+        assert_eq!(link_at(&links, 15), Some(&file("src/foo.rs:42")));
+        assert_eq!(link_at(&links, 0), None);
+    }
+
+    #[test]
+    fn web_and_file_targets_both_get_a_menu_target() {
+        let ranges = vec![0..3, 5..9];
+        let targets = vec![
+            ClickTarget::Url("https://a.test".to_owned()),
+            ClickTarget::WorkspaceFile("src/foo.rs:42".to_owned()),
+        ];
+        assert_eq!(
+            menu_targets(&ranges, &targets),
+            vec![
+                (0..3, LinkMenuTarget::Web("https://a.test".to_owned())),
+                (5..9, LinkMenuTarget::File("src/foo.rs:42".to_owned())),
+            ]
+        );
+    }
+
     use super::*;
 
     #[test]

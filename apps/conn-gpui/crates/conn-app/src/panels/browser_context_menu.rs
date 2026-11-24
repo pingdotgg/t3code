@@ -16,7 +16,7 @@ use crate::a11y::ConnA11yExt as _;
 use crate::icons;
 use crate::sidebar::thread_menu::{
     MENU_DISABLED_OPACITY, MENU_FONT_PX, MENU_ICON_OPACITY, MENU_ICON_PX, MENU_LINE_PX,
-    MENU_ROW_HEIGHT_PX, MENU_ROW_RADIUS_PX, menu_surface,
+    MENU_ROW_HEIGHT_PX, MENU_ROW_RADIUS_PX, MenuHighlight, menu_surface,
 };
 use crate::theme::{hsla, hsla_alpha};
 
@@ -120,7 +120,7 @@ pub(super) fn render_context_menu<T: 'static>(
 ) -> AnyElement {
     let fg = hsla(tokens.popover_foreground);
     let muted = hsla(tokens.muted_foreground);
-    let highlight = hsla(tokens.shell_highlight);
+    let highlight = MenuHighlight::new(tokens);
     let separator = hsla_alpha(tokens.foreground, 0.08);
     let dismiss = actions.dismiss;
     let has_checks = menu.entries.iter().any(|e| {
@@ -166,6 +166,7 @@ pub(super) fn render_context_menu<T: 'static>(
                 depth,
             } => {
                 let highlighted = menu.cursor == Some(index) && *enabled;
+                let fg = if highlighted { highlight.fg } else { fg };
                 let mut row = div()
                     .id(SharedString::from(format!("browser-context-menu-{index}")))
                     .a11y(
@@ -205,7 +206,7 @@ pub(super) fn render_context_menu<T: 'static>(
                     let choose = actions.choose;
                     let hover = actions.hover;
                     if highlighted {
-                        row = row.bg(highlight);
+                        row = row.bg(highlight.bg);
                     }
                     row = row
                         .cursor_pointer()

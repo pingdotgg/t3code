@@ -443,6 +443,8 @@ impl ChatView {
                 let link = link_start..link_start + SHOW_MORE.len();
                 let styled = StyledText::new(SharedString::from(line))
                     .with_runs(show_more_runs(&cut, muted, fg));
+                let layout = styled.layout().clone();
+                let more_range = link.clone();
                 let weak = cx.entity().downgrade();
                 let on_text_click = {
                     let more = more.clone();
@@ -455,6 +457,17 @@ impl ChatView {
                     .text_size(px(CONTEXT_FONT_PX))
                     .line_height(px(CONTEXT_LINE_PX))
                     .text_color(muted)
+                    // `InteractiveText` records a press of any button and clicks on release, so a
+                    // right-click on `Show more` stops in the capture phase, before the text.
+                    .capture_any_mouse_down(move |event, _, cx| {
+                        if event.button == gpui_kit::MouseButton::Right
+                            && layout
+                                .index_for_position(event.position)
+                                .is_ok_and(|index| more_range.contains(&index))
+                        {
+                            cx.stop_propagation();
+                        }
+                    })
                     .child(
                         InteractiveText::new("question-context-text", styled)
                             .on_click(vec![link], on_text_click),

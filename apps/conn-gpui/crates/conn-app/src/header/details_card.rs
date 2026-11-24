@@ -157,11 +157,19 @@ impl ThreadDetailsState {
     /// The preferred editor, else the first installed one (Finder last).
     #[must_use]
     pub(crate) fn editor(&self) -> EditorTarget {
-        self.preferred_editor.unwrap_or_else(|| {
-            EditorTarget::ALL
+        EditorTarget::resolve(self.preferred_editor)
+    }
+}
+
+impl EditorTarget {
+    /// `preferred`, else the first installed editor (Finder last).
+    #[must_use]
+    pub(crate) fn resolve(preferred: Option<Self>) -> Self {
+        preferred.unwrap_or_else(|| {
+            Self::ALL
                 .into_iter()
                 .find(|e| e.installed())
-                .unwrap_or(EditorTarget::Finder)
+                .unwrap_or(Self::Finder)
         })
     }
 }

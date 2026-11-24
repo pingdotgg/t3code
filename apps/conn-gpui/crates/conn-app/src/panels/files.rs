@@ -1468,7 +1468,7 @@ impl FilesPanel {
         let tokens = &self.tokens;
         let fg = to_hsla(tokens.popover_foreground);
         let muted = to_hsla(tokens.muted_foreground);
-        let hover = to_hsla(tokens.shell_highlight);
+        let hover = crate::sidebar::thread_menu::MenuHighlight::new(tokens);
         let divider = to_hsla(tokens.shell_divider);
         let local = self.workspace_root.as_deref().is_some_and(|root| {
             std::path::Path::new(&file_path::absolute_path(root, &menu.path)).exists()
@@ -1480,8 +1480,10 @@ impl FilesPanel {
                     action: RowAction,
                     cx: &mut Context<'_, Self>| {
             let path = menu.path.clone();
+            let group = SharedString::from(format!("files-row-menu-{id}"));
             h_flex()
-                .id(SharedString::from(format!("files-row-menu-{id}")))
+                .id(group.clone())
+                .group(group.clone())
                 .a11y_button(format!("panel.files.row-menu.{id}"), label.clone())
                 .items_center()
                 .gap(px(8.0))
@@ -1492,11 +1494,14 @@ impl FilesPanel {
                 .text_size(px(UI_TEXT_PX))
                 .line_height(px(UI_LINE_HEIGHT_PX))
                 .text_color(fg)
-                .hover(move |s| s.bg(hover))
+                .hover(move |s| hover.hover_style(s))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.run_row_action(action, &path, cx);
                 }))
-                .child(superhero_icon(icon, 14.0, muted))
+                .child(
+                    superhero_icon(icon, 14.0, muted)
+                        .group_hover(group, move |s| s.text_color(hover.fg)),
+                )
                 .child(div().flex_1().min_w_0().truncate().child(label))
         };
         let separator = || div().my(px(3.0)).h(px(1.0)).bg(divider);
@@ -1841,12 +1846,14 @@ impl FilesPanel {
         let tokens = &self.tokens;
         let fg = to_hsla(tokens.popover_foreground);
         let muted = to_hsla(tokens.muted_foreground);
-        let hover = to_hsla(tokens.shell_highlight);
+        let hover = crate::sidebar::thread_menu::MenuHighlight::new(tokens);
         let project = self.project_name();
 
         let row = |id: String, ax: String, icon: &'static str, label: String| {
+            let group = SharedString::from(id);
             h_flex()
-                .id(SharedString::from(id))
+                .id(group.clone())
+                .group(group.clone())
                 .a11y_button(ax, label.clone())
                 .items_center()
                 .gap(px(8.0))
@@ -1857,8 +1864,11 @@ impl FilesPanel {
                 .text_size(px(UI_TEXT_PX))
                 .line_height(px(UI_LINE_HEIGHT_PX))
                 .text_color(fg)
-                .hover(move |s| s.bg(hover))
-                .child(superhero_icon(icon, 14.0, muted))
+                .hover(move |s| hover.hover_style(s))
+                .child(
+                    superhero_icon(icon, 14.0, muted)
+                        .group_hover(group, move |s| s.text_color(hover.fg)),
+                )
                 .child(div().flex_1().min_w_0().truncate().child(label))
         };
         let status = |text: &str| {
@@ -1936,7 +1946,7 @@ impl FilesPanel {
                         child.label.clone(),
                     )
                     .when(child.ignored, |el| el.text_color(muted))
-                    .when(current, |el| el.bg(hover))
+                    .when(current, |el| el.bg(to_hsla(tokens.shell_highlight)))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if is_dir {
                             this.load_crumb_menu(target.clone(), cx);
