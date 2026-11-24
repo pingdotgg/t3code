@@ -8279,7 +8279,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(loadingSessionId, sessionId);
           const agent = installedAgentCapabilities();
           const activated = yield* Effect.gen(function* () {
-            if (!canLoadOrResume()) {
+            if (agent?.loadSession !== true && agent?.sessionCapabilities?.resume == null) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver,
                 detail: `ACP driver cannot load or resume session ${sessionId}`,

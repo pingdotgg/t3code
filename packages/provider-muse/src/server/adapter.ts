@@ -1978,7 +1978,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             : undefined;
           const startModel = yield* resolveModel(args.modelSelection);
           const permissionProfile = musePermissionProfile(args.runtimePolicy.runtimeMode);
-          if (requestedId) yield* reportStartupPhase("resume");
+          if (resumeExistingId) yield* reportStartupPhase("resume");
           const result = yield* request(
             resumeExistingId ? "session/resume" : "session/start",
             resumeExistingId

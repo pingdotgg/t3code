@@ -272,6 +272,19 @@ const makeHarness = Effect.fnUntraced(function* (
   return { adapter, runtime, providerThread, takeEvent, allEvents, policy, eventsEnded };
 });
 
+const setMcp = (ordinal: number) =>
+  Effect.flatMap(McpProviderSessions.McpProviderSessions, (mcpSessions) =>
+    mcpSessions.set({
+      environmentId: EnvironmentId.make("test-environment"),
+      threadId: THREAD_ID,
+      providerSessionId: `test-session-${ordinal}`,
+      providerInstanceId: INSTANCE_ID,
+      endpoint: "http://127.0.0.1:43210/mcp",
+      authorizationHeader: `Bearer muse-run-${ordinal}-token`,
+      browserToolsAvailable: false,
+    }),
+  );
+
 const preallocatedProviderThread = Effect.fnUntraced(function* () {
   const now = yield* DateTime.now;
   return {
@@ -427,17 +440,6 @@ describe("MuseAdapterV2", () => {
 
   it.effect("re-resumes with rotated MCP credentials on the next turn", () =>
     Effect.gen(function* () {
-      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      const setMcp = (ordinal: number) =>
-        mcpSessions.set({
-          environmentId: EnvironmentId.make("test-environment"),
-          threadId: THREAD_ID,
-          providerSessionId: `test-session-${ordinal}`,
-          providerInstanceId: INSTANCE_ID,
-          endpoint: "http://127.0.0.1:43210/mcp",
-          authorizationHeader: `Bearer muse-run-${ordinal}-token`,
-          browserToolsAvailable: false,
-        });
       yield* setMcp(1);
       const fake = yield* makeFakeMuse();
       fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
@@ -466,6 +468,32 @@ describe("MuseAdapterV2", () => {
         },
       });
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "reports the resume phase when a rotated credential re-resumes without a native id",
+    () =>
+      Effect.gen(function* () {
+        yield* setMcp(1);
+        const fake = yield* makeFakeMuse();
+        fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
+        const harness = yield* makeHarness(fake, INSTANCE_ID);
+        yield* fake.takeCall("session/start");
+
+        yield* setMcp(2);
+        yield* harness.runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection(),
+          runtimePolicy,
+        });
+        yield* fake.takeCall("session/resume");
+        yield* harness.takeEvent(
+          "provider_session.updated",
+          (event) => event.providerSession.startupPhase === "resume",
+        );
+        const cleared = yield* harness.takeEvent("provider_session.updated");
+        assert.isUndefined(cleared.providerSession.startupPhase);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect("selects the runtime mode's permission profile on native start and resume", () =>

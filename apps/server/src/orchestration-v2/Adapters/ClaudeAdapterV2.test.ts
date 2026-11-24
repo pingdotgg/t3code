@@ -26433,7 +26433,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           return;
         }
 
+        const eventsBeforeRotation = harness.events.length;
         yield* harness.runtime.startTurn(yield* turnInput(2, "Second turn."));
+        // The awaited in-place MCP update is a startup step, cleared whether it succeeds or not.
+        assert.deepEqual(
+          harness.events
+            .slice(eventsBeforeRotation)
+            .flatMap((event) =>
+              event.type === "provider_session.updated"
+                ? [event.providerSession.startupPhase ?? null]
+                : [],
+            ),
+          ["mcp", null],
+        );
         if (mode === "fallback-replace") {
           assert.equal(harness.processQueues.length, 2);
           yield* Queue.offer(

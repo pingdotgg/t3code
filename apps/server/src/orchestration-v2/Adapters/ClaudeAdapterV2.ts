@@ -13548,7 +13548,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               candidate.query.setMcpServers === undefined
             )
               return;
-            yield* candidate.query.setMcpServers(mcpOverrides.mcpServers);
+            yield* reportStartupPhase("mcp").pipe(
+              Effect.andThen(candidate.query.setMcpServers(mcpOverrides.mcpServers)),
+              Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
+            );
             candidate.mcpAuthorization = mcpSession?.authorizationHeader;
             if (candidate.queryPolicyKeyWithoutMcpAuth === getQueryPolicyKeyWithoutMcpAuth()) {
               candidate.queryPolicyKey = queryPolicyKey;
