@@ -2267,17 +2267,14 @@ code {
   }
 }
 
-/* Prose fences hold sentences, not code: each line takes the direction of its
-   own words. Coding-font ligatures assume left-to-right and would overprint RTL letters. */
+/* Markdown fences hold sentences, not code: each line takes the direction of its
+   own words. Coding-font ligatures assume left-to-right and would overprint RTL letters.
+   Text and unlabeled fences stay LTR: they often hold trees and tables, whose lines must align. */
 .chat-markdown
   .chat-markdown-codeblock:is(
     [data-language="md" i],
     [data-language="markdown" i],
-    [data-language="mdx" i],
-    [data-language="text" i],
-    [data-language="txt" i],
-    [data-language="plain" i],
-    [data-language="plaintext" i]
+    [data-language="mdx" i]
   )
   pre {
   unicode-bidi: plaintext;
