@@ -12,7 +12,14 @@ export const layer = McpToolAccess.toLayer(ToolSearchToolkit, {
         Effect.flatMap((scope) => McpInvocationContext.requireThreadScope(scope, "tool_search")),
       );
       const exposure = yield* McpToolExposure.McpToolExposure;
-      return { tools: yield* exposure.search(thread.providerSessionId, query) };
+      const found = yield* exposure.search(
+        {
+          providerSessionId: thread.providerSessionId,
+          providerInstanceId: thread.providerInstanceId,
+        },
+        query,
+      );
+      return { tools: found.map(({ name, description }) => ({ name, description })) };
     }),
   ),
 });

@@ -27,10 +27,19 @@ Cases are JSON lines in `cases/`, one file per area. The case schema in `run.ts`
 - `kind`: `bad` reproduces a mistake, `guard` protects correct behavior, `control` is ordinary work.
 - `experience`: the real mistake, in a sentence. `source`: where it happened.
 - `setup`: the fake thread, its `world` (repo, branch, files, PRs, pages), `priorTurns`, and `mocks` for tool results. With `world.backgroundTasks`, `t3_background_wait` answers from T3's own handler and ThreadManagementService, so its result and errors are the checkout's; a prior wait with `"result": "default"` gets that result too.
+- `setup.toolExposure: "t3_tool_search"` uses the Claude template with ACP prompt instructions and T3's server-side deferred MCP listing. These cases run on Claude models.
 - `setup.priorTurns[].toolCalls[].resultFile`: load a repository-relative file as the tool result instead of copying its contents into the case. An empty `prompt` resumes a top-level thread after its last prior tool result without adding a user message. Side-chat and subagent setups require a nonempty prompt.
 - `expect`: the checks, such as `calls`, `callsMustNot`, `maxCalls`, `order`, `shellMust`, `textMust`, `finalTextMust` (the last text, once the turn ended), and `linked`. A call's `args` match partially: `~text` is a case-insensitive substring, `re:` a case-sensitive regex, `"<=N"` / `">=N"` bound a number, `null` matches a missing key, and keys may be dotted paths. For `calls` and `callsMustNot`, `argsAnyOf` accepts any one of its partial argument objects, in addition to `args`. Only `calls` supports `success: true`, which requires a recorded successful result. `distinctCalls` supports only `tool` and `args`. Device cases also use `device` to check every child brief, forbid raw UI commands, bound failed device actions per user turn, and require artifact paths in completed final answers. Secrets cases use `secret` (see [Secrets cases](#secrets-cases)).
 
 Check that the case builds with `--dry-run --case <id>`. Then run it on the text before your fix, where it must fail, and on the text after, where it must pass.
+
+## Server-side tool search cases
+
+`cases/tool-search.ndjson` checks discovery of customization and preview tools, with ordinary file edits and project theme edits as controls. The first request includes T3's direct tools, including `tool_search`. Claude's native `ToolSearch` serves only the template's native deferred tools. The runner uses T3's search implementation and exposes the newly listed schemas on the next model request.
+
+Claude stands in for models used by ACP harnesses. The runner assumes the harness re-lists tools within the same turn after a search, so these cases measure the model's routing decisions. Harness support for re-listing requires separate verification. A search that finds tools answers with tool references instead of its JSON result: the API rejects text beside references, and a plain change to the tool list unbinds earlier thinking blocks.
+
+On Sonnet 5.5 at 3 samples, `t3-tool-search-theme-pack` passed 0/3 with the `tool_search` description that named no packs and 3/3 with the pack list (2026-11-23). `t3-tool-search-preview-open` passed 3/3 on both, and the two controls passed 3/3 with the pack list.
 
 ## Device manager cases
 

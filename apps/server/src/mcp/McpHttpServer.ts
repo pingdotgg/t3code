@@ -1540,7 +1540,11 @@ const layerToolExposure = Layer.effect(
               enabledWhen === undefined || enabledWhen({ protocolVersion: "", capabilities: {} })
             );
           })
-          .map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
+          .map(({ tool, annotations }) => ({
+            name: tool.name,
+            description: tool.description ?? "",
+            pack: Context.getOrUndefined(annotations, McpToolExposure.Pack),
+          })),
       () => server.notifications["notifications/tools/list_changed"]({}),
     );
   }),
@@ -1561,6 +1565,9 @@ const layerDeferredListing = McpServer.visibility(
       const providerSessionId = Option.getOrUndefined(scope)?.thread?.providerSessionId;
       if (headers[MCP_TOOL_EXPOSURE_HEADER] !== "deferred" || providerSessionId === undefined) {
         return target !== McpToolExposure.TOOL_SEARCH;
+      }
+      if (exposure.relisted(providerSessionId)) {
+        yield* Effect.logDebug("mcp.tool-search.relisted", { providerSessionId });
       }
       return exposure.isListed(providerSessionId, target);
     });

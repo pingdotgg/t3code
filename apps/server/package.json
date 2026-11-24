@@ -31,6 +31,7 @@
     "record:fx-replay": "node scripts/record-fx-acp-replay-fixture.ts",
     "record:kiro-replay": "node scripts/record-kiro-acp-replay-fixture.ts",
     "record:muse-replay": "node scripts/record-muse-msp-replay-fixture.ts",
+    "probe:mcp-relist": "node scripts/mcp-relist-probe.ts",
     "generate": "graphqlgen",
     "generate:expo-schema": "node scripts/fetch-expo-schema.ts"
   },

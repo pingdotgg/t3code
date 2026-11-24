@@ -40,6 +40,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
+import * as McpToolExposure from "../../apps/server/src/mcp/McpToolExposure.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import * as Contracts from "@t3tools/contracts";
 import {
@@ -49,6 +50,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { t3AcpPromptWithInstructions } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { THEME_GUIDE } from "@t3tools/shared/themeCss";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
@@ -80,6 +82,7 @@ import {
 } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
 import { ThemeToolkit } from "../../apps/server/src/mcp/toolkits/theme/tools.ts";
 import { ThreadToolkit } from "../../apps/server/src/mcp/toolkits/thread/tools.ts";
+import { ToolSearchToolkit } from "../../apps/server/src/mcp/toolkits/toolSearch/tools.ts";
 import { WorktreeToolkit } from "../../apps/server/src/mcp/toolkits/worktree/tools.ts";
 import {
   CLAUDE_PROVIDER,
@@ -350,6 +353,8 @@ export const McpToolUseCase = Schema.Struct({
     role: Schema.Literals(["top", "delegated-child", "native-subagent"]),
     /** Runs only on this harness, for cases whose right answer depends on it. */
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
+    /** Claude template with ACP instructions and T3's own deferred listing and tool_search. */
+    toolExposure: Schema.optional(Schema.Literal("t3_tool_search")),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
     /** false: the project is on no forge T3 reads, so T3 hides its forge tools. */
@@ -513,6 +518,24 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   HtmlToolkit,
   MessageToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
+const t3SearchCatalog = t3SourceTools.map((tool) => ({
+  name: tool.name,
+  description: Tool.getDescription(tool) ?? "",
+  pack: Context.getOrUndefined(tool.annotations, McpToolExposure.Pack),
+}));
+const searchCaller = {
+  providerSessionId: "mcp-tool-use-eval",
+  providerInstanceId: "mcp-tool-use-eval",
+};
+/** Searches only the tools the case lists, so every result has a schema to load. */
+const makeT3Exposure = (eligible: ReadonlyArray<ApiTool>) => {
+  const names = new Set(eligible.map((tool) => normalizeToolName(tool.name)));
+  const catalog = t3SearchCatalog.filter((tool) => names.has(tool.name));
+  return McpToolExposure.make(
+    () => catalog,
+    () => Effect.void,
+  );
+};
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
   t3SourceTools.map((tool) => [
@@ -522,11 +545,15 @@ const t3InputDecoders = new Map(
     ),
   ]),
 );
-const t3Tools: ReadonlyArray<ApiTool> = t3SourceTools.map((tool) => ({
+const advertisedTool = (tool: Tool.Any): ApiTool => ({
   name: `${T3_PREFIX}${tool.name}`,
   description: Tool.getDescription(tool) ?? "",
   input_schema: advertisedJsonSchema(tool),
-}));
+});
+const t3Tools = t3SourceTools.map(advertisedTool);
+const t3SearchSourceTool = ToolSearchToolkit.tools.tool_search;
+const decodeT3Search = Schema.decodeUnknownOption(t3SearchSourceTool.parametersSchema);
+const decodePriorT3Search = Schema.decodeUnknownSync(t3SearchSourceTool.parametersSchema);
 // T3 gates these on the `preview` capability, which agent browser access decides.
 const PREVIEW_TOOLS = new Set(
   [PreviewToolkit, PreviewControlsToolkit].flatMap((toolkit) =>
@@ -720,6 +747,7 @@ export const buildBase = (
     readonly subagent?: boolean;
     readonly links?: boolean;
     readonly forge?: boolean;
+    readonly t3Deferred?: boolean;
     /** A native subagent starts from its task: T3 appends nothing to its system prompt. */
     readonly nativeSubagent?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
@@ -731,7 +759,13 @@ export const buildBase = (
     readonly arm?: Arm;
   },
 ) => {
-  const t3 = visibleT3Tools(options);
+  const visible = visibleT3Tools(options);
+  const t3 = options.t3Deferred ? [...visible, advertisedTool(t3SearchSourceTool)] : visible;
+  const exposure = options.t3Deferred ? makeT3Exposure(t3) : undefined;
+  if (exposure && (options.agentFeedback ?? "off") !== "off") {
+    // This mode sends ACP instructions, which carry no feedback guidance.
+    throw new Error("toolExposure t3_tool_search does not model agentFeedback.");
+  }
   const firstAssistant = template.messages.findIndex((message) => message.role === "assistant");
   const head = template.messages.slice(0, firstAssistant === -1 ? undefined : firstAssistant);
   const systemTexts = [
@@ -745,19 +779,21 @@ export const buildBase = (
     throw new Error(`The template needs one ${RUNTIME_MARKER} block and a deferred tool list.`);
   }
   const nativeDeferred = deferredList.split("\n").filter((name) => name && !isT3Name(name));
+  const t3NativeDeferred = exposure ? [] : t3;
   const names = [
     ...nativeDeferred,
-    ...t3.filter((tool) => !alwaysLoaded.has(tool.name)).map((tool) => tool.name),
+    ...t3NativeDeferred.filter((tool) => !alwaysLoaded.has(tool.name)).map((tool) => tool.name),
   ]
     .toSorted()
     .join("\n");
   const { model } = options;
-  const append = options.nativeSubagent
-    ? ""
-    : forArm(
-        t3SystemAppend(model, options.deviceAccess, options.browserAccess, options.agentFeedback),
-        options.arm,
-      );
+  const append =
+    options.nativeSubagent || exposure
+      ? ""
+      : forArm(
+          t3SystemAppend(model, options.deviceAccess, options.browserAccess, options.agentFeedback),
+          options.arm,
+        );
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -799,11 +835,18 @@ export const buildBase = (
     },
     nativeTools: [
       ...template.tools.filter((tool) => !isT3Name(tool.name)),
-      ...t3.filter((tool) => alwaysLoaded.has(tool.name)),
+      ...t3.filter((tool) =>
+        exposure
+          ? exposure.isListed(searchCaller.providerSessionId, normalizeToolName(tool.name))
+          : alwaysLoaded.has(tool.name),
+      ),
     ],
     /** Tools ToolSearch loads: T3 tools from source, and native tools the template only names. */
     t3,
-    deferred: [...t3, ...nativeDeferred.map((name) => ({ name, ...nativeSchema(name) }))],
+    deferred: [
+      ...t3NativeDeferred,
+      ...nativeDeferred.map((name) => ({ name, ...nativeSchema(name) })),
+    ],
   };
 };
 
@@ -999,6 +1042,7 @@ type Sample = {
   readonly testCase: McpToolUseCase;
   readonly base: Base;
   readonly tools: Array<ApiTool>;
+  readonly t3Exposure?: ReturnType<typeof makeT3Exposure>;
   readonly repo: string;
   readonly shell: Array<ShellEntry>;
   readonly shellUsage: Usage;
@@ -1064,6 +1108,9 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     testCase,
     base,
     tools: [...base.nativeTools],
+    ...(testCase.setup.toolExposure === "t3_tool_search"
+      ? { t3Exposure: makeT3Exposure(base.t3) }
+      : {}),
     repo: testCase.setup.world?.repo ?? "acme/app",
     shell,
     shellUsage: emptyUsage(),
@@ -1174,8 +1221,41 @@ const gitStatus = ({ setup }: McpToolUseCase) => {
 };
 
 const findTool = (base: Base, bare: string) =>
-  [...base.nativeTools, ...base.deferred].find((tool) => normalizeToolName(tool.name) === bare) ??
-  (base.codex ? { name: bare } : undefined);
+  [...base.nativeTools, ...base.deferred, ...base.t3].find(
+    (tool) => normalizeToolName(tool.name) === bare,
+  ) ?? (base.codex ? { name: bare } : undefined);
+
+const t3Search = (exposure: ReturnType<typeof makeT3Exposure>, id: string, query: string) =>
+  exposure.search(searchCaller, query).pipe(
+    // The API allows no text beside tool references, and they carry the same names and
+    // descriptions, so a search that found tools answers with references alone.
+    Effect.map((found) =>
+      found.length === 0
+        ? toolResult(id, { tools: [] })
+        : {
+            type: "tool_result",
+            tool_use_id: id,
+            content: found.map((tool) => ({
+              type: "tool_reference",
+              tool_name: `${T3_PREFIX}${tool.name}`,
+            })),
+          },
+    ),
+  );
+
+export const relistT3Tools = ({ t3Exposure, base, tools }: Sample) => {
+  if (!t3Exposure?.relisted(searchCaller.providerSessionId)) return;
+  for (const tool of base.t3) {
+    if (
+      t3Exposure.isListed(searchCaller.providerSessionId, normalizeToolName(tool.name)) &&
+      !hasTool(tools, tool.name)
+    ) {
+      // A plain push would change the tool list and unbind earlier thinking blocks, so the
+      // re-list is sent the way Claude Code loads tools: deferred schemas the result references.
+      tools.push({ ...tool, defer_loading: true });
+    }
+  }
+};
 
 /** Adds deferred schemas to `tools` and returns the ToolSearch result Claude Code sends. */
 const loadTools = (tools: Array<ApiTool>, id: string, found: ReadonlyArray<ApiTool>): Block => {
@@ -1188,7 +1268,7 @@ const loadTools = (tools: Array<ApiTool>, id: string, found: ReadonlyArray<ApiTo
 
 /** Messages for a case: reminders, context, prior turns with real tool blocks, then the prompt. */
 export const buildMessages = (sample: Sample) => {
-  const { testCase, base, tools } = sample;
+  const { testCase, base, tools, t3Exposure } = sample;
   const messages: Array<ApiMessage> = [];
   const push = (role: ApiMessage["role"], ...blocks: ReadonlyArray<Block>) => {
     const last = messages.at(-1);
@@ -1196,6 +1276,20 @@ export const buildMessages = (sample: Sample) => {
     else messages[messages.length - 1] = { role, content: [...last.content, ...blocks] };
   };
   const { role, context, delegateRole, priorTurns = [] } = testCase.setup;
+  let acpInstructionsPending = t3Exposure !== undefined;
+  const userPrompt = (prompt: string) => {
+    if (!acpInstructionsPending) return prompt;
+    const withInstructions = t3AcpPromptWithInstructions({
+      prompt,
+      state: {
+        interactionMode: "default",
+        hasT3Mcp: true,
+        hasDeviceTools: testCase.setup.world?.deviceAgentAccess !== false,
+      },
+    });
+    acpInstructionsPending = withInstructions === prompt;
+    return withInstructions;
+  };
   const sideChat = testCase.setup.sideChat;
   if (testCase.prompt === "" && (role !== "top" || sideChat !== undefined)) {
     throw new Error(
@@ -1234,28 +1328,46 @@ export const buildMessages = (sample: Sample) => {
       }
       return { ...call, id: `toolu_prior_${nextId++}`, name: tool.name, tool, prior: call };
     });
-    // Prior T3 calls load their schemas first, as in a real deferred session.
     const unloaded = [...new Set(calls.map((call) => call.tool))].filter(
       (tool) => !hasTool(tools, tool.name),
     );
-    if (unloaded.length > 0 && !base.codex) {
+    const nativeDeferred = unloaded.filter((tool) => !t3Exposure || !isT3Name(tool.name));
+    if (nativeDeferred.length > 0 && !base.codex) {
       const id = `toolu_prior_${nextId++}`;
-      const query = `select:${unloaded.map((tool) => tool.name).join(",")}`;
-      const input = { query, max_results: unloaded.length };
+      const query = `select:${nativeDeferred.map((tool) => tool.name).join(",")}`;
+      const input = { query, max_results: nativeDeferred.length };
       push("assistant", { type: "tool_use", id, name: toolSearch, input });
-      push("user", loadTools(tools, id, unloaded), text(TOOL_LOADED));
+      push("user", loadTools(tools, id, nativeDeferred), text(TOOL_LOADED));
     }
     // One call per step, as most real turns run them.
-    for (const { id, name, input, result, tool, prior } of calls) {
+    for (const { id, name, input, result, prior } of calls) {
+      const bare = normalizeToolName(name);
+      if (t3Exposure && isT3Name(name) && !hasTool(tools, name)) {
+        const searchId = `toolu_prior_${nextId++}`;
+        push("assistant", {
+          type: "tool_use",
+          id: searchId,
+          name: `${T3_PREFIX}${McpToolExposure.TOOL_SEARCH}`,
+          input: { query: bare },
+        });
+        push("user", Effect.runSync(t3Search(t3Exposure, searchId, bare)));
+        relistT3Tools(sample);
+      }
       push("assistant", { type: "tool_use", id, name, input });
+      if (t3Exposure && bare === McpToolExposure.TOOL_SEARCH) {
+        const decoded = decodePriorT3Search(input);
+        push("user", Effect.runSync(t3Search(t3Exposure, id, decoded.query)));
+        relistT3Tools(sample);
+        continue;
+      }
       const replayed =
-        normalizeToolName(tool.name) === "orchestrator_capabilities"
+        bare === "orchestrator_capabilities"
           ? capabilities(sample, result)
           : (sample.priorResults.get(prior) ?? result);
       const answer = toolResult(id, replayed);
       push("user", sample.priorErrors.has(prior) ? { ...answer, is_error: true } : answer);
     }
-    if (turn.text) push(turn.role, text(turn.text));
+    if (turn.text) push(turn.role, text(turn.role === "user" ? userPrompt(turn.text) : turn.text));
   }
   const userText =
     testCase.promptContext === undefined
@@ -1265,7 +1377,7 @@ export const buildMessages = (sample: Sample) => {
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   if (testCase.prompt !== "")
-    push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+    push("user", text(userPrompt(role === "delegated-child" ? childPrompt() : prompt)));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
     push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));
@@ -2236,7 +2348,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   config: Config,
   call: typeof ToolUse.Type,
 ) {
-  const { testCase, base, tools } = sample;
+  const { testCase, base, tools, t3Exposure } = sample;
   let name = normalizeToolName(call.name);
   let input = isRecord(call.input) ? call.input : {};
   if (call.name === "web__run") {
@@ -2251,8 +2363,17 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   }
   const failed = (error: string): Block => ({ ...toolResult(call.id, error), is_error: true });
   if (!base.codex && !hasTool(tools, call.name)) {
-    const error = `InputValidationError: ${call.name} is deferred. Load it with ToolSearch first.`;
+    const search =
+      t3Exposure && isT3Name(call.name)
+        ? `${T3_PREFIX}${McpToolExposure.TOOL_SEARCH}`
+        : "ToolSearch";
+    const error = `InputValidationError: ${call.name} is deferred. Load it with ${search} first.`;
     return failed(`<tool_use_error>${error}</tool_use_error>`);
+  }
+  if (t3Exposure && name === McpToolExposure.TOOL_SEARCH) {
+    const decoded = Option.getOrUndefined(decodeT3Search(input));
+    if (decoded === undefined) return failed("Invalid tool_search input.");
+    return yield* t3Search(t3Exposure, call.id, decoded.query);
   }
   if (name === "ToolSearch") {
     const max = typeof input.max_results === "number" ? input.max_results : 5;
@@ -3004,6 +3125,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         });
       }),
     );
+    relistT3Tools(sample);
     // Claude Code adds this text after a ToolSearch that loaded tools.
     const loaded = results.some((result) => Array.isArray(result.content));
     messages.push({ role: "user", content: [...results, ...(loaded ? [text(TOOL_LOADED)] : [])] });
@@ -3243,7 +3365,8 @@ const main = Effect.gen(function* () {
   const selectedCases = cases.filter(
     ({ id, setup }) =>
       (wanted === undefined || wanted.includes(id)) &&
-      (setup.harness === undefined || setup.harness === harness),
+      (setup.harness === undefined || setup.harness === harness) &&
+      (!codex || setup.toolExposure !== "t3_tool_search"),
   );
   if (selectedCases.length === 0) return yield* Effect.die(new Error("No case matches --case."));
   // The raw arm has no PR or issue tools, so a case whose prior turns call one cannot be replayed.
@@ -3302,6 +3425,7 @@ const main = Effect.gen(function* () {
     links: boolean,
     forge: boolean,
     agentFeedback: Contracts.AgentFeedbackMode = "off",
+    t3Deferred = false,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -3327,6 +3451,7 @@ const main = Effect.gen(function* () {
               keepUserInstructions,
               subagent: role === "delegated-child",
               nativeSubagent: role === "native-subagent",
+              t3Deferred,
               links,
               forge,
               deviceAccess,
@@ -3343,14 +3468,15 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}:${setup.world?.agentFeedback ?? "off"}`;
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}:${setup.world?.agentFeedback ?? "off"}:${setup.toolExposure === "t3_tool_search"}`;
   const base = yield* buildFor("top", true, true, false, true);
-  const bases = new Map<string, Base>([["top:true:true:false:true:off", base]]);
+  const bases = new Map<string, Base>([["top:true:true:false:true:off:false", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", device, browser, links, forge, feedback] = key.split(":") as [
+    const [role = "top", device, browser, links, forge, feedback, t3Deferred] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
+      string,
       string,
       string,
       string,
@@ -3366,6 +3492,7 @@ const main = Effect.gen(function* () {
         links === "true",
         forge === "true",
         feedback as Contracts.AgentFeedbackMode,
+        t3Deferred === "true",
       ),
     );
   }
