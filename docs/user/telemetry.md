@@ -1,16 +1,16 @@
 # Product usage data
 
 The T3 Code server sends product usage events to T3 Code's own endpoint at `ingest.t3.codes`,
-associated with a hashed account or installation identifier. To count how many installations one person
-uses, the server also sends hashed account identifiers: your T3 Connect account, your OpenAI and
-Claude accounts when you are signed in, and a random identifier for each device that connects. The endpoint keeps a copy of each
+associated with a hashed random identifier for the installation. To count how many installations one person
+uses, the server also sends a hashed identifier for your T3 Connect account when you are signed in
+to one, and a random identifier for each device that connects. The endpoint keeps a copy of each
 event and forwards events to PostHog. Events include the provider, model, reasoning effort,
 permission mode, turn and request results, duration, release channel, and token counts when
 available. Child-agent token counts are reported separately from the main agent's. Events include
 the model ID the provider used, including custom models and models served by a custom endpoint.
 
 Product events do not include prompts, responses, file contents, authentication tokens, conversation IDs,
-raw provider events, or child-agent output. The one exception is [agent feedback](#agent-feedback),
+raw provider events, child-agent output, or identifiers from your provider accounts. The one exception is [agent feedback](#agent-feedback),
 which is off unless you turn it on.
 
 ## Agent feedback
