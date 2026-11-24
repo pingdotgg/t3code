@@ -552,6 +552,9 @@ export const make = Effect.gen(function* () {
                     ? "fast-forward-only"
                     : (input.mergeMethod ?? "merge"),
                 delete_branch_after_merge: deleteBranch,
+                ...(input.expectedHeadSha === undefined
+                  ? {}
+                  : { head_commit_id: input.expectedHeadSha }),
               },
             }).pipe(
               Effect.catchTags({
