@@ -474,56 +474,49 @@ impl Inner {
         replay: impl FnOnce(&Tx<'_>) -> ProjectResult<T> + Send + 'static,
         f: impl FnOnce(&mut Tx<'_>) -> ProjectResult<(T, Vec<Effect>)> + Send + 'static,
     ) -> ProjectResult<T> {
-        let result = self
-            .db(move |store| {
-                let mut tx = store.tx().map_err(ProjectFailure::from)?;
-                // The id is taken inside this write; a receipt another command holds decides
-                // the answer here, and is never replaced.
-                if let Some(command) = &command
-                    && !tx.reserve(&command.key()).map_err(ProjectFailure::from)?
-                {
-                    let held = tx.outcome(&command.id).map_err(ProjectFailure::from)?;
-                    let answer = held
-                        .ok_or_else(|| ProjectFailure::from("The receipt vanished.".to_owned()))
-                        .and_then(|receipt| command.check(receipt))
-                        .and_then(|()| replay(&tx));
-                    tx.rollback();
-                    return Ok((answer?, vec![], store.high_water()));
-                }
-                match f(&mut tx) {
-                    Ok((value, effects)) => {
-                        let receipt = command.as_ref().map(ProjectCommand::key);
-                        tx.commit(receipt.as_ref()).map_err(ProjectFailure::from)?;
-                        Ok((value, effects, store.high_water()))
-                    }
-                    Err(e) => {
-                        tx.rollback();
-                        // A refusal from planning is the command's outcome (T3's
-                        // `commitRejectedProjectCommand`); others stay retryable.
-                        if e.planned
-                            && let Some(command) = &command
-                        {
-                            store
-                                .record_refusal(&command.key(), &e.encode())
-                                .map_err(ProjectFailure::from)?;
-                        }
-                        Err(e)
-                    }
-                }
-            })
-            .await;
-        let (value, effects, high) = result?;
-        self.notify.send_if_modified(|current| {
-            let moved = high > *current;
-            if moved {
-                *current = high;
+        self.ensure_effect_worker();
+        self.db(move |store| {
+            let mut tx = store.tx().map_err(ProjectFailure::from)?;
+            // The id is taken inside this write; a receipt another command holds decides
+            // the answer here, and is never replaced.
+            if let Some(command) = &command
+                && !tx.reserve(&command.key()).map_err(ProjectFailure::from)?
+            {
+                let held = tx.outcome(&command.id).map_err(ProjectFailure::from)?;
+                let answer = held
+                    .ok_or_else(|| ProjectFailure::from("The receipt vanished.".to_owned()))
+                    .and_then(|receipt| command.check(receipt))
+                    .and_then(|()| replay(&tx));
+                tx.rollback();
+                return answer;
             }
-            moved
-        });
-        for effect in effects {
-            self.spawn_effect(effect);
-        }
-        Ok(value)
+            match f(&mut tx) {
+                Ok((value, effects)) => {
+                    let receipt = command.as_ref().map(ProjectCommand::key);
+                    let command_id = command.as_ref().map(|command| command.id.as_str());
+                    if let Err(e) = tx.enqueue(command_id, &effects) {
+                        tx.rollback();
+                        return Err(ProjectFailure::from(e));
+                    }
+                    tx.commit(receipt.as_ref()).map_err(ProjectFailure::from)?;
+                    Ok(value)
+                }
+                Err(e) => {
+                    tx.rollback();
+                    // A refusal from planning is the command's outcome (T3's
+                    // `commitRejectedProjectCommand`); others stay retryable.
+                    if e.planned
+                        && let Some(command) = &command
+                    {
+                        store
+                            .record_refusal(&command.key(), &e.encode())
+                            .map_err(ProjectFailure::from)?;
+                    }
+                    Err(e)
+                }
+            }
+        })
+        .await
     }
 
     pub(crate) async fn project_mutate(self: &Arc<Self>, input: Value) -> ProjectResult<Value> {

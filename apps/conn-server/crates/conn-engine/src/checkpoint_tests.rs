@@ -964,6 +964,100 @@ async fn a_failed_restore_leaves_the_live_session_on_its_thread() {
 /// `phase` is what the store then says: `admitted` (sent nothing), `provider` (sent it, no
 /// answer), `provider_done` (its answer kept). A restart finishes the first and the last, as
 /// T3 requeues the effect, and records a failure for the middle one.
+/// The round-3 gate's probe: an engine is replaced while its provider rollback is in flight.
+/// The new engine records the rollback as interrupted. The old engine, when the provider
+/// answers, is fenced: it must touch no file and delete no ref.
+#[tokio::test(flavor = "current_thread")]
+async fn a_replaced_engine_s_rollback_touches_no_files() {
+    let db = TempDb::new("rb-fenced-files");
+    let repo = Repo::new("rb-fenced-files");
+    let pending = || -> Vec<String> {
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        let mut stmt = conn.prepare("SELECT phase FROM pending_rollbacks").unwrap();
+        stmt.query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    let (old, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent").with_control_delay(Duration::from_millis(300)),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&old, "t1").await;
+    let stale = checkpoint_at(&p, 2)["ref"].as_str().unwrap().to_owned();
+    dispatch(&old, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+    for _ in 0..250 {
+        if pending() == ["provider"] {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(pending(), ["provider"]);
+    drop(old);
+    let (engine, _) = open_repo(&db, &repo);
+    let p = until(&engine, |p| p["thread"]["rollbackFailure"].is_object()).await;
+    assert_eq!(p["thread"]["rollbackFailure"]["requestId"], "rb-1");
+    // The old engine's provider answers; give its task time to go on, as it did before.
+    for _ in 0..250 {
+        if provider
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c == "rolled back")
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        repo.read("b.txt").as_deref(),
+        Some("two\n"),
+        "files untouched"
+    );
+    assert!(repo.git(&["show-ref"]).contains(&stale), "refs untouched");
+}
+
+/// The round-5 gate's probe: an engine dropped while its rollback restores files keeps the
+/// store locked until the restore ends, so no replacement opens beside it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_store_stays_locked_while_a_dropped_engine_restores_files() {
+    let db = TempDb::new("rb-restore-lock");
+    let repo = Repo::new("rb-restore-lock");
+    let (old, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&old, "t1").await;
+    let (paused_tx, paused) = tokio::sync::oneshot::channel();
+    let (release, release_rx) = tokio::sync::oneshot::channel();
+    crate::lock(&old.inner().worker_hooks).restore_pause = Some((paused_tx, release_rx));
+    dispatch(&old, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+    paused.await.unwrap();
+    drop(old);
+    let config = || {
+        let mut config = EngineConfig::new(db.path());
+        config.checkpoints = true;
+        config
+    };
+    let Err(error) = SqliteEngine::start(config()).await else {
+        panic!("a replacement opened while the dropped engine restored files");
+    };
+    assert_eq!(error, crate::STORE_IN_USE);
+    release.send(()).unwrap();
+    // The restore ends within the open's lock wait; then the store is free.
+    SqliteEngine::start(config()).await.unwrap();
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_restart_finishes_or_fails_a_rollback_left_pending() {
     for phase in ["admitted", "provider", "provider_done"] {

@@ -9,6 +9,19 @@ Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new contai
 "Released and running in Orbit"); the web and iOS clients were tested against it in a VM
 (see "Client parity, wave 1").
 
+**Effect outbox (2026-11-23):** effects commit with their command in `effect_outbox` and one
+worker runs them, as T3's `EffectOutbox.ts` and `EffectWorker.ts`. Before, they started after
+the commit returned, so a closed socket could lose a committed turn start (the run stayed
+`starting`). The in-memory lanes are gone. Proof: engine tests for an aborted launch and an
+aborted archive (both fail with the old order), commit order per thread, and the outbox store
+tests from T3's `FoundationPersistence.test.ts`. Each commit publishes its own sequence, so an
+aborted caller cannot hide it from clients. An engine takes an `engine_epoch` lease at open;
+every write checks it in its transaction, so a dropped or replaced engine never writes again. A
+settlement retries while the store is locked and otherwise settles the row `failed`, so its
+lane frees without running the effect again. Pruning lets the store go between batches. Left: T3's process-loss split (replay-safe
+effects run again; today every unsettled row is cancelled at start), folding
+`pending_rollbacks` into the outbox, and T3's worker retries.
+
 **Input validators (2026-11-17):** RPC limits and MCP input decode share
 `conn-support/src/input.rs` and the generator walk `tools/schema-rules.mjs`. Proof:
 `tools/check.sh` 46/46, no skips; touched-crate tests pass; the original cases are unchanged.

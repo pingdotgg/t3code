@@ -348,7 +348,6 @@ impl Inner {
             .as_ref()
             .is_some_and(|f| f["class"] != "validation_error");
         let checkpointing = self.checkpoints.is_some();
-        let inner = self.clone();
         let next = self
             .write(move |tx| {
                 // A run with a checkpoint scope is captured first (`checkpoint.capture`): a
@@ -402,19 +401,12 @@ impl Inner {
                     effects.extend(start_next_queued(tx, &thread_id, None)?);
                     effects
                 };
-                // Lane slots are taken under the store lock, so lane order is commit order.
-                let reserved = effects
-                    .into_iter()
-                    .map(|effect| inner.reserve_effect(effect))
-                    .collect::<Vec<_>>();
-                Ok((reserved, captured))
+                tx.enqueue(None, &effects)?;
+                Ok(captured)
             })
             .await;
         match next {
-            Ok((reserved, captured)) => {
-                reserved
-                    .into_iter()
-                    .for_each(crate::engine::ReservedEffect::start);
+            Ok(captured) => {
                 if captured {
                     return;
                 }
@@ -1695,7 +1687,6 @@ impl Inner {
         if drafts.is_empty() {
             return;
         }
-        let inner = self.clone();
         let written = self
             .write(move |tx| {
                 let mut settled = Vec::new();
@@ -1713,17 +1704,11 @@ impl Inner {
                 for thread_id in settled {
                     effects.extend(crate::families::finalize_tasks(tx, &thread_id)?);
                 }
-                Ok(effects
-                    .into_iter()
-                    .map(|effect| inner.reserve_effect(effect))
-                    .collect::<Vec<_>>())
+                tx.enqueue(None, &effects)
             })
             .await;
-        match written {
-            Ok(reserved) => reserved
-                .into_iter()
-                .for_each(crate::engine::ReservedEffect::start),
-            Err(e) => eprintln!("conn-engine: could not record provider events: {e}"),
+        if let Err(e) = written {
+            eprintln!("conn-engine: could not record provider events: {e}");
         }
     }
 
