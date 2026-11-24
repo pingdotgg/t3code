@@ -1766,6 +1766,23 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
           );
           expect(deferredOnCrlf).toBe("mytool");
 
+          // An execute-only file (0111) cannot have its header inspected, so defer to native
+          // lookup rather than pinning a script whose interpreter may be missing.
+          if (process.getuid?.() !== 0) {
+            const execOnlyEntry = path.join(root, "exec-only");
+            yield* fs.makeDirectory(execOnlyEntry);
+            const execOnlyTool = path.join(execOnlyEntry, "mytool");
+            yield* fs.writeFileString(execOnlyTool, "#!/bin/sh\nexit 0\n");
+            yield* fs.chmod(execOnlyTool, 0o111);
+            const deferredOnExecOnly = yield* resolveSpawnCommand("mytool", [], {
+              env: { PATH: `${execOnlyEntry}:${validEntry}` },
+            }).pipe(
+              Effect.map((r) => r.command),
+              Effect.provideService(HostProcess.Platform, "darwin"),
+            );
+            expect(deferredOnExecOnly).toBe("mytool");
+          }
+
           // Symlink loop (ELOOP) stops the scan and defers to native spawn instead of skipping to validTool.
           const loopA = path.join(loopEntry, "loop-a");
           const loopB = path.join(loopEntry, "loop-b");
