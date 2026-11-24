@@ -12,8 +12,10 @@ import {
   type VoiceState,
 } from "@t3tools/contracts";
 import { Atom, type AtomRegistry } from "effect/reactivity";
+import { msg } from "gt-react";
 
 import { toastManager } from "../components/ui/toast";
+import { m } from "../i18n/messages";
 import { environmentSummaries } from "../state/presentation";
 import { serverEnvironment } from "../state/server";
 import { readPreparedConnection } from "../state/session";
@@ -74,7 +76,7 @@ export async function setVoiceThread(
     }),
   );
   const saved = results.every((result) => result === undefined || result._tag === "Success");
-  if (!saved) toastManager.add({ type: "error", title: "Voice mode could not be saved" });
+  if (!saved) toastManager.add({ type: "error", title: m(msg("Voice mode could not be saved")) });
   return saved;
 }
 
@@ -98,7 +100,7 @@ export function threadVoiceMode(
 function reportVoiceFailure(error: unknown) {
   toastManager.add({
     type: "error",
-    title: "Voice replies failed",
+    title: m(msg("Voice replies failed")),
     description: error instanceof Error ? error.message : String(error),
   });
 }
