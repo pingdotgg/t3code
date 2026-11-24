@@ -204,20 +204,20 @@ export const make = Effect.gen(function* () {
   });
 
   /** The repository's statuses and the issue's, or null on a host without them. */
-  const issueStatuses = (
+  const issueStatuses = Effect.fn("GitHubIssueTracker.issueStatuses")(function* (
     input: { readonly host: string },
     owner: string,
     name: string,
     number: number,
     operation: string,
-  ) =>
-    asksStatuses(input.host)
-      ? client.IssueStatuses({ owner, name, number }).pipe(
-          graphql(input.host, operation),
-          Effect.map((result) => result.repository),
-          Effect.catchIf(statusesRefused, () => Effect.succeed(null)),
-        )
-      : Effect.succeed(null);
+  ) {
+    if (!asksStatuses(input.host)) return null;
+    return yield* client.IssueStatuses({ owner, name, number }).pipe(
+      graphql(input.host, operation),
+      Effect.map((result) => result.repository),
+      Effect.catchIf(statusesRefused, () => Effect.succeed(null)),
+    );
+  });
 
   // As sets: GitHub applies a name asked for twice once.
   const sameNames = (wanted: ReadonlyArray<string>, applied: ReadonlyArray<string>) => {
