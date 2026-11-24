@@ -97,6 +97,9 @@ export function ThreadRelationshipIcon({
           status === "running" ||
             status === "in_progress" ||
             status === "pending" ||
+            status === "queued" ||
+            status === "preparing" ||
+            status === "starting" ||
             status === "waiting"
             ? "bg-info"
             : status === "failed" || status === "error"

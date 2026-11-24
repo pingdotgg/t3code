@@ -457,62 +457,69 @@ it("shows how long a running remote subagent has been running, as a local one do
   expect(row.element().textContent).toContain("12m");
 });
 
-it("does not show a delegated child that is still starting as inactive", async () => {
-  setup();
-  const projection = makeThreadProjectionFixture();
-  const childId = ThreadId.make("starting-child");
-  const startedAt = DateTime.makeUnsafe("2026-11-24T07:44:39.792Z");
-  // The parent's record says running from dispatch; the child's own run has not opened a session.
-  state.projection = {
-    ...projection,
-    subagents: [
+it.each(["running", "completed"] as const)(
+  "does not show a delegated child that is still starting as inactive when its task is %s",
+  async (taskStatus) => {
+    setup();
+    const projection = makeThreadProjectionFixture();
+    const childId = ThreadId.make("starting-child");
+    const startedAt = DateTime.makeUnsafe("2026-11-24T07:44:39.792Z");
+    // The parent's record says running from dispatch; the child's own run has not opened a session.
+    state.projection = {
+      ...projection,
+      subagents: [
+        {
+          id: NodeId.make("agent"),
+          threadId: projection.thread.id,
+          runId: null,
+          parentNodeId: NodeId.make("parent"),
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: "codex",
+          providerInstanceId: projection.thread.providerInstanceId,
+          providerThreadId: null,
+          childThreadId: childId,
+          nativeTaskRef: null,
+          prompt: "Say hello",
+          title: "Starting child",
+          model: null,
+          status: taskStatus,
+          result: null,
+          startedAt,
+          completedAt: taskStatus === "completed" ? startedAt : null,
+          updatedAt: startedAt,
+        },
+      ],
+    };
+    state.relatedShells = [
       {
-        id: NodeId.make("agent"),
-        threadId: projection.thread.id,
-        runId: null,
-        parentNodeId: NodeId.make("parent"),
-        origin: "app_owned",
-        createdBy: "agent",
-        driver: "codex",
-        providerInstanceId: projection.thread.providerInstanceId,
-        providerThreadId: null,
-        childThreadId: childId,
-        nativeTaskRef: null,
-        prompt: "Say hello",
+        id: childId,
         title: "Starting child",
-        model: null,
-        status: "running",
-        result: null,
-        startedAt,
-        completedAt: null,
-        updatedAt: startedAt,
+        forkedFrom: null,
+        lineage: { parentThreadId: projection.thread.id, relationshipToParent: "subagent" },
+        activityRunStatus: "starting",
+        status: "starting",
       },
-    ],
-  };
-  state.relatedShells = [
-    {
-      id: childId,
-      title: "Starting child",
-      forkedFrom: null,
-      lineage: { parentThreadId: projection.thread.id, relationshipToParent: "subagent" },
-      activityRunStatus: "starting",
-      status: "starting",
-    },
-  ];
-  await using screen = await render(
-    <ThreadRelationshipsPanel
-      environmentId={environmentId}
-      threadId={projection.thread.id}
-      showLineage
-      showSideChats={false}
-    />,
-  );
+    ];
+    await using screen = await render(
+      <ThreadRelationshipsPanel
+        environmentId={environmentId}
+        threadId={projection.thread.id}
+        showLineage
+        showSideChats={false}
+      />,
+    );
 
-  const row = screen.getByRole("button", { name: /^Starting child/ });
-  await expect.element(row).toBeVisible();
-  const dot = row.element().querySelector("span.rounded-full.border-2");
-  expect(dot?.classList.contains("bg-muted-foreground/45")).toBe(false);
-});
+    const row = screen.getByRole("button", { name: /^Starting child/ });
+    await expect.element(row).toBeVisible();
+    const dot = row.element().querySelector("span.rounded-full.border-2");
+    expect(dot?.classList.contains("bg-muted-foreground/45")).toBe(false);
+    expect(dot?.classList.contains("bg-info")).toBe(true);
+    if (taskStatus === "running") {
+      await expect.element(screen.getByText("Lineage · 1 running")).toBeVisible();
+    }
+  },
+);
 
 it("explains why Merge back is unavailable before the fork completes a run", async () => {
   setup();

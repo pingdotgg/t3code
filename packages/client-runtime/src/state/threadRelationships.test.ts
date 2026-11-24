@@ -119,6 +119,38 @@ describe("thread relationships", () => {
     ]);
   });
 
+  it.each([
+    ["running", "starting", "running"],
+    ["running", "preparing", "running"],
+    ["running", "waiting", "waiting"],
+    ["completed", "starting", "starting"],
+  ])(
+    "shows a %s task whose child run is %s as %s",
+    (taskStatus, childActivityRunStatus, expected) => {
+      const parent = ThreadId.make("parent");
+      const child = ThreadId.make("child");
+      const graph = deriveThreadRelationshipGraph({
+        threads: [
+          {
+            id: child,
+            activityRunStatus: childActivityRunStatus,
+            status: childActivityRunStatus,
+            latestRunId: "run",
+            lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
+          },
+        ] as never,
+        projection: {
+          thread: { id: parent, lineage: { parentThreadId: null } },
+          subagents: [{ childThreadId: child, status: taskStatus }],
+          contextTransfers: [],
+        } as never,
+      });
+      expect(
+        threadRelationshipRowStatus(graph, immediateThreadRelationships(graph, parent)[0]!),
+      ).toBe(expected);
+    },
+  );
+
   it("keeps missing parents and cycles navigable without recursive traversal", () => {
     const root = ThreadId.make("thread-root");
     const child = ThreadId.make("thread-child");

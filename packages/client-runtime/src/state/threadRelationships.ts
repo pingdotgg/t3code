@@ -105,15 +105,21 @@ export function deriveThreadRelationshipGraph(input: {
     for (const subagent of input.projection.subagents) {
       if (subagent.childThreadId === null) continue;
       const child = threadsById.get(subagent.childThreadId);
+      const taskActive = isOrchestrationV2WorkActive(subagent.status);
+      // A dispatched task is recorded as running before its child's run has opened a session, and
+      // every other reader shows that record; the child's own not-yet-started run must not unsay it.
+      const childActivity =
+        taskActive &&
+        (child?.activityRunStatus === "preparing" || child?.activityRunStatus === "starting")
+          ? null
+          : child?.activityRunStatus;
       addEdge({
         sourceThreadId: ownerThreadId,
         targetThreadId: subagent.childThreadId,
         kind: "subagent",
         status:
-          child?.activityRunStatus ??
-          (child?.latestRunId != null && !isOrchestrationV2WorkActive(subagent.status)
-            ? child.status
-            : subagent.status),
+          childActivity ??
+          (child?.latestRunId != null && !taskActive ? child.status : subagent.status),
       });
     }
     for (const transfer of input.projection.contextTransfers) {
