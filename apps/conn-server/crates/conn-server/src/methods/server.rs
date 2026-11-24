@@ -92,8 +92,11 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
 
     let (env, providers) = (environment.clone(), deps.clone());
     table.unary("server.getConfig", move |_, _: Value| {
-        let config = server_config(&env, current_providers(&providers));
-        async move { config }
+        let (env, providers) = (env.clone(), providers.clone());
+        async move {
+            crate::settings::refresh(&env).await;
+            server_config(&env, current_providers(&providers))
+        }
     });
     let providers = deps.clone();
     table.unary("server.refreshProviders", move |_, input: Value| {
@@ -129,8 +132,11 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     // T3's `redactServerSettingsForClient`, as `server.getConfig` sends it.
     let env = environment.clone();
     table.unary("server.getSettings", move |_, _: Value| {
-        let settings = env.settings.for_client();
-        async move { Ok(settings) }
+        let env = env.clone();
+        async move {
+            crate::settings::refresh(&env).await;
+            Ok(env.settings.for_client())
+        }
     });
     // T3 reads `<state>/logs/server.trace.ndjson` and its rotations. This server writes no
     // trace, but its state folder may hold an earlier T3 server's: read them as T3 does.
@@ -199,14 +205,17 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     table.stream("subscribeServerConfig", move |_, input: Value| {
         // Subscribed before the snapshot is built: a reload in between sends a new one.
         let descriptor = env.subscribe_descriptor();
-        let config = server_config(&env, current_providers(&providers));
         let env = env.clone();
         let deps = providers.clone();
         // Only clients that ask get `environmentThemesUpdated`; older ones die on it.
         let themes = themes
             .clone()
             .filter(|_| input["environmentThemes"] == Value::Bool(true));
-        async move { Ok(config_stream(env, deps, config?, descriptor, themes)) }
+        async move {
+            crate::settings::refresh(&env).await;
+            let config = server_config(&env, current_providers(&deps))?;
+            Ok(config_stream(env, deps, config, descriptor, themes))
+        }
     });
     let env = environment.clone();
     table.stream("subscribeAuthAccess", move |ctx, _: Value| {
@@ -579,12 +588,387 @@ mod tests {
         (Arc::new(env), dir)
     }
 
+    /// One unknown enum value on disk still gives clients a config, in the snapshot and the
+    /// stream the GPUI model catalog reads, and the file stays as the user wrote it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_undecodable_settings_file_still_gives_a_config() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-server-cfg-{}", crate::auth::random_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let broken = "{\"responseStreamingMode\":\"typo\"}";
+        std::fs::write(dir.join("settings.json"), broken).unwrap();
+        let env = Arc::new(
+            Environment::load(&dir, Some("Test".into()), dir.clone(), Default::default()).unwrap(),
+        );
+        let config = server_config(&env, Vec::new()).unwrap();
+        assert_eq!(
+            config["settings"]["continueThreadsAfterServerUpdate"],
+            false
+        );
+        let mut stream = config_stream(
+            env.clone(),
+            Deps::default(),
+            config,
+            env.subscribe_descriptor(),
+            None,
+        );
+        let snapshot = stream.recv().await.unwrap().unwrap();
+        assert_eq!(snapshot["type"], "snapshot");
+        conn_contract::from_json::<conn_contract::ServerConfig>(snapshot["config"].clone())
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("settings.json")).unwrap(),
+            broken
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A Claude opt-out holds in the advertised config and at launch: T3's legacy map beside an
+    /// invalid field (read apart, the file never rewritten), and a modern opt-out beside a
+    /// retention written as `30.0`, which T3 reads as the whole number 30.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_claude_opt_out_holds_in_config_and_at_launch() {
+        struct Admission(Arc<Environment>);
+        impl conn_engine::EngineHost for Admission {
+            fn provider_instance_enabled(&self, project: Option<&str>, instance: &str) -> bool {
+                crate::settings::provider_instance_enabled(
+                    &self.0.settings.raw(),
+                    project,
+                    instance,
+                )
+            }
+        }
+        let cases = [
+            (
+                r#"{"providers":{"claudeAgent":{"enabled":false}},"responseStreamingMode":"typo"}"#,
+                true,
+            ),
+            (
+                r#"{"usageHistoryRetentionDays":30.0,"providerInstances":{"claudeAgent":{"driver":"claudeAgent","enabled":false}}}"#,
+                false,
+            ),
+            // T3's schema takes `null` here: the file is valid and its opt-out holds.
+            (
+                r#"{"defaultThreadEnvMode":null,"providerInstances":{"claudeAgent":{"driver":"claudeAgent","enabled":false}}}"#,
+                false,
+            ),
+        ];
+        for (file, untrusted) in cases {
+            let dir = std::env::temp_dir()
+                .join(format!("conn-server-cfg-{}", crate::auth::random_hex(6)));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("settings.json");
+            std::fs::write(&path, file).unwrap();
+            let env = Arc::new(
+                Environment::load(&dir, Some("Test".into()), dir.clone(), Default::default())
+                    .unwrap(),
+            );
+            let config = server_config(&env, Vec::new()).unwrap();
+            assert_eq!(
+                config["settings"]["providerInstances"]["claudeAgent"]["enabled"], false,
+                "{file}"
+            );
+
+            let root = dir.join("project").display().to_string();
+            let provider = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));
+            let mut engine = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
+            engine.projects = vec![conn_engine::ProjectConfig {
+                title: "Project".into(),
+                workspace_root: root.clone(),
+            }];
+            engine.providers = vec![provider.clone()];
+            engine.host = Some(Arc::new(Admission(env.clone())));
+            let engine = conn_engine::SqliteEngine::open(engine).unwrap();
+            let model = json!({"instanceId": "claudeAgent", "model": "claude-haiku-4-5"});
+            let create = json!({
+                "type": "thread.create", "commandId": "create", "threadId": "t1",
+                "projectId": conn_engine::SqliteEngine::project_id_for(&root), "title": "Claude",
+                "modelSelection": model, "runtimeMode": "full-access", "interactionMode": "default",
+                "branch": null, "worktreePath": null, "createdBy": "user", "creationSource": "web",
+            });
+            let send = json!({
+                "type": "message.dispatch", "commandId": "send", "threadId": "t1",
+                "messageId": "message:send", "text": "hello", "attachments": [],
+                "dispatchMode": {"type": "start_immediately"}, "createdBy": "user",
+                "creationSource": "web",
+            });
+            let mut refused = false;
+            for command in [create, send] {
+                refused |= conn_engine::Engine::dispatch(
+                    &engine,
+                    conn_contract::from_json(command).unwrap(),
+                )
+                .await
+                .is_err();
+            }
+            assert!(refused, "the Claude launch is refused: {file}");
+            assert_eq!(
+                provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "no Claude session started: {file}"
+            );
+
+            if untrusted {
+                let save = env
+                    .settings
+                    .update(json!({ "defaultAutoPull": true }), None);
+                assert_eq!(save.unwrap_err().operation, "read-file");
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), file);
+                drop(crate::settings::SettingsStore::open(path.clone()));
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), file);
+            }
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// T3 fails a load whose provider history cannot be read and tries again on the next
+    /// read. Claude, disabled in the file's instance map, stays off meanwhile; once the history
+    /// reads, the next admission loads again and the legacy migration runs.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_history_failure_keeps_claude_off_and_is_retried() {
+        struct Admission(Arc<Environment>);
+        impl conn_engine::EngineHost for Admission {
+            fn refresh_settings(&self) -> conn_engine::BoxFuture<'_, ()> {
+                let environment = self.0.clone();
+                Box::pin(async move {
+                    let _ = tokio::task::spawn_blocking(move || {
+                        environment.settings.reload_if_failed();
+                    })
+                    .await;
+                })
+            }
+            fn provider_instance_enabled(&self, project: Option<&str>, instance: &str) -> bool {
+                crate::settings::provider_instance_enabled(
+                    &self.0.settings.raw(),
+                    project,
+                    instance,
+                )
+            }
+        }
+        let dir =
+            std::env::temp_dir().join(format!("conn-server-cfg-{}", crate::auth::random_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let file = r#"{"providers":{},"providerInstances":{"claudeAgent":{"driver":"claudeAgent","enabled":false}}}"#;
+        std::fs::write(&path, file).unwrap();
+        // A T3 database whose history cannot be read yet.
+        let history = rusqlite::Connection::open(dir.join("statev2.sqlite")).unwrap();
+        history.execute_batch("CREATE TABLE other (x)").unwrap();
+        let env = Arc::new(
+            Environment::load(&dir, Some("Test".into()), dir.clone(), Default::default()).unwrap(),
+        );
+        let config = server_config(&env, Vec::new()).unwrap();
+        assert_eq!(
+            config["settings"]["providerInstances"]["claudeAgent"]["enabled"],
+            false
+        );
+        let root = dir.join("project").display().to_string();
+        let provider = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));
+        let mut engine = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
+        engine.projects = vec![conn_engine::ProjectConfig {
+            title: "Project".into(),
+            workspace_root: root.clone(),
+        }];
+        engine.providers = vec![provider.clone()];
+        engine.host = Some(Arc::new(Admission(env.clone())));
+        let engine = conn_engine::SqliteEngine::open(engine).unwrap();
+        // A thread with a Claude message: the message is what admission checks.
+        let refused = |n: u32| {
+            let engine = &engine;
+            let thread = format!("t{n}");
+            let create = json!({
+                "type": "thread.create", "commandId": format!("create-{n}"), "threadId": thread,
+                "projectId": conn_engine::SqliteEngine::project_id_for(&root), "title": "Claude",
+                "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+                "runtimeMode": "full-access", "interactionMode": "default",
+                "branch": null, "worktreePath": null, "createdBy": "user", "creationSource": "web",
+            });
+            let send = json!({
+                "type": "message.dispatch", "commandId": format!("send-{n}"), "threadId": thread,
+                "messageId": format!("message:{n}"), "text": "hello", "attachments": [],
+                "dispatchMode": {"type": "start_immediately"}, "createdBy": "user",
+                "creationSource": "web",
+            });
+            async move {
+                let _ = conn_engine::Engine::dispatch(
+                    engine,
+                    conn_contract::from_json(create).unwrap(),
+                )
+                .await;
+                conn_engine::Engine::dispatch(engine, conn_contract::from_json(send).unwrap())
+                    .await
+                    .is_err()
+            }
+        };
+        assert!(refused(1).await);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            file,
+            "kept for a retry"
+        );
+        history
+            .execute_batch(
+                "CREATE TABLE projection_thread_sessions (provider_name TEXT, provider_instance_id TEXT);
+                 CREATE TABLE provider_session_runtime (provider_name TEXT, provider_instance_id TEXT);",
+            )
+            .unwrap();
+        assert!(refused(2).await);
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(saved.get("providers").is_none(), "the repaired load ran");
+        assert_eq!(saved["providerInstances"]["claudeAgent"]["enabled"], false);
+        assert_eq!(
+            provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A history that cannot be read keeps a project's Claude opt-out for clients and at
+    /// launch through the real host; every settings read retries the failed load, and once it
+    /// succeeds clients get the file's settings, a null `defaultThreadEnvMode` left off.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_history_failure_keeps_project_overrides_and_reads_retry() {
+        use crate::table::{CallContext, Handler, MethodTable};
+        let dir =
+            std::env::temp_dir().join(format!("conn-server-cfg-{}", crate::auth::random_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.join("project").display().to_string();
+        let project = conn_engine::SqliteEngine::project_id_for(&root);
+        let path = dir.join("settings.json");
+        let file = json!({
+            "providers": {},
+            "defaultThreadEnvMode": null,
+            "projectSettingsOverrides": {
+                project.clone(): { "providerInstances": { "claudeAgent": { "enabled": false } } },
+            },
+        })
+        .to_string();
+        std::fs::write(&path, &file).unwrap();
+        let history = rusqlite::Connection::open(dir.join("statev2.sqlite")).unwrap();
+        history.execute_batch("CREATE TABLE other (x)").unwrap();
+        let env = Arc::new(
+            Environment::load(&dir, Some("Test".into()), dir.clone(), Default::default()).unwrap(),
+        );
+        let mut table = MethodTable::new();
+        register(
+            &mut table,
+            &Deps {
+                environment: Some(env.clone()),
+                ..Deps::default()
+            },
+        );
+        let call = |tag: &str| match table.get(tag) {
+            Some(Handler::Unary(call)) => call.clone(),
+            _ => panic!("{tag}"),
+        };
+        let view = call("server.getSettings")(CallContext::default(), json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            view["projectSettingsOverrides"][project.as_str()]["providerInstances"]["claudeAgent"]
+                ["enabled"],
+            false,
+            "{view}"
+        );
+
+        let host = Arc::new(crate::host::Host {
+            mcp: std::sync::OnceLock::new(),
+            files: None,
+            vcs: crate::methods::vcs::VcsShared::default(),
+            terminals: crate::methods::terminal::manager(Some(&env)),
+            environment: env.clone(),
+            scheduled_tasks: std::sync::OnceLock::new(),
+            devices: std::sync::OnceLock::new(),
+            previews: std::sync::OnceLock::new(),
+            settle_cleanups: Arc::default(),
+        });
+        let provider = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));
+        let mut engine = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
+        engine.projects = vec![conn_engine::ProjectConfig {
+            title: "Project".into(),
+            workspace_root: root.clone(),
+        }];
+        engine.providers = vec![provider.clone()];
+        engine.host = Some(host);
+        let engine = conn_engine::SqliteEngine::open(engine).unwrap();
+        let refused = |n: u32| {
+            let engine = &engine;
+            let thread = format!("t{n}");
+            let create = json!({
+                "type": "thread.create", "commandId": format!("create-{n}"), "threadId": thread,
+                "projectId": project, "title": "Claude",
+                "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+                "runtimeMode": "full-access", "interactionMode": "default",
+                "branch": null, "worktreePath": null, "createdBy": "user", "creationSource": "web",
+            });
+            let send = json!({
+                "type": "message.dispatch", "commandId": format!("send-{n}"), "threadId": thread,
+                "messageId": format!("message:{n}"), "text": "hello", "attachments": [],
+                "dispatchMode": {"type": "start_immediately"}, "createdBy": "user",
+                "creationSource": "web",
+            });
+            async move {
+                let _ = conn_engine::Engine::dispatch(
+                    engine,
+                    conn_contract::from_json(create).unwrap(),
+                )
+                .await;
+                conn_engine::Engine::dispatch(engine, conn_contract::from_json(send).unwrap())
+                    .await
+                    .is_err()
+            }
+        };
+        assert!(refused(1).await, "refused while the history fails");
+
+        history
+            .execute_batch(
+                "CREATE TABLE projection_thread_sessions (provider_name TEXT, provider_instance_id TEXT);
+                 CREATE TABLE provider_session_runtime (provider_name TEXT, provider_instance_id TEXT);",
+            )
+            .unwrap();
+        let view = call("server.getSettings")(CallContext::default(), json!({}))
+            .await
+            .unwrap();
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(
+            saved.get("providers").is_none(),
+            "the read retried the load"
+        );
+        assert!(view.get("defaultThreadEnvMode").is_none(), "{view}");
+        let config = call("server.getConfig")(CallContext::default(), json!({}))
+            .await
+            .unwrap();
+        assert!(config["settings"].get("defaultThreadEnvMode").is_none());
+        assert_eq!(
+            config["settings"]["projectSettingsOverrides"][project.as_str()]["providerInstances"]["claudeAgent"]
+                ["enabled"],
+            false
+        );
+        assert!(refused(2).await, "the project's opt-out holds");
+        assert_eq!(
+            provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn the_config_stream_follows_settings_keybindings_and_providers() {
         let (env, dir) = environment();
         let config = server_config(&env, Vec::new()).unwrap();
         assert!(config["keybindings"].as_array().unwrap().len() > 10);
         assert_eq!(config["auth"]["policy"], "remote-reachable");
+        // The mobile gates read these from `server.getConfig` as from the descriptor.
+        for flag in [
+            "freshContext",
+            "oneTimeSchedules",
+            "scheduledTaskThreadModes",
+            "threadPullRequestWatch",
+            "issueLinkedThreads",
+            "commandOutputStreaming",
+        ] {
+            assert_eq!(config["environment"]["capabilities"][flag], true, "{flag}");
+        }
         let before = conn_support::time::iso_from_ms(conn_support::time::now_ms());
         let server_time = config["serverTime"].as_str().unwrap();
         assert!(

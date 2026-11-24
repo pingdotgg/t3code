@@ -41,7 +41,7 @@ import * as NodePath from "node:path";
 import * as NodeModule from "node:module";
 import * as NodeURL from "node:url";
 
-import { schemaRule } from "./schema-rules.mjs";
+import { nullRule, schemaRule } from "./schema-rules.mjs";
 import { importSource, inMonorepo, packageImporter, repoRoot } from "./monorepo.mjs";
 
 const check = process.argv.includes("--check");
@@ -66,6 +66,9 @@ const client = await importSource(CLIENT_FILE);
 const rpc = await importSource("packages/contracts/src/rpc.ts");
 const orchestration = await importSource("packages/contracts/src/orchestrationV2.ts");
 const settings = await importSource("packages/contracts/src/settings.ts");
+const SettingsSchemaApi = await packageImporter("packages/contracts")("effect/Schema");
+const SettingsExitApi = await packageImporter("packages/contracts")("effect/Exit");
+const SettingsDecode = { decode: SettingsSchemaApi.decodeUnknownExit, isSuccess: SettingsExitApi.isSuccess };
 
 const scopes = Object.entries(auth.RPC_REQUIRED_SCOPES)
   .map(([tag, scope]) => [tag, scope])
@@ -287,6 +290,25 @@ for (const id of [...defaultEnabledInstances, ...defaultDisabledDrivers, "conn-t
 }
 
 const strs = (list) => `&[${list.map(str).join(", ")}]`;
+// Persisted settings for the null-rule differential: T3's own decoder gives each verdict.
+const nullRuleCases = (() => {
+  const SettingsSchema = settings.ServerSettings;
+  const rules = { worktreeAfterDays: null, worktreeOnMerge: true, worktreeOnDelete: true, worktreeUnchanged: false };
+  const docs = [
+    { defaultThreadEnvMode: null },
+    { projectSettingsFolded: null },
+    { providerInstances: { claudeAgent: { driver: "claudeAgent", enabled: null } } },
+    { hiddenThreadTags: [null, "keep"] },
+    { worktreeCleanup: null },
+    { worktreeCleanup: { mode: "off", rules: null } },
+    { worktreeCleanup: { mode: "custom", rules } },
+    { worktreeCleanup: { mode: "custom", rules: { ...rules, worktreeKeepWhen: null } } },
+    { responseStreamingMode: null },
+    { projectSettingsOverrides: { p: { defaultThreadEnvMode: null } } },
+  ];
+  return docs.map((doc) => [doc, SettingsDecode.isSuccess(SettingsDecode.decode(SettingsSchema)(doc))]);
+})();
+
 const secretsRs = rustfmt(
   [
     ...HEADER,
@@ -337,6 +359,18 @@ const secretsRs = rustfmt(
     "/// Default instances that run before settings name them (`DEFAULT_ENABLED_DEFAULT_INSTANCES`).",
     `pub(super) const DEFAULT_ENABLED_INSTANCES: &[&str] = ${strs(defaultEnabledInstances)};`,
     "",
+    "/// Where `ServerSettings` (packages/contracts/src/settings.ts) takes an explicit `null`, by",
+    "/// T3's own decoder (`nullRule` in tools/schema-rules.mjs): `n` marks a node that may be null,",
+    "/// `f` an object's known fields, `v` a record's values, `i` array items.",
+    `pub(super) const NULL_RULES: &str = ${JSON.stringify(JSON.stringify(nullRule(contracts.ServerSettings.ast)))};`,
+    "",
+    "/// Persisted settings and whether T3's own `ServerSettings` decoder takes them: the null",
+    "/// rules and the settings load must agree on each (`settings/file.rs` tests).",
+    "#[cfg(test)]",
+    "pub(super) const NULL_RULE_CASES: &[(&str, bool)] = &[",
+    ...nullRuleCases.map(([doc, accepted]) => `(${str(JSON.stringify(doc))}, ${accepted}),`),
+    "];",
+    "",
   ].join("\n"),
 );
 
@@ -365,9 +399,40 @@ for (const standIn of transcriptStandIns) {
   transcriptRest = transcriptRest.slice(at + str(standIn).length);
 }
 transcriptHeaderParts.push(transcriptRest);
+// The lines a server prints while it upgrades its database; the desktop waits while they run.
+const migrationLog = await importSource("packages/shared/src/databaseMigrationLog.ts");
+const migrationMessages = [
+  "DATABASE_MIGRATIONS_STARTED_MESSAGE",
+  "DATABASE_MIGRATION_PROGRESS_MESSAGE",
+  "DATABASE_MIGRATIONS_FINISHED_MESSAGE",
+].map((name) => {
+  if (typeof migrationLog[name] !== "string") throw new Error(`databaseMigrationLog.ts has no ${name}`);
+  return `pub const ${name}: &str = ${str(migrationLog[name])};`;
+});
 const chatAttachment = await importSource("packages/contracts/src/chatAttachment.ts");
 const maxFileBytes = chatAttachment.PROVIDER_SEND_TURN_MAX_FILE_BYTES;
 if (!Number.isSafeInteger(maxFileBytes)) throw new Error("PROVIDER_SEND_TURN_MAX_FILE_BYTES moved");
+
+// Every domain event type (`OrchestrationV2DomainEvent`), and the ones whose payload sets the
+// thread row's `updated_at` in T3's `ProjectionStore.ts`: the types its apply step leaves out of
+// the touch that writes `occurredAt` for every other event.
+const DOMAIN_EVENT_TYPES = contracts.OrchestrationV2DomainEvent.members.flatMap((member) => {
+  const type = member.fields.type;
+  return type.literals ?? [type.ast.literal];
+});
+const PROJECTION_FILE = "apps/server/src/orchestration-v2/ProjectionStore.ts";
+const projectionSource = NodeFS.readFileSync(inMonorepo(PROJECTION_FILE), "utf8");
+const touchStart = projectionSource.indexOf('event.type !== "thread.created" &&');
+if (touchStart === -1) throw new Error(`${PROJECTION_FILE}: the updated_at touch moved`);
+const touchBlock = projectionSource.slice(touchStart, projectionSource.indexOf(") {", touchStart));
+const touchBody = projectionSource.slice(touchStart + touchBlock.length, touchStart + touchBlock.length + 400);
+if (!touchBody.includes("encodeThreadUpdatedAt(event.occurredAt)")) {
+  throw new Error(`${PROJECTION_FILE}: the updated_at touch no longer writes occurredAt`);
+}
+const PAYLOAD_UPDATED_AT_EVENTS = [...touchBlock.matchAll(/event\.type !== "([^"]+)"/g)].map((m) => m[1]);
+for (const type of PAYLOAD_UPDATED_AT_EVENTS) {
+  if (!DOMAIN_EVENT_TYPES.includes(type)) throw new Error(`${PROJECTION_FILE}: unknown event ${type}`);
+}
 
 const upstreamRs = rustfmt(
   [
@@ -384,6 +449,17 @@ const upstreamRs = rustfmt(
     "/// `threadTranscriptHeader` (packages/shared/src/threadTranscript.ts): the fixed text around",
     "/// its four JSON-encoded values, in order: title, environment id, thread id, `updatedAt`.",
     `pub const THREAD_TRANSCRIPT_HEADER_PARTS: [&str; 5] = [${transcriptHeaderParts.map(str).join(", ")}];`,
+    "",
+    "/// `databaseMigrationLog.ts` (packages/shared): the lines a server prints while it upgrades",
+    "/// its database. The desktop keeps waiting for readiness while the last one is not finished.",
+    ...migrationMessages,
+    "",
+    "/// Every domain event type of `OrchestrationV2DomainEvent` (packages/contracts).",
+    `pub const DOMAIN_EVENT_TYPES: [&str; ${DOMAIN_EVENT_TYPES.length}] = [${DOMAIN_EVENT_TYPES.map(str).join(", ")}];`,
+    "",
+    "/// The events whose payload's `updatedAt` becomes the thread's (`ProjectionStore.ts`). Every",
+    "/// other event sets the thread's `updatedAt` to its `occurredAt`.",
+    `pub const PAYLOAD_UPDATED_AT_EVENTS: [&str; ${PAYLOAD_UPDATED_AT_EVENTS.length}] = [${PAYLOAD_UPDATED_AT_EVENTS.map(str).join(", ")}];`,
     "",
   ].join("\n"),
 );

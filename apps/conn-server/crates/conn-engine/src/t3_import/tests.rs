@@ -100,7 +100,7 @@ fn t3_state(dir: &Path) -> PathBuf {
         (
             "m2",
             "assistant",
-            "pong",
+            "Pong École",
             "2026-01-01T00:00:04.000Z",
             "i2",
             7,
@@ -217,7 +217,17 @@ fn imports_threads_projects_and_rows_once_and_leaves_t3_untouched() {
         .iter()
         .map(|m| m["text"].as_str().unwrap())
         .collect();
-    assert_eq!(texts, ["ping", "pong"]);
+    assert_eq!(texts, ["ping", "Pong École"]);
+    // The import indexes message text folded, as an ordinary write does (`fold`).
+    let indexed: Vec<String> = rusqlite::Connection::open(dir.join(ENGINE_FILE))
+        .unwrap()
+        .prepare("SELECT text FROM message_search ORDER BY rowid")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(indexed, ["ping", "pong ecole"]);
     let ordinals: Vec<i64> = projection["turnItems"]
         .as_array()
         .unwrap()
