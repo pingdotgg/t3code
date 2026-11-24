@@ -16,7 +16,7 @@ conn-contract.workspace = true
 pty-process = { version = "0.5", features = ["async"] }
 # Signals to the shell's process group and the PTY's foreground group; already under
 # pty-process.
-rustix = { workspace = true, features = ["process", "termios"] }
+rustix = { workspace = true, features = ["event", "process", "termios"] }
 serde_json.workspace = true
 # `signal`: see `pty::stop_passing_on_ignored_signals`; `process` already pulls in its code.
 tokio = { workspace = true, features = ["process", "io-util", "sync", "time", "rt", "macros", "signal"] }
