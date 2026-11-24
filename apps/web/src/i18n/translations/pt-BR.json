@@ -4625,6 +4625,7 @@
   "7f0f9b1ee42892db": "A saída não está mais disponível.",
   "e470bb79fa74a6ae": "Imagem da saída da ferramenta",
   "e8c80b6d40c0944c": "Resultado da pesquisa",
+  "76cf478e5674fd12": "{count, plural, one {{count} correspondência} other {{count} correspondências}}",
   "8d1906900b5c95c7": [
     "saída ",
     {

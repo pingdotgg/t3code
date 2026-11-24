@@ -4628,6 +4628,7 @@
   "7f0f9b1ee42892db": "Die Ausgabe ist nicht mehr verfügbar.",
   "e470bb79fa74a6ae": "Bild aus Tool-Ausgabe",
   "e8c80b6d40c0944c": "Suchergebnis",
+  "76cf478e5674fd12": "{count, plural, one {{count} Treffer} other {{count} Treffer}}",
   "8d1906900b5c95c7": [
     "Exit ",
     {
