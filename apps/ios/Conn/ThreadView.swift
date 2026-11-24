@@ -20,7 +20,9 @@ struct ThreadView: View {
     @State private var historyNotice: String?
     @State private var scrollTarget: String?
     @State private var historyRequest = UUID()
-    @State private var visibleRow: String?
+    @State private var viewport = TimelineViewport()
+    @State private var prependAnchor: UnitPoint?
+    @State private var requestedByScroll = false
     @State private var paging = false
     @State private var pageExhausted = false
     @State private var userScrolling = false
@@ -292,7 +294,14 @@ struct ThreadView: View {
                     current.entries.insert(contentsOf: older.filter { ids.insert($0.entryId).inserted }, at: 0)
                     pageExhausted = current.serverPage && current.historyCursor == nil
                     stickToBottom = false
+                    let visible = viewport.frames.filter { $0.value.minY >= 0 && $0.value.minY < viewHeight }
+                        .min { $0.value.minY < $1.value.minY }
                     readingWindow = current
+                    if !older.isEmpty, let visible {
+                        let fraction = visible.value.minY / max(1, viewHeight - visible.value.height)
+                        prependAnchor = UnitPoint(x: 0.5, y: min(1, fraction))
+                        scrollTarget = visible.key
+                    }
                 }
                 historyNotice = nil
             } catch {
@@ -334,18 +343,32 @@ struct ThreadView: View {
                                 .padding(.vertical, 48)
                         } else {
                             let items = renderItems(for: snapshot)
+                            let anchorCandidates = Set(items.prefix(12).map(\.id))
                             ForEach(items) { item in
-                                switch item {
-                                case let .workGroup(group, entries):
-                                    WorkGroupCard(group: group, entries: entries)
-                                case let .entry(entry):
-                                    TimelineEntryRow(
-                                        threadId: threadId,
-                                        entry: entry,
-                                        store: store,
-                                        onOpenThread: onOpenThread
-                                    )
+                                Group {
+                                    switch item {
+                                    case let .workGroup(group, entries):
+                                        WorkGroupCard(group: group, entries: entries)
+                                    case let .entry(entry):
+                                        TimelineEntryRow(
+                                            threadId: threadId,
+                                            entry: entry,
+                                            store: store,
+                                            onOpenThread: onOpenThread
+                                        )
+                                    }
                                 }
+                                .background {
+                                    if anchorCandidates.contains(item.id) {
+                                        GeometryReader { geometry in
+                                            Color.clear.preference(
+                                                key: TimelineFrames.self,
+                                                value: [item.id: geometry.frame(in: .named("timeline-viewport"))]
+                                            )
+                                        }
+                                    }
+                                }
+                                .id(item.id)
                             }
                         }
 
@@ -380,17 +403,22 @@ struct ThreadView: View {
             }
             .background(theme.background.ignoresSafeArea())
             .defaultScrollAnchor(.bottom, for: .initialOffset)
-            .scrollPosition(id: $visibleRow, anchor: .top)
+            .coordinateSpace(name: "timeline-viewport")
+            .onPreferenceChange(TimelineFrames.self) { viewport.frames = $0 }
             .onScrollPhaseChange { _, phase in
                 if phase == .interacting { userScrolling = true }
                 if phase == .idle || phase == .animating { userScrolling = false }
+                if phase == .idle && requestedByScroll {
+                    requestedByScroll = false
+                    readHistory()
+                }
             }
             .onScrollGeometryChange(for: Int.self) { geometry in
                 Int(min(160, geometry.contentOffset.y + geometry.contentInsets.top))
             } action: { previous, offset in
                 if userScrolling && offset < previous && !paging {
                     userScrolling = false
-                    readHistory()
+                    requestedByScroll = true
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -409,7 +437,8 @@ struct ThreadView: View {
             }
             .onChange(of: scrollTarget) { _, target in
                 if let target {
-                    proxy.scrollTo(target, anchor: target == "timeline-bottom" ? .bottom : .top)
+                    proxy.scrollTo(target, anchor: prependAnchor ?? (target == "timeline-bottom" ? .bottom : .top))
+                    prependAnchor = nil
                     scrollTarget = nil
                 }
             }
@@ -713,5 +742,17 @@ struct ThreadView: View {
         case let .notice(id, text, isError): "n:\(id):\(isError):\(text.count)"
         case let .other(id, label): "o:\(id):\(label.count)"
         }
+    }
+}
+
+private final class TimelineViewport {
+    var frames: [String: CGRect] = [:]
+}
+
+private struct TimelineFrames: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
