@@ -245,6 +245,7 @@ const ToolkitLayer = McpServer.toolkit(MyToolkit).pipe(
 
 In this example, `Tool.make` defines new tools with typed parameters and result schemas for success
 outcomes. Multiple tools can be grouped into a single `Toolkit` using `Toolkit.make`.
+Tool parameters are expected in their JSON encoding as described by the tool's `parametersSchema`.
 
 The toolkit is then transformed into a layer defining the interface of the tools using
 `McpServer.toolkit()`. The corresponding implementations are attached using `.toLayer`, which binds
@@ -256,6 +257,10 @@ A tool result is sent to the client in its JSON encoding, the same encoding its 
 `Schema.Void` field as `null`. Declared failures are sent as text in the JSON encoding of their
 `failure` schema. In the default `"error"` failure mode, a declared `Error` with a non-empty
 `message` is sent as that message instead.
+
+In `tools/list`, an explicit `Tool.Destructive` value takes precedence. Otherwise,
+`destructiveHint` is `false` when `Tool.Readonly` is `true`, and `true` when `Tool.Readonly`
+is `false` or unset.
 
 ## Request-level dependencies
 

@@ -1,6 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
-import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
@@ -14,7 +14,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { SplitButton } from "../../components/ui/SplitButton";
 import { useEnvironmentServerConfig } from "../../state/entities";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -50,7 +50,7 @@ export function PullRequestMergeControls(props: {
   const stateAction = usePullRequestAction(props.params, pr);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const serverSettings = useEnvironmentServerConfig(target.environmentId)?.settings;
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const runAction = useAtomCommand(composerPullRequests.runAction, { reportFailure: false });
   const refreshDetail = useAtomRefresh(composerPullRequests.detail(target));
   const refreshActivity = useAtomRefresh(composerPullRequests.activity(target));
@@ -158,7 +158,10 @@ export function PullRequestMergeControls(props: {
     permissions.canWrite &&
     canPerformPullRequestAction(pr, autoAction);
 
-  const perform = async (action: "merge" | "enable-auto-merge" | "disable-auto-merge") => {
+  const perform = async (
+    action: "merge" | "enable-auto-merge" | "disable-auto-merge",
+    shownHeadSha: string | undefined,
+  ) => {
     if (
       pending.current ||
       (action !== "disable-auto-merge" && !method) ||
@@ -172,6 +175,10 @@ export function PullRequestMergeControls(props: {
       input: {
         ...target.input,
         action,
+        // A merge lands the head on screen and refuses one that moved; a stack pins its other layers.
+        ...(action !== "disable-auto-merge" && shownHeadSha
+          ? { expectedHeadSha: shownHeadSha }
+          : {}),
         ...(action === "merge" && method && stack.stack && scope
           ? {
               stackNumber: stack.stack.number,
@@ -218,6 +225,8 @@ export function PullRequestMergeControls(props: {
     }
   };
   const confirm = (action: "merge" | "enable-auto-merge" | "disable-auto-merge") => {
+    // The overview refreshes on focus, so the alert merges the head it was opened on.
+    const shownHeadSha = pr.headSha;
     const title =
       action === "merge"
         ? scope && scope.layers.length > 1
@@ -274,7 +283,7 @@ export function PullRequestMergeControls(props: {
             : action === "enable-auto-merge"
               ? gt("Enable auto-merge")
               : gt("Disable auto-merge"),
-        onPress: () => void perform(action),
+        onPress: () => void perform(action, shownHeadSha),
       },
     ]);
   };
@@ -336,7 +345,7 @@ export function PullRequestMergeControls(props: {
           const selected = methods.find((method) => method === id);
           if (selected) {
             setSelectedMethod(selected);
-            savePreferences({ pullRequestMergeMethod: selected });
+            void savePreferences({ pullRequestMergeMethod: selected });
           } else if (id === autoAction && canAutoMerge) confirm(autoAction);
         }}
       />

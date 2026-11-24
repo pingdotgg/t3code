@@ -22,6 +22,7 @@ it.effect("starts each RPC in its own trace, linked to the connection span", () 
       yield* middleware(handler as never, {
         client: new Rpc.ServerClient(0),
         requestId: RequestId(1),
+        remoteParentSpan: undefined,
         rpc: Rpc.make(WS_METHODS.reviewGetDiffPreview),
         payload: {},
         headers: Headers.empty,

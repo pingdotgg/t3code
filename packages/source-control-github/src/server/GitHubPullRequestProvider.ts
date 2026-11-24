@@ -737,10 +737,16 @@ export const make = Effect.gen(function* () {
           ...(input.expectedStackHeads === undefined
             ? {}
             : { expectedStackHeads: input.expectedStackHeads }),
+          ...(input.expectedHeadSha === undefined
+            ? {}
+            : { expectedHeadSha: input.expectedHeadSha }),
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
         })
         .pipe(Effect.mapError(fail("runAction"))),
+
+    getCheckLogs: (input) => cli.readCheckLogs(input).pipe(Effect.mapError(fail("getCheckLogs"))),
+    rerunChecks: (input) => cli.rerunChecks(input).pipe(Effect.mapError(fail("rerunChecks"))),
 
     updateChangeRequest: (input) =>
       cli
@@ -780,6 +786,7 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,
+          number: input.number,
           threadId: input.threadId,
           body: input.body,
         })
@@ -804,6 +811,7 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,
+          number: input.number,
           threadId: input.threadId,
           resolved: input.resolved,
         })
