@@ -1733,7 +1733,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   Effect.logWarning("previous checkpoint lookup failed", {
                     cwd: input.cwd,
                     checkpointRef: previousCheckpointRef,
-                    cause: String(cause),
+                    errorTag: cause._tag,
                   }).pipe(Effect.as(null)),
                 ),
               );
