@@ -450,6 +450,16 @@ for (const standIn of transcriptStandIns) {
   transcriptRest = transcriptRest.slice(at + str(standIn).length);
 }
 transcriptHeaderParts.push(transcriptRest);
+// The lines a server prints while it upgrades its database; the desktop waits while they run.
+const migrationLog = await importSource("packages/shared/src/databaseMigrationLog.ts");
+const migrationMessages = [
+  "DATABASE_MIGRATIONS_STARTED_MESSAGE",
+  "DATABASE_MIGRATION_PROGRESS_MESSAGE",
+  "DATABASE_MIGRATIONS_FINISHED_MESSAGE",
+].map((name) => {
+  if (typeof migrationLog[name] !== "string") throw new Error(`databaseMigrationLog.ts has no ${name}`);
+  return `pub const ${name}: &str = ${str(migrationLog[name])};`;
+});
 const chatAttachment = await importSource("packages/contracts/src/chatAttachment.ts");
 const maxFileBytes = chatAttachment.PROVIDER_SEND_TURN_MAX_FILE_BYTES;
 if (!Number.isSafeInteger(maxFileBytes)) throw new Error("PROVIDER_SEND_TURN_MAX_FILE_BYTES moved");
@@ -490,6 +500,10 @@ const upstreamRs = rustfmt(
     "/// `threadTranscriptHeader` (packages/shared/src/threadTranscript.ts): the fixed text around",
     "/// its four JSON-encoded values, in order: title, environment id, thread id, `updatedAt`.",
     `pub const THREAD_TRANSCRIPT_HEADER_PARTS: [&str; 5] = [${transcriptHeaderParts.map(str).join(", ")}];`,
+    "",
+    "/// `databaseMigrationLog.ts` (packages/shared): the lines a server prints while it upgrades",
+    "/// its database. The desktop keeps waiting for readiness while the last one is not finished.",
+    ...migrationMessages,
     "",
     "/// Every domain event type of `OrchestrationV2DomainEvent` (packages/contracts).",
     `pub const DOMAIN_EVENT_TYPES: [&str; ${DOMAIN_EVENT_TYPES.length}] = [${DOMAIN_EVENT_TYPES.map(str).join(", ")}];`,

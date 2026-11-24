@@ -593,7 +593,7 @@ async fn a_partial_receipt_upgrade_finishes_on_open() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 6);
+    assert_eq!(version, 5);
     let columns: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('receipts')
@@ -3165,9 +3165,9 @@ async fn a_restart_sends_an_undelivered_message_again() {
     assert_eq!(p["messages"][1]["text"], "echo: late");
 }
 
-/// A store the pre-merge branch wrote is at version 6 with no receipt owners (that branch
-/// numbered its search step 5 and had no receipts step). It gets the columns on open, and
-/// commands and their retries work.
+/// A store the pre-merge branch wrote is at version 6 with `message_keys.search_text` and no
+/// receipt owners (that branch numbered its search step 5 and had no receipts step). It opens
+/// at 5 without the column, gets the receipt columns, and commands and their retries work.
 #[tokio::test(flavor = "current_thread")]
 async fn a_version_6_store_without_receipt_owners_gets_them() {
     let db = TempDb::new("receipt-owners-v6");
@@ -3181,6 +3181,7 @@ async fn a_version_6_store_without_receipt_owners_gets_them() {
             "ALTER TABLE receipts DROP COLUMN owner_kind;
              ALTER TABLE receipts DROP COLUMN owner_id;
              ALTER TABLE receipts DROP COLUMN error;
+             ALTER TABLE message_keys ADD COLUMN search_text TEXT;
              PRAGMA user_version = 6;",
         )
         .unwrap();
@@ -3203,6 +3204,18 @@ async fn a_version_6_store_without_receipt_owners_gets_them() {
         )
         .unwrap();
     assert_eq!(columns, 3);
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 5);
+    let search_text: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('message_keys') WHERE name = 'search_text'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(search_text, 0);
 }
 
 /// With `recover_runs` off, a recovered run waits for `recover_runs()`, as the server holds it
@@ -7233,11 +7246,12 @@ async fn search_reads_a_citation_as_its_text_and_comment() {
     assert_citation_search(&engine).await;
 }
 
-/// A store from before readable search (schema step 4, or #260's step 5 with its receipts):
-/// no `search_text` column and the raw link in the index. The upgrade (step 6) reads it again.
+/// Stores whose index holds older text read it again on open, once: main at schema 4 or 5
+/// with fold 3 (the raw link folded), and a pre-merge build of readable search at 6 (its
+/// `search_text` column, readable text unfolded). All end at 5 with the folded readable index.
 #[tokio::test(flavor = "current_thread")]
 async fn an_older_search_index_is_read_again_on_upgrade() {
-    for from in [4, 5] {
+    for (from, fold, search_text) in [(4, Some(3), false), (5, Some(3), false), (6, None, true)] {
         let db = TempDb::new(&format!("search-upgrade-{from}"));
         {
             let (engine, _) = open(&db);
@@ -7254,13 +7268,23 @@ async fn an_older_search_index_is_read_again_on_upgrade() {
                 )
                 .unwrap();
             }
+            if search_text {
+                conn.execute_batch("ALTER TABLE message_keys ADD COLUMN search_text TEXT")
+                    .unwrap();
+            }
+            let mark = match fold {
+                Some(fold) => format!(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('message_search_folded', {fold});"
+                ),
+                None => "DELETE FROM meta WHERE key = 'message_search_folded';".to_owned(),
+            };
             conn.execute_batch(&format!(
-                "ALTER TABLE message_keys DROP COLUMN search_text;
-                 DELETE FROM message_search;
+                "DELETE FROM message_search;
                  INSERT INTO message_search (rowid, text)
-                   SELECT k.id, json_extract(e.body, '$.text') FROM message_keys k
+                   SELECT k.id, lower(json_extract(e.body, '$.text')) FROM message_keys k
                    JOIN entities e
                      ON e.thread_id = k.thread_id AND e.kind = 'messages' AND e.id = k.message_id;
+                 {mark}
                  PRAGMA user_version = {from};"
             ))
             .unwrap();
@@ -7283,12 +7307,21 @@ async fn an_older_search_index_is_read_again_on_upgrade() {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 6, "from {from}");
+        assert_eq!(version, 5, "from {from}");
+        let column: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('message_keys') WHERE name = 'search_text'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(column, 0, "from {from}");
     }
 }
 
 /// `t1`: a quote with hidden context and a comment, then plain words; `t2`: a quote with
-/// accented, CJK and Cyrillic words. Written as T3's tests apply them, without a turn: the
+/// accented, CJK and Cyrillic words; `t3`: a quote of accented words with hidden context, then
+/// an accented word of its own. Written as T3's tests apply them, without a turn: the
 /// fake provider would echo the provider's expansion, whose JSON carries the hidden context.
 async fn write_citations(engine: &SqliteEngine) {
     let quote = citation(
@@ -7303,9 +7336,11 @@ async fn write_citations(engine: &SqliteEngine) {
         "",
         "",
     );
+    let accented_quote = citation("Le café lumière ferme tard.", "", "beacon02", "quai");
     for (thread, text) in [
         ("t1", format!("{quote} quiet silver lantern")),
         ("t2", accented),
+        ("t3", format!("{accented_quote} Déjà vu")),
     ] {
         dispatch(engine, create(thread, &format!("{thread}:c1"))).await;
         let thread = thread.to_owned();
@@ -7362,6 +7397,287 @@ async fn assert_citation_search(engine: &SqliteEngine) {
     ] {
         assert_eq!(search(engine, query).await, ["t2"], "{query}");
     }
+    // The index holds the readable text folded: a quote's accented words and the message's
+    // own are found without accents, its hidden context is not.
+    for query in ["cafe lumiere", "deja vu"] {
+        assert_eq!(search(engine, query).await, ["t3"], "{query}");
+    }
+    for hidden in ["beacon02", "quai"] {
+        assert_eq!(
+            search(engine, hidden).await,
+            Vec::<String>::new(),
+            "{hidden}"
+        );
+    }
+}
+
+/// T3 "ThreadSearch short words outside ASCII: finds them in any case or accent", plus the
+/// ordinary message of audit 9.5: a query without accents finds an accented message, on a
+/// store indexed before folding (after the migration) and for a message sent after it.
+#[tokio::test(flavor = "current_thread")]
+async fn search_folds_case_and_accents_before_and_after_the_upgrade() {
+    let db = TempDb::new("search-accents");
+    let (engine, _) = open(&db);
+    for (thread, texts) in [
+        ("russian", &["В логах ошибка"][..]),
+        (
+            "french",
+            &[
+                "École fermée à Lyon. Scope ordinary beacon.",
+                "Météo école",
+                "Școala închisă",
+                "Hồ Chí Minh",
+            ][..],
+        ),
+    ] {
+        dispatch(&engine, create(thread, &format!("{thread}:c0"))).await;
+        for (n, text) in texts.iter().enumerate() {
+            let n = n + 1;
+            dispatch(&engine, message(thread, &format!("{thread}:c{n}"), text)).await;
+            run_to_end(&engine, thread, &format!("run:{thread}:{n}")).await;
+        }
+    }
+    engine.shutdown().await;
+    drop(engine);
+    // The index as a store written before folding had it: original text, no fold mark.
+    let conn = rusqlite::Connection::open(db.path()).unwrap();
+    conn.execute_batch(
+        "UPDATE message_search SET text = (
+           SELECT COALESCE(json_extract(e.body, '$.text'), '') FROM message_keys k
+           JOIN entities e ON e.thread_id = k.thread_id AND e.kind = 'messages'
+             AND e.id = k.message_id
+           WHERE k.id = message_search.rowid);
+         DELETE FROM meta WHERE key = 'message_search_folded';",
+    )
+    .unwrap();
+    let stored: String = conn
+        .query_row(
+            "SELECT text FROM message_search WHERE text LIKE '%Lyon%' LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(stored.starts_with("École"), "{stored}");
+    drop(conn);
+
+    let (engine, _) = open(&db);
+    let hits = |query: &'static str| {
+        let engine = &engine;
+        async move {
+            call(
+                engine,
+                "orchestration.searchThreads",
+                json!({"query": query}),
+            )
+            .await
+            .unwrap()["matches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| (m["threadId"].as_str().unwrap().to_owned(), m.clone()))
+                .collect::<Vec<_>>()
+        }
+    };
+    let ids = |found: &[(String, Value)]| found.iter().map(|f| f.0.clone()).collect::<Vec<_>>();
+    let french = hits("École fermée").await;
+    assert_eq!(ids(&french), ["french"]);
+    let message_id = french[0].1["messageId"].clone();
+    for query in ["ecole fermee", "ecole fermée", "fermée éc", "ECOLE FERMEE"] {
+        let found = hits(query).await;
+        assert_eq!(ids(&found), ["french"], "{query}");
+        assert_eq!(found[0].1["messageId"], message_id, "{query}");
+        assert!(
+            found[0].1["snippet"]
+                .as_str()
+                .unwrap()
+                .contains("École fermée à Lyon"),
+            "the snippet keeps the original text: {query}"
+        );
+    }
+    assert_eq!(ids(&hits("ошибка в").await), ["russian"]);
+    assert_eq!(ids(&hits("école me").await), ["french"]);
+    assert_eq!(ids(&hits("închisă sc").await), ["french"]);
+    assert_eq!(ids(&hits("chí ho").await), ["french"]);
+    // Short words still narrow, and an absent word finds nothing.
+    assert_eq!(ids(&hits("ошибка я").await), Vec::<String>::new());
+    assert_eq!(ids(&hits("fermée ce").await), Vec::<String>::new());
+    assert_eq!(ids(&hits("totallyabsent").await), Vec::<String>::new());
+
+    // A message sent after the upgrade is indexed folded too.
+    dispatch(&engine, create("later", "later:c1")).await;
+    dispatch(&engine, message("later", "later:c2", "Crème brûlée recipe")).await;
+    run_to_end(&engine, "later", "run:later:1").await;
+    let later = hits("creme brulee").await;
+    assert_eq!(ids(&later), ["later"]);
+    assert!(
+        later[0].1["snippet"]
+            .as_str()
+            .unwrap()
+            .contains("Crème brûlée")
+    );
+    engine.shutdown().await;
+}
+
+/// The index folds as T3's `trigram remove_diacritics 1` and the query is NFC, as
+/// `messageSearchTokens`: Latin accents fold, other scripts' marks and other letters stay apart.
+/// A store folded by the first, wider fold (mark 1) is folded again once, from the messages.
+#[tokio::test(flavor = "current_thread")]
+async fn search_folds_latin_accents_only_and_normalizes_the_query() {
+    let db = TempDb::new("search-scripts");
+    let (engine, _) = open(&db);
+    for (thread, text) in [
+        ("kana", "かがく の じっけん"),
+        ("hangul", "한글 문서 작성"),
+        ("french", "Le garçon était déjà prêt"),
+        ("letters", "Straße ørsted ﬁle"),
+        ("georgian", "თბილისი"),
+    ] {
+        dispatch(&engine, create(thread, &format!("{thread}:c1"))).await;
+        dispatch(&engine, message(thread, &format!("{thread}:c2"), text)).await;
+        run_to_end(&engine, thread, &format!("run:{thread}:1")).await;
+    }
+    let none = Vec::<String>::new();
+    assert_eq!(search(&engine, "かがく").await, ["kana"]);
+    assert_eq!(
+        search(&engine, "かかく").await,
+        none,
+        "dakuten tells か from が"
+    );
+    // "한글" typed as decomposed jamo finds the composed syllables.
+    let decomposed = "\u{1112}\u{1161}\u{11ab}\u{1100}\u{1173}\u{11af}";
+    assert_eq!(search(&engine, decomposed).await, ["hangul"]);
+    assert_eq!(search(&engine, "한글").await, ["hangul"]);
+    assert_eq!(search(&engine, "garcon etait deja pret").await, ["french"]);
+    assert_eq!(search(&engine, "GARÇON déjà").await, ["french"]);
+    for query in ["straße", "ørsted", "ﬁle"] {
+        assert_eq!(search(&engine, query).await, ["letters"], "{query}");
+    }
+    for query in ["strasse", "orsted", "file"] {
+        assert_eq!(search(&engine, query).await, none, "{query}");
+    }
+    // The query is lowercased before the index fold, which leaves Mtavruli capitals alone.
+    assert_eq!(search(&engine, "ᲗᲑᲘᲚᲘᲡᲘ").await, ["georgian"]);
+    engine.shutdown().await;
+    drop(engine);
+
+    // The first fold took dakuten off ("かかく の しっけん") and marked the store 1.
+    let conn = rusqlite::Connection::open(db.path()).unwrap();
+    conn.execute_batch(
+        "UPDATE message_search SET text = 'かかく の しっけん' WHERE text LIKE 'かがく%';
+         UPDATE meta SET value = 1 WHERE key = 'message_search_folded';",
+    )
+    .unwrap();
+    drop(conn);
+    let (engine, _) = open(&db);
+    assert_eq!(search(&engine, "かかく").await, none);
+    assert_eq!(search(&engine, "かがく").await, ["kana"]);
+    assert_eq!(search(&engine, "じっけん").await, ["kana"]);
+    engine.shutdown().await;
+}
+
+/// `messageMatcher` in `paletteSearch.ts`: a word shorter than four characters must start a
+/// word in the message, so "me" does not find "fermé" and "fts" does not find "drafts". A
+/// symbol starts a word only where a letter would (`startsWordAt`): "☀ab" is inside "x☀ab". T3
+/// reads an emoji above U+FFFF as two UTF-16 units, so "🚀cd" brings its own boundary.
+#[tokio::test(flavor = "current_thread")]
+async fn search_short_words_must_start_a_word() {
+    let db = TempDb::new("search-word-starts");
+    let (engine, _) = open(&db);
+    for (thread, text) in [
+        ("closed", "marker fermé"),
+        ("drafts", "marker drafts"),
+        ("sun", "marker x☀ab y🚀cd"),
+    ] {
+        dispatch(&engine, create(thread, &format!("{thread}:c1"))).await;
+        dispatch(&engine, message(thread, &format!("{thread}:c2"), text)).await;
+        run_to_end(&engine, thread, &format!("run:{thread}:1")).await;
+    }
+    let none = Vec::<String>::new();
+    assert_eq!(search(&engine, "marker").await.len(), 3);
+    assert_eq!(search(&engine, "marker me").await, none);
+    assert_eq!(search(&engine, "marker ☀ab").await, none);
+    assert_eq!(search(&engine, "marker 🚀cd").await, ["sun"]);
+    assert_eq!(search(&engine, "marker ke").await, none);
+    assert_eq!(search(&engine, "marker fe").await, ["closed"]);
+    assert_eq!(search(&engine, "fts").await, none);
+    assert_eq!(search(&engine, "dra").await, ["drafts"]);
+    assert_eq!(
+        search(&engine, "afts").await,
+        ["drafts"],
+        "four letters match inside a word"
+    );
+    engine.shutdown().await;
+}
+
+/// `messageMatcher` counts a word's length before the index folds it, and skips hits inside a
+/// hex id (`findMessageToken`). "İce" is four characters once lowercased, so it may sit inside
+/// "service"; "abc" is not a word of "42abc12".
+#[tokio::test(flavor = "current_thread")]
+async fn search_word_length_and_hex_ids_as_message_matcher() {
+    let db = TempDb::new("search-length-hex");
+    let (engine, _) = open(&db);
+    for (thread, text) in [
+        ("service", "the service runs"),
+        ("hex", "commit 42abc12 landed"),
+        ("word", "the abc rule"),
+    ] {
+        dispatch(&engine, create(thread, &format!("{thread}:c1"))).await;
+        dispatch(&engine, message(thread, &format!("{thread}:c2"), text)).await;
+        run_to_end(&engine, thread, &format!("run:{thread}:1")).await;
+    }
+    assert_eq!(search(&engine, "İce").await, ["service"]);
+    assert_eq!(search(&engine, "abc").await, ["word"]);
+    assert_eq!(
+        search(&engine, "42abc12").await,
+        ["hex"],
+        "a pasted id still matches"
+    );
+    engine.shutdown().await;
+}
+
+/// The snippet shows the occurrence that qualified the message: "fts" only counts where it
+/// starts a word, not inside "drafts" 320 characters earlier.
+#[tokio::test(flavor = "current_thread")]
+async fn search_snippet_shows_the_accepted_occurrence() {
+    let db = TempDb::new("search-snippet-at");
+    let (engine, _) = open(&db);
+    let text = format!("drafts {} fts ready", "z".repeat(320));
+    dispatch(&engine, create("t", "t:c1")).await;
+    dispatch(&engine, message("t", "t:c2", &text)).await;
+    run_to_end(&engine, "t", "run:t:1").await;
+    let found = call(
+        &engine,
+        "orchestration.searchThreads",
+        json!({"query": "fts ready"}),
+    )
+    .await
+    .unwrap();
+    let snippet = found["matches"][0]["snippet"].as_str().unwrap_or_default();
+    assert!(snippet.contains("fts ready"), "{snippet}");
+    engine.shutdown().await;
+}
+
+/// `ThreadSearch.ts` matches a message as it reads (`MARKDOWN_LINK`): a link shows only its label,
+/// so its address finds nothing and the snippet shows the label.
+#[tokio::test(flavor = "current_thread")]
+async fn search_reads_a_markdown_link_as_its_label() {
+    let db = TempDb::new("search-link-label");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t", "t:c1")).await;
+    let text = "See [release notes](https://docs.example/quartz/changelog).";
+    dispatch(&engine, message("t", "t:c2", text)).await;
+    run_to_end(&engine, "t", "run:t:1").await;
+    assert_eq!(search(&engine, "quartz").await, Vec::<String>::new());
+    let found = call(
+        &engine,
+        "orchestration.searchThreads",
+        json!({"query": "release notes"}),
+    )
+    .await
+    .unwrap();
+    // The fake provider echoes the message, and its reply is the newest hit.
+    assert_eq!(found["matches"][0]["snippet"], "echo: See release notes.");
+    engine.shutdown().await;
 }
 
 /// Search follows `ThreadSearch.ts`: every long word must match, `%` and `_` are plain

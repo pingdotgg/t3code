@@ -37,7 +37,7 @@ thread already active keeps its anchor and `updatedAt` but still records `thread
   answers only for its owner (`owner_kind` thread or project, `owner_id`; T3's
   `commandThreadId`, so a fork's and a merge-back's is the target thread). Receipts from
   before owners (main's schema 4) keep none, so a retry of a command from before the upgrade
-  is refused, never run twice. The upgrade adds only the columns a store lacks, so a store at 6 without them gets them too. A project command takes
+  is refused, never run twice. The upgrade adds only the columns a store lacks. A store a pre-merge build of readable search wrote at 6 (with `message_keys.search_text`) drops that column and opens at 5; the search index then holds each message's readable text, folded (fold mark 4). A project command takes
   its id inside its write (insert-if-absent; a receipt is never replaced), records its project
   and T3's command type (`project.update` is `project.meta.update`), and records a refusal
   from planning, which a retry gets again (T3's `commitRejectedProjectCommand`).

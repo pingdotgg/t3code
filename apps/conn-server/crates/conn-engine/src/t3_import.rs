@@ -384,8 +384,8 @@ fn build(
            JOIN entities e ON e.thread_id = k.thread_id AND e.kind = 'messages' AND e.id = k.message_id;",
     )
     .map_err(err)?;
-    // Messages as they read, as an ordinary write indexes them.
-    crate::store::refresh_readable_search(&tx)?;
+    // Messages as they read, folded, as an ordinary write indexes them.
+    crate::store::refold_message_search(&tx, &mut |_| {})?;
     if !columns(&tx, "mcp_app_model_context")?.is_empty() {
         tx.execute_batch(
             "INSERT OR REPLACE INTO mcp_app_model_context (thread_id, item_id, server, tool, text, updated_at)
