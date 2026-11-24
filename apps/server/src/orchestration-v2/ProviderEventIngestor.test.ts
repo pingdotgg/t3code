@@ -28,6 +28,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -38,8 +39,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
+import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -1791,13 +1794,13 @@ layer("ProviderEventIngestorV2", (it) => {
         threadId: threadEvent.threadId,
         itemId: steer.id,
       });
-      const steerUpdated = (status: "pending" | "completed") =>
+      const steerUpdated = (status: "pending" | "completed", id = messageId) =>
         ingest({
           type: "steer.updated",
           driver: CODEX_DRIVER,
           threadId: threadEvent.threadId,
           runId,
-          messageId,
+          messageId: id,
           status,
         });
 
@@ -1806,6 +1809,28 @@ layer("ProviderEventIngestorV2", (it) => {
       assert.deepInclude(yield* projected, { status: "pending", completedAt: null });
       yield* steerUpdated("completed");
       assert.equal((yield* projected)?.status, "completed");
+
+      // A steered notification stays completed; its completedAt becomes the read time.
+      const wakeId = MessageId.make("message:steer-read-wake");
+      const wake = notificationTurnItem(
+        { ...steer, id: idAllocator.derive.userTurnItem({ messageId: wakeId }), ordinal: 2 },
+        {
+          notification: {
+            source: { kind: "delegated_task", taskIds: [] },
+            outcome: "updated",
+            summary: "Delegated task has a question",
+          },
+        },
+        [],
+      );
+      yield* ingest({ type: "turn_item.updated", driver: CODEX_DRIVER, turnItem: wake });
+      yield* TestClock.adjust(Duration.seconds(5));
+      yield* steerUpdated("pending", wakeId);
+      yield* steerUpdated("completed", wakeId);
+      assert.deepInclude(
+        yield* projectionStore.getTurnItem({ threadId: threadEvent.threadId, itemId: wake.id }),
+        { status: "completed", completedAt: yield* DateTime.now },
+      );
     }),
   );
 

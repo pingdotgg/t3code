@@ -1252,8 +1252,7 @@ const make = Effect.gen(function* () {
     const { run } = yield* waitForThread({ ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS });
     if (run?.status !== "completed") return;
     // A message or wake steered in after the agent asked to settle starts a turn that decides again.
-    // A provider may hold a user steer pending until it reads it; completedAt is when the agent saw
-    // it. A steered notification keeps the time it was steered in.
+    // A provider may hold a steer pending until it reads it; completedAt is when the agent saw it.
     const { turnItems } = yield* getProjectThreadRecords(input, ["turnItems"], {
       turnItemTypes: ["user_message", "notification"],
       turnItemRunIds: [run.id],

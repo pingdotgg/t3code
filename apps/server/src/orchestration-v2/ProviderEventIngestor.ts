@@ -657,6 +657,20 @@ export const layer: Layer.Layer<
                 threadId: input.event.threadId,
                 itemId: idAllocator.derive.userTurnItem({ messageId: input.event.messageId }),
               });
+              // A steered notification stays completed; its completedAt moves to when it was read.
+              if (item?.type === "notification" && input.event.status === "completed") {
+                const occurredAt = yield* DateTime.now;
+                return [
+                  yield* makeDomainEvent(input, {
+                    type: "turn-item.updated",
+                    threadId: item.threadId,
+                    payload: { ...item, completedAt: occurredAt, updatedAt: occurredAt },
+                    runId: item.runId,
+                    nodeId: item.nodeId,
+                    occurredAt,
+                  }),
+                ];
+              }
               if (
                 item?.type !== "user_message" ||
                 item.status === input.event.status ||
