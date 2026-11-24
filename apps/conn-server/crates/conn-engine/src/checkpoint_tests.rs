@@ -1974,6 +1974,30 @@ async fn a_parent_with_a_running_delegate_is_not_archived() {
     }
 }
 
+/// The lease a terminal holds while it restores a worktree (`Engine::workspace_lease`) is the
+/// lock checkpoint capture and turn preparation take: a capture waits for it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_workspace_lease_holds_off_checkpoint_capture() {
+    let db = TempDb::new("lease");
+    let repo = Repo::new("lease");
+    let (engine, _) = open_repo(&db, &repo);
+    let root = repo.root();
+    let lease = engine
+        .workspace_lease(&root)
+        .await
+        .expect("checkpoints take locks");
+    let waiting = tokio::time::timeout(
+        Duration::from_millis(200),
+        engine.test_hold_workspace(&root),
+    )
+    .await;
+    assert!(waiting.is_err(), "the capture lock waits for the lease");
+    drop(lease);
+    let _capture = tokio::time::timeout(Duration::from_secs(5), engine.test_hold_workspace(&root))
+        .await
+        .expect("the capture lock follows the lease");
+}
+
 /// A thread in worktree `repo` that ran `first` there, then moved to a sibling worktree of the
 /// same repository: the moved run has not started yet.
 async fn moved_thread(

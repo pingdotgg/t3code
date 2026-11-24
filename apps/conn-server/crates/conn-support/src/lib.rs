@@ -5,6 +5,7 @@ pub mod base64;
 pub mod fs;
 pub mod hex;
 pub mod hmac;
+pub mod home;
 pub mod ids;
 pub mod input;
 pub mod js_date;

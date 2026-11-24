@@ -192,6 +192,11 @@
       "name": "a new text generator is added beside a saved one",
       "stored": { "textGenerators": { "tg1": { "kind": "openaiCompatible", "baseUrl": "https://api.example.com/v1", "apiKey": "tg-key" } } },
       "patch": { "textGenerators": { "openrouter": { "kind": "openaiCompatible", "label": "OpenRouter", "baseUrl": "https://openrouter.ai/api/v1", "apiKey": "or-key", "enabled": true } } }
+    },
+    {
+      "name": "a moved worktrees directory is remembered",
+      "stored": { "worktreesDirectory": "/old/worktrees", "previousWorktreesDirectories": ["/older", "/new/worktrees"] },
+      "patch": { "worktreesDirectory": "/new/worktrees" }
     }
   ]
 }

@@ -320,6 +320,16 @@ pub struct WorktreeRequest {
     pub start_from_origin: bool,
 }
 
+/// A thread's worktree as a terminal needs it (`getThreadShell` in T3's
+/// `prepareTerminalLaunch`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThreadWorktree {
+    pub worktree_path: String,
+    pub branch: Option<String>,
+    /// The thread's project's workspace root.
+    pub project_root: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProvisionedWorktree {
     pub path: String,
@@ -480,6 +490,23 @@ pub trait Engine: Send + Sync {
         _thread_id: ThreadId,
     ) -> BoxFuture<'_, Result<Value, EngineError<GetThreadProjectionError>>> {
         unsupported("orchestration.getThreadProjection")
+    }
+
+    /// The thread's worktree, from its stored row; `None` for a thread without one.
+    fn thread_worktree(
+        &self,
+        _thread_id: &str,
+    ) -> BoxFuture<'_, Result<Option<ThreadWorktree>, String>> {
+        Box::pin(std::future::ready(Ok(None)))
+    }
+
+    /// Holds the workspace lock that turn preparation and checkpoint capture take for the
+    /// folder `root` (`withWorkspaceLease`). `None` when this engine takes none.
+    fn workspace_lease<'a>(
+        &'a self,
+        _root: &'a str,
+    ) -> BoxFuture<'a, Option<conn_vcs::locks::WorkspaceLock<'a>>> {
+        Box::pin(std::future::ready(None))
     }
 
     /// `GET /api/orchestration/shell`: `OrchestrationV2ShellSnapshot`.

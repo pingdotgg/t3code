@@ -181,17 +181,21 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
         },
     );
 
-    let e = engine.clone();
+    let (e, environment) = (engine.clone(), deps.environment.clone());
     table.unary(
         "projects.writeFile",
         move |_, input: ProjectWriteFileInput| {
-            let e = e.clone();
+            let (e, environment) = (e.clone(), environment.clone());
             async move {
                 check_length(&input.relative_path, false, PATH_MAX_LENGTH, "relativePath")?;
                 let layout = Layout::load(e.as_ref()).await;
                 let (projects, worktrees) = layout.known_workspaces();
+                let managed = environment
+                    .as_deref()
+                    .map(crate::host::managed_worktree_dirs)
+                    .unwrap_or_default();
                 blocking(move || {
-                    let known = KnownWorkspaces::new(&projects, &worktrees);
+                    let known = KnownWorkspaces::new(&projects, &worktrees).with_managed(&managed);
                     workspace::write_file(&input, &|real| known.contains(real))
                         .map_err(|e| fail(e.into_write_error(&input.cwd, &input.relative_path)))
                 })

@@ -41,7 +41,7 @@ const STUB = NodePath.join(HERE, "grok-cli-stub.mjs");
     NodePath.join(MONOREPO, "packages/provider-core/src/server/pathExpansion.ts"),
     "utf8",
   );
-  const rust = NodeFS.readFileSync(NodePath.join(HERE, "../../conn-provider-support/src/instance.rs"), "utf8");
+  const rust = NodeFS.readFileSync(NodePath.join(HERE, "../../conn-support/src/home.rs"), "utf8");
   const names = (text, re) => [...(text.match(re)?.[1] ?? "").matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]).toSorted();
   const theirs = names(ts, /HOME_PATH_VARIABLES = new Set\(\[([^\]]*)\]/);
   const ours = names(rust, /HOME_PATH_VARIABLES: \[&str; \d+\] = \[([^\]]*)\]/);

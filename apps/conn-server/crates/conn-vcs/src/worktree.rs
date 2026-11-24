@@ -285,33 +285,8 @@ pub async fn create_worktree_claiming(
         return Err(error);
     }
 
-    if let (Some(new), Some(base)) = (&input.new_ref_name, &input.base_ref_name)
-        && let Some((branch_name, full)) = resolve_branch_base(cwd, base).await
-    {
-        let _ = git(
-            OPERATION,
-            cwd,
-            [
-                "config".to_owned(),
-                format!("branch.{new}.t3-merge-base"),
-                branch_name,
-            ],
-        )
-        .run()
-        .await;
-        if full.starts_with("refs/remotes/") {
-            let _ = git(
-                OPERATION,
-                cwd,
-                [
-                    "config".to_owned(),
-                    format!("branch.{new}.t3-merge-base-ref"),
-                    full,
-                ],
-            )
-            .run()
-            .await;
-        }
+    if let (Some(new), Some(base)) = (&input.new_ref_name, &input.base_ref_name) {
+        record_base(cwd, new, base).await;
     }
     Ok(Worktree {
         path,
@@ -624,6 +599,165 @@ pub async fn update_submodules(worktree: &Path, mode: Submodules) -> VcsResult<(
         }
     }
     result
+}
+
+/// Entries `git worktree remove` can leave behind without a checkout
+/// (`LEFTOVER_WORKTREE_ENTRIES`).
+const LEFTOVER_ENTRIES: [&str; 2] = ["node_modules", ".next"];
+
+/// `restoreMissingWorktree` (T3 `workspace/restoreMissingWorktree.ts`): checks `branch` out
+/// again at `path` when the folder is gone or holds only leftover dependency folders, which
+/// are cleared first. Returns whether it recreated the checkout. The caller decides that
+/// `path` is a managed worktree of `project_root`.
+pub async fn restore_missing_worktree(
+    project_root: &Path,
+    path: &Path,
+    branch: &str,
+) -> VcsResult<bool> {
+    let folder = path.to_owned();
+    let missing = tokio::task::spawn_blocking(move || clear_leftover_folder(&folder))
+        .await
+        .map_err(|e| invalid(project_root, e.to_string()))?
+        .map_err(|e| invalid(project_root, e.to_string()))?;
+    if !missing {
+        return Ok(false);
+    }
+    recreate_worktree(project_root, path, branch).await?;
+    Ok(true)
+}
+
+/// Whether `path` needs a checkout: it does not exist, or held only leftovers (now removed).
+/// The folder itself stays: it may be a running process's working folder.
+fn clear_leftover_folder(path: &Path) -> std::io::Result<bool> {
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries.collect::<Result<Vec<_>, _>>()?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(_) => return Ok(false),
+    };
+    let leftover = entries.iter().all(|entry| {
+        let name = entry.file_name();
+        LEFTOVER_ENTRIES.iter().any(|l| name == *l) && entry.file_type().is_ok_and(|t| t.is_dir())
+    });
+    if !leftover || path.join(".git").exists() {
+        return Ok(false);
+    }
+    for entry in entries {
+        std::fs::remove_dir_all(entry.path())?;
+    }
+    Ok(true)
+}
+
+/// `restoreMissingWorktree.recreate`: the local branch when it survives; else its pushed copy
+/// (`refs/remotes/<remote>/<branch>`), read without a fetch; else a new branch from the
+/// project's current branch, the remote's default commit, or `HEAD`.
+async fn recreate_worktree(project_root: &Path, path: &Path, branch: &str) -> VcsResult<()> {
+    refuse_option_like(project_root, branch)?;
+    git(OPERATION, project_root, ["worktree", "prune"])
+        .run()
+        .await?;
+    let target = path.to_string_lossy().into_owned();
+    let add = |args: Vec<String>| async move {
+        let mut full = vec!["worktree".to_owned(), "add".to_owned()];
+        full.extend(args);
+        git(OPERATION, project_root, full)
+            .timeout(Duration::from_secs(3600))
+            .max_stdout(1_000_000, OnLimit::Truncate)
+            .run()
+            .await
+            .map(drop)
+            .map_err(VcsError::from)
+    };
+    if repo::ref_exists(project_root, &format!("refs/heads/{branch}")).await? {
+        return add(vec!["--".into(), target, branch.to_owned()]).await;
+    }
+    let remote = repo::primary_remote(project_root).await.ok().flatten();
+    if let Some(remote) = &remote {
+        let pushed = format!("refs/remotes/{remote}/{branch}");
+        if repo::ref_exists(project_root, &pushed).await? {
+            return add(vec![
+                "-b".into(),
+                branch.to_owned(),
+                "--".into(),
+                target,
+                pushed,
+            ])
+            .await;
+        }
+    }
+    let (start, base) = match repo::current_branch(project_root).await? {
+        Some(current) => {
+            let full = format!("refs/heads/{current}");
+            (full.clone(), Some(full))
+        }
+        None => match remote {
+            Some(remote)
+                if repo::ref_exists(project_root, &format!("refs/remotes/{remote}/HEAD"))
+                    .await? =>
+            {
+                let head = format!("refs/remotes/{remote}/HEAD");
+                // The commit, so the new branch does not track the default branch.
+                let commit = repo::resolve_commit(project_root, &head)
+                    .await?
+                    .ok_or_else(|| {
+                        invalid(project_root, "the remote default branch has no commit")
+                    })?;
+                (commit, Some(head))
+            }
+            _ if repo::has_head_commit(project_root).await? => ("HEAD".to_owned(), None),
+            _ => {
+                return Err(invalid(
+                    project_root,
+                    format!(
+                        "Could not recreate branch '{branch}' at {}: the project workspace has no commit to start it from.",
+                        path.display()
+                    ),
+                ));
+            }
+        },
+    };
+    git(
+        OPERATION,
+        project_root,
+        ["branch", "--no-track", "--", branch, start.as_str()],
+    )
+    .run()
+    .await?;
+    add(vec!["--".into(), target, branch.to_owned()]).await?;
+    if let Some(base) = base {
+        record_base(project_root, branch, &base).await;
+    }
+    Ok(())
+}
+
+/// Records `base` as the new branch's base (`branch.<new>.t3-merge-base`), for Changes totals.
+async fn record_base(cwd: &Path, new: &str, base: &str) {
+    let Some((branch_name, full)) = resolve_branch_base(cwd, base).await else {
+        return;
+    };
+    let _ = git(
+        OPERATION,
+        cwd,
+        [
+            "config".to_owned(),
+            format!("branch.{new}.t3-merge-base"),
+            branch_name,
+        ],
+    )
+    .run()
+    .await;
+    if full.starts_with("refs/remotes/") {
+        let _ = git(
+            OPERATION,
+            cwd,
+            [
+                "config".to_owned(),
+                format!("branch.{new}.t3-merge-base-ref"),
+                full,
+            ],
+        )
+        .run()
+        .await;
+    }
 }
 
 /// `(branch name, full ref)` of a base given as a local or remote branch.

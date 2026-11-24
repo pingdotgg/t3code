@@ -340,6 +340,24 @@ for (const id of [...defaultEnabledInstances, ...defaultDisabledDrivers, "conn-t
   }
 }
 
+// `deriveProviderInstanceConfigMap` gives every driver a default instance unless its client
+// sets `hasDefaultInstance: false`; `KNOWN_DRIVERS` in managedProviders.ts lists them.
+const MANAGED_FILE = "apps/server/src/policy/managedProviders.ts";
+const managedText = NodeFS.readFileSync(inMonorepo(MANAGED_FILE), "utf8");
+const defaultInstanceDrivers = [...managedText.matchAll(/^\s*known\("(\w+)", "[^"]*", \w+\),$/gm)].map((m) => m[1]);
+const packagedClients = /PACKAGED_CLIENTS[^=]*=\s*\[([^\]]*)\]/.exec(managedText)?.[1].match(/\w+Client/g) ?? [];
+if (defaultInstanceDrivers.length < 3 || packagedClients.length < 3) {
+  throw new Error(`${MANAGED_FILE}: KNOWN_DRIVERS or PACKAGED_CLIENTS changed shape`);
+}
+for (const name of packagedClients) {
+  const specifier = new RegExp(`import \\{ ${name} \\} from "([^"]+)";`).exec(managedText)?.[1];
+  if (specifier === undefined) throw new Error(`${MANAGED_FILE}: no import for ${name}`);
+  const client = (await importServerPackage(specifier))[name];
+  if (!client?.driverKind) throw new Error(`${specifier} exports no ${name} with a driverKind`);
+  if (client.hasDefaultInstance !== false) defaultInstanceDrivers.push(client.driverKind);
+}
+defaultInstanceDrivers.sort();
+
 const strs = (list) => `&[${list.map(str).join(", ")}]`;
 // Persisted settings for the null-rule differential: T3's own decoder gives each verdict.
 const nullRuleCases = (() => {
@@ -409,6 +427,10 @@ const secretsRs = rustfmt(
     "",
     "/// Default instances that run before settings name them (`DEFAULT_ENABLED_DEFAULT_INSTANCES`).",
     `pub(super) const DEFAULT_ENABLED_INSTANCES: &[&str] = ${strs(defaultEnabledInstances)};`,
+    "",
+    "/// Drivers with an instance named after them even when settings name none",
+    `/// (\`deriveProviderInstanceConfigMap\`, \`hasDefaultInstance\`; ${MANAGED_FILE}).`,
+    `pub(super) const DEFAULT_INSTANCE_DRIVERS: &[&str] = ${strs(defaultInstanceDrivers)};`,
     "",
     "/// Where `ServerSettings` (packages/contracts/src/settings.ts) takes an explicit `null`, by",
     "/// T3's own decoder (`nullRule` in tools/schema-rules.mjs): `n` marks a node that may be null,",

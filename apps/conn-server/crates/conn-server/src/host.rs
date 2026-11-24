@@ -58,6 +58,62 @@ pub fn worktrees_dir(environment: &Environment) -> PathBuf {
     }
 }
 
+/// `managedWorktreesDirectories` (T3 `worktreesDirectory.ts`): `<state-dir>/worktrees`, the
+/// `worktreesDirectory` setting and the `previousWorktreesDirectories` it remembers, each with
+/// `~` expanded; a relative setting or a filesystem root names none.
+pub fn managed_worktree_dirs(environment: &Environment) -> Vec<PathBuf> {
+    let settings = environment.settings.raw();
+    let default = environment.state_dir.join("worktrees");
+    let previous = settings
+        .get("previousWorktreesDirectories")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str);
+    let configured = settings.get("worktreesDirectory").and_then(Value::as_str);
+    let mut dirs = vec![default.clone()];
+    for setting in configured.into_iter().chain(previous).map(str::trim) {
+        let dir = if setting.is_empty() {
+            default.clone()
+        } else {
+            conn_files::paths::normalize(std::path::Path::new(
+                &conn_provider_support::instance::expand_home(setting),
+            ))
+        };
+        if dir.is_absolute() && dir.parent().is_some() && !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    dirs
+}
+
+/// `isManagedWorktreePath`: an absolute, normalized path exactly two levels below a managed
+/// folder (`<dir>/<repo>/<name>`), compared after symlinks resolve as Git resolves them.
+/// Blocking: it reads the filesystem.
+pub fn is_managed_worktree_path(dirs: &[PathBuf], path: &std::path::Path) -> bool {
+    if !path.is_absolute() || conn_files::paths::normalize(path) != path {
+        return false;
+    }
+    let candidate = real_location(path);
+    dirs.iter().map(|dir| real_location(dir)).any(|root| {
+        root.parent().is_some()
+            && candidate
+                .strip_prefix(&root)
+                .is_ok_and(|rest| rest.components().count() == 2)
+    })
+}
+
+/// The nearest existing ancestor's real path, plus the missing components.
+fn real_location(path: &std::path::Path) -> PathBuf {
+    if let Ok(real) = std::fs::canonicalize(path) {
+        return real;
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => real_location(parent).join(name),
+        _ => path.to_owned(),
+    }
+}
+
 impl Host {
     fn worktrees_dir(&self) -> PathBuf {
         worktrees_dir(&self.environment)
