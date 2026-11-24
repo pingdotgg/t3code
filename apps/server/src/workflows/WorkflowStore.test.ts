@@ -10,6 +10,7 @@ import type * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
+import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
 import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
@@ -21,7 +22,9 @@ const withStore = <A, E>(
     const path = yield* Path.Path;
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflow-store-" });
     const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
-    const migrated = Layer.effectDiscard(WorkflowsMigration);
+    const migrated = Layer.effectDiscard(
+      Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration),
+    );
     return yield* Effect.provide(
       use,
       WorkflowStore.layer.pipe(
@@ -524,6 +527,96 @@ it.effect("tells the milestone hub of each run and question transition once", ()
           ...news,
         })),
       );
+    }),
+  ),
+);
+
+const started = (
+  store: WorkflowStore.WorkflowStore["Service"],
+  runId: string,
+  workflow = "intake",
+  parent?: WorkflowStore.RunParent,
+) =>
+  Effect.andThen(
+    TestClock.adjust("1 second"),
+    store.runStarted({
+      runId,
+      workflow,
+      version: 1,
+      engineTag: `${workflow}@1`,
+      idempotencyKey: runId,
+      input: { body: "a webhook payload" },
+      parent,
+    }),
+  );
+
+it.effect("a skipped top-level run drops the input it started with; other ends keep theirs", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      yield* started(store, "skipped");
+      yield* started(store, "stopped");
+      yield* started(store, "child", "intake", { runId: "stopped", wait: "w" });
+      yield* store.runEnded("skipped", "skipped", "only a ping", null);
+      yield* store.runEnded("stopped", "stopped", "no need", null);
+      yield* store.runEnded("child", "skipped", "nothing to do", null);
+      const input = (runId: string) => Effect.map(store.run(runId), (run) => run?.input_json);
+      assert.isNull(yield* input("skipped"));
+      assert.isNotNull(yield* input("stopped"));
+      assert.isNotNull(yield* input("child"));
+    }),
+  ),
+);
+
+it.effect("keeps each workflow's latest skipped runs and deletes older ones with their steps", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const skipped = Effect.fnUntraced(function* (runId: string, workflow = "intake") {
+        yield* started(store, runId, workflow);
+        yield* store.stepStarted(runId, "look", "step");
+        yield* store.stepEnded(runId, "look", "completed", null);
+        yield* store.runEnded(runId, "skipped", "only a ping", null);
+        yield* store.enginePruned(runId);
+      });
+      for (const n of [1, 2, 3, 4]) yield* skipped(`old${n}`);
+      // Not deleted: it did something, its journal is still kept, or it invoked a run.
+      yield* started(store, "done");
+      yield* store.runEnded("done", "completed", null, null);
+      yield* store.enginePruned("done");
+      yield* started(store, "journaled");
+      yield* store.runEnded("journaled", "skipped", "only a ping", null);
+      yield* skipped("parent");
+      yield* started(store, "invoked", "intake", { runId: "parent", wait: "w" });
+      for (const n of [1, 2]) yield* skipped(`new${n}`);
+      yield* skipped("other", "sweep");
+
+      // A small batch leaves the rest to the next sweep.
+      assert.equal(yield* store.pruneSkipped(2, 3), 3);
+      assert.equal(yield* store.pruneSkipped(2, 100), 1);
+      assert.equal(yield* store.pruneSkipped(2, 100), 0);
+
+      const left = (yield* store.runs(undefined)).map((run) => run.run_id).toSorted();
+      assert.deepStrictEqual(left, [
+        "done",
+        "invoked",
+        "journaled",
+        "new1",
+        "new2",
+        "other",
+        "parent",
+      ]);
+      assert.deepStrictEqual(yield* store.steps("old1"), []);
+      assert.equal((yield* store.steps("new1")).length, 1);
+
+      // Keeping none deletes every skipped run the rules allow, in every workflow.
+      assert.equal(yield* store.pruneSkipped(0, 100), 3);
+      assert.deepStrictEqual((yield* store.runs(undefined)).map((run) => run.run_id).toSorted(), [
+        "done",
+        "invoked",
+        "journaled",
+        "parent",
+      ]);
     }),
   ),
 );

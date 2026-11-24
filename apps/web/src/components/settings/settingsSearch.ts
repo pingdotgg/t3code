@@ -573,6 +573,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("beta workflow durable runs automation steps schedule webhook folder")],
   },
   {
+    id: "workflow-skipped-runs",
+    title: msg("Skipped runs kept"),
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: [msg("workflow history retention delete old skipped runs webhook")],
+  },
+  {
     id: "prompt-suggestions-beta",
     title: msg("Suggest next prompt"),
     to: "/settings/labs",

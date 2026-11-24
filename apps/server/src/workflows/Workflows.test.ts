@@ -36,6 +36,8 @@ import {
 } from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
+import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import {
   Issue,
@@ -702,7 +704,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
   const path = yield* Path.Path;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflows-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
-  yield* Effect.provide(WorkflowsMigration, database);
+  yield* Effect.provide(Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration), database);
   const counts = yield* Ref.make<Record<string, number>>({});
   const failures = yield* Ref.make(0);
   const latch: Latch = {
@@ -2020,6 +2022,47 @@ it("hooks of different workflows never share an id", () => {
   assert.notEqual(Workflows.hookId("a.b", "c"), Workflows.hookId("a", "b.c"));
   assert.equal(Workflows.hookId("inbound", "push"), "wf-inbound.push");
 });
+
+it.effect("the sweep deletes skipped runs past the number the settings keep", () =>
+  Effect.gen(function* () {
+    const exposed = exposedStore();
+    const { boot } = yield* harness(exposed.layer);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const store = yield* exposed.store;
+        const [hook] = yield* workflows.hooks;
+        const [hookId, token] = hook!.path.split("/").slice(-2).map(decodeURIComponent);
+        const deliver = (body: string, delivery: string) =>
+          Effect.map(
+            workflows.deliver({
+              hookId: hookId!,
+              token: token!,
+              request: { method: "POST", headers: { "x-delivery": delivery }, query: "", body },
+            }),
+            Option.getOrThrow,
+          );
+        const ping = yield* deliver("ping", "d1");
+        yield* workflows.waitFor(ping.runId, status("skipped"));
+        const hello = yield* deliver("hello", "d2");
+        yield* workflows.waitFor(hello.runId, status("completed"));
+        assert.isNull((yield* store.run(ping.runId))?.input_json);
+
+        // Deleted once its engine journal is, which waits an hour after the run ends.
+        yield* workflows.sweep;
+        assert.isDefined(yield* store.run(ping.runId));
+        yield* TestClock.adjust("2 hours");
+        yield* workflows.sweep;
+        assert.isUndefined(yield* store.run(ping.runId));
+        assert.isDefined(yield* store.run(hello.runId));
+      }),
+    ).pipe(
+      Effect.provide(
+        ServerSettings.ServerSettingsService.layerTest({ workflowSkippedRunsKept: 0 }),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
 
 it.effect("a request to a hook starts a run, its retry is the same run, and a bad token none", () =>
   Effect.gen(function* () {
