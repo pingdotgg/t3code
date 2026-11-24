@@ -179,8 +179,9 @@ it.effect("hook paths go only to a caller at the broadest mode", () =>
 it.effect("under an administrator's ceiling, a caller at the ceiling starts runs", () =>
   Effect.gen(function* () {
     const start = { action: "start", workflow: "release", idempotencyKey: "trial" };
+    const started: Array<string> = [];
     const workflows = {
-      start: () => Effect.succeed({ runId: "run-1" }),
+      start: (name: string) => Effect.sync(() => (started.push(name), { runId: "run-1" })),
       get: () => Effect.succeed(emptyRun),
     };
     const narrowedTo = (runtimeMode: "auto" | "approval-required") => ({
@@ -189,11 +190,63 @@ it.effect("under an administrator's ceiling, a caller at the ceiling starts runs
     });
     expect(
       yield* call(start).pipe(Effect.provide(handlersWith(workflows, narrowedTo("auto")))),
-    ).not.toMatchObject({ code: "capability_denied" });
+    ).toEqual({ steps: [], references: [] });
+    expect(started).toEqual(["release"]);
     expect(
       yield* call(start).pipe(
         Effect.provide(handlersWith(workflows, narrowedTo("approval-required"))),
       ),
     ).toMatchObject({ code: "capability_denied" });
+    expect(started).toEqual(["release"]);
+  }),
+);
+
+it.effect("questions are narrowed to a kind, and runs to a tag", () =>
+  Effect.gen(function* () {
+    const filters: Array<unknown> = [];
+    const question = (name: string, kind?: string) => ({
+      runId: "run-1",
+      name,
+      request: { title: name, choices: ["Yes"] },
+      ...(kind === undefined ? {} : { kind }),
+      askedAt: "2026-11-20T00:00:00.000Z",
+      thread: null,
+    });
+    const results = yield* Effect.gen(function* () {
+      const toolkit = yield* WorkflowToolkit;
+      return yield* Effect.forEach(
+        [
+          { action: "questions" as const, kind: "feature" },
+          { action: "questions" as const },
+          { action: "list" as const, tag: "backlog" },
+        ],
+        (input) =>
+          toolkit.handle("t3_workflow", input).pipe(
+            Stream.unwrap,
+            Stream.runCollect,
+            Effect.map((parts) => parts.at(-1)?.result),
+          ),
+      );
+    }).pipe(
+      Effect.provide(
+        handlersWith({
+          questions: Effect.succeed([
+            question("wanted", "feature"),
+            question("meant", "intended"),
+            question("plain"),
+          ]),
+          list: (filter) =>
+            Effect.sync(() => {
+              filters.push(filter);
+              return [];
+            }),
+        }),
+      ),
+    );
+    expect(results[0]).toMatchObject({ questions: [{ name: "wanted" }] });
+    expect(results[1]).toMatchObject({
+      questions: [{ name: "wanted" }, { name: "meant" }, { name: "plain" }],
+    });
+    expect(filters).toEqual([{ tag: "backlog" }]);
   }),
 );
