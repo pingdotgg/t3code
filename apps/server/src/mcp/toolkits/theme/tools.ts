@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as EnvironmentTheme from "../../../environmentTheme.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolExposure from "../../McpToolExposure.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 
@@ -50,7 +51,8 @@ const ThemeReadTool = Tool.make("t3_theme_read", {
   }),
 })
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpToolExposure.Pack, "customization");
 
 const ThemeSetTool = Tool.make("t3_theme_set", {
   ...shared,
@@ -66,6 +68,8 @@ const ThemeSetTool = Tool.make("t3_theme_set", {
     appearance: Schema.optionalKey(Appearance),
     published: Schema.Boolean,
   }),
-}).annotate(Tool.Destructive, true);
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(McpToolExposure.Pack, "customization");
 
 export const ThemeToolkit = Toolkit.make(ThemeReadTool, ThemeSetTool);

@@ -3,6 +3,7 @@ name: Agent Context Budget
 # Fails when a PR raises a value in agentContextBudget.json above main's. AgentContextBudget.test.ts
 # keeps that file equal to the measured context, so the context cannot grow by editing the file.
 # To accept growth on purpose, a maintainer adds the agent-context-increase label.
+# mcpPackToolListJsonBytes is recorded, not gated: pack tools load on demand (McpToolExposure.ts).
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
@@ -40,6 +41,7 @@ jobs:
           git show "HEAD^1:$BUDGET" > "$RUNNER_TEMP/main.json"
           grown=$(jq -r --slurpfile main "$RUNNER_TEMP/main.json" '
             to_entries[]
+            | select(.key != "mcpPackToolListJsonBytes")
             | select($main[0][.key] != null and .value > $main[0][.key])
             | "\(.key): \($main[0][.key]) -> \(.value) (+\(.value - $main[0][.key]))"
           ' "$BUDGET")

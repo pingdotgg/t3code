@@ -56,6 +56,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
+import * as McpToolExposure from "./McpToolExposure.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -2149,6 +2150,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         tool("delegate_task", "Delegates a task."),
         tool("preview_open", "Opens a browser preview."),
         tool("schedule_task", "Schedules a task."),
+        tool("t3_theme_set", "Restyles T3 Code.").annotate(McpToolExposure.Pack, "customization"),
       );
       const reads = McpToolAccess.reads(() => Effect.succeed({}));
       const serverLayer = McpHttpServer.layerMcpTransport(
@@ -2159,6 +2161,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               delegate_task: reads,
               preview_open: reads,
               schedule_task: reads,
+              t3_theme_set: reads,
             }),
           ),
           McpHttpServer.layerToolSearch,
@@ -2232,7 +2235,8 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       const deferring = yield* session("deferringToken", true);
       const other = yield* session("otherToken", false);
       expect(yield* deferring.listed).toEqual(["delegate_task", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+      const everything = ["delegate_task", "preview_open", "schedule_task", "t3_theme_set"];
+      expect(yield* other.listed).toEqual(everything);
       // Unlisted tools stay callable.
       expect((yield* deferring.call("schedule_task", {})).structuredContent).toEqual({});
 
@@ -2240,7 +2244,18 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         (yield* deferring.call("tool_search", { query: "browser" })).structuredContent,
       ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
       expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+      expect(yield* other.listed).toEqual(everything);
+
+      // A pack's name loads its tools, whatever their text says.
+      expect(
+        (yield* deferring.call("tool_search", { query: "customization" })).structuredContent,
+      ).toEqual({ tools: [{ name: "t3_theme_set", description: "Restyles T3 Code." }] });
+      expect(yield* deferring.listed).toEqual([
+        "delegate_task",
+        "preview_open",
+        "t3_theme_set",
+        "tool_search",
+      ]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

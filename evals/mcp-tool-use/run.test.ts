@@ -24,6 +24,7 @@ import {
   gradeSample,
   modelRequests,
   makeSample,
+  relistT3Tools,
   ranCalls,
   McpToolUseCase,
   savesPastedSecrets,
@@ -732,6 +733,74 @@ it("rebuilds the template from this checkout and sends a child T3's task prompt"
   assert.equal(prompt?.text, taskPrompt({ task: childCase.prompt, role: "implementation" }));
   assert.notEqual(prompt?.text, childCase.prompt);
 });
+
+it.effect("re-lists T3 search results for the next model request", () =>
+  Effect.gen(function* () {
+    const config = {
+      apiKey: "",
+      model: "claude-sonnet-5-5",
+      effort: "high",
+      maxSteps: 6,
+      shellModel: "claude-haiku-5-5",
+    } as const;
+    const base = buildBase(template, {
+      model: config.model,
+      keepUserInstructions: false,
+      t3Deferred: true,
+    });
+    const testCase: McpToolUseCase = {
+      ...childCase,
+      setup: { role: "top", toolExposure: "t3_tool_search" },
+    };
+    const sample = makeSample(testCase, base);
+    assert.deepEqual(
+      sample.tools
+        .filter((tool) => tool.name.startsWith("mcp__t3-code__"))
+        .map((tool) => normalizeToolName(tool.name)),
+      ["orchestrator_capabilities", "delegate_task", "task_status", "tool_search"],
+    );
+    assert.notInclude(base.system.map((block) => block.text).join("\n"), "mcp__t3-code__");
+    assert.include(
+      String(buildMessages(sample)[0]?.content.at(-1)?.text),
+      "<t3_code_instructions>",
+    );
+    const call = (name: string, input: unknown) =>
+      answerToolCall(sample, config, { type: "tool_use", id: "test", name, input });
+    const native = yield* call("mcp__host__clown_ToolSearch", {
+      query: "select:mcp__t3-code__t3_theme_read",
+    });
+    assert.equal(native.content, "No matching deferred tools found");
+
+    const themeSearch = yield* call("mcp__t3-code__tool_search", { query: "customization" });
+    assert.isFalse(themeSearch.is_error === true);
+    assert.deepEqual(themeSearch.content, [
+      { type: "tool_reference", tool_name: "mcp__t3-code__t3_theme_read" },
+      { type: "tool_reference", tool_name: "mcp__t3-code__t3_theme_set" },
+    ]);
+    const prematureCall = yield* call("mcp__t3-code__t3_theme_read", {});
+    assert.isTrue(prematureCall.is_error);
+    assert.include(String(prematureCall.content), "Load it with mcp__t3-code__tool_search first");
+
+    relistT3Tools(sample);
+    const themeTool = sample.tools.find((tool) => tool.name === "mcp__t3-code__t3_theme_read");
+    assert.isDefined(themeTool?.input_schema);
+    assert.isTrue(themeTool?.defer_loading);
+    const previewSearch = yield* call("mcp__t3-code__tool_search", { query: "preview_open" });
+    assert.deepInclude(previewSearch.content, {
+      type: "tool_reference",
+      tool_name: "mcp__t3-code__preview_open",
+    });
+    relistT3Tools(sample);
+    assert.include(
+      sample.tools.map((tool) => tool.name),
+      "mcp__t3-code__preview_open",
+    );
+    assert.notInclude(
+      makeSample(testCase, base).tools.map((tool) => tool.name),
+      "mcp__t3-code__preview_open",
+    );
+  }).pipe(Effect.provide(FetchHttpClient.layer)),
+);
 
 it("lists link tools only while a case turns the beta on, and sends chips as T3 projects them", () => {
   const off = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
