@@ -267,6 +267,11 @@ describe("AcpMcpOverAcpBridge", () => {
         "reconnects cleanly when auth rotates during initial initialize and rejects waiting calls from the prior generation",
     },
     {
+      scenario: "reconnect-releases-mutex" as const,
+      description:
+        "answers a reconnecting call while a long call from an earlier reconnect is pending",
+    },
+    {
       scenario: "error-and-malformed-initialize" as const,
       description:
         "fails reconnect when initialize returns an error or malformed envelope without sending notifications/initialized",
@@ -386,6 +391,31 @@ describe("AcpMcpOverAcpBridge", () => {
           { authorization: "Bearer run-2-token", sessionId: "session-2", method: "tools/call" },
           { authorization: "Bearer run-2-token", sessionId: "session-2", method: "tools/call" },
         ]);
+        return;
+      }
+
+      if (scenario === "reconnect-releases-mutex") {
+        const slowCallStarted = Promise.withResolvers<void>();
+        const releaseSlowCall = Promise.withResolvers<void>();
+        const { bridge, init, callTool } = yield* makeStatefulBridge({
+          onRequest: async (_auth, body) => {
+            if (body.params?.name === "slow_call") {
+              slowCallStarted.resolve();
+              await releaseSlowCall.promise;
+            }
+            return undefined;
+          },
+        });
+
+        yield* init();
+        bridge.setAuthorization("Bearer run-2-token");
+        const slow = yield* callTool("slow_call").pipe(Effect.forkChild);
+        yield* Effect.promise(() => slowCallStarted.promise);
+        // The slow call reconnected for run 2; the next rotation's reconnect must not wait on it.
+        bridge.setAuthorization("Bearer run-3-token");
+        expect(yield* callTool()).toEqual({ content: [] });
+        releaseSlowCall.resolve();
+        expect(yield* Fiber.join(slow)).toEqual({ content: [] });
         return;
       }
 

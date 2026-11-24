@@ -115,12 +115,16 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         : Effect.succeed(connection);
     });
 
-  // Only initialization and auth-rotation reconnects need ordering; negotiated calls wait independently.
-  const untilNegotiated = <A, E>(connection: Connection, effect: Effect.Effect<A, E>) =>
+  // Only initialization needs ordering; negotiated calls wait independently. The flag says
+  // whether the call already holds the mutex for first negotiation.
+  const untilNegotiated = <A, E>(
+    connection: Connection,
+    effect: (ordered: boolean) => Effect.Effect<A, E>,
+  ) =>
     Effect.suspend(() =>
-      connection.protocolVersion === null || connection.needsReconnect
-        ? connection.mutex.withPermits(1)(effect)
-        : effect,
+      connection.protocolVersion === null
+        ? connection.mutex.withPermits(1)(effect(true))
+        : effect(false),
     );
 
   const postOnce = Effect.fn("AcpMcpOverAcpBridge.postOnce")(function* (
@@ -227,8 +231,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
   ): Effect.Effect<ReadonlyArray<unknown>, AcpMcpOverAcpError> => {
     const method = asEnvelope(message)?.method;
     const pinnedGeneration = authorizationGeneration;
-    return untilNegotiated(
-      connection,
+    return untilNegotiated(connection, (ordered) =>
       Effect.gen(function* () {
         if (method !== "initialize") {
           while (true) {
@@ -238,7 +241,16 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
               });
             }
             if (!connection.needsReconnect) break;
-            yield* reconnectIfNeeded(connection);
+            // A reconnect holds the mutex only while it renegotiates, not for this request.
+            yield* ordered
+              ? reconnectIfNeeded(connection)
+              : connection.mutex.withPermits(1)(
+                  Effect.suspend(() =>
+                    connection.needsReconnect && authorizationGeneration === pinnedGeneration
+                      ? reconnectIfNeeded(connection)
+                      : Effect.void,
+                  ),
+                );
           }
         }
         const requestGeneration = authorizationGeneration;
