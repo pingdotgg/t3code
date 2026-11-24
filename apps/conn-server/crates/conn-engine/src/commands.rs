@@ -410,8 +410,20 @@ fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>
         },
         _ => None,
     };
-    let restart =
-        c.dispatch_mode.kind == "restart_active" || c.delivery_intent.as_deref() == Some("restart");
+    // A steer on another instance cannot join the running turn: it restarts there, with the
+    // conversation (`selectionMustApplyNow` in `dispatchMessage`).
+    let requested = match &c.model_selection {
+        Some(selection) => selection["instanceId"].clone(),
+        None => tx
+            .thread(&c.thread_id)?
+            .map_or(Value::Null, |t| t["modelSelection"]["instanceId"].clone()),
+    };
+    let switches = steer_target
+        .as_ref()
+        .is_some_and(|t| requested.is_string() && t["providerInstanceId"] != requested);
+    let restart = switches
+        || c.dispatch_mode.kind == "restart_active"
+        || c.delivery_intent.as_deref() == Some("restart");
     Ok(match steer_target {
         // Interrupt-and-restart: the message goes first in the queue and the turn stops.
         Some(target) if restart => (Delivery::Queue { first: true }, Some(target)),

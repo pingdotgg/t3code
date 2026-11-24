@@ -233,11 +233,10 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
   `supportsProviderSwitchingViaHandoff: true`, as in T3, so clients open the model picker to
   other providers. Tests: `a_provider_switch_hands_the_history_to_the_new_provider`,
   `a_queued_run_on_another_provider_carries_the_history`,
-  `a_switch_to_a_provider_without_handoff_is_refused`.
+  `a_switch_to_a_provider_without_handoff_is_refused`,
+  `a_steer_to_another_provider_restarts_there`.
   Not built (T3 has them): the `prepareLegacyImport` recovery handoff of a v1 import with no
-  completed run, the turn start's resume-fallback and missed-run retry handoffs, a switch
-  steered into a running turn (`dispatchSteerIntoRun` restarts it with a handoff; here a steer
-  stays on the running provider), cross-instance resume for instances that share native
+  completed run, the turn start's resume-fallback and missed-run retry handoffs, cross-instance resume for instances that share native
   history (`restart_and_resume`; here every instance change hands off), the capability check
   for a queued run (all four providers pass it), and the provider thread's `handoffIds`.
 - **Live command output.** `command_output.delta` (Codex) feeds a bounded hub in `output.rs`:

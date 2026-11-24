@@ -82,10 +82,12 @@ thread's provider, and a switch made another way started the new provider with n
 - **Not proven:** T3's `ProviderSwitch.integration.test.ts` runs on T3's in-process harness
   (its own adapters and event sink), so it does not run on this engine; the switch rules here
   come from reading `Orchestrator.ts`. No live provider was switched.
+- **Steer on another provider:** the running turn stops and the message restarts on the new
+  instance with a handoff (`a_steer_to_another_provider_restarts_there`). After `/clear`, a
+  return to a provider starts a new native thread, never the cleared one.
 - **Not built** (T3 has them): the v1-import recovery handoff (`prepareLegacyImport`) for an
   imported thread with no completed run; the turn start's resume-fallback and missed-run retry
-  handoffs; a provider change steered into a running turn (T3 restarts the turn with a
-  handoff; here the steer stays on the running provider); resume across instances that share
+  handoffs; resume across instances that share
   native history (here every instance change hands off); the capability check for a queued
   run (all four providers pass it); the provider thread's `handoffIds`. The budget still
   knows no model window and no native estimate (as for merge-back).

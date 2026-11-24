@@ -3658,6 +3658,61 @@ async fn a_provider_switch_hands_the_history_to_the_new_provider() {
     assert_eq!(p["runs"][4]["contextHandoffId"], Value::Null);
     assert_eq!(crate::lock(&codex.injected).len(), 1);
     assert_eq!(crate::lock(&codex.prompts).last().unwrap(), "start over");
+
+    // Back on Claude after the clear: a new native thread, never the cleared one
+    // (`rootProviderThreadsForProvider` skips threads older than the boundary).
+    dispatch(&engine, model_selection_set("c10", "claudeAgent")).await;
+    dispatch(&engine, message("t1", "c11", "after the clear")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:6").await;
+    assert_eq!(p["runs"][5]["status"], "completed");
+    assert_eq!(p["runs"][5]["providerThreadId"], "provider-thread:t1:2");
+    assert_eq!(
+        handoff_of(&p, "run:t1:6")["strategy"],
+        "full_thread_summary"
+    );
+    let prompt = crate::lock(&claude.prompts).last().unwrap().clone();
+    assert!(prompt.contains("start over"), "{prompt}");
+    assert!(!prompt.contains("blue-17"), "{prompt}");
+}
+
+/// A steer that picks another instance than the running turn's does not join that turn: the
+/// turn stops and the message restarts on the new provider with the conversation
+/// (`dispatchMessage`, `selectionMustApplyNow` for a provider instance change).
+#[tokio::test(flavor = "current_thread")]
+async fn a_steer_to_another_provider_restarts_there() {
+    let db = TempDb::new("steer-switch");
+    let (engine, claude, codex) = open_two_injecting(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let mut steer = message_with(
+        "t1",
+        "c3",
+        "now on codex",
+        json!({"type": "steer_active", "targetRunId": "run:t1:1"}),
+        None,
+    );
+    steer["modelSelection"] = json!({"instanceId": "codex", "model": "m"});
+    dispatch(&engine, steer).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][0]["status"], "interrupted");
+    assert_eq!(p["runs"][1]["providerInstanceId"], "codex");
+    assert_eq!(p["runs"][1]["status"], "completed");
+    assert!(
+        !crate::lock(&claude.prompts)
+            .iter()
+            .any(|prompt| prompt.contains("now on codex")),
+        "the steer never reaches the Claude session"
+    );
+    assert_eq!(*crate::lock(&codex.prompts), ["now on codex"]);
+    let injected = crate::lock(&codex.injected).clone();
+    assert_eq!(injected.len(), 1);
+    assert!(injected[0].1.to_string().contains("hang"));
 }
 
 /// A switch to a provider that cannot take the history is refused with T3's text
