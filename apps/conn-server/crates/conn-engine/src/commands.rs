@@ -1012,7 +1012,8 @@ pub(crate) fn next_runs_on_failed_provider(
             Some(id) => tx.entity(thread_id, "messages", id)?,
             None => None,
         };
-        let stale = match message {
+        // Only a pull request wake needs the thread's history.
+        let stale = match message.filter(crate::pull_requests::is_watch_wake) {
             Some(message) => crate::pull_requests::stale_wake(
                 &thread,
                 &tx.entities(thread_id, "messages")?,
