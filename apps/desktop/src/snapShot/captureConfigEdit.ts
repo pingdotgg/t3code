@@ -144,7 +144,9 @@ export function editCaptureConfig(
   operation: "install" | "remove",
   requestedKeys?: string,
 ) {
-  if (format === "hyprland-lua" && (/^\s*return\b/m.test(source) || /\[=*\[/.test(source)))
+  // A top-level return must end the chunk, so appending after it would break the config. A return
+  // indented inside a function or block is fine.
+  if (format === "hyprland-lua" && (/^return\b/m.test(source) || /\[=*\[/.test(source)))
     throw new Error(
       "This Lua config needs a manual edit. Choose your bindings file or use manual setup in Advanced.",
     );
