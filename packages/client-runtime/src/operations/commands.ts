@@ -611,6 +611,21 @@ export const pinThread = Effect.fn("EnvironmentCommands.pinThread")(function* (
   });
 });
 
+// fork: roles
+export interface SetThreadRoleInput extends ThreadCommandInput {
+  readonly roleId: string | null;
+}
+export const setThreadRole = Effect.fn("EnvironmentCommands.setThreadRole")(function* (
+  input: SetThreadRoleInput,
+) {
+  return yield* dispatch({
+    type: "thread.role.set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    roleId: input.roleId,
+  });
+});
+
 export interface SetThreadAutoSettleInput extends ThreadCommandInput {
   readonly enabled: boolean;
 }

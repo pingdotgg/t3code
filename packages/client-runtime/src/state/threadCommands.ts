@@ -50,6 +50,7 @@ import {
   reorderPinnedThread,
   reorderActiveThread,
   setThreadAutoSettle,
+  setThreadRole, // fork: roles
   settleThread,
   snoozeThread,
   startThreadTurn,
@@ -268,6 +269,13 @@ export function createThreadEnvironmentAtoms<R, E>(
     reorderPin: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:reorder-pin",
       execute: reorderPinnedThread,
+      scheduler,
+      concurrency,
+    }),
+    // fork: roles
+    setRole: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-role",
+      execute: setThreadRole,
       scheduler,
       concurrency,
     }),
@@ -581,6 +589,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       snoozedUntil: null,
       snoozedAt: null,
     })),
+    setRole: optimistic.wrap(commands.setRole, (thread, input) => ({ ...thread, roleId: input.roleId })), // fork: roles
     setAutoSettle: optimistic.wrap(commands.setAutoSettle, (thread, input, now) => ({
       ...thread,
       autoSettleDisabledAt: input.enabled ? null : (thread.autoSettleDisabledAt ?? now),
