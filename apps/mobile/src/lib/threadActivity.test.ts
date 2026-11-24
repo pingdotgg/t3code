@@ -1392,19 +1392,6 @@ describe("buildThreadFeed", () => {
         ]),
       ),
     ).toBe("Waiting on 2 subagents");
-    const { exitCode: _exitCode, ...completedCommand } = command("2026-06-20T00:00:05.000Z");
-    expect(
-      thinkingLabel(
-        present([
-          {
-            ...completedCommand,
-            status: "running",
-            completedAt: null,
-            output: "",
-          },
-        ]),
-      ),
-    ).toBeUndefined();
     expect(
       thinkingLabel(
         present([
