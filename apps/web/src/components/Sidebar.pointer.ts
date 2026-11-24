@@ -10,6 +10,8 @@ type Options = {
   onMove?: (point: { x: number; y: number }) => boolean;
   /** Return true to consume the release and cancel sorting. */
   onDrop?: (point: { x: number; y: number }) => boolean;
+  /** Return true when a missing pointerup should finish the sort instead of cancelling it. */
+  completeSortOnLostRelease?: (activeId: string) => boolean;
 };
 
 export class SidebarPointerSensor {
@@ -60,10 +62,16 @@ export class SidebarPointerSensor {
     if (this.phase === "finished" || event.pointerId !== this.pointer.pointerId) return;
     const coordinates = { x: event.clientX, y: event.clientY };
     // Desktop may report buttons=0 before pointerup: a pending press is released like pointerup so its
-    // click lands; an active drag drops context before cancelling sort.
+    // click lands; an active drag drops context or finishes the sort the way a release would.
     if ((event.buttons & 1) === 0) {
       if (this.phase === "pending") return this.finish(false);
-      this.props.options.onDrop?.(coordinates);
+      const consumed = this.props.options.onDrop?.(coordinates) === true;
+      if (
+        !consumed &&
+        this.props.options.completeSortOnLostRelease?.(String(this.props.active)) === true
+      ) {
+        return this.finish(false);
+      }
       return this.cancel();
     }
     if (this.phase === "pending") {

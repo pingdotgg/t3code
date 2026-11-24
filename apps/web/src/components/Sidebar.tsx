@@ -1873,12 +1873,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return true;
   };
   // useSensor memoizes options identity; fresh options rebuild DndContext and every sortable row.
+  const completeSortOnLostRelease = useStableCallback((activeId: string) =>
+    projectFolderById.has(activeId),
+  );
   const pointerSensorOptions = {
     distance: SIDEBAR_DRAG_DISTANCE,
     onAttach: attachDragSensor,
     onFinish: finishSidebarDrag,
     onMove: moveThreadContextDrag,
     onDrop: dropSidebarDrag,
+    completeSortOnLostRelease,
   };
   const dndSensors = useSensors(useSensor(SidebarPointerSensor, pointerSensorOptions));
   const sectionByThreadKeyRef = useRef(sectionByThreadKey);

@@ -56,7 +56,11 @@ describe("sidebar pointer lifecycle", () => {
   it("drops context when a zero-button move precedes pointerup", () => {
     using _environment = setup();
     const onDrop = vi.fn((point: { x: number; y: number }) => point.x > 50);
-    const drag = gesture({ onMove: (point) => point.x > 50, onDrop });
+    const drag = gesture({
+      onMove: (point) => point.x > 50,
+      onDrop,
+      completeSortOnLostRelease: () => true,
+    });
     document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
     document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 30 }));
 
@@ -68,6 +72,24 @@ describe("sidebar pointer lifecycle", () => {
     expect(onDrop).toHaveBeenCalledExactlyOnceWith({ x: 94, y: 32 });
     expect(drag.onCancel).toHaveBeenCalledOnce();
     expect(drag.onEnd).not.toHaveBeenCalled();
+    expect(drag.onFinish).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it("finishes a sortable drag when a zero-button move precedes pointerup", () => {
+    using _environment = setup();
+    const onDrop = vi.fn((point: { x: number; y: number }) => point.x > 50);
+    const drag = gesture({
+      onMove: (point) => point.x > 50,
+      onDrop,
+      completeSortOnLostRelease: (activeId) => activeId === "thread",
+    });
+    document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 30 }));
+    document.dispatchEvent(pointer("pointermove", { buttons: 0, clientX: 30, clientY: 40 }));
+    document.dispatchEvent(pointer("pointerup", { buttons: 0, clientX: 30, clientY: 40 }));
+
+    expect(onDrop).toHaveBeenCalledExactlyOnceWith({ x: 30, y: 40 });
+    expect(drag.onEnd).toHaveBeenCalledOnce();
+    expect(drag.onCancel).not.toHaveBeenCalled();
     expect(drag.onFinish).toHaveBeenCalledExactlyOnceWith(true);
   });
 
