@@ -71,6 +71,7 @@
   "cd03eb1b84271c02": "Agent",
   "bfe1a60f3f9c60fb": "Tour {turn} · {what}",
   "dfdaa6255a416140": "Résumé de {turns, plural, one {{turns} tour récent} other {{turns} tours récents}}, {textTurns, plural, =0 {sans texte des messages} one {avec le texte des messages du dernier tour} other {avec le texte des messages des {textTurns} derniers tours}}{truncated, select, yes {, raccourci pour tenir dans la limite} other {}}",
+  "260c6b45f52d2f27": "Ajoute le texte de vos messages et des réponses de l'agent dans {textTurns, plural, one {le dernier tour} other {les {textTurns} derniers tours}}.",
   "afac52a5cc2dc801": "Impossible d'envoyer votre réponse. Réessayez.",
   "79d776428f4d0650": "Le fichier n’a pas pu être chargé. Reconnectez-vous et réessayez.",
   "3ea34cbb1ca5ba9b": "Aperçu annulé.",
@@ -2510,6 +2511,9 @@
   "f8725d62bc72896d": "Changez de canal dans À propos → Canal de mise à jour",
   "048a22fa4de22f96": "Mettez à jour l’app desktop sur cette machine pour mettre à jour ce serveur.",
   "05e8891ef57c0d63": "Later",
+  "1d82bd5e90077552": "Hide quiet roles",
+  "7fe756d0ad52bec8": "Show all roles",
+  "c3e6417dd95f15e7": "Roles",
   "e7a50ab49cdfd076": "Régénération… ({count})",
   "6523a0ca24b57fde": "Régénérer les titres ({count})",
   "96adc8bf3106015d": "Désépingler ({count})",
@@ -2738,9 +2742,9 @@
   "db7b3a938c45e56c": "Mise à jour {version} prête à être téléchargée",
   "9a951140b69ba740": "Téléchargement de la mise à jour ({percent} %)",
   "7fdece033260e9fb": "Téléchargement de la mise à jour",
+  "52e1d4a487c0cf4b": "Échec de l’installation de {version}. Cliquez pour réessayer.",
   "09ef51903e99e876": "Mise à jour téléchargée. Cliquez pour redémarrer et l’installer.",
   "d62631cab06d2b80": "Mise à jour {version} téléchargée. Cliquez pour redémarrer et l’installer.",
-  "52e1d4a487c0cf4b": "Échec de l’installation de {version}. Cliquez pour réessayer.",
   "78a04e0e625c0990": "Échec de la mise à jour",
   "c24de5eb69373a55": "Cette version {build} ignore les versions {track}. Vérifiez le canal de mise à jour dans les Réglages pour terminer le changement.",
   "b02ae45a6109c93b": "À jour",
@@ -2807,6 +2811,10 @@
   "f50619195a6d0ad2": "Donner à {appName} l’accès à {owner}",
   "9b771434a1d169dd": "L’app n’y est pas installée, les requêtes GitHub pour {repository} utilisent donc votre propre connexion et sa limite de débit plus basse.",
   "5d973795984549fc": "Installer",
+  "ca87c746bbce56fb": "Set a roles directory in Settings",
+  "620729eb5c44f7fc": "No roles in the roles directory",
+  "abedd6f4ef51d17f": "Role",
+  "b85dde0a51358b48": "No role",
   "d2ba9ab14fd2e81c": "Copier",
   "a9abbabbd3106847": "Chemin",
   "bd86c9f5e546d3d9": "Branche",
@@ -3106,6 +3114,7 @@
   "c646366e142ba05f": "L’état WSL de l’app desktop n’est pas disponible.",
   "228dcd284ea651b3": "Échec du chargement de l’état WSL.",
   "b08d105dd2553f8d": "Le projet n’est pas apparu dans l’app desktop.",
+  "bd9beedd2021d34d": "Failed to change role",
   "7a4b3f3b83e121d7": "{organization} a désactivé les données d’utilisation anonymes.",
   "d85822b18e9475df": "Géré par {organization}.",
   "a6dd531d58080010": "Connectez-vous à ce serveur pour vérifier les versions.",
@@ -3213,7 +3222,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "sur l’ordinateur qui a ouvert cette page"]
+      "c": [
+        " ",
+        "sur l’ordinateur qui a ouvert cette page"
+      ]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3225,7 +3237,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "· quiconque l’exécute obtient cet accès"]
+      "c": [
+        " ",
+        "· quiconque l’exécute obtient cet accès"
+      ]
     }
   ],
   "c54cc9c75db9dc58": "N’approuvez qu’une connexion que vous venez de lancer.",
@@ -3386,6 +3401,7 @@
   ],
   "3dbc42464b2bfb20": "Fast et Ultrafast ne sont pas disponibles avec cette connexion ChatGPT. Utilisez une connexion Codex CLI existante pour les options de vitesse prises en charge par votre compte.",
   "5c0eb4217bb673bd": "Forfait ChatGPT utilisé",
+  "a67d9e3f336621bf": "Open role file: {role}",
   "3e545d70d0c3535c": "Fil d’Ariane du fil",
   "890c34762a621a66": "Ouvrir le fil parent : {title}",
   "7514746d2bd43a1c": "Titre du fil",
@@ -3639,19 +3655,18 @@
   "c53bc5a4b0314342": "Média suivant",
   "2950b1424a3cddf5": "Reconnectez-vous à cet environnement et ouvrez à nouveau le média.",
   "ef638bf1479a5461": "L’environnement a renvoyé une URL de média non valide.",
+  "3ccfbf7e86868c35": "Retour pour l'équipe T3",
+  "4e0710d19dfc2e7e": "Envoyer ce rapport à l'équipe T3 ?",
+  "87d0ae0723ba75d1": "Voici tout ce qui quitte votre machine. Rien n'est envoyé tant que vous ne cliquez pas sur Envoyer.",
+  "bf19826f81484328": "Inclure la conversation",
+  "ddb7e6f8ce99e657": "Seule une personne autorisée à exécuter des agents sur cette machine peut l'envoyer ou le refuser.",
+  "03c1eb603c112f47": "Ne pas envoyer",
+  "653405e4ed498d9f": "Envoyer",
   "1a6bd480da129271": "One-shot",
   "36af65817abef4a9": "Settle this thread when the agent finishes. The agent is told no follow-ups will come.",
   "684ae446fac50755": "One-shot",
   "5b235c9cebd4ab04": "Work through my questions ({command})",
   "3c7b3f37b5aa5e76": "Work through my questions ({command}). Clear the draft first.",
-  "3ccfbf7e86868c35": "Retour pour l'équipe T3",
-  "4e0710d19dfc2e7e": "Envoyer ce rapport à l'équipe T3 ?",
-  "87d0ae0723ba75d1": "Voici tout ce qui quitte votre machine. Rien n'est envoyé tant que vous ne cliquez pas sur Envoyer.",
-  "bf19826f81484328": "Inclure la conversation",
-  "260c6b45f52d2f27": "Ajoute le texte de vos messages et des réponses de l'agent dans {textTurns, plural, one {le dernier tour} other {les {textTurns} derniers tours}}.",
-  "ddb7e6f8ce99e657": "Seule une personne autorisée à exécuter des agents sur cette machine peut l'envoyer ou le refuser.",
-  "03c1eb603c112f47": "Ne pas envoyer",
-  "653405e4ed498d9f": "Envoyer",
   "262955d6eb632f9b": "L’API Presse-papiers n’est pas disponible pour copier le lien invité.",
   "f1a4f2b04cdbb4ef": "Impossible de copier le lien invité dans le presse-papiers.",
   "cf3490a604e44d31": "Impossible de créer un lien invité.",
@@ -8640,6 +8655,12 @@
   "e8622c39abe68f9d": "par défaut",
   "5383ef2d2c09cdf7": "Rechercher des polices…",
   "ea08337bcadd35b4": "Aucune police trouvée.",
+  "c0617c74e32ff9c3": "Roles",
+  "4c831f64832bb555": "Folder of role files, one Markdown file per role. A thread given a role keeps that standing job. Leave empty to turn roles off.",
+  "110ab40968d48002": "Clear the roles directory",
+  "69d053acd41768be": "Roles directory",
+  "d52b3d6bf9f2a013": "Mixte",
+  "7c45097e502dcfe0": "Off",
   "d6ad43bc4b700a88": "Aucune donnée de profil de navigateur à effacer.",
   "ad8efd437b301a37": "Système",
   "42e23caa6ef99cad": "Clair",
@@ -8766,9 +8787,13 @@
   "ed83b25c71c98a20": "Choisissez un ou plusieurs {scope}s {tracker} pour chaque projet. Leurs tickets s'affichent à côté de ceux du dépôt, et les agents créent les nouveaux tickets dans le premier, sauf si vous leur indiquez une autre destination.",
   "19c2d5e81ff8f89a": "{scope} {tracker} pour {project}",
   "68e061510b765772": "Non lié",
+  "99d51127f573296b": "Autre compte",
+  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
+  "99963c0142e17f00": "Pour le nouveau compte {tracker}.",
   "a2d95d39d3398bda": "Identifiant refusé",
   "9eae463720500113": "Stocké sur le serveur.",
   "b6e27ab2537ef874": "En créer un",
+  "6d8e4ebc889bace9": "Ajouter un compte",
   "13ef526271b0f5d4": "Effacer toutes les conditions",
   "d1938a629f039515": "Supprimer la condition",
   "84a605b241ce65b7": "Supprimer le groupe et ses conditions",
@@ -8921,7 +8946,6 @@
   "f9904f78d3003f58": "Checkout rapide des worktrees",
   "9c2f647882522302": "Les machines sélectionnées utilisent des modes de retour des agents différents.",
   "31bbf7bf8c0a5279": "Retours des agents",
-  "d52b3d6bf9f2a013": "Mixte",
   "ec7623deed751c05": [
     "Partagez un fil avec un invité qui le suit en direct dans un navigateur et envoie des messages que vous approuvez. Nécessite T3 Connect : connectez-vous et associez cette machine dans",
     " ",
@@ -11796,6 +11820,7 @@
   "514934c5c2d1d6ae": "Ce checkout n’est plus disponible dans le projet et l’environnement sélectionnés.",
   "766892e19b165adf": "Ce projet n’a pas de checkout dans cet environnement.",
   "1c563d7e36c759af": "L’environnement de ce checkout n’est plus disponible.",
+  "1e517ac2cdde16a9": "roles role briefs folder path standing job agent",
   "81d0d1e78b196630": "Général",
   "afda415d2d75a5d3": "Discussion",
   "4beeab8d1814b251": "Diffs et pull requests",
@@ -12614,6 +12639,16 @@
   "156ff7b625287a1e": "Masquer les éléments ignorés",
   "69b985b97ab45e6b": "Afficher {count} ignorés",
   "2400254d362de84d": "Chargement des exécutions de workflow…",
+  "cae5c3205c01d062": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": "Un fichier de workflow présente un problème."
+    },
+    " ",
+    "La dernière version valide continue de s’exécuter."
+  ],
+  "ed8ce6ebc73dc12d": "Ouvrir le fichier",
   "145e1f7503ba3b2c": [
     "Cet environnement n’a aucune exécution avec ce lien.",
     " ",
@@ -12639,16 +12674,6 @@
       "c": "Lire le guide"
     }
   ],
-  "cae5c3205c01d062": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": "Un fichier de workflow présente un problème."
-    },
-    " ",
-    "La dernière version valide continue de s’exécuter."
-  ],
-  "ed8ce6ebc73dc12d": "Ouvrir le fichier",
   "5d8d278ff828102d": "Tous les workflows",
   "39459da07479f482": "Agent",
   "7741243632056b81": "{step} · transcription",
@@ -12793,9 +12818,5 @@
   "27d76249d09eb69f": "Guide de revue prêt",
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
-  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
-  "99d51127f573296b": "Autre compte",
-  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
-  "99963c0142e17f00": "Pour le nouveau compte {tracker}.",
-  "6d8e4ebc889bace9": "Ajouter un compte"
+  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue"
 }

@@ -71,6 +71,7 @@
   "cd03eb1b84271c02": "Agent",
   "bfe1a60f3f9c60fb": "Turn {turn} · {what}",
   "dfdaa6255a416140": "Outline of {turns, plural, one {{turns} recent turn} other {{turns} recent turns}}, {textTurns, plural, =0 {no message text} one {message text of the last turn} other {message text of the last {textTurns} turns}}{truncated, select, yes {, shortened to fit} other {}}",
+  "260c6b45f52d2f27": "Adds the text of your messages and the agent's replies in the last {textTurns, plural, one {turn} other {{textTurns} turns}}.",
   "afac52a5cc2dc801": "Could not send your answer. Try again.",
   "79d776428f4d0650": "The file could not be loaded. Reconnect and try again.",
   "3ea34cbb1ca5ba9b": "Preview cancelled.",
@@ -2510,6 +2511,9 @@
   "f8725d62bc72896d": "Switch tracks in About → Update track",
   "048a22fa4de22f96": "Update the desktop app on that machine to update this server.",
   "05e8891ef57c0d63": "Later",
+  "1d82bd5e90077552": "Hide quiet roles",
+  "7fe756d0ad52bec8": "Show all roles",
+  "c3e6417dd95f15e7": "Roles",
   "e7a50ab49cdfd076": "Regenerating… ({count})",
   "6523a0ca24b57fde": "Regenerate titles ({count})",
   "96adc8bf3106015d": "Unpin ({count})",
@@ -2738,9 +2742,9 @@
   "db7b3a938c45e56c": "Update {version} ready to download",
   "9a951140b69ba740": "Downloading update ({percent}%)",
   "7fdece033260e9fb": "Downloading update",
+  "52e1d4a487c0cf4b": "Install failed for {version}. Click to retry.",
   "09ef51903e99e876": "Update ready downloaded. Click to restart and install.",
   "d62631cab06d2b80": "Update {version} downloaded. Click to restart and install.",
-  "52e1d4a487c0cf4b": "Install failed for {version}. Click to retry.",
   "78a04e0e625c0990": "Update failed",
   "c24de5eb69373a55": "This {build} build ignores {track} releases. Review the update track in Settings to finish the switch.",
   "b02ae45a6109c93b": "Up to date",
@@ -2807,6 +2811,10 @@
   "f50619195a6d0ad2": "Give {appName} access to {owner}",
   "9b771434a1d169dd": "It isn't installed there, so GitHub requests for {repository} use your own login and its lower rate limit.",
   "5d973795984549fc": "Install",
+  "ca87c746bbce56fb": "Set a roles directory in Settings",
+  "620729eb5c44f7fc": "No roles in the roles directory",
+  "abedd6f4ef51d17f": "Role",
+  "b85dde0a51358b48": "No role",
   "d2ba9ab14fd2e81c": "Copy",
   "a9abbabbd3106847": "Path",
   "bd86c9f5e546d3d9": "Branch",
@@ -3106,6 +3114,7 @@
   "c646366e142ba05f": "Desktop WSL state is unavailable.",
   "228dcd284ea651b3": "Failed to load WSL state.",
   "b08d105dd2553f8d": "The project did not appear in the desktop app.",
+  "bd9beedd2021d34d": "Failed to change role",
   "7a4b3f3b83e121d7": "{organization} turned off anonymous usage data.",
   "d85822b18e9475df": "Managed by {organization}.",
   "a6dd531d58080010": "Connect to this server to check releases.",
@@ -3213,7 +3222,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "on the computer that opened this page"]
+      "c": [
+        " ",
+        "on the computer that opened this page"
+      ]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3225,7 +3237,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "· whoever runs it gets this access"]
+      "c": [
+        " ",
+        "· whoever runs it gets this access"
+      ]
     }
   ],
   "c54cc9c75db9dc58": "Only approve a sign-in you just started.",
@@ -3386,6 +3401,7 @@
   ],
   "3dbc42464b2bfb20": "Fast and Ultrafast are unavailable with this ChatGPT connection. Use an existing Codex CLI login for speed options your account supports.",
   "5c0eb4217bb673bd": "Using ChatGPT plan",
+  "a67d9e3f336621bf": "Open role file: {role}",
   "3e545d70d0c3535c": "Thread breadcrumb",
   "890c34762a621a66": "Open parent thread: {title}",
   "7514746d2bd43a1c": "Thread title",
@@ -3639,19 +3655,18 @@
   "c53bc5a4b0314342": "Next media",
   "2950b1424a3cddf5": "Reconnect to this environment and open the media again.",
   "ef638bf1479a5461": "The environment returned an invalid media URL.",
+  "3ccfbf7e86868c35": "Feedback for the T3 team",
+  "4e0710d19dfc2e7e": "Send this report to the T3 team?",
+  "87d0ae0723ba75d1": "This is everything that leaves your machine. Nothing is sent unless you press Send.",
+  "bf19826f81484328": "Include the conversation",
+  "ddb7e6f8ce99e657": "Only someone who can run agents on this machine can send or decline it.",
+  "03c1eb603c112f47": "Don't send",
+  "653405e4ed498d9f": "Send",
   "1a6bd480da129271": "One-shot",
   "36af65817abef4a9": "Settle this thread when the agent finishes. The agent is told no follow-ups will come.",
   "684ae446fac50755": "One-shot",
   "5b235c9cebd4ab04": "Work through my questions ({command})",
   "3c7b3f37b5aa5e76": "Work through my questions ({command}). Clear the draft first.",
-  "3ccfbf7e86868c35": "Feedback for the T3 team",
-  "4e0710d19dfc2e7e": "Send this report to the T3 team?",
-  "87d0ae0723ba75d1": "This is everything that leaves your machine. Nothing is sent unless you press Send.",
-  "bf19826f81484328": "Include the conversation",
-  "260c6b45f52d2f27": "Adds the text of your messages and the agent's replies in the last {textTurns, plural, one {turn} other {{textTurns} turns}}.",
-  "ddb7e6f8ce99e657": "Only someone who can run agents on this machine can send or decline it.",
-  "03c1eb603c112f47": "Don't send",
-  "653405e4ed498d9f": "Send",
   "262955d6eb632f9b": "Clipboard API is unavailable while copying guest link.",
   "f1a4f2b04cdbb4ef": "Failed to copy guest link to the clipboard.",
   "cf3490a604e44d31": "Could not create a guest link.",
@@ -8649,6 +8664,12 @@
   "e8622c39abe68f9d": "default",
   "5383ef2d2c09cdf7": "Search fonts…",
   "ea08337bcadd35b4": "No fonts found.",
+  "c0617c74e32ff9c3": "Roles",
+  "4c831f64832bb555": "Folder of role files, one Markdown file per role. A thread given a role keeps that standing job. Leave empty to turn roles off.",
+  "110ab40968d48002": "Clear the roles directory",
+  "69d053acd41768be": "Roles directory",
+  "d52b3d6bf9f2a013": "Mixed",
+  "7c45097e502dcfe0": "Off",
   "d6ad43bc4b700a88": "Browser profile data is not available to clear.",
   "ad8efd437b301a37": "System",
   "42e23caa6ef99cad": "Light",
@@ -8775,9 +8796,13 @@
   "ed83b25c71c98a20": "Pick one or more {tracker} {scope}s for each project. Their issues list beside the repository's own, and agents file new issues in the first one unless asked for another.",
   "19c2d5e81ff8f89a": "{tracker} {scope} for {project}",
   "68e061510b765772": "Not bound",
+  "99d51127f573296b": "Another account",
+  "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
+  "99963c0142e17f00": "For the new {tracker} account.",
   "a2d95d39d3398bda": "Credential rejected",
   "9eae463720500113": "Stored on the server.",
   "b6e27ab2537ef874": "Create one",
+  "6d8e4ebc889bace9": "Add account",
   "13ef526271b0f5d4": "Clear all conditions",
   "d1938a629f039515": "Remove condition",
   "84a605b241ce65b7": "Remove group and its conditions",
@@ -8930,7 +8955,6 @@
   "f9904f78d3003f58": "Fast worktree checkout",
   "9c2f647882522302": "The selected machines use different agent feedback modes.",
   "31bbf7bf8c0a5279": "Agent feedback",
-  "d52b3d6bf9f2a013": "Mixed",
   "ec7623deed751c05": [
     "Share a thread with a guest who watches it live in a browser and sends messages you approve. Needs T3 Connect: sign in and link this machine in",
     " ",
@@ -11806,6 +11830,7 @@
   "514934c5c2d1d6ae": "This checkout is no longer available in the selected project and environment.",
   "766892e19b165adf": "This project has no checkout on this environment.",
   "1c563d7e36c759af": "This checkout's environment is no longer available.",
+  "1e517ac2cdde16a9": "roles role briefs folder path standing job agent",
   "81d0d1e78b196630": "General",
   "afda415d2d75a5d3": "Chat",
   "4beeab8d1814b251": "Diffs & pull requests",
@@ -12624,6 +12649,16 @@
   "156ff7b625287a1e": "Hide skipped",
   "69b985b97ab45e6b": "Show {count} skipped",
   "2400254d362de84d": "Loading workflow runs…",
+  "cae5c3205c01d062": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": "A workflow file has a problem."
+    },
+    " ",
+    "The last version that did keeps running."
+  ],
+  "ed8ce6ebc73dc12d": "Open the file",
   "145e1f7503ba3b2c": [
     "This environment has no run with that link.",
     " ",
@@ -12649,16 +12684,6 @@
       "c": "Read the guide"
     }
   ],
-  "cae5c3205c01d062": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": "A workflow file has a problem."
-    },
-    " ",
-    "The last version that did keeps running."
-  ],
-  "ed8ce6ebc73dc12d": "Open the file",
   "5d8d278ff828102d": "All workflows",
   "39459da07479f482": "Agent",
   "7741243632056b81": "{step} · transcript",
@@ -12802,9 +12827,5 @@
   "27d76249d09eb69f": "Review guide ready",
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
-  "9e91e9a77b664e4e": "Could not start a review guide",
-  "99d51127f573296b": "Another account",
-  "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
-  "99963c0142e17f00": "For the new {tracker} account.",
-  "6d8e4ebc889bace9": "Add account"
+  "9e91e9a77b664e4e": "Could not start a review guide"
 }
