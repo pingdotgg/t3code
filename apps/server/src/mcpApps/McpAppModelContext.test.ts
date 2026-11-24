@@ -63,7 +63,7 @@ layer("McpAppModelContext", (it) => {
     }),
   );
 
-  it.effect("drops pre-/clear MCP app notes after a started freshContext run", () =>
+  it.effect("drops pre-/clear MCP app notes, but not for a restarted scheduled fresh run", () =>
     Effect.gen(function* () {
       yield* runMigrations();
       const sql = yield* SqlClient.SqlClient;
@@ -77,7 +77,7 @@ layer("McpAppModelContext", (it) => {
           ('run-before-clear', ${clearedThread}, 1, 'codex', 'completed', '2026-01-01', '{"startedAt":"2026-01-01"}'),
           ('run-clear', ${clearedThread}, 2, 'codex', 'completed', '2026-01-02', '{"freshContext":true,"startedAt":"2026-01-02","userMessageId":"msg-clear"}'),
           ('run-after-clear', ${clearedThread}, 3, 'codex', 'completed', '2026-01-03', '{"startedAt":"2026-01-03"}'),
-          ('run-scheduled-fresh', ${clearedThread}, 4, 'codex', 'completed', '2026-01-04', '{"freshContext":true,"startedAt":"2026-01-04","userMessageId":"msg-scheduled"}')
+          ('run-scheduled-fresh', ${clearedThread}, 4, 'codex', 'completed', '2026-01-04', '{"freshContext":true,"startedAt":"2026-01-04","userMessageId":"msg-restart"}')
       `;
       yield* sql`
         INSERT INTO orchestration_v2_projection_turn_items
@@ -85,7 +85,8 @@ layer("McpAppModelContext", (it) => {
         VALUES
           ('item-before-clear', ${clearedThread}, 'run-before-clear', 1, 'dynamic_tool', 'completed', '2026-01-01', '{}'),
           ('item-after-clear', ${clearedThread}, 'run-after-clear', 2, 'dynamic_tool', 'completed', '2026-01-03', '{}'),
-          ('item-scheduled-prompt', ${clearedThread}, 'run-scheduled-fresh', 3, 'user_message', 'completed', '2026-01-04', '{"messageId":"msg-scheduled","scheduledTaskId":"sched-1"}')
+          ('item-scheduled-prompt', ${clearedThread}, 'run-scheduled-fresh', 3, 'user_message', 'completed', '2026-01-04', '{"messageId":"msg-scheduled","scheduledTaskId":"sched-1"}'),
+          ('item-restart-prompt', ${clearedThread}, 'run-scheduled-fresh', 4, 'user_message', 'completed', '2026-01-04', '{"messageId":"msg-restart"}')
       `;
 
       yield* store.set({

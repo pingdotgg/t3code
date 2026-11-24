@@ -104,14 +104,19 @@ export const layer = Layer.effect(
               AND json_extract(b.payload_json, '$.startedAt') IS NULL
               AND json_extract(b.payload_json, '$.restartContinuationOfRunId') IS NULL
             )
-            AND NOT EXISTS (
-              SELECT 1
+            -- Mirrors isScheduledFreshRun: the run's first prompt, else its userMessageId's row.
+            AND (
+              SELECT json_extract(ti.payload_json, '$.scheduledTaskId')
               FROM orchestration_v2_projection_turn_items AS ti
               WHERE ti.thread_id = b.thread_id
                 AND ti.type = 'user_message'
-                AND json_extract(ti.payload_json, '$.messageId') = json_extract(b.payload_json, '$.userMessageId')
-                AND json_extract(ti.payload_json, '$.scheduledTaskId') IS NOT NULL
-            )
+                AND (
+                  ti.run_id = b.run_id
+                  OR json_extract(ti.payload_json, '$.messageId') = json_extract(b.payload_json, '$.userMessageId')
+                )
+              ORDER BY ti.run_id = b.run_id DESC, ti.ordinal
+              LIMIT 1
+            ) IS NULL
         )
         SELECT context.item_id AS "itemId", context.server, context.tool, context.text
         FROM mcp_app_model_context AS context

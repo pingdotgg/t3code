@@ -4,19 +4,22 @@ import { cancelledBeforeStart } from "./RestartBackgroundNote.ts";
 
 /** A fresh-session schedule run starts a side conversation; the thread's own one continues past it. */
 export function isScheduledFreshRun(
-  run: Pick<OrchestrationV2Run, "freshContext" | "userMessageId">,
+  run: Pick<OrchestrationV2Run, "id" | "freshContext" | "userMessageId">,
   turnItems: OrchestrationV2ThreadProjection["turnItems"],
 ): boolean {
+  if (run.freshContext !== true) return false;
+  // A steering restart replaces userMessageId; the run's first prompt still records its origin.
   // A compacted thread's command read loads these prompts for every fresh-context run.
-  return (
-    run.freshContext === true &&
-    turnItems.some(
-      (item) =>
-        item.type === "user_message" &&
-        item.messageId === run.userMessageId &&
-        item.scheduledTaskId !== undefined,
-    )
-  );
+  let prompt: OrchestrationV2ThreadProjection["turnItems"][number] | undefined;
+  for (const item of turnItems) {
+    if (item.type !== "user_message") continue;
+    if (item.runId === run.id) {
+      if (prompt?.runId !== run.id || item.ordinal < prompt.ordinal) prompt = item;
+    } else if (prompt === undefined && item.messageId === run.userMessageId) {
+      prompt = item;
+    }
+  }
+  return prompt?.type === "user_message" && prompt.scheduledTaskId !== undefined;
 }
 
 /** Ordinal of the latest started fresh-context run. Runs before it never reach a provider again. */
