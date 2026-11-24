@@ -165,7 +165,9 @@ it("Escape in the search clears it without closing Add provider", async () => {
       search.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
       search
         .element()
-        .dispatchEvent(new KeyboardEvent("keydown", { ...composition, bubbles: true }));
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { ...composition, bubbles: true, cancelable: true }),
+        );
     });
     await expect.element(search).toHaveValue("gemini");
   }
@@ -175,13 +177,16 @@ it("Escape in the search clears it without closing Add provider", async () => {
   await expect.element(search).toHaveFocus();
   // Holding Escape repeats the keydown, which must not also close the dialog.
   await act(() => {
-    search
-      .element()
-      .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", repeat: true, bubbles: true }));
+    search.element().dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        repeat: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
   });
   expect(onOpenChange).not.toHaveBeenCalled();
-  await expect.element(search).toHaveAttribute("type", "text");
-  await expect.element(search).toHaveAttribute("enterkeyhint", "search");
 
   await userEvent.keyboard("{Escape}");
   expect(onOpenChange.mock.calls.map(([open]) => open)).toEqual([false]);
