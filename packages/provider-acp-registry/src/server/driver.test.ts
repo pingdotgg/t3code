@@ -5,7 +5,6 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
   type ServerProvider,
-  type ServerProviderModel,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -41,7 +40,6 @@ import {
   acpRegistryProbeResult,
   normalizeAcpRegistryLiveConfiguration,
 } from "./probe.ts";
-import { acpRegistryModelsToDiscover } from "./learnedModelOptions.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 const identity = {
@@ -868,62 +866,6 @@ describe("acpRegistryEnrichmentCache", () => {
   });
 });
 
-describe("acpRegistryModelsToDiscover", () => {
-  it("orders unknown visible models by favorites and the user's order, up to the limit", () => {
-    const instanceId = ProviderInstanceId.make("acpRegistry_devin");
-    const effort = {
-      id: "effort",
-      label: "Effort",
-      type: "select" as const,
-      role: "reasoning" as const,
-      options: [{ id: "high", label: "High" }],
-      currentValue: "high",
-    };
-    const model = (
-      slug: string,
-      extra: Partial<ServerProviderModel> = {},
-    ): ServerProviderModel => ({
-      slug,
-      name: slug,
-      isCustom: false,
-      capabilities: { optionDescriptors: [] },
-      ...extra,
-    });
-    const provider = {
-      instanceId,
-      models: [
-        model("current", { isDefault: true }),
-        model("a"),
-        model("b"),
-        model("c"),
-        model("advertised", { capabilities: { optionDescriptors: [effort] } }),
-        model("known"),
-        model("custom", { isCustom: true }),
-        model("d"),
-        model("e"),
-      ],
-    };
-
-    expect(
-      acpRegistryModelsToDiscover({
-        provider,
-        settings: {
-          ...DEFAULT_SERVER_SETTINGS,
-          favorites: [
-            { provider: ProviderInstanceId.make("other"), model: "a" },
-            { provider: instanceId, model: "e" },
-          ],
-          providerModelPreferences: {
-            [instanceId]: { hiddenModels: ["b"], modelOrder: ["d", "c"] },
-          },
-        },
-        learned: new Map([["known", []]]),
-        limit: 3,
-      }),
-    ).toEqual(["e", "d", "c"]);
-  });
-});
-
 describe("acpRegistryAdvertisesModelCatalog", () => {
   it("counts choices inside option groups and available model state", () => {
     expect(
@@ -1009,7 +951,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
-// Reports `effort` levels for its current model only, like Devin, and logs each model switch.
+// Reports `effort` levels for its current model only and logs each model switch.
 const perModelEffortAgentSource = `
 import { appendFileSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";

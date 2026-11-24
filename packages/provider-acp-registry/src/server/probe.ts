@@ -437,7 +437,7 @@ const discoverAcpRegistryModelOptions = Effect.fn("AcpRegistryProbe.discoverMode
       { discard: true },
     ).pipe(
       Effect.timeoutOption(MODEL_DISCOVERY_TIMEOUT),
-      // Some agents (Mistral Vibe) save the selected model as the user's default.
+      // Some agents save the selected model as the user's default.
       Effect.ensuring(
         runtime
           .setConfigOption(modelOption.id, originalModelId)

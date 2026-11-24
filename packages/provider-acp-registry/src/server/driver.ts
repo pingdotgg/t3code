@@ -78,8 +78,8 @@ const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 // Cache only successful authenticated probes so sign-in changes remain visible.
 const PROBE_SUCCESS_TTL_MS = 15 * 60 * 1_000;
 const PROBE_PROVISIONAL_TTL_MS = 30 * 1_000;
-// Devin answers a model switch in about a third of a second and lists 170 models,
-// so a probe reads a few seconds' worth; later probes continue from the saved results.
+// Large catalogs (well over a hundred models) would keep the probe session open for
+// minutes; each probe reads a bounded batch and later probes continue from the saved results.
 const MAX_DISCOVERED_MODELS_PER_PROBE = 24;
 
 function acpRegistryProbeTtlMs(provider: ServerProvider): number {
