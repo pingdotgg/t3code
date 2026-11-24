@@ -16,7 +16,6 @@ on:
 permissions:
   contents: read
   id-token: none
-  statuses: write
 
 concurrency:
   group: relay-production
@@ -29,6 +28,9 @@ jobs:
     if: github.repository == 'pingdotgg/t3code' && github.ref == 'refs/heads/main'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
+    permissions:
+      contents: read
+      statuses: write
     environment:
       name: production
     env:

@@ -17,6 +17,7 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -39,6 +40,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import { releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
+import { deviceHubNodeArgs } from "./deviceHubNodeArgs.ts";
 import {
   agentDeviceStateDir,
   type DeviceToolPaths,
@@ -53,6 +55,7 @@ import {
 } from "./DeviceToolchain.ts";
 
 const HUB_READY_TIMEOUT_MS = 30_000;
+const HUB_TOKEN_PATTERN = /\btoken=([\w.~-]+)/;
 const DAEMON_READY_TIMEOUT_MS = 30_000;
 const DAEMON_POLL_MS = 100;
 const HUB_RESTART_STABLE_UPTIME_MS = 60_000;
@@ -93,6 +96,7 @@ interface HubProcess {
   readonly child: ChildProcessSpawner.ChildProcessHandle;
   readonly scope: Scope.Closeable;
   readonly origin: string;
+  readonly token: string;
   readonly startedAtMillis: number;
   readonly emulatorExtraArgs: string | undefined;
   readonly emulatorStamp: string | undefined;
@@ -430,6 +434,9 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     yield* fs
       .makeDirectory(agentDeviceStateDir(path, config.stateDir), { recursive: true })
       .pipe(Effect.ignore);
+    // The hub records its token in this folder, kept with the rest of the server's state.
+    const hubStateDir = path.join(config.stateDir, "device", "hub");
+    yield* fs.makeDirectory(hubStateDir, { recursive: true, mode: 0o700 }).pipe(Effect.ignore);
     const port = yield* net.reserveLoopbackPort("127.0.0.1").pipe(
       Effect.mapError(
         (cause) =>
@@ -449,11 +456,13 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           ChildProcess.make(
             nodePath,
             [
-              hubTool.entryPath,
+              ...deviceHubNodeArgs(hubTool.entryPath, hostPlatform),
               "--port",
               String(port),
               "--host",
               "127.0.0.1",
+              // Only the server, which reads the token the hub prints, talks to the hub.
+              "--require-token",
               "--hide-sidebar",
               "--hide-boot-device",
               ...hubPlatformArguments(hostPlatform),
@@ -464,7 +473,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               shell: false,
               stdout: "pipe",
               stderr: "pipe",
-              env,
+              env: { ...env, EXPO_DEVICE_HUB_STATE_DIR: hubStateDir },
             },
           ),
         )
@@ -480,16 +489,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           ),
         );
       const startedAtMillis = yield* Clock.currentTimeMillis;
-      const hub: HubProcess = {
-        child,
-        scope,
-        origin,
-        startedAtMillis,
-        nodePath,
-        emulatorExtraArgs: env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS,
-        emulatorStamp: stamp,
-      };
-      yield* Effect.forkIn(observeHubOutput(hub), scope);
+      const announcedToken = yield* Deferred.make<string>();
+      yield* Effect.forkIn(observeHubOutput(child, announcedToken), scope);
       yield* waitForHttpReady({
         baseUrl: origin,
         path: "/readyz",
@@ -501,21 +502,56 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             cause: info.cause,
           }),
       }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+      const token = yield* Deferred.await(announcedToken).pipe(
+        Effect.timeoutOrElse({
+          duration: Duration.millis(HUB_READY_TIMEOUT_MS),
+          orElse: () =>
+            Effect.fail(
+              new DeviceHost.DeviceHostError({
+                hostId,
+                step: "reading the device hub's session token",
+                cause: new Error("The device hub did not print a session token."),
+              }),
+            ),
+        }),
+      );
+      const hub: HubProcess = {
+        child,
+        scope,
+        origin,
+        token,
+        startedAtMillis,
+        nodePath,
+        emulatorExtraArgs: env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS,
+        emulatorStamp: stamp,
+      };
       yield* recordHub(hub, hubTool);
       yield* Effect.logInfo("Device hub started", { pid: Number(child.pid), port });
       return hub;
     }).pipe(Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)));
   });
 
-  const observeHubOutput = (hub: HubProcess) =>
-    hub.child.all.pipe(
+  // The hub generates its session token and prints it in its startup link; keep it out of logs.
+  const observeHubOutput = (
+    child: ChildProcessSpawner.ChildProcessHandle,
+    announcedToken: Deferred.Deferred<string>,
+  ) =>
+    child.all.pipe(
       Stream.decodeText(),
       Stream.splitLines,
       Stream.map((line) => line.trim()),
       Stream.filter((line) => line.length > 0),
-      Stream.runForEach((line) =>
-        Effect.logDebug("Device hub output", { pid: Number(hub.child.pid), output: line }),
-      ),
+      Stream.runForEach((line) => {
+        const token = HUB_TOKEN_PATTERN.exec(line)?.[1];
+        return (token === undefined ? Effect.void : Deferred.succeed(announcedToken, token)).pipe(
+          Effect.andThen(
+            Effect.logDebug("Device hub output", {
+              pid: Number(child.pid),
+              output: line.replace(HUB_TOKEN_PATTERN, "token=<redacted>"),
+            }),
+          ),
+        );
+      }),
       Effect.ignoreCause,
     );
 
@@ -590,19 +626,25 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       token: file.token,
       entryPath: agentTool.entryPath,
     });
-    if (existing._tag === "Some") {
-      const alive = yield* HttpClient.withScope(httpClient)
-        .get(`http://127.0.0.1:${existing.value.httpPort}/health`)
+    const daemonAnswersHealth = (httpPort: number) =>
+      HttpClient.withScope(httpClient)
+        .get(`http://127.0.0.1:${httpPort}/health`)
         .pipe(
-          Effect.timeout(Duration.seconds(2)),
           Effect.flatMap((response) =>
             response.arrayBuffer.pipe(Effect.as(response.status === 200)),
           ),
+          Effect.timeout(Duration.seconds(2)),
           Effect.scoped,
           Effect.orElseSucceed(() => false),
         );
-      if (alive) return toEndpoint(existing.value);
-      yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
+    if (existing._tag === "Some") {
+      const alive = yield* daemonAnswersHealth(existing.value.httpPort);
+      const samePin =
+        existing.value.version === undefined || existing.value.version === AGENT_DEVICE_VERSION;
+      if (alive && samePin) return toEndpoint(existing.value);
+      // A live daemon from another pin may speak another RPC protocol. Keep its registration so
+      // the pinned CLI retires it, which that CLI does only while the daemon holds no work.
+      if (!alive) yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
     }
     // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
     const runResult = yield* runner
@@ -614,9 +656,16 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.result);
-    // Discovery may fail after startup; accept a published endpoint or preserve the CLI failure.
+    // A failed run can stop the previous daemon and leave its file. Keep that registration
+    // only while it still answers; a successful run has published the endpoint it reached.
     const started = yield* readDaemonFile().pipe(Effect.option);
-    if (started._tag === "Some") return toEndpoint(started.value);
+    if (started._tag === "Some") {
+      const runSucceeded =
+        runResult._tag === "Success" && !runResult.success.timedOut && runResult.success.code === 0;
+      if (runSucceeded || (yield* daemonAnswersHealth(started.value.httpPort))) {
+        return toEndpoint(started.value);
+      }
+    }
     if (runResult._tag === "Failure") {
       return yield* new DeviceHost.DeviceHostError({
         hostId,
@@ -892,10 +941,14 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     );
 
   const toReady = (running: RunningHost): DeviceHost.DeviceHostReady => ({
-    hub: { origin: running.hub.origin } satisfies DeviceHost.DeviceHubEndpoint,
+    hub: {
+      origin: running.hub.origin,
+      token: running.hub.token,
+    } satisfies DeviceHost.DeviceHubEndpoint,
     devices: makeDeviceHubOperations({
       hostId,
       origin: running.hub.origin,
+      token: running.hub.token,
       http: httpClient,
       run,
       platformAvailable: (platform) =>
