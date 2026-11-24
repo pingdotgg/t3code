@@ -2,7 +2,7 @@ import { RegistryProvider } from "@effect/atom-react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent, type Locator } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import * as atomCommands from "../../state/use-atom-command";
 
@@ -169,6 +169,26 @@ it("Esc in the keybindings search clears the query without closing Settings", as
   );
   const search = page.getByRole("searchbox", { name: "Search keybindings" });
   await search.fill("sidebar");
+  for (const composition of [
+    { key: "Escape", isComposing: true, keyCode: 27 },
+    { key: "Escape", isComposing: false, keyCode: 229 },
+  ]) {
+    const keydown = new KeyboardEvent("keydown", {
+      ...composition,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(() => {
+      // Safari ends the composition just before the Escape keydown.
+      if (!composition.isComposing)
+        search.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      search.element().dispatchEvent(keydown);
+    });
+    expect(keydown.defaultPrevented).toBe(false);
+    await expect.element(search).toHaveValue("sidebar");
+    await expect.element(search).toHaveFocus();
+  }
+  expect(search.element().getAttribute("type")).toBe("text");
 
   await userEvent.keyboard("{Escape}");
 

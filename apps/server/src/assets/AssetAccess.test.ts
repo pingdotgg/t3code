@@ -755,7 +755,7 @@ describe("AssetAccess", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const root = yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: "t3-link-" }));
-        yield* fs.writeFileString(path.join(root, "payload.xhtml"), "<html/>");
+        yield* fs.writeFileString(path.join(root, "page.xhtml"), "<html/>");
         yield* fs.writeFileString(path.join(root, "real.pdf"), "%PDF-1.4");
         const link = path.join(root, "report.pdf");
         const issue = issueAssetUrl({
@@ -772,7 +772,7 @@ describe("AssetAccess", () => {
           return resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
         };
 
-        yield* fs.symlink(path.join(root, "payload.xhtml"), link);
+        yield* fs.symlink(path.join(root, "page.xhtml"), link);
         expect((yield* issue.pipe(Effect.flip))._tag).toBe("AssetPreviewTypeValidationError");
 
         yield* fs.remove(link);
@@ -783,7 +783,7 @@ describe("AssetAccess", () => {
         });
 
         yield* fs.remove(link);
-        yield* fs.symlink(path.join(root, "payload.xhtml"), link);
+        yield* fs.symlink(path.join(root, "page.xhtml"), link);
         expect(yield* resolveIssued(issued.relativeUrl)).toBeNull();
       }).pipe(Effect.provide(layerTest)),
   );
@@ -1804,6 +1804,51 @@ describe("AssetAccess", () => {
       );
       expect(tamperedSuffixResult).toEqual({ kind: "file", path: canonicalPath });
       expect(tamperedSuffixResult).not.toEqual({ kind: "file", path: canonicalSiblingPath });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)("refuses a favicon link whose target is not an image", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-asset-favicon-link-" }),
+      );
+      const pictures = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-asset-favicon-link-pictures-" }),
+      );
+      yield* fs.writeFileString(path.join(root, "page.xhtml"), "<html/>");
+      yield* fs.writeFileString(path.join(root, "real.svg"), "<svg/>");
+      const resolveIssued = (relativeUrl: string) => {
+        const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        return resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+      };
+      for (const link of [path.join(root, "favicon.svg"), path.join(pictures, "custom.svg")]) {
+        const issue = issueAssetUrl({
+          resource: { _tag: "project-favicon", cwd: root },
+          ...(link.startsWith(pictures) ? { projectFaviconPath: link } : {}),
+        });
+
+        yield* fs.symlink(path.join(root, "page.xhtml"), link);
+        expect((yield* issue.pipe(Effect.flip))._tag).toBe("AssetPreviewTypeValidationError");
+
+        yield* fs.remove(link);
+        yield* fs.symlink(path.join(root, "real.svg"), link);
+        const issued = yield* issue;
+        expect(yield* resolveIssued(issued.relativeUrl)).toEqual({
+          kind: "file",
+          path: path.join(root, "real.svg"),
+        });
+
+        yield* fs.remove(link);
+        yield* fs.symlink(path.join(root, "page.xhtml"), link);
+        // An outside icon's URL names its target, so repointing the link cannot change it.
+        expect(yield* resolveIssued(issued.relativeUrl)).toEqual(
+          link.startsWith(pictures) ? { kind: "file", path: path.join(root, "real.svg") } : null,
+        );
+        yield* fs.remove(link);
+      }
     }).pipe(Effect.provide(layerTest)),
   );
 

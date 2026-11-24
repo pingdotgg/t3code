@@ -2014,6 +2014,9 @@ export type ThreadSnapshot = {
         | "superseded";
       readonly startedAt: string | null;
       readonly completedAt: string | null;
+      readonly startedModes?:
+        | { readonly runtimeMode: Wire12; readonly interactionMode: Wire13 }
+        | undefined;
     }>;
     readonly nodes: globalThis.ReadonlyArray<{
       readonly id: string;
@@ -2245,6 +2248,7 @@ export type ThreadSnapshot = {
         | undefined
         | undefined;
       readonly startupPhase?: string;
+      readonly startupPhaseThreadId?: string;
       readonly createdAt: string;
       readonly updatedAt: string;
       readonly lastError: string | null;
@@ -2991,6 +2995,7 @@ export type OrchestrationCommand =
     }
   | {
       readonly type: "queued-run.edit";
+      readonly modelSelection?: Wire55;
       readonly context?: Wire73;
       readonly commandId: string;
       readonly threadId: string;
