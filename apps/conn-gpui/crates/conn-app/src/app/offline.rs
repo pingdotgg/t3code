@@ -19,16 +19,20 @@ static CACHE_WRITER: Mutex<()> = Mutex::new(());
 
 const RETENTION_MS: i64 = 24 * 60 * 60 * 1000;
 
-pub(super) fn expired(thread: &ThreadShell) -> bool {
-    thread.deleted_at.is_some()
-        || thread
-            .settled_at
-            .as_deref()
-            .or(thread.archived_at.as_deref())
-            .and_then(conn_state::parse_iso8601_epoch_ms)
-            .is_some_and(|at| {
-                i128::from(super::now_ms()) - i128::from(at) >= i128::from(RETENTION_MS)
-            })
+fn expires_at(thread: &ThreadShell) -> Option<i64> {
+    if thread.deleted_at.is_some() {
+        return Some(0);
+    }
+    thread
+        .settled_at
+        .as_deref()
+        .or(thread.archived_at.as_deref())
+        .and_then(conn_state::parse_iso8601_epoch_ms)
+        .map(|t| t.saturating_add(RETENTION_MS))
+}
+
+fn expired(thread: &ThreadShell) -> bool {
+    expires_at(thread).is_some_and(|at| i128::from(at) <= i128::from(super::now_ms()))
 }
 
 type ThreadKey = (String, String);
@@ -52,6 +56,8 @@ pub(super) struct Offline {
     subscriptions: HashMap<(String, String), Connection>,
     dirty: HashSet<(String, String)>,
     expired: HashSet<(String, String)>,
+    deadlines: HashMap<ThreadKey, i64>,
+    deadlines_dirty: bool,
     outlines: HashMap<(String, String), Arc<ThreadOutline>>,
     outline_writes: HashMap<(String, String), String>,
     outline_requested: HashMap<(String, String), String>,
@@ -94,9 +100,17 @@ impl Offline {
                 }
             }
         });
+        let deadlines = dir
+            .as_ref()
+            .and_then(|dir| std::fs::read(dir.join("settlement-deadlines")).ok())
+            .and_then(|bytes| serde_json::from_slice::<Vec<(ThreadKey, i64)>>(&bytes).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
         Self {
             dir,
             db,
+            deadlines,
             ..Self::default()
         }
     }
@@ -163,16 +177,17 @@ enum Commit {
 
 enum Save {
     Shell(PathBuf, LinkedShellSnapshot),
+    Deadlines(Vec<(ThreadKey, i64)>),
     Chat(ThreadKey, Vec<Message>, Option<Commit>, Option<Weak<u64>>),
     Remove(String, String),
     Outline(String, String, String),
 }
 
-fn write_shell(path: &Path, shell: &LinkedShellSnapshot) -> io::Result<()> {
+fn write_json(path: &Path, value: &impl serde::Serialize) -> io::Result<()> {
     let dir = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
     std::fs::create_dir_all(dir)?;
     let mut file = tempfile::NamedTempFile::new_in(dir)?;
-    serde_json::to_writer(&mut file, shell)?;
+    serde_json::to_writer(&mut file, value)?;
     file.flush()?;
     file.persist(path)?;
     Ok(())
@@ -241,7 +256,8 @@ fn replace_messages(db: &MessageCache, env: &str, id: &str, rows: &[Message]) ->
 
 fn save(dir: &Path, db: Option<&MessageCache>, write: Save) -> io::Result<()> {
     match write {
-        Save::Shell(path, snapshot) => write_shell(&path, &snapshot),
+        Save::Shell(path, snapshot) => write_json(&path, &snapshot),
+        Save::Deadlines(records) => write_json(&dir.join("settlement-deadlines"), &records),
         Save::Chat((env, id), messages, commit, snapshot) => {
             if snapshot.is_some_and(|snapshot| snapshot.strong_count() == 0) {
                 return Ok(());
@@ -734,15 +750,44 @@ impl ConnApp {
         if self.offline.dir.is_none() {
             return;
         }
-        let mut expired_keys: HashSet<_> = self
+        let mut deadlines = std::mem::take(&mut self.offline.deadlines);
+        let previous = deadlines.clone();
+        deadlines.retain(|(env, id), _| self.cache_shell(env, id).is_none());
+        let settled = |t: &ThreadShell| t.deleted_at.is_some() || ShellState::is_settled(t);
+        for thread in self
             .shell
             .threads
             .iter()
             .chain(&self.shell.archived_threads)
-            .filter(|t| expired(t))
-            .filter_map(|t| Some((self.cache_env(&t.id)?.to_owned(), t.id.clone())))
+            .filter(|t| settled(t))
+        {
+            if let (Some(env), Some(at)) = (self.cache_env(&thread.id), expires_at(thread)) {
+                deadlines.insert((env.to_owned(), thread.id.clone()), at);
+            }
+        }
+        for key in self.linked.cache_threads(settled) {
+            if let Some(at) = self.cache_shell(&key.0, &key.1).and_then(expires_at) {
+                deadlines.insert(key, at);
+            }
+        }
+        let now = i128::from(super::now_ms());
+        let mut expired_keys: HashSet<_> = deadlines
+            .iter()
+            .filter(|(_, at)| i128::from(**at) <= now)
+            .map(|(key, _)| key.clone())
             .collect();
-        expired_keys.extend(self.linked.cache_threads(expired));
+        expired_keys.extend(
+            self.offline
+                .expired
+                .iter()
+                .filter(|key| {
+                    self.offline.dirty.contains(*key) && self.cache_shell(&key.0, &key.1).is_none()
+                })
+                .cloned(),
+        );
+        deadlines.retain(|_, at| i128::from(*at) > now);
+        self.offline.deadlines_dirty |= previous != deadlines;
+        self.offline.deadlines = deadlines;
         self.offline
             .dirty
             .extend(expired_keys.difference(&self.offline.expired).cloned());
@@ -1001,7 +1046,9 @@ impl ConnApp {
         }
         for (env, id) in std::mem::take(&mut self.offline.dirty) {
             let key = (env.clone(), id.clone());
-            if self.cache_shell(&env, &id).is_none_or(expired) {
+            if self.offline.expired.contains(&key)
+                || self.cache_shell(&env, &id).is_some_and(expired)
+            {
                 writes.push(Save::Remove(env, id));
             } else if let Some(state) = self.cache_state(&key)
                 && state.sequence.is_some()
@@ -1016,12 +1063,22 @@ impl ConnApp {
                 ));
             }
         }
+        if std::mem::take(&mut self.offline.deadlines_dirty) {
+            writes.push(Save::Deadlines(
+                self.offline
+                    .deadlines
+                    .iter()
+                    .map(|(key, at)| (key.clone(), *at))
+                    .collect(),
+            ));
+        }
         writes
     }
     pub(super) fn schedule_offline_save(&mut self, cx: &mut Context<'_, Self>) {
         if self.offline.dir.is_none()
             || self.offline.saving
             || (!self.offline.shell_dirty
+                && !self.offline.deadlines_dirty
                 && self.offline.dirty.is_empty()
                 && self.offline.outline_writes.is_empty())
         {
@@ -1143,6 +1200,22 @@ mod tests {
         assert_eq!(reopened.entries[0].id(), "950");
         assert_eq!(reopened.entries[99].id(), "1049");
         assert_eq!(reopened.sequence, None);
+        let generation = Arc::new(1);
+        let stale = Save::Chat(
+            ("env".to_owned(), "t".to_owned()),
+            Vec::new(),
+            Some(Commit::Replace),
+            Some(Arc::downgrade(&generation)),
+        );
+        drop(generation);
+        save(dir.path(), Some(&db), stale).expect("discard stale write");
+        assert_eq!(
+            read_chat(&db, "env", "t")
+                .expect("preserved after reset")
+                .entries
+                .len(),
+            100
+        );
         crate::live::RT
             .block_on(db.remove("env", "t"))
             .expect("expire chat");

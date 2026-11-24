@@ -412,6 +412,36 @@ def prove_outline(directory, url, child, database, server, env, start_app):
             assert len(cached_ids("proof-linked",linked_child)) == 1000
     print("23h retention, 25h expiry and unopened refetch to 1000 passed; linked cache stayed intact.",flush=True)
 
+    at = settlement(24 - 12 / 3600)
+    deadline = datetime.fromisoformat(at.replace("Z","+00:00")).timestamp() + 24*3600
+    with ExitStack() as phase:
+        phase.enter_context(running(server,env,directory,"server.log"))
+        start_app(phase)
+        until(lambda: any(t["id"] == child and t["settledAt"] == at for t in json.loads(shell.read_text())["threads"]), "near-expiry settlement")
+        until(lambda: (database.parent/"settlement-deadlines").exists() and
+              any(key == [url,child] for key,_ in json.loads((database.parent/"settlement-deadlines").read_text())),
+              "observed deadline persisted")
+    with sqlite3.connect(engine) as db:
+        saved_thread = db.execute("SELECT * FROM threads WHERE id=?",(child,)).fetchone()
+        db.execute("DELETE FROM threads WHERE id=?",(child,))
+    with ExitStack() as phase:
+        phase.enter_context(running(server,env,directory,"server.log"))
+        start_app(phase)
+        until(lambda: all(t["id"] != child for t in json.loads(shell.read_text())["threads"]), "thread left shell")
+        assert len(cached_ids(url,child)) == 1000
+    time.sleep(max(0,deadline-time.time())+0.1)
+    with ExitStack() as phase:
+        start_app(phase)
+        until(lambda: not cached_ids(url,child), "offline expiry of omitted settled thread")
+    with sqlite3.connect(engine) as db:
+        db.execute(f"INSERT INTO threads VALUES ({','.join('?' for _ in saved_thread)})",saved_thread)
+    settlement(None)
+    with ExitStack() as phase:
+        phase.enter_context(running(server,env,directory,"server.log"))
+        start_app(phase)
+        until(lambda: len(cached_ids(url,child)) == 1000, "refetch after omission")
+    print("The settled child left the shell before its deadline. Offline restart expired its cache, and its return refetched 1000.",flush=True)
+
     with sqlite3.connect(engine) as db:
         db.execute("DELETE FROM entities WHERE thread_id=? AND kind IN ('messages','turnItems') AND id NOT IN (?,?,?,?)",
                    (child,*[f"{prefix}-{child}-{role}1" for prefix in ("ti","msg") for role in ("u","a")]))
