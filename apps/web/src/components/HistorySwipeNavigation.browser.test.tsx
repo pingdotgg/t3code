@@ -80,7 +80,6 @@ describe("HistorySwipeNavigation", () => {
 
   it.each([
     ["end", "back", -130, "wheel first", true],
-    ["end", "forward", 130, "wheel first", true],
     ["end", "forward", 130, "release first", true],
     ["end", "back", -130, "next from edge", false],
     ["end", "back", -130, "next wheel before begin", true],

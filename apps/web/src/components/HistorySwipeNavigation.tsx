@@ -20,13 +20,7 @@ type NativeContact = { at: number; ending?: NativeRelease };
 
 type SwipeBounds = { left: number; top: number; width: number; height: number };
 type SwipeGesture =
-  | {
-      kind: "pending";
-      path: EventTarget[];
-      y: number;
-      sumX: number;
-      sumY: number;
-    }
+  | { kind: "pending"; path: EventTarget[]; y: number; sumX: number; sumY: number }
   | {
       kind: "tracking";
       direction: HistoryDirection;

@@ -2505,6 +2505,31 @@ export const stageAppleSpeech = Effect.fn("stageAppleSpeech")(function* (input: 
   );
 });
 
+export const stageMacTrackpad = Effect.fn("stageMacTrackpad")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  if (input.platform !== "mac") return;
+  const path = yield* Path.Path;
+  yield* runCommand(
+    ChildProcess.make(
+      "node",
+      [
+        path.join(input.repoRoot, "apps/desktop/scripts/build-mac-trackpad.mjs"),
+        "--arch",
+        input.arch,
+        "--output",
+        path.join(input.stageResourcesDir, "mac-trackpad", "libt3-trackpad.dylib"),
+      ],
+      { cwd: input.repoRoot },
+    ),
+    { label: "build macOS trackpad monitor", verbose: input.verbose },
+  );
+});
+
 const generateMacIconSet = Effect.fn("build-desktop-artifact.generateMacIconSet")(function* (
   sourcePng: string,
   targetIcns: string,
@@ -3892,22 +3917,13 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     verbose: options.verbose,
   });
 
-  if (options.platform === "mac") {
-    yield* runCommand(
-      ChildProcess.make(
-        "node",
-        [
-          path.join(repoRoot, "apps/desktop/scripts/build-mac-trackpad.mjs"),
-          "--arch",
-          options.arch,
-          "--output",
-          path.join(stageResourcesDir, "mac-trackpad", "libt3-trackpad.dylib"),
-        ],
-        { cwd: repoRoot },
-      ),
-      { label: "build macOS trackpad monitor", verbose: options.verbose },
-    );
-  }
+  yield* stageMacTrackpad({
+    repoRoot,
+    stageResourcesDir,
+    platform: options.platform,
+    arch: options.arch,
+    verbose: options.verbose,
+  });
 
   yield* assertPlatformBuildResources(
     options.platform,
