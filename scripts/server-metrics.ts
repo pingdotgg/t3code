@@ -13,12 +13,14 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import * as Clock from "effect/Clock";
+import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -28,10 +30,14 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { Argument, Command, Flag } from "effect/cli";
 import {
+  CommandId,
+  MessageId,
+  type OrchestrationV2ThreadStreamItem,
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
@@ -51,13 +57,24 @@ import * as Scope from "effect/Scope";
 import * as Socket from "effect/socket/Socket";
 
 import { run } from "./scenarios/shell.ts";
+import { serveFakeGitHub, type FakeGitHub } from "./server-metrics-forge.ts";
 import {
   compareMetrics,
   CpuProfile,
+  describeFailure,
   HeapProfile,
   HeapSnapshot,
   heapByConstructor,
   heapGrowth,
+  heapRetainers,
+  retainerGrowth,
+  type RetainerGrowth,
+  competingBetween,
+  loadWarnings,
+  noiseReport,
+  noiseRulesFor,
+  noisePairProblem,
+  profileMismatch,
   round,
   ServerMetrics,
   slope,
@@ -70,7 +87,9 @@ import {
   parseRunSelection,
   summarizeProfiles,
   type FirstWord,
+  type MachineState,
   type Measured,
+  type WorkingPoint,
   type ProfileSummary,
   type Window,
 } from "./server-metrics-report.ts";
@@ -78,10 +97,51 @@ import {
 const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 const MODEL = "claude-haiku-4-5";
 const SLOW_MARKER = "[[stream-slowly]]";
-/** Sequential turns in the pipeline scenario. */
-const PIPELINE_TURNS = 50;
-/** Clients that drop and reconnect at once in the clients scenario. */
+/** A prompt holding this streams a reply that ends in a Write tool call, then a short answer. */
+const EDIT_MARKER = "[[edit-files]]";
+/**
+ * How long each scenario measures. `quick` keeps every scenario but shortens its windows, for a
+ * per-PR or nightly check; its numbers compare only with other quick runs.
+ */
+const PROFILES = {
+  full: {
+    /** Idle time before a quiet window, so startup and thread setup work has drained. */
+    settleSeconds: 15,
+    windowSeconds: 30,
+    streamingSeconds: 60,
+    profileSeconds: 20,
+    /** Sequential turns in the pipeline scenario. */
+    pipelineTurns: 50,
+    /** Threads working at once in each window of the working scenario. */
+    workingThreads: [5, 10, 20],
+    workingWarmupSeconds: 10,
+    /** Long enough that most threads finish a turn inside it even at 20 working. */
+    workingSeconds: 30,
+    threads: "0,5,10,20",
+    runs: 5,
+  },
+  quick: {
+    settleSeconds: 5,
+    windowSeconds: 10,
+    streamingSeconds: 20,
+    profileSeconds: 5,
+    pipelineTurns: 15,
+    workingThreads: [5, 20],
+    workingWarmupSeconds: 5,
+    workingSeconds: 20,
+    threads: "0,10",
+    runs: 3,
+  },
+} as const;
+type Profile = (typeof PROFILES)[keyof typeof PROFILES];
+/** A user's devices: clients that drop and reconnect at once, each holding this many threads. */
+const RECONNECT_CLIENTS = 3;
+const RECONNECT_THREADS = 10;
+/** Clients that drop and reconnect at once in the opt-in storm, each holding one thread. */
 const STORM_CLIENTS = 20;
+/** Threads the soak keeps open; every few turns the oldest is replaced. */
+const SOAK_THREADS = 10;
+const SOAK_CHURN_TURNS = 4;
 /** Event-loop delay sampling interval; each sample wakes the loop once. */
 const LOOP_RESOLUTION_MS = 10;
 const LoopStats = Schema.Struct({
@@ -122,6 +182,8 @@ interface ApiRequest {
   readonly agent: boolean;
   readonly stream: boolean;
   readonly marker: string | undefined;
+  /** The request carries a tool result, so it is a turn's follow-up rather than its start. */
+  readonly toolResult: boolean;
   /** When the reply's last event was produced; streamed replies only. */
   endedAt?: number;
 }
@@ -130,7 +192,25 @@ const MessagesRequest = Schema.Struct({
   stream: Schema.optional(Schema.Boolean),
   model: Schema.optional(Schema.String),
   tools: Schema.optional(Schema.Array(Schema.Unknown)),
+  messages: Schema.optional(
+    Schema.Array(Schema.Struct({ role: Schema.String, content: Schema.Unknown })),
+  ),
 });
+
+/** Whether the newest message hands back a tool's result. */
+const endsInToolResult = (messages: typeof MessagesRequest.Type.messages) => {
+  const content = messages?.at(-1)?.content;
+  return (
+    Array.isArray(content) &&
+    content.some(
+      (block: unknown) =>
+        typeof block === "object" &&
+        block !== null &&
+        "type" in block &&
+        block.type === "tool_result",
+    )
+  );
+};
 
 /** Streams a canned reply to every Messages request; a prompt holding SLOW_MARKER streams slowly. */
 const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(function* () {
@@ -151,7 +231,9 @@ const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(functio
       Effect.orElseSucceed((): typeof MessagesRequest.Type => ({})),
     );
     const streamed = body.stream === true;
+    const toolResult = endsInToolResult(body.messages);
     const entry: ApiRequest = {
+      toolResult,
       at: yield* nowMs,
       stream: streamed,
       // Title and branch-name jobs carry only their structured-output tool; the agent carries many.
@@ -177,10 +259,13 @@ const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(functio
     const event = (name: string, data: object) =>
       `event: ${name}\ndata: ${encodeJson({ type: name, ...data })}\n\n`;
     const slow = raw.includes(SLOW_MARKER);
-    const words = slow ? 2_000 : 40;
+    // An editing turn streams a longer first reply, then writes a file in the agent's directory.
+    const cwd = /Primary working directory: ([^\\"\n]+)/.exec(raw)?.[1]?.trim();
+    const edit = entry.agent && raw.includes(EDIT_MARKER) && !toolResult && cwd !== undefined;
+    const words = slow ? 2_000 : edit ? 150 : 40;
     const deltas = Stream.range(0, words - 1).pipe(
       Stream.mapEffect((word) =>
-        Effect.sleep(Duration.millis(slow ? 50 : 5)).pipe(
+        Effect.sleep(Duration.millis(slow ? 50 : edit ? 10 : 5)).pipe(
           Effect.as(
             event("content_block_delta", {
               index: 0,
@@ -190,6 +275,43 @@ const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(functio
         ),
       ),
     );
+    const toolCall = edit
+      ? Stream.make(
+          event("content_block_stop", { index: 0 }),
+          event("content_block_start", {
+            index: 1,
+            content_block: {
+              type: "tool_use",
+              id: `toolu_bench_${requests.length}`,
+              name: "Write",
+              input: {},
+            },
+          }),
+          event("content_block_delta", {
+            index: 1,
+            delta: {
+              type: "input_json_delta",
+              partial_json: encodeJson({
+                file_path: `${cwd}/bench/${entry.marker ?? `turn-${requests.length}`}.md`,
+                content: Array.from({ length: 40 }, (_, line) => `line ${line} of ${id}`).join(
+                  "\n",
+                ),
+              }),
+            },
+          }),
+          event("content_block_stop", { index: 1 }),
+          event("message_delta", {
+            delta: { stop_reason: "tool_use", stop_sequence: null },
+            usage: { output_tokens: words },
+          }),
+        )
+      : Stream.make(
+          event("content_block_stop", { index: 0 }),
+          event("message_delta", {
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { output_tokens: words },
+          }),
+        );
     const events = Stream.make(
       event("message_start", {
         message: {
@@ -206,15 +328,7 @@ const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(functio
       event("content_block_start", { index: 0, content_block: { type: "text", text: "" } }),
     ).pipe(
       Stream.concat(deltas),
-      Stream.concat(
-        Stream.make(
-          event("content_block_stop", { index: 0 }),
-          event("message_delta", {
-            delta: { stop_reason: "end_turn", stop_sequence: null },
-            usage: { output_tokens: words },
-          }),
-        ),
-      ),
+      Stream.concat(toolCall),
       // Stamped as the last event is produced, so it is set before any client can see the end.
       Stream.concat(
         Stream.fromEffect(
@@ -416,7 +530,8 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
       yield* send("HeapProfiler.takeHeapSnapshot", { reportProgress: false });
       const json = chunks.join("");
       chunks.length = 0;
-      return heapByConstructor(yield* decodeJson(HeapSnapshot)(json));
+      const snapshot = yield* decodeJson(HeapSnapshot)(json);
+      return { byConstructor: heapByConstructor(snapshot), retainers: heapRetainers(snapshot) };
     }),
   };
 });
@@ -475,7 +590,8 @@ const descendantsOf = Effect.fn("serverMetrics.descendantsOf")(function* (pid: n
     }
   } else if (platform === "darwin") {
     const table = yield* output("ps", ["-A", "-o", "pid=,ppid="]);
-    for (const line of Option.getOrElse(table, () => "").split("\n")) {
+    if (Option.isNone(table)) return yield* new MetricsError({ message: "ps listed no processes" });
+    for (const line of table.value.split("\n")) {
       const [child, parent] = line.trim().split(/\s+/).map(Number);
       if (child && parent) add(child, parent);
     }
@@ -504,6 +620,8 @@ interface Environment {
 interface ServerOptions {
   /** A base dir `migrate-dev-db` prepared; the server starts on a copy of its database. */
   readonly seed?: string;
+  /** A fake GitHub host the project's origin points at. */
+  readonly forge?: FakeGitHub;
 }
 
 /** Transcript text: paths there are words in a conversation, which the server never acts on. */
@@ -727,12 +845,14 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
   yield* fs.makeDirectory(project);
   yield* fs.writeFileString(path.join(project, "README.md"), "# bench\n");
   for (const args of [
-    ["init", "-q", "-b", "main"],
+    // Loose refs on purpose: the soak writes them as files, which a reftable store would ignore.
+    ["-c", "init.defaultRefFormat=files", "init", "-q", "-b", "main"],
     ["add", "."],
     ["-c", "user.email=bench@t3.codes", "-c", "user.name=bench", "commit", "-qm", "init"],
   ]) {
     yield* run("git", args, { cwd: project });
   }
+  if (options.forge !== undefined) yield* options.forge.setupProject(project);
   const baseDir = path.join(directory, "base");
   // Branch names come from Claude too, so a worktree launch's naming call reaches the fake API.
   yield* fs.makeDirectory(path.join(baseDir, "userdata"), { recursive: true });
@@ -765,6 +885,7 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     OTEL_SDK_DISABLED: "true",
     T3CODE_DEV_SEED: "0",
+    ...options.forge?.env,
   };
   const port = yield* freePort;
   const started = yield* nowMs;
@@ -831,6 +952,19 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
       Effect.flatMap(
         Ref.get(stderr),
         (text) => new MetricsError({ message: `server never answered:\n${text}` }),
+      ),
+    ),
+  );
+  // The server answers HTTP before it records its runtime state, and until then the CLI
+  // finds no server, tries to make changes locally, and exits 78 on the server's lock.
+  yield* fs.exists(path.join(baseDir, "userdata/server-runtime.json")).pipe(
+    Effect.filterOrFail((recorded) => recorded),
+    Effect.retry({ schedule: Schedule.spaced(Duration.millis(100)), times: 3_000 }),
+    Effect.catch(() =>
+      Effect.flatMap(
+        Ref.get(stderr),
+        (text) =>
+          new MetricsError({ message: `server never recorded its runtime state:\n${text}` }),
       ),
     ),
   );
@@ -905,6 +1039,7 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
 
   return {
     readyMs,
+    pid,
     startedAt: started,
     origin: `http://127.0.0.1:${port}`,
     /** The seeded projects' clones; none without a seed. */
@@ -1122,6 +1257,13 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
   server: Server,
   token: string,
   threadIds: ReadonlyArray<string>,
+  /** Sees every item a thread subscription delivers, the snapshot included. */
+  onThreadItem: (
+    threadId: string,
+    item: OrchestrationV2ThreadStreamItem,
+  ) => Effect.Effect<void> = () => Effect.void,
+  /** How long the server may go silent before the client drops the connection or a report fails. */
+  pingTimeout?: Duration.Input,
 ) {
   const http = yield* HttpClient.HttpClient;
   // Headers alone do not finish a request; the deadline covers the body too.
@@ -1140,7 +1282,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
     );
   const { ticket } = yield* decodeJson(Schema.Struct({ ticket: Schema.String }))(ticketBody);
   const protocol = yield* Layer.build(
-    RpcClient.layerProtocolSocket().pipe(
+    RpcClient.layerProtocolSocket(pingTimeout === undefined ? {} : { pingTimeout }).pipe(
       Layer.provide(
         Socket.layerWebSocket(
           `${server.origin.replace(/^http/, "ws")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}&wsTicket=${encodeURIComponent(ticket)}`,
@@ -1154,8 +1296,10 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
   // client costs, so the first such loss is kept for `healthy` to report.
   const lost = yield* Ref.make<string | undefined>(undefined);
   const ready = Effect.fn("serverMetrics.subscription")(function* <A, E, R>(
+    name: string,
     stream: Stream.Stream<A, E, R>,
     isReady: (item: A) => boolean,
+    onItem: (item: A) => Effect.Effect<void> = () => Effect.void,
   ) {
     const synchronized = yield* Deferred.make<void, MetricsError>();
     const lose = (message: string) =>
@@ -1164,10 +1308,14 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
       );
     yield* stream.pipe(
       Stream.runForEach((item) =>
-        isReady(item) ? Deferred.succeed(synchronized, undefined) : Effect.void,
+        onItem(item).pipe(
+          Effect.andThen(isReady(item) ? Deferred.succeed(synchronized, undefined) : Effect.void),
+        ),
       ),
-      Effect.andThen(lose("a subscription ended")),
-      Effect.catchCause(() => lose("a subscription failed")),
+      Effect.andThen(lose(`the ${name} subscription ended`)),
+      Effect.catchCause((cause) =>
+        lose(`the ${name} subscription failed: ${describeFailure(Cause.squash(cause))}`),
+      ),
       Effect.forkScoped,
     );
     return Deferred.await(synchronized);
@@ -1189,7 +1337,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
   }).pipe(
     // A server that keeps the socket open but never answers would otherwise hang the scenario.
     Effect.timeoutOrElse({
-      duration: Duration.seconds(15),
+      duration: pingTimeout ?? Duration.seconds(15),
       orElse: () => new MetricsError({ message: "an activity report got no answer" }),
     }),
   );
@@ -1218,6 +1366,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
   const synchronized = (item: { readonly kind: string }) => item.kind === "synchronized";
   const waits = [
     yield* ready(
+      "shell",
       client["orchestration.subscribeShell"]({
         requestCompletionMarker: true,
         omitIdleSubagents: true,
@@ -1225,9 +1374,10 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
       }),
       synchronized,
     ),
-    yield* ready(client.subscribeVcsStatus({ cwd: server.project }), () => true),
+    yield* ready("VCS status", client.subscribeVcsStatus({ cwd: server.project }), () => true),
     ...(yield* Effect.forEach(threadIds, (threadId) =>
       ready(
+        `thread ${threadId}`,
         client["orchestration.subscribeThread"]({
           threadId: ThreadId.make(threadId),
           requestCompletionMarker: true,
@@ -1238,6 +1388,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
           acceptDedupedBodies: true,
         }),
         synchronized,
+        (item) => onThreadItem(threadId, item),
       ),
     )),
   ];
@@ -1248,11 +1399,74 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
     }),
   );
   return {
+    /** Sends a message the way the composer does, starting a turn at once. */
+    send: (threadId: string, messageId: string, text: string) =>
+      client["orchestration.dispatchCommand"]({
+        type: "message.dispatch",
+        commandId: CommandId.make(messageId),
+        threadId: ThreadId.make(threadId),
+        messageId: MessageId.make(messageId),
+        text,
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "start_immediately" },
+      }),
+    rpc: client,
+    /** Archives or deletes a thread the way the sidebar does. */
+    retire: (type: "thread.archive" | "thread.delete", threadId: string, commandId: string) =>
+      client["orchestration.dispatchCommand"]({
+        type,
+        commandId: CommandId.make(commandId),
+        threadId: ThreadId.make(threadId),
+      }),
     /** Fails if any of this client's subscriptions or reports was lost since it attached. */
     healthy: Effect.flatMap(Ref.get(lost), (message) =>
       message === undefined ? Effect.void : Effect.fail(new MetricsError({ message })),
     ),
   };
+});
+
+/**
+ * Attaches one client per entry, each holding the shell, VCS status and its threads, lets them
+ * settle, then drops all of them at once and reconnects them: the time until every subscription
+ * delivered its snapshot again, and the loop delay across it.
+ */
+const reconnectAll = Effect.fn("serverMetrics.reconnectAll")(function* (
+  server: Server,
+  token: string,
+  clientThreads: ReadonlyArray<ReadonlyArray<string>>,
+) {
+  // Each client gets its own scope so they can be dropped on cue; the server's scope still closes
+  // any left open when a step fails or is interrupted.
+  const clientScope = Effect.acquireRelease(Scope.make(), (scope, exit) =>
+    Scope.close(scope, exit),
+  );
+  const attachAll = (scopes: ReadonlyArray<Scope.Closeable>) =>
+    Effect.forEach(
+      scopes,
+      (scope, index) =>
+        attachClient(server, token, clientThreads[index] ?? []).pipe(Scope.provide(scope)),
+      { concurrency: "unbounded" },
+    );
+  const clients = yield* Effect.forEach(clientThreads, () => clientScope);
+  const first = yield* attachAll(clients);
+  yield* Effect.sleep(Duration.seconds(10));
+  yield* Effect.forEach(first, (client) => client.healthy, { discard: true });
+  yield* server.loopStart;
+  const dropped = yield* nowMs;
+  yield* Effect.forEach(clients, (scope) => Scope.close(scope, Exit.void), {
+    concurrency: "unbounded",
+    discard: true,
+  });
+  const reopened = yield* Effect.forEach(clientThreads, () => clientScope);
+  const second = yield* attachAll(reopened);
+  const resubscribedMs = Math.round((yield* nowMs) - dropped);
+  const loop = yield* server.loopRead;
+  // The first cohort again: a loss between its check and the drop happened in the reconnect.
+  yield* Effect.forEach([...first, ...second], (client) => client.healthy, { discard: true });
+  yield* Effect.forEach(reopened, (scope) => Scope.close(scope, Exit.void), { discard: true });
+  return { resubscribedMs, loopDelayP99Ms: round(loop.p99), loopDelayMaxMs: round(loop.max) };
 });
 
 /**
@@ -1302,6 +1516,126 @@ const pipelineTurns = Effect.fn("serverMetrics.pipelineTurns")(function* (
   };
 });
 
+const TERMINAL_RUN = new Set(["completed", "failed", "interrupted", "cancelled", "rolled_back"]);
+
+/** Threads that each answered once in a worktree of their own, by id. */
+const openWorktreeThreads = Effect.fn("serverMetrics.openWorktreeThreads")(function* (
+  server: Server,
+  count: number,
+) {
+  const answers = yield* Effect.forEach(
+    Array.from({ length: count }, (_, index) => index),
+    (index) => server.threadStart(`Say hello ${index}.`, ["--wait", "--worktree", "main"]),
+    { concurrency: 5 },
+  );
+  const ids = answers.map((answer) => /^Thread (\S+)$/m.exec(answer.stderr)?.[1]);
+  const failed = answers.find((answer, index) => answer.exitCode !== 0 || !ids[index]);
+  if (failed) {
+    return yield* new MetricsError({
+      message: `a worktree thread failed to start: ${failed.stderr.trim() || failed.stdout.trim()}`,
+    });
+  }
+  return ids.filter((id) => id !== undefined);
+});
+
+/**
+ * Every given thread runs editing turns back to back, all at once, sent and watched by one client
+ * subscribed to all of them, as the web client is. Each turn streams a reply, writes a file in the
+ * thread's worktree through the agent's Write tool, and ends in a checkpoint of that change. The
+ * window is measured while every thread is working; turns finished inside it are timed.
+ */
+const workingWindow = Effect.fn("serverMetrics.workingWindow")(function* (
+  environment: Environment,
+  server: Server,
+  token: string,
+  threadIds: ReadonlyArray<string>,
+  timing: { readonly warmupSeconds: number; readonly windowSeconds: number },
+  /** The first turn's marker number; each window needs its own range, as ids never repeat. */
+  firstMarker: number,
+) {
+  // One pending turn per thread: its message id and when the run's end reached the client.
+  const pending = new Map<string, { messageId: string; done: Deferred.Deferred<string> }>();
+  const client = yield* attachClient(server, token, threadIds, (threadId, item) => {
+    if (item.kind !== "event" || item.event.type !== "run.updated") return Effect.void;
+    const run = item.event.payload;
+    const turn = pending.get(threadId);
+    if (!turn || run.userMessageId !== turn.messageId || !TERMINAL_RUN.has(run.status)) {
+      return Effect.void;
+    }
+    return Deferred.succeed(turn.done, run.status).pipe(Effect.asVoid);
+  });
+  const turns: Array<{ endedAt: number; toRequest: number; turnEnd: number; turnMs: number }> = [];
+  let stopping = false;
+  let sequence = 0;
+  const work = Effect.fn("serverMetrics.workingThread")(function* (threadId: string) {
+    while (!stopping) {
+      const marker = `bench-run-${firstMarker + sequence++}`;
+      const messageId = `bench-message-${marker}`;
+      const done = yield* Deferred.make<string>();
+      pending.set(threadId, { messageId, done });
+      const sentAt = yield* nowMs;
+      yield* client.send(threadId, messageId, `Edit a file. ${EDIT_MARKER} ${marker}`);
+      const status = yield* Deferred.await(done).pipe(
+        Effect.timeoutOrElse({
+          duration: Duration.seconds(120),
+          orElse: () => new MetricsError({ message: `turn ${marker} never ended` }),
+        }),
+      );
+      const endedAt = yield* nowMs;
+      if (status !== "completed") {
+        return yield* new MetricsError({ message: `turn ${marker} ended ${status}` });
+      }
+      const forTurn = environment.requests.filter(
+        (request) => request.agent && request.marker === marker && request.at >= sentAt,
+      );
+      const first = forTurn.find((request) => !request.toolResult);
+      const last = forTurn.findLast((request) => request.toolResult);
+      if (first === undefined || last?.endedAt === undefined) {
+        return yield* new MetricsError({
+          message: `turn ${marker} never called its Write tool; is the Claude CLI's tool set unchanged?`,
+        });
+      }
+      turns.push({
+        endedAt,
+        toRequest: first.at - sentAt,
+        turnEnd: endedAt - last.endedAt,
+        turnMs: endedAt - sentAt,
+      });
+    }
+  });
+  const workers = yield* Effect.forEach(threadIds, (threadId) => Effect.forkScoped(work(threadId)));
+  // A failed turn ends the window at once instead of thinning it.
+  const failed = Effect.forEach(workers, Fiber.join, {
+    concurrency: "unbounded",
+    discard: true,
+  }).pipe(Effect.andThen(Effect.never));
+  return yield* Effect.raceFirst(
+    Effect.gen(function* () {
+      yield* Effect.sleep(Duration.seconds(timing.warmupSeconds));
+      const from = yield* nowMs;
+      const window = yield* server.measure(timing.windowSeconds);
+      const to = yield* nowMs;
+      // Every thread finishes the turn it is on, so the next window starts from idle threads.
+      stopping = true;
+      yield* Effect.forEach(workers, Fiber.join, { discard: true });
+      yield* client.healthy;
+      const inside = turns.filter((turn) => turn.endedAt >= from && turn.endedAt <= to);
+      if (inside.length === 0) {
+        return yield* new MetricsError({ message: "no turn finished inside the window" });
+      }
+      const point: WorkingPoint = {
+        ...window,
+        turnsPerMin: round((inside.length / (to - from)) * 60_000),
+        toRequestMs: spread(inside.map((turn) => turn.toRequest)),
+        turnEndMs: spread(inside.map((turn) => turn.turnEnd)),
+        turnMs: spread(inside.map((turn) => turn.turnMs)),
+      };
+      return point;
+    }),
+    failed,
+  );
+}, Effect.scoped);
+
 const SCENARIOS = [
   "startup",
   "rest",
@@ -1310,6 +1644,7 @@ const SCENARIOS = [
   "streaming",
   "clients",
   "pipeline",
+  "working",
   "busy",
 ] as const;
 /** Scenarios that read the developer's real database, so they run only when named. */
@@ -1325,6 +1660,9 @@ interface RunOptions {
   /** A seeded base dir for the busy scenario. */
   readonly seed: string | undefined;
   readonly ballastMB: number;
+  /** Also runs the upper-bound stress cases, such as the 20-client reconnect storm. */
+  readonly stress: boolean;
+  readonly profile: Profile;
   /** Where full CPU and allocation profiles go; none are written without it. */
   readonly profileDir: string | undefined;
 }
@@ -1332,7 +1670,9 @@ interface RunOptions {
 /** One pass: startup, rest and firstWord share a server; quiet, streaming and soak get their own. */
 const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOptions) {
   const fs = yield* FileSystem.FileSystem;
+  const platform = yield* HostProcess.Platform;
   const path = yield* Path.Path;
+  const machine = yield* watchMachine;
   const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-server-metrics-" });
   const api = yield* serveFakeAnthropic();
   const environment: Environment = {
@@ -1349,13 +1689,26 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
   const measured: { -readonly [K in keyof Measured]: Measured[K] } = {};
   const profiles: Record<string, ProfileSummary> = {};
   let soakHeapGrowth: ReturnType<typeof heapGrowth> | undefined;
+  let soakRetainerGrowth: ReadonlyArray<RetainerGrowth> | undefined;
   const withServer = <A, E, R>(
     name: string,
     body: (server: Server) => Effect.Effect<A, E, R>,
     serverOptions: ServerOptions = {},
-  ) => Effect.scoped(Effect.flatMap(startServer(environment, name, serverOptions), body));
+  ) =>
+    Effect.scoped(Effect.flatMap(startServer(environment, name, serverOptions), body)).pipe(
+      // Names the scenario and its cause in one line, instead of a stack from deep in the RPC client.
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.fail(
+            new MetricsError({
+              message: `the ${name} scenario failed: ${describeFailure(Cause.squash(cause))}`,
+            }),
+          ),
+      ),
+    );
   const profile = Effect.fn("serverMetrics.saveProfile")(function* (server: Server, name: string) {
-    const { summary, raw } = yield* server.profile(20);
+    const { summary, raw } = yield* server.profile(options.profile.profileSeconds);
     profiles[name] = summary;
     if (options.profileDir === undefined) return;
     yield* fs.makeDirectory(options.profileDir, { recursive: true });
@@ -1374,8 +1727,8 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
       Effect.gen(function* () {
         measured.startup = { readyMs: server.readyMs };
         if (wanted("rest")) {
-          yield* Effect.sleep(Duration.seconds(15));
-          measured.rest = yield* server.measure(30);
+          yield* Effect.sleep(Duration.seconds(options.profile.settleSeconds));
+          measured.rest = yield* server.measure(options.profile.windowSeconds);
         }
         if (wanted("firstWord")) {
           measured.firstWord = {
@@ -1394,8 +1747,8 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
         for (const threads of options.threads) {
           if (threads > open) yield* openThreads(server, open, threads - open);
           open = Math.max(open, threads);
-          yield* Effect.sleep(Duration.seconds(15));
-          points.push({ threads, window: yield* server.measure(30) });
+          yield* Effect.sleep(Duration.seconds(options.profile.settleSeconds));
+          points.push({ threads, window: yield* server.measure(options.profile.windowSeconds) });
         }
         const last = points.at(-1);
         if (last) measured.quiet = last.window;
@@ -1427,62 +1780,76 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
     yield* withServer("clients", (server) =>
       Effect.gen(function* () {
         const token = yield* server.issueToken;
-        const most = Math.max(STORM_CLIENTS, ...options.threads);
+        const most = Math.max(
+          RECONNECT_THREADS,
+          options.stress ? STORM_CLIENTS : 0,
+          ...options.threads,
+        );
         const threads = yield* openThreads(server, 0, most);
         const attached: Record<string, Window> = {};
         for (const count of options.threads) {
           yield* Effect.scoped(
             Effect.gen(function* () {
               const client = yield* attachClient(server, token, threads.slice(0, count));
-              yield* Effect.sleep(Duration.seconds(10));
-              attached[`${count}`] = yield* server.measure(30);
+              yield* Effect.sleep(Duration.seconds(options.profile.settleSeconds));
+              attached[`${count}`] = yield* server.measure(options.profile.windowSeconds);
               yield* client.healthy;
             }),
           );
         }
-        // Each client gets its own scope so the storm can drop them on cue; the server's scope
-        // still closes any left open when a step fails or is interrupted.
-        const clientScope = Effect.acquireRelease(Scope.make(), (scope, exit) =>
-          Scope.close(scope, exit),
+        const reconnect = yield* reconnectAll(
+          server,
+          token,
+          Array.from({ length: RECONNECT_CLIENTS }, () => threads.slice(0, RECONNECT_THREADS)),
         );
         // Every client holds the shell, VCS status and one thread, then all drop and come back.
-        const clients = yield* Effect.forEach(threads.slice(0, STORM_CLIENTS), () => clientScope);
-        const first = yield* Effect.forEach(
-          clients,
-          (scope, index) =>
-            attachClient(server, token, threads.slice(index, index + 1)).pipe(Scope.provide(scope)),
-          { concurrency: "unbounded" },
-        );
-        yield* Effect.sleep(Duration.seconds(10));
-        yield* Effect.forEach(first, (client) => client.healthy, { discard: true });
-        yield* server.loopStart;
-        const dropped = yield* nowMs;
-        yield* Effect.forEach(clients, (scope) => Scope.close(scope, Exit.void), {
-          concurrency: "unbounded",
-          discard: true,
-        });
-        const reopened = yield* Effect.forEach(clients, () => clientScope);
-        const second = yield* Effect.forEach(
-          reopened,
-          (scope, index) =>
-            attachClient(server, token, threads.slice(index, index + 1)).pipe(Scope.provide(scope)),
-          { concurrency: "unbounded" },
-        );
-        const resubscribedMs = Math.round((yield* nowMs) - dropped);
-        const loop = yield* server.loopRead;
-        // The first cohort again: a loss between its check and the drop happened in the storm.
-        yield* Effect.forEach([...first, ...second], (client) => client.healthy, { discard: true });
-        yield* Effect.forEach(reopened, (scope) => Scope.close(scope, Exit.void), {
-          discard: true,
-        });
+        const storm = options.stress
+          ? yield* reconnectAll(
+              server,
+              token,
+              threads.slice(0, STORM_CLIENTS).map((thread) => [thread]),
+            )
+          : undefined;
         measured.clients = {
           attached,
-          storm: {
-            clients: STORM_CLIENTS,
-            resubscribedMs,
-            loopDelayP99Ms: round(loop.p99),
-            loopDelayMaxMs: round(loop.max),
+          reconnect: {
+            clients: RECONNECT_CLIENTS,
+            threadsPerClient: RECONNECT_THREADS,
+            ...reconnect,
           },
+          ...(storm ? { storm: { clients: STORM_CLIENTS, ...storm } } : {}),
+        };
+      }),
+    );
+  }
+  if (wanted("working")) {
+    yield* withServer("working", (server) =>
+      Effect.gen(function* () {
+        const token = yield* server.issueToken;
+        const counts = options.profile.workingThreads;
+        const threads = yield* openWorktreeThreads(server, Math.max(...counts));
+        const active: Record<string, WorkingPoint> = {};
+        for (const [index, count] of counts.entries()) {
+          active[`${count}`] = yield* workingWindow(
+            environment,
+            server,
+            token,
+            threads.slice(0, count),
+            {
+              warmupSeconds: options.profile.workingWarmupSeconds,
+              windowSeconds: options.profile.workingSeconds,
+            },
+            30_000 + index * 10_000,
+          );
+        }
+        const fit = (pick: (point: WorkingPoint) => number) =>
+          round(slope(counts.map((count) => [count, pick(active[`${count}`]!)] as const)), 3);
+        measured.working = {
+          active,
+          heapMBPerThread: fit((point) => point.heapAfterGcMB),
+          rssMBPerThread: fit((point) => point.rssMB),
+          cpuPctPerThread: fit((point) => point.cpuPct),
+          loopDelayP99MsPerThread: fit((point) => point.loopDelayP99Ms ?? 0),
         };
       }),
     );
@@ -1490,7 +1857,11 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
   if (wanted("pipeline")) {
     yield* withServer("pipeline", (server) =>
       Effect.gen(function* () {
-        measured.pipeline = yield* pipelineTurns(environment, server, PIPELINE_TURNS);
+        measured.pipeline = yield* pipelineTurns(
+          environment,
+          server,
+          options.profile.pipelineTurns,
+        );
       }),
     );
   }
@@ -1522,7 +1893,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           return yield* new MetricsError({ message: "fewer than 5 replies started streaming" });
         }
         yield* Effect.sleep(Duration.seconds(5));
-        measured.streaming = yield* server.measure(60);
+        measured.streaming = yield* server.measure(options.profile.streamingSeconds);
         yield* profile(server, "streaming");
       }),
     );
@@ -1536,8 +1907,8 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
       (server) =>
         Effect.gen(function* () {
           yield* server.ballast(options.ballastMB);
-          yield* Effect.sleep(Duration.seconds(30));
-          const rest = yield* server.measure(30);
+          yield* Effect.sleep(Duration.seconds(options.profile.settleSeconds * 2));
+          const rest = yield* server.measure(options.profile.windowSeconds);
           yield* server.assertIdle(server.startedAt);
           const shell = yield* loadShell(server, 5);
           const largest = server.largest;
@@ -1547,7 +1918,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           const git = yield* Effect.raceFirst(
             Effect.gen(function* () {
               yield* Effect.sleep(Duration.seconds(5));
-              const window = yield* server.measure(30);
+              const window = yield* server.measure(options.profile.windowSeconds);
               yield* profile(server, "busyGit");
               return window;
             }),
@@ -1577,49 +1948,165 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
     );
   }
   if (options.soakMinutes > 0) {
-    yield* withServer("soak", (server) =>
-      Effect.gen(function* () {
-        const threads = yield* openThreads(server, 0, 10);
-        yield* Effect.sleep(Duration.seconds(60));
-        // The snapshot inflates RSS once, so the slopes start after it.
-        const before = yield* server.snapshot;
-        const samples: Array<{ hours: number; window: Window }> = [];
-        const start = yield* nowMs;
-        const elapsed = Effect.map(nowMs, (now) => now - start);
-        const takeSample = Effect.gen(function* () {
-          samples.push({ hours: (yield* elapsed) / 3_600_000, window: yield* server.measure(5) });
-        });
-        let nextSample = 0;
-        for (let turn = 0; (yield* elapsed) < options.soakMinutes * 60_000; turn++) {
-          if ((yield* elapsed) >= nextSample) {
-            yield* takeSample;
-            nextSample += 120_000;
+    const forge = yield* serveFakeGitHub();
+    yield* withServer(
+      "soak",
+      (server) =>
+        Effect.gen(function* () {
+          let threads = yield* openThreads(server, 0, SOAK_THREADS);
+          // A busy repository under a web client: thousands of loose remote-tracking refs, more
+          // arriving every turn as fetches and agent branches add them, so caches keyed by ref
+          // state churn the way they do on a real checkout.
+          const head = (yield* run("git", ["rev-parse", "HEAD"], { cwd: server.project })).stdout;
+          // Under a remote with no config, so no fetch (or a host's fetch.prune) can delete them.
+          const remotes = path.join(server.project, ".git", "refs", "remotes", "mirror");
+          yield* fs.makeDirectory(remotes, { recursive: true });
+          yield* Effect.forEach(
+            Array.from({ length: 3_000 }, (_, index) => index),
+            (index) => fs.writeFileString(path.join(remotes, `bench-${index}`), head),
+            { concurrency: 64, discard: true },
+          );
+          // A reftable store (GIT_DEFAULT_REF_FORMAT can still pick one) ignores refs written as files.
+          const listed = yield* run(
+            "git",
+            ["for-each-ref", "--count=3000", "refs/remotes/mirror/"],
+            {
+              cwd: server.project,
+            },
+          );
+          if (listed.stdout.trim().split("\n").length < 3_000) {
+            return yield* new MetricsError({ message: "git does not see the soak's loose refs" });
           }
-          const threadId =
-            threads[yield* Random.nextIntBetween(0, threads.length, { halfOpen: true })];
-          if (threadId === undefined)
-            return yield* new MetricsError({ message: "no soak threads" });
-          const sent = yield* server.threadSend(threadId, `Short reply ${turn}.`);
-          if (sent.exitCode !== 0) {
-            return yield* new MetricsError({
-              message: `soak turn ${turn} on ${threadId} failed: ${sent.stderr.trim() || sent.stdout.trim()}`,
-            });
+          const token = yield* server.issueToken;
+          // The client gets a scope of its own so each churn cycle can drop it and reconnect.
+          const clientScope = Effect.acquireRelease(Scope.make(), (scope, exit) =>
+            Scope.close(scope, exit),
+          );
+          // Each client also polls pull requests the way the sidebar and an open PR do.
+          const connect = Effect.fn("serverMetrics.soakClient")(function* (
+            threadIds: ReadonlyArray<string>,
+          ) {
+            // A heap snapshot pauses the server for longer than the default 5 s ping timeout.
+            const client = yield* attachClient(
+              server,
+              token,
+              threadIds,
+              undefined,
+              Duration.minutes(2),
+            );
+            yield* forge
+              .pollLikeWebClient({
+                list: client.rpc["pullRequests.list"],
+                summary: client.rpc["pullRequests.summary"],
+                checks: client.rpc["pullRequests.checks"],
+              })
+              .pipe(Effect.forkScoped);
+            return client;
+          });
+          let scope = yield* clientScope;
+          let client = yield* connect(threads).pipe(Scope.provide(scope));
+          yield* Effect.sleep(Duration.seconds(60));
+          // The first snapshot inflates RSS once, so the slopes start after it.
+          const snapshots = [yield* server.snapshot];
+          const samples: Array<{
+            hours: number;
+            window: Window;
+            rssMB: number;
+            processes: number | null;
+          }> = [];
+          const start = yield* nowMs;
+          const elapsed = Effect.map(nowMs, (now) => now - start);
+          let snapshotRssMB = 0;
+          const takeSample = Effect.gen(function* () {
+            const hours = (yield* elapsed) / 3_600_000;
+            const window = yield* server.measure(5);
+            // Windows lists no descendants, which is not the same as having none.
+            const processes =
+              platform === "win32"
+                ? null
+                : yield* descendantsOf(server.pid).pipe(
+                    Effect.map((found) => found.length),
+                    // Unknown, not zero: a failed probe leaves the process slope out.
+                    Effect.orElseSucceed(() => null),
+                  );
+            samples.push({ hours, window, rssMB: window.rssMB - snapshotRssMB, processes });
+            yield* Console.error(
+              `soak ${round(hours * 60)} min: heap ${window.heapAfterGcMB} MB, RSS ${window.rssMB} MB${processes === null ? "" : `, ${processes} child processes`}`,
+            );
+          });
+          let nextSample = 0;
+          for (let turn = 0; (yield* elapsed) < options.soakMinutes * 60_000; turn++) {
+            if (snapshots.length === 1 && (yield* elapsed) >= options.soakMinutes * 30_000) {
+              // RSS the snapshot itself added stays off the slope: later samples drop the step.
+              const before = (yield* sample(server.pid)).rss;
+              snapshots.push(yield* server.snapshot);
+              snapshotRssMB = Math.max(0, ((yield* sample(server.pid)).rss - before) / 1e6);
+            }
+            if ((yield* elapsed) >= nextSample) {
+              yield* takeSample;
+              nextSample += 120_000;
+            }
+            // Users come and go: a new thread replaces the oldest, which is archived and deleted,
+            // and the client reconnects, so state kept per thread or per connection must be freed.
+            if (turn > 0 && turn % SOAK_CHURN_TURNS === 0) {
+              yield* client.healthy;
+              const [fresh] = yield* openThreads(server, SOAK_THREADS + turn, 1);
+              const [oldest, ...rest] = threads;
+              if (fresh === undefined || oldest === undefined)
+                return yield* new MetricsError({ message: "no soak thread to churn" });
+              threads = [...rest, fresh];
+              const retiring = client;
+              yield* Scope.close(scope, Exit.void);
+              // A loss while the replacement thread started still counts against the run.
+              yield* retiring.healthy.pipe(
+                Effect.mapError(
+                  (error) => new MetricsError({ message: `the retired client: ${error.message}` }),
+                ),
+              );
+              scope = yield* clientScope;
+              client = yield* connect(threads).pipe(Scope.provide(scope));
+              yield* forge.advanceRemote;
+              yield* client.retire("thread.archive", oldest, `bench-archive-${turn}`);
+              yield* client.retire("thread.delete", oldest, `bench-delete-${turn}`);
+            }
+            // Round robin, so two soaks send the same turns to the same threads.
+            const threadId = threads[turn % threads.length];
+            if (threadId === undefined)
+              return yield* new MetricsError({ message: "no soak threads" });
+            yield* fs.writeFileString(path.join(remotes, `soak-${turn}`), head);
+            const sent = yield* server.threadSend(threadId, `Short reply ${turn}.`);
+            if (sent.exitCode !== 0) {
+              return yield* new MetricsError({
+                message: `soak turn ${turn} on ${threadId} failed: ${sent.stderr.trim() || sent.stdout.trim()}`,
+              });
+            }
+            yield* Effect.sleep(
+              Duration.millis(Math.max(0, (turn + 1) * 30_000 - (yield* elapsed))),
+            );
           }
-          yield* Effect.sleep(Duration.millis(Math.max(0, (turn + 1) * 30_000 - (yield* elapsed))));
-        }
-        yield* takeSample;
-        const perHour = (pick: (window: Window) => number) =>
-          round(slope(samples.map(({ hours, window }) => [hours, pick(window)])));
-        measured.soak = {
-          minutes: options.soakMinutes,
-          heapMBPerHour: perHour((window) => window.heapAfterGcMB),
-          rssMBPerHour: perHour((window) => window.rssMB),
-        };
-        soakHeapGrowth = heapGrowth(before, yield* server.snapshot);
-      }),
+          yield* takeSample;
+          yield* client.healthy;
+          yield* forge.checkFetched(server.project);
+          const perHour = (pick: (sample: (typeof samples)[number]) => number) =>
+            round(slope(samples.map((sample) => [sample.hours, pick(sample)])));
+          measured.soak = {
+            minutes: options.soakMinutes,
+            heapMBPerHour: perHour(({ window }) => window.heapAfterGcMB),
+            rssMBPerHour: perHour(({ rssMB }) => rssMB),
+            ...(samples.some(({ processes }) => processes === null)
+              ? {}
+              : { childProcessesPerHour: perHour(({ processes }) => processes ?? 0) }),
+          };
+          snapshots.push(yield* server.snapshot);
+          soakHeapGrowth = heapGrowth(snapshots[0]!.byConstructor, snapshots.at(-1)!.byConstructor);
+          soakRetainerGrowth = retainerGrowth(snapshots.map((snapshot) => snapshot.retainers));
+        }),
+      { forge },
     );
+    yield* forge.verify;
   }
-  return { measured: measured as Measured, profiles, soakHeapGrowth };
+  measured.machine = yield* machine;
+  return { measured: measured as Measured, profiles, soakHeapGrowth, soakRetainerGrowth };
 }, Effect.scoped);
 
 const machineLoad = Effect.gen(function* () {
@@ -1640,6 +2127,110 @@ const machineLoad = Effect.gen(function* () {
     Option.getOrNull(Option.map(load, (text) => text.replace(/[{}]/g, "").trim())),
   ),
 );
+
+/** Comm names of the processes that compete with a measured server on a developer's machine. */
+const COMPETING = /^(node|node-MainThread|t3|claude|codex|vite|pnpm)/;
+
+/**
+ * CPU seconds of every node, T3, claude or codex process outside this script's own tree, keyed by
+ * pid and start time so a reused pid is a new process. Linux only; elsewhere none, and the run
+ * records only the load average.
+ */
+const competingCpuSeconds = Effect.gen(function* () {
+  const platform = yield* HostProcess.Platform;
+  if (platform !== "linux") return Option.none<ReadonlyMap<string, number>>();
+  const fs = yield* FileSystem.FileSystem;
+  const self = Number(yield* fs.readLink("/proc/self"));
+  const parents = new Map<number, number>();
+  const cpu = new Map<number, { key: string; seconds: number }>();
+  for (const entry of yield* fs.readDirectory("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    const stat = yield* fs
+      .readFileString(`/proc/${entry}/stat`)
+      .pipe(Effect.orElseSucceed(() => ""));
+    const open = stat.indexOf(" (");
+    const close = stat.lastIndexOf(") ");
+    if (open < 0 || close < 0) continue;
+    const fields = stat.slice(close + 2).split(" ");
+    const pid = Number(entry);
+    parents.set(pid, Number(fields[1]));
+    if (COMPETING.test(stat.slice(open + 2, close))) {
+      // Fields after the name start at the state, field 3: utime 14, stime 15, starttime 22.
+      cpu.set(pid, {
+        key: `${pid}:${fields[19]}`,
+        seconds: (Number(fields[11]) + Number(fields[12])) / 100,
+      });
+    }
+  }
+  const ours = (pid: number) => {
+    for (let at: number | undefined = pid; at !== undefined && at > 1; at = parents.get(at)) {
+      if (at === self) return true;
+    }
+    return false;
+  };
+  return Option.some(
+    new Map([...cpu].filter(([pid]) => !ours(pid)).map(([, { key, seconds }]) => [key, seconds])),
+  );
+}).pipe(Effect.orElseSucceed(() => Option.none<ReadonlyMap<string, number>>()));
+
+/** How often the machine watcher reads competing CPU; a process that exits loses at most this. */
+const MACHINE_SAMPLE_SECONDS = 10;
+
+const load1 = Effect.gen(function* () {
+  const platform = yield* HostProcess.Platform;
+  if (platform === "win32") return Option.none<number>();
+  if (platform === "linux") {
+    const fs = yield* FileSystem.FileSystem;
+    const text = yield* fs.readFileString("/proc/loadavg").pipe(Effect.option);
+    return Option.map(text, (value) => Number(value.split(" ")[0]));
+  }
+  const text = yield* output("sysctl", ["-n", "vm.loadavg"]);
+  return Option.map(text, (value) => Number(value.replace(/[{}]/g, "").trim().split(/\s+/)[0]));
+}).pipe(Effect.map(Option.filter(Number.isFinite)));
+
+/**
+ * Starts watching the machine for one run; the returned effect reads what competed with it: the
+ * highest 1-minute load seen and the cores other T3, node and agent processes kept busy.
+ */
+const watchMachine = Effect.gen(function* () {
+  const startedAt = yield* nowMs;
+  const loads: number[] = [];
+  // Unknown (none) once any read fails, so a partial sum never passes for the whole run.
+  let competing: Option.Option<number> = Option.some(0);
+  let previous = yield* competingCpuSeconds;
+  if (Option.isNone(previous)) competing = Option.none();
+  // The periodic and final reads would otherwise interleave across the await below.
+  const reading = yield* Semaphore.make(1);
+  const read = Effect.gen(function* () {
+    loads.push(...Option.toArray(yield* load1));
+    if (Option.isNone(previous) || Option.isNone(competing)) return;
+    const next = yield* competingCpuSeconds;
+    if (Option.isNone(next)) {
+      competing = Option.none();
+      return;
+    }
+    competing = Option.some(competing.value + competingBetween(previous.value, next.value));
+    previous = next;
+  }).pipe(reading.withPermits(1));
+  yield* read;
+  // Reading through the run, not only at its ends, keeps a busy process that exits mid-run.
+  yield* read.pipe(
+    Effect.delay(Duration.seconds(MACHINE_SAMPLE_SECONDS)),
+    Effect.forever,
+    Effect.forkScoped,
+  );
+  return Effect.gen(function* () {
+    yield* read;
+    const elapsed = ((yield* nowMs) - startedAt) / 1_000;
+    const machine: MachineState = {
+      load1: loads.length ? round(Math.max(...loads), 2) : null,
+      otherCpuCores:
+        Option.isSome(competing) && elapsed > 0 ? round(competing.value / elapsed, 2) : null,
+      minutes: round(elapsed / 60, 1),
+    };
+    return machine;
+  });
+});
 
 const metaFor = Effect.fn("serverMetrics.metaFor")(function* (options: RunOptions) {
   const platform = yield* HostProcess.Platform;
@@ -1668,6 +2259,7 @@ const metaFor = Effect.fn("serverMetrics.metaFor")(function* (options: RunOption
       yield* output("git", ["rev-parse", "--short=12", "HEAD"], options.checkout),
     ),
     noAgentScope: options.noAgentScope,
+    profile: options.profile === PROFILES.quick ? "quick" : "full",
     agentScope:
       platform === "linux" &&
       !options.noAgentScope &&
@@ -1684,8 +2276,56 @@ const writeMetrics = Effect.fn("serverMetrics.writeMetrics")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const json = yield* encodeMetrics(metrics);
-  if (Option.isSome(out)) yield* fs.writeFileString(out.value, `${json}\n`);
-  else yield* Console.log(json);
+  if (Option.isNone(out)) return yield* Console.log(json);
+  // A sibling then a rename, so a failed write keeps the previous file whole.
+  const temp = `${out.value}.tmp`;
+  yield* fs.writeFileString(temp, `${json}\n`);
+  yield* fs.rename(temp, out.value);
+});
+
+/**
+ * Runs A and B alternately, saving a side after each of its runs so a failure keeps the finished
+ * runs. On a failure it reports how many runs of each side reached disk.
+ */
+export const runAbRounds = Effect.fn("serverMetrics.abRounds")(function* <
+  A,
+  S,
+  E,
+  R,
+  ES,
+  RS,
+>(options: {
+  readonly rounds: number;
+  readonly outDir: string;
+  readonly runSide: (side: 0 | 1) => Effect.Effect<A, E, R>;
+  readonly save: (side: 0 | 1, runs: ReadonlyArray<A>) => Effect.Effect<S, ES, RS>;
+}) {
+  const runs: [A[], A[]] = [[], []];
+  const persisted = [0, 0];
+  const saveSide = Effect.fn("serverMetrics.abSave")(function* (side: 0 | 1) {
+    const count = runs[side].length;
+    const saved = yield* options.save(side, runs[side]);
+    persisted[side] = count;
+    return saved;
+  });
+  const saved: [S, S] = [yield* saveSide(0), yield* saveSide(1)];
+  yield* Effect.gen(function* () {
+    for (let round = 0; round < options.rounds; round++) {
+      // A B, then B A, so a drift in machine load lands on both sides.
+      for (const side of round % 2 === 0 ? ([0, 1] as const) : ([1, 0] as const)) {
+        yield* Console.error(`round ${round + 1}/${options.rounds}: ${side === 0 ? "A" : "B"}`);
+        runs[side].push(yield* options.runSide(side));
+        saved[side] = yield* saveSide(side);
+      }
+    }
+  }).pipe(
+    Effect.onError(() =>
+      Console.error(
+        `ab stopped early; ${options.outDir} keeps ${persisted[0]} A and ${persisted[1]} B runs`,
+      ),
+    ),
+  );
+  return saved;
 });
 
 /** Prints the comparison and sets exit code 1 when a metric got worse. */
@@ -1694,12 +2334,22 @@ const report = Effect.fn("serverMetrics.report")(function* (
   after: ServerMetrics,
   threshold: number,
 ) {
-  const { table, regressed, improved, compared } = compareMetrics(before, after, threshold);
+  const mismatch = profileMismatch(before, after);
+  if (mismatch !== undefined) return yield* new MetricsError({ message: mismatch });
+  const { table, regressed, improved, informational, compared, warnings } = compareMetrics(
+    before,
+    after,
+    threshold,
+  );
   yield* Console.log(table);
+  for (const warning of warnings) yield* Console.error(`Warning: ${warning}`);
   if (compared === 0) {
     return yield* new MetricsError({
       message: "the two files share no metric, so nothing was compared",
     });
+  }
+  if (informational.length) {
+    yield* Console.error(`Moved, but too noisy to gate on: ${informational.join(", ")}`);
   }
   if (improved.length) yield* Console.error(`Better: ${improved.join(", ")}`);
   if (regressed.length === 0) return;
@@ -1723,12 +2373,20 @@ const runFlags = {
   ),
   runs: Flag.Int("runs").pipe(
     Flag.withSchema(PositiveInt),
-    Flag.withDescription("firstWord runs in each variant."),
-    Flag.withDefault(5),
+    Flag.withDescription("firstWord runs in each variant. Default 5, 3 with --quick."),
+    Flag.optional,
   ),
   threads: Flag.String("threads").pipe(
-    Flag.withDescription("Open thread counts the quiet scenario measures."),
-    Flag.withDefault("0,5,10,20"),
+    Flag.withDescription(
+      "Open thread counts the quiet and clients scenarios measure. Default 0,5,10,20; 0,10 with --quick.",
+    ),
+    Flag.optional,
+  ),
+  quick: Flag.Boolean("quick").pipe(
+    Flag.withDefault(false),
+    Flag.withDescription(
+      "Shorter windows, fewer turns and fewer points (about a third of the time), for a per-PR or nightly check. Compare quick runs only with quick runs.",
+    ),
   ),
   only: Flag.String("only").pipe(
     Flag.withDescription(`Scenarios to run, comma separated: ${SCENARIOS.join(", ")}.`),
@@ -1757,24 +2415,32 @@ const runFlags = {
     ),
     Flag.withDefault(768),
   ),
+  stress: Flag.Boolean("stress").pipe(
+    Flag.withDefault(false),
+    Flag.withDescription(
+      "Also run upper bounds no user hits daily: clients drops 20 clients at once and reconnects them. Compare stress numbers only with stress numbers.",
+    ),
+  ),
   soak: Flag.Int("soak").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     Flag.withDescription(
-      "Minutes of soak: 10 threads, a short turn every 30 s; heap and RSS slopes per hour and the constructors that grew. Runs alone unless --only names more.",
+      "Minutes of soak: 10 threads under one web client, a short turn every 30 s in a project with 3,000 loose remote refs that gains one per turn. From minute 2, every 2 minutes a new thread replaces the oldest (archived, then deleted), the client reconnects and a fake GitHub remote gains a commit; the client polls that host's pull requests and checks. Reports heap, RSS and child-process slopes per hour, the constructors that grew, and the objects whose retained size grew at each of three snapshots with the path that holds them. Needs openssl on PATH and Node 24.5 or later. Runs alone unless --only names more.",
     ),
     Flag.withDefault(0),
   ),
 };
 interface RunFlags {
   readonly noAgentScope: boolean;
-  readonly runs: number;
-  readonly threads: string;
+  readonly runs: Option.Option<number>;
+  readonly threads: Option.Option<string>;
+  readonly quick: boolean;
   readonly only: Option.Option<string>;
   readonly soak: number;
   readonly seedDir: Option.Option<string>;
   readonly busyProjects: number;
   readonly busyThreads: number;
   readonly busyBallast: number;
+  readonly stress: boolean;
 }
 
 const toRunOptions = Effect.fn("serverMetrics.toRunOptions")(function* (
@@ -1783,9 +2449,10 @@ const toRunOptions = Effect.fn("serverMetrics.toRunOptions")(function* (
   profileDir: string | undefined,
 ) {
   const path = yield* Path.Path;
+  const profile = flags.quick ? PROFILES.quick : PROFILES.full;
   const selection = parseRunSelection({
     only: Option.getOrElse(flags.only, () => ""),
-    threads: flags.threads,
+    threads: Option.getOrElse(flags.threads, () => profile.threads),
     soak: flags.soak,
     scenarios: SCENARIOS,
   });
@@ -1794,13 +2461,15 @@ const toRunOptions = Effect.fn("serverMetrics.toRunOptions")(function* (
   const options: RunOptions = {
     checkout: path.resolve(checkout),
     noAgentScope: flags.noAgentScope,
-    runs: flags.runs,
+    runs: Option.getOrElse(flags.runs, () => profile.runs),
     threads,
     only,
     soakMinutes: flags.soak,
     profileDir,
     seed: undefined,
     ballastMB: flags.busyBallast,
+    stress: flags.stress,
+    profile,
   };
   return options;
 });
@@ -1859,11 +2528,12 @@ const runCommand = Command.make(
       runs,
       ...(last ? { profiles: last.profiles } : {}),
       ...(last?.soakHeapGrowth ? { soakHeapGrowth: last.soakHeapGrowth } : {}),
+      ...(last?.soakRetainerGrowth ? { soakRetainerGrowth: last.soakRetainerGrowth } : {}),
     });
   }, Effect.scoped),
 ).pipe(
   Command.withDescription(
-    "Measure a checkout's server: startup, rest and first word on one server, then quiet threads (with their cost per thread), streaming and an optional soak on servers of their own. Needs the real claude CLI on PATH; on Windows the native claude.exe from claude.ai/install.ps1, since an npm claude.cmd shim cannot be started without a shell.",
+    "Measure a checkout's server: startup, rest and first word on one server, then quiet threads (with their cost per thread), clients, many threads working, the turn pipeline, streaming and an optional soak on servers of their own. Needs the real claude CLI on PATH; on Windows the native claude.exe from claude.ai/install.ps1, since an npm claude.cmd shim cannot be started without a shell.",
   ),
 );
 
@@ -1901,20 +2571,21 @@ const abCommand = Command.make(
       yield* withSeed(unseeded[0], input),
       yield* withSeed(unseeded[1], input),
     ] as const;
-    const runs: [Measured[], Measured[]] = [[], []];
-    for (let round = 0; round < input.rounds; round++) {
-      // A B, then B A, so a drift in machine load lands on both sides.
-      for (const side of round % 2 === 0 ? ([0, 1] as const) : ([1, 0] as const)) {
-        yield* Console.error(`round ${round + 1}/${input.rounds}: ${side === 0 ? "A" : "B"}`);
-        runs[side].push((yield* runOnce(sides[side])).measured);
-      }
-    }
-    const loadAfter = yield* machineLoad;
-    const before: ServerMetrics = { meta: { ...metas[0], loadAfter }, runs: runs[0] };
-    const after: ServerMetrics = { meta: { ...metas[1], loadAfter }, runs: runs[1] };
-    yield* writeMetrics(Option.some(path.join(outDir, "a.json")), before);
-    yield* writeMetrics(Option.some(path.join(outDir, "b.json")), after);
-    yield* report(before, after, input.threshold);
+    // Written up front and after every run; compare takes unequal run counts.
+    const saved = yield* runAbRounds({
+      rounds: input.rounds,
+      outDir,
+      runSide: (side) => runOnce(sides[side]).pipe(Effect.map((run) => run.measured)),
+      save: Effect.fn("serverMetrics.abSaveFile")(function* (side, runs) {
+        const file: ServerMetrics = {
+          meta: { ...metas[side], loadAfter: yield* machineLoad },
+          runs: [...runs],
+        };
+        yield* writeMetrics(Option.some(path.join(outDir, side === 0 ? "a.json" : "b.json")), file);
+        return file;
+      }),
+    });
+    yield* report(saved[0], saved[1], input.threshold);
   }, Effect.scoped),
 ).pipe(
   Command.withDescription(
@@ -1937,15 +2608,72 @@ const compareCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Markdown table of two result files, lower is better. With 2+ runs a side, a metric counts only when the 95% bootstrap interval of the median difference clears the threshold and its noise floor (1 CPU point, 20 wakeups/s, 15 MB, 300 ms; per thread 2 MB or 0.2 CPU points). Exits 1 on a regression.",
+    "Markdown table of two result files, lower is better. With 2+ runs a side, a metric counts only when the 95% bootstrap interval of the median difference clears the threshold and its noise floor, measured from A/A runs (see `noise`). Metrics too noisy to gate on are shown but never counted. Warns when either side ran under heavy machine load. Exits 1 on a regression.",
+  ),
+);
+
+const noiseCommand = Command.make(
+  "noise",
+  {
+    dirs: Argument.String("dir").pipe(
+      Argument.withDescription("An `ab` out dir (a.json and b.json) of one commit against itself."),
+      Argument.atLeast(1),
+    ),
+  },
+  Effect.fn("serverMetrics.noise")(function* (input) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const read = (file: string) =>
+      fs.readFileString(file).pipe(Effect.flatMap(decodeJson(ServerMetrics)));
+    const pairs = yield* Effect.forEach(input.dirs, (dir) =>
+      Effect.gen(function* () {
+        const a = yield* read(path.join(dir, "a.json"));
+        const b = yield* read(path.join(dir, "b.json"));
+        const problem = noisePairProblem(dir, a, b);
+        if (problem !== undefined) return yield* new MetricsError({ message: problem });
+        for (const [file, metrics] of [
+          ["a.json", a],
+          ["b.json", b],
+        ] as const) {
+          for (const warning of loadWarnings(path.join(dir, file), metrics)) {
+            yield* Console.error(`Warning: ${warning}`);
+          }
+        }
+        return [a, b] as const;
+      }),
+    );
+    const { warning } = noiseRulesFor(pairs.flat());
+    if (warning !== undefined) yield* Console.error(`Warning: ${warning}`);
+    const { rows, table } = noiseReport(pairs);
+    if (rows.length === 0) {
+      return yield* new MetricsError({
+        message: "no metric was measured on both sides of any pair, so nothing was calibrated",
+      });
+    }
+    yield* Console.log(table);
+  }),
+).pipe(
+  Command.withDescription(
+    "Spread of every metric over A/A runs (`ab <same> <same>`), an estimated floor covering the half ranges and median differences these runs showed, and which metrics are too noisy to gate on. ⚠ marks a current floor under the estimate. Refuses directories whose two files record different commits.",
   ),
 );
 
 const serverMetricsCommand = Command.make("server-metrics").pipe(
   Command.withDescription(
-    "Measure the server process against a fake Anthropic API and the real claude CLI, on Linux, macOS and Windows.",
+    `Measure the server process against a fake Anthropic API and the real claude CLI, on Linux, macOS and Windows.
+
+Which scenario answers what:
+  working     Many threads editing files at once, one client watching all: steer performance work by its loop delay, turn end and turns per minute.
+  pipeline    One thread's overhead per turn: send to API request, reply end to run end.
+  clients     What an attached client costs, and a user's 3 devices reconnecting. --stress adds the 20-client storm, an upper bound.
+  quiet       Idle cost per open thread (the scaling fit); rest is an idle server.
+  streaming   CPU and loop delay while 5 replies stream.
+  firstWord   A new thread's time to the API; startup is time to the first answer. Latency on a shared machine is noisy.
+  busy        Opt-in: a copy of your real database, read-only, for costs an empty one hides.
+
+Trust a change only from \`ab\` on one machine. compare gates on floors measured from A/A runs (\`noise\`), shows metrics too noisy to gate on without counting them, and warns when other processes loaded the machine; rerun then. --quick suits a per-PR or nightly check; decide on full runs.`,
   ),
-  Command.withSubcommands([runCommand, abCommand, compareCommand]),
+  Command.withSubcommands([runCommand, abCommand, compareCommand, noiseCommand]),
 );
 
 if (import.meta.main) {
@@ -1957,6 +2685,16 @@ if (import.meta.main) {
         NodeSocket.layerWebSocketConstructor,
       ),
     ),
+    Effect.catchTags({
+      MetricsError: (error) =>
+        Console.error(`server-metrics: ${error.message}`).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              process.exitCode = 1;
+            }),
+          ),
+        ),
+    }),
     NodeRuntime.runMain,
   );
 }
