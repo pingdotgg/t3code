@@ -863,4 +863,34 @@ describe("WebRTC device streams", () => {
     expect(events.onStatus).toHaveBeenLastCalledWith("streaming", undefined);
     client.stop();
   });
+
+  it("restarts the iOS WebRTC feed when Duo panels are cleared without WebCodecs", async () => {
+    const { client, fetch, sockets } = setup("ios");
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    // A screen config (tag 0x82) with a hinge lets the viewer enter Duo.
+    const config = new TextEncoder().encode(
+      JSON.stringify({
+        width: 400,
+        height: 800,
+        orientation: "portrait",
+        supportsHingeAngle: true,
+      }),
+    );
+    const message = new Uint8Array(1 + config.length);
+    message[0] = 0x82;
+    message.set(config, 1);
+    sockets[0]!.onmessage?.({ data: message.buffer } as unknown as { data: string });
+    const panel = { present: vi.fn(() => true) };
+    client.setDuoPanels({ cover: panel, inner: panel } as unknown as Parameters<
+      typeof client.setDuoPanels
+    >[0]);
+    const mainOffer = `${serveSim}/helper/session-1/webrtc/offer?hostId=eas`;
+    const offers = () => fetch.mock.calls.filter(([url]) => url === mainOffer).length;
+    const before = offers();
+    client.setDuoPanels(null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(offers()).toBe(before + 1);
+    client.stop();
+  });
 });

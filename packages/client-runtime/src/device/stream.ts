@@ -1112,6 +1112,11 @@ export function createDeviceStreamClient(
     clearFrameTimer();
     connecting();
     // A restart can follow an MJPEG fallback that left the canvas hidden.
+    if (mjpeg) {
+      mjpeg = false;
+      releaseImage?.();
+      releaseImage = null;
+    }
     events.onCanvasVideo?.();
     void readWebRtc(settings);
   };
@@ -1459,6 +1464,7 @@ export function createDeviceStreamClient(
       panelClients = [];
       if (!panels) {
         if (useWebCodecs) void readIosVideo();
+        else void startIosWithoutWebCodecs();
         return;
       }
       startDuoVideo(panels);
