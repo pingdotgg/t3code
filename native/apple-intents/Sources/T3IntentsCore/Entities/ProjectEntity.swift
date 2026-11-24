@@ -121,7 +121,9 @@ public struct ProjectEntityQuery: IndexedEntityQuery, EnumerableEntityQuery, Ent
     let store = store
     try await T3IndexOperationQueue.run {
       let entities = store.projects(for: identifiers).map(ProjectEntity.init(record:))
-      try await CSSearchableIndex.default().indexAppEntities(entities)
+      try await T3SpotlightIndexer.withDeadline {
+        try await T3SpotlightIndexer.indexAppEntities(projects: entities)
+      }
     }
   }
 
@@ -129,7 +131,9 @@ public struct ProjectEntityQuery: IndexedEntityQuery, EnumerableEntityQuery, Ent
     let store = store
     try await T3IndexOperationQueue.run {
       let entities = store.allProjects().map(ProjectEntity.init(record:))
-      try await CSSearchableIndex.default().indexAppEntities(entities)
+      try await T3SpotlightIndexer.withDeadline {
+        try await T3SpotlightIndexer.indexAppEntities(projects: entities)
+      }
     }
   }
 }

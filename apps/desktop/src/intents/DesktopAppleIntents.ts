@@ -157,7 +157,8 @@ export class DesktopAppleIntents extends Context.Service<
 >()("@t3tools/desktop/intents/DesktopAppleIntents") {}
 
 const NATIVE_TIMEOUT_STATUS = -2;
-const NATIVE_MUTATION_TIMEOUT = "30 seconds";
+// Longer than the dylib's own bound, which releases the worker thread before this fires.
+const NATIVE_MUTATION_TIMEOUT = "60 seconds";
 
 const checkNativeStatus = (operation: string, status: number): DesktopAppleIntentsMutation =>
   status === 0

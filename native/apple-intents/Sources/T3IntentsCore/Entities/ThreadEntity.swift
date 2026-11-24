@@ -216,7 +216,9 @@ public struct ThreadEntityQuery: IndexedEntityQuery, EntityStringQuery, Sendable
     let store = store
     try await T3IndexOperationQueue.run {
       let entities = store.threads(for: identifiers).map(ThreadEntity.init(record:))
-      try await CSSearchableIndex.default().indexAppEntities(entities)
+      try await T3SpotlightIndexer.withDeadline {
+        try await T3SpotlightIndexer.indexAppEntities(threads: entities)
+      }
     }
   }
 
@@ -224,7 +226,9 @@ public struct ThreadEntityQuery: IndexedEntityQuery, EntityStringQuery, Sendable
     let store = store
     try await T3IndexOperationQueue.run {
       let entities = store.allThreads().map(ThreadEntity.init(record:))
-      try await CSSearchableIndex.default().indexAppEntities(entities)
+      try await T3SpotlightIndexer.withDeadline {
+        try await T3SpotlightIndexer.indexAppEntities(threads: entities)
+      }
     }
   }
 }

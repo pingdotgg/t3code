@@ -86,6 +86,13 @@ private struct FailingCredentials: T3CredentialProviding {
   }
 }
 
+private final class ManagedFlag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var flag = false
+  var value: Bool { lock.withLock { flag } }
+  func set() { lock.withLock { flag = true } }
+}
+
 private func makeTempStore() -> T3IndexStore {
   let dir = FileManager.default.temporaryDirectory
     .appendingPathComponent("t3-intents-tests-\(UUID().uuidString)", isDirectory: true)
@@ -267,6 +274,22 @@ struct T3IntentsCoreTests {
       Issue.record("Expected an old sync to read as stale")
       return
     }
+  }
+
+  @Test("A stalled Spotlight call times out and frees the index queue for later syncs")
+  func stalledSpotlightRecovers() async throws {
+    await #expect(throws: T3SpotlightTimeoutError.self) {
+      try await T3IndexOperationQueue.run {
+        // Never resumes, like a Spotlight call that ignores cancellation.
+        try await T3SpotlightIndexer.withDeadline(seconds: 0.05) {
+          await withUnsafeContinuation { (_: UnsafeContinuation<Void, Never>) in }
+        }
+      }
+    }
+    let ran = ManagedFlag()
+    try await T3IndexOperationQueue.run { ran.set() }
+    #expect(ran.value)
+    #expect(try await T3SpotlightIndexer.withDeadline(seconds: 5) { 42 } == 42)
   }
 
   private func makeThread(id: String, status: String = "idle") -> T3ThreadRecord {

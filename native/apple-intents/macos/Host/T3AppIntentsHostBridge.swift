@@ -18,9 +18,13 @@ private func runBlockingAsync(_ work: @escaping @Sendable () async throws -> Voi
     }
     semaphore.signal()
   }
-  semaphore.wait()
+  // Spotlight work carries its own deadline; this outer bound guarantees the ffi-rs worker thread
+  // is always released even if something else stalls.
+  guard semaphore.wait(timeout: .now() + hostCallDeadline) == .success else { return 3 }
   return box.code
 }
+
+private let hostCallDeadline: DispatchTimeInterval = .seconds(50)
 
 @_cdecl("t3_apple_intents_is_supported")
 public func t3_apple_intents_is_supported() -> Int32 {
