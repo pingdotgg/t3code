@@ -207,8 +207,19 @@ function UpdateEverythingDialogContent({
                 </span>
                 <span role="cell">
                   {row.providers.map((provider, index) => (
-                    <Fragment key={provider}>
-                      <span className="whitespace-nowrap">{provider}</span>
+                    <Fragment key={provider.label}>
+                      {provider.href !== null ? (
+                        <a
+                          href={provider.href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="whitespace-nowrap underline-offset-2 hover:underline"
+                        >
+                          {provider.label}
+                        </a>
+                      ) : (
+                        <span className="whitespace-nowrap">{provider.label}</span>
+                      )}
                       {index < row.providers.length - 1 ? ", " : null}
                     </Fragment>
                   ))}

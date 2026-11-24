@@ -154,7 +154,15 @@ describe("SidebarUpdatePill update everything", () => {
     const label = "DESKTOP-WORKSTATION-UPSTAIRS";
     setup(null, {
       hasUpdates: true,
-      rows: [{ environmentId: null, label, app: "this-app", skipped: null, providers: ["Claude"] }],
+      rows: [
+        {
+          environmentId: null,
+          label,
+          app: "this-app",
+          skipped: null,
+          providers: [{ label: "Claude", href: null }],
+        },
+      ],
     });
     await using screen = await render(<SidebarUpdatePill />);
     await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
