@@ -155,6 +155,32 @@ it.effect.each([
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("filterIgnoredPaths treats leading-colon paths literally and preserves ./ prefixes", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-filter-ignored-pathspec-",
+    });
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    yield* runGit(cwd, ["init"]);
+    yield* fileSystem.writeFileString(
+      path.join(cwd, ".gitignore"),
+      ":ignored\nshadow\nplain.log\n",
+    );
+
+    const kept = yield* driver.filterIgnoredPaths(cwd, [
+      ":ignored",
+      ":shadow",
+      ":(foo)",
+      "keep.ts",
+      "plain.log",
+      "./plain.log",
+    ]);
+    assert.deepEqual(kept, [":shadow", ":(foo)", "keep.ts"]);
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 // Forking the server for every git call stalls its event loop in proportion to its RSS.
 it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
   "runs git from the process launcher instead of forking the server",

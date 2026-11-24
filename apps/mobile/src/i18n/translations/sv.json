@@ -4901,6 +4901,7 @@
   "306a6f95ad9d52f7": "Ej skickade",
   "11276ab6c58b7a25": "Öppnar utkastet i inmatningsfältet för ny uppgift. Svep åt vänster för att kasta.",
   "99950f3a28d425fa": "Skickas när miljön återansluter. Öppnar uppgiften för redigering. Svep åt vänster för att ta bort.",
+  "d71048f4fb9cf44a": "Väntar på synkronisering",
   "0a260c7744afd0be": "Väntar",
   "ad78fae7d373cf21": "Arbetar",
   "be451f475c514b37": "Stäng aviseringen Väckt",
@@ -5329,6 +5330,9 @@
   "744127f8dfad7d22": "Anslut en miljö för att se dess arbetsflödeskörningar.",
   "b9aae2f7cdb1a379": "Inga arbetsflödeskörningar än",
   "ace8fc1c643cf9f6": "Ett arbetsflöde knyter ihop agenter, kod, scheman och frågor till dig i en enda körning som överlever omstarter. Skriv ett på din dator, under Arbetsflöden och sedan Definitioner.",
+  "fc9c3a00cfc18b55": "Alla typer",
+  "e4d1316c85ed7066": "Inga frågor av den här typen väntar på dig.",
+  "45a94c724845ec1d": "Övrigt",
   "86798f07ba2d7f4d": "Sök ärenden",
   "484cd83bb303bab8": "Sök pull requests",
   "75ed31fcea4f741a": "Filtrera ärenden",
@@ -5623,5 +5627,6 @@
   "18c30aa94d0a807f": "Anslutningsdiagnostik",
   "eb287395a09cd288": "Skicka anslutningsspårningar",
   "6787f93bbf6ce0b6": "Hjälper T3 Code-teamet att åtgärda anslutningsproblem. Spårningar innehåller tider, feltyper, ett ID för den här appsessionen och appversionen, aldrig dina trådar, prompter eller din kod. Du kan ändra det under Inställningar > Om T3 Code > Diagnostik.",
-  "0b1e4aecbd38e0cf": "När appen ansluter till en dator via {product} skickar den hur lång tid varje steg tog, feltypen, ett ID för den här appsessionen och appversionen till T3 Code-teamet. Spårningar innehåller aldrig dina trådar, prompter eller din kod."
+  "0b1e4aecbd38e0cf": "När appen ansluter till en dator via {product} skickar den hur lång tid varje steg tog, feltypen, ett ID för den här appsessionen och appversionen till T3 Code-teamet. Spårningar innehåller aldrig dina trådar, prompter eller din kod.",
+  "e0856d6a402ad821": "Policyn för {organization} tillåter inte projekts layoutkommandon för worktrees."
 }

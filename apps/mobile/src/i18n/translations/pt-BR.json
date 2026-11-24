@@ -4895,6 +4895,7 @@
   "306a6f95ad9d52f7": "Não enviadas",
   "11276ab6c58b7a25": "Abre o rascunho no editor de nova tarefa. Deslize para a esquerda para descartar.",
   "99950f3a28d425fa": "Envia quando o ambiente se reconectar. Abre a tarefa para edição. Deslize para a esquerda para excluir.",
+  "d71048f4fb9cf44a": "Aguardando sincronização",
   "0a260c7744afd0be": "Aguardando",
   "ad78fae7d373cf21": "Trabalhando",
   "be451f475c514b37": "Dispensar notificação de despertar",
@@ -5323,6 +5324,9 @@
   "744127f8dfad7d22": "Conecte um ambiente para ver as execuções de workflow dele.",
   "b9aae2f7cdb1a379": "Nenhuma execução de workflow ainda",
   "ace8fc1c643cf9f6": "Um workflow reúne agentes, código, agendamentos e perguntas para você em uma única execução que sobrevive a reinicializações. Escreva um no seu computador, em Workflows e depois Definições.",
+  "fc9c3a00cfc18b55": "Todos os tipos",
+  "e4d1316c85ed7066": "Nenhuma pergunta desse tipo aguarda você.",
+  "45a94c724845ec1d": "Outras",
   "86798f07ba2d7f4d": "Pesquisar issues",
   "484cd83bb303bab8": "Pesquisar pull requests",
   "75ed31fcea4f741a": "Filtrar issues",
@@ -5617,5 +5621,6 @@
   "18c30aa94d0a807f": "Diagnóstico de conexão",
   "eb287395a09cd288": "Enviar traces de conexão",
   "6787f93bbf6ce0b6": "Ajuda a equipe do T3 Code a corrigir problemas de conexão. Os traces incluem tempos, tipos de erro, um ID desta sessão do app e a versão do app, nunca suas conversas, prompts ou código. Você pode mudar isso em Configurações > Sobre o T3 Code > Diagnóstico.",
-  "0b1e4aecbd38e0cf": "Quando o app se conecta a um computador pelo {product}, ele envia à equipe do T3 Code quanto tempo cada etapa levou, o tipo de erro, um ID desta sessão do app e a versão do app. Os traces nunca incluem suas conversas, prompts ou código."
+  "0b1e4aecbd38e0cf": "Quando o app se conecta a um computador pelo {product}, ele envia à equipe do T3 Code quanto tempo cada etapa levou, o tipo de erro, um ID desta sessão do app e a versão do app. Os traces nunca incluem suas conversas, prompts ou código.",
+  "e0856d6a402ad821": "A política de {organization} não permite comandos de layout de worktree de projetos."
 }

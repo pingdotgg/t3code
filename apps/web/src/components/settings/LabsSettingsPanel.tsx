@@ -2,16 +2,26 @@ import { msg } from "gt-react";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
-import { AgentFeedbackMode } from "@t3tools/contracts";
+import {
+  AgentFeedbackMode,
+  DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT,
+  MAX_WORKFLOW_SKIPPED_RUNS_KEPT,
+} from "@t3tools/contracts";
 import { T, useGT, useMessages } from "gt-react";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
+import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 import {
   useScopedSettings,
@@ -32,6 +42,7 @@ export function LabsSettingsPanel() {
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
         <WorkflowsRow />
+        <WorkflowSkippedRunsRow />
         <PromptSuggestionsRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
@@ -215,6 +226,60 @@ function WorkflowsRow() {
           onCheckedChange={(checked) => updateSettings({ workflowsEnabled: Boolean(checked) })}
           aria-label={gt("Workflows")}
         />
+      }
+    />
+  );
+}
+
+const NO_GROUPING: Intl.NumberFormatOptions = { useGrouping: false };
+
+export function WorkflowSkippedRunsRow() {
+  const searchableSetting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["workflowSkippedRunsKept"]);
+  const gt = useGT();
+  if (!settings.workflowsEnabled) return null;
+  const kept = settings.workflowSkippedRunsKept;
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("workflow-skipped-runs")}
+      settingKeys={["workflowSkippedRunsKept"]}
+      description={gt(
+        "How many skipped runs each workflow keeps in its history. Older skipped runs are deleted; runs that did something are always kept.",
+      )}
+      resetAction={
+        mixed || kept !== DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT ? (
+          <SettingResetButton
+            ariaLabel={gt("Reset skipped runs kept to default")}
+            onClick={() =>
+              updateSettings({ workflowSkippedRunsKept: DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT })
+            }
+          />
+        ) : null
+      }
+      control={
+        <div className="w-24">
+          <NumberField
+            value={mixed ? null : kept}
+            min={0}
+            max={MAX_WORKFLOW_SKIPPED_RUNS_KEPT}
+            format={NO_GROUPING}
+            size="sm"
+            onValueCommitted={(value) => {
+              if (value === null || !Number.isInteger(value) || (!mixed && value === kept)) return;
+              updateSettings({ workflowSkippedRunsKept: value });
+            }}
+          >
+            <NumberFieldGroup>
+              <NumberFieldInput
+                aria-label={gt("Skipped runs kept")}
+                placeholder={mixed ? gt("Mixed") : undefined}
+              />
+            </NumberFieldGroup>
+          </NumberField>
+        </div>
       }
     />
   );

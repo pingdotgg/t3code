@@ -4903,6 +4903,7 @@
   "306a6f95ad9d52f7": "Unsent",
   "11276ab6c58b7a25": "Opens the draft in the new task composer. Swipe left to discard.",
   "99950f3a28d425fa": "Sends when the environment reconnects. Opens the task for editing. Swipe left to delete.",
+  "d71048f4fb9cf44a": "Waiting to sync",
   "0a260c7744afd0be": "Waiting",
   "ad78fae7d373cf21": "Working",
   "be451f475c514b37": "Dismiss Woke notification",
@@ -5331,6 +5332,9 @@
   "744127f8dfad7d22": "Connect an environment to see its workflow runs.",
   "b9aae2f7cdb1a379": "No workflow runs yet",
   "ace8fc1c643cf9f6": "A workflow ties agents, code, schedules and questions to you into one run that survives restarts. Write one on your computer, under Workflows, then Definitions.",
+  "fc9c3a00cfc18b55": "All kinds",
+  "e4d1316c85ed7066": "No questions of this kind wait on you.",
+  "45a94c724845ec1d": "Other",
   "86798f07ba2d7f4d": "Search issues",
   "484cd83bb303bab8": "Search pull requests",
   "75ed31fcea4f741a": "Filter issues",
@@ -5625,5 +5629,6 @@
   "18c30aa94d0a807f": "Connection diagnostics",
   "eb287395a09cd288": "Send connection traces",
   "6787f93bbf6ce0b6": "Helps the T3 Code team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About T3 Code > Diagnostics.",
-  "0b1e4aecbd38e0cf": "When the app connects to a computer through {product}, it sends the T3 Code team how long each step took, any error type, an ID for this app session, and the app version. Traces never include your threads, prompts, or code."
+  "0b1e4aecbd38e0cf": "When the app connects to a computer through {product}, it sends the T3 Code team how long each step took, any error type, an ID for this app session, and the app version. Traces never include your threads, prompts, or code.",
+  "e0856d6a402ad821": "{organization}'s policy does not allow project worktree layout commands."
 }
