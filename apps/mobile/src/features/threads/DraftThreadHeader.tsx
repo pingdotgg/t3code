@@ -50,6 +50,7 @@ export function DraftThreadHeader(props: {
   return (
     <ThreadHeader
       draft
+      projectId={props.project.id}
       title={gt("New thread")}
       subtitle=""
       hasThreadCwd={props.cwd !== null}

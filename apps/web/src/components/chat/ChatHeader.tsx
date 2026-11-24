@@ -416,7 +416,7 @@ export const ChatHeader = memo(function ChatHeader({
       </WorkspaceBreadcrumb>
       <ExtensionActions
         environmentId={activeThreadEnvironmentId}
-        threadId={activeThreadId}
+        {...(isServerThread ? { threadId: activeThreadId } : {})}
         {...(activeProject ? { projectId: activeProject.id } : {})}
       />
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}

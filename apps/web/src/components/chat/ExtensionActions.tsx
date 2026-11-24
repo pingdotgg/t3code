@@ -10,7 +10,7 @@ import { Button } from "../ui/button";
 
 export function ExtensionActions(props: {
   environmentId: EnvironmentId;
-  threadId: ThreadId;
+  threadId?: ThreadId;
   projectId?: ProjectId;
 }) {
   const environment = useEnvironment(props.environmentId);
@@ -40,7 +40,7 @@ export function ExtensionActions(props: {
       ...selection,
       environmentId: props.environmentId,
       context: {
-        threadId: props.threadId,
+        ...(props.threadId ? { threadId: props.threadId } : {}),
         ...(props.projectId ? { projectId: props.projectId } : {}),
         surface: extensionClientSurface,
       },

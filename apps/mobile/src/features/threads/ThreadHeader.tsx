@@ -29,7 +29,7 @@ export function ThreadHeader(props: {
 }) {
   const extensionMenu = useExtensionMenu(
     EnvironmentId.make(String(props.gitControls.environmentId)),
-    ThreadId.make(String(props.gitControls.threadId)),
+    props.draft ? undefined : ThreadId.make(String(props.gitControls.threadId)),
     props.projectId,
   );
   const gt = useGT();

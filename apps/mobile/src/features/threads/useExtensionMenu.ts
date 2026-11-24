@@ -9,7 +9,7 @@ import { useExtensionCommandPrompt } from "../extensions/useExtensionCommandProm
 
 export function useExtensionMenu(
   environmentId: EnvironmentId,
-  threadId: ThreadId,
+  threadId: ThreadId | undefined,
   projectId?: ProjectId,
 ): AppBarMenu | null {
   const gt = useGT();
@@ -42,7 +42,10 @@ export function useExtensionMenu(
     subtitle: entry.manifest.name,
     disabled: !allowed,
     onPress: () =>
-      invoke(environmentId, entry, command, { threadId, ...(projectId ? { projectId } : {}) }),
+      invoke(environmentId, entry, command, {
+        ...(threadId ? { threadId } : {}),
+        ...(projectId ? { projectId } : {}),
+      }),
   }));
   return {
     title: gt("Extensions"),

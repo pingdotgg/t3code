@@ -1,9 +1,37 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 const persisted = vi.hoisted(() => ({ title: "" }));
 const openMenu = vi.hoisted(() => vi.fn());
+const openExtension = vi.hoisted(() => vi.fn());
+vi.mock("../ExtensionCommandHost", () => ({ openExtensionCommand: openExtension }));
+vi.mock("../../state/environments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/environments")>()),
+  useEnvironment: () => ({ serverConfig: { environment: { capabilities: { extensions: true } } } }),
+}));
+vi.mock("../../state/extensions", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const allowed = Atom.make(true);
+  return {
+    extensionClientSurface: "web",
+    extensionEnvironment: { state: () => ({}), invoke: { permissionAtom: () => allowed } },
+  };
+});
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: () => ({
+    data: [
+      {
+        status: "running",
+        manifest: {
+          id: "test.extension",
+          commands: [{ id: "status", title: "Run extension status" }],
+          statusItems: [{ command: "status", text: "Run extension status" }],
+        },
+      },
+    ],
+  }),
+}));
 vi.mock(import("../../state/session"), async (importOriginal) => ({
   ...(await importOriginal()),
   useEnvironmentScope: () => true,
@@ -24,15 +52,32 @@ vi.mock(import("~/hooks/useThreadActionMenu"), () => ({
 import { render, stubGlobal } from "../../../test/render";
 import { ChatHeader } from "./ChatHeader";
 
-function header(title: string) {
+const project = {
+  environmentId: EnvironmentId.make("environment"),
+  id: ProjectId.make("project"),
+  title: "Project",
+  workspaceRoot: "/workspace/project",
+  scripts: [],
+  defaultModelSelection: null,
+  createdAt: "2026-11-24T00:00:00Z",
+  updatedAt: "2026-11-24T00:00:00Z",
+};
+
+function header(
+  title: string,
+  {
+    isServerThread = true,
+    activeProject,
+  }: { isServerThread?: boolean; activeProject?: typeof project } = {},
+) {
   return (
     <>
       <ChatHeader
         activeThreadEnvironmentId={EnvironmentId.make("environment")}
         activeThreadId={ThreadId.make("thread")}
         activeThreadTitle={title}
-        isServerThread
-        activeProject={null}
+        isServerThread={isServerThread}
+        activeProject={activeProject ?? null}
         parentThreadLink={null}
         onOpenThread={() => {}}
         rightPanelOpen={false}
@@ -102,4 +147,27 @@ it("keeps the Escape that cancels a rename from also reaching window shortcuts",
   await expect.element(input).not.toBeInTheDocument();
   expect(persisted.title).toBe("New thread");
   expect(windowEscapes).toEqual([true]);
+});
+
+it("omits the draft thread from extension actions until it is persisted", async () => {
+  openExtension.mockClear();
+  await using screen = await render(
+    header("New thread", { isServerThread: false, activeProject: project }),
+  );
+  await screen.getByRole("button", { name: "Run extension status" }).click();
+  expect(openExtension.mock.lastCall?.[0]).toMatchObject({
+    environmentId: project.environmentId,
+  });
+  expect(openExtension.mock.lastCall?.[0].context).toEqual({
+    surface: "web",
+    projectId: project.id,
+  });
+
+  await screen.rerender(header("New thread", { activeProject: project }));
+  await screen.getByRole("button", { name: "Run extension status" }).click();
+  expect(openExtension.mock.lastCall?.[0].context).toEqual({
+    surface: "web",
+    projectId: project.id,
+    threadId: ThreadId.make("thread"),
+  });
 });
