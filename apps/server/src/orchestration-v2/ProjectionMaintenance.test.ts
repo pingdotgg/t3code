@@ -533,9 +533,25 @@ it.effect("the maintenance pass purges threads deleted before purging existed", 
     const deleted = makeThread(ThreadId.make("thread:purge-backfill"), now);
     yield* writeThread(deleted, now);
     yield* deleteThread(deleted, now);
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO orchestration_v2_effect_outbox (
+        effect_id, command_id, thread_id, effect_type, payload_json, status,
+        available_at, created_at, updated_at
+      ) VALUES (
+        'effect:purge-backfill', 'command:purge-backfill', ${deleted.id}, 'terminal.cleanup',
+        '{"type":"terminal.cleanup"}', 'pending', '2026-11-01T00:00:00.000Z',
+        '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'
+      )
+    `;
+
+    // An earlier effect still reads the thread, so the pass waits for it.
+    assert.equal((yield* maintenance.pruneEventStore()).purgedRowCount, 0);
+    yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'`;
 
     assert.isAbove((yield* maintenance.pruneEventStore()).purgedRowCount, 0);
     assert.equal(yield* contentRowCount(deleted.id), 0);
+    assert.deepEqual(yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox`, []);
     assert.equal((yield* maintenance.pruneEventStore()).purgedRowCount, 0);
   }).pipe(Effect.provide(layerTest)),
 );

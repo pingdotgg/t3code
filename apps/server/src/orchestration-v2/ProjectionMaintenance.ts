@@ -328,6 +328,21 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
       JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = candidate.thread_id
       WHERE thread.deleted_at IS NOT NULL
         AND thread.thread_id NOT IN (SELECT thread_id FROM shown WHERE thread_id IS NOT NULL)
+        -- Earlier effects still read the thread; a later purge or sweep takes it.
+        AND NOT EXISTS (
+          SELECT 1 FROM orchestration_v2_effect_outbox AS effect
+          WHERE effect.thread_id = thread.thread_id
+            AND effect.status IN ('pending', 'running')
+            AND effect.effect_type <> 'thread-content.purge'
+        )
+        -- A live parent settles its delegated task from this child's runs.
+        AND NOT EXISTS (
+          SELECT 1 FROM orchestration_v2_projection_subagents AS task
+          JOIN orchestration_v2_projection_threads AS parent ON parent.thread_id = task.thread_id
+          WHERE task.child_thread_id = thread.thread_id
+            AND task.status IN ('pending', 'running', 'waiting')
+            AND parent.deleted_at IS NULL
+        )
         AND (${sql.or([
           sql`thread.title <> ${DELETED_THREAD_TITLE}`,
           ...DELETED_THREAD_CONTENT_TABLES.map(
@@ -388,27 +403,40 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           )
           RETURNING 1 AS purged
         `);
-        // The deletion's own cohort disposal can leave a subagent update as the stream head.
+        // The kept head can be the deletion's cohort disposal or, for a legacy thread, a
+        // metadata update. Pending guest messages are conversation text too.
         yield* sql`
           UPDATE orchestration_events
-          SET payload_json = CASE event_type
-            WHEN 'subagent.updated' THEN json_remove(
+          SET payload_json = CASE
+            WHEN event_type = 'subagent.updated' THEN json_remove(
               json_set(payload_json, '$.prompt', '', '$.title', json('null'), '$.result', json('null')),
               '$.progress',
               '$.promptSequence'
             )
-            ELSE json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE})
+            WHEN json_type(payload_json, '$.title') = 'text' THEN json_remove(
+              json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE}),
+              '$.guestShare'
+            )
+            ELSE json_remove(payload_json, '$.guestShare')
           END
           WHERE application_event_version = 2
             AND aggregate_kind = 'thread'
             AND stream_id = ${threadId}
-            AND event_type IN ('thread.created', 'thread.deleted', 'subagent.updated')
+            AND (event_type LIKE 'thread.%' OR event_type = 'subagent.updated')
         `;
         yield* sql`
           UPDATE orchestration_v2_projection_threads
           SET title = ${DELETED_THREAD_TITLE},
-            payload_json = json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE})
+            payload_json = json_remove(
+              json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE}),
+              '$.guestShare'
+            )
           WHERE thread_id = ${threadId}
+        `;
+        // Settled requests can hold answers, feedback, and titles.
+        yield* sql`
+          DELETE FROM orchestration_v2_effect_outbox
+          WHERE thread_id = ${threadId} AND status IN ('succeeded', 'failed', 'cancelled')
         `;
         yield* sql`
           UPDATE projection_threads SET title = ${DELETED_THREAD_TITLE} WHERE thread_id = ${threadId}
