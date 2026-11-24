@@ -352,6 +352,10 @@ export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
 
+/** How wide inline HTML previews grow: "chat" keeps them in the chat column. */
+export const HtmlPreviewWidth = Schema.Literals(["chat", "wide", "full"]);
+export type HtmlPreviewWidth = typeof HtmlPreviewWidth.Type;
+
 /** How the composer shows reasoning effort: the level's name, or rising bars. */
 export const EffortDisplay = Schema.Literals(["label", "bars"]);
 export type EffortDisplay = typeof EffortDisplay.Type;
@@ -418,6 +422,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
   chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
+  htmlPreviewWidth: HtmlPreviewWidth.pipe(
+    Schema.withDecodingDefault(Effect.succeed("chat" as const)),
+  ),
   effortDisplay: EffortDisplay.pipe(Schema.withDecodingDefault(Effect.succeed("label" as const))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -1501,6 +1508,8 @@ export const ServerSettings = Schema.Struct({
    * and tasks on another machine; tasks already running there finish.
    */
   linkedEnvironmentsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Beta: durable workflows from the workflows folder of the T3 home. Off runs none of them. */
+  workflowsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Beta: Claude and Codex predict the next prompt after completed turns. Codex follows a change at once; open Claude threads after they restart. */
   promptSuggestionsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
@@ -1938,6 +1947,7 @@ export const ServerSettingsPatch = Schema.Struct({
   hideTaggedThreads: Schema.optionalKey(Schema.Boolean),
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
+  workflowsEnabled: Schema.optionalKey(Schema.Boolean),
   promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
@@ -2072,6 +2082,7 @@ export const ClientSettingsPatch = Schema.Struct({
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),
+  htmlPreviewWidth: Schema.optionalKey(HtmlPreviewWidth),
   effortDisplay: Schema.optionalKey(EffortDisplay),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),

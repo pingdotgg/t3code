@@ -67,6 +67,7 @@ import {
   mediaFileRevision,
   openMediaFile,
   readMediaFileHeader,
+  streamMediaFile,
   type OpenMediaFile,
 } from "./MediaFile.ts";
 import * as WorkspacePreviewRevisions from "./WorkspacePreviewRevisions.ts";
@@ -253,15 +254,9 @@ function decodeRelativePath(value: string): string | null {
   }
 }
 
-export const readMcpAppHtml = Effect.fn("AssetAccess.readMcpAppHtml")(function* (
-  filePath: string,
-  maxBytes = MCP_APP_MAX_HTML_BYTES,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  // Allow space for stored CSP/bootstrap tags, but bound reads if the attachment grows after minting.
-  const limit = maxBytes + 128 * 1024;
-  const chunks = yield* Stream.runCollect(fileSystem.stream(filePath, { bytesToRead: limit + 1 }));
-  const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+function collectBoundedChunks(chunks: Iterable<Uint8Array>, limit: number): Uint8Array | null {
+  let size = 0;
+  for (const chunk of chunks) size += chunk.byteLength;
   if (size > limit) return null;
   const bytes = new Uint8Array(size);
   let position = 0;
@@ -270,6 +265,28 @@ export const readMcpAppHtml = Effect.fn("AssetAccess.readMcpAppHtml")(function* 
     position += chunk.byteLength;
   }
   return bytes;
+}
+
+export const readMcpAppHtml = Effect.fn("AssetAccess.readMcpAppHtml")(function* (
+  filePath: string,
+  maxBytes = MCP_APP_MAX_HTML_BYTES,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  // Allow space for stored CSP/bootstrap tags, but bound reads if the attachment grows after minting.
+  const limit = maxBytes + 128 * 1024;
+  const chunks = yield* Stream.runCollect(fileSystem.stream(filePath, { bytesToRead: limit + 1 }));
+  return collectBoundedChunks(chunks, limit);
+});
+
+export const readOpenMcpAppHtml = Effect.fn("AssetAccess.readOpenMcpAppHtml")(function* (
+  file: OpenMediaFile,
+  maxBytes = MCP_APP_MAX_HTML_BYTES,
+) {
+  const limit = maxBytes + 128 * 1024;
+  const source = streamMediaFile(file, 0n, BigInt(limit + 1));
+  if (source === null) return null;
+  const chunks = yield* Stream.runCollect(source);
+  return collectBoundedChunks(chunks, limit);
 });
 
 const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(function* (input: {
@@ -290,6 +307,8 @@ const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(functio
 const projectFaviconAsset = Effect.fn("AssetAccess.projectFaviconAsset")(function* (
   filePath: string,
 ) {
+  // Checked again here: a link can be repointed after its URL was issued.
+  if (!isProjectFaviconPath(filePath)) return null;
   if (!filePath.toLowerCase().endsWith(".icns")) {
     return { kind: "file", path: filePath } satisfies ResolvedAsset;
   }
@@ -826,6 +845,10 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         return yield* new AssetProjectFaviconNotFoundError({
           resource: input.resource,
         });
+      }
+      // A favicon link must resolve to an image file.
+      if (canonicalFaviconPath && !isProjectFaviconPath(canonicalFaviconPath)) {
+        return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
       }
       claims =
         isExternalOverride && canonicalFaviconPath

@@ -251,4 +251,36 @@ describe("ThemeEditorPanel", () => {
     expect(view.onEditorOpenChange).not.toHaveBeenCalled();
     expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
   });
+
+  it("closes on a second Escape from the Custom CSS editor without closing Settings", async () => {
+    await using view = await renderBesideSettings();
+    await editorElement("button[aria-expanded]");
+    const cssToggle = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        "[data-theme-editor-panel] button[aria-expanded]",
+      ),
+    ).find((button) => button.textContent?.includes("Custom CSS"));
+    expect(cssToggle).toBeDefined();
+    cssToggle!.click();
+
+    const editor = await editorElement('textarea[aria-label="Custom CSS"]');
+    editor.focus();
+    await userEvent.keyboard("{Escape}");
+    editor.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Escape",
+        repeat: true,
+      }),
+    );
+
+    expect(view.onEditorOpenChange).not.toHaveBeenCalled();
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(view.onEditorOpenChange).toHaveBeenCalledWith(false);
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
+  });
 });
