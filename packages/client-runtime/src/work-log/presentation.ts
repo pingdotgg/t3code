@@ -8,6 +8,7 @@ import {
   type ToolActivityIcon,
   type OrchestrationV2TurnItem,
   type ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import {
@@ -487,11 +488,57 @@ export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): strin
     : null;
 }
 
+/** An image a tool call opened, and the call whose stored output may hold what it saw. */
+export interface ViewedImage {
+  readonly path: string;
+  readonly itemId: string;
+  readonly threadId: ThreadId | undefined;
+  /** False when the call is known to have kept no output, as Codex's image views do. */
+  readonly hasOutput: boolean;
+}
+
+export function workEntryViewedImage(entry: WorkLogPresentationEntry): ViewedImage | null {
+  const path = workEntryViewedImagePath(entry);
+  if (path === null) return null;
+  const item = entry.structuredPayload;
+  return {
+    path,
+    itemId: item?.id ?? entry.id,
+    threadId: item?.threadId,
+    hasOutput:
+      item === undefined ||
+      (item.type === "dynamic_tool" && (item.outputOmitted === true || item.output !== undefined)),
+  };
+}
+
 /** Distinct images the agent opened across a tool group, in viewing order. */
-export function workEntriesViewedImagePaths(
+export function workEntriesViewedImages(
   entries: ReadonlyArray<WorkLogPresentationEntry>,
-): string[] {
-  return [...new Set(entries.flatMap((entry) => workEntryViewedImagePath(entry) ?? []))];
+): ViewedImage[] {
+  const images = new Map<string, ViewedImage>();
+  for (const entry of entries) {
+    const image = workEntryViewedImage(entry);
+    if (image && !images.has(image.path)) images.set(image.path, image);
+  }
+  return [...images.values()];
+}
+
+/**
+ * The picture the call returned. The path holds the file's current contents, so a preview
+ * shows this first and falls back to the path only when the call kept no image.
+ */
+export function viewedImageOutputResource(
+  image: ViewedImage,
+  threadId: ThreadId,
+): Extract<AssetResource, { readonly _tag: "tool-output-image" }> | null {
+  return image.hasOutput
+    ? {
+        _tag: "tool-output-image",
+        threadId: image.threadId ?? threadId,
+        itemId: TurnItemId.make(image.itemId),
+        index: 0,
+      }
+    : null;
 }
 
 export interface ViewedImageAsset {

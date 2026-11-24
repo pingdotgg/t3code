@@ -29,7 +29,8 @@ import {
   toolGroupAction,
   toolGroupSummaryKind,
   contextCompactionTokenCounts,
-  workEntriesViewedImagePaths,
+  workEntriesViewedImages,
+  type ViewedImage,
   type ToolGroupSummaryKind,
   liveThoughtLine,
   workEntryHiddenByToolCallVisibility,
@@ -593,7 +594,7 @@ type MessagesTimelineRowContent =
       kind: "viewed-images";
       id: string;
       createdAt: string;
-      paths: ReadonlyArray<string>;
+      images: ReadonlyArray<ViewedImage>;
     }
   | {
       kind: "turn-fold";
@@ -720,10 +721,10 @@ function viewedImagesRows(
   createdAt: string,
   groupedEntries: ReadonlyArray<WorkLogEntry>,
 ): Array<Extract<MessagesTimelineRow, { kind: "viewed-images" }>> {
-  const paths = workEntriesViewedImagePaths(groupedEntries);
-  return paths.length === 0
+  const images = workEntriesViewedImages(groupedEntries);
+  return images.length === 0
     ? []
-    : [{ kind: "viewed-images", id: `${groupId}:viewed-images`, createdAt, paths }];
+    : [{ kind: "viewed-images", id: `${groupId}:viewed-images`, createdAt, images }];
 }
 
 export function resolveAssistantMessageCopyState({
@@ -2839,8 +2840,16 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       const bv = b as typeof a;
       return (
         a.createdAt === bv.createdAt &&
-        a.paths.length === bv.paths.length &&
-        a.paths.every((path, index) => path === bv.paths[index])
+        a.images.length === bv.images.length &&
+        a.images.every((image, index) => {
+          const other = bv.images[index];
+          return (
+            image.path === other?.path &&
+            image.itemId === other.itemId &&
+            image.threadId === other.threadId &&
+            image.hasOutput === other.hasOutput
+          );
+        })
       );
     }
 

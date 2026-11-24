@@ -76,21 +76,27 @@ vi.mock(import("~/state/query"), async (original) => ({
   })) as never,
 }));
 
-const stubbedAsset = vi.hoisted(() => ({ url: "", failed: false }));
+const stubbedAsset = vi.hoisted(() => ({
+  url: "",
+  failed: false,
+  requested: [] as Array<unknown>,
+}));
 vi.mock(import("~/assets/assetUrls"), async (original) => {
   const actual = await original();
   return {
     ...actual,
-    useAssetUrlState: ((...args: Parameters<typeof actual.useAssetUrlState>) =>
-      stubbedAsset.failed
+    useAssetUrlState: ((...args: Parameters<typeof actual.useAssetUrlState>) => {
+      stubbedAsset.requested.push(args[1]);
+      return stubbedAsset.failed
         ? { _tag: "Failure" }
         : stubbedAsset.url
           ? { _tag: "Success", url: stubbedAsset.url }
-          : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
-    useAssetUrls: ((...args: Parameters<typeof actual.useAssetUrls>) =>
-      stubbedAsset.url
-        ? args[1].map(() => stubbedAsset.url)
-        : actual.useAssetUrls(...args)) as typeof actual.useAssetUrls,
+          : actual.useAssetUrlState(...args);
+    }) as typeof actual.useAssetUrlState,
+    useAssetUrls: ((...args: Parameters<typeof actual.useAssetUrls>) => {
+      stubbedAsset.requested.push(...args[1]);
+      return stubbedAsset.url ? args[1].map(() => stubbedAsset.url) : actual.useAssetUrls(...args);
+    }) as typeof actual.useAssetUrls,
   };
 });
 
@@ -160,6 +166,10 @@ function work(id: string, entry: Record<string, unknown>): Entry {
     createdAt: CREATED_AT,
     entry: { id, createdAt: CREATED_AT, ...entry },
   } as Entry;
+}
+
+function viewedImage(path: string) {
+  return { path, itemId: path, threadId: undefined, hasOutput: false };
 }
 
 function v2Item(type: string, fields: Record<string, unknown>) {
@@ -1901,7 +1911,7 @@ describe("MessagesTimeline attachments", () => {
             kind: "viewed-images",
             id: "viewed",
             createdAt: CREATED_AT,
-            paths: ["/repo/first.png", "/repo/second.png", "/repo/third.png"],
+            images: ["/repo/first.png", "/repo/second.png", "/repo/third.png"].map(viewedImage),
           }}
         />
       </TimelineRowCtx>,
@@ -1936,7 +1946,7 @@ describe("MessagesTimeline attachments", () => {
             kind: "viewed-images",
             id: "viewed",
             createdAt: CREATED_AT,
-            paths: ["/repo/step-1.jpg", "/repo/step-3.jpg"],
+            images: ["/repo/step-1.jpg", "/repo/step-3.jpg"].map(viewedImage),
           }}
         />
       </TimelineRowCtx>,
@@ -1997,6 +2007,38 @@ describe("MessagesTimeline attachments", () => {
         ),
       }),
     );
+  });
+  it("previews each Read of an overwritten image from what that Read saw, not the path", async () => {
+    stubbedAsset.url =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    stubbedAsset.requested = [];
+    onTestFinished(() => {
+      stubbedAsset.url = "";
+      stubbedAsset.requested = [];
+    });
+    const read = (id: string) =>
+      work(id, {
+        label: "Read shot.png",
+        toolTitle: "Read",
+        tone: "tool",
+        itemType: "dynamic_tool",
+        toolLifecycleStatus: "completed",
+        viewedImagePath: "/repo/shot.png",
+      });
+    await using screen = await renderTimeline(
+      [
+        read("read-before"),
+        message("The settings page is open.", { role: "assistant" }, "between"),
+        read("read-after"),
+      ],
+      { workspaceRoot: "/repo" },
+    );
+    await vi.waitFor(() =>
+      expect(screen.container.querySelectorAll("[data-image-gallery] img")).toHaveLength(2),
+    );
+    const distinct = new Set(stubbedAsset.requested.map((resource) => JSON.stringify(resource)));
+    // The file now holds only the second Read's picture; a shared path lookup shows it twice.
+    expect(distinct.size).toBeGreaterThanOrEqual(2);
   });
 });
 
