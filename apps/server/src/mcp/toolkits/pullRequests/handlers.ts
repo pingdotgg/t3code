@@ -421,10 +421,8 @@ const make = Effect.gen(function* () {
   // Layers below the target are pinned to the heads read here; the host refuses if any moved.
   const stackMergeScope = Effect.fnUntraced(function* (
     ref: PullRequestRef,
-    input: { readonly expectedHeadSha: string; readonly auto?: boolean | undefined },
+    input: { readonly expectedHeadSha: string },
   ) {
-    if (input.auto === true)
-      return yield* new PullRequestForgeError({ detail: "A stack merge cannot wait with auto." });
     const stack = yield* pullRequests
       .stack(ref, { bypassCache: true })
       .pipe(Effect.mapError(forgeFailure));
@@ -478,6 +476,8 @@ const make = Effect.gen(function* () {
     comments: ReadonlyArray<ReviewLineComment>,
   ) {
     const placed = new Map<ReviewLineComment, PullRequestReviewCommentDraft>();
+    // Comments whose end line some page showed, so a failure names the line that is missing.
+    const lineShown = new Set<ReviewLineComment>();
     const unplaced = () => comments.filter((comment) => !placed.has(comment));
     let cursor: string | undefined;
     for (let page = 0; page < REVIEW_DIFF_PAGES && unplaced().length > 0; page += 1) {
@@ -491,6 +491,7 @@ const make = Effect.gen(function* () {
           comment.startLine === undefined
             ? undefined
             : reviewPositionInPatch(diff.patch, comment.path, comment.startLine, side);
+        if (position !== null) lineShown.add(comment);
         if (position === null || start === null) continue;
         placed.set(comment, {
           path: comment.path,
@@ -504,8 +505,12 @@ const make = Effect.gen(function* () {
     }
     const missing = unplaced()[0];
     if (missing !== undefined) {
+      const missingLine =
+        missing.startLine !== undefined && lineShown.has(missing)
+          ? missing.startLine
+          : missing.line;
       return yield* new PullRequestForgeError({
-        detail: `${missing.path} line ${missing.startLine ?? missing.line} (${missing.side ?? "new"} side) is not in this PR's diff. Comment on a changed line or one shown around it.`,
+        detail: `${missing.path} line ${missingLine} (${missing.side ?? "new"} side) is not in this PR's diff. Comment on a changed line or one shown around it.`,
       });
     }
     return comments.map((comment) => placed.get(comment)!);
@@ -1184,10 +1189,24 @@ const make = Effect.gen(function* () {
     ),
     pull_request_review: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
+        if (input.verdict === "approve" && input.expectedHeadSha === undefined) {
+          return yield* new PullRequestForgeError({
+            detail:
+              "Approving needs expectedHeadSha: the headSha pull_request_read reported for the commits you reviewed.",
+          });
+        }
         const { target, ref } = yield* locate(input);
         const comments = yield* reviewComments(ref, input.comments ?? []);
         yield* pullRequests
-          .submitReview({ ...ref, verdict: input.verdict, body: input.body ?? "", comments })
+          .submitReview({
+            ...ref,
+            verdict: input.verdict,
+            body: input.body ?? "",
+            comments,
+            ...(input.expectedHeadSha === undefined
+              ? {}
+              : { expectedHeadSha: input.expectedHeadSha }),
+          })
           .pipe(Effect.mapError(forgeFailure));
         return identityOf(target);
       }),
