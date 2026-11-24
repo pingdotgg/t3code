@@ -74,6 +74,11 @@ describe("projectAutoMonogram", () => {
     }
   });
 
+  it("uses only the first character of a Chinese title", () => {
+    expect(projectAutoMonogram("健康顾问")?.text).toBe("健");
+    expect(projectAutoMonogram("定时任务与编排")?.text).toBe("定");
+  });
+
   it("leaves untitled projects to the folder icon, like desktop", () => {
     expect(projectAutoMonogram("")).toBeNull();
     expect(projectAutoMonogram("   ")).toBeNull();
