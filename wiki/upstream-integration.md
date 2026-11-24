@@ -5,8 +5,8 @@ description: Main and branch integration boundaries and fork compatibility excep
 tags: [upstream, fork, integration]
 status: stable
 generated:
-  by: codex/gpt-6.2-astra
-  at: 2026-11-24T02:07:29+00:00
+  by: opencode/gpt-6.2-sol
+  at: 2026-11-24T16:54:52+00:00
 verified:
   - by: opencode/gpt-6.2-astra
     at: 2026-11-23T17:12:38+00:00
@@ -28,6 +28,9 @@ sources:
   - id: upstream-desktop-forwards
     resource: https://github.com/pingdotgg/t3code/blob/700a4644a44afc1b127a4df323e7d833abd8779b/docs/user/remote-access.md
     title: Desktop forwarding through the preview tunnel
+  - id: fork-pinned-port-forwards
+    resource: ../apps/web/src/state/pinnedPortForwards.ts
+    title: Fork desktop auto-forward coordinator
   - id: november-23-upstream
     resource: https://github.com/pingdotgg/t3code/commit/990412468340b8362f82610de0eae70a5171abb7
     title: November 23 upstream tip
@@ -1148,12 +1151,21 @@ The guards retain the remaining protection associated with issue #15608; do not
 restore the older parallel managed-server recovery implementation.
 [^ssh-recovery-issue][^october-15-review-git]
 
+## Desktop auto-forward boundary
+
+Keep Portless on the standard desktop preview tunnel. A port pin belongs to this
+desktop and its saved environment, not to the selected thread or SSH alias.
+An auto-forward needs the exact local port so printed Portless URLs keep their
+origin. Do not restore SSH route discovery or use an alternate port for a pin
+when the local port is occupied.[^fork-pinned-port-forwards]
+
 ## Crit remote review boundary
 
 Over SSH, Crit runs on the host's loopback. The desktop opens the review through
 its standard port forward and releases its own listener when the review ends.
 A manually forwarded port belongs to the user. The client checks for the server's
-streaming review RPC before starting a review.[^upstream-desktop-forwards]
+streaming review RPC before starting a review.[^upstream-desktop-forwards] A
+review can also borrow a pin without taking ownership.[^fork-pinned-port-forwards]
 
 For Tailscale connections the external browser needs its own origin. Each review
 owns a separate foreground HTTPS endpoint on the tailnet. Closing it must preserve
@@ -1323,6 +1335,8 @@ git log --reverse --oneline origin/main..upstream/main
 [^ssh-recovery]: Integrated SSH implementation and its focused readiness-recovery regressions.
 
 [^crit-tailnet-forwarding]: The review manager keeps Crit on loopback and owns each temporary forward's lifetime.
+
+[^fork-pinned-port-forwards]: See [desktop port forwarding](../docs/user/remote-access.md#browser-on-a-remote-environment) and the [desktop listener](../apps/desktop/src/preview/LoopbackTunnel.ts).
 
 [^tailscale-foreground-serve]: Foreground Serve uses a nested configuration tied to its IPN watcher; closing that session removes its publication.
 

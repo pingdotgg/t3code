@@ -387,26 +387,35 @@ it.effect("closing a review releases only its own forward", () =>
   }),
 );
 
-it.effect("a renderer reload releases a review's forward", () =>
-  Effect.gen(function* () {
-    const endpoint = yield* listenEndpoint;
-    const contents = new NodeEvents.EventEmitter();
-    const tunnel = yield* makeTunnel(
-      `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel`,
-      undefined,
-      contents,
-    );
-    const target = { environmentId: EnvironmentId.make("remote"), remotePort: yield* unusedPort };
-    const forward = yield* tunnel.forward({ ...target, owner: "review" });
-    const changes = yield* Queue.unbounded<number>();
-    yield* tunnel.subscribeForwards((forwards) =>
-      Queue.offer(changes, forwards.length).pipe(Effect.asVoid),
-    );
-    contents.emit("did-navigate");
-    expect(yield* Queue.take(changes)).toBe(0);
-    expect(yield* refusesConnections(forward.localPort)).toBe(true);
-    expect(contents.listenerCount("render-process-gone")).toBe(0);
-  }),
+it.effect.each([false, true])(
+  "a renderer reload releases an owned forward (pinned: %s)",
+  (pinned) =>
+    Effect.gen(function* () {
+      const endpoint = yield* listenEndpoint;
+      const contents = new NodeEvents.EventEmitter();
+      const tunnel = yield* makeTunnel(
+        `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel`,
+        undefined,
+        contents,
+      );
+      const target = { environmentId: EnvironmentId.make("remote"), remotePort: yield* unusedPort };
+      if (pinned) yield* tunnel.forward(target);
+      const forward = yield* tunnel.forward({ ...target, owner: "owner", pinned });
+      if (pinned) {
+        yield* tunnel.forward({ ...target, owner: "review" });
+        yield* tunnel.stopForward({ ...target, owner: "review" });
+        yield* tunnel.stopForward(target);
+        expect(yield* exchange(forward.localPort, Uint8Array.of(3))).toEqual([0xee, 3]);
+      }
+      const changes = yield* Queue.unbounded<number>();
+      yield* tunnel.subscribeForwards((forwards) =>
+        Queue.offer(changes, forwards.length).pipe(Effect.asVoid),
+      );
+      contents.emit("did-navigate");
+      expect(yield* Queue.take(changes)).toBe(0);
+      expect(yield* refusesConnections(forward.localPort)).toBe(true);
+      expect(contents.listenerCount("render-process-gone")).toBe(0);
+    }),
 );
 
 const hasIpv6Loopback = await new Promise<boolean>((resolve) => {
@@ -417,24 +426,37 @@ const hasIpv6Loopback = await new Promise<boolean>((resolve) => {
 
 // Vite listens on ::1 by default on macOS, and Node's default listen is ::.
 it.effect.each(hasIpv6Loopback ? ["127.0.0.1", "::1", "::"] : ["127.0.0.1"])(
-  "moves a forward to a free port when its own is taken here on %s",
+  "only ordinary forwards use a free port when the local port is taken on %s",
   (host) =>
     Effect.gen(function* () {
-      const decoy = yield* listenDecoyOn(host);
       const endpoint = yield* listenEndpoint;
-      const remotePort = addressPort(decoy.server);
       const tunnel = yield* makeTunnel(
         `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel`,
       );
-      const forward = yield* tunnel.forward({
-        environmentId: EnvironmentId.make("remote"),
-        remotePort,
-      });
-      expect(forward.localPort).not.toBe(remotePort);
+      const environmentId = EnvironmentId.make("remote");
+      const owner = "pin";
+      const fallback = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const decoy = yield* listenDecoyOn(host);
+          const remotePort = addressPort(decoy.server);
+          const target = { environmentId, remotePort };
+          const forward = yield* tunnel.forward(target);
+          expect(forward.localPort).not.toBe(remotePort);
+          const error = yield* tunnel.forward({ ...target, pinned: true, owner }).pipe(Effect.flip);
+          expect(error._tag).toBe("LoopbackTunnelPortInUseError");
+          expect(yield* tunnel.forwards).toEqual([forward]);
+          expect(yield* exchange(forward.localPort, Uint8Array.of(6))).toEqual([0xee, 6]);
+          expect(endpoint.requests.at(-1)).toBe(`/api/preview/tunnel?port=${remotePort}`);
+          expect(decoy.connections()).toBe(0);
+          return forward;
+        }),
+      );
 
-      expect(yield* exchange(forward.localPort, Uint8Array.of(6))).toEqual([0xee, 6]);
-      expect(endpoint.requests.at(-1)).toBe(`/api/preview/tunnel?port=${remotePort}`);
-      expect(decoy.connections()).toBe(0);
+      const { remotePort } = fallback;
+      const pinned = yield* tunnel.forward({ environmentId, remotePort, pinned: true, owner });
+      expect(pinned.localPort).toBe(remotePort);
+      expect(yield* exchange(remotePort, Uint8Array.of(7))).toEqual([0xee, 7]);
+      expect(yield* refusesConnections(fallback.localPort)).toBe(true);
     }),
 );
 

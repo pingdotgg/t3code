@@ -4,6 +4,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
+  type DesktopPortForward,
   type DiscoveredLocalServer,
   type EnvironmentId,
   type ThreadId,
@@ -26,6 +27,7 @@ import { readLocalApi } from "../../localApi";
 import { cn, isMacPlatform } from "../../lib/utils";
 import { useThreadDiscoveredPorts } from "../../portDiscoveryState";
 import { useEnvironment } from "../../state/environments";
+import { unpinPortForward } from "../../state/pinnedPortForwards";
 import {
   canForwardPorts,
   findPortForward,
@@ -159,13 +161,18 @@ function ThreadServersList(props: ThreadServersPanelProps) {
     }
   };
 
-  const toggleForward = async (server: DiscoveredLocalServer, forwarded: boolean) => {
+  const toggleForward = async (
+    server: DiscoveredLocalServer,
+    forward: DesktopPortForward | undefined,
+  ) => {
     if (forwardingPort !== null) return;
     setForwardingPort(server.port);
     await (
-      forwarded
-        ? stopPortForward(props.environmentId, server.port)
-        : forwardPort(props.environmentId, server.port)
+      forward?.pinned
+        ? unpinPortForward(props.environmentId, server.port)
+        : forward
+          ? stopPortForward(props.environmentId, server.port)
+          : forwardPort(props.environmentId, server.port)
     ).catch((error: unknown) =>
       reportFailure(gt("Could not forward port {port}", { port: server.port }), error),
     );
@@ -260,14 +267,16 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                             part="icon"
                             aria-pressed={forward !== undefined}
                             aria-label={
-                              forward
-                                ? gt("Stop forwarding localhost:{port}", { port: server.port })
-                                : gt("Forward localhost:{port} to this machine", {
-                                    port: server.port,
-                                  })
+                              forward?.pinned
+                                ? gt("Stop auto-forwarding")
+                                : forward
+                                  ? gt("Stop forwarding localhost:{port}", { port: server.port })
+                                  : gt("Forward localhost:{port} to this machine", {
+                                      port: server.port,
+                                    })
                             }
                             disabled={forwardingPort !== null}
-                            onClick={() => void toggleForward(server, forward !== undefined)}
+                            onClick={() => void toggleForward(server, forward)}
                           />
                         }
                       >
@@ -281,7 +290,9 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                         )}
                       </TooltipTrigger>
                       <TooltipPopup side="left">
-                        {forward ? (
+                        {forward?.pinned ? (
+                          gt("Stop auto-forwarding")
+                        ) : forward ? (
                           <T>
                             Forwarded to localhost:<Var>{forward.localPort}</Var> on this machine.
                             Click to stop.

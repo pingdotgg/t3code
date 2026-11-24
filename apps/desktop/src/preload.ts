@@ -457,11 +457,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     },
     resolveTunnelAccess: (requestId, url) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL, { requestId, url }),
-    forwardPort: (environmentId, remotePort, owner) =>
+    forwardPort: (environmentId, remotePort, options) =>
       ipcRenderer.invoke(IpcChannels.PORT_FORWARD_START_CHANNEL, {
         environmentId,
         remotePort,
-        owner,
+        ...options,
       }),
     stopPortForward: (environmentId, remotePort, owner) =>
       ipcRenderer.invoke(IpcChannels.PORT_FORWARD_STOP_CHANNEL, {

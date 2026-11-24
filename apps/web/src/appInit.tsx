@@ -67,6 +67,7 @@ import { installCommandPaletteCommands } from "./shortcuts/commandPaletteCommand
 import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPickerShortcut";
 import { environmentThreadShells, threadEnvironment } from "./state/threads";
 import { resolveActiveThreadRouteRef, resolveThreadRouteTarget } from "./threadRoutes";
+import { startPinnedPortForwards } from "./state/pinnedPortForwards";
 
 /** Writes appearance settings onto the document, touching only the groups that changed. */
 function startClientAppearance(): void {
@@ -280,7 +281,10 @@ export function startAppServices(): AppRouter {
   startDefaultThemeAdoption();
   startModelPreferencesMigration();
   startAgentOpenedPreviews();
-  if (isElectron) startElectronBrowserHost();
+  if (isElectron) {
+    startElectronBrowserHost();
+    startPinnedPortForwards();
+  }
   startPreviewTitleRecording();
   startBrowserProfileReporting();
   installChatRouteCommands(router);

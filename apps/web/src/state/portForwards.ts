@@ -24,7 +24,7 @@ import { environmentSession } from "./session";
 
 const EMPTY_FORWARDS: ReadonlyArray<DesktopPortForward> = [];
 
-const previewBridge = () =>
+export const previewBridge = () =>
   typeof window === "undefined" ? undefined : window.desktopBridge?.preview;
 
 /** Ports of other environments the desktop app forwards to this machine; empty elsewhere. */
@@ -131,19 +131,25 @@ export const forwardLocalitiesAtom = environmentAtomList(
   localityAtom,
 );
 
-export const findPortForward = (
-  forwards: ReadonlyArray<DesktopPortForward>,
+export const findPortForward = <
+  Forward extends Pick<DesktopPortForward, "environmentId" | "remotePort">,
+>(
+  forwards: ReadonlyArray<Forward>,
   environmentId: EnvironmentId,
   remotePort: number,
-) =>
+): Forward | undefined =>
   forwards.find(
     (forward) => forward.environmentId === environmentId && forward.remotePort === remotePort,
   );
 
-export function forwardPort(environmentId: EnvironmentId, remotePort: number, owner?: string) {
+export function forwardPort(
+  environmentId: EnvironmentId,
+  remotePort: number,
+  owner?: string,
+): Promise<DesktopPortForward> {
   const bridge = previewBridge();
   if (!bridge) return Promise.reject(new Error(m(msg("Port forwarding needs the desktop app."))));
-  return bridge.forwardPort(environmentId, remotePort, owner).catch((error: unknown) => {
+  return bridge.forwardPort(environmentId, remotePort, { owner }).catch((error: unknown) => {
     // Electron flattens main-process errors into "Error invoking remote method '…': Tag: text".
     const raw = error instanceof Error ? error.message : String(error);
     throw new Error(
@@ -165,10 +171,10 @@ export function stopPortForward(environmentId: EnvironmentId, remotePort: number
   return previewBridge()?.stopPortForward(environmentId, remotePort, owner) ?? Promise.resolve();
 }
 
-/** `url` with its host and port moved to the forward's end on this machine. */
+/** `url` at the forward's end, keeping any hostname the proxy uses for routing. */
 export function forwardedUrl(forward: DesktopPortForward, url?: string): string {
   const local = new URL(url ?? "http://localhost/");
-  local.hostname = "localhost";
+  if (!/\.localhost\.?$/i.test(local.hostname)) local.hostname = "localhost";
   local.port = String(forward.localPort);
   return local.toString();
 }

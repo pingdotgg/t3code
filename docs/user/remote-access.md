@@ -322,6 +322,15 @@ and shows it. Forwards end when you stop them or quit the app. ⌘-click
 (Ctrl-click on Windows and Linux) on a remote server forwards it and opens it
 in your browser.
 
+For a port you use often, choose **Always forward on this computer** in
+**Forwarded ports**. T3 Code remembers it on this desktop and restores it when
+the environment connects, even without an open thread. An auto-forward always
+uses the same local port, so URLs printed by a proxy such as Portless still
+work as written. HTTPS still requires your browser to trust the proxy's
+certificate. If the port is taken, free it and retry from **Forwarded ports**
+or the environment's row in Settings. Either place also lets you stop
+auto-forwarding.
+
 When you connect over SSH, **Open in Crit** opens the review in your browser
 through a temporary port forward. Install Crit on the host and enable its
 preview tunnel. Closing the review releases its forward. If you already
