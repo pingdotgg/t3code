@@ -316,8 +316,10 @@ const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 export const TIMELINE_MINIMAP_TARGET_OFFSET = 24;
 // Relative to the timeline, not the viewport, so an open terminal shrinks the rail and
-// endpoint previews (centered on their strip) still fit above and below it.
-const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "max(4rem, calc(100% - 14.75rem))";
+// endpoint previews (centered on their strip) still fit above and below it. The last term
+// keeps the turn buttons inside a very short timeline and below its top fade.
+const TIMELINE_MINIMAP_MAX_HEIGHT_CSS =
+  "min(max(4rem, calc(100% - 14.75rem)), calc(100% - 6.25rem))";
 const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
 
 export interface WorkGroupScrollAnchor {
@@ -482,17 +484,26 @@ export function resolveTimelineMinimapHasPersistentGutter(
 
 const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 12;
 const TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH = 40;
+// The turn buttons reach this far left of the rail. The minimap renders inside the
+// scroller, which clips its scrollbar gutter, so a wide classic gutter pushes it right.
+const TIMELINE_MINIMAP_BUTTON_OVERHANG = 6;
+export const TIMELINE_MINIMAP_SHIFT_CSS = `max(0px, var(--chat-timeline-gutter, 0px) - ${TIMELINE_MINIMAP_HIT_STRIP_LEFT - TIMELINE_MINIMAP_BUTTON_OVERHANG}px)`;
 
 export function resolveTimelineMinimapHitStripWidth(
   viewportWidth: number,
   contentWidth: number,
+  scrollbarGutter: number,
 ): number {
   const sideGutter = resolveTimelineSideGutter(viewportWidth, contentWidth);
+  const shift = Math.max(
+    0,
+    scrollbarGutter - (TIMELINE_MINIMAP_HIT_STRIP_LEFT - TIMELINE_MINIMAP_BUTTON_OVERHANG),
+  );
   return Math.max(
     0,
     Math.min(
       TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH,
-      Math.floor(sideGutter) - TIMELINE_MINIMAP_HIT_STRIP_LEFT,
+      Math.floor(sideGutter) - TIMELINE_MINIMAP_HIT_STRIP_LEFT - shift,
     ),
   );
 }
