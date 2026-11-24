@@ -102,7 +102,7 @@ jobs:
 
       # Files/dependencies are repo-wide; export checks cover clean workspaces only.
       - name: Check unused code
-        run: vp run knip:check
+        run: vp run fallow:check
 
       - name: Check generated GitHub GraphQL operations
         run: vp run --filter @t3tools/source-control-github generate --check

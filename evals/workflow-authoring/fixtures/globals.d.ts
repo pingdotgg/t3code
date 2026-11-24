@@ -1,4 +1,5 @@
 // What the server hands a workflow file as globals, for the fixtures here to be type-checked.
+// fallow-ignore-next-line namespace-escape
 import type * as api from "../../../apps/server/src/workflows/api.ts";
 
 declare global {

@@ -63,7 +63,7 @@ export class WorkflowStop extends Schema.TaggedError<WorkflowStop>()("WorkflowSt
 }
 
 /** What the primitives need from the run they are called in. */
-export class RunContext extends Context.Service<
+class RunContext extends Context.Service<
   RunContext,
   {
     readonly runId: string;

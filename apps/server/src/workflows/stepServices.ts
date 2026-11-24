@@ -76,7 +76,7 @@ export interface RunFilter {
 }
 
 /** Signals from the step that is running. Its signals are numbered, so a retry sends the same ones. */
-export class Signals extends Context.Service<
+class Signals extends Context.Service<
   Signals,
   {
     readonly sendAll: SendSignalToAll;

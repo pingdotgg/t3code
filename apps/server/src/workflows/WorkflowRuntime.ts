@@ -127,6 +127,8 @@ const within = <A>(work: Promise<A>, ms: number): Promise<A | undefined> => {
 };
 
 const evaluate = async (url: string, evaluation: Evaluation): Promise<ReadonlyArray<unknown>> => {
+  // A workflow file gets every export of the API as a global.
+  // fallow-ignore-next-line namespace-escape
   const api = await import("./api.ts");
   const { Duration, Effect: effect, Option: option, Schedule, Schema: schema, ...t3 } = api;
   const workflow = ((...input: Parameters<typeof api.workflow>) => {
