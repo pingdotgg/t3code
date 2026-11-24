@@ -78,7 +78,7 @@ export function parseActiveThreadPath(pathname: string): {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 } | null {
-  const match = /^\/threads\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathname);
+  const match = /^\/threads\/([^/?#]+)\/([^/?#]+)(?:[/?#]|$)/.exec(pathname);
   if (!match?.[1] || !match[2]) return null;
   try {
     return {
