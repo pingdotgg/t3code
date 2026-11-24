@@ -194,13 +194,41 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
         const cwd = yield* makeTempDir;
-        yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="/brand/logo.svg">');
+        yield* writeTextFile(
+          cwd,
+          "index.html",
+          `<link rel="icon" href="data:image/png;base64,${"A".repeat(5000)}">
+<link rel="icon" href="https://cdn.example.com/icon.svg">
+<link rel="icon" href="/missing.svg">
+<link rel="icon" href="//cdn.example.com/icon.svg">
+<link rel="icon" href="/index.html/icon.svg">
+<link rel="icon" href="/brand/logo.svg#mark">
+<link rel="icon" href="/brand/late.svg">`,
+        );
         yield* writeTextFile(cwd, "public/brand/logo.svg", "<svg>brand</svg>");
+        yield* writeTextFile(cwd, "public/brand/late.svg", "<svg>late</svg>");
+        yield* writeTextFile(cwd, "public/cdn.example.com/icon.svg", "<svg>cdn</svg>");
+        yield* writeTextFile(cwd, "web/favicon.png", "flutter");
 
         const resolved = yield* resolver.resolvePath(cwd);
 
         expect(resolved).not.toBeNull();
         expect(resolved).toBe((yield* Path.Path).join(cwd, "public", "brand", "logo.svg"));
+
+        // A cached icon whose `public` folder became a file falls back instead of failing.
+        yield* (yield* FileSystem.FileSystem).remove((yield* Path.Path).join(cwd, "public"), {
+          recursive: true,
+        });
+        yield* writeTextFile(cwd, "public", "not a folder");
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          (yield* Path.Path).join(cwd, "web", "favicon.png"),
+        );
+
+        const flutterCwd = yield* makeTempDir;
+        yield* writeTextFile(flutterCwd, "web/favicon.png", "flutter");
+        expect(yield* resolver.resolvePath(flutterCwd)).toBe(
+          (yield* Path.Path).join(flutterCwd, "web", "favicon.png"),
+        );
 
         const paddedCwd = yield* makeTempDir;
         yield* writeTextFile(
@@ -212,6 +240,57 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         expect(yield* resolver.resolvePath(paddedCwd)).toBe(
           (yield* Path.Path).join(paddedCwd, "brand", "custom.svg"),
         );
+
+        const tokenListCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          tokenListCwd,
+          "index.html",
+          `<link rel="apple-touch-icon" href="touch.svg"><link rel="icon's" href="touch.svg"><link rel="Icon\tshortcut" href="brand.svg">`,
+        );
+        yield* writeTextFile(tokenListCwd, "touch.svg", "<svg>touch</svg>");
+        yield* writeTextFile(tokenListCwd, "brand.svg", "<svg>brand</svg>");
+        expect(yield* resolver.resolvePath(tokenListCwd)).toBe(
+          (yield* Path.Path).join(tokenListCwd, "brand.svg"),
+        );
+
+        const unquotedCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          unquotedCwd,
+          "index.html",
+          `<link rel=stylesheet data-rel=icon href=app.css><link href=app.css rel=icon/><link rel=icon href={icon} /><link rel=icon data-href=app.css title="href=app.css" href=brand.svg/>`,
+        );
+        yield* writeTextFile(unquotedCwd, "app.css", "body {}");
+        yield* writeTextFile(unquotedCwd, "brand.svg", "<svg>brand</svg>");
+        expect(yield* resolver.resolvePath(unquotedCwd)).toBe(
+          (yield* Path.Path).join(unquotedCwd, "brand.svg"),
+        );
+
+        const quotedValueCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          quotedValueCwd,
+          "index.html",
+          `<link rel="icon" title="preview href=app.css here" href="brand.svg">`,
+        );
+        yield* writeTextFile(quotedValueCwd, "app.css", "body {}");
+        yield* writeTextFile(quotedValueCwd, "brand.svg", "<svg>brand</svg>");
+        expect(yield* resolver.resolvePath(quotedValueCwd)).toBe(
+          (yield* Path.Path).join(quotedValueCwd, "brand.svg"),
+        );
+      }),
+    );
+
+    it.effect("skips source metadata beyond the favicon scan limit", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "index.html",
+          `<!-- ${" ".repeat(128 * 1024)} --><link rel="icon" href="/brand/logo.svg">`,
+        );
+        yield* writeTextFile(cwd, "public/brand/logo.svg", "<svg>brand</svg>");
+
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
       }),
     );
 
@@ -226,7 +305,8 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
   head: () => ({
     links: [
       { rel: "stylesheet", href: "/app.css" },
-      { rel: "icon", href: "/brand/logo.svg" },
+      { rel: "icon", href: "https://cdn.example.com/icon.svg" },
+      { rel: "icon shortcut", href: "/brand/logo.svg#mark" },
     ],
   }),
 });`,

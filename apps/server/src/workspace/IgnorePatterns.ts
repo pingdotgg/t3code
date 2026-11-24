@@ -21,6 +21,12 @@ interface Pattern {
 
 export type IgnoreDecision = "ignored" | "included";
 
+const utf8 = new TextEncoder();
+
+// Git wildcards consume UTF-8 bytes, including inside character classes.
+const globBytes = (value: string) =>
+  Array.from(utf8.encode(value), (byte) => String.fromCharCode(byte));
+
 function parseClass(chars: ReadonlyArray<string>, start: number) {
   let index = start + 1;
   const negated = chars[index] === "!" || chars[index] === "^";
@@ -46,8 +52,13 @@ function parseClass(chars: ReadonlyArray<string>, start: number) {
 
 function parseLine(rawLine: string): Pattern | undefined {
   let line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-  // Trailing spaces are dropped unless escaped.
-  while (line.endsWith(" ") && !line.endsWith("\\ ")) line = line.slice(0, -1);
+  // Trailing spaces are dropped unless escaped; `\\ ` escapes the backslash, not the space.
+  while (line.endsWith(" ")) {
+    let backslashes = 0;
+    while (line[line.length - 2 - backslashes] === "\\") backslashes += 1;
+    if (backslashes % 2 === 1) break;
+    line = line.slice(0, -1);
+  }
   if (line === "" || line.startsWith("#")) return undefined;
   const negated = line.startsWith("!");
   if (negated) line = line.slice(1);
@@ -58,7 +69,7 @@ function parseLine(rawLine: string): Pattern | undefined {
   const anchored = line.slice(0, -1).includes("/");
   if (line.startsWith("/")) line = line.slice(1);
 
-  const chars = Array.from(line);
+  const chars = globBytes(line);
   const tokens: Token[] = anchored ? [] : [{ type: "folders" }];
   // A `[` that never closes leaves every later `[` unclosed too, so one failed scan settles them
   // all; rescanning the suffix for each would make `[[[[…` quadratic.
@@ -158,7 +169,7 @@ export function parseIgnoreFile(contents: string): IgnoreFile {
   const patterns = contents.split("\n").flatMap((line) => parseLine(line) ?? []);
   return {
     decide: (relativePath, isFolder) => {
-      const path = Array.from(relativePath);
+      const path = globBytes(relativePath);
       for (let index = patterns.length - 1; index >= 0; index -= 1) {
         const pattern = patterns[index]!;
         if (pattern.folderOnly && !isFolder) continue;

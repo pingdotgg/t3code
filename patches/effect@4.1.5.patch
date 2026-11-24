@@ -1,0 +1,4140 @@
+diff --git a/dist/ai/McpSchema.d.ts b/dist/ai/McpSchema.d.ts
+index 8f86c27..aed42ae 100644
+--- a/dist/ai/McpSchema.d.ts
++++ b/dist/ai/McpSchema.d.ts
+@@ -941,6 +941,52 @@ export declare const HEADER_MISMATCH_ERROR_CODE: -32020;
+  * @since 4.0.6
+  */
+ export declare const UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE: -32022;
++/**
++ * Represents the MCP error code for a referenced entity that does not exist,
++ * such as an unknown event name. `data.kind` may say which.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export declare const NOT_FOUND_ERROR_CODE: -32023;
++/**
++ * Represents the MCP error code for a principal that is not permitted, or
++ * whose access was revoked.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export declare const FORBIDDEN_ERROR_CODE: -32024;
++/**
++ * Represents the MCP error code for a server-imposed limit or quota.
++ * `data.limit` names it.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export declare const RESOURCE_EXHAUSTED_ERROR_CODE: -32025;
++/**
++ * Represents the MCP error code for a well-formed request that asks for a
++ * capability or option not supported here. `data` identifies it, for example
++ * `{ feature: "deliveryMode", value: "push" }`.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export declare const UNSUPPORTED_ERROR_CODE: -32026;
++/**
++ * Represents the MCP error code for a client-supplied callback endpoint that
++ * failed verification or could not be reached.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export declare const CALLBACK_ENDPOINT_ERROR_CODE: -32027;
+ declare const ParseError_base: Schema.Class<ParseError, Schema.Struct<{
+     /**
+      * A short description of the error. The message SHOULD be limited to a
+@@ -1102,6 +1148,81 @@ declare const InternalError_base: Schema.Class<InternalError, Schema.Struct<{
+ export declare class InternalError extends InternalError_base {
+     static readonly notImplemented: InternalError;
+ }
++declare const NotFound_base: Schema.Class<NotFound, Schema.Struct<{
++    readonly message: Schema.String;
++    readonly data: Schema.decodeTo<Schema.toType<Schema.optional<Schema.Any>>, Schema.optionalKey<Schema.Any>, never, never>;
++    readonly _tag: Schema.tag<"NotFound">;
++    readonly code: Schema.tag<-32023>;
++}>, import("../Cause.ts").YieldableError>;
++/**
++ * Represents an MCP error for a referenced entity that does not exist.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export declare class NotFound extends NotFound_base {
++}
++declare const Forbidden_base: Schema.Class<Forbidden, Schema.Struct<{
++    readonly message: Schema.String;
++    readonly data: Schema.decodeTo<Schema.toType<Schema.optional<Schema.Any>>, Schema.optionalKey<Schema.Any>, never, never>;
++    readonly _tag: Schema.tag<"Forbidden">;
++    readonly code: Schema.tag<-32024>;
++}>, import("../Cause.ts").YieldableError>;
++/**
++ * Represents an MCP error for a principal that is not permitted.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export declare class Forbidden extends Forbidden_base {
++}
++declare const ResourceExhausted_base: Schema.Class<ResourceExhausted, Schema.Struct<{
++    readonly message: Schema.String;
++    readonly data: Schema.decodeTo<Schema.toType<Schema.optional<Schema.Any>>, Schema.optionalKey<Schema.Any>, never, never>;
++    readonly _tag: Schema.tag<"ResourceExhausted">;
++    readonly code: Schema.tag<-32025>;
++}>, import("../Cause.ts").YieldableError>;
++/**
++ * Represents an MCP error for a server-imposed limit or quota.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export declare class ResourceExhausted extends ResourceExhausted_base {
++}
++declare const Unsupported_base: Schema.Class<Unsupported, Schema.Struct<{
++    readonly message: Schema.String;
++    readonly data: Schema.decodeTo<Schema.toType<Schema.optional<Schema.Any>>, Schema.optionalKey<Schema.Any>, never, never>;
++    readonly _tag: Schema.tag<"Unsupported">;
++    readonly code: Schema.tag<-32026>;
++}>, import("../Cause.ts").YieldableError>;
++/**
++ * Represents an MCP error for a capability or option not supported here.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export declare class Unsupported extends Unsupported_base {
++}
++declare const CallbackEndpointError_base: Schema.Class<CallbackEndpointError, Schema.Struct<{
++    readonly message: Schema.String;
++    readonly data: Schema.decodeTo<Schema.toType<Schema.optional<Schema.Any>>, Schema.optionalKey<Schema.Any>, never, never>;
++    readonly _tag: Schema.tag<"CallbackEndpointError">;
++    readonly code: Schema.tag<-32027>;
++}>, import("../Cause.ts").YieldableError>;
++/**
++ * Represents an MCP error for a callback endpoint that failed verification or could not be reached.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export declare class CallbackEndpointError extends CallbackEndpointError_base {
++}
+ /**
+  * Schema for MCP protocol errors returned in JSON-RPC failure responses,
+  * including standard protocol errors and custom `McpErrorBase` values.
+@@ -1880,6 +2001,66 @@ declare const Skill_base: Schema.Class<Skill, Schema.Struct<{
+  */
+ export declare class Skill extends Skill_base {
+ }
++/**
++ * How a client receives an event type's occurrences under the MCP Events
++ * extension (SEP-3415): by `events/poll`, an `events/stream` push stream, or
++ * a webhook registered with `events/subscribe`.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export declare const EventDelivery: Schema.Literals<readonly ["poll", "push", "webhook"]>;
++/**
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export type EventDelivery = typeof EventDelivery.Type;
++/**
++ * An event type listed by `events/list`: its subscription arguments, its
++ * payload, and the delivery modes it supports.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export declare const EventDescriptor: Schema.Struct<{
++    readonly name: Schema.String;
++    readonly description: Schema.decodeTo<Schema.toType<Schema.optional<Schema.String>>, Schema.optionalKey<Schema.String>, never, never>;
++    readonly delivery: Schema.$Array<Schema.Literals<readonly ["poll", "push", "webhook"]>>;
++    readonly inputSchema: Schema.$Record<Schema.String, Schema.Unknown>;
++    readonly payloadSchema: Schema.$Record<Schema.String, Schema.Unknown>;
++    readonly _meta: Schema.decodeTo<Schema.toType<Schema.optional<Schema.$Record<Schema.String, Schema.Unknown>>>, Schema.optionalKey<Schema.$Record<Schema.String, Schema.Unknown>>, never, never>;
++}>;
++/**
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export type EventDescriptor = typeof EventDescriptor.Type;
++/**
++ * One delivered event. `cursor` is the subscription's position after it, on
++ * push and webhook delivery; poll carries the cursor on the result.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export declare const EventOccurrence: Schema.Struct<{
++    readonly eventId: Schema.String;
++    readonly name: Schema.String;
++    readonly timestamp: Schema.String;
++    readonly data: Schema.$Record<Schema.String, Schema.Unknown>;
++    readonly cursor: Schema.decodeTo<Schema.toType<Schema.optional<Schema.NullOr<Schema.String>>>, Schema.optionalKey<Schema.NullOr<Schema.String>>, never, never>;
++    readonly _meta: Schema.decodeTo<Schema.toType<Schema.optional<Schema.$Record<Schema.String, Schema.Unknown>>>, Schema.optionalKey<Schema.$Record<Schema.String, Schema.Unknown>>, never, never>;
++}>;
++/**
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export type EventOccurrence = typeof EventOccurrence.Type;
+ declare const PromptArgument_base: Schema.Opaque<PromptArgument, Schema.Struct<{
+     /**
+      * The name of the argument.
+diff --git a/dist/ai/McpSchema.js b/dist/ai/McpSchema.js
+index bff6370..0a6962c 100644
+--- a/dist/ai/McpSchema.js
++++ b/dist/ai/McpSchema.js
+@@ -586,6 +586,52 @@ export const HEADER_MISMATCH_ERROR_CODE = -32020;
+  * @since 4.0.6
+  */
+ export const UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE = -32022;
++/**
++ * Represents the MCP error code for a referenced entity that does not exist,
++ * such as an unknown event name. `data.kind` may say which.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export const NOT_FOUND_ERROR_CODE = -32023;
++/**
++ * Represents the MCP error code for a principal that is not permitted, or
++ * whose access was revoked.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export const FORBIDDEN_ERROR_CODE = -32024;
++/**
++ * Represents the MCP error code for a server-imposed limit or quota.
++ * `data.limit` names it.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export const RESOURCE_EXHAUSTED_ERROR_CODE = -32025;
++/**
++ * Represents the MCP error code for a well-formed request that asks for a
++ * capability or option not supported here. `data` identifies it, for example
++ * `{ feature: "deliveryMode", value: "push" }`.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export const UNSUPPORTED_ERROR_CODE = -32026;
++/**
++ * Represents the MCP error code for a client-supplied callback endpoint that
++ * failed verification or could not be reached.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export const CALLBACK_ENDPOINT_ERROR_CODE = -32027;
+ /**
+  * Represents an MCP/JSON-RPC error for invalid JSON that could not be parsed.
+  *
+@@ -695,6 +741,66 @@ export class InternalError extends /*#__PURE__*/Schema.Error("effect/ai/McpSchem
+     message: "Not implemented"
+   });
+ }
++/**
++ * Represents an MCP error for a referenced entity that does not exist.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export class NotFound extends /*#__PURE__*/Schema.Error("effect/ai/McpSchema/NotFound")({
++  ...McpErrorBase.fields,
++  _tag: /*#__PURE__*/Schema.tag("NotFound"),
++  code: /*#__PURE__*/Schema.tag(NOT_FOUND_ERROR_CODE)
++}) {}
++/**
++ * Represents an MCP error for a principal that is not permitted.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export class Forbidden extends /*#__PURE__*/Schema.Error("effect/ai/McpSchema/Forbidden")({
++  ...McpErrorBase.fields,
++  _tag: /*#__PURE__*/Schema.tag("Forbidden"),
++  code: /*#__PURE__*/Schema.tag(FORBIDDEN_ERROR_CODE)
++}) {}
++/**
++ * Represents an MCP error for a server-imposed limit or quota.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export class ResourceExhausted extends /*#__PURE__*/Schema.Error("effect/ai/McpSchema/ResourceExhausted")({
++  ...McpErrorBase.fields,
++  _tag: /*#__PURE__*/Schema.tag("ResourceExhausted"),
++  code: /*#__PURE__*/Schema.tag(RESOURCE_EXHAUSTED_ERROR_CODE)
++}) {}
++/**
++ * Represents an MCP error for a capability or option not supported here.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export class Unsupported extends /*#__PURE__*/Schema.Error("effect/ai/McpSchema/Unsupported")({
++  ...McpErrorBase.fields,
++  _tag: /*#__PURE__*/Schema.tag("Unsupported"),
++  code: /*#__PURE__*/Schema.tag(UNSUPPORTED_ERROR_CODE)
++}) {}
++/**
++ * Represents an MCP error for a callback endpoint that failed verification or could not be reached.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export class CallbackEndpointError extends /*#__PURE__*/Schema.Error("effect/ai/McpSchema/CallbackEndpointError")({
++  ...McpErrorBase.fields,
++  _tag: /*#__PURE__*/Schema.tag("CallbackEndpointError"),
++  code: /*#__PURE__*/Schema.tag(CALLBACK_ENDPOINT_ERROR_CODE)
++}) {}
+ /**
+  * Schema for MCP protocol errors returned in JSON-RPC failure responses,
+  * including standard protocol errors and custom `McpErrorBase` values.
+@@ -1271,6 +1377,51 @@ export class Skill extends /*#__PURE__*/Schema.Class("@effect/ai/McpSchema/Skill
+   _meta: /*#__PURE__*/optional(UnknownObject)
+ }) {}
+ // =============================================================================
++// Events
++// =============================================================================
++/**
++ * How a client receives an event type's occurrences under the MCP Events
++ * extension (SEP-3415): by `events/poll`, an `events/stream` push stream, or
++ * a webhook registered with `events/subscribe`.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export const EventDelivery = /*#__PURE__*/Schema.Literals(["poll", "push", "webhook"]);
++/**
++ * An event type listed by `events/list`: its subscription arguments, its
++ * payload, and the delivery modes it supports.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export const EventDescriptor = /*#__PURE__*/Schema.Struct({
++  name: Schema.String,
++  description: /*#__PURE__*/optional(Schema.String),
++  delivery: /*#__PURE__*/Schema.Array(EventDelivery),
++  inputSchema: UnknownObject,
++  payloadSchema: UnknownObject,
++  _meta: /*#__PURE__*/optional(UnknownObject)
++});
++/**
++ * One delivered event. `cursor` is the subscription's position after it, on
++ * push and webhook delivery; poll carries the cursor on the result.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export const EventOccurrence = /*#__PURE__*/Schema.Struct({
++  eventId: Schema.String,
++  name: Schema.String,
++  timestamp: Schema.String,
++  data: UnknownObject,
++  cursor: /*#__PURE__*/optional(/*#__PURE__*/Schema.NullOr(Schema.String)),
++  _meta: /*#__PURE__*/optional(UnknownObject)
++});
++// =============================================================================
+ // Prompts
+ // =============================================================================
+ /**
+diff --git a/dist/ai/McpServer.d.ts b/dist/ai/McpServer.d.ts
+index fe6f18e..c67169e 100644
+--- a/dist/ai/McpServer.d.ts
++++ b/dist/ai/McpServer.d.ts
+@@ -17,6 +17,7 @@ import * as Context from "../Context.ts";
+ import * as Duration from "../Duration.ts";
+ import * as Effect from "../Effect.ts";
+ import * as Headers from "../http/Headers.ts";
++import * as HttpClient from "../http/HttpClient.ts";
+ import * as HttpRouter from "../http/HttpRouter.ts";
+ import * as HttpServerRequest from "../http/HttpServerRequest.ts";
+ import * as Layer from "../Layer.ts";
+@@ -26,6 +27,7 @@ import * as RpcServer from "../rpc/RpcServer.ts";
+ import * as Schema from "../Schema.ts";
+ import * as Scope from "../Scope.ts";
+ import type { Stdio } from "../Stdio.ts";
++import type * as Stream from "../Stream.ts";
+ import type * as Types from "../Types.ts";
+ import type * as McpProtocol from "./McpProtocol.ts";
+ import * as McpSchema from "./McpSchema.ts";
+@@ -113,7 +115,7 @@ export interface MiddlewareSuccess {
+  * @category middleware
+  * @since 4.0.0
+  */
+-export type MiddlewareMethod = "tools/call" | "resources/read" | "prompts/get" | "completion/complete" | "tools/list" | "resources/list" | "resources/templates/list" | "prompts/list" | "skills/list" | "skills/get" | "resources/directory/read";
++export type MiddlewareMethod = "tools/call" | "resources/read" | "prompts/get" | "completion/complete" | "tools/list" | "resources/list" | "resources/templates/list" | "prompts/list" | "skills/list" | "skills/get" | "resources/directory/read" | "events/list" | "events/poll" | "events/stream";
+ /**
+  * Request metadata passed to MCP middleware.
+  *
+@@ -1276,6 +1278,266 @@ export declare const registerSkill: (options: SkillOptions) => Effect.Effect<voi
+  * @since 4.1.1
+  */
+ export declare const skill: (options: SkillOptions) => Layer.Layer<never, Cause.IllegalArgumentError, McpServer>;
++
++/**
++ * A failure an event handler reports to the client: a JSON-RPC error on a
++ * poll or when a push stream opens, and `notifications/events/terminated`
++ * once it is open.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export type EventError =
++  | InvalidParams
++  | InternalError
++  | McpSchema.NotFound
++  | McpSchema.Forbidden
++  | McpSchema.ResourceExhausted
++  | McpSchema.Unsupported
++
++/**
++ * Where a poll starts. `cursor` is `null` to start from now, which replays
++ * nothing. With a cursor, replay starts at whichever is later: the cursor, or
++ * `maxAgeMs` before now.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventPollRequest {
++  readonly cursor: string | null
++  readonly maxAgeMs?: number | undefined
++  readonly maxEvents?: number | undefined
++}
++
++/**
++ * Where a push stream starts, read as for {@link EventPollRequest}.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventStreamRequest {
++  readonly cursor: string | null
++  readonly maxAgeMs?: number | undefined
++}
++
++/**
++ * One occurrence, with its payload as the event's `payload` schema types it.
++ * `eventId` stays the same however often the occurrence is delivered.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventOccurrence<A> {
++  readonly eventId: string
++  readonly timestamp: string
++  readonly data: A
++  readonly _meta?: Readonly<Record<string, unknown>> | undefined
++}
++
++/**
++ * A poll's answer. `truncated` says delivery started later than the cursor,
++ * and `hasMore` that `maxEvents` cut the batch short. `nextPollMs` defaults
++ * to 30 seconds.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventPollResult<A> {
++  readonly events: ReadonlyArray<EventOccurrence<A>>
++  readonly cursor: string | null
++  readonly truncated?: boolean | undefined
++  readonly hasMore?: boolean | undefined
++  readonly nextPollMs?: number | undefined
++}
++
++/**
++ * What a push stream carries: an occurrence and the cursor after it; a
++ * position checked without a match, which the next heartbeat reports; a gap,
++ * sent as a fresh `notifications/events/active` with `truncated`; or an error
++ * that leaves the stream open.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export type EventStreamItem<A> =
++  | ({ readonly _tag: "Event"; readonly cursor: string | null } & EventOccurrence<A>)
++  | { readonly _tag: "Position"; readonly cursor: string | null }
++  | { readonly _tag: "Gap"; readonly cursor: string | null }
++  | { readonly _tag: "Error"; readonly error: EventError }
++
++/**
++ * An accepted push subscription: where it starts, and its items. A failure
++ * of `items` ends it.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventSubscription<A, R> {
++  readonly cursor: string | null
++  readonly truncated?: boolean | undefined
++  readonly items: Stream.Stream<EventStreamItem<A>, EventError, R>
++}
++
++/**
++ * Options for {@link registerEvent} and {@link event}.
++ *
++ * **Details**
++ *
++ * `parameters` types the subscription arguments, an empty object by default,
++ * and `payload` the occurrences' `data`; both are advertised as JSON Schema
++ * by `events/list`. `poll` offers poll delivery and `stream` push delivery,
++ * and at least one is required. With {@link EventWebhooks} provided where the
++ * event is registered, `stream` also backs webhook delivery.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventOptions<Params extends Schema.Codec<any, any>, Payload extends Schema.Codec<any, any>, R> {
++  readonly name: string
++  readonly description?: string | undefined
++  readonly parameters?: Params | undefined
++  readonly payload: Payload
++  readonly _meta?: Readonly<Record<string, unknown>> | undefined
++  readonly annotations?: Context.Context<never> | undefined
++  readonly poll?:
++    | ((
++      args: Params["Type"],
++      request: EventPollRequest
++    ) => Effect.Effect<EventPollResult<Payload["Type"]>, EventError, R>)
++    | undefined
++  readonly stream?:
++    | ((
++      args: Params["Type"],
++      request: EventStreamRequest
++    ) => Effect.Effect<EventSubscription<Payload["Type"], R>, EventError, R | Scope.Scope>)
++    | undefined
++}
++
++/**
++ * Registers an event type under the MCP Events extension (SEP-3415).
++ *
++ * **Details**
++ *
++ * The server declares `io.modelcontextprotocol/events` on revision
++ * `2026-07-28` once any event type is registered, and answers `events/list`,
++ * `events/poll` and `events/stream`. A push stream runs `stream` for its
++ * lifetime inside the request's middleware, sends heartbeats carrying the
++ * last cursor, and ends when the client goes away. Services read by `poll`
++ * and `stream` are request-level, as for tools.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export declare const registerEvent: <Params extends Schema.Codec<any, any> = Schema.Struct<{}>, Payload extends Schema.Codec<any, any> = Schema.Codec<any, any>, R = never>(options: EventOptions<Params, Payload, R>) => Effect.Effect<void, never, RegistrationRequirements<never, R>>;
++/**
++ * Creates a layer that registers an event type under the MCP Events
++ * extension (SEP-3415).
++ *
++ * @see {@link registerEvent} for the Effect-level event registration API
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export declare const event: <Params extends Schema.Codec<any, any> = Schema.Struct<{}>, Payload extends Schema.Codec<any, any> = Schema.Codec<any, any>, R = never>(options: EventOptions<Params, Payload, R>) => Layer.Layer<never, never, RegistrationRequirements<never, R>>;
++declare const CallbackRejected_base: new <A extends Record<string, any> = {}>(args: import("../Types.ts").VoidIfEmpty<{ readonly [P in keyof A as P extends "_tag" ? never : P]: A[P]; }>) => import("../Cause.ts").YieldableError & {
++    readonly _tag: "CallbackRejected";
++} & Readonly<A>;
++/**
++ * The reason a {@link CallbackGuard} refuses a callback URL.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export declare class CallbackRejected extends CallbackRejected_base<{
++    readonly message: string;
++}> {
++}
++/**
++ * Decides which webhook callback URLs may be reached.
++ *
++ * **Details**
++ *
++ * `check` runs when a subscription is created and again before every POST.
++ * Resolving a host name needs the platform, so the default refuses every URL:
++ * a server that offers webhooks provides a guard that resolves the host and
++ * refuses addresses that are not globally routable. That check alone cannot
++ * stop DNS rebinding, so the `HttpClient` given to {@link layerEventWebhooks}
++ * must connect only to the address it validated, sending the original host
++ * name in `Host` and TLS SNI, and must not follow redirects. `allowsPlaintext`
++ * admits an `http:` URL, which only a local test setup should do.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export declare const CallbackGuard: Context.Reference<{
++    readonly check: (url: URL) => Effect.Effect<void, CallbackRejected>;
++    readonly allowsPlaintext?: ((url: URL) => boolean) | undefined;
++}>;
++declare const EventWebhooks_base: Context.ServiceClass<EventWebhooks, "effect/ai/McpServer/EventWebhooks", {
++    /** The number of live webhook subscriptions. */
++    readonly size: Effect.Effect<number>;
++}>;
++/**
++ * Webhook delivery for event types under the MCP Events extension (SEP-3415).
++ *
++ * **Details**
++ *
++ * Event types registered with a `stream` where this service is present also
++ * offer webhook delivery. `events/subscribe` validates the callback, verifies
++ * the endpoint with a challenge, and runs the event's `stream` for the
++ * subscription's lifetime, POSTing each occurrence with Standard Webhooks
++ * signatures, one at a time, retrying with backoff. Subscriptions live in
++ * memory: every grant is finite, between a minute and an hour, so a client
++ * refreshing from its cursor recreates what a restart lost. A failure of the
++ * stream, such as `Forbidden` when access is revoked, ends the subscription
++ * with a `terminated` envelope.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export declare class EventWebhooks extends EventWebhooks_base {
++}
++/**
++ * Options for {@link layerEventWebhooks}.
++ *
++ * **Details**
++ *
++ * `principal` names the authenticated subject of an `events/subscribe` or
++ * `events/unsubscribe` request, read from the request's services. It fails
++ * with `Forbidden` for a caller that may not subscribe; webhook delivery
++ * requires an authenticated principal. A subscription's identity is its
++ * principal, callback URL, event name and arguments, so the principal must
++ * stay the same across token refreshes.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventWebhooksOptions {
++    readonly principal: Effect.Effect<string, McpSchema.Forbidden>;
++}
++/**
++ * Provides {@link EventWebhooks}, delivering through the given `HttpClient`
++ * and admitting callbacks through the current {@link CallbackGuard}.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export declare const layerEventWebhooks: (options: EventWebhooksOptions) => Layer.Layer<EventWebhooks, never, HttpClient.HttpClient>;
+ /**
+  * Registers an MCP prompt from an Effect program.
+  *
+diff --git a/dist/ai/McpServer.js b/dist/ai/McpServer.js
+index 4bf6bca..5ad258e 100644
+--- a/dist/ai/McpServer.js
++++ b/dist/ai/McpServer.js
+@@ -16,6 +16,8 @@ import * as Cause from "../Cause.js";
+ import * as Clock from "../Clock.js";
+ import * as Context from "../Context.js";
+ import * as Digest from "../crypto/Digest.js";
++import * as Mac from "../crypto/Mac.js";
++import * as SecureRandom from "../crypto/SecureRandom.js";
+ import * as Data from "../Data.js";
+ import * as Deferred from "../Deferred.js";
+ import * as Duration from "../Duration.js";
+@@ -26,6 +28,7 @@ import * as Exit from "../Exit.js";
+ import * as Fiber from "../Fiber.js";
+ import * as FindMyWay from "../http/FindMyWay.js";
+ import * as Headers from "../http/Headers.js";
++import * as HttpClient from "../http/HttpClient.js";
+ import { appendPreResponseHandlerUnsafe } from "../http/HttpEffect.js";
+ import * as HttpRouter from "../http/HttpRouter.js";
+ import * as HttpServerRequest from "../http/HttpServerRequest.js";
+@@ -55,6 +58,7 @@ import * as McpCore from "./internal/mcpCore.js";
+ import * as McpProtocolInternal from "./internal/mcpProtocol.js";
+ import * as McpRuntime from "./internal/mcpRuntime.js";
+ import * as McpSkills from "./internal/mcpSkills.js";
++import * as McpWebhooks from "./internal/mcpWebhooks.js";
+ import * as InternalStructuredOutput from "./internal/structured-output.js";
+ import * as McpSchema from "./McpSchema.js";
+ import { CallToolResult, ElicitationDeclined, EnabledWhen, GetPromptResult, InternalError, InvalidParams, InvalidRequest, isParam, McpRequestContext, McpServerClient, McpServerClientMiddleware, MethodNotFound, Prompt, Resource, ResourceTemplate, ServerNotificationRpcs, TextContent, Tool as McpTool, ToolJson } from "./McpSchema.js";
+@@ -413,6 +417,9 @@ const notFound = (method, target) => {
+       return new McpCore.SkillNotFound({
+         uri: target
+       });
++    case "events/poll":
++    case "events/stream":
++      return McpCore.eventNotFound(target);
+   }
+ };
+ const isHidden = error => error instanceof Hidden;
+@@ -2637,6 +2644,155 @@ export const registerSkill = /*#__PURE__*/Effect.fnUntraced(function* (options)
+  * @since 4.1.1
+  */
+ export const skill = options => Layer.effectDiscard(registerSkill(options));
++// =============================================================================
++// Events
++// =============================================================================
++const DEFAULT_NEXT_POLL_MS = 30_000;
++/**
++* Registers an event type under the MCP Events extension (SEP-3415).
++*
++* **Details**
++*
++* The server declares `io.modelcontextprotocol/events` on revision
++* `2026-07-28` once any event type is registered, and answers `events/list`,
++* `events/poll`, `events/stream`, and with {@link EventWebhooks}
++* `events/subscribe` and `events/unsubscribe`. A push stream runs `stream` for its
++* lifetime inside the request's middleware, sends heartbeats carrying the
++* last cursor, and ends when the client goes away. Services read by `poll`
++* and `stream` are request-level, as for tools.
++*
++* @stability unstable
++* @category events
++* @since 4.1.4
++*/
++export const registerEvent = Effect.fnUntraced(function* (options) {
++  const { name, poll, stream } = options;
++  if (poll === undefined && stream === undefined) {
++    return yield* Effect.die(new Cause.IllegalArgumentError(`Event ${name}: give it poll, stream or both`));
++  }
++  const registry = yield* McpServer;
++  const { core, globalMiddleware } = internalState.get(registry);
++  const services = yield* Effect.context();
++  const annotations = options.annotations ?? Context.empty();
++  const { invoke, visible } = makeInvoke(services, globalMiddleware);
++  const webhooks = stream === undefined
++    ? undefined
++    : Option.getOrUndefined(Option.map(Context.getOption(services, EventWebhooks), (service) => webhooksState.get(service)));
++  const parameters = options.parameters ?? Schema.Struct({});
++  const decodeArguments = Schema.decodeUnknownEffect(Schema.toCodecJson(parameters));
++  const encodePayload = Schema.encodeUnknownEffect(Schema.toCodecJson(options.payload));
++  const argumentsOf = (args) => decodeArguments(args).pipe(Effect.mapError((error) => new InvalidParams({ message: error.message })));
++  const encodeEvent = (event) => encodePayload(event.data).pipe(Effect.flatMap((data) => Predicate.isReadonlyObject(data) ? Effect.succeed(data) : Effect.fail(data)), Effect.map((data) => ({
++    eventId: event.eventId,
++    timestamp: event.timestamp,
++    data,
++    ...(event._meta === undefined ? {} : { _meta: event._meta })
++  })), Effect.mapError(() => new InternalError({ message: `Event '${name}' payload failed to encode` })));
++  yield* core.events.register({
++    descriptor: {
++      name,
++      ...(options.description === undefined ? {} : { description: options.description }),
++      delivery: [
++        ...(poll === undefined ? [] : ["poll"]),
++        ...(stream === undefined ? [] : ["push"]),
++        ...(webhooks === undefined ? [] : ["webhook"])
++      ],
++      inputSchema: toolJsonSchema(parameters, false),
++      payloadSchema: toolJsonSchema(options.payload, false),
++      ...(options._meta === undefined ? {} : { _meta: options._meta })
++    },
++    isVisible: isEnabled(annotations),
++    visible: visible("events/list", name),
++    webhooks,
++    decodeArguments: argumentsOf,
++    poll: poll === undefined ? undefined : (request, invocation) => invoke(Effect.gen(function* () {
++      const result = yield* poll(yield* argumentsOf(request.arguments), {
++        cursor: request.cursor,
++        maxAgeMs: request.maxAgeMs,
++        maxEvents: request.maxEvents
++      });
++      return {
++        events: yield* Effect.forEach(result.events, encodeEvent),
++        cursor: result.cursor,
++        truncated: result.truncated ?? false,
++        hasMore: result.hasMore ?? false,
++        nextPollMs: result.nextPollMs ?? DEFAULT_NEXT_POLL_MS
++      };
++    }), invocation, { method: "events/poll", target: name, payload: request }),
++    stream: stream === undefined ? undefined : (request, invocation, deliver) => invoke(Effect.scoped(Effect.gen(function* () {
++      const args = request.decoded !== undefined ? request.decoded.value : yield* argumentsOf(request.arguments);
++      const subscription = yield* stream(args, {
++        cursor: request.cursor,
++        maxAgeMs: request.maxAgeMs
++      });
++      // The items run on the delivery fiber, so they keep this request's services.
++      const context = yield* Effect.context();
++      const items = subscription.items.pipe(Stream.mapEffect((item) => item._tag === "Event"
++        ? encodeEvent(item).pipe(Effect.map((event) => ({ ...event, _tag: "Event", cursor: item.cursor })), Effect.catch((error) => Effect.succeed({ _tag: "Error", error })))
++        : Effect.succeed(item)), Stream.provideContext(context));
++      yield* deliver({ cursor: subscription.cursor, truncated: subscription.truncated ?? false, items });
++    })), invocation, { method: "events/stream", target: name, payload: request })
++  });
++});
++/**
++* Creates a layer that registers an event type under the MCP Events
++* extension (SEP-3415).
++*
++* @see {@link registerEvent} for the Effect-level event registration API
++*
++* @stability unstable
++* @category events
++* @since 4.1.4
++*/
++export const event = (options) => Layer.effectDiscard(registerEvent(options));
++/**
++ * The reason a {@link CallbackGuard} refuses a callback URL.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export class CallbackRejected extends /*#__PURE__*/Data.TaggedError("CallbackRejected") {}
++/**
++ * Decides which webhook callback URLs may be reached. The default refuses
++ * every URL; see the source for the contract a platform guard keeps.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export const CallbackGuard = /*#__PURE__*/Context.Reference("effect/ai/McpServer/CallbackGuard", {
++  defaultValue: () => ({
++    check: (url) => Effect.fail(new CallbackRejected({ message: `No callback guard admits ${url.host}` }))
++  })
++});
++/**
++ * Webhook delivery for event types under the MCP Events extension (SEP-3415).
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export class EventWebhooks extends /*#__PURE__*/Context.Service()("effect/ai/McpServer/EventWebhooks") {}
++const webhooksState = /*#__PURE__*/new WeakMap();
++/**
++ * Provides {@link EventWebhooks}, delivering through the given `HttpClient`
++ * and admitting callbacks through the current {@link CallbackGuard}.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export const layerEventWebhooks = (options) => Layer.effect(EventWebhooks, Effect.gen(function* () {
++  const webhooks = yield* McpWebhooks.make({
++    principal: options.principal,
++    guard: yield* CallbackGuard,
++    client: yield* HttpClient.HttpClient
++  });
++  const service = EventWebhooks.of({ size: webhooks.size });
++  webhooksState.set(service, webhooks);
++  return service;
++}).pipe(Effect.provide(Layer.mergeAll(Mac.layerWebCrypto, Digest.layerWebCrypto).pipe(Layer.provideMerge(SecureRandom.layerWebCrypto)))));
+ /**
+  * Registers an MCP prompt from an Effect program.
+  *
+diff --git a/dist/ai/internal/mcpCore.js b/dist/ai/internal/mcpCore.js
+index 4c416a8..50d2d34 100644
+--- a/dist/ai/internal/mcpCore.js
++++ b/dist/ai/internal/mcpCore.js
+@@ -75,6 +75,15 @@ export const ClientNotification = /*#__PURE__*/Data.taggedEnum();
+  * @internal
+  */
+ export const ServerNotification = /*#__PURE__*/Data.taggedEnum();
++/**
++ * @internal
++ */
++export const eventNotFound = name => new McpSchema.NotFound({
++  message: `Event '${name}' not found`,
++  data: {
++    kind: "event"
++  }
++});
+ // Whether one skill directory contains the other, or both are the same.
+ const skillsOverlap = (a, b) => {
+   const rootA = a.slice(0, -"/SKILL.md".length);
+@@ -90,6 +99,7 @@ export const make = /*#__PURE__*/Effect.sync(() => {
+   const resourceTemplateRegistrations = [];
+   const promptRegistrations = new Map();
+   const skillRegistrations = new Map();
++  const eventRegistrations = new Map();
+   const skillFiles = new Set();
+   const completionRegistrations = new Map();
+   const filterList = (registrations, invocation) => Effect.map(Effect.filter(Arr.filter(registrations, entry => entry.isVisible(invocation.protocol)), entry => entry.visible === undefined ? Effect.succeed(true) : entry.visible(invocation)), entries => entries.map(entry => entry.descriptor));
+@@ -234,11 +244,22 @@ export const make = /*#__PURE__*/Effect.sync(() => {
+       return Array.from(children.values()).sort((a, b) => a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0);
+     })
+   };
++  const events = {
++    register: registration => Effect.sync(() => {
++      eventRegistrations.set(registration.descriptor.name, registration);
++    }),
++    list: invocation => filterList(eventRegistrations.values(), invocation),
++    get: (name, invocation) => Effect.suspend(() => {
++      const registration = eventRegistrations.get(name);
++      return registration !== undefined && registration.isVisible(invocation.protocol) ? Effect.succeed(registration) : Effect.fail(eventNotFound(name));
++    })
++  };
+   const registrationPresence = Effect.sync(() => ({
+     tools: registrations.size > 0,
+     resources: resourceRegistrations.length > 0 || resourceTemplateRegistrations.length > 0,
+     prompts: promptRegistrations.size > 0,
+-    skills: skillRegistrations.size > 0
++    skills: skillRegistrations.size > 0,
++    events: eventRegistrations.size > 0
+   }));
+   return {
+     tools,
+@@ -246,6 +267,7 @@ export const make = /*#__PURE__*/Effect.sync(() => {
+     prompts,
+     completions,
+     skills,
++    events,
+     registrationPresence
+   };
+ });
+diff --git a/dist/ai/internal/mcpEvents.d.ts b/dist/ai/internal/mcpEvents.d.ts
+new file mode 100644
+index 0000000..cb0ff5c
+--- /dev/null
++++ b/dist/ai/internal/mcpEvents.d.ts
+@@ -0,0 +1 @@
++export {};
+diff --git a/dist/ai/internal/mcpEvents.js b/dist/ai/internal/mcpEvents.js
+new file mode 100644
+index 0000000..d875046
+--- /dev/null
++++ b/dist/ai/internal/mcpEvents.js
+@@ -0,0 +1,265 @@
++/**
++ * The Events extension (SEP-3415): wire schemas on revision 2026-07-28 and
++ * the delivery loop behind a push stream.
++ */
++import * as Cause from "../../Cause.js";
++import * as Clock from "../../Clock.js";
++import * as Duration from "../../Duration.js";
++import * as Effect from "../../Effect.js";
++import * as Option from "../../Option.js";
++import * as Queue from "../../Queue.js";
++import * as Result from "../../Result.js";
++import * as Rpc from "../../rpc/Rpc.js";
++import * as RpcGroup from "../../rpc/RpcGroup.js";
++import * as Schema from "../../Schema.js";
++import * as Stream from "../../Stream.js";
++import * as PublicMcpSchema from "../McpSchema.js";
++import * as McpProtocol from "./mcpProtocol.js";
++import * as Stateless from "./mcpSchema/v2026_07_28.js";
++/**
++ * @internal
++ */
++export const EXTENSION_ID = "io.modelcontextprotocol/events";
++/**
++ * Adds the extension declaration while any event type is registered. The
++ * server sends no `notifications/events/list_changed`, so its settings object
++ * is empty.
++ *
++ * @internal
++ */
++export const declareExtension = (extensions, servesEvents) => servesEvents ? { ...extensions, [EXTENSION_ID]: {} } : extensions;
++const methodNotFound = (method) => new McpProtocol.ProtocolError({
++    code: PublicMcpSchema.METHOD_NOT_FOUND_ERROR_CODE,
++    message: `Method not found: ${method}`
++});
++/**
++ * Fails with `Method not found` while no event type is registered, as a
++ * server that does not declare the extension.
++ *
++ * @internal
++ */
++export const requireEvents = (core, method) => Effect.flatMap(core.registrationPresence, (presence) => presence.events ? Effect.void : Effect.fail(methodNotFound(method)));
++/**
++ * @internal
++ */
++export const unsupportedDelivery = (value) => new PublicMcpSchema.Unsupported({
++    message: `Delivery mode '${value}' is not supported for this event`,
++    data: { feature: "deliveryMode", value }
++});
++// =============================================================================
++// Wire schemas
++// =============================================================================
++const optional = Stateless.optional;
++const Cursor = Schema.NullOr(Schema.String);
++const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
++/**
++ * @internal
++ */
++export const ListEventsResult = Schema.StructWithRest(Schema.Struct({ ...Stateless.PaginatedResult, events: Schema.Array(PublicMcpSchema.EventDescriptor) }), [Stateless.UnknownObject]);
++/**
++ * @internal
++ */
++export class ListEvents extends Rpc.make("events/list", {
++    success: ListEventsResult,
++    error: Stateless.McpError,
++    payload: Stateless.PaginatedRequestParams
++}) {
++}
++const SubscriptionParams = {
++    ...Stateless.RequestParams.fields,
++    name: Schema.String,
++    arguments: optional(Stateless.UnknownObject),
++    cursor: optional(Cursor),
++    maxAgeMs: optional(NonNegativeInt)
++};
++/**
++ * @internal
++ */
++export const PollEventsResult = Schema.StructWithRest(Schema.Struct({
++    ...Stateless.ResultMeta,
++    events: Schema.Array(PublicMcpSchema.EventOccurrence),
++    cursor: Cursor,
++    truncated: Schema.Boolean,
++    hasMore: Schema.Boolean,
++    nextPollMs: NonNegativeInt
++}), [Stateless.UnknownObject]);
++/**
++ * @internal
++ */
++export class PollEvents extends Rpc.make("events/poll", {
++    success: PollEventsResult,
++    error: Stateless.McpError,
++    payload: { ...SubscriptionParams, maxEvents: optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))) }
++}) {
++}
++/**
++ * @internal
++ */
++export class StreamEvents extends Rpc.make("events/stream", {
++    success: Stateless.SubscriptionsListenResult,
++    error: Stateless.McpError,
++    payload: { ...SubscriptionParams, heartbeatMs: optional(NonNegativeInt) }
++}) {
++}
++/**
++ * @internal
++ */
++export class SubscribeEvents extends Rpc.make("events/subscribe", {
++    success: Schema.StructWithRest(Schema.Struct({
++        ...Stateless.ResultMeta,
++        id: Schema.String,
++        refreshBefore: Schema.NullOr(Schema.String),
++        cursor: Cursor,
++        truncated: Schema.Boolean
++    }), [Stateless.UnknownObject]),
++    error: Stateless.McpError,
++    payload: {
++        ...SubscriptionParams,
++        delivery: Stateless.UnknownObject,
++        ttlMs: optional(Schema.NullOr(NonNegativeInt))
++    }
++}) {
++}
++/**
++ * @internal
++ */
++export class UnsubscribeEvents extends Rpc.make("events/unsubscribe", {
++    success: Schema.StructWithRest(Schema.Struct(Stateless.ResultMeta), [Stateless.UnknownObject]),
++    error: Stateless.McpError,
++    payload: {
++        ...Stateless.RequestParams.fields,
++        name: Schema.String,
++        arguments: optional(Stateless.UnknownObject),
++        delivery: Stateless.UnknownObject
++    }
++}) {
++}
++/**
++ * @internal
++ */
++export class EventsActiveNotification extends Rpc.make("notifications/events/active", {
++    payload: { ...Stateless.NotificationParams.fields, cursor: Cursor, truncated: Schema.Boolean, heartbeatMs: NonNegativeInt }
++}) {
++}
++/**
++ * @internal
++ */
++export class EventsEventNotification extends Rpc.make("notifications/events/event", {
++    payload: { ...PublicMcpSchema.EventOccurrence.fields, ...Stateless.NotificationParams.fields }
++}) {
++}
++/**
++ * @internal
++ */
++export class EventsHeartbeatNotification extends Rpc.make("notifications/events/heartbeat", {
++    payload: { ...Stateless.NotificationParams.fields, cursor: Cursor }
++}) {
++}
++/**
++ * @internal
++ */
++export class EventsErrorNotification extends Rpc.make("notifications/events/error", {
++    payload: { ...Stateless.NotificationParams.fields, error: Stateless.McpError }
++}) {
++}
++/**
++ * @internal
++ */
++export class EventsTerminatedNotification extends Rpc.make("notifications/events/terminated", {
++    payload: { ...Stateless.NotificationParams.fields, error: Stateless.McpError }
++}) {
++}
++/**
++ * The extension's requests on revision 2026-07-28.
++ *
++ * @internal
++ */
++export class StatelessRpcs extends RpcGroup.make(ListEvents, PollEvents, StreamEvents, SubscribeEvents, UnsubscribeEvents) {
++}
++/**
++ * The notifications a push stream carries.
++ *
++ * @internal
++ */
++export class ServerNotificationRpcs extends RpcGroup.make(EventsActiveNotification, EventsEventNotification, EventsHeartbeatNotification, EventsErrorNotification, EventsTerminatedNotification) {
++}
++// =============================================================================
++// Push delivery
++// =============================================================================
++const DEFAULT_HEARTBEAT_MS = 30_000;
++const MIN_HEARTBEAT_MS = 1_000;
++const MAX_HEARTBEAT_MS = 300_000;
++// Occurrences the handler may run ahead of a slow client before it waits.
++const PENDING_ITEMS = 16;
++/**
++ * The heartbeat interval granted for a suggested one.
++ *
++ * @internal
++ */
++export const grantHeartbeat = (suggested) => Math.min(MAX_HEARTBEAT_MS, Math.max(MIN_HEARTBEAT_MS, suggested ?? DEFAULT_HEARTBEAT_MS));
++const isJson = Schema.is(Schema.Json);
++/**
++ * @internal
++ */
++export const wireError = (failure) => ({
++    code: failure.code,
++    message: failure.message,
++    ...(failure.data !== undefined && isJson(failure.data) ? { data: failure.data } : {})
++});
++/**
++ * Sends `notifications/events/active`, then each occurrence, and a heartbeat
++ * with the position checked so far whenever `heartbeatMs` passes without
++ * another message. A failure of the subscription's items ends it with
++ * `notifications/events/terminated`. `send` adds the subscription id.
++ *
++ * @internal
++ */
++export const deliver = Effect.fnUntraced(function* (options) {
++    const { heartbeatMs, name, subscription } = options;
++    let cursor = subscription.cursor;
++    // Measured from the last message sent: a Position changes the cursor but sends nothing.
++    let sentAt = 0;
++    const send = (tag, payload) =>
++        options.send(tag, payload).pipe(Effect.andThen(Clock.currentTimeMillis), Effect.map((at) => {
++            sentAt = at;
++        }));
++    const active = (truncated) => send(EventsActiveNotification._tag, { cursor, truncated, heartbeatMs });
++    yield* active(subscription.truncated);
++    const items = yield* Stream.toQueue(subscription.items, { capacity: PENDING_ITEMS });
++    while (true) {
++        const wait = Math.max(0, sentAt + heartbeatMs - (yield* Clock.currentTimeMillis));
++        const next = yield* Queue.take(items).pipe(Effect.timeoutOption(Duration.millis(wait)), Effect.result);
++        if (Result.isFailure(next)) {
++            if (!Cause.isDone(next.failure)) {
++                yield* send(EventsTerminatedNotification._tag, { error: wireError(next.failure) });
++            }
++            return;
++        }
++        if (Option.isNone(next.success)) {
++            yield* send(EventsHeartbeatNotification._tag, { cursor });
++            continue;
++        }
++        const item = next.success.value;
++        switch (item._tag) {
++            case "Event": {
++                cursor = item.cursor;
++                const { _meta, _tag, ...occurrence } = item;
++                yield* send(EventsEventNotification._tag, { ...occurrence, name, ...(_meta === undefined ? {} : { _meta }) });
++                break;
++            }
++            case "Position": {
++                cursor = item.cursor;
++                break;
++            }
++            case "Gap": {
++                cursor = item.cursor;
++                yield* active(true);
++                break;
++            }
++            case "Error": {
++                yield* send(EventsErrorNotification._tag, { error: wireError(item.error) });
++                break;
++            }
++        }
++    }
++}, Effect.scoped);
+diff --git a/dist/ai/internal/mcpProtocol/v2026_07_28.js b/dist/ai/internal/mcpProtocol/v2026_07_28.js
+index af1ceed..ea29279 100644
+--- a/dist/ai/internal/mcpProtocol/v2026_07_28.js
++++ b/dist/ai/internal/mcpProtocol/v2026_07_28.js
+@@ -17,6 +17,7 @@ import * as Schema from "../../../Schema.js";
+ import * as Scope from "../../../Scope.js";
+ import * as PublicMcpSchema from "../../McpSchema.js";
+ import * as McpCore from "../mcpCore.js";
++import * as McpEvents from "../mcpEvents.js";
+ import * as McpProtocol from "../mcpProtocol.js";
+ import * as McpSchema from "../mcpSchema/v2026_07_28.js";
+ import * as McpSkills from "../mcpSkills.js";
+@@ -242,7 +243,7 @@ const unsupported = operation => new PublicMcpSchema.McpReverseOperationUnsuppor
+ /**
+  * @internal
+  */
+-export const handlerRpcs = /*#__PURE__*/McpSchema.ClientRequestRpcs.merge(McpSchema.ClientNotificationRpcs, McpSkills.StatelessRpcs);
++export const handlerRpcs = /*#__PURE__*/McpSchema.ClientRequestRpcs.merge(McpSchema.ClientNotificationRpcs, McpSkills.StatelessRpcs, McpEvents.StatelessRpcs);
+ /**
+  * @internal
+  */
+@@ -260,6 +261,10 @@ export const makeHandlers = (core, _lifecycle, context) => {
+   const decodeListSkillsResult = Schema.decodeUnknownEffect(McpSkills.ListSkillsResult);
+   const decodeGetSkillResult = Schema.decodeUnknownEffect(McpSkills.GetSkillResult);
+   const decodeReadResourceDirectoryResult = Schema.decodeUnknownEffect(McpSkills.ReadResourceDirectoryResult);
++  const decodeListEventsResult = Schema.decodeUnknownEffect(McpEvents.ListEventsResult);
++  const decodePollEventsResult = Schema.decodeUnknownEffect(McpEvents.PollEventsResult);
++  const decodeSubscribeEventsResult = Schema.decodeUnknownEffect(McpEvents.SubscribeEvents.successSchema);
++  const decodeUnsubscribeEventsResult = Schema.decodeUnknownEffect(McpEvents.UnsubscribeEvents.successSchema);
+   const sendNotification = context.sendNotification;
+   const supportsSubscriptions = sendNotification !== undefined;
+   // Older adapters accept arbitrary JSON; this binding requires extension settings objects.
+@@ -277,8 +282,11 @@ export const makeHandlers = (core, _lifecycle, context) => {
+       completions: {},
+       logging: {}
+     };
+-    const declared = McpSkills.declareExtension(extensions, presence.skills);
++    const declared = McpEvents.declareExtension(McpSkills.declareExtension(extensions, presence.skills), presence.events);
+     if (declared !== undefined) capabilities.extensions = declared;
++    // Bridge for clients predating SEP-3415 (ChatGPT, @ai-sdk/mcp); drop per #41158.
++    // They look for a top-level `events` capability instead of the extension.
++    if (presence.events) capabilities.events = {};
+     if (presence.tools) capabilities.tools = {
+       listChanged: supportsSubscriptions
+     };
+@@ -297,6 +305,26 @@ export const makeHandlers = (core, _lifecycle, context) => {
+       serverInfo: context.serverInfo
+     };
+   });
++  const requireEvents = (method) => McpEvents.requireEvents(core, method).pipe(Effect.catch((error) => failWithHttpStatus(404, error)));
++  // The event type's `x-mcp-header` arguments must match their headers, as a tool's do.
++  const validateEventHeaders = Effect.fnUntraced(function* (registration, args) {
++    const httpRequest = yield* Effect.serviceOption(HttpServerRequest.HttpServerRequest);
++    if (Option.isSome(httpRequest)) {
++      yield* validateParameterHeaders(registration.descriptor.inputSchema, args, httpRequest.value.headers);
++    }
++  });
++  // Webhook delivery runs the event's push stream, so it needs both.
++  const webhookRegistration = Effect.fnUntraced(function* (method, name, args) {
++    yield* requireEvents(method);
++    const invocation = yield* getInvocation;
++    const registration = yield* core.events.get(name, invocation);
++    const { stream, webhooks } = registration;
++    if (webhooks === undefined || stream === undefined) {
++      return yield* McpEvents.unsupportedDelivery("webhook");
++    }
++    yield* validateEventHeaders(registration, args);
++    return { invocation, stream, webhooks, decodeArguments: registration.decodeArguments };
++  });
+   const requireSkills = method => McpSkills.requireSkills(core, method).pipe(Effect.catch(error => failWithHttpStatus(404, error)));
+   const getInvocation = PublicMcpSchema.McpRequestContext.useSync(McpProtocol.invocationFromRequestContext);
+   const getInputInvocation = Effect.fnUntraced(function* (request) {
+@@ -592,6 +620,97 @@ export const makeHandlers = (core, _lifecycle, context) => {
+       }, context.serverInfo);
+       return yield* decodeReadResourceDirectoryResult(result);
+     }, Effect.mapError(projectError)),
++    "events/list": Effect.fnUntraced(function* (request) {
++      yield* requireEvents("events/list");
++      yield* McpProtocol.rejectCursor(request.cursor);
++      const events = yield* core.events.list(yield* getInvocation);
++      // Without a notification channel nothing can be pushed.
++      const offered = supportsSubscriptions ? events : events.flatMap((event) => {
++        const delivery = event.delivery.filter((mode) => mode !== "push");
++        return delivery.length === 0 ? [] : [{ ...event, delivery }];
++      });
++      const result = yield* projectCompleteResult({ events: offered }, context.serverInfo);
++      return yield* decodeListEventsResult(result);
++    }, Effect.mapError(projectError)),
++    "events/poll": Effect.fnUntraced(function* (request) {
++      yield* requireEvents("events/poll");
++      const invocation = yield* getInvocation;
++      const registration = yield* core.events.get(request.name, invocation);
++      if (registration.poll === undefined) {
++        return yield* McpEvents.unsupportedDelivery("poll");
++      }
++      yield* validateEventHeaders(registration, request.arguments);
++      const outcome = yield* registration.poll({
++        arguments: request.arguments ?? {},
++        cursor: request.cursor ?? null,
++        maxAgeMs: request.maxAgeMs,
++        maxEvents: request.maxEvents
++      }, invocation);
++      const result = yield* projectCompleteResult({
++        events: outcome.events.map((event) => omitUndefined({
++          eventId: event.eventId,
++          name: request.name,
++          timestamp: event.timestamp,
++          data: event.data,
++          _meta: event._meta
++        })),
++        cursor: outcome.cursor,
++        truncated: outcome.truncated,
++        hasMore: outcome.hasMore,
++        nextPollMs: outcome.nextPollMs
++      }, context.serverInfo);
++      return yield* decodePollEventsResult(result);
++    }, Effect.mapError(projectError)),
++    "events/stream": Effect.fnUntraced(function* (request, { client, requestId }) {
++      yield* requireEvents("events/stream");
++      const invocation = yield* getInvocation;
++      const registration = yield* core.events.get(request.name, invocation);
++      if (registration.stream === undefined || sendNotification === undefined) {
++        return yield* McpEvents.unsupportedDelivery("push");
++      }
++      yield* validateEventHeaders(registration, request.arguments);
++      const subscriptionMetadata = { "io.modelcontextprotocol/subscriptionId": requestId };
++      const send = (tag, payload) => sendNotification(McpSchema.protocolVersion, client.id, {
++        tag,
++        payload: {
++          ...payload,
++          _meta: { ...(Predicate.isReadonlyObject(payload._meta) ? payload._meta : {}), ...subscriptionMetadata }
++        }
++      });
++      const heartbeatMs = McpEvents.grantHeartbeat(request.heartbeatMs);
++      yield* Effect.raceFirst(registration.stream({ arguments: request.arguments ?? {}, cursor: request.cursor ?? null, maxAgeMs: request.maxAgeMs }, invocation, (subscription) => McpEvents.deliver({ name: request.name, subscription, heartbeatMs, send })), context.awaitClientEnd ?? Effect.never);
++      const encodedServerInfo = yield* encodeImplementation(context.serverInfo);
++      return McpSchema.SubscriptionsListenResult.make({
++        _meta: { ...subscriptionMetadata, "io.modelcontextprotocol/serverInfo": encodedServerInfo },
++        resultType: "complete"
++      });
++    }, Effect.mapError(projectError)),
++    "events/subscribe": Effect.fnUntraced(function* (request) {
++      const { decodeArguments, invocation, stream, webhooks } = yield* webhookRegistration("events/subscribe", request.name, request.arguments);
++      const args = request.arguments ?? {};
++      const cursor = request.cursor ?? null;
++      const subscribed = yield* webhooks.subscribe({
++        name: request.name,
++        arguments: args,
++        delivery: request.delivery,
++        cursor,
++        ttlMs: request.ttlMs,
++        decode: decodeArguments(args),
++        open: (decoded, deliver) => stream({ arguments: args, decoded: { value: decoded }, cursor, maxAgeMs: request.maxAgeMs }, invocation, deliver)
++      });
++      const result = yield* projectCompleteResult(omitUndefined({ ...subscribed }), context.serverInfo);
++      return yield* decodeSubscribeEventsResult(result);
++    }, Effect.mapError(projectError)),
++    "events/unsubscribe": Effect.fnUntraced(function* (request) {
++      const { webhooks } = yield* webhookRegistration("events/unsubscribe", request.name, request.arguments);
++      yield* webhooks.unsubscribe({
++        name: request.name,
++        arguments: request.arguments ?? {},
++        delivery: request.delivery
++      });
++      const result = yield* projectCompleteResult({}, context.serverInfo);
++      return yield* decodeUnsubscribeEventsResult(result);
++    }, Effect.mapError(projectError)),
+     "notifications/cancelled": Effect.fnUntraced(function* (_request) {
+       return yield* Effect.void;
+     })
+@@ -613,10 +732,10 @@ const runtime = {
+ export const protocol = /*#__PURE__*/McpProtocol.make({
+   protocolVersion: McpSchema.protocolVersion,
+   runtime,
+-  clientRpcs: /*#__PURE__*/McpSchema.ClientRpcs.merge(McpSkills.StatelessRpcs),
++  clientRpcs: /*#__PURE__*/McpSchema.ClientRpcs.merge(McpSkills.StatelessRpcs, McpEvents.StatelessRpcs),
+   clientNotificationRpcs: McpSchema.ClientNotificationRpcs,
+   serverRequestRpcs: McpSchema.ServerRequestRpcs,
+-  serverNotificationRpcs: McpSchema.ServerNotificationRpcs,
++  serverNotificationRpcs: /*#__PURE__*/McpSchema.ServerNotificationRpcs.merge(McpEvents.ServerNotificationRpcs),
+   handlerRpcs,
+   makeHandlers,
+   toReverseClient: () => ({
+diff --git a/dist/ai/internal/mcpRuntime.js b/dist/ai/internal/mcpRuntime.js
+index 88238ff..721ff28 100644
+--- a/dist/ai/internal/mcpRuntime.js
++++ b/dist/ai/internal/mcpRuntime.js
+@@ -39,6 +39,10 @@ const routingNameKey = method => {
+   switch (method) {
+     case "tools/call":
+     case "prompts/get":
++    case "events/poll":
++    case "events/stream":
++    case "events/subscribe":
++    case "events/unsubscribe":
+       return "name";
+     case "resources/read":
+       return "uri";
+@@ -178,7 +182,10 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (protocols) {
+       if (nameKey !== undefined) {
+         const name = asRecord(inputRecord?.params)?.[nameKey];
+         const header = headers[MCP_NAME_HEADER];
+-        if (typeof name !== "string" || header === undefined || McpProtocol.decodeRoutingHeader(header) !== name) {
++        // Bridge for clients predating SEP-3415 (ChatGPT, @ai-sdk/mcp); drop per #41158.
++        // They send no Mcp-Name on these; one they do send must still match.
++        const optional = header === undefined && (method === "events/subscribe" || method === "events/unsubscribe");
++        if (!optional && (typeof name !== "string" || header === undefined || McpProtocol.decodeRoutingHeader(header) !== name)) {
+           return headerMismatch("Mcp-Name header does not match request parameters");
+         }
+       }
+@@ -340,7 +347,8 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (protocols) {
+       return {
+         _tag: "Accepted",
+         acknowledge: !isRequest || !hasId,
+-        isSubscription: Predicate.hasProperty(input, "method") && input.method === "subscriptions/listen"
++        // A push subscription stays open until cancelled, so it is never a plain response.
++        isSubscription: Predicate.hasProperty(input, "method") && (input.method === "subscriptions/listen" || input.method === "events/stream")
+       };
+     },
+     effectLogLevel: (clientId, headers, fallback) => stateful?.effectLogLevel(clientId, headers, fallback) ?? fallback,
+diff --git a/dist/ai/internal/mcpWebhooks.d.ts b/dist/ai/internal/mcpWebhooks.d.ts
+new file mode 100644
+index 0000000..cb0ff5c
+--- /dev/null
++++ b/dist/ai/internal/mcpWebhooks.d.ts
+@@ -0,0 +1 @@
++export {};
+diff --git a/dist/ai/internal/mcpWebhooks.js b/dist/ai/internal/mcpWebhooks.js
+new file mode 100644
+index 0000000..4e2871a
+--- /dev/null
++++ b/dist/ai/internal/mcpWebhooks.js
+@@ -0,0 +1,456 @@
++import * as Clock from "../../Clock.js";
++import * as Digest from "../../crypto/Digest.js";
++import * as Mac from "../../crypto/Mac.js";
++import * as SecureRandom from "../../crypto/SecureRandom.js";
++import * as Deferred from "../../Deferred.js";
++import * as Duration from "../../Duration.js";
++import * as Effect from "../../Effect.js";
++import * as Base64 from "../../encoding/Base64.js";
++import * as Base64Url from "../../encoding/Base64Url.js";
++import * as Fiber from "../../Fiber.js";
++import * as FetchHttpClient from "../../http/FetchHttpClient.js";
++import * as HttpClient from "../../http/HttpClient.js";
++import * as HttpClientRequest from "../../http/HttpClientRequest.js";
++import * as Option from "../../Option.js";
++import * as Result from "../../Result.js";
++import * as Stream from "../../Stream.js";
++import * as PublicMcpSchema from "../McpSchema.js";
++import { wireError } from "./mcpEvents.js";
++const MINUTE_MS = 6e4;
++const MIN_TTL_MS = MINUTE_MS;
++const MAX_TTL_MS = 60 * MINUTE_MS;
++const DEFAULT_TTL_MS = 15 * MINUTE_MS;
++const MAX_ATTEMPTS = 5;
++const FIRST_RETRY_MS = 3e4;
++const REQUEST_TIMEOUT_MS = 1e4;
++const ROTATION_GRACE_MS = 5 * MINUTE_MS;
++const VERIFIED_FOR_MS = MAX_TTL_MS;
++const FAILED_FOR_MS = 5 * MINUTE_MS;
++const VERIFICATIONS_PER_HOST_PER_MINUTE = 10;
++const MAX_SUBSCRIPTIONS_PER_PRINCIPAL = 100;
++const MAX_CHALLENGE_RESPONSE_BYTES = 8192;
++const SECRET_PREFIX = "whsec_";
++const invalid = (message) => new PublicMcpSchema.InvalidParams({ message });
++const grantTtl = (suggested) => suggested === void 0 ? DEFAULT_TTL_MS : suggested === null ? MAX_TTL_MS : Math.min(MAX_TTL_MS, Math.max(MIN_TTL_MS, suggested));
++const canonicalJson = (value) => {
++  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
++  if (typeof value === "object" && value !== null) {
++    const entries = Object.entries(value).filter(([, entry]) => entry !== void 0);
++    entries.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
++    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`).join(",")}}`;
++  }
++  return JSON.stringify(value) ?? "null";
++};
++const encoder = new TextEncoder();
++const parseUrl = (value, guard) => {
++  if (typeof value !== "string") return Effect.fail(invalid("delivery.url is required"));
++  let url;
++  try {
++    url = new URL(value);
++  } catch {
++    return Effect.fail(invalid("delivery.url is not a valid URL"));
++  }
++  if (url.protocol !== "https:" && !(url.protocol === "http:" && guard.allowsPlaintext?.(url) === true)) {
++    return Effect.fail(invalid("delivery.url must use https"));
++  }
++  if (url.username !== "" || url.password !== "") {
++    return Effect.fail(invalid("delivery.url must not carry credentials"));
++  }
++  url.hash = "";
++  return Effect.succeed(url);
++};
++const parseSecret = (value) => {
++  const fail = Effect.fail(invalid("delivery.secret must be whsec_ and the base64 of 24 to 64 random bytes"));
++  if (typeof value !== "string" || !value.startsWith(SECRET_PREFIX)) return fail;
++  const bytes = Base64.decode(value.slice(SECRET_PREFIX.length));
++  if (Result.isFailure(bytes) || bytes.success.length < 24 || bytes.success.length > 64) return fail;
++  return Mac.key(Mac.hmacSha256, bytes.success).pipe(Effect.orDie, Effect.map((key) => ({ text: value, key })));
++};
++const statusCategory = (status) => status >= 500 ? "http_5xx" : "http_4xx";
++const transportCategory = (error) => {
++  let current = error;
++  for (let depth = 0; depth < 8 && typeof current === "object" && current !== null; depth++) {
++    const code = current.code;
++    if (typeof code === "string" && /CERT|TLS|SSL/.test(code)) return "tls_error";
++    current = current.cause ?? current.reason;
++  }
++  return "connection_refused";
++};
++const readCapped = (response) => Effect.suspend(() => {
++  const chunks = [];
++  let total = 0;
++  let oversized = false;
++  return response.stream.pipe(
++    Stream.takeWhile((chunk) => {
++      if (total + chunk.length > MAX_CHALLENGE_RESPONSE_BYTES) {
++        oversized = true;
++        return false;
++      }
++      total += chunk.length;
++      chunks.push(chunk);
++      return true;
++    }),
++    Stream.runDrain,
++    Effect.map(() => {
++      if (oversized) return void 0;
++      const bytes = new Uint8Array(total);
++      let offset = 0;
++      for (const chunk of chunks) {
++        bytes.set(chunk, offset);
++        offset += chunk.length;
++      }
++      return new TextDecoder().decode(bytes);
++    })
++  );
++});
++const echoedChallenge = (body) => {
++  try {
++    const parsed = JSON.parse(body);
++    const challenge = typeof parsed === "object" && parsed !== null ? parsed.challenge : void 0;
++    return typeof challenge === "string" ? challenge : void 0;
++  } catch {
++    return void 0;
++  }
++};
++const callbackError = (category) => new PublicMcpSchema.CallbackEndpointError({
++  message: `The callback endpoint failed verification: ${category}`,
++  data: { reason: category }
++});
++const iso = (millis) => new Date(millis).toISOString();
++const make = Effect.fnUntraced(function* (options) {
++  const scope = yield* Effect.scope;
++  const mac = yield* Mac.Mac;
++  const digest = yield* Digest.Digest;
++  const random = yield* SecureRandom.SecureRandom;
++  const { guard } = options;
++  const client = HttpClient.withScope(options.client);
++  const subscriptions = /* @__PURE__ */ new Map();
++  const pending = /* @__PURE__ */ new Map();
++  const verified = /* @__PURE__ */ new Map();
++  const failedVerifications = /* @__PURE__ */ new Map();
++  const verifying = /* @__PURE__ */ new Map();
++  const verificationsByHost = /* @__PURE__ */ new Map();
++  const forget = (subscription) => {
++    if (subscriptions.get(subscription.id) === subscription) subscriptions.delete(subscription.id);
++  };
++  const subscriptionId = (principal, url, name, args) => digest.digestHex(Digest.sha256, encoder.encode(canonicalJson([principal, url.href, name, args]))).pipe(
++    Effect.map((hex) => `sub_${hex.slice(0, 32)}`)
++  );
++  const messageId = (prefix) => Effect.map(random.randomBytes(18), (bytes) => `${prefix}_${Base64Url.encode(bytes)}`);
++  const deliveryId = (subscription, eventId) => Effect.map(
++    digest.digest(Digest.sha256, encoder.encode(`${subscription.id}\0${eventId}`)),
++    (hash) => `evt_${Base64Url.encode(hash).slice(0, 22)}`
++  );
++  const MAX_CURSORS_SINCE_GAP = 1024;
++  const advance = (subscription, cursor) => {
++    subscription.watermark = cursor;
++    const since = subscription.cursorsSinceGap;
++    if (since === void 0) return;
++    since.add(cursor);
++    if (since.size > MAX_CURSORS_SINCE_GAP) since.delete(since.values().next().value);
++  };
++  const sign = (keys, webhookId, timestamp, body) => Effect.forEach(keys, (key) => mac.sign(key, encoder.encode(`${webhookId}.${timestamp}.${body}`))).pipe(
++    Effect.orDie,
++    Effect.map((tags) => tags.map((tag) => `v1,${Base64.encode(tag)}`).join(" "))
++  );
++  const send = Effect.fnUntraced(function* (subscription, body, webhookId, readBody) {
++    const admitted = yield* Effect.result(guard.check(subscription.url));
++    if (Result.isFailure(admitted)) {
++      return { _tag: "Failed", category: "connection_refused", retryable: true };
++    }
++    const now = yield* Clock.currentTimeMillis;
++    const timestamp = Math.floor(now / 1e3);
++    const previous = subscription.previous;
++    const keys = previous !== void 0 && now < previous.until ? [subscription.key, previous.key] : [subscription.key];
++    const request = HttpClientRequest.post(subscription.url).pipe(
++      HttpClientRequest.setHeaders({
++        "webhook-id": webhookId,
++        "webhook-timestamp": String(timestamp),
++        "webhook-signature": yield* sign(keys, webhookId, timestamp, body),
++        "x-mcp-subscription-id": subscription.id
++      }),
++      HttpClientRequest.bodyText(body, "application/json")
++    );
++    const outcome = yield* client.execute(request).pipe(
++      Effect.flatMap((response) => {
++        if (response.status < 200 || response.status >= 300) {
++          return Effect.succeed({
++            _tag: "Failed",
++            category: statusCategory(response.status),
++            retryable: response.status !== 410 && response.status !== 413
++          });
++        }
++        return readBody ? Effect.map(readCapped(response), (text) => ({ _tag: "Delivered", body: text })) : Effect.succeed({ _tag: "Delivered", body: void 0 });
++      }),
++      Effect.timeoutOption(Duration.millis(REQUEST_TIMEOUT_MS)),
++      Effect.scoped,
++      // `fetch` would follow a redirect itself; webhook delivery never does.
++      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
++      // Trace ids stay inside: the endpoint belongs to someone else.
++      Effect.provideService(HttpClient.TracerPropagationEnabled, false),
++      Effect.catch(
++        (error) => Effect.succeed(Option.some({ _tag: "Failed", category: transportCategory(error), retryable: true }))
++      )
++    );
++    return Option.getOrElse(outcome, () => ({ _tag: "Failed", category: "timeout", retryable: true }));
++  });
++  const deliver = Effect.fnUntraced(function* (subscription, body, webhookId) {
++    for (let attempt = 1; ; attempt++) {
++      const current = subscriptions.get(subscription.id);
++      if (current !== void 0 && current !== subscription) return false;
++      const startedAt = yield* Clock.currentTimeMillis;
++      const outcome = yield* send(subscription, body, webhookId, false);
++      if (outcome._tag === "Delivered") {
++        subscription.lastDeliveryAt = yield* Clock.currentTimeMillis;
++        subscription.lastError = void 0;
++        return true;
++      }
++      subscription.lastError = outcome.category;
++      if (!outcome.retryable || attempt >= MAX_ATTEMPTS) return false;
++      const wait = startedAt + FIRST_RETRY_MS * 2 ** (attempt - 1) - (yield* Clock.currentTimeMillis);
++      if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
++    }
++  });
++  const control = (subscription, type, fields) => Effect.flatMap(
++    messageId(`msg_${type}`),
++    (webhookId) => deliver(subscription, JSON.stringify({ type, ...fields }), webhookId)
++  );
++  const run = (subscription, name, events) => events.items.pipe(
++    Stream.runForEach((item) => {
++      switch (item._tag) {
++        case "Event":
++          return Effect.flatMap(deliveryId(subscription, item.eventId), (webhookId) => {
++            const body = JSON.stringify({
++              eventId: webhookId,
++              name,
++              timestamp: item.timestamp,
++              data: item.data,
++              cursor: item.cursor,
++              ...item._meta === void 0 ? {} : { _meta: item._meta }
++            });
++            return deliver(subscription, body, webhookId);
++          }).pipe(Effect.andThen(Effect.sync(() => advance(subscription, item.cursor))));
++        case "Position":
++          return Effect.sync(() => advance(subscription, item.cursor));
++        case "Gap":
++          return control(subscription, "gap", { cursor: item.cursor }).pipe(
++            Effect.map((delivered) => {
++              if (!delivered) subscription.cursorsSinceGap = /* @__PURE__ */ new Set();
++              advance(subscription, item.cursor);
++            })
++          );
++        case "Error":
++          return Effect.void;
++      }
++    }),
++    // Ended before it says so, so a refresh meanwhile starts afresh instead of reporting it live.
++    Effect.catch(
++      (failure) => Effect.suspend(() => {
++        forget(subscription);
++        return control(subscription, "terminated", { error: wireError(failure) });
++      })
++    )
++  );
++  const expiry = (subscription) => Effect.gen(function* () {
++    while (true) {
++      const left = subscription.expiresAt - (yield* Clock.currentTimeMillis);
++      if (left <= 0) return forget(subscription);
++      yield* Effect.raceFirst(Effect.sleep(Duration.millis(left)), Deferred.await(subscription.deadlineMoved));
++    }
++  });
++  const handshake = Effect.fnUntraced(function* (subscription) {
++    const challenge = Base64Url.encode(yield* random.randomBytes(32));
++    const outcome = yield* send(
++      subscription,
++      JSON.stringify({ type: "verification", challenge }),
++      yield* messageId("msg_verification"),
++      true
++    );
++    if (outcome._tag === "Failed") return yield* Effect.fail(outcome.category);
++    const echoed = outcome.body === void 0 ? void 0 : echoedChallenge(outcome.body);
++    if (echoed === void 0 || !Mac.timingSafeEqual(encoder.encode(echoed), encoder.encode(challenge))) {
++      return yield* Effect.fail("challenge_failed");
++    }
++  });
++  const verify = Effect.fnUntraced(function* (subscription) {
++    const key = JSON.stringify([subscription.principal, subscription.url.href]);
++    const now = yield* Clock.currentTimeMillis;
++    for (const [entry, until] of verified) if (until <= now) verified.delete(entry);
++    for (const [entry, failure2] of failedVerifications) if (failure2.until <= now) failedVerifications.delete(entry);
++    if (verified.has(key)) return;
++    const failure = failedVerifications.get(key);
++    if (failure !== void 0) return yield* callbackError(failure.category);
++    const inFlight = verifying.get(key);
++    if (inFlight !== void 0) return yield* Deferred.await(inFlight);
++    const host = subscription.url.hostname;
++    const recent = (verificationsByHost.get(host) ?? []).filter((at) => at > now - MINUTE_MS);
++    if (recent.length >= VERIFICATIONS_PER_HOST_PER_MINUTE) {
++      verificationsByHost.set(host, recent);
++      return yield* new PublicMcpSchema.ResourceExhausted({
++        message: "Too many callback verifications for this host",
++        data: { limit: "verifications", max: VERIFICATIONS_PER_HOST_PER_MINUTE }
++      });
++    }
++    for (const [entry, times] of verificationsByHost) {
++      if (times.every((at) => at <= now - MINUTE_MS)) verificationsByHost.delete(entry);
++    }
++    verificationsByHost.set(host, [...recent, now]);
++    const done = Deferred.makeUnsafe();
++    verifying.set(key, done);
++    return yield* handshake(subscription).pipe(
++      Effect.tap(
++        () => Effect.map(Clock.currentTimeMillis, (at) => {
++          verified.set(key, at + VERIFIED_FOR_MS);
++        })
++      ),
++      Effect.tapError(
++        (category) => Effect.map(Clock.currentTimeMillis, (at) => {
++          failedVerifications.set(key, { until: at + FAILED_FOR_MS, category });
++        })
++      ),
++      Effect.mapError(callbackError),
++      Effect.onExit(
++        (exit) => Effect.sync(() => {
++          verifying.delete(key);
++          Deferred.doneUnsafe(done, exit);
++        })
++      )
++    );
++  });
++  const refresh = Effect.fnUntraced(function* (request, subscription, secret, expiresAt, now) {
++    const opening = !Deferred.isDoneUnsafe(subscription.accepted);
++    const start = yield* Deferred.await(subscription.accepted);
++    if (subscriptions.get(subscription.id) !== subscription) return yield* subscribe(request);
++    if (subscription.secret !== secret.text) {
++      subscription.previous = { key: subscription.key, until: now + ROTATION_GRACE_MS };
++      subscription.secret = secret.text;
++      subscription.key = secret.key;
++    }
++    subscription.expiresAt = expiresAt;
++    const moved = subscription.deadlineMoved;
++    subscription.deadlineMoved = Deferred.makeUnsafe();
++    Deferred.doneUnsafe(moved, Effect.void);
++    if (opening) return { id: subscription.id, refreshBefore: iso(expiresAt), ...start };
++    const since = subscription.cursorsSinceGap;
++    if (since !== void 0 && since.has(request.cursor)) subscription.cursorsSinceGap = void 0;
++    const truncated = subscription.cursorsSinceGap !== void 0;
++    return {
++      id: subscription.id,
++      refreshBefore: iso(expiresAt),
++      cursor: subscription.watermark,
++      truncated,
++      deliveryStatus: {
++        active: true,
++        lastDeliveryAt: subscription.lastDeliveryAt === void 0 ? null : iso(subscription.lastDeliveryAt),
++        lastError: subscription.lastError ?? null
++      }
++    };
++  });
++  const subscribe = Effect.fnUntraced(function* (request) {
++    const principal = yield* options.principal;
++    const mode = request.delivery.mode;
++    if (mode !== void 0 && mode !== "webhook") return yield* invalid("delivery.mode must be 'webhook'");
++    const url = yield* parseUrl(request.delivery.url, guard);
++    const secret = yield* parseSecret(request.delivery.secret);
++    const id = yield* subscriptionId(principal, url, request.name, request.arguments);
++    const now = yield* Clock.currentTimeMillis;
++    const expiresAt = now + grantTtl(request.ttlMs);
++    const live = subscriptions.get(id);
++    if (live !== void 0) return yield* refresh(request, live, secret, expiresAt, now);
++    let held = pending.get(principal) ?? 0;
++    for (const subscription of subscriptions.values()) if (subscription.principal === principal) held++;
++    if (held >= MAX_SUBSCRIPTIONS_PER_PRINCIPAL) {
++      return yield* new PublicMcpSchema.ResourceExhausted({
++        message: "Too many webhook subscriptions",
++        data: { limit: "subscriptions", max: MAX_SUBSCRIPTIONS_PER_PRINCIPAL }
++      });
++    }
++    pending.set(principal, (pending.get(principal) ?? 0) + 1);
++    let reserved = true;
++    const release = () => {
++      if (!reserved) return;
++      reserved = false;
++      const left = (pending.get(principal) ?? 1) - 1;
++      if (left === 0) pending.delete(principal);
++      else pending.set(principal, left);
++    };
++    return yield* create(request, { principal, url, secret, id, expiresAt, now, release }).pipe(
++      Effect.ensuring(Effect.sync(release))
++    );
++  });
++  const create = Effect.fnUntraced(function* (request, { expiresAt, id, now, principal, release, secret, url }) {
++    yield* Effect.mapError(guard.check(url), () => invalid("delivery.url is not allowed"));
++    const subscription = {
++      id,
++      principal,
++      url,
++      secret: secret.text,
++      key: secret.key,
++      previous: void 0,
++      expiresAt,
++      watermark: request.cursor,
++      lastDeliveryAt: void 0,
++      lastError: void 0,
++      fiber: void 0,
++      deadlineMoved: Deferred.makeUnsafe(),
++      accepted: Deferred.makeUnsafe(),
++      cursorsSinceGap: void 0
++    };
++    const decoded = yield* request.decode;
++    yield* verify(subscription);
++    const raced = subscriptions.get(id);
++    if (raced !== void 0) {
++      release();
++      return yield* refresh(request, raced, secret, expiresAt, now);
++    }
++    release();
++    subscriptions.set(id, subscription);
++    const { accepted } = subscription;
++    const lifetime = request.open(
++      decoded,
++      (events) => Effect.suspend(() => {
++        subscription.watermark = events.cursor;
++        return Deferred.succeed(accepted, { cursor: events.cursor, truncated: events.truncated });
++      }).pipe(Effect.andThen(run(subscription, request.name, events)))
++    ).pipe(
++      Effect.tapError((failure) => Deferred.fail(accepted, failure)),
++      Effect.raceFirst(expiry(subscription)),
++      Effect.ignore,
++      Effect.ensuring(Effect.suspend(() => {
++        forget(subscription);
++        return Deferred.fail(accepted, new PublicMcpSchema.InternalError({ message: "The subscription ended" }));
++      }))
++    );
++    subscription.fiber = yield* Effect.forkIn(lifetime, scope);
++    const start = yield* Deferred.await(accepted);
++    return { id, refreshBefore: iso(expiresAt), cursor: start.cursor, truncated: start.truncated };
++  });
++  const unsubscribe = Effect.fnUntraced(function* (request) {
++    const principal = yield* options.principal;
++    const url = yield* parseUrl(request.delivery.url, guard);
++    const id = yield* subscriptionId(principal, url, request.name, request.arguments);
++    const subscription = subscriptions.get(id);
++    if (subscription === void 0) {
++      return yield* new PublicMcpSchema.NotFound({
++        message: "No webhook subscription matches",
++        data: { kind: "subscription" }
++      });
++    }
++    subscriptions.delete(id);
++    if (subscription.fiber !== void 0) yield* Fiber.interrupt(subscription.fiber);
++  });
++  return {
++    subscribe,
++    unsubscribe,
++    size: Effect.sync(() => subscriptions.size)
++  };
++});
++export {
++  DEFAULT_TTL_MS,
++  MAX_ATTEMPTS,
++  MAX_TTL_MS,
++  MIN_TTL_MS,
++  canonicalJson,
++  grantTtl,
++  make
++};
+diff --git a/src/ai/McpSchema.ts b/src/ai/McpSchema.ts
+index ba6c830..1e58fb9 100644
+--- a/src/ai/McpSchema.ts
++++ b/src/ai/McpSchema.ts
+@@ -740,6 +740,57 @@ export const HEADER_MISMATCH_ERROR_CODE = -32020 as const
+  */
+ export const UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE = -32022 as const
+ 
++/**
++ * Represents the MCP error code for a referenced entity that does not exist,
++ * such as an unknown event name. `data.kind` may say which.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export const NOT_FOUND_ERROR_CODE = -32023 as const
++
++/**
++ * Represents the MCP error code for a principal that is not permitted, or
++ * whose access was revoked.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export const FORBIDDEN_ERROR_CODE = -32024 as const
++
++/**
++ * Represents the MCP error code for a server-imposed limit or quota.
++ * `data.limit` names it.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export const RESOURCE_EXHAUSTED_ERROR_CODE = -32025 as const
++
++/**
++ * Represents the MCP error code for a well-formed request that asks for a
++ * capability or option not supported here. `data` identifies it, for example
++ * `{ feature: "deliveryMode", value: "push" }`.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export const UNSUPPORTED_ERROR_CODE = -32026 as const
++
++/**
++ * Represents the MCP error code for a client-supplied callback endpoint that
++ * failed verification or could not be reached.
++ *
++ * @stability unstable
++ * @category constants
++ * @since 4.1.4
++ */
++export const CALLBACK_ENDPOINT_ERROR_CODE = -32027 as const
++
+ /**
+  * Represents an MCP/JSON-RPC error for invalid JSON that could not be parsed.
+  *
+@@ -852,6 +903,74 @@ export class InternalError extends Schema.Error<InternalError>("effect/ai/McpSch
+   static readonly notImplemented = new InternalError({ message: "Not implemented" })
+ }
+ 
++/**
++ * Represents an MCP error for a referenced entity that does not exist.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export class NotFound extends Schema.Error<NotFound>("effect/ai/McpSchema/NotFound")({
++  ...McpErrorBase.fields,
++  _tag: Schema.tag("NotFound"),
++  code: Schema.tag(NOT_FOUND_ERROR_CODE)
++}) {}
++
++/**
++ * Represents an MCP error for a principal that is not permitted.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export class Forbidden extends Schema.Error<Forbidden>("effect/ai/McpSchema/Forbidden")({
++  ...McpErrorBase.fields,
++  _tag: Schema.tag("Forbidden"),
++  code: Schema.tag(FORBIDDEN_ERROR_CODE)
++}) {}
++
++/**
++ * Represents an MCP error for a server-imposed limit or quota.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export class ResourceExhausted extends Schema.Error<ResourceExhausted>("effect/ai/McpSchema/ResourceExhausted")({
++  ...McpErrorBase.fields,
++  _tag: Schema.tag("ResourceExhausted"),
++  code: Schema.tag(RESOURCE_EXHAUSTED_ERROR_CODE)
++}) {}
++
++/**
++ * Represents an MCP error for a capability or option not supported here.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export class Unsupported extends Schema.Error<Unsupported>("effect/ai/McpSchema/Unsupported")({
++  ...McpErrorBase.fields,
++  _tag: Schema.tag("Unsupported"),
++  code: Schema.tag(UNSUPPORTED_ERROR_CODE)
++}) {}
++
++/**
++ * Represents an MCP error for a callback endpoint that failed verification or
++ * could not be reached.
++ *
++ * @stability unstable
++ * @category errors
++ * @since 4.1.4
++ */
++export class CallbackEndpointError
++  extends Schema.Error<CallbackEndpointError>("effect/ai/McpSchema/CallbackEndpointError")({
++    ...McpErrorBase.fields,
++    _tag: Schema.tag("CallbackEndpointError"),
++    code: Schema.tag(CALLBACK_ENDPOINT_ERROR_CODE)
++  })
++{}
++
+ /**
+  * Schema for MCP protocol errors returned in JSON-RPC failure responses,
+  * including standard protocol errors and custom `McpErrorBase` values.
+@@ -1501,6 +1620,76 @@ export class Skill extends Schema.Class<Skill>(
+   _meta: optional(UnknownObject)
+ }) {}
+ 
++// =============================================================================
++// Events
++// =============================================================================
++
++/**
++ * How a client receives an event type's occurrences under the MCP Events
++ * extension (SEP-3415): by `events/poll`, an `events/stream` push stream, or
++ * a webhook registered with `events/subscribe`.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export const EventDelivery = Schema.Literals(["poll", "push", "webhook"])
++
++/**
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export type EventDelivery = typeof EventDelivery.Type
++
++/**
++ * An event type listed by `events/list`: its subscription arguments, its
++ * payload, and the delivery modes it supports.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export const EventDescriptor = Schema.Struct({
++  name: Schema.String,
++  description: optional(Schema.String),
++  delivery: Schema.Array(EventDelivery),
++  inputSchema: UnknownObject,
++  payloadSchema: UnknownObject,
++  _meta: optional(UnknownObject)
++})
++
++/**
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export type EventDescriptor = typeof EventDescriptor.Type
++
++/**
++ * One delivered event. `cursor` is the subscription's position after it, on
++ * push and webhook delivery; poll carries the cursor on the result.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export const EventOccurrence = Schema.Struct({
++  eventId: Schema.String,
++  name: Schema.String,
++  timestamp: Schema.String,
++  data: UnknownObject,
++  cursor: optional(Schema.NullOr(Schema.String)),
++  _meta: optional(UnknownObject)
++})
++
++/**
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export type EventOccurrence = typeof EventOccurrence.Type
++
+ // =============================================================================
+ // Prompts
+ // =============================================================================
+diff --git a/src/ai/McpServer.ts b/src/ai/McpServer.ts
+index 4c2e191..bedd064 100644
+--- a/src/ai/McpServer.ts
++++ b/src/ai/McpServer.ts
+@@ -16,6 +16,8 @@ import * as Cause from "../Cause.ts"
+ import * as Clock from "../Clock.ts"
+ import * as Context from "../Context.ts"
+ import * as Digest from "../crypto/Digest.ts"
++import * as Mac from "../crypto/Mac.ts"
++import * as SecureRandom from "../crypto/SecureRandom.ts"
+ import * as Data from "../Data.ts"
+ import * as Deferred from "../Deferred.ts"
+ import * as Duration from "../Duration.ts"
+@@ -26,6 +28,7 @@ import * as Exit from "../Exit.ts"
+ import * as Fiber from "../Fiber.ts"
+ import * as FindMyWay from "../http/FindMyWay.ts"
+ import * as Headers from "../http/Headers.ts"
++import * as HttpClient from "../http/HttpClient.ts"
+ import { appendPreResponseHandlerUnsafe } from "../http/HttpEffect.ts"
+ import * as HttpRouter from "../http/HttpRouter.ts"
+ import * as HttpServerRequest from "../http/HttpServerRequest.ts"
+@@ -59,6 +62,7 @@ import * as McpCore from "./internal/mcpCore.ts"
+ import * as McpProtocolInternal from "./internal/mcpProtocol.ts"
+ import * as McpRuntime from "./internal/mcpRuntime.ts"
+ import * as McpSkills from "./internal/mcpSkills.ts"
++import * as McpWebhooks from "./internal/mcpWebhooks.ts"
+ import * as InternalStructuredOutput from "./internal/structured-output.ts"
+ import type * as McpProtocol from "./McpProtocol.ts"
+ import * as McpSchema from "./McpSchema.ts"
+@@ -344,6 +348,9 @@ export type MiddlewareMethod =
+   | "skills/list"
+   | "skills/get"
+   | "resources/directory/read"
++  | "events/list"
++  | "events/poll"
++  | "events/stream"
+ 
+ /**
+  * Request metadata passed to MCP middleware.
+@@ -819,7 +826,14 @@ const internalError = new InternalError({ message: "Internal error" })
+ const rejectWith = (error: McpErrorBase) =>
+   Effect.fail(new McpCore.RequestRejected({ code: error.code, message: error.message, data: error.data, error }))
+ 
+-type CallMethod = "tools/call" | "resources/read" | "prompts/get" | "completion/complete" | "skills/get"
++type CallMethod =
++  | "tools/call"
++  | "resources/read"
++  | "prompts/get"
++  | "completion/complete"
++  | "skills/get"
++  | "events/poll"
++  | "events/stream"
+ 
+ type ListMethod = Exclude<MiddlewareMethod, CallMethod>
+ 
+@@ -829,6 +843,8 @@ interface NotFoundErrors {
+   readonly "prompts/get": McpCore.PromptNotFound
+   readonly "completion/complete": InvalidParams
+   readonly "skills/get": McpCore.SkillNotFound
++  readonly "events/poll": McpSchema.NotFound
++  readonly "events/stream": McpSchema.NotFound
+ }
+ 
+ const notFound = (method: CallMethod, target: string): NotFoundErrors[CallMethod] => {
+@@ -843,6 +859,9 @@ const notFound = (method: CallMethod, target: string): NotFoundErrors[CallMethod
+       return new InvalidParams({ message: "Unknown completion reference or argument" })
+     case "skills/get":
+       return new McpCore.SkillNotFound({ uri: target })
++    case "events/poll":
++    case "events/stream":
++      return McpCore.eventNotFound(target)
+   }
+ }
+ 
+@@ -4134,6 +4153,404 @@ export const registerSkill: (options: SkillOptions) => Effect.Effect<void, Cause
+ export const skill = (options: SkillOptions): Layer.Layer<never, Cause.IllegalArgumentError, McpServer> =>
+   Layer.effectDiscard(registerSkill(options))
+ 
++// =============================================================================
++// Events
++// =============================================================================
++
++/**
++ * A failure an event handler reports to the client: a JSON-RPC error on a
++ * poll or when a push stream opens, and `notifications/events/terminated`
++ * once it is open.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export type EventError =
++  | InvalidParams
++  | InternalError
++  | McpSchema.NotFound
++  | McpSchema.Forbidden
++  | McpSchema.ResourceExhausted
++  | McpSchema.Unsupported
++
++/**
++ * Where a poll starts. `cursor` is `null` to start from now, which replays
++ * nothing. With a cursor, replay starts at whichever is later: the cursor, or
++ * `maxAgeMs` before now.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventPollRequest {
++  readonly cursor: string | null
++  readonly maxAgeMs?: number | undefined
++  readonly maxEvents?: number | undefined
++}
++
++/**
++ * Where a push stream starts, read as for {@link EventPollRequest}.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventStreamRequest {
++  readonly cursor: string | null
++  readonly maxAgeMs?: number | undefined
++}
++
++/**
++ * One occurrence, with its payload as the event's `payload` schema types it.
++ * `eventId` stays the same however often the occurrence is delivered.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventOccurrence<A> {
++  readonly eventId: string
++  readonly timestamp: string
++  readonly data: A
++  readonly _meta?: Readonly<Record<string, unknown>> | undefined
++}
++
++/**
++ * A poll's answer. `truncated` says delivery started later than the cursor,
++ * and `hasMore` that `maxEvents` cut the batch short. `nextPollMs` defaults
++ * to 30 seconds.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventPollResult<A> {
++  readonly events: ReadonlyArray<EventOccurrence<A>>
++  readonly cursor: string | null
++  readonly truncated?: boolean | undefined
++  readonly hasMore?: boolean | undefined
++  readonly nextPollMs?: number | undefined
++}
++
++/**
++ * What a push stream carries: an occurrence and the cursor after it; a
++ * position checked without a match, which the next heartbeat reports; a gap,
++ * sent as a fresh `notifications/events/active` with `truncated`; or an error
++ * that leaves the stream open.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export type EventStreamItem<A> =
++  | ({ readonly _tag: "Event"; readonly cursor: string | null } & EventOccurrence<A>)
++  | { readonly _tag: "Position"; readonly cursor: string | null }
++  | { readonly _tag: "Gap"; readonly cursor: string | null }
++  | { readonly _tag: "Error"; readonly error: EventError }
++
++/**
++ * An accepted push subscription: where it starts, and its items. A failure
++ * of `items` ends it.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventSubscription<A, R> {
++  readonly cursor: string | null
++  readonly truncated?: boolean | undefined
++  readonly items: Stream.Stream<EventStreamItem<A>, EventError, R>
++}
++
++/**
++ * Options for {@link registerEvent} and {@link event}.
++ *
++ * **Details**
++ *
++ * `parameters` types the subscription arguments, an empty object by default,
++ * and `payload` the occurrences' `data`; both are advertised as JSON Schema
++ * by `events/list`. `poll` offers poll delivery and `stream` push delivery,
++ * and at least one is required. With {@link EventWebhooks} provided where the
++ * event is registered, `stream` also backs webhook delivery.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventOptions<Params extends Schema.Codec<any, any>, Payload extends Schema.Codec<any, any>, R> {
++  readonly name: string
++  readonly description?: string | undefined
++  readonly parameters?: Params | undefined
++  readonly payload: Payload
++  readonly _meta?: Readonly<Record<string, unknown>> | undefined
++  readonly annotations?: Context.Context<never> | undefined
++  readonly poll?:
++    | ((
++      args: Params["Type"],
++      request: EventPollRequest
++    ) => Effect.Effect<EventPollResult<Payload["Type"]>, EventError, R>)
++    | undefined
++  readonly stream?:
++    | ((
++      args: Params["Type"],
++      request: EventStreamRequest
++    ) => Effect.Effect<EventSubscription<Payload["Type"], R>, EventError, R | Scope.Scope>)
++    | undefined
++}
++
++const DEFAULT_NEXT_POLL_MS = 30_000
++
++/**
++ * Registers an event type under the MCP Events extension (SEP-3415).
++ *
++ * **Details**
++ *
++ * The server declares `io.modelcontextprotocol/events` on revision
++ * `2026-07-28` once any event type is registered, and answers `events/list`,
++ * `events/poll`, `events/stream`, and with {@link EventWebhooks}
++ * `events/subscribe` and `events/unsubscribe`. A push stream runs `stream` for its
++ * lifetime inside the request's middleware, sends heartbeats carrying the
++ * last cursor, and ends when the client goes away. Services read by `poll`
++ * and `stream` are request-level, as for tools.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export const registerEvent: <
++  Params extends Schema.Codec<any, any> = Schema.Struct<{}>,
++  Payload extends Schema.Codec<any, any> = Schema.Codec<any, any>,
++  R = never
++>(options: EventOptions<Params, Payload, R>) => Effect.Effect<void, never, RegistrationRequirements<never, R>> =
++  Effect.fnUntraced(function*(options: EventOptions<Schema.Codec<any, any>, Schema.Codec<any, any>, any>) {
++    const { name, poll, stream } = options
++    if (poll === undefined && stream === undefined) {
++      return yield* Effect.die(new Cause.IllegalArgumentError(`Event ${name}: give it poll, stream or both`))
++    }
++    const registry = yield* McpServer
++    const { core, globalMiddleware } = internalState.get(registry)!
++    const services = yield* Effect.context<never>()
++    const annotations = options.annotations ?? Context.empty()
++    const { invoke, visible } = makeInvoke(services, globalMiddleware)
++    const webhooks = stream === undefined
++      ? undefined
++      : Option.getOrUndefined(Option.map(Context.getOption(services, EventWebhooks), (service) => webhooksState.get(service)))
++    const parameters = options.parameters ?? Schema.Struct({})
++    const decodeArguments = Schema.decodeUnknownEffect(Schema.toCodecJson(parameters))
++    const encodePayload = Schema.encodeUnknownEffect(Schema.toCodecJson(options.payload))
++    const argumentsOf = (args: unknown) =>
++      decodeArguments(args).pipe(Effect.mapError((error) => new InvalidParams({ message: error.message })))
++    const encodeEvent = (event: EventOccurrence<unknown>) =>
++      encodePayload(event.data).pipe(
++        Effect.flatMap((data) => Predicate.isReadonlyObject(data) ? Effect.succeed(data) : Effect.fail(data)),
++        Effect.map((data): McpCore.EncodedEvent => ({
++          eventId: event.eventId,
++          timestamp: event.timestamp,
++          data,
++          ...(event._meta === undefined ? {} : { _meta: event._meta })
++        })),
++        Effect.mapError(() => new InternalError({ message: `Event '${name}' payload failed to encode` }))
++      )
++    yield* core.events.register({
++      descriptor: {
++        name,
++        ...(options.description === undefined ? {} : { description: options.description }),
++        delivery: [
++          ...(poll === undefined ? [] : ["poll" as const]),
++          ...(stream === undefined ? [] : ["push" as const]),
++          ...(webhooks === undefined ? [] : ["webhook" as const])
++        ],
++        inputSchema: toolJsonSchema(parameters, false) as Record<string, unknown>,
++        payloadSchema: toolJsonSchema(options.payload, false) as Record<string, unknown>,
++        ...(options._meta === undefined ? {} : { _meta: options._meta })
++      },
++      isVisible: isEnabled(annotations),
++      visible: visible("events/list", name),
++      webhooks,
++      decodeArguments: argumentsOf,
++      poll: poll === undefined ? undefined : (request, invocation) =>
++        invoke(
++          Effect.gen(function*() {
++            const result = yield* poll(yield* argumentsOf(request.arguments), {
++              cursor: request.cursor,
++              maxAgeMs: request.maxAgeMs,
++              maxEvents: request.maxEvents
++            })
++            return {
++              events: yield* Effect.forEach(result.events, encodeEvent),
++              cursor: result.cursor,
++              truncated: result.truncated ?? false,
++              hasMore: result.hasMore ?? false,
++              nextPollMs: result.nextPollMs ?? DEFAULT_NEXT_POLL_MS
++            }
++          }),
++          invocation,
++          { method: "events/poll", target: name, payload: request }
++        ),
++      stream: stream === undefined ? undefined : (request, invocation, deliver) =>
++        invoke(
++          Effect.scoped(Effect.gen(function*() {
++            const args = request.decoded !== undefined
++              ? request.decoded.value
++              : yield* argumentsOf(request.arguments)
++            const subscription = yield* stream(args, {
++              cursor: request.cursor,
++              maxAgeMs: request.maxAgeMs
++            })
++            // The items run on the delivery fiber, so they keep this request's services.
++            const context = yield* Effect.context<any>()
++            const items = subscription.items.pipe(
++              Stream.mapEffect((item): Effect.Effect<McpCore.EventStreamItem> =>
++                item._tag === "Event"
++                  ? encodeEvent(item).pipe(
++                    Effect.map((event) => ({ ...event, _tag: "Event" as const, cursor: item.cursor })),
++                    Effect.catch((error) => Effect.succeed({ _tag: "Error" as const, error }))
++                  )
++                  : Effect.succeed(item)
++              ),
++              Stream.provideContext(context)
++            )
++            yield* deliver({ cursor: subscription.cursor, truncated: subscription.truncated ?? false, items })
++          })),
++          invocation,
++          { method: "events/stream", target: name, payload: request }
++        )
++    })
++  }) as any
++
++/**
++ * Creates a layer that registers an event type under the MCP Events
++ * extension (SEP-3415).
++ *
++ * @see {@link registerEvent} for the Effect-level event registration API
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export const event = <
++  Params extends Schema.Codec<any, any> = Schema.Struct<{}>,
++  Payload extends Schema.Codec<any, any> = Schema.Codec<any, any>,
++  R = never
++>(options: EventOptions<Params, Payload, R>): Layer.Layer<never, never, RegistrationRequirements<never, R>> =>
++  Layer.effectDiscard(registerEvent(options))
++
++/**
++ * The reason a {@link CallbackGuard} refuses a callback URL.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export class CallbackRejected extends Data.TaggedError("CallbackRejected")<{
++  readonly message: string
++}> {}
++
++/**
++ * Decides which webhook callback URLs may be reached.
++ *
++ * **Details**
++ *
++ * `check` runs when a subscription is created and again before every POST.
++ * Resolving a host name needs the platform, so the default refuses every URL:
++ * a server that offers webhooks provides a guard that resolves the host and
++ * refuses addresses that are not globally routable. That check alone cannot
++ * stop DNS rebinding, so the `HttpClient` given to {@link layerEventWebhooks}
++ * must connect only to the address it validated, sending the original host
++ * name in `Host` and TLS SNI, and must not follow redirects. `allowsPlaintext`
++ * admits an `http:` URL, which only a local test setup should do.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export const CallbackGuard = Context.Reference<{
++  readonly check: (url: URL) => Effect.Effect<void, CallbackRejected>
++  readonly allowsPlaintext?: ((url: URL) => boolean) | undefined
++}>("effect/ai/McpServer/CallbackGuard", {
++  defaultValue: () => ({
++    check: (url) => Effect.fail(new CallbackRejected({ message: `No callback guard admits ${url.host}` }))
++  })
++})
++
++/**
++ * Webhook delivery for event types under the MCP Events extension (SEP-3415).
++ *
++ * **Details**
++ *
++ * Event types registered with a `stream` where this service is present also
++ * offer webhook delivery. `events/subscribe` validates the callback, verifies
++ * the endpoint with a challenge, and runs the event's `stream` for the
++ * subscription's lifetime, POSTing each occurrence with Standard Webhooks
++ * signatures, one at a time, retrying with backoff. Subscriptions live in
++ * memory: every grant is finite, between a minute and an hour, so a client
++ * refreshing from its cursor recreates what a restart lost. A failure of the
++ * stream, such as `Forbidden` when access is revoked, ends the subscription
++ * with a `terminated` envelope.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export class EventWebhooks extends Context.Service<EventWebhooks, {
++  /** The number of live webhook subscriptions. */
++  readonly size: Effect.Effect<number>
++}>()("effect/ai/McpServer/EventWebhooks") {}
++
++const webhooksState = new WeakMap<object, McpWebhooks.Webhooks>()
++
++/**
++ * Options for {@link layerEventWebhooks}.
++ *
++ * **Details**
++ *
++ * `principal` names the authenticated subject of an `events/subscribe` or
++ * `events/unsubscribe` request, read from the request's services. It fails
++ * with `Forbidden` for a caller that may not subscribe; webhook delivery
++ * requires an authenticated principal. A subscription's identity is its
++ * principal, callback URL, event name and arguments, so the principal must
++ * stay the same across token refreshes.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export interface EventWebhooksOptions {
++  readonly principal: Effect.Effect<string, McpSchema.Forbidden>
++}
++
++/**
++ * Provides {@link EventWebhooks}, delivering through the given `HttpClient`
++ * and admitting callbacks through the current {@link CallbackGuard}.
++ *
++ * @stability unstable
++ * @category events
++ * @since 4.1.4
++ */
++export const layerEventWebhooks = (
++  options: EventWebhooksOptions
++): Layer.Layer<EventWebhooks, never, HttpClient.HttpClient> =>
++  Layer.effect(
++    EventWebhooks,
++    Effect.gen(function*() {
++      const webhooks = yield* McpWebhooks.make({
++        principal: options.principal,
++        guard: yield* CallbackGuard,
++        client: yield* HttpClient.HttpClient
++      })
++      const service = EventWebhooks.of({ size: webhooks.size })
++      webhooksState.set(service, webhooks)
++      return service
++    }).pipe(
++      Effect.provide(
++        Layer.mergeAll(Mac.layerWebCrypto, Digest.layerWebCrypto).pipe(
++          Layer.provideMerge(SecureRandom.layerWebCrypto)
++        )
++      )
++    )
++  )
++
+ /**
+  * Registers an MCP prompt from an Effect program.
+  *
+diff --git a/src/ai/internal/mcpCore.ts b/src/ai/internal/mcpCore.ts
+index 643982d..d705160 100644
+--- a/src/ai/internal/mcpCore.ts
++++ b/src/ai/internal/mcpCore.ts
+@@ -8,6 +8,8 @@ import * as Data from "../../Data.ts"
+ import * as Effect from "../../Effect.ts"
+ import type * as McpProtocol from "../McpProtocol.ts"
+ import * as McpSchema from "../McpSchema.ts"
++import type * as Stream from "../../Stream.ts"
++import type * as McpWebhooks from "./mcpWebhooks.ts"
+ 
+ /**
+  * @internal
+@@ -330,6 +332,123 @@ export interface SkillRegistration {
+   readonly directory: (uri: string) => ReadonlyArray<DirectoryChild> | undefined
+ }
+ 
++/**
++ * A failure an event handler reports to the client as a JSON-RPC error, such
++ * as `McpSchema.Forbidden` or `McpSchema.InvalidParams`.
++ *
++ * @internal
++ */
++export interface EventFailure {
++  readonly code: number
++  readonly message: string
++  readonly data?: unknown
++}
++
++/**
++ * @internal
++ */
++export interface EventPollRequest {
++  readonly arguments: Readonly<Record<string, unknown>>
++  readonly cursor: string | null
++  readonly maxAgeMs?: number | undefined
++  readonly maxEvents?: number | undefined
++}
++
++/**
++ * An occurrence with its payload already encoded for the wire.
++ *
++ * @internal
++ */
++export interface EncodedEvent {
++  readonly eventId: string
++  readonly timestamp: string
++  readonly data: Readonly<Record<string, unknown>>
++  readonly _meta?: Readonly<Record<string, unknown>> | undefined
++}
++
++/**
++ * @internal
++ */
++export interface EventPollOutcome {
++  readonly events: ReadonlyArray<EncodedEvent>
++  readonly cursor: string | null
++  readonly truncated: boolean
++  readonly hasMore: boolean
++  readonly nextPollMs: number
++}
++
++/**
++ * @internal
++ */
++export interface EventStreamRequest {
++  readonly arguments: Readonly<Record<string, unknown>>
++  // Set when the arguments were already decoded, as a webhook subscribe does first.
++  readonly decoded?: { readonly value: unknown } | undefined
++  readonly cursor: string | null
++  readonly maxAgeMs?: number | undefined
++}
++
++/**
++ * What a push stream carries after `notifications/events/active`: occurrences,
++ * a position checked without a match (carried by the next heartbeat), a gap
++ * (a fresh `active` with `truncated`), or a recoverable error.
++ *
++ * @internal
++ */
++export type EventStreamItem =
++  | ({ readonly _tag: "Event"; readonly cursor: string | null } & EncodedEvent)
++  | { readonly _tag: "Position"; readonly cursor: string | null }
++  | { readonly _tag: "Gap"; readonly cursor: string | null }
++  | { readonly _tag: "Error"; readonly error: EventFailure }
++
++/**
++ * A push subscription the handler accepted. A failure of `items` ends it with
++ * `notifications/events/terminated`.
++ *
++ * @internal
++ */
++export interface EventSubscription {
++  readonly cursor: string | null
++  readonly truncated: boolean
++  readonly items: Stream.Stream<EventStreamItem, EventFailure>
++}
++
++/**
++ * @internal
++ */
++export interface EventRegistration {
++  readonly descriptor: McpSchema.EventDescriptor
++  readonly isVisible: (profile: NegotiatedProtocolProfile<string>) => boolean
++  readonly visible?: Visible | undefined
++  // Set when webhook delivery is offered, which runs `stream`.
++  readonly webhooks?: McpWebhooks.Webhooks | undefined
++  readonly decodeArguments: (args: unknown) => Effect.Effect<unknown, EventFailure>
++  readonly poll?:
++    | ((
++      request: EventPollRequest,
++      invocation: McpInvocation
++    ) => Effect.Effect<EventPollOutcome, EventFailure | RequestRejected>)
++    | undefined
++  // Runs for the subscription's lifetime: `deliver` takes over once the
++  // handler accepts it, so a failure before that is the request's error.
++  readonly stream?:
++    | ((
++      request: EventStreamRequest,
++      invocation: McpInvocation,
++      deliver: (subscription: EventSubscription) => Effect.Effect<void>
++    ) => Effect.Effect<void, EventFailure | RequestRejected>)
++    | undefined
++}
++
++/**
++ * @internal
++ */
++export interface Events {
++  readonly register: (registration: EventRegistration) => Effect.Effect<void>
++  readonly list: (invocation: McpInvocation) => Effect.Effect<ReadonlyArray<McpSchema.EventDescriptor>, RequestRejected>
++  readonly get: (name: string, invocation: McpInvocation) => Effect.Effect<EventRegistration, McpSchema.NotFound>
++}
++
+ /**
+  * @internal
+  */
+@@ -507,11 +626,13 @@ export interface McpCore {
+   readonly prompts: Prompts
+   readonly completions: Completions
+   readonly skills: Skills
++  readonly events: Events
+   readonly registrationPresence: Effect.Effect<{
+     readonly tools: boolean
+     readonly resources: boolean
+     readonly prompts: boolean
+     readonly skills: boolean
++    readonly events: boolean
+   }>
+ }
+ 
+@@ -523,6 +644,12 @@ export interface McpCore {
+  */
+ export type Visible = (invocation: McpInvocation) => Effect.Effect<boolean, RequestRejected>
+ 
++/**
++ * @internal
++ */
++export const eventNotFound = (name: string): McpSchema.NotFound =>
++  new McpSchema.NotFound({ message: `Event '${name}' not found`, data: { kind: "event" } })
++
+ // Whether one skill directory contains the other, or both are the same.
+ const skillsOverlap = (a: string, b: string): boolean => {
+   const rootA = a.slice(0, -"/SKILL.md".length)
+@@ -539,6 +666,7 @@ export const make: Effect.Effect<McpCore> = Effect.sync(() => {
+   const resourceTemplateRegistrations: Array<ResourceTemplateRegistration> = []
+   const promptRegistrations = new Map<string, PromptRegistration>()
+   const skillRegistrations = new Map<string, SkillRegistration>()
++  const eventRegistrations = new Map<string, EventRegistration>()
+   const skillFiles = new Set<string>()
+   const completionRegistrations = new Map<
+     string,
+@@ -717,12 +845,28 @@ export const make: Effect.Effect<McpCore> = Effect.sync(() => {
+     })
+   }
+ 
++  const events: Events = {
++    register: (registration) =>
++      Effect.sync(() => {
++        eventRegistrations.set(registration.descriptor.name, registration)
++      }),
++    list: (invocation) => filterList(eventRegistrations.values(), invocation),
++    get: (name, invocation) =>
++      Effect.suspend(() => {
++        const registration = eventRegistrations.get(name)
++        return registration !== undefined && registration.isVisible(invocation.protocol)
++          ? Effect.succeed(registration)
++          : Effect.fail(eventNotFound(name))
++      })
++  }
++
+   const registrationPresence = Effect.sync(() => ({
+     tools: registrations.size > 0,
+     resources: resourceRegistrations.length > 0 || resourceTemplateRegistrations.length > 0,
+     prompts: promptRegistrations.size > 0,
+-    skills: skillRegistrations.size > 0
++    skills: skillRegistrations.size > 0,
++    events: eventRegistrations.size > 0
+   }))
+ 
+-  return { tools, resources, prompts, completions, skills, registrationPresence }
++  return { tools, resources, prompts, completions, skills, events, registrationPresence }
+ })
+diff --git a/src/ai/internal/mcpEvents.ts b/src/ai/internal/mcpEvents.ts
+new file mode 100644
+index 0000000..54b2ca8
+--- /dev/null
++++ b/src/ai/internal/mcpEvents.ts
+@@ -0,0 +1,315 @@
++/**
++ * The Events extension (SEP-3415): wire schemas on revision 2026-07-28 and
++ * the delivery loop behind a push stream.
++ */
++import * as Cause from "../../Cause.ts"
++import * as Clock from "../../Clock.ts"
++import * as Duration from "../../Duration.ts"
++import * as Effect from "../../Effect.ts"
++import * as Option from "../../Option.ts"
++import * as Queue from "../../Queue.ts"
++import * as Result from "../../Result.ts"
++import * as Rpc from "../../rpc/Rpc.ts"
++import * as RpcGroup from "../../rpc/RpcGroup.ts"
++import * as Schema from "../../Schema.ts"
++import * as Stream from "../../Stream.ts"
++import * as PublicMcpSchema from "../McpSchema.ts"
++import type * as McpCore from "./mcpCore.ts"
++import * as McpProtocol from "./mcpProtocol.ts"
++import * as Stateless from "./mcpSchema/v2026_07_28.ts"
++
++/**
++ * @internal
++ */
++export const EXTENSION_ID = "io.modelcontextprotocol/events"
++
++/**
++ * Adds the extension declaration while any event type is registered. The
++ * server sends no `notifications/events/list_changed`, so its settings object
++ * is empty.
++ *
++ * @internal
++ */
++export const declareExtension = <A>(
++  extensions: Readonly<Record<string, A>> | undefined,
++  servesEvents: boolean
++): Readonly<Record<string, A | {}>> | undefined =>
++  servesEvents ? { ...extensions, [EXTENSION_ID]: {} } : extensions
++
++const methodNotFound = (method: string) =>
++  new McpProtocol.ProtocolError({
++    code: PublicMcpSchema.METHOD_NOT_FOUND_ERROR_CODE,
++    message: `Method not found: ${method}`
++  })
++
++/**
++ * Fails with `Method not found` while no event type is registered, as a
++ * server that does not declare the extension.
++ *
++ * @internal
++ */
++export const requireEvents = (core: McpCore.McpCore, method: string) =>
++  Effect.flatMap(
++    core.registrationPresence,
++    (presence) => presence.events ? Effect.void : Effect.fail(methodNotFound(method))
++  )
++
++/**
++ * @internal
++ */
++export const unsupportedDelivery = (value: PublicMcpSchema.EventDelivery) =>
++  new PublicMcpSchema.Unsupported({
++    message: `Delivery mode '${value}' is not supported for this event`,
++    data: { feature: "deliveryMode", value }
++  })
++
++// =============================================================================
++// Wire schemas
++// =============================================================================
++
++const optional = Stateless.optional
++const Cursor = Schema.NullOr(Schema.String)
++const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
++
++/**
++ * @internal
++ */
++export const ListEventsResult = Schema.StructWithRest(
++  Schema.Struct({ ...Stateless.PaginatedResult, events: Schema.Array(PublicMcpSchema.EventDescriptor) }),
++  [Stateless.UnknownObject]
++)
++
++/**
++ * @internal
++ */
++export class ListEvents extends Rpc.make("events/list", {
++  success: ListEventsResult,
++  error: Stateless.McpError,
++  payload: Stateless.PaginatedRequestParams
++}) {}
++
++const SubscriptionParams = {
++  ...Stateless.RequestParams.fields,
++  name: Schema.String,
++  arguments: optional(Stateless.UnknownObject),
++  cursor: optional(Cursor),
++  maxAgeMs: optional(NonNegativeInt)
++}
++
++/**
++ * @internal
++ */
++export const PollEventsResult = Schema.StructWithRest(
++  Schema.Struct({
++    ...Stateless.ResultMeta,
++    events: Schema.Array(PublicMcpSchema.EventOccurrence),
++    cursor: Cursor,
++    truncated: Schema.Boolean,
++    hasMore: Schema.Boolean,
++    nextPollMs: NonNegativeInt
++  }),
++  [Stateless.UnknownObject]
++)
++
++/**
++ * @internal
++ */
++export class PollEvents extends Rpc.make("events/poll", {
++  success: PollEventsResult,
++  error: Stateless.McpError,
++  payload: { ...SubscriptionParams, maxEvents: optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))) }
++}) {}
++
++/**
++ * @internal
++ */
++export class StreamEvents extends Rpc.make("events/stream", {
++  success: Stateless.SubscriptionsListenResult,
++  error: Stateless.McpError,
++  payload: { ...SubscriptionParams, heartbeatMs: optional(NonNegativeInt) }
++}) {}
++
++/**
++ * @internal
++ */
++export class SubscribeEvents extends Rpc.make("events/subscribe", {
++  success: Schema.StructWithRest(
++    Schema.Struct({
++      ...Stateless.ResultMeta,
++      id: Schema.String,
++      refreshBefore: Schema.NullOr(Schema.String),
++      cursor: Cursor,
++      truncated: Schema.Boolean
++    }),
++    [Stateless.UnknownObject]
++  ),
++  error: Stateless.McpError,
++  payload: {
++    ...SubscriptionParams,
++    delivery: Stateless.UnknownObject,
++    ttlMs: optional(Schema.NullOr(NonNegativeInt))
++  }
++}) {}
++
++/**
++ * @internal
++ */
++export class UnsubscribeEvents extends Rpc.make("events/unsubscribe", {
++  success: Schema.StructWithRest(Schema.Struct(Stateless.ResultMeta), [Stateless.UnknownObject]),
++  error: Stateless.McpError,
++  payload: {
++    ...Stateless.RequestParams.fields,
++    name: Schema.String,
++    arguments: optional(Stateless.UnknownObject),
++    delivery: Stateless.UnknownObject
++  }
++}) {}
++
++/**
++ * @internal
++ */
++export class EventsActiveNotification extends Rpc.make("notifications/events/active", {
++  payload: { ...Stateless.NotificationParams.fields, cursor: Cursor, truncated: Schema.Boolean, heartbeatMs: NonNegativeInt }
++}) {}
++
++/**
++ * @internal
++ */
++export class EventsEventNotification extends Rpc.make("notifications/events/event", {
++  payload: { ...PublicMcpSchema.EventOccurrence.fields, ...Stateless.NotificationParams.fields }
++}) {}
++
++/**
++ * @internal
++ */
++export class EventsHeartbeatNotification extends Rpc.make("notifications/events/heartbeat", {
++  payload: { ...Stateless.NotificationParams.fields, cursor: Cursor }
++}) {}
++
++/**
++ * @internal
++ */
++export class EventsErrorNotification extends Rpc.make("notifications/events/error", {
++  payload: { ...Stateless.NotificationParams.fields, error: Stateless.McpError }
++}) {}
++
++/**
++ * @internal
++ */
++export class EventsTerminatedNotification extends Rpc.make("notifications/events/terminated", {
++  payload: { ...Stateless.NotificationParams.fields, error: Stateless.McpError }
++}) {}
++
++/**
++ * The extension's requests on revision 2026-07-28.
++ *
++ * @internal
++ */
++export class StatelessRpcs
++  extends RpcGroup.make(ListEvents, PollEvents, StreamEvents, SubscribeEvents, UnsubscribeEvents)
++{}
++
++/**
++ * The notifications a push stream carries.
++ *
++ * @internal
++ */
++export class ServerNotificationRpcs extends RpcGroup.make(
++  EventsActiveNotification,
++  EventsEventNotification,
++  EventsHeartbeatNotification,
++  EventsErrorNotification,
++  EventsTerminatedNotification
++) {}
++
++// =============================================================================
++// Push delivery
++// =============================================================================
++
++const DEFAULT_HEARTBEAT_MS = 30_000
++const MIN_HEARTBEAT_MS = 1_000
++const MAX_HEARTBEAT_MS = 300_000
++// Occurrences the handler may run ahead of a slow client before it waits.
++const PENDING_ITEMS = 16
++
++/**
++ * The heartbeat interval granted for a suggested one.
++ *
++ * @internal
++ */
++export const grantHeartbeat = (suggested: number | undefined): number =>
++  Math.min(MAX_HEARTBEAT_MS, Math.max(MIN_HEARTBEAT_MS, suggested ?? DEFAULT_HEARTBEAT_MS))
++
++const isJson = Schema.is(Schema.Json)
++
++/**
++ * @internal
++ */
++export const wireError = (failure: McpCore.EventFailure): Stateless.McpError => ({
++  code: failure.code,
++  message: failure.message,
++  ...(failure.data !== undefined && isJson(failure.data) ? { data: failure.data } : {})
++})
++
++/**
++ * Sends `notifications/events/active`, then each occurrence, and a heartbeat
++ * with the position checked so far whenever `heartbeatMs` passes without
++ * another message. A failure of the subscription's items ends it with
++ * `notifications/events/terminated`. `send` adds the subscription id.
++ *
++ * @internal
++ */
++export const deliver = Effect.fnUntraced(function*(options: {
++  readonly name: string
++  readonly subscription: McpCore.EventSubscription
++  readonly heartbeatMs: number
++  readonly send: (tag: string, payload: Readonly<Record<string, unknown>>) => Effect.Effect<void>
++}) {
++  const { heartbeatMs, name, subscription } = options
++  let cursor = subscription.cursor
++  // Measured from the last message sent: a Position changes the cursor but sends nothing.
++  let sentAt = 0
++  const send = (tag: string, payload: Readonly<Record<string, unknown>>) =>
++    options.send(tag, payload).pipe(Effect.andThen(Clock.currentTimeMillis), Effect.map((at) => {
++      sentAt = at
++    }))
++  const active = (truncated: boolean) => send(EventsActiveNotification._tag, { cursor, truncated, heartbeatMs })
++  yield* active(subscription.truncated)
++  const items = yield* Stream.toQueue(subscription.items, { capacity: PENDING_ITEMS })
++  while (true) {
++    const wait = Math.max(0, sentAt + heartbeatMs - (yield* Clock.currentTimeMillis))
++    const next = yield* Queue.take(items).pipe(Effect.timeoutOption(Duration.millis(wait)), Effect.result)
++    if (Result.isFailure(next)) {
++      if (!Cause.isDone(next.failure)) {
++        yield* send(EventsTerminatedNotification._tag, { error: wireError(next.failure) })
++      }
++      return
++    }
++    if (Option.isNone(next.success)) {
++      yield* send(EventsHeartbeatNotification._tag, { cursor })
++      continue
++    }
++    const item = next.success.value
++    switch (item._tag) {
++      case "Event": {
++        cursor = item.cursor
++        const { _meta, _tag, ...occurrence } = item
++        yield* send(EventsEventNotification._tag, { ...occurrence, name, ...(_meta === undefined ? {} : { _meta }) })
++        break
++      }
++      case "Position": {
++        cursor = item.cursor
++        break
++      }
++      case "Gap": {
++        cursor = item.cursor
++        yield* active(true)
++        break
++      }
++      case "Error": {
++        yield* send(EventsErrorNotification._tag, { error: wireError(item.error) })
++        break
++      }
++    }
++  }
++}, Effect.scoped)
+diff --git a/src/ai/internal/mcpProtocol.ts b/src/ai/internal/mcpProtocol.ts
+index 5393651..f40915b 100644
+--- a/src/ai/internal/mcpProtocol.ts
++++ b/src/ai/internal/mcpProtocol.ts
+@@ -484,6 +484,7 @@ export interface HandlerInstallationContext {
+     readonly resources: boolean
+     readonly prompts: boolean
+     readonly skills: boolean
++    readonly events: boolean
+   }>
+ }
+ 
+diff --git a/src/ai/internal/mcpProtocol/v2026_07_28.ts b/src/ai/internal/mcpProtocol/v2026_07_28.ts
+index a701ec8..8e4b36a 100644
+--- a/src/ai/internal/mcpProtocol/v2026_07_28.ts
++++ b/src/ai/internal/mcpProtocol/v2026_07_28.ts
+@@ -22,6 +22,7 @@ import type * as Types from "../../../Types.ts"
+ import type * as PublicMcpProtocol from "../../McpProtocol.ts"
+ import * as PublicMcpSchema from "../../McpSchema.ts"
+ import * as McpCore from "../mcpCore.ts"
++import * as McpEvents from "../mcpEvents.ts"
+ import * as McpProtocol from "../mcpProtocol.ts"
+ import * as McpSchema from "../mcpSchema/v2026_07_28.ts"
+ import * as McpSkills from "../mcpSkills.ts"
+@@ -344,7 +345,11 @@ const unsupported = (
+ /**
+  * @internal
+  */
+-export const handlerRpcs = McpSchema.ClientRequestRpcs.merge(McpSchema.ClientNotificationRpcs, McpSkills.StatelessRpcs)
++export const handlerRpcs = McpSchema.ClientRequestRpcs.merge(
++  McpSchema.ClientNotificationRpcs,
++  McpSkills.StatelessRpcs,
++  McpEvents.StatelessRpcs
++)
+ 
+ /**
+  * @internal
+@@ -370,6 +375,10 @@ export const makeHandlers = (
+   const decodeListSkillsResult = Schema.decodeUnknownEffect(McpSkills.ListSkillsResult)
+   const decodeGetSkillResult = Schema.decodeUnknownEffect(McpSkills.GetSkillResult)
+   const decodeReadResourceDirectoryResult = Schema.decodeUnknownEffect(McpSkills.ReadResourceDirectoryResult)
++  const decodeListEventsResult = Schema.decodeUnknownEffect(McpEvents.ListEventsResult)
++  const decodePollEventsResult = Schema.decodeUnknownEffect(McpEvents.PollEventsResult)
++  const decodeSubscribeEventsResult = Schema.decodeUnknownEffect(McpEvents.SubscribeEvents.successSchema)
++  const decodeUnsubscribeEventsResult = Schema.decodeUnknownEffect(McpEvents.UnsubscribeEvents.successSchema)
+   const sendNotification = context.sendNotification
+   const supportsSubscriptions = sendNotification !== undefined
+   // Older adapters accept arbitrary JSON; this binding requires extension settings objects.
+@@ -384,8 +393,14 @@ export const makeHandlers = (
+   }
+   const getDiscovery = Effect.map(context.registrationPresence, (presence) => {
+     const capabilities: Types.Mutable<typeof McpSchema.ServerCapabilities.Type> = { completions: {}, logging: {} }
+-    const declared = McpSkills.declareExtension(extensions, presence.skills)
++    const declared = McpEvents.declareExtension(
++      McpSkills.declareExtension(extensions, presence.skills),
++      presence.events
++    )
+     if (declared !== undefined) capabilities.extensions = declared
++    // Bridge for clients predating SEP-3415 (ChatGPT, @ai-sdk/mcp); drop per #41158.
++    // They look for a top-level `events` capability instead of the extension.
++    if (presence.events) capabilities.events = {}
+     if (presence.tools) capabilities.tools = { listChanged: supportsSubscriptions }
+     if (presence.resources) {
+       capabilities.resources = { listChanged: supportsSubscriptions, subscribe: supportsSubscriptions }
+@@ -393,6 +408,30 @@ export const makeHandlers = (
+     if (presence.prompts) capabilities.prompts = { listChanged: supportsSubscriptions }
+     return { supportedVersions: context.supportedVersions, capabilities, serverInfo: context.serverInfo }
+   })
++  const requireEvents = (method: string) =>
++    McpEvents.requireEvents(core, method).pipe(Effect.catch((error) => failWithHttpStatus(404, error)))
++  // The event type's `x-mcp-header` arguments must match their headers, as a tool's do.
++  const validateEventHeaders = Effect.fnUntraced(function*(
++    registration: McpCore.EventRegistration,
++    args: unknown
++  ) {
++    const httpRequest = yield* Effect.serviceOption(HttpServerRequest.HttpServerRequest)
++    if (Option.isSome(httpRequest)) {
++      yield* validateParameterHeaders(registration.descriptor.inputSchema, args, httpRequest.value.headers)
++    }
++  })
++  // Webhook delivery runs the event's push stream, so it needs both.
++  const webhookRegistration = Effect.fnUntraced(function*(method: string, name: string, args: unknown) {
++    yield* requireEvents(method)
++    const invocation = yield* getInvocation
++    const registration = yield* core.events.get(name, invocation)
++    const { stream, webhooks } = registration
++    if (webhooks === undefined || stream === undefined) {
++      return yield* McpEvents.unsupportedDelivery("webhook")
++    }
++    yield* validateEventHeaders(registration, args)
++    return { invocation, stream, webhooks, decodeArguments: registration.decodeArguments }
++  })
+   const requireSkills = (method: string) =>
+     McpSkills.requireSkills(core, method).pipe(
+       Effect.catch((error) => failWithHttpStatus(404, error))
+@@ -728,6 +767,121 @@ export const makeHandlers = (
+       const result = yield* projectCompleteResult({ ...cacheHint("skills"), resources }, context.serverInfo)
+       return yield* decodeReadResourceDirectoryResult(result)
+     }, Effect.mapError(projectError)),
++    "events/list": Effect.fnUntraced(function*(request: typeof McpEvents.ListEvents.payloadSchema.Type) {
++      yield* requireEvents("events/list")
++      yield* McpProtocol.rejectCursor(request.cursor)
++      const events = yield* core.events.list(yield* getInvocation)
++      // Without a notification channel nothing can be pushed.
++      const offered = supportsSubscriptions ? events : events.flatMap((event) => {
++        const delivery = event.delivery.filter((mode) => mode !== "push")
++        return delivery.length === 0 ? [] : [{ ...event, delivery }]
++      })
++      const result = yield* projectCompleteResult({ events: offered }, context.serverInfo)
++      return yield* decodeListEventsResult(result)
++    }, Effect.mapError(projectError)),
++    "events/poll": Effect.fnUntraced(function*(request: typeof McpEvents.PollEvents.payloadSchema.Type) {
++      yield* requireEvents("events/poll")
++      const invocation = yield* getInvocation
++      const registration = yield* core.events.get(request.name, invocation)
++      if (registration.poll === undefined) {
++        return yield* McpEvents.unsupportedDelivery("poll")
++      }
++      yield* validateEventHeaders(registration, request.arguments)
++      const outcome = yield* registration.poll({
++        arguments: request.arguments ?? {},
++        cursor: request.cursor ?? null,
++        maxAgeMs: request.maxAgeMs,
++        maxEvents: request.maxEvents
++      }, invocation)
++      const result = yield* projectCompleteResult({
++        events: outcome.events.map((event) =>
++          omitUndefined({
++            eventId: event.eventId,
++            name: request.name,
++            timestamp: event.timestamp,
++            data: event.data,
++            _meta: event._meta
++          })
++        ),
++        cursor: outcome.cursor,
++        truncated: outcome.truncated,
++        hasMore: outcome.hasMore,
++        nextPollMs: outcome.nextPollMs
++      }, context.serverInfo)
++      return yield* decodePollEventsResult(result)
++    }, Effect.mapError(projectError)),
++    "events/stream": Effect.fnUntraced(function*(
++      request: typeof McpEvents.StreamEvents.payloadSchema.Type,
++      { client, requestId }: { readonly client: Rpc.ServerClient; readonly requestId: RpcMessage.RequestId }
++    ) {
++      yield* requireEvents("events/stream")
++      const invocation = yield* getInvocation
++      const registration = yield* core.events.get(request.name, invocation)
++      if (registration.stream === undefined || sendNotification === undefined) {
++        return yield* McpEvents.unsupportedDelivery("push")
++      }
++      yield* validateEventHeaders(registration, request.arguments)
++      const subscriptionMetadata = { "io.modelcontextprotocol/subscriptionId": requestId }
++      const send = (tag: string, payload: Readonly<Record<string, unknown>>) =>
++        sendNotification(McpSchema.protocolVersion, client.id, {
++          tag,
++          payload: {
++            ...payload,
++            _meta: { ...(Predicate.isReadonlyObject(payload._meta) ? payload._meta : {}), ...subscriptionMetadata }
++          }
++        })
++      const heartbeatMs = McpEvents.grantHeartbeat(request.heartbeatMs)
++      yield* Effect.raceFirst(
++        registration.stream(
++          { arguments: request.arguments ?? {}, cursor: request.cursor ?? null, maxAgeMs: request.maxAgeMs },
++          invocation,
++          (subscription) => McpEvents.deliver({ name: request.name, subscription, heartbeatMs, send })
++        ),
++        context.awaitClientEnd ?? Effect.never
++      )
++      const encodedServerInfo = yield* encodeImplementation(context.serverInfo)
++      return McpSchema.SubscriptionsListenResult.make({
++        _meta: { ...subscriptionMetadata, "io.modelcontextprotocol/serverInfo": encodedServerInfo },
++        resultType: "complete"
++      })
++    }, Effect.mapError(projectError)),
++    "events/subscribe": Effect.fnUntraced(function*(request: typeof McpEvents.SubscribeEvents.payloadSchema.Type) {
++      const { decodeArguments, invocation, stream, webhooks } = yield* webhookRegistration(
++        "events/subscribe",
++        request.name,
++        request.arguments
++      )
++      const args = request.arguments ?? {}
++      const cursor = request.cursor ?? null
++      const subscribed = yield* webhooks.subscribe({
++        name: request.name,
++        arguments: args,
++        delivery: request.delivery,
++        cursor,
++        ttlMs: request.ttlMs,
++        decode: decodeArguments(args),
++        open: (decoded, deliver) =>
++          stream(
++            { arguments: args, decoded: { value: decoded }, cursor, maxAgeMs: request.maxAgeMs },
++            invocation,
++            deliver
++          )
++      })
++      const result = yield* projectCompleteResult(omitUndefined({ ...subscribed }), context.serverInfo)
++      return yield* decodeSubscribeEventsResult(result)
++    }, Effect.mapError(projectError)),
++    "events/unsubscribe": Effect.fnUntraced(function*(
++      request: typeof McpEvents.UnsubscribeEvents.payloadSchema.Type
++    ) {
++      const { webhooks } = yield* webhookRegistration("events/unsubscribe", request.name, request.arguments)
++      yield* webhooks.unsubscribe({
++        name: request.name,
++        arguments: request.arguments ?? {},
++        delivery: request.delivery
++      })
++      const result = yield* projectCompleteResult({}, context.serverInfo)
++      return yield* decodeUnsubscribeEventsResult(result)
++    }, Effect.mapError(projectError)),
+     "notifications/cancelled": Effect.fnUntraced(function*(
+       _request: typeof McpSchema.CancelledNotification.payloadSchema.Type
+     ) {
+@@ -751,10 +905,10 @@ const runtime = {
+ export const protocol = McpProtocol.make({
+   protocolVersion: McpSchema.protocolVersion,
+   runtime,
+-  clientRpcs: McpSchema.ClientRpcs.merge(McpSkills.StatelessRpcs),
++  clientRpcs: McpSchema.ClientRpcs.merge(McpSkills.StatelessRpcs, McpEvents.StatelessRpcs),
+   clientNotificationRpcs: McpSchema.ClientNotificationRpcs,
+   serverRequestRpcs: McpSchema.ServerRequestRpcs,
+-  serverNotificationRpcs: McpSchema.ServerNotificationRpcs,
++  serverNotificationRpcs: McpSchema.ServerNotificationRpcs.merge(McpEvents.ServerNotificationRpcs),
+   handlerRpcs,
+   makeHandlers,
+   toReverseClient: () => ({
+diff --git a/src/ai/internal/mcpRuntime.ts b/src/ai/internal/mcpRuntime.ts
+index 9d4c96e..0afe3ed 100644
+--- a/src/ai/internal/mcpRuntime.ts
++++ b/src/ai/internal/mcpRuntime.ts
+@@ -53,6 +53,10 @@ const routingNameKey = (method: string): "name" | "uri" | undefined => {
+   switch (method) {
+     case "tools/call":
+     case "prompts/get":
++    case "events/poll":
++    case "events/stream":
++    case "events/subscribe":
++    case "events/unsubscribe":
+       return "name"
+     case "resources/read":
+       return "uri"
+@@ -319,7 +323,13 @@ export const make = Effect.fnUntraced(function*(
+       if (nameKey !== undefined) {
+         const name = asRecord(inputRecord?.params)?.[nameKey]
+         const header = headers[MCP_NAME_HEADER]
+-        if (typeof name !== "string" || header === undefined || McpProtocol.decodeRoutingHeader(header) !== name) {
++        // Bridge for clients predating SEP-3415 (ChatGPT, @ai-sdk/mcp); drop per #41158.
++        // They send no Mcp-Name on these; one they do send must still match.
++        const optional = header === undefined && (method === "events/subscribe" || method === "events/unsubscribe")
++        if (
++          !optional &&
++          (typeof name !== "string" || header === undefined || McpProtocol.decodeRoutingHeader(header) !== name)
++        ) {
+           return headerMismatch("Mcp-Name header does not match request parameters")
+         }
+       }
+@@ -479,7 +489,9 @@ export const make = Effect.fnUntraced(function*(
+       return {
+         _tag: "Accepted",
+         acknowledge: !isRequest || !hasId,
+-        isSubscription: Predicate.hasProperty(input, "method") && input.method === "subscriptions/listen"
++        // A push subscription stays open until cancelled, so it is never a plain response.
++        isSubscription: Predicate.hasProperty(input, "method") &&
++          (input.method === "subscriptions/listen" || input.method === "events/stream")
+       }
+     },
+     effectLogLevel: (clientId, headers, fallback) => stateful?.effectLogLevel(clientId, headers, fallback) ?? fallback,
+diff --git a/src/ai/internal/mcpWebhooks.ts b/src/ai/internal/mcpWebhooks.ts
+new file mode 100644
+index 0000000..5b53d08
+--- /dev/null
++++ b/src/ai/internal/mcpWebhooks.ts
+@@ -0,0 +1,692 @@
++/**
++ * Webhook delivery for the Events extension (SEP-3415): `events/subscribe`
++ * validation, subscription identity, Standard Webhooks signing, the endpoint
++ * verification handshake and the delivery loop.
++ *
++ * Subscriptions live in memory. Every grant is finite, so a subscription lost
++ * in a restart comes back on the client's next refresh, from its cursor.
++ */
++import * as Clock from "../../Clock.ts"
++import * as Digest from "../../crypto/Digest.ts"
++import * as Mac from "../../crypto/Mac.ts"
++import * as SecureRandom from "../../crypto/SecureRandom.ts"
++import * as Deferred from "../../Deferred.ts"
++import * as Duration from "../../Duration.ts"
++import * as Effect from "../../Effect.ts"
++import * as Base64 from "../../encoding/Base64.ts"
++import * as Base64Url from "../../encoding/Base64Url.ts"
++import * as Fiber from "../../Fiber.ts"
++import * as FetchHttpClient from "../../http/FetchHttpClient.ts"
++import * as HttpClient from "../../http/HttpClient.ts"
++import * as HttpClientRequest from "../../http/HttpClientRequest.ts"
++import type * as HttpClientResponse from "../../http/HttpClientResponse.ts"
++import * as Option from "../../Option.ts"
++import * as Result from "../../Result.ts"
++import * as Stream from "../../Stream.ts"
++import * as PublicMcpSchema from "../McpSchema.ts"
++import type * as McpCore from "./mcpCore.ts"
++import { wireError } from "./mcpEvents.ts"
++
++const MINUTE_MS = 60_000
++/** @internal */
++export const MIN_TTL_MS = MINUTE_MS
++// Short grants because subscriptions live in memory: a restart loses them until the next refresh.
++/** @internal */
++export const MAX_TTL_MS = 60 * MINUTE_MS
++/** @internal */
++export const DEFAULT_TTL_MS = 15 * MINUTE_MS
++/** @internal */
++export const MAX_ATTEMPTS = 5
++// Retries wait 30 s, 1, 2 and 4 minutes: about 7.5 minutes in all.
++const FIRST_RETRY_MS = 30_000
++const REQUEST_TIMEOUT_MS = 10_000
++// Deliveries signed with the old secret before a rotation still verify for this long.
++const ROTATION_GRACE_MS = 5 * MINUTE_MS
++const VERIFIED_FOR_MS = MAX_TTL_MS
++// A failed challenge is answered from here, so repeated subscribes cannot flood the endpoint.
++const FAILED_FOR_MS = 5 * MINUTE_MS
++// Verification POSTs one destination host receives per minute, across all principals.
++const VERIFICATIONS_PER_HOST_PER_MINUTE = 10
++const MAX_SUBSCRIPTIONS_PER_PRINCIPAL = 100
++// A verification reads this many bytes of the response at most; a delivery reads none.
++const MAX_CHALLENGE_RESPONSE_BYTES = 8_192
++const SECRET_PREFIX = "whsec_"
++
++/**
++ * The fixed categories `deliveryStatus.lastError` and `CallbackEndpointError`
++ * report; never the endpoint's own response.
++ *
++ * @internal
++ */
++export type FailureCategory =
++  | "connection_refused"
++  | "timeout"
++  | "tls_error"
++  | "http_4xx"
++  | "http_5xx"
++  | "challenge_failed"
++
++/**
++ * @internal
++ */
++export interface Guard {
++  readonly check: (url: URL) => Effect.Effect<void, { readonly message: string }>
++  readonly allowsPlaintext?: ((url: URL) => boolean) | undefined
++}
++
++/**
++ * @internal
++ */
++export interface Options {
++  readonly principal: Effect.Effect<string, PublicMcpSchema.Forbidden>
++  readonly guard: Guard
++  readonly client: HttpClient.HttpClient
++}
++
++/**
++ * @internal
++ */
++export interface SubscribeRequest {
++  readonly name: string
++  readonly arguments: Readonly<Record<string, unknown>>
++  readonly delivery: Readonly<Record<string, unknown>>
++  readonly cursor: string | null
++  readonly ttlMs?: number | null | undefined
++  // The event's argument decoder, run before the endpoint is contacted.
++  readonly decode: Effect.Effect<unknown, McpCore.EventFailure>
++  // Runs the event's stream for the subscription's lifetime, as push delivery does.
++  readonly open: (
++    decoded: unknown,
++    deliver: (subscription: McpCore.EventSubscription) => Effect.Effect<void>
++  ) => Effect.Effect<void, McpCore.EventFailure | McpCore.RequestRejected>
++}
++
++/**
++ * @internal
++ */
++export interface SubscribeResult {
++  readonly id: string
++  readonly refreshBefore: string
++  readonly cursor: string | null
++  readonly truncated: boolean
++  readonly deliveryStatus?: {
++    readonly active: boolean
++    readonly lastDeliveryAt: string | null
++    readonly lastError: FailureCategory | null
++  } | undefined
++}
++
++/**
++ * @internal
++ */
++export interface UnsubscribeRequest {
++  readonly name: string
++  readonly arguments: Readonly<Record<string, unknown>>
++  readonly delivery: Readonly<Record<string, unknown>>
++}
++
++/**
++ * @internal
++ */
++export interface Webhooks {
++  readonly subscribe: (
++    request: SubscribeRequest
++  ) => Effect.Effect<SubscribeResult, McpCore.EventFailure | McpCore.RequestRejected>
++  readonly unsubscribe: (request: UnsubscribeRequest) => Effect.Effect<void, McpCore.EventFailure>
++  readonly size: Effect.Effect<number>
++}
++
++interface Subscription {
++  readonly id: string
++  readonly principal: string
++  readonly url: URL
++  secret: string
++  key: Mac.Key
++  previous: { readonly key: Mac.Key; readonly until: number } | undefined
++  expiresAt: number
++  // Everything at or before it was acknowledged or given up on.
++  watermark: string | null
++  lastDeliveryAt: number | undefined
++  lastError: FailureCategory | undefined
++  fiber: Fiber.Fiber<void> | undefined
++  // Completed when a refresh moves the deadline, so the expiry recomputes it.
++  deadlineMoved: Deferred.Deferred<void>
++  // Where the event's stream started, or why it could not; a same-key refresh waits for it.
++  readonly accepted: Deferred.Deferred<
++    { readonly cursor: string | null; readonly truncated: boolean },
++    McpCore.EventFailure | McpCore.RequestRejected
++  >
++  // After a gap whose envelope the endpoint never took: the cursors handed out since, any of
++  // which a refresh presents to say it saw past the gap. Until then every refresh is truncated.
++  cursorsSinceGap: Set<string | null> | undefined
++}
++
++type Outcome =
++  // `body` is read only for a verification, and is undefined when it was too long.
++  | { readonly _tag: "Delivered"; readonly body: string | undefined }
++  | { readonly _tag: "Failed"; readonly category: FailureCategory; readonly retryable: boolean }
++
++const invalid = (message: string) => new PublicMcpSchema.InvalidParams({ message })
++
++/**
++ * The TTL granted for a suggested one: the default when none is suggested, and
++ * never unbounded, since subscriptions are not kept across restarts.
++ *
++ * @internal
++ */
++export const grantTtl = (suggested: number | null | undefined): number =>
++  suggested === undefined
++    ? DEFAULT_TTL_MS
++    : suggested === null
++    ? MAX_TTL_MS
++    : Math.min(MAX_TTL_MS, Math.max(MIN_TTL_MS, suggested))
++
++/**
++ * JSON with object keys sorted, so equal arguments serialize equally.
++ *
++ * @internal
++ */
++export const canonicalJson = (value: unknown): string => {
++  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
++  if (typeof value === "object" && value !== null) {
++    const entries = Object.entries(value).filter(([, entry]) => entry !== undefined)
++    entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
++    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`).join(",")}}`
++  }
++  return JSON.stringify(value) ?? "null"
++}
++
++const encoder = new TextEncoder()
++
++const parseUrl = (value: unknown, guard: Guard) => {
++  if (typeof value !== "string") return Effect.fail(invalid("delivery.url is required"))
++  let url: URL
++  try {
++    url = new URL(value)
++  } catch {
++    return Effect.fail(invalid("delivery.url is not a valid URL"))
++  }
++  if (url.protocol !== "https:" && !(url.protocol === "http:" && guard.allowsPlaintext?.(url) === true)) {
++    return Effect.fail(invalid("delivery.url must use https"))
++  }
++  if (url.username !== "" || url.password !== "") {
++    return Effect.fail(invalid("delivery.url must not carry credentials"))
++  }
++  url.hash = ""
++  return Effect.succeed(url)
++}
++
++const parseSecret = (value: unknown) => {
++  const fail = Effect.fail(invalid("delivery.secret must be whsec_ and the base64 of 24 to 64 random bytes"))
++  if (typeof value !== "string" || !value.startsWith(SECRET_PREFIX)) return fail
++  const bytes = Base64.decode(value.slice(SECRET_PREFIX.length))
++  if (Result.isFailure(bytes) || bytes.success.length < 24 || bytes.success.length > 64) return fail
++  return Mac.key(Mac.hmacSha256, bytes.success).pipe(Effect.orDie, Effect.map((key) => ({ text: value, key })))
++}
++
++const statusCategory = (status: number): FailureCategory => (status >= 500 ? "http_5xx" : "http_4xx")
++
++// Only codes and names are read, never what the endpoint sent.
++const transportCategory = (error: unknown): FailureCategory => {
++  let current: unknown = error
++  for (let depth = 0; depth < 8 && typeof current === "object" && current !== null; depth++) {
++    const code = (current as { readonly code?: unknown }).code
++    if (typeof code === "string" && /CERT|TLS|SSL/.test(code)) return "tls_error"
++    current = (current as { readonly cause?: unknown }).cause ??
++      (current as { readonly reason?: unknown }).reason
++  }
++  return "connection_refused"
++}
++
++// Stops pulling past the cap; closing the request's scope then aborts the rest.
++const readCapped = (response: HttpClientResponse.HttpClientResponse) =>
++  Effect.suspend(() => {
++    const chunks: Array<Uint8Array> = []
++    let total = 0
++    let oversized = false
++    return response.stream.pipe(
++      Stream.takeWhile((chunk) => {
++        if (total + chunk.length > MAX_CHALLENGE_RESPONSE_BYTES) {
++          oversized = true
++          return false
++        }
++        total += chunk.length
++        chunks.push(chunk)
++        return true
++      }),
++      Stream.runDrain,
++      Effect.map(() => {
++        if (oversized) return undefined
++        const bytes = new Uint8Array(total)
++        let offset = 0
++        for (const chunk of chunks) {
++          bytes.set(chunk, offset)
++          offset += chunk.length
++        }
++        return new TextDecoder().decode(bytes)
++      })
++    )
++  })
++
++const echoedChallenge = (body: string): string | undefined => {
++  try {
++    const parsed: unknown = JSON.parse(body)
++    const challenge = typeof parsed === "object" && parsed !== null
++      ? (parsed as { readonly challenge?: unknown }).challenge
++      : undefined
++    return typeof challenge === "string" ? challenge : undefined
++  } catch {
++    return undefined
++  }
++}
++
++const callbackError = (category: FailureCategory) =>
++  new PublicMcpSchema.CallbackEndpointError({
++    message: `The callback endpoint failed verification: ${category}`,
++    data: { reason: category }
++  })
++
++const iso = (millis: number) => new Date(millis).toISOString()
++
++/**
++ * @internal
++ */
++export const make = Effect.fnUntraced(function*(options: Options) {
++  const scope = yield* Effect.scope
++  const mac = yield* Mac.Mac
++  const digest = yield* Digest.Digest
++  const random = yield* SecureRandom.SecureRandom
++  const { guard } = options
++  // Closing a request's scope aborts its body, so a delivery never downloads what the endpoint sends.
++  const client = HttpClient.withScope(options.client)
++  const subscriptions = new Map<string, Subscription>()
++  // Subscribes past the principal check that have not created their subscription yet.
++  const pending = new Map<string, number>()
++  const verified = new Map<string, number>()
++  const failedVerifications = new Map<string, { readonly until: number; readonly category: FailureCategory }>()
++  const verifying = new Map<string, Deferred.Deferred<void, PublicMcpSchema.CallbackEndpointError>>()
++  const verificationsByHost = new Map<string, Array<number>>()
++
++  const forget = (subscription: Subscription) => {
++    if (subscriptions.get(subscription.id) === subscription) subscriptions.delete(subscription.id)
++  }
++
++  const subscriptionId = (principal: string, url: URL, name: string, args: unknown) =>
++    digest.digestHex(Digest.sha256, encoder.encode(canonicalJson([principal, url.href, name, args]))).pipe(
++      Effect.map((hex) => `sub_${hex.slice(0, 32)}`)
++    )
++
++  // High entropy and unrelated to the eventId; a retry reuses it.
++  const messageId = (prefix: string) =>
++    Effect.map(random.randomBytes(18), (bytes) => `${prefix}_${Base64Url.encode(bytes)}`)
++
++  // Bridge for clients predating SEP-3415 (ChatGPT, @ai-sdk/mcp); drop per #41158.
++  // They require an event's webhook-id to equal its eventId. Both become this id, derived per
++  // subscription so two subscriptions to one URL never share it; poll and push keep the eventId.
++  const deliveryId = (subscription: Subscription, eventId: string) =>
++    Effect.map(
++      digest.digest(Digest.sha256, encoder.encode(`${subscription.id}\0${eventId}`)),
++      (hash) => `evt_${Base64Url.encode(hash).slice(0, 22)}`
++    )
++
++  const MAX_CURSORS_SINCE_GAP = 1_024
++  const advance = (subscription: Subscription, cursor: string | null) => {
++    subscription.watermark = cursor
++    const since = subscription.cursorsSinceGap
++    if (since === undefined) return
++    since.add(cursor)
++    if (since.size > MAX_CURSORS_SINCE_GAP) since.delete(since.values().next().value!)
++  }
++
++  const sign = (keys: ReadonlyArray<Mac.Key>, webhookId: string, timestamp: number, body: string) =>
++    Effect.forEach(keys, (key) => mac.sign(key, encoder.encode(`${webhookId}.${timestamp}.${body}`))).pipe(
++      Effect.orDie,
++      Effect.map((tags) => tags.map((tag) => `v1,${Base64.encode(tag)}`).join(" "))
++    )
++
++  // One POST. The timestamp and signature are fresh on every attempt.
++  const send = Effect.fnUntraced(function*(
++    subscription: Subscription,
++    body: string,
++    webhookId: string,
++    readBody: boolean
++  ) {
++    const admitted = yield* Effect.result(guard.check(subscription.url))
++    if (Result.isFailure(admitted)) {
++      return { _tag: "Failed", category: "connection_refused", retryable: true } satisfies Outcome
++    }
++    const now = yield* Clock.currentTimeMillis
++    const timestamp = Math.floor(now / 1000)
++    const previous = subscription.previous
++    const keys = previous !== undefined && now < previous.until
++      ? [subscription.key, previous.key]
++      : [subscription.key]
++    const request = HttpClientRequest.post(subscription.url).pipe(
++      HttpClientRequest.setHeaders({
++        "webhook-id": webhookId,
++        "webhook-timestamp": String(timestamp),
++        "webhook-signature": yield* sign(keys, webhookId, timestamp, body),
++        "x-mcp-subscription-id": subscription.id
++      }),
++      HttpClientRequest.bodyText(body, "application/json")
++    )
++    const outcome = yield* client.execute(request).pipe(
++      Effect.flatMap((response): Effect.Effect<Outcome, unknown> => {
++        if (response.status < 200 || response.status >= 300) {
++          return Effect.succeed({
++            _tag: "Failed",
++            category: statusCategory(response.status),
++            retryable: response.status !== 410 && response.status !== 413
++          })
++        }
++        return readBody
++          ? Effect.map(readCapped(response), (text) => ({ _tag: "Delivered", body: text }))
++          : Effect.succeed({ _tag: "Delivered", body: undefined })
++      }),
++      Effect.timeoutOption(Duration.millis(REQUEST_TIMEOUT_MS)),
++      Effect.scoped,
++      // `fetch` would follow a redirect itself; webhook delivery never does.
++      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
++      // Trace ids stay inside: the endpoint belongs to someone else.
++      Effect.provideService(HttpClient.TracerPropagationEnabled, false),
++      Effect.catch((error) =>
++        Effect.succeed(Option.some<Outcome>({ _tag: "Failed", category: transportCategory(error), retryable: true }))
++      )
++    )
++    return Option.getOrElse(outcome, (): Outcome => ({ _tag: "Failed", category: "timeout", retryable: true }))
++  })
++
++  // Retries with backoff; gives up after a 410, a 413 or the last attempt. True once delivered.
++  const deliver = Effect.fnUntraced(function*(subscription: Subscription, body: string, webhookId: string) {
++    for (let attempt = 1;; attempt++) {
++      // A subscription that ended may have been replaced under its id; this one speaks no longer.
++      const current = subscriptions.get(subscription.id)
++      if (current !== undefined && current !== subscription) return false
++      const startedAt = yield* Clock.currentTimeMillis
++      const outcome = yield* send(subscription, body, webhookId, false)
++      if (outcome._tag === "Delivered") {
++        subscription.lastDeliveryAt = yield* Clock.currentTimeMillis
++        subscription.lastError = undefined
++        return true
++      }
++      subscription.lastError = outcome.category
++      if (!outcome.retryable || attempt >= MAX_ATTEMPTS) return false
++      // Counted from the attempt's start, so a slow endpoint does not stretch the window.
++      const wait = startedAt + FIRST_RETRY_MS * 2 ** (attempt - 1) - (yield* Clock.currentTimeMillis)
++      if (wait > 0) yield* Effect.sleep(Duration.millis(wait))
++    }
++  })
++
++  const control = (subscription: Subscription, type: string, fields: Readonly<Record<string, unknown>>) =>
++    Effect.flatMap(
++      messageId(`msg_${type}`),
++      (webhookId) => deliver(subscription, JSON.stringify({ type, ...fields }), webhookId)
++    )
++
++  // One delivery in flight per subscription, so the watermark only moves forward
++  // once everything before it is resolved.
++  const run = (subscription: Subscription, name: string, events: McpCore.EventSubscription) =>
++    events.items.pipe(
++      Stream.runForEach((item): Effect.Effect<void> => {
++        switch (item._tag) {
++          case "Event":
++            return Effect.flatMap(deliveryId(subscription, item.eventId), (webhookId) => {
++              const body = JSON.stringify({
++                eventId: webhookId,
++                name,
++                timestamp: item.timestamp,
++                data: item.data,
++                cursor: item.cursor,
++                ...(item._meta === undefined ? {} : { _meta: item._meta })
++              })
++              return deliver(subscription, body, webhookId)
++            }).pipe(Effect.andThen(Effect.sync(() => advance(subscription, item.cursor))))
++          case "Position":
++            return Effect.sync(() => advance(subscription, item.cursor))
++          case "Gap":
++            return control(subscription, "gap", { cursor: item.cursor }).pipe(
++              Effect.map((delivered) => {
++                if (!delivered) subscription.cursorsSinceGap = new Set()
++                advance(subscription, item.cursor)
++              })
++            )
++          case "Error":
++            // A webhook has no envelope for an error that leaves the subscription open.
++            return Effect.void
++        }
++      }),
++      // Ended before it says so, so a refresh meanwhile starts afresh instead of reporting it live.
++      Effect.catch((failure) =>
++        Effect.suspend(() => {
++          forget(subscription)
++          return control(subscription, "terminated", { error: wireError(failure) })
++        })
++      )
++    )
++
++  const expiry = (subscription: Subscription) =>
++    Effect.gen(function*() {
++      while (true) {
++        const left = subscription.expiresAt - (yield* Clock.currentTimeMillis)
++        if (left <= 0) return forget(subscription)
++        yield* Effect.raceFirst(Effect.sleep(Duration.millis(left)), Deferred.await(subscription.deadlineMoved))
++      }
++    })
++
++  const handshake = Effect.fnUntraced(function*(subscription: Subscription) {
++    const challenge = Base64Url.encode(yield* random.randomBytes(32))
++    const outcome = yield* send(
++      subscription,
++      JSON.stringify({ type: "verification", challenge }),
++      yield* messageId("msg_verification"),
++      true
++    )
++    if (outcome._tag === "Failed") return yield* Effect.fail(outcome.category)
++    const echoed = outcome.body === undefined ? undefined : echoedChallenge(outcome.body)
++    if (echoed === undefined || !Mac.timingSafeEqual(encoder.encode(echoed), encoder.encode(challenge))) {
++      return yield* Effect.fail<FailureCategory>("challenge_failed")
++    }
++  })
++
++  // Cached per (principal, url) either way; concurrent subscribes share one handshake.
++  const verify = Effect.fnUntraced(function*(subscription: Subscription) {
++    const key = JSON.stringify([subscription.principal, subscription.url.href])
++    const now = yield* Clock.currentTimeMillis
++    for (const [entry, until] of verified) if (until <= now) verified.delete(entry)
++    for (const [entry, failure] of failedVerifications) if (failure.until <= now) failedVerifications.delete(entry)
++    if (verified.has(key)) return
++    const failure = failedVerifications.get(key)
++    if (failure !== undefined) return yield* callbackError(failure.category)
++    const inFlight = verifying.get(key)
++    if (inFlight !== undefined) return yield* Deferred.await(inFlight)
++    const host = subscription.url.hostname
++    const recent = (verificationsByHost.get(host) ?? []).filter((at) => at > now - MINUTE_MS)
++    if (recent.length >= VERIFICATIONS_PER_HOST_PER_MINUTE) {
++      verificationsByHost.set(host, recent)
++      return yield* new PublicMcpSchema.ResourceExhausted({
++        message: "Too many callback verifications for this host",
++        data: { limit: "verifications", max: VERIFICATIONS_PER_HOST_PER_MINUTE }
++      })
++    }
++    for (const [entry, times] of verificationsByHost) {
++      if (times.every((at) => at <= now - MINUTE_MS)) verificationsByHost.delete(entry)
++    }
++    verificationsByHost.set(host, [...recent, now])
++    const done = Deferred.makeUnsafe<void, PublicMcpSchema.CallbackEndpointError>()
++    verifying.set(key, done)
++    return yield* handshake(subscription).pipe(
++      Effect.tap(() =>
++        Effect.map(Clock.currentTimeMillis, (at) => {
++          verified.set(key, at + VERIFIED_FOR_MS)
++        })
++      ),
++      Effect.tapError((category) =>
++        Effect.map(Clock.currentTimeMillis, (at) => {
++          failedVerifications.set(key, { until: at + FAILED_FOR_MS, category })
++        })
++      ),
++      Effect.mapError(callbackError),
++      Effect.onExit((exit) =>
++        Effect.sync(() => {
++          verifying.delete(key)
++          Deferred.doneUnsafe(done, exit)
++        })
++      )
++    )
++  })
++
++  // A caller that joins while the first subscribe's stream is opening waits for it and gets
++  // where it started; one whose subscription went away meanwhile subscribes afresh.
++  const refresh = Effect.fnUntraced(function*(
++    request: SubscribeRequest,
++    subscription: Subscription,
++    secret: { readonly text: string; readonly key: Mac.Key },
++    expiresAt: number,
++    now: number
++  ): Effect.fn.Return<SubscribeResult, McpCore.EventFailure | McpCore.RequestRejected> {
++    const opening = !Deferred.isDoneUnsafe(subscription.accepted)
++    const start = yield* Deferred.await(subscription.accepted)
++    if (subscriptions.get(subscription.id) !== subscription) return yield* subscribe(request)
++    if (subscription.secret !== secret.text) {
++      subscription.previous = { key: subscription.key, until: now + ROTATION_GRACE_MS }
++      subscription.secret = secret.text
++      subscription.key = secret.key
++    }
++    subscription.expiresAt = expiresAt
++    const moved = subscription.deadlineMoved
++    subscription.deadlineMoved = Deferred.makeUnsafe()
++    Deferred.doneUnsafe(moved, Effect.void)
++    if (opening) return { id: subscription.id, refreshBefore: iso(expiresAt), ...start }
++    // Kept until the client shows a cursor from past the gap, so a lost response hides nothing.
++    const since = subscription.cursorsSinceGap
++    if (since !== undefined && since.has(request.cursor)) subscription.cursorsSinceGap = undefined
++    const truncated = subscription.cursorsSinceGap !== undefined
++    return {
++      id: subscription.id,
++      refreshBefore: iso(expiresAt),
++      cursor: subscription.watermark,
++      truncated,
++      deliveryStatus: {
++        active: true,
++        lastDeliveryAt: subscription.lastDeliveryAt === undefined ? null : iso(subscription.lastDeliveryAt),
++        lastError: subscription.lastError ?? null
++      }
++    } satisfies SubscribeResult
++  })
++
++  const subscribe: Webhooks["subscribe"] = Effect.fnUntraced(function*(request) {
++    const principal = yield* options.principal
++    const mode = request.delivery.mode
++    if (mode !== undefined && mode !== "webhook") return yield* invalid("delivery.mode must be 'webhook'")
++    const url = yield* parseUrl(request.delivery.url, guard)
++    const secret = yield* parseSecret(request.delivery.secret)
++    const id = yield* subscriptionId(principal, url, request.name, request.arguments)
++    const now = yield* Clock.currentTimeMillis
++    const expiresAt = now + grantTtl(request.ttlMs)
++    const live = subscriptions.get(id)
++    if (live !== undefined) return yield* refresh(request, live, secret, expiresAt, now)
++    // The slot is taken before anything asynchronous, so concurrent subscribes cannot pass the cap.
++    let held = pending.get(principal) ?? 0
++    for (const subscription of subscriptions.values()) if (subscription.principal === principal) held++
++    if (held >= MAX_SUBSCRIPTIONS_PER_PRINCIPAL) {
++      return yield* new PublicMcpSchema.ResourceExhausted({
++        message: "Too many webhook subscriptions",
++        data: { limit: "subscriptions", max: MAX_SUBSCRIPTIONS_PER_PRINCIPAL }
++      })
++    }
++    pending.set(principal, (pending.get(principal) ?? 0) + 1)
++    let reserved = true
++    const release = () => {
++      if (!reserved) return
++      reserved = false
++      const left = (pending.get(principal) ?? 1) - 1
++      if (left === 0) pending.delete(principal)
++      else pending.set(principal, left)
++    }
++    return yield* create(request, { principal, url, secret, id, expiresAt, now, release }).pipe(
++      Effect.ensuring(Effect.sync(release))
++    )
++  })
++
++  const create = Effect.fnUntraced(function*(
++    request: SubscribeRequest,
++    { expiresAt, id, now, principal, release, secret, url }: {
++      readonly principal: string
++      readonly url: URL
++      readonly secret: { readonly text: string; readonly key: Mac.Key }
++      readonly id: string
++      readonly expiresAt: number
++      readonly now: number
++      readonly release: () => void
++    }
++  ) {
++    // One answer whether the host is private or does not resolve, so it reveals neither.
++    yield* Effect.mapError(guard.check(url), () => invalid("delivery.url is not allowed"))
++    const subscription: Subscription = {
++      id,
++      principal,
++      url,
++      secret: secret.text,
++      key: secret.key,
++      previous: undefined,
++      expiresAt,
++      watermark: request.cursor,
++      lastDeliveryAt: undefined,
++      lastError: undefined,
++      fiber: undefined,
++      deadlineMoved: Deferred.makeUnsafe(),
++      accepted: Deferred.makeUnsafe(),
++      cursorsSinceGap: undefined
++    }
++    const decoded = yield* request.decode
++    yield* verify(subscription)
++    // A concurrent subscribe for the same key may have finished while this one verified.
++    const raced = subscriptions.get(id)
++    if (raced !== undefined) {
++      release()
++      return yield* refresh(request, raced, secret, expiresAt, now)
++    }
++    release()
++    subscriptions.set(id, subscription)
++    const { accepted } = subscription
++    const lifetime = request.open(decoded, (events) =>
++      Effect.suspend(() => {
++        subscription.watermark = events.cursor
++        return Deferred.succeed(accepted, { cursor: events.cursor, truncated: events.truncated })
++      }).pipe(Effect.andThen(run(subscription, request.name, events)))
++    ).pipe(
++      Effect.tapError((failure) => Deferred.fail(accepted, failure)),
++      Effect.raceFirst(expiry(subscription)),
++      Effect.ignore,
++      Effect.ensuring(Effect.suspend(() => {
++        forget(subscription)
++        return Deferred.fail(accepted, new PublicMcpSchema.InternalError({ message: "The subscription ended" }))
++      }))
++    )
++    // Forked from the request, so the event's stream keeps the request's services.
++    subscription.fiber = yield* Effect.forkIn(lifetime, scope)
++    const start = yield* Deferred.await(accepted)
++    return { id, refreshBefore: iso(expiresAt), cursor: start.cursor, truncated: start.truncated }
++  })
++
++  const unsubscribe: Webhooks["unsubscribe"] = Effect.fnUntraced(function*(request) {
++    const principal = yield* options.principal
++    const url = yield* parseUrl(request.delivery.url, guard)
++    const id = yield* subscriptionId(principal, url, request.name, request.arguments)
++    const subscription = subscriptions.get(id)
++    if (subscription === undefined) {
++      return yield* new PublicMcpSchema.NotFound({
++        message: "No webhook subscription matches",
++        data: { kind: "subscription" }
++      })
++    }
++    subscriptions.delete(id)
++    if (subscription.fiber !== undefined) yield* Fiber.interrupt(subscription.fiber)
++  })
++
++  return {
++    subscribe,
++    unsubscribe,
++    size: Effect.sync(() => subscriptions.size)
++  } satisfies Webhooks
++})
+diff --git a/dist/sql/SqlClient.js b/dist/sql/SqlClient.js
+--- a/dist/sql/SqlClient.js
++++ b/dist/sql/SqlClient.js
+@@ -238,6 +238,9 @@
+   log: "Unhandled",
+   message: "Unhandled error in SqlClient.afterCommit callback"
+ });
++// The transaction context extends the fiber's own, so merging the two would only copy every
++// service twice per transaction and savepoint.
++const provideTransactionContext = (effect, services, context) => Effect.updateContext(effect, current => current === services ? context : Context.merge(current, context));
+ const makeAfterCommit = transactionService => effect => Effect.withFiber(fiber => {
+   const transaction = Context.getOrUndefined(fiber.context, transactionService);
+   const buffer = transaction && afterCommitBuffers.get(transaction);
+@@ -328,7 +331,7 @@
+     const transaction = Effect.flatMap(conn, ([scope, conn]) => start(conn).pipe(Effect.flatMap(() => {
+       const level = [conn, id];
+       afterCommitBuffers.set(level, buffer);
+-      return Effect.onExitPrimitive(Effect.provideContext(restore(effect), services.pipe(Context.add(options.transactionService, level), Context.add(CurrentTransactionService, options.transactionService), reactivity ? Context.add(Reactivity, deferInvalidations(reactivity)) : identity, Context.add(transactionSemaphore, Semaphore.makeUnsafe(1)), Context.add(Tracer.ParentSpan, span))), exit => {
++      return Effect.onExitPrimitive(provideTransactionContext(restore(effect), services, services.pipe(Context.add(options.transactionService, level), Context.add(CurrentTransactionService, options.transactionService), reactivity ? Context.add(Reactivity, deferInvalidations(reactivity)) : identity, Context.add(transactionSemaphore, Semaphore.makeUnsafe(1)), Context.add(Tracer.ParentSpan, span))), exit => {
+         buffer.open = false;
+         // The savepoint ended with its parent, and the connection
+         // may already be in another transaction.
+diff --git a/src/sql/SqlClient.ts b/src/sql/SqlClient.ts
+--- a/src/sql/SqlClient.ts
++++ b/src/sql/SqlClient.ts
+@@ -596,6 +596,17 @@
+ const runAfterCommit = <R>(effect: Effect.Effect<void, never, R>): Effect.Effect<void, never, R> =>
+   Effect.ignoreCause(effect, { log: "Unhandled", message: "Unhandled error in SqlClient.afterCommit callback" })
+ 
++// The transaction context extends the fiber's own, so merging the two would only copy every
++// service twice per transaction and savepoint.
++const provideTransactionContext = <A, E, R, XR>(
++  effect: Effect.Effect<A, E, R>,
++  services: Context.Context<never>,
++  context: Context.Context<XR>
++): Effect.Effect<A, E, Exclude<R, XR>> =>
++  Effect.updateContext(effect, (current: Context.Context<Exclude<R, XR>>) =>
++    (current === services ? context : Context.merge(current, context)) as Context.Context<R>
++  )
++
+ const makeAfterCommit =
+   (transactionService: Context.Key<any, any>) =>
+   <R>(effect: Effect.Effect<void, never, R>): Effect.Effect<void, never, R> =>
+@@ -747,8 +758,9 @@
+                     const level = [conn, id] as const
+                     afterCommitBuffers.set(level, buffer)
+                     return Effect.onExitPrimitive(
+-                      Effect.provideContext(
++                      provideTransactionContext(
+                         restore(effect),
++                        services,
+                         services.pipe(
+                           Context.add(options.transactionService, level),
+                           Context.add(CurrentTransactionService, options.transactionService),

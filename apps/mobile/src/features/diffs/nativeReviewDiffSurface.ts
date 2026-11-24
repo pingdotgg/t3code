@@ -10,6 +10,7 @@ import {
 } from "react";
 import { View, type NativeSyntheticEvent, type ViewProps } from "react-native";
 import { requireNativeView } from "expo";
+import { msg, useMessages } from "gt-react-native";
 
 import { EmptyState } from "../../components/ui/EmptyState";
 import { NativeViewResolutionError } from "../../native/nativeViewResolutionError";
@@ -288,6 +289,7 @@ function getExpoViewConfig(moduleName: string) {
 }
 
 function NativeReviewDiffView(props: NativeReviewDiffViewProps) {
+  const messages = useMessages();
   const [failedRowsJson, setFailedRowsJson] = useState<string | null>(null);
   const onRowsFailure = useCallback(() => setFailedRowsJson(props.rowsJson), [props.rowsJson]);
   if (failedRowsJson !== null && failedRowsJson !== props.rowsJson) setFailedRowsJson(null);
@@ -306,10 +308,10 @@ function NativeReviewDiffView(props: NativeReviewDiffViewProps) {
         ],
       },
       createElement(EmptyState, {
-        title: "Could not display diff",
-        detail: "Try loading the diff view again.",
+        title: messages(msg("Could not display diff")),
+        detail: messages(msg("Try loading the diff view again.")),
         variant: "plain",
-        actionLabel: "Retry diff",
+        actionLabel: messages(msg("Retry diff")),
         onAction: () => {
           props.onDebug?.({
             nativeEvent: { message: "surface-retry" },

@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 
+import { SnapShotSource } from "./chatAttachment.ts";
+
 import { AssistantCitation } from "./assistantCitations.ts";
 import {
   EnvironmentId,
@@ -99,6 +101,7 @@ export const ImageContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("image"),
   ...attachmentBinding,
+  source: Schema.optional(SnapShotSource),
 });
 export type ImageContextRecord = typeof ImageContextRecord.Type;
 
