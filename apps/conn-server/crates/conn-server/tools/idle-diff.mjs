@@ -1044,7 +1044,14 @@ const SCENARIOS = [
       await both(pair, (side) => side.tool("conn_thread_interrupt", { threadId: side.threadId }));
       await compare(pair, "a turn being stopped", await gate(pair, "turn/interrupt"));
       await both(pair, (side) => side.release("turn/interrupt"));
-      await compare(pair, "a stopped turn", await threadWhere(pair, "interrupted", (t) => terminal(t.status)));
+      const stopped = await threadWhere(pair, "interrupted", (t) => terminal(t.status));
+      // T3 commits the stopped run's checkpoint after it publishes the terminal status.
+      // Wait for that row before comparing two separate reads of this single-run thread.
+      const checkpoint = await until([pair[0]], "stopped run checkpoint", async (t3) => {
+        const snapshot = await t3.get(`/api/orchestration/threads/${encodeURIComponent(t3.threadId)}`);
+        return snapshot.body?.projection?.visibleTurnItems?.some((row) => row.item.type === "checkpoint");
+      });
+      await compare(pair, "a stopped turn", [...stopped, ...checkpoint]);
       await compareTranscript(pair, "a stopped turn");
     },
   },
