@@ -390,7 +390,8 @@ export default function DiffPanel({
     );
   }, [storedDiffSelection, orderedTurnDiffSummaries, routeThreadRef]);
 
-  const selectedRunId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
+  const turnSelection = diffSelection.kind === "turn" ? diffSelection : null;
+  const followsLatestTurn = turnSelection?.turnId === null;
   const selectedGitScope =
     diffSelection.kind === "unstaged" || diffSelection.kind === "commit"
       ? diffSelection.kind
@@ -404,9 +405,9 @@ export default function DiffPanel({
   const selectedFileRevealRequestId =
     diffSelection.kind === "turn" ? diffSelection.revealRequestId : 0;
   const selectedTurn =
-    selectedRunId === null
+    turnSelection === null
       ? undefined
-      : (orderedTurnDiffSummaries.find((summary) => summary.runId === selectedRunId) ??
+      : (orderedTurnDiffSummaries.find((summary) => summary.runId === turnSelection.turnId) ??
         orderedTurnDiffSummaries[0]);
   const selectedCheckpointTurnCount = selectedTurn?.checkpointTurnCount;
   const reviewSectionId = toolCallSelection
@@ -518,11 +519,11 @@ export default function DiffPanel({
   const selectedTurnLabel = gt("Turn {count}", { count: selectedCheckpointTurnCount ?? "?" });
   const selectedScopeLabel = toolCallSelection
     ? gt("Tool call")
-    : selectedRunId === null
+    : turnSelection === null
       ? selectedCommitSha !== null
         ? (selectedCommitSubject ?? gt("Commit", { $context: "a git commit" }))
         : selectedGitScopeLabel
-      : selectedTurn?.runId === latestTurn?.runId
+      : followsLatestTurn
         ? gt("Latest turn")
         : selectedTurnLabel;
   const reviewSectionTitle = toolCallSelection
@@ -530,9 +531,9 @@ export default function DiffPanel({
     : selectedTurn
       ? selectedTurnLabel
       : selectedGitScopeLabel;
-  const headerCommitSha = selectedRunId === null ? selectedCommitSha : null;
   // The project's remote is the thread folder's; another repository's commits are not on it.
   const commitLinkIdentity = gitRepository === null ? activeProject?.repositoryIdentity : null;
+  const headerCommitSha = turnSelection === null ? selectedCommitSha : null;
   const selectedCommitUrl =
     headerCommitSha !== null ? projectCommitUrl(commitLinkIdentity, headerCommitSha) : null;
   const openLink = useOpenLink(routeThreadRef);
@@ -918,7 +919,7 @@ export default function DiffPanel({
     updateCollapsedDiffFiles((current) => toggleAllDiffFiles(shownFileKeys, current));
   };
 
-  const selectTurn = (runId: RunId) => {
+  const selectTurn = (runId: RunId | null) => {
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectTurn(routeThreadRef, runId);
   };
@@ -939,13 +940,13 @@ export default function DiffPanel({
     selectBranchBaseRef(null);
     if (selectedGitScope === "unstaged") selectGitScope("unstaged");
   };
-  const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
+  const selectedTurnValue = selectedTurn && !followsLatestTurn ? `turn:${selectedTurn.runId}` : "";
   const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";
   const selectedScopeValue = toolCallSelection
     ? ""
-    : selectedRunId === null
+    : turnSelection === null
       ? selectedCommitValue || selectedGitScope
-      : selectedTurn?.runId === latestTurn?.runId
+      : followsLatestTurn
         ? "latest"
         : selectedTurnValue;
   const selectRepository = (key: string) => {
@@ -968,7 +969,7 @@ export default function DiffPanel({
         useDiffPanelStore.getState().selectCommit(routeThreadRef, value.slice("commit:".length));
       }
     } else if (value === "latest") {
-      if (latestTurn) selectTurn(latestTurn.runId);
+      selectTurn(null);
     } else {
       const turn = orderedTurnDiffSummaries.find((summary) => `turn:${summary.runId}` === value);
       if (turn) selectTurn(turn.runId);
@@ -1584,7 +1585,7 @@ export default function DiffPanel({
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           <T>Turn diffs are unavailable because this project is not a git repository.</T>
         </div>
-      ) : selectedRunId !== null && orderedTurnDiffSummaries.length === 0 ? (
+      ) : turnSelection !== null && orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           <T>No completed turns yet.</T>
         </div>

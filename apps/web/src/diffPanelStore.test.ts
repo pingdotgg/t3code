@@ -39,6 +39,23 @@ describe("diffPanelStore", () => {
     });
   });
 
+  it("keeps following the newest turn and moves a vanished pinned turn to the newest", () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    const store = useDiffPanelStore.getState();
+    store.selectTurn(ref, null);
+    store.reconcileTurnSelection(ref, [RunId.make("second"), RunId.make("first")]);
+    expect(useDiffPanelStore.getState().byThreadKey[scopedThreadKey(ref)]).toMatchObject({
+      kind: "turn",
+      turnId: null,
+    });
+    store.selectTurn(ref, RunId.make("gone"));
+    store.reconcileTurnSelection(ref, [RunId.make("second"), RunId.make("first")]);
+    expect(useDiffPanelStore.getState().byThreadKey[scopedThreadKey(ref)]).toMatchObject({
+      kind: "turn",
+      turnId: "second",
+    });
+  });
+
   it("refreshes a live tool-call target when its source item completes", () => {
     const target = {
       threadId: ThreadId.make("child"),

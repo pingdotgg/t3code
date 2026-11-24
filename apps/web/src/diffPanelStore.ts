@@ -20,7 +20,7 @@ export type DiffPanelSelection =
   | { kind: "commit"; sha: string; baseRef: string | null }
   | {
       kind: "turn";
-      turnId: RunId;
+      turnId: RunId | null;
       /** From the thread's folder, so a tracked repository's file carries that repository's folder. */
       filePath: string | null;
       revealRequestId: number;
@@ -36,7 +36,7 @@ interface DiffPanelStoreState {
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
-  selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
+  selectTurn: (ref: ScopedThreadRef, turnId: RunId | null, filePath?: string) => void;
   selectTurnRepository: (ref: ScopedThreadRef, turnId: RunId, repository: string | null) => void;
   selectCommit: (ref: ScopedThreadRef, sha: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
@@ -164,6 +164,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
           const latestTurnId = availableTurnIds[0];
           if (
             previous?.kind !== "turn" ||
+            previous.turnId === null ||
             latestTurnId === undefined ||
             availableTurnIds.includes(previous.turnId)
           ) {
