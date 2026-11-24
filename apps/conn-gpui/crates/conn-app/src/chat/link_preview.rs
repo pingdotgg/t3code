@@ -62,7 +62,9 @@ const CARD_RADIUS_PX: f32 = 8.0;
 const CARD_PADDING_PX: f32 = 12.0;
 /// Top padding: a little tighter than the sides (Nick, 2026-11-24).
 const CARD_PADDING_TOP_PX: f32 = 10.0;
-/// The same gap between the header, the title and the author row.
+/// Gap between the repo header and the title.
+const HEADER_GAP_PX: f32 = 8.0;
+/// Gap between the title and the author row.
 const ROW_GAP_PX: f32 = 10.0;
 /// `text-2xs` (`0.6875rem`) and its line height.
 const REPO_FONT_PX: f32 = 11.0;
@@ -653,7 +655,7 @@ pub(super) fn estimated_card_height(title: &str) -> f32 {
     2.0 + CARD_PADDING_TOP_PX
         + CARD_PADDING_PX
         + REPO_LINE_PX
-        + ROW_GAP_PX
+        + HEADER_GAP_PX
         + lines * TITLE_LINE_PX
         + ROW_GAP_PX
         + AUTHOR_LINE_PX
@@ -895,7 +897,7 @@ fn card_element(
             "chat.link-preview.title",
             model.title.clone(),
         )
-        .mt(px(ROW_GAP_PX))
+        .mt(px(HEADER_GAP_PX))
         .text_size(px(TITLE_FONT_PX))
         .line_height(px(TITLE_LINE_PX))
         .font_weight(FontWeight::MEDIUM)
