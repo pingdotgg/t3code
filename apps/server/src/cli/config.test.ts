@@ -35,7 +35,7 @@ import {
 import { deriveServerPaths } from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { acquireServerOwnership } from "../serverOwnership.ts";
-import { resolveServerConfig } from "./config.ts";
+import { DurationFromString, resolveServerConfig } from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
@@ -1086,4 +1086,14 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       });
     }),
   );
+});
+
+it("rejects a duration flag that is not longer than zero", () => {
+  const decode = Schema.decodeUnknownResult(DurationFromString);
+  for (const value of ["-5 minutes", "-1 millis", "0 minutes", "0m"]) {
+    assert.isTrue(Result.isFailure(decode(value)), value);
+  }
+  for (const value of ["1ms", "5m", "15 minutes"]) {
+    assert.isTrue(Result.isSuccess(decode(value)), value);
+  }
 });
