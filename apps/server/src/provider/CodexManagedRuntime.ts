@@ -11,13 +11,15 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
-import { COMMAND_TIMEOUT_MS } from "./CodexManagedTokenProtocol.ts";
+import { COMMAND_TIMEOUT_MS, type Refusal } from "./CodexManagedTokenProtocol.ts";
 import { materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
 
 export interface CodexEffectiveRuntime {
   readonly config: CodexSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly revision: string;
+  /** Why T3 last refused this session's token request, for explaining Codex's 401. */
+  readonly recentTokenRefusal?: Effect.Effect<Refusal | undefined>;
 }
 const decodeSettings = Schema.decodeSync(CodexSettings);
 const managedCodexLaunchArgs = (command: string, args: ReadonlyArray<string>) =>
@@ -133,6 +135,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       }),
       environment,
       revision: profileKey,
+      recentTokenRefusal: broker.recentRefusal(options.instanceId, profileKey),
     } satisfies CodexEffectiveRuntime;
   });
   return { auth, resolve, installation, homePath, homeLayout };

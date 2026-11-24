@@ -18,6 +18,7 @@ import {
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
 import { classifyCodexManagedError } from "../../provider/CodexManagedErrors.ts";
+import type { Refusal } from "../../provider/CodexManagedTokenProtocol.ts";
 import {
   buildCodexInitializeParams,
   codexAppServerEnvironment,
@@ -1420,6 +1421,23 @@ function withCodexManagedFailure(
       };
 }
 
+/**
+ * Codex sends requests without credentials after T3 refuses its managed token
+ * request, so the 401 it reports hides the refusal that caused it.
+ */
+function withManagedTokenRefusal(
+  failure: OrchestrationV2ProviderFailure,
+  refusal: Refusal | undefined,
+): OrchestrationV2ProviderFailure {
+  if (refusal === undefined) return failure;
+  return makeProviderFailure({
+    message: `Codex could not get a ChatGPT token from T3 Code: ${refusal.message} Check the connection in Settings → Providers. Codex reported: ${failure.message}`,
+    code: `managed_token_${refusal.kind}`,
+    class: failure.class,
+    retryable: failure.retryable,
+  });
+}
+
 function failureResetAt(
   failure: OrchestrationV2ProviderFailure,
   snapshot: CodexRateLimitSnapshot | undefined,
@@ -2155,6 +2173,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           environment: resolvedRuntime?.environment ?? adapterOptions.environment,
         });
         const codexZone = codexTimeZone(resolvedRuntime?.environment ?? adapterOptions.environment);
+        const explainTokenRefusal = (
+          failure: OrchestrationV2ProviderFailure,
+          errorInfo: CodexErrorInfo | null | undefined,
+        ) =>
+          resolvedRuntime?.recentTokenRefusal === undefined ||
+          codexErrorHttpStatus(errorInfo) !== 401
+            ? Effect.succeed(failure)
+            : resolvedRuntime.recentTokenRefusal.pipe(
+                Effect.map((refusal) => withManagedTokenRefusal(failure, refusal)),
+              );
         const additionalContextByThread = yield* Ref.make(
           new Map<string, NonNullable<CodexTurnStartParams["additionalContext"]>>(),
         );
@@ -5463,16 +5491,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ...(payload.error.codexErrorInfo === undefined
                   ? {}
                   : { errorInfo: payload.error.codexErrorInfo }),
-                failure: withCodexManagedFailure(
-                  makeProviderFailure({
-                    message: payload.error.additionalDetails?.trim() || payload.error.message,
-                    code: notificationCode,
-                    class: codexTerminalFailureClass(
-                      payload.error.codexErrorInfo,
-                      notificationCode,
-                    ),
-                  }),
-                  payload.error,
+                failure: yield* explainTokenRefusal(
+                  withCodexManagedFailure(
+                    makeProviderFailure({
+                      message: payload.error.additionalDetails?.trim() || payload.error.message,
+                      code: notificationCode,
+                      class: codexTerminalFailureClass(
+                        payload.error.codexErrorInfo,
+                        notificationCode,
+                      ),
+                    }),
+                    payload.error,
+                  ),
+                  payload.error.codexErrorInfo,
                 ),
               };
               return;
@@ -5488,21 +5519,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             };
             const code = codexErrorInfoCode(payload.error.codexErrorInfo);
             const additionalDetails = payload.error.additionalDetails?.trim();
-            const failure = withCodexManagedFailure(
-              makeProviderFailure({
-                message:
-                  additionalDetails === undefined || additionalDetails.length === 0
-                    ? payload.error.message
-                    : additionalDetails,
-                code,
-                class: codexUsageLimitError(code, payload.error.codexErrorInfo)
-                  ? "usage_limit"
-                  : code?.startsWith("http") === true || code?.startsWith("responseStream") === true
-                    ? "transport_error"
-                    : "provider_error",
-                retryable: true,
-              }),
-              payload.error,
+            const failure = yield* explainTokenRefusal(
+              withCodexManagedFailure(
+                makeProviderFailure({
+                  message:
+                    additionalDetails === undefined || additionalDetails.length === 0
+                      ? payload.error.message
+                      : additionalDetails,
+                  code,
+                  class: codexUsageLimitError(code, payload.error.codexErrorInfo)
+                    ? "usage_limit"
+                    : code?.startsWith("http") === true ||
+                        code?.startsWith("responseStream") === true
+                      ? "transport_error"
+                      : "provider_error",
+                  retryable: true,
+                }),
+                payload.error,
+              ),
+              payload.error.codexErrorInfo,
             );
             const itemOrdinal =
               previous?.itemOrdinal ??
@@ -6667,13 +6702,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 (failureCode === undefined || failureCode === previousFailure.nativeCode) &&
                 (!completionHasClass || previousFailure.failure.class === failureClass)
                   ? previousFailure.failure
-                  : withCodexManagedFailure(
-                      makeProviderFailure({
-                        message: input.failureMessage,
-                        code: failureCode,
-                        class: failureClass,
-                      }),
-                      input.failureMessage,
+                  : yield* explainTokenRefusal(
+                      withCodexManagedFailure(
+                        makeProviderFailure({
+                          message: input.failureMessage,
+                          code: failureCode,
+                          class: failureClass,
+                        }),
+                        input.failureMessage,
+                      ),
+                      input.failureErrorInfo,
                     );
               const retry = input.providerRetry;
               const notification = input.context.latestProviderFailure;

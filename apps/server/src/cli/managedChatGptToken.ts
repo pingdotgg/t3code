@@ -37,12 +37,13 @@ export async function runManagedChatGptTokenCli(args: ReadonlyArray<string>): Pr
     ).pipe(Effect.flatMap(decodeResponse));
   }).pipe(Effect.scoped);
   const result = await Effect.runPromiseExit(program);
-  if (Exit.isFailure(result)) {
-    process.stderr.write(
-      "Could not access the managed ChatGPT connection. Reconnect in T3 Code.\n",
-    );
-    process.exitCode = 1;
+  const response = Exit.isSuccess(result) ? result.value : undefined;
+  if (response !== undefined && "token" in response) {
+    process.stdout.write(response.token);
     return;
   }
-  process.stdout.write(result.value.token);
+  process.stderr.write(
+    `${response?.refusal.message ?? "Could not access the managed ChatGPT connection. Reconnect in T3 Code."}\n`,
+  );
+  process.exitCode = 1;
 }

@@ -1734,6 +1734,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
+    resolveRuntime?: CodexAdapterV2.CodexAdapterV2Options["resolveRuntime"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1798,6 +1799,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
         ...(models ? { models } : {}),
+        ...(resolveRuntime ? { resolveRuntime } : {}),
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -8943,6 +8945,139 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(terminal.failure.code, scenario.expectedCode);
         assert.include(terminal.failure.message, scenario.expectedMessage);
         assert.equal(terminal.failure.resetAt, null);
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  // Codex sends requests without credentials after T3 refuses its managed token request.
+  it.effect.each([
+    { name: "a managed 401 notice", managed: true, notification: true, explained: true },
+    { name: "a managed 401 completion", managed: true, notification: false, explained: true },
+    { name: "a managed 401 retry", managed: true, retry: true, explained: true },
+    { name: "an unrefused managed 401", managed: true, unrefused: true, explained: false },
+    { name: "a managed 503", managed: true, status: 503, explained: false },
+    { name: "a local Codex 401", managed: false, explained: false },
+  ] as const)("explains $name with the managed token refusal", (scenario) =>
+    Effect.gen(function* () {
+      const nativeThreadId = `native-token-refusal-${scenario.name}`;
+      const nativeTurnId = `turn-token-refusal-${scenario.name}`;
+      const status = "status" in scenario ? scenario.status : 401;
+      const nativeMessage = `unexpected status ${status}: Missing authentication header, url: https://api.openai.com/v1/responses`;
+      const errorInfo =
+        "retry" in scenario
+          ? { responseTooManyFailedAttempts: { httpStatusCode: status } }
+          : { httpConnectionFailed: { httpStatusCode: status } };
+      const refusal = {
+        kind: "refresh",
+        message: "Your ChatGPT connection expired. Sign in again.",
+      };
+      const notification = "notification" in scenario ? scenario.notification : true;
+      const transcript = makeCodexReplayTranscript({
+        scenario: `codex-token-refusal-${scenario.name}`,
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+          ...("retry" in scenario
+            ? [
+                {
+                  type: "emit_inbound" as const,
+                  label: "error/retry",
+                  frame: {
+                    method: "error",
+                    params: {
+                      threadId: nativeThreadId,
+                      turnId: nativeTurnId,
+                      willRetry: true,
+                      error: {
+                        message: "Reconnecting... 1/5",
+                        codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: status } },
+                        additionalDetails: nativeMessage,
+                      },
+                    },
+                  },
+                },
+              ]
+            : []),
+          ...(notification
+            ? [
+                {
+                  type: "emit_inbound" as const,
+                  label: "error",
+                  frame: {
+                    method: "error",
+                    params: {
+                      threadId: nativeThreadId,
+                      turnId: nativeTurnId,
+                      willRetry: false,
+                      error: { message: nativeMessage, codexErrorInfo: errorInfo },
+                    },
+                  },
+                },
+              ]
+            : []),
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: {
+                  ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                  error: { message: nativeMessage, codexErrorInfo: errorInfo },
+                },
+              },
+            },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        scenario.managed
+          ? Effect.succeed({
+              config: DEFAULT_CODEX_SETTINGS,
+              environment: {},
+              revision: "managed-profile",
+              recentTokenRefusal: Effect.succeed("unrefused" in scenario ? undefined : refusal),
+            })
+          : undefined,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          text: "Continue.",
+          attemptId: RunAttemptId.make(`attempt-token-refusal-${scenario.name}`),
+        }),
+      );
+      yield* harness.firstTerminal;
+      const terminal = harness.terminalEvents()[0];
+      assert.equal(terminal?.status, "failed");
+      if (terminal?.status !== "failed") return;
+      if (scenario.explained) {
+        assert.equal(terminal.failure.code, `managed_token_${refusal.kind}`);
+        assert.include(terminal.failure.message, refusal.message);
+        assert.include(terminal.failure.message, nativeMessage);
+      } else {
+        assert.equal(terminal.failure.code, "httpConnectionFailed");
+        assert.equal(terminal.failure.message, nativeMessage);
       }
     }).pipe(
       Effect.provide(

@@ -9,7 +9,16 @@ export const Request = Schema.Struct({
   environmentId: Schema.NonEmptyString,
   profileKey: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
 });
-export const Response = Schema.Struct({ token: Schema.NonEmptyString });
+// Messages are safe setup text that Codex shows in its own diagnostics.
+export const Refusal = Schema.Struct({
+  kind: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+  message: Schema.NonEmptyString.check(Schema.isMaxLength(1024)),
+});
+export type Refusal = typeof Refusal.Type;
+export const Response = Schema.Union([
+  Schema.Struct({ token: Schema.NonEmptyString }),
+  Schema.Struct({ refusal: Refusal }),
+]);
 // Selectors are small; tokens can be larger JWTs. Never truncate either frame
 // into something that could be accepted.
 export const REQUEST_BYTES = 1024;
