@@ -345,6 +345,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         )
         AND (${sql.or([
           sql`thread.title <> ${DELETED_THREAD_TITLE}`,
+          sql`json_type(thread.payload_json, '$.guestShare') IS NOT NULL`,
           ...DELETED_THREAD_CONTENT_TABLES.map(
             (table) => sql`EXISTS (SELECT 1 FROM ${sql(table)} WHERE thread_id = thread.thread_id)`,
           ),
@@ -403,49 +404,65 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           )
           RETURNING 1 AS purged
         `);
-        // The kept head can be the deletion's cohort disposal or, for a legacy thread, a
-        // metadata update. Pending guest messages are conversation text too.
-        yield* sql`
-          UPDATE orchestration_events
-          SET payload_json = CASE
-            WHEN event_type = 'subagent.updated' THEN json_remove(
-              json_set(payload_json, '$.prompt', '', '$.title', json('null'), '$.result', json('null')),
-              '$.progress',
-              '$.promptSequence'
-            )
-            WHEN json_type(payload_json, '$.title') = 'text' THEN json_remove(
-              json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE}),
-              '$.guestShare'
-            )
-            ELSE json_remove(payload_json, '$.guestShare')
-          END
-          WHERE application_event_version = 2
-            AND aggregate_kind = 'thread'
-            AND stream_id = ${threadId}
-            AND (event_type LIKE 'thread.%' OR event_type = 'subagent.updated')
-        `;
-        yield* sql`
-          UPDATE orchestration_v2_projection_threads
-          SET title = ${DELETED_THREAD_TITLE},
-            payload_json = json_remove(
-              json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE}),
-              '$.guestShare'
-            )
-          WHERE thread_id = ${threadId}
-        `;
-        // Settled requests can hold answers, feedback, and titles.
+        // Settled requests can hold answers, feedback, and titles. A failed one stays as the
+        // marker that keeps a deleted thread's worktree, so only its text goes.
         yield* sql`
           DELETE FROM orchestration_v2_effect_outbox
-          WHERE thread_id = ${threadId} AND status IN ('succeeded', 'failed', 'cancelled')
+          WHERE thread_id = ${threadId} AND status IN ('succeeded', 'cancelled')
         `;
         yield* sql`
-          UPDATE projection_threads SET title = ${DELETED_THREAD_TITLE} WHERE thread_id = ${threadId}
+          UPDATE orchestration_v2_effect_outbox
+          SET payload_json = CASE
+            WHEN json_type(payload_json, '$.title') = 'text'
+              THEN json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE})
+            ELSE json_remove(payload_json, '$.feedback', '$.answers')
+          END
+          WHERE thread_id = ${threadId} AND status = 'failed'
         `;
         // Its v1 events then go with the imported-history prune, and no import refills it.
         yield* sql`
           UPDATE orchestration_v2_legacy_imports
           SET transcript_imported_at = ${now}
           WHERE thread_id = ${threadId} AND transcript_imported_at IS NULL
+        `;
+        const tombstone = sql`(
+          SELECT json_remove(json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE}), '$.guestShare')
+          FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}
+        )`;
+        yield* sql`
+          UPDATE orchestration_events
+          SET payload_json = json_remove(
+            json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE}),
+            '$.guestShare'
+          )
+          WHERE application_event_version = 2
+            AND aggregate_kind = 'thread'
+            AND stream_id = ${threadId}
+            AND event_type IN ('thread.created', 'thread.deleted')
+        `;
+        // The head row only holds the stream's position, so any other head becomes the tombstone.
+        yield* sql`
+          UPDATE orchestration_events
+          SET event_type = 'thread.deleted', payload_json = ${tombstone}
+          WHERE sequence = (
+              SELECT MAX(sequence) FROM orchestration_events
+              WHERE application_event_version = 2
+                AND aggregate_kind = 'thread'
+                AND stream_id = ${threadId}
+            )
+            AND event_type NOT IN ('thread.created', 'thread.deleted')
+            AND NOT (
+              event_type = 'run.updated' AND json_extract(payload_json, '$.status') = 'running'
+            )
+        `;
+        // Last, because the new title is what marks the purge as done.
+        yield* sql`
+          UPDATE projection_threads SET title = ${DELETED_THREAD_TITLE} WHERE thread_id = ${threadId}
+        `;
+        yield* sql`
+          UPDATE orchestration_v2_projection_threads
+          SET title = ${DELETED_THREAD_TITLE}, payload_json = ${tombstone}
+          WHERE thread_id = ${threadId}
         `;
       }
       return purged;

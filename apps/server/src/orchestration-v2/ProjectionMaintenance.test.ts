@@ -533,6 +533,11 @@ it.effect("the maintenance pass purges threads deleted before purging existed", 
     const deleted = makeThread(ThreadId.make("thread:purge-backfill"), now);
     yield* writeThread(deleted, now);
     yield* deleteThread(deleted, now);
+    // A late transcript import leaves a content event as the stream head.
+    const sink = yield* EventSink.EventSinkV2;
+    yield* sink.write({
+      events: [itemEvent(deleted.id, now, itemSpecs[1], 0, "event:purge:late-item")],
+    });
     const sql = yield* SqlClient.SqlClient;
     yield* sql`
       INSERT INTO orchestration_v2_effect_outbox (
@@ -552,6 +557,19 @@ it.effect("the maintenance pass purges threads deleted before purging existed", 
     assert.isAbove((yield* maintenance.pruneEventStore()).purgedRowCount, 0);
     assert.equal(yield* contentRowCount(deleted.id), 0);
     assert.deepEqual(yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox`, []);
+    const stream = yield* EventStore.EventStoreV2.pipe(
+      Effect.flatMap((store) => store.read({ threadId: deleted.id }).pipe(Stream.runCollect)),
+    );
+    assert.deepEqual(
+      Array.from(stream, (stored) => stored.event.type),
+      ["thread.created", "thread.deleted", "thread.deleted"],
+    );
+    const leaked = yield* sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM orchestration_events
+      WHERE stream_id = ${deleted.id}
+        AND (payload_json LIKE '%reasoning:0%' OR payload_json LIKE ${`%${deleted.title}%`})
+    `;
+    assert.equal(leaked[0]?.count, 0);
     assert.equal((yield* maintenance.pruneEventStore()).purgedRowCount, 0);
   }).pipe(Effect.provide(layerTest)),
 );
