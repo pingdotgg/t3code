@@ -74,7 +74,7 @@ pub(crate) struct Cursor {
     inclusive: bool,
 }
 
-fn encode_cursor(sequence: u64, row: &Value) -> String {
+pub(crate) fn encode_cursor(sequence: u64, row: &Value) -> String {
     let payload = json!({
         "v": 1, "seq": sequence, "st": row["sourceThreadId"], "si": row["sourceItemId"],
         "p": row["position"],

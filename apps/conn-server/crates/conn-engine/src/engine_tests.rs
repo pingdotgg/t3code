@@ -13176,6 +13176,11 @@ fn transcript_queries_use_their_indexes() {
     let items = plan(crate::store::TRANSCRIPT_ITEMS_SQL);
     assert!(items.contains("USING INDEX turn_items_in_order"), "{items}");
     assert!(!items.contains("TEMP B-TREE"), "{items}");
+    let outline = plan(<crate::outline::Markers as crate::transcript::RowSink>::ITEMS_SQL);
+    assert!(
+        outline.contains("thread_outline_rows") && !outline.contains("TEMP B-TREE"),
+        "{outline}"
+    );
     let interrupts = plan(crate::store::TRANSCRIPT_INTERRUPTS_SQL);
     assert!(interrupts.contains("turn_item_interrupts"), "{interrupts}");
     assert!(!interrupts.contains("TEMP B-TREE"), "{interrupts}");
@@ -14572,6 +14577,31 @@ async fn find_searches_the_visible_timeline_as_rendered_on_both_rpcs() {
         }),
     )
     .await;
+    let outline = engine.thread_outline("t3".into()).await.unwrap().unwrap();
+    let previews: Vec<_> = outline.markers.iter().map(|m| m.preview.as_str()).collect();
+    assert_eq!(previews.len(), 2);
+    assert_eq!(previews[0], "Archive lantern");
+    assert!(previews[1].starts_with("Check **the build**"));
+    let inherited = engine
+        .thread_window("t3".into(), outline.markers[1].entry_id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        inherited["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["visibility"] == "inherited" && row["item"]["text"] == markdown)
+    );
+    let source = engine.thread_outline("t1".into()).await.unwrap().unwrap();
+    assert!(
+        engine
+            .thread_window("t3".into(), source.markers[2].entry_id.clone())
+            .await
+            .unwrap()
+            .is_none()
+    );
     let find = |thread: &str, query: &str| {
         let input = json!({"threadId": thread, "query": query});
         let engine = &engine;
@@ -14729,6 +14759,45 @@ async fn a_bounded_snapshot_holds_ten_turns_and_pages_back() {
         .await;
         until_run_ends(&mut stream).await;
     }
+    let outline = engine.thread_outline("t1".into()).await.unwrap().unwrap();
+    assert_eq!(outline.markers.len(), 19);
+    let anchor = &outline.markers[15];
+    let jumped = engine
+        .thread_window("t1".into(), anchor.entry_id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let visible = projection(&engine, "t1").await["visibleTurnItems"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let target = visible
+        .iter()
+        .position(|r| r["sourceItemId"] == anchor.entry_id)
+        .unwrap();
+    let expected = &visible[target.saturating_sub(24)..(target + 76).min(visible.len())];
+    let ids = |rows: &[Value]| {
+        rows.iter()
+            .map(|r| r["sourceItemId"].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(jumped["items"].as_array().unwrap()), ids(expected));
+    let before = engine
+        .thread_history_page(
+            "t1".into(),
+            jumped["nextCursor"].as_str().unwrap().to_owned(),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+    let crate::ThreadHistory::Page(before) = before else {
+        panic!("window cursor did not page");
+    };
+    assert_eq!(
+        before["items"].as_array().unwrap().last().unwrap()["sourceItemId"],
+        visible[target - 25]["sourceItemId"]
+    );
     let cursor = view["historyCursor"].as_str().unwrap().to_owned();
     let page = engine
         .thread_history_page("t1".into(), cursor, None, false)
