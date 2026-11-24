@@ -90,6 +90,14 @@ pub fn router(state: AppState) -> Router {
             "/api/orchestration/threads/{thread_id}/history",
             get(thread_history),
         )
+        .route(
+            "/api/orchestration/threads/{thread_id}/outline",
+            get(thread_outline),
+        )
+        .route(
+            "/api/orchestration/threads/{thread_id}/window",
+            get(thread_window),
+        )
         .route("/ws", get(ws))
         .merge(crate::routes::router())
         .layer(middleware::from_fn(cors))
@@ -732,6 +740,45 @@ async fn thread_snapshot(
     }
 }
 
+async fn thread_outline(
+    State(state): State<AppState>,
+    Path(thread_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let engine = match orchestration_access(&state, &headers) {
+        Ok(engine) => engine,
+        Err(response) => return *response,
+    };
+    history_result(engine.thread_outline(thread_id.into()).await)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WindowQuery {
+    entry_id: String,
+}
+
+async fn thread_window(
+    State(state): State<AppState>,
+    Path(thread_id): Path<String>,
+    Query(query): Query<WindowQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let engine = match orchestration_access(&state, &headers) {
+        Ok(engine) => engine,
+        Err(response) => return *response,
+    };
+    history_result(engine.thread_window(thread_id.into(), query.entry_id).await)
+}
+
+fn history_result<T: serde::Serialize, E>(result: Result<Option<T>, EngineError<E>>) -> Response {
+    match result {
+        Ok(Some(value)) => Json(value).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => snapshot_failed("orchestration_thread_history_failed", error),
+    }
+}
+
 /// Full-thread exports at once, as T3's `transcriptExportPermits`: each holds a whole
 /// projection in memory.
 static TRANSCRIPT_EXPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
@@ -815,13 +862,17 @@ async fn thread_history(
     let Some(cursor) = query.get("cursor").cloned() else {
         return invalid();
     };
-    let conversation_only = query.get("view").map(String::as_str) == Some("conversation");
+    let view = match query.get("view").map(String::as_str) {
+        Some("messages") => conn_engine::HistoryView::Messages,
+        Some("conversation") => conn_engine::HistoryView::Conversation,
+        _ => conn_engine::HistoryView::Timeline,
+    };
     match engine
         .thread_history_page(
             thread_id.into(),
             cursor,
             query.get("throughEntryId").cloned(),
-            conversation_only,
+            view,
         )
         .await
     {

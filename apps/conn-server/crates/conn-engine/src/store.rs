@@ -105,8 +105,7 @@ CREATE INDEX IF NOT EXISTS receipts_by_sequence ON receipts(sequence);
 pub(crate) const RECEIPT_SQL: &str = "SELECT sequence, owner_kind, owner_id, error, command_type FROM receipts WHERE command_id = ?1";
 
 /// A thread's turn items in timeline order; served by `turn_items_in_order`.
-pub(crate) const TRANSCRIPT_ITEMS_SQL: &str =
-    "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems' ORDER BY ordinal, id";
+pub(crate) const TRANSCRIPT_ITEMS_SQL: &str = "SELECT body FROM entities INDEXED BY turn_items_in_order WHERE thread_id = ?1 AND kind = 'turnItems' ORDER BY ordinal, id";
 /// The runs of a thread with a Stop request; served by `turn_item_interrupts`.
 pub(crate) const TRANSCRIPT_INTERRUPTS_SQL: &str = "SELECT DISTINCT json_extract(body, '$.runId')
      FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'
@@ -444,6 +443,8 @@ impl Store {
         )
         .map_err(err)?;
         conn.execute_batch(SCHEMA).map_err(err)?;
+        conn.execute_batch(crate::outline::CREATE_INDEX)
+            .map_err(err)?;
         conn.execute_batch(crate::attention::SCHEMA).map_err(err)?;
         conn.execute_batch(crate::outbox::SCHEMA).map_err(err)?;
         migrate(&conn)?;
@@ -1149,7 +1150,6 @@ impl Store {
     pub(crate) fn bounded_thread(
         &self,
         thread_id: &str,
-        sequence: u64,
     ) -> StoreResult<Option<crate::history::Bounded>> {
         use crate::history;
         let Some((control, index)) = self.timeline_index(thread_id)? else {
@@ -1167,6 +1167,9 @@ impl Store {
             .into_iter()
             .filter(|item| history::is_retained_dependency(item, &pending))
             .collect();
+        // The cursor identifies a version of this timeline. Activity elsewhere advances
+        // the stream watermark, but does not invalidate this cached history prefix.
+        let sequence = self.history_revision(&control["thread"])?;
         let window = history::select_window(&control, &index, &dependencies, sequence);
         drop(index);
         let mut control = control;
@@ -1244,6 +1247,24 @@ impl Store {
         }))
     }
 
+    fn history_revision(&self, thread: &Value) -> StoreResult<u64> {
+        let id = thread["id"].as_str().unwrap_or_default();
+        let mut revision = latest_sequence(&self.conn, ReceiptOwner::Thread(id))?;
+        let mut ancestor = inherited_run_fork(thread);
+        let mut seen = std::collections::HashSet::from([id.to_owned()]);
+        while let Some((id, _)) = ancestor {
+            if !seen.insert(id.clone()) {
+                break;
+            }
+            revision = revision.max(latest_sequence(&self.conn, ReceiptOwner::Thread(&id))?);
+            ancestor = self
+                .stored_thread(&id)?
+                .as_ref()
+                .and_then(inherited_run_fork);
+        }
+        Ok(revision)
+    }
+
     /// `getThreadHistoryPage` on indexed reads: only the page's bodies are read. `None` for an
     /// unknown or deleted thread.
     pub(crate) fn history_page(
@@ -1252,9 +1273,21 @@ impl Store {
         sequence: u64,
         cursor: &crate::history::Cursor,
         through_entry_id: Option<&str>,
-        conversation_only: bool,
+        view: crate::HistoryView,
     ) -> StoreResult<Option<Value>> {
         use crate::history;
+        if view == crate::HistoryView::Messages && cursor.source_thread == thread_id {
+            let Some((thread, _)) = self.live_thread(thread_id)? else {
+                return Ok(None);
+            };
+            if self.unfiltered_local(thread_id, &thread)?
+                && let Some(page) =
+                    crate::outline::local_message_page(&self.conn, thread_id, sequence, cursor)
+                        .map_err(err)?
+            {
+                return self.finish_page(thread_id, sequence, page).map(Some);
+            }
+        }
         let Some((_, index)) = self.timeline_index(thread_id)? else {
             return Ok(None);
         };
@@ -1263,9 +1296,103 @@ impl Store {
             sequence,
             cursor,
             through_entry_id,
-            conversation_only,
+            view != crate::HistoryView::Timeline,
         );
+        if view == crate::HistoryView::Messages {
+            page.rows.retain(|row| {
+                matches!(
+                    row["item"]["type"].as_str(),
+                    Some("user_message" | "assistant_message")
+                )
+            });
+        }
         drop(index);
+        self.finish_page(thread_id, sequence, page).map(Some)
+    }
+
+    pub(crate) fn thread_outline(
+        &self,
+        thread_id: &str,
+    ) -> StoreResult<Option<conn_contract::ThreadOutline>> {
+        let Some((thread, _)) = self.live_thread(thread_id)? else {
+            return Ok(None);
+        };
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT body ->> '$.runId' FROM entities WHERE thread_id=? AND kind='checkpoints'
+             AND body ->> '$.status'='ready' AND body ->> '$.runId' IS NOT NULL
+             AND coalesce(body ->> '$.filesTotal.count', json_array_length(body,'$.files')) > 0"
+        ).map_err(err)?;
+        let checkpoints = stmt
+            .query_map([thread_id], |row| row.get(0))
+            .map_err(err)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(err)?;
+        let mut outline = crate::outline::Markers::new(checkpoints);
+        self.visible_rows(&thread, &mut outline)?;
+        Ok(Some(conn_contract::ThreadOutline {
+            snapshot_sequence: self.high_water(),
+            markers: outline.markers,
+        }))
+    }
+
+    fn unfiltered_local(&self, thread_id: &str, thread: &Value) -> StoreResult<bool> {
+        if inherited_run_fork(thread).is_some() {
+            return Ok(false);
+        }
+        self.conn.query_row(
+            "SELECT NOT EXISTS (SELECT 1 FROM entities WHERE thread_id=?1 AND kind='runs'
+                AND body ->> '$.status' IN ('rolled_back','queued','cancelled'))
+             AND NOT EXISTS (SELECT 1 FROM entities WHERE thread_id=?1 AND kind='attempts'
+                AND body ->> '$.status'='superseded')
+             AND NOT EXISTS (SELECT 1 FROM entities WHERE thread_id=?1 AND kind='turnItems' AND ordinal IS NULL)",
+            [thread_id], |r| r.get::<_, bool>(0)).map_err(err)
+    }
+
+    pub(crate) fn thread_window(
+        &self,
+        thread_id: &str,
+        target: &str,
+    ) -> StoreResult<Option<Value>> {
+        let Some((thread, _)) = self.live_thread(thread_id)? else {
+            return Ok(None);
+        };
+        let mut window = crate::outline::JumpWindow::new(target, 0);
+        // Forks and runs with hidden rows use the same visibility walk as the transcript.
+        // In an ordinary timeline seek by key and deserialize only the neighboring rows.
+        if self.unfiltered_local(thread_id, &thread)? {
+            let mut stmt = self
+                .conn
+                .prepare(crate::outline::LOCAL_WINDOW)
+                .map_err(err)?;
+            let mut rows = stmt.query(params![thread_id, target]).map_err(err)?;
+            let Some(first) = rows.next().map_err(err)? else {
+                return Ok(None);
+            };
+            window = crate::outline::JumpWindow::new(target, first.get(1).map_err(err)?);
+            let mut row = Some(first);
+            while let Some(current) = row {
+                let item = parse(current.get(0).map_err(err)?)?;
+                if !window.push("local", item["threadId"].clone(), item["id"].clone(), item)? {
+                    break;
+                }
+                row = rows.next().map_err(err)?;
+            }
+        } else {
+            self.visible_rows(&thread, &mut window)?;
+        }
+        let sequence = self.high_water();
+        window
+            .finish(sequence)
+            .map(|page| self.finish_page(thread_id, sequence, page))
+            .transpose()
+    }
+
+    fn finish_page(
+        &self,
+        thread_id: &str,
+        sequence: u64,
+        mut page: crate::history::Page,
+    ) -> StoreResult<Value> {
         page.rows = self.materialize_rows(std::mem::take(&mut page.rows))?;
         let ids: Vec<Value> = page
             .rows
@@ -1278,9 +1405,9 @@ impl Store {
              AND id IN (SELECT value FROM json_each(?2)) ORDER BY first_seq",
             params![thread_id, Value::from(ids).to_string()],
         )?;
-        Ok(Some(history::page_body(
+        Ok(crate::history::page_body(
             thread_id, sequence, page, &subagents,
-        )))
+        ))
     }
 
     /// `GET /api/orchestration/threads/:threadId/transcript`, encoded: the thread's visible
@@ -1411,14 +1538,14 @@ impl Store {
 
     /// Writes a thread's turn items that `keep` accepts, in timeline order, one at a time.
     /// `false` when the limit stopped it.
-    fn transcript_rows(
+    fn transcript_rows<S: RowSink>(
         &self,
         thread_id: &str,
         visibility: &str,
-        out: &mut impl RowSink,
+        out: &mut S,
         keep: impl Fn(&Value) -> bool,
     ) -> StoreResult<bool> {
-        let mut stmt = self.conn.prepare(TRANSCRIPT_ITEMS_SQL).map_err(err)?;
+        let mut stmt = self.conn.prepare(S::ITEMS_SQL).map_err(err)?;
         let mut rows = stmt.query([thread_id]).map_err(err)?;
         while let Some(row) = rows.next().map_err(err)? {
             let text = row

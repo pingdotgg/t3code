@@ -2708,12 +2708,40 @@ impl Engine for SqliteEngine {
         })
     }
 
+    fn thread_outline(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<
+        '_,
+        Result<Option<conn_contract::ThreadOutline>, EngineError<GetThreadProjectionError>>,
+    > {
+        Box::pin(async move {
+            self.inner
+                .db(move |store| store.thread_outline(thread_id.as_str()))
+                .await
+                .map_err(EngineError::Internal)
+        })
+    }
+
+    fn thread_window(
+        &self,
+        thread_id: ThreadId,
+        entry_id: String,
+    ) -> BoxFuture<'_, Result<Option<Value>, EngineError<GetThreadProjectionError>>> {
+        Box::pin(async move {
+            self.inner
+                .db(move |store| store.thread_window(thread_id.as_str(), &entry_id))
+                .await
+                .map_err(EngineError::Internal)
+        })
+    }
+
     fn thread_history_page(
         &self,
         thread_id: ThreadId,
         cursor: String,
         through_entry_id: Option<String>,
-        conversation_only: bool,
+        view: crate::HistoryView,
     ) -> BoxFuture<'_, Result<crate::ThreadHistory, EngineError<GetThreadProjectionError>>> {
         Box::pin(async move {
             let Ok(cursor) = crate::history::decode_cursor(&cursor) else {
@@ -2728,7 +2756,7 @@ impl Engine for SqliteEngine {
                             high,
                             &cursor,
                             through_entry_id.as_deref(),
-                            conversation_only,
+                            view,
                         )?
                         .map_or(crate::ThreadHistory::NotFound, crate::ThreadHistory::Page))
                 })

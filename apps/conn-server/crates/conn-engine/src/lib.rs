@@ -55,6 +55,7 @@ mod history;
 mod html_cleanup;
 mod link_requests;
 mod outbox;
+mod outline;
 mod output;
 mod projects;
 mod provider_handoff;
@@ -732,9 +733,29 @@ pub trait Engine: Send + Sync {
         _thread_id: ThreadId,
         _cursor: String,
         _through_entry_id: Option<String>,
-        _conversation_only: bool,
+        _view: HistoryView,
     ) -> BoxFuture<'_, Result<ThreadHistory, EngineError<GetThreadProjectionError>>> {
         unsupported("thread history pages")
+    }
+
+    /// Compact whole-thread prompt index in timeline order.
+    fn thread_outline(
+        &self,
+        _thread_id: ThreadId,
+    ) -> BoxFuture<
+        '_,
+        Result<Option<conn_contract::ThreadOutline>, EngineError<GetThreadProjectionError>>,
+    > {
+        unsupported("the thread outline")
+    }
+
+    /// One bounded window around a visible prompt, including an inherited fork prompt.
+    fn thread_window(
+        &self,
+        _thread_id: ThreadId,
+        _entry_id: String,
+    ) -> BoxFuture<'_, Result<Option<Value>, EngineError<GetThreadProjectionError>>> {
+        unsupported("the thread window")
     }
 
     /// `ThreadManagementService.awaitBackgroundTasks`: the live session of the thread's
@@ -759,6 +780,15 @@ pub enum ThreadTranscript {
     NotFound,
     /// The file would pass the limit (`thread_transcript_too_large`).
     TooLarge,
+}
+
+/// Row selection for a paged thread history read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryView {
+    Timeline,
+    Conversation,
+    /// User and assistant rows for the native offline cache.
+    Messages,
 }
 
 /// The outcome of [`Engine::thread_history_page`].

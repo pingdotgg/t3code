@@ -13167,15 +13167,28 @@ fn transcript_queries_use_their_indexes() {
     let conn = rusqlite::Connection::open(db.path()).unwrap();
     let plan = |sql: &str| {
         let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
-        stmt.query_map(["t1"], |row| row.get::<_, String>(3))
-            .unwrap()
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .unwrap()
-            .join("; ")
+        let args = vec!["t1"; stmt.parameter_count()];
+        stmt.query_map(rusqlite::params_from_iter(args), |row| {
+            row.get::<_, String>(3)
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+        .join("; ")
     };
     let items = plan(crate::store::TRANSCRIPT_ITEMS_SQL);
     assert!(items.contains("USING INDEX turn_items_in_order"), "{items}");
     assert!(!items.contains("TEMP B-TREE"), "{items}");
+    let outline = plan(<crate::outline::Markers as crate::transcript::RowSink>::ITEMS_SQL);
+    assert!(
+        outline.contains("thread_outline_rows") && !outline.contains("TEMP B-TREE"),
+        "{outline}"
+    );
+    let messages = plan(crate::outline::MESSAGE_PAGE);
+    assert!(
+        messages.contains("thread_outline_rows") && !messages.contains("TEMP B-TREE"),
+        "{messages}"
+    );
     let interrupts = plan(crate::store::TRANSCRIPT_INTERRUPTS_SQL);
     assert!(interrupts.contains("turn_item_interrupts"), "{interrupts}");
     assert!(!interrupts.contains("TEMP B-TREE"), "{interrupts}");
@@ -14572,6 +14585,31 @@ async fn find_searches_the_visible_timeline_as_rendered_on_both_rpcs() {
         }),
     )
     .await;
+    let outline = engine.thread_outline("t3".into()).await.unwrap().unwrap();
+    let previews: Vec<_> = outline.markers.iter().map(|m| m.preview.as_str()).collect();
+    assert_eq!(previews.len(), 2);
+    assert_eq!(previews[0], "Archive lantern");
+    assert!(previews[1].starts_with("Check **the build**"));
+    let inherited = engine
+        .thread_window("t3".into(), outline.markers[1].entry_id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        inherited["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["visibility"] == "inherited" && row["item"]["text"] == markdown)
+    );
+    let source = engine.thread_outline("t1".into()).await.unwrap().unwrap();
+    assert!(
+        engine
+            .thread_window("t3".into(), source.markers[2].entry_id.clone())
+            .await
+            .unwrap()
+            .is_none()
+    );
     let find = |thread: &str, query: &str| {
         let input = json!({"threadId": thread, "query": query});
         let engine = &engine;
@@ -14719,6 +14757,16 @@ async fn a_bounded_snapshot_holds_ten_turns_and_pages_back() {
         );
     }
     assert_eq!(view["hasMoreHistory"], true);
+    dispatch(&engine, create("unrelated", "unrelated-create")).await;
+    let mut reconnected = engine.subscribe_thread(
+        from_json(json!({"threadId":"t1", "acceptBoundedSnapshot":true, "acceptCompactTurnItems":true, "acceptDedupedBodies":true})).unwrap()
+    ).await.unwrap();
+    let warm = next(&mut reconnected).await;
+    assert!(warm["snapshotSequence"].as_u64() > view["snapshotSequence"].as_u64());
+    assert_eq!(
+        warm["historyCursor"], view["historyCursor"],
+        "an unrelated thread does not invalidate cached bodies"
+    );
     // Turns appended while the view is open do not move the cursor: the page still ends
     // right before the window, so window, page and new turns cover every turn once.
     for i in 16..19 {
@@ -14729,9 +14777,80 @@ async fn a_bounded_snapshot_holds_ten_turns_and_pages_back() {
         .await;
         until_run_ends(&mut stream).await;
     }
+    let outline = engine.thread_outline("t1".into()).await.unwrap().unwrap();
+    assert_eq!(outline.markers.len(), 19);
+    let anchor = &outline.markers[15];
+    let jumped = engine
+        .thread_window("t1".into(), anchor.entry_id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let visible = projection(&engine, "t1").await["visibleTurnItems"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let target = visible
+        .iter()
+        .position(|r| r["sourceItemId"] == anchor.entry_id)
+        .unwrap();
+    let expected = &visible[target.saturating_sub(24)..(target + 76).min(visible.len())];
+    let ids = |rows: &[Value]| {
+        rows.iter()
+            .map(|r| r["sourceItemId"].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(jumped["items"].as_array().unwrap()), ids(expected));
+    let before = engine
+        .thread_history_page(
+            "t1".into(),
+            jumped["nextCursor"].as_str().unwrap().to_owned(),
+            None,
+            crate::HistoryView::Timeline,
+        )
+        .await
+        .unwrap();
+    let crate::ThreadHistory::Page(before) = before else {
+        panic!("window cursor did not page");
+    };
+    assert_eq!(
+        before["items"].as_array().unwrap().last().unwrap()["sourceItemId"],
+        visible[target - 25]["sourceItemId"]
+    );
     let cursor = view["historyCursor"].as_str().unwrap().to_owned();
+    let crate::ThreadHistory::Page(cached) = engine
+        .thread_history_page(
+            "t1".into(),
+            cursor.clone(),
+            None,
+            crate::HistoryView::Messages,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("missing message cache page")
+    };
+    let first_visible = view["projection"]["visibleTurnItems"][0]["sourceItemId"].clone();
+    let boundary = visible
+        .iter()
+        .position(|row| row["sourceItemId"] == first_visible)
+        .unwrap();
+    let expected_messages: Vec<_> = visible[..boundary]
+        .iter()
+        .filter(|row| {
+            matches!(
+                row["item"]["type"].as_str(),
+                Some("user_message" | "assistant_message")
+            )
+        })
+        .cloned()
+        .collect();
+    assert_eq!(
+        ids(cached["items"].as_array().unwrap()),
+        ids(&expected_messages)
+    );
+    assert_eq!(cached["hasMoreHistory"], false);
     let page = engine
-        .thread_history_page("t1".into(), cursor, None, false)
+        .thread_history_page("t1".into(), cursor, None, crate::HistoryView::Timeline)
         .await
         .unwrap();
     let crate::ThreadHistory::Page(page) = page else {
@@ -14750,7 +14869,12 @@ async fn a_bounded_snapshot_holds_ten_turns_and_pages_back() {
     );
     assert_eq!(
         engine
-            .thread_history_page("t1".into(), "bad".into(), None, false)
+            .thread_history_page(
+                "t1".into(),
+                "bad".into(),
+                None,
+                crate::HistoryView::Timeline
+            )
             .await
             .unwrap(),
         crate::ThreadHistory::InvalidCursor

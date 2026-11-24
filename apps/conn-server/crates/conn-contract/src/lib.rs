@@ -24,11 +24,13 @@ use serde_json::Value;
 pub mod attention;
 mod generated;
 pub mod ids;
+pub mod outline;
 pub mod support;
 mod upstream;
 
 pub use generated::*;
 pub use ids::*;
+pub use outline::{ThreadOutline, ThreadOutlineMarker};
 pub use upstream::{
     DATABASE_MIGRATION_PROGRESS_MESSAGE, DATABASE_MIGRATIONS_FINISHED_MESSAGE,
     DATABASE_MIGRATIONS_STARTED_MESSAGE, DOMAIN_EVENT_TYPES, PAYLOAD_UPDATED_AT_EVENTS,

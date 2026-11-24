@@ -24,6 +24,8 @@ fn json_len(value: &Value) -> u64 {
 /// Where the timeline reader writes visible rows (`OrchestrationV2ProjectedTurnItem`), in
 /// order, each with the next position.
 pub(crate) trait RowSink {
+    const ITEMS_SQL: &'static str = crate::store::TRANSCRIPT_ITEMS_SQL;
+
     /// Whether a row whose stored text has at least `bytes` could still fit.
     fn has_room(&self, bytes: u64) -> bool;
     /// Appends one row; `false` when the sink is full (and the read should stop).
