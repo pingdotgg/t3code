@@ -122,7 +122,7 @@ export class ProjectFaviconResolver extends Context.Service<
   }
 >()("t3/project/ProjectFaviconResolver") {}
 
-function extractIconHref(source: string): string | null {
+function* extractIconHrefs(source: string): Generator<string> {
   for (const [tag] of source.matchAll(HTML_LINK_RE)) {
     const attributes = new Map<string, { value: string; quoted: boolean }>();
     for (const [, name, doubleQuoted, singleQuoted, unquoted] of tag
@@ -145,15 +145,17 @@ function extractIconHref(source: string): string | null {
     // An unquoted `{...}` is a JSX expression, not a path.
     if (!href || (!href.quoted && href.value.startsWith("{"))) continue;
     const path = href.value.split("?")[0];
-    if (path) return path;
+    if (path) yield path;
   }
   for (const run of source.split("}")) {
     if (!ICON_REL_RE.test(run)) continue;
     const hrefMatch = run.match(ICON_HREF_RE);
-    if (hrefMatch?.[1]) return hrefMatch[1];
+    if (hrefMatch?.[1]) yield hrefMatch[1];
   }
-  return null;
 }
+
+// A path through a file (ENOTDIR) or a symlink loop names no file either.
+const isBadResource = (error: PlatformError.PlatformError) => error.reason._tag === "BadResource";
 
 export const optionOnNotFound = <A, R>(
   effect: Effect.Effect<A, PlatformError.PlatformError, R>,
@@ -173,6 +175,8 @@ export const make = Effect.gen(function* () {
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
 
   const resolveIconHref = (href: string): ReadonlyArray<string> => {
+    // `data:`, `https:` and `//host` icons name no project file, and a long data URL fails `stat`.
+    if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href.trim())) return [];
     // Browsers strip surrounding whitespace from URL attributes; file paths keep theirs.
     const clean = href.trim().replace(/^\//, "");
     return [path.join("public", clean), clean];
@@ -204,6 +208,7 @@ export const make = Effect.gen(function* () {
         continue;
       }
       const stats = yield* optionOnNotFound(fileSystem.stat(candidate.value.absolutePath)).pipe(
+        Effect.catchIf(isBadResource, () => Effect.succeedNone),
         Effect.mapError(
           (cause) =>
             new ProjectFaviconResolutionError({
@@ -243,6 +248,7 @@ export const make = Effect.gen(function* () {
         ),
       );
     const stats = yield* optionOnNotFound(fileSystem.stat(sourcePath.absolutePath)).pipe(
+      Effect.catchIf(isBadResource, () => Effect.succeedNone),
       Effect.mapError(
         (cause) =>
           new ProjectFaviconResolutionError({
@@ -263,6 +269,7 @@ export const make = Effect.gen(function* () {
         Effect.scoped,
       ),
     ).pipe(
+      Effect.catchIf(isBadResource, () => Effect.succeedNone),
       Effect.mapError(
         (cause) =>
           new ProjectFaviconResolutionError({
@@ -277,11 +284,8 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(source) || Option.isNone(source.value)) {
       return null;
     }
-    const href = extractIconHref(new TextDecoder().decode(source.value.value));
-    if (!href) {
-      return null;
-    }
-    return yield* findExistingFile(projectCwd, resolveIconHref(href), "workspace");
+    const hrefs = Array.from(extractIconHrefs(new TextDecoder().decode(source.value.value)));
+    return yield* findExistingFile(projectCwd, hrefs.flatMap(resolveIconHref), "workspace");
   });
 
   // Probe concurrently but join in list order so lower-ranked probes cannot delay a hit.
@@ -378,6 +382,7 @@ export const make = Effect.gen(function* () {
     }
 
     const stats = yield* optionOnNotFound(fileSystem.stat(cached)).pipe(
+      Effect.catchIf(isBadResource, () => Effect.succeedNone),
       Effect.mapError(
         (cause) =>
           new ProjectFaviconResolutionError({
