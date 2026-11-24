@@ -97,6 +97,7 @@ function LinkPullRequestDialog({
   });
 
   const submit = async () => {
+    if (pending) return;
     setDirty(true);
     if (resolved === null || "error" in resolved) return;
     setSubmitError(null);
@@ -147,7 +148,8 @@ function LinkPullRequestDialog({
               setReference(event.target.value);
             }}
             onKeyDown={(event) => {
-              if (event.key !== "Enter") return;
+              if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229)
+                return;
               event.preventDefault();
               void submit();
             }}
