@@ -35,9 +35,9 @@ function ConfiguredT3ConnectSidebarAvatar() {
           userButtonTrigger:
             "mb-1! rounded-lg! p-1! hover:bg-sidebar-row-hover! [anchor-name:--t3-account-avatar]",
           // Clerk pins this popover to bottom-end. Anchor it above the avatar instead; fixed lets it see
-          // an anchor inside the fixed settings modal.
+          // an anchor inside the fixed settings modal. Without anchor support, Clerk's placement stays.
           userButtonPopoverCard:
-            "fixed! top-auto! left-auto! mb-2 [position-anchor:--t3-account-avatar] [position-area:top_span-right]",
+            "supports-[position-area:top]:fixed! supports-[position-area:top]:top-auto! supports-[position-area:top]:left-auto! supports-[position-area:top]:mb-2 [position-anchor:--t3-account-avatar] [position-area:top_span-right]",
         },
       }}
     >
