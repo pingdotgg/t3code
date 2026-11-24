@@ -276,11 +276,13 @@ export const ChatHeader = memo(function ChatHeader({
                   }
                 >
                   <ProjectFavicon project={activeProject} className="size-3.5" />
+                  {/* Phones give the thread title the width; the favicon still names the project. */}
                   <MiddleTruncate
                     data-slot="workspace-breadcrumb-text"
                     value={activeProjectName ?? ""}
                     showTitle={false}
                     variant="cap-aligned"
+                    className="max-sm:hidden"
                   />
                 </TooltipTrigger>
                 <TooltipPopup side="top">
