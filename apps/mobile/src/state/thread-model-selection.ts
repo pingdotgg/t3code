@@ -12,7 +12,7 @@ import * as Dialog from "../components/ui/Dialog";
 import { msg } from "gt-react-native";
 import { m } from "../i18n/messages";
 import { appAtomRegistry } from "./atom-registry";
-import { activeComposerDraftKey, getQueuedRunEdit } from "./queued-run-edit";
+import { activeComposerDraftKey, getQueuedRunEdit, isQueuedRunEditSaving } from "./queued-run-edit";
 import { readEnvironmentScope } from "./session";
 import { environmentThreadShells, threadEnvironment } from "./threads";
 import {
@@ -37,6 +37,7 @@ export function selectThreadModel(
     ref.draftKey ?? threadKey,
     getQueuedRunEdit(threadKey),
   );
+  if (draftKey !== threadKey && isQueuedRunEditSaving(threadKey)) return;
   updateComposerDraftSettings(draftKey, { modelSelection });
   if (draftKey !== threadKey) return;
   const thread = appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));

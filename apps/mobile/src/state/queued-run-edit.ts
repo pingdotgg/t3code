@@ -52,6 +52,9 @@ export { queuedEditDraftKey } from "./queued-edit-draft-key";
 
 export const getQueuedRunEdit = queuedRunEdits.get;
 
+export const isQueuedRunEditSaving = (threadKey: string): boolean =>
+  appAtomRegistry.get(queuedRunEdits.savingAtom)[threadKey] === true;
+
 /**
  * The draft a sheet opened for `requestedKey` should edit now: a queued edit's
  * draft only while that edit is still open, else the thread's own draft.
