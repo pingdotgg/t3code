@@ -1,4 +1,5 @@
 import {
+  AuthOrchestrationOperateScope,
   buildRemoteOpenUrl,
   EDITORS,
   type ContextMenuItem,
@@ -20,6 +21,7 @@ import {
   useRemoteOpenResolution,
 } from "./remoteOpen";
 import { serverEnvironment } from "./state/server";
+import { useEnvironmentScope } from "./state/session";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
@@ -42,6 +44,7 @@ export interface FileContextMenuTarget {
   readonly filePath: string;
   readonly workspaceRoot: string | undefined;
   readonly repositoryRoot?: string | undefined;
+  readonly isDirectory?: boolean;
 }
 
 export function resolveFileContextMenuAbsolutePath(target: FileContextMenuTarget): string | null {
@@ -111,7 +114,8 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const remoteCapableEditors = useRemoteCapableEditors();
   const mode = environmentId !== null && remoteOpen.isResolved ? remoteOpen.state.mode : null;
   // Shell actions run on the server host, which is the viewer's machine only in local-exec.
-  const isLocalExec = mode === "local-exec";
+  const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const isLocalExec = mode === "local-exec" && canOperateHost;
   const remoteHost = remoteOpen.state.mode === "remote-links" ? remoteOpen.state.host : null;
 
   const availableEditors = isLocalExec
@@ -157,7 +161,12 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
     if (action !== "open" && !reveal && !capabilities.editorIds.includes(editor)) return;
 
     if (remoteHost !== null) {
-      const url = buildRemoteOpenUrl({ editor, ...remoteHost, absolutePath, isFile: true });
+      const url = buildRemoteOpenUrl({
+        editor,
+        ...remoteHost,
+        absolutePath,
+        isFile: target.isDirectory !== true,
+      });
       if (url !== undefined && (await openRemoteEditorUrl(url))) return;
       toastManager.add({
         type: "error",

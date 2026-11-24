@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => ({
-    availableEditors: ["vscode", "file-manager"],
+    availableEditors: ["cursor", "file-manager"],
     shellRevealInFileManager: true,
     shellRevealInFileManagerKind: "xdg-open",
     environment: { platform: { os: "linux" } },
@@ -21,6 +21,10 @@ vi.mock("@effect/atom-react", () => ({
 vi.mock("gt-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("gt-react")>()),
   useMessages: () => (text: string) => text,
+}));
+vi.mock(import("./state/session"), async (original) => ({
+  ...(await original()),
+  useEnvironmentScope: () => true,
 }));
 vi.mock("./state/use-atom-command", () => ({ useAtomCommand: () => state.openInEditor }));
 vi.mock(import("./remoteOpen"), async (original) => ({
@@ -103,10 +107,12 @@ describe("useFileContextMenu", () => {
     ]);
     await menu.activate("open", BASE_TARGET);
     await menu.activate("editor:vscode", BASE_TARGET);
+    await menu.activate("editor:vscode", { ...BASE_TARGET, filePath: "src", isDirectory: true });
     expect(state.openInEditor).not.toHaveBeenCalled();
-    expect(state.openRemoteEditorUrl).toHaveBeenCalledExactlyOnceWith(
-      "vscode://vscode-remote/ssh-remote+me%40box/workspace/project/src/index.ts:1:1",
-    );
+    expect(state.openRemoteEditorUrl.mock.calls).toEqual([
+      ["vscode://vscode-remote/ssh-remote+me%40box/workspace/project/src/index.ts:1:1"],
+      ["vscode://vscode-remote/ssh-remote+me%40box/workspace/project/src?windowId=_blank"],
+    ]);
   });
 
   it("opens files on the server host when remote open is local-exec", async () => {
