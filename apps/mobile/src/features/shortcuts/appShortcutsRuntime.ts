@@ -4,6 +4,7 @@ import type { NavigationState } from "@react-navigation/native";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
+import { environmentCatalog } from "../../connection/catalog";
 import {
   loadRecentThreadShortcuts,
   saveRecentThreadShortcuts,
@@ -34,6 +35,7 @@ export function createRecentThreadShortcuts(dependencies: RecentThreadShortcutsD
   let recents: ReadonlyArray<RecentThreadShortcut> | null = null;
   let persistable = false;
   let active: RecentThreadShortcut | null = null;
+  let savedEnvironmentIds: ReadonlySet<string> | null = null;
   // Serialize saves so older lists cannot overwrite newer ones.
   let saveQueue: Promise<unknown> = Promise.resolve();
 
@@ -48,13 +50,20 @@ export function createRecentThreadShortcuts(dependencies: RecentThreadShortcutsD
         () => undefined,
       );
     }
-    void dependencies.publish(next).catch((error: unknown) => {
+    publish(next);
+  };
+
+  const publish = (list: ReadonlyArray<RecentThreadShortcut>) => {
+    void dependencies.publish(list).catch((error: unknown) => {
       console.warn("[app-shortcuts] failed to update launcher shortcuts", error);
     });
   };
 
+  const isSaved = (thread: RecentThreadShortcut) =>
+    savedEnvironmentIds?.has(thread.environmentId) ?? true;
+
   const withActive = (list: ReadonlyArray<RecentThreadShortcut>) => {
-    if (active === null) return list;
+    if (active === null || !isSaved(active)) return list;
     const next = withRecentThreadShortcut(list, active);
     if (next !== list) persistable = true;
     return next;
@@ -63,7 +72,7 @@ export function createRecentThreadShortcuts(dependencies: RecentThreadShortcutsD
   const loaded = dependencies.load().then(
     (threads) => {
       persistable = true;
-      commit(withActive(threads));
+      commit(withActive(threads.filter(isSaved)));
     },
     (error: unknown) => {
       console.warn("[app-shortcuts] failed to load recent threads", error);
@@ -81,7 +90,23 @@ export function createRecentThreadShortcuts(dependencies: RecentThreadShortcutsD
       const updated = withActive(recents);
       if (updated !== recents) commit(updated);
     },
+    retainEnvironments(next: ReadonlySet<string>): void {
+      savedEnvironmentIds = next;
+      if (recents === null) return;
+      const kept = recents.filter(isSaved);
+      if (kept.length !== recents.length) commit(kept);
+    },
+    /** Publishes the current list again, for titles that follow the UI language. */
+    republish(): void {
+      if (recents !== null) publish(recents);
+    },
   };
+}
+
+let installedRecents: ReturnType<typeof createRecentThreadShortcuts> | null = null;
+
+export function republishAppShortcuts(): void {
+  installedRecents?.republish();
 }
 
 const activeThreadRefAtom = Atom.make<ScopedThreadRef | null>(null).pipe(
@@ -137,13 +162,23 @@ export function installAppShortcuts(navigate: (href: string) => void): () => voi
     save: saveRecentThreadShortcuts,
     publish: (list) => QuickActions.setItems(buildShortcutActions(list)),
   });
+  installedRecents = recents;
   const unsubscribe = appAtomRegistry.subscribe(
     activeThreadShortcutAtom,
     (active) => recents.recordActiveThread(active),
     { immediate: true },
   );
+  const unsubscribeCatalog = appAtomRegistry.subscribe(
+    environmentCatalog.catalogValueAtom,
+    (catalog) => {
+      if (catalog.isReady) recents.retainEnvironments(new Set(catalog.entries.keys()));
+    },
+    { immediate: true },
+  );
   return () => {
+    if (installedRecents === recents) installedRecents = null;
     subscription.remove();
     unsubscribe();
+    unsubscribeCatalog();
   };
 }
