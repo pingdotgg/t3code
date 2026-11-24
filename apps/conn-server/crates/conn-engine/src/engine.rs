@@ -259,6 +259,19 @@ impl Drop for SqliteEngine {
     }
 }
 
+/// What worktree cleanup reads in one pass ([`SqliteEngine::cleanup_threads`]): thread shell
+/// JSON as clients see it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CleanupThreads {
+    /// Live and archived threads, with the fields cleanup reads.
+    pub threads: Vec<Value>,
+    /// Deleted threads that had a worktree and a branch, with their project's
+    /// `workspaceRoot`.
+    pub deleted: Vec<Value>,
+    /// The live projects (`OrchestrationV2ProjectShell`).
+    pub projects: Vec<Value>,
+}
+
 impl std::fmt::Debug for SqliteEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SqliteEngine").finish_non_exhaustive()
@@ -296,7 +309,7 @@ pub(crate) struct Inner {
     /// Set when shutdown begins; no provider session opens after it.
     pub(crate) shutting_down: std::sync::atomic::AtomicBool,
     /// Git checkpoints per turn (`checkpoint.rs`); `None` when off.
-    pub(crate) checkpoints: Option<crate::checkpoint::Checkpoints>,
+    pub(crate) checkpoints: Option<Arc<crate::checkpoint::Checkpoints>>,
     /// [`EngineConfig::runtime_policy_override`].
     pub(crate) policy_override: Option<RuntimePolicyOverride>,
     /// [`EngineConfig::command_output_tap`].
@@ -508,7 +521,7 @@ impl SqliteEngine {
                 preparing: Mutex::new(std::collections::HashSet::new()),
                 checkpoints: config
                     .checkpoints
-                    .then(crate::checkpoint::Checkpoints::default),
+                    .then(Arc::<crate::checkpoint::Checkpoints>::default),
                 policy_override: config.runtime_policy_override.clone(),
                 output_tap: config.command_output_tap.clone(),
                 clock: config.clock.clone(),
@@ -662,6 +675,66 @@ impl SqliteEngine {
     /// ([`EngineConfig::attention`]).
     pub fn attention_signal(&self) -> Option<Arc<tokio::sync::Notify>> {
         self.inner.attention.clone()
+    }
+
+    /// Every live thread's stored worktree path, `(thread id, path)`, with the live projects:
+    /// what worktree cleanup reads again before a removal, without parsing every shell.
+    pub async fn worktree_bindings(&self) -> Result<(Vec<(String, String)>, Vec<Value>), String> {
+        self.inner
+            .db(|store| Ok((store.worktree_bindings()?, store.projects_snapshot()?)))
+            .await
+    }
+
+    /// The shells of `ids`, as [`CleanupThreads::threads`] holds them.
+    pub async fn cleanup_shells(&self, ids: Vec<String>) -> Result<Vec<Value>, String> {
+        self.inner.db(move |store| store.cleanup_shells(&ids)).await
+    }
+
+    /// The threads worktree cleanup weighs, with the live projects (see [`CleanupThreads`]).
+    pub async fn cleanup_threads(&self) -> Result<CleanupThreads, String> {
+        self.inner
+            .db(|store| {
+                let (threads, deleted) = store.cleanup_threads()?;
+                let projects = store.projects_snapshot()?;
+                Ok(CleanupThreads {
+                    threads,
+                    deleted,
+                    projects,
+                })
+            })
+            .await
+    }
+
+    /// The folders open provider sessions work in. A session can outlive its run, so a
+    /// worktree it works in is still in use (`ProviderSessionManager.isLive`).
+    pub async fn open_session_cwds(&self) -> Result<Vec<String>, String> {
+        let threads: Vec<String> = crate::lock(&self.inner.live).keys().cloned().collect();
+        if threads.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.inner
+            .db(move |store| {
+                let mut cwds = Vec::new();
+                for thread in threads {
+                    let tx = store.tx()?;
+                    let sessions = tx.entities(&thread, "providerSessions");
+                    tx.rollback();
+                    cwds.extend(sessions?.into_iter().filter_map(|session| {
+                        (session["status"] != "stopped")
+                            .then(|| session["cwd"].as_str().map(str::to_owned))
+                            .flatten()
+                    }));
+                }
+                Ok(cwds)
+            })
+            .await
+    }
+
+    /// The per-checkout lease (T3's `withWorkspaceLease`): turn starts, checkpoint captures and
+    /// rollbacks take it, and so do terminal starts and worktree removal. `None` when
+    /// checkpoints are off.
+    pub fn workspace_locks(&self) -> Option<Arc<conn_vcs::locks::WorkspaceLocks>> {
+        self.inner.checkpoints.clone()
     }
 
     /// Now, by the engine's clock, in milliseconds since the epoch.

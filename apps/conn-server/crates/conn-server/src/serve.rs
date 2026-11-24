@@ -282,6 +282,7 @@ pub async fn serve_with_instances(
         environment: environment.clone(),
         scheduled_tasks: OnceLock::new(),
         devices: OnceLock::new(),
+        worktree_cleanup: OnceLock::new(),
         previews: OnceLock::new(),
         settle_cleanups: Arc::default(),
     });
@@ -424,6 +425,7 @@ pub async fn serve_with_instances(
         files,
         vcs,
         terminals: Some(terminals.clone()),
+        workspace_locks: sqlite_engine.workspace_locks(),
         text_generators: Some(text_generators),
         oauth: Some(Arc::new(crate::oauth::McpOAuth::new(
             &state_dir.join("secrets"),
@@ -473,6 +475,7 @@ pub async fn serve_with_instances(
     println!("providers: {provider_names}");
     // Probes spawn provider CLIs; T3 starts them once the server is ready, too.
     // An inert copy starts none of these: each can start a turn or act on another host.
+    let mut worktree_cleanup = None;
     if !inert {
         crate::methods::provider::start_status_refresh(&state.deps);
         // Tasks in linked environments: their followers, again after a restart.
@@ -481,6 +484,16 @@ pub async fn serve_with_instances(
         }
         // Pull request watches: a sweep every two minutes, as T3's `PullRequestWatchReactor`.
         crate::methods::pull_requests::start_watches(&state.deps);
+        // Worktree cleanup: at start, hourly, and on rule changes and deletions, as T3's
+        // `StorageCleanup`.
+        let cleanup = crate::worktree_cleanup::WorktreeCleanup::new(
+            sqlite_engine.clone(),
+            environment.clone(),
+            terminals.clone(),
+            crate::methods::pull_requests::merge_lookup(&state.deps),
+        );
+        worktree_cleanup = Some(cleanup.start());
+        let _ = host.worktree_cleanup.set(cleanup);
     }
     // `model-manifest.json`, fetched and cached as the T3 server's provider checks do.
     if let Some(manifest) = &state.deps.model_manifest {
@@ -544,6 +557,11 @@ pub async fn serve_with_instances(
     }
     if let Some(managed) = managed_server {
         managed.abort();
+    }
+    // No removal starts once the server stops; one under way ends before terminals and
+    // sessions drain.
+    if let Some(cleanup) = worktree_cleanup {
+        cleanup.stop().await;
     }
     // Shells and provider processes end with their whole process groups, so nothing they
     // started outlives the server.

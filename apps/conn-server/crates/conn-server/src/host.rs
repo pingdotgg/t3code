@@ -33,6 +33,8 @@ pub struct Host {
     pub scheduled_tasks: OnceLock<conn_features::scheduled::ScheduledTasks>,
     /// Device sessions a closed thread held (`ResourceCleanupService.cleanupDevices`).
     pub devices: OnceLock<conn_devices::Devices>,
+    /// Set once the engine exists; a deleted thread or a stopped session may free a worktree.
+    pub worktree_cleanup: OnceLock<crate::worktree_cleanup::WorktreeCleanup>,
     /// Preview tabs a deleted thread held (`ResourceCleanupService.cleanupPreviews`).
     pub previews: OnceLock<conn_preview::tabs::Preview>,
     /// Settled-thread cleanups run one at a time, as T3's single event consumer runs them.
@@ -259,6 +261,12 @@ impl EngineHost for Host {
         }
     }
 
+    fn session_released(&self) {
+        if let Some(cleanup) = self.worktree_cleanup.get() {
+            cleanup.session_closed();
+        }
+    }
+
     fn snapshot_mcp_app(
         &self,
         thread: String,
@@ -471,6 +479,11 @@ impl EngineHost for Host {
                 }
             });
         }
+        if reason == ThreadClose::Deleted
+            && let Some(cleanup) = self.worktree_cleanup.get()
+        {
+            cleanup.thread_deleted();
+        }
         let terminals = self.terminals.clone();
         // The thread's device sessions end; the devices stay on for other threads.
         let devices = self.devices.get().cloned();
@@ -621,6 +634,7 @@ mod tests {
             devices: OnceLock::new(),
             previews: OnceLock::new(),
             settle_cleanups: Arc::default(),
+            worktree_cleanup: OnceLock::new(),
         }
     }
 
@@ -905,6 +919,7 @@ mod tests {
             devices: OnceLock::new(),
             previews: OnceLock::new(),
             settle_cleanups: Arc::default(),
+            worktree_cleanup: OnceLock::new(),
         });
         let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
         config.projects = vec![conn_engine::ProjectConfig {
@@ -1132,6 +1147,7 @@ mod tests {
             devices: OnceLock::new(),
             previews: OnceLock::new(),
             settle_cleanups: Arc::default(),
+            worktree_cleanup: OnceLock::new(),
         });
         let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
         config.projects = vec![conn_engine::ProjectConfig {
@@ -1356,6 +1372,7 @@ mod tests {
             environment: environment.clone(),
             scheduled_tasks: OnceLock::new(),
             devices: OnceLock::new(),
+            worktree_cleanup: OnceLock::new(),
             previews: OnceLock::new(),
             settle_cleanups: Arc::default(),
         };
@@ -1478,6 +1495,7 @@ mod tests {
             previews: OnceLock::new(),
             devices: OnceLock::new(),
             settle_cleanups: Arc::default(),
+            worktree_cleanup: OnceLock::new(),
         });
         let provider = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));
         let mut config = config(&provider);

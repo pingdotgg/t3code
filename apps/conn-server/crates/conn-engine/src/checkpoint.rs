@@ -266,12 +266,12 @@ fn needs_capture(run: &Value) -> bool {
 }
 
 impl Inner {
-    /// The baseline before a provider turn (`captureRunBaseline`). Never fails the turn.
+    /// The baseline before a provider turn (`captureRunBaseline`). Never fails the turn. The
+    /// turn start holds the folder's lease.
     pub(crate) async fn capture_baseline(&self, scope_id: &str, cwd: &str, run_ordinal: u64) {
-        let Some(checkpoints) = &self.checkpoints else {
+        if self.checkpoints.is_none() {
             return;
-        };
-        let _held = checkpoints.workspace(cwd).await;
+        }
         let path = PathBuf::from(cwd);
         if probe(&path).await != Probe::Repository {
             return;

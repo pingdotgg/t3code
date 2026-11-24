@@ -49,6 +49,9 @@ pub struct Deps {
     pub pull_requests: pull_requests::Shared,
     /// Shared with the engine host, so a thread's terminals close with it.
     pub terminals: Option<conn_terminal::TerminalManager>,
+    /// The engine's per-checkout lease ([`conn_engine::SqliteEngine::workspace_locks`]): a
+    /// terminal starts under it, so worktree cleanup never removes a folder a shell opens in.
+    pub workspace_locks: Option<Arc<conn_vcs::locks::WorkspaceLocks>>,
     /// Files, assets and attachments; without it those methods and routes are not served.
     pub files: Option<Arc<conn_files::Files>>,
     /// Scheduled tasks (`conn_features::scheduled`); without it `scheduledTasks.*` is not served.

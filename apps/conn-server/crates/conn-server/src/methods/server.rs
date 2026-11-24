@@ -881,6 +881,7 @@ mod tests {
             devices: std::sync::OnceLock::new(),
             previews: std::sync::OnceLock::new(),
             settle_cleanups: Arc::default(),
+            worktree_cleanup: std::sync::OnceLock::new(),
         });
         let provider = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));
         let mut engine = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));

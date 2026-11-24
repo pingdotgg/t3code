@@ -686,9 +686,6 @@ pub fn apply_patch(settings: &mut Map<String, Value>, mut patch: Map<String, Val
     }
 }
 
-/// `translateLegacyProjectOverridePatch`: the legacy per-project maps become
-/// `projectSettingsOverrides` entries. A project the patch names there keeps its canonical
-/// entry; an entry left empty becomes `null` (removed).
 /// `applyServerSettingsPatch`: a moved `worktreesDirectory` keeps the one it replaces in
 /// `previousWorktreesDirectories`, so worktrees made there stay managed.
 fn remember_worktrees_directory(settings: &Map<String, Value>, patch: &mut Map<String, Value>) {
@@ -719,6 +716,9 @@ fn remember_worktrees_directory(settings: &Map<String, Value>, patch: &mut Map<S
     );
 }
 
+/// `translateLegacyProjectOverridePatch`: the legacy per-project maps become
+/// `projectSettingsOverrides` entries. A project the patch names there keeps its canonical
+/// entry; an entry left empty becomes `null` (removed).
 fn translate_legacy_project_overrides(
     settings: &Map<String, Value>,
     patch: &mut Map<String, Value>,
@@ -1205,6 +1205,20 @@ mod tests {
 
     use super::*;
 
+    /// T3 `applyServerSettingsPatch`: a moved `worktreesDirectory` stays managed.
+    #[test]
+    fn a_moved_and_cleared_worktrees_directory_stays_remembered() {
+        let next = patched(
+            json!({ "worktreesDirectory": "/a" }),
+            json!({ "worktreesDirectory": "/b" }),
+        );
+        assert_eq!(next["previousWorktreesDirectories"], json!(["/a"]));
+        let back = patched(next, json!({ "worktreesDirectory": "/a" }));
+        assert_eq!(back["previousWorktreesDirectories"], json!(["/b"]));
+        let cleared = patched(back, json!({ "worktreesDirectory": "" }));
+        assert_eq!(cleared["previousWorktreesDirectories"], json!(["/b", "/a"]));
+    }
+
     fn patched(stored: Value, patch: Value) -> Value {
         let Value::Object(mut stored) = stored else {
             panic!()
@@ -1245,6 +1259,7 @@ mod tests {
         assert_eq!(next["idleCompaction"], "onReturn");
         assert_eq!(next["compactIdleThreads"], false);
     }
+
 
     #[test]
     fn a_client_patch_cannot_set_the_theme_defaults() {

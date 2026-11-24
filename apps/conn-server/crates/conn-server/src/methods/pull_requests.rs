@@ -1965,6 +1965,58 @@ pub(crate) fn start_watches(deps: &Deps) {
     }
 }
 
+/// The merge rule of worktree cleanup reads a branch's pull request fresh from GitHub, as
+/// T3's cleanup calls `branchPullRequest` with `refresh`.
+pub(crate) fn merge_lookup(deps: &Deps) -> Option<Arc<dyn crate::worktree_cleanup::MergeLookup>> {
+    let panel = deps.pull_requests.panel(deps)?;
+    Some(Arc::new(PanelMerges(panel)))
+}
+
+struct PanelMerges(Arc<Panel>);
+
+impl crate::worktree_cleanup::MergeLookup for PanelMerges {
+    fn branch_pull_request<'a>(
+        &'a self,
+        project_id: &'a str,
+        cwd: &'a std::path::Path,
+        branch: &'a str,
+    ) -> conn_engine::BoxFuture<'a, Option<crate::worktree_cleanup::PullRequestHead>> {
+        Box::pin(async move {
+            let panel = &self.0;
+            let github = panel
+                .projects(&json!({"projectId": project_id}))
+                .await
+                .ok()?
+                .into_iter()
+                .next()?;
+            let head = links::head_of(&github, cwd, branch).await?;
+            let client = panel.client(&github, "listChangeRequests").await.ok()?;
+            let (owner, name) = github.repository.split_once('/')?;
+            let nodes = client
+                .pull_requests_by_heads(&[(
+                    owner.to_owned(),
+                    name.to_owned(),
+                    head.head.name.clone(),
+                )])
+                .await
+                .into_iter()
+                .next()??;
+            let found = conn_source_control::pull_requests::link_sync::branch_pull_request(
+                &nodes,
+                &head.head,
+                head.default_branch.as_deref(),
+            )?;
+            let node = nodes.iter().find(|n| n["number"] == found["number"])?;
+            Some(crate::worktree_cleanup::PullRequestHead {
+                state: found["state"].as_str()?.to_owned(),
+                head_ref: text(node, "headRefName").to_owned(),
+                base_ref: text(node, "baseRefName").to_owned(),
+                head_sha: node["headRefOid"].as_str().map(str::to_owned),
+            })
+        })
+    }
+}
+
 pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
     if let Some(panel) = deps.pull_requests.panel(deps) {
         register_panel(table, panel);

@@ -80,8 +80,8 @@ pub use attention::{AttentionOutboxRow, RELEASED_COMPLETION_GRACE_MS};
 pub use background_wait::{BackgroundWait, BackgroundWaitError};
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use engine::{
-    CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride,
-    STORE_IN_USE, SqliteEngine,
+    CleanupThreads, CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig,
+    RuntimePolicyOverride, STORE_IN_USE, SqliteEngine,
 };
 pub use families::{delegated_task_result, monitor_runs};
 pub use fold::{SearchField, field_holds_words, fold, fold_field, fold_search_query, match_fields};
@@ -170,6 +170,10 @@ pub trait EngineHost: Send + Sync {
 
     /// A provider session closed: revoke what [`EngineHost::agent_tools`] issued under `key`.
     fn session_closed(&self, _key: &str) {}
+
+    /// A live provider session ended, whether or not it revoked agent tools: a folder it held
+    /// may be free now.
+    fn session_released(&self) {}
 
     /// The host handle a new provider session gets for its agent's file and terminal
     /// callbacks (`ProviderHost`). `None`: the server offers none (today's server).

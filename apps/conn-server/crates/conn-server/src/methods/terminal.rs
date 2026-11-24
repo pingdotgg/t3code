@@ -40,6 +40,18 @@ pub fn manager(environment: Option<&crate::environment::Environment>) -> Termina
     })
 }
 
+/// T3 opens a terminal under the folder's workspace lease (`Manager.openLocked`), the one
+/// worktree cleanup removes a checkout under.
+async fn lease<'a>(
+    leases: Option<&'a conn_vcs::locks::WorkspaceLocks>,
+    folder: Option<&str>,
+) -> Option<conn_vcs::locks::WorkspaceLock<'a>> {
+    match (leases, folder) {
+        (Some(leases), Some(folder)) => Some(leases.workspace(folder).await),
+        _ => None,
+    }
+}
+
 pub fn register(table: &mut MethodTable, deps: &Deps) {
     let manager = deps
         .terminals
@@ -52,8 +64,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         locks: Arc::default(),
     };
     let (m, r) = (manager.clone(), restore.clone());
+    let leases = deps.workspace_locks.clone();
     table.unary("terminal.open", move |_, mut input: TerminalOpenInput| {
-        let (m, r) = (m.clone(), r.clone());
+        let (m, r, leases) = (m.clone(), r.clone(), leases.clone());
         async move {
             check_session(&input.thread_id, &input.terminal_id)?;
             check_grid(input.cols, input.rows)?;
@@ -68,8 +81,13 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             if let Some(w) = &worktree {
                 input.worktree_path = Some(Some(w.worktree_path.clone()));
             }
-            // Held across the open, the restore and the retry, as turns and captures hold it.
-            let _lease = r.lease(worktree.as_ref()).await;
+            // Held across the open, the restore and the retry, as turns and captures hold it. A
+            // terminal outside the thread's worktree leases its own folder (`openLocked`).
+            let folder = input.worktree_path.clone().flatten();
+            let _lease = match &worktree {
+                Some(_) => r.lease(worktree.as_ref()).await,
+                None => lease(leases.as_deref(), Some(folder.as_deref().unwrap_or(&input.cwd))).await,
+            };
             match m.open(input.clone()) {
                 Err(TerminalOpenError::TerminalCwdNotFoundError(_))
                     if r.restore(worktree.as_ref()).await =>
@@ -82,10 +100,11 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         }
     });
     let (m, r) = (manager.clone(), restore);
+    let leases = deps.workspace_locks.clone();
     table.stream(
         "terminal.attach",
         move |ctx, mut input: TerminalAttachInput| {
-            let (m, r) = (m.clone(), r.clone());
+            let (m, r, leases) = (m.clone(), r.clone(), leases.clone());
             async move {
                 check_session(&input.thread_id, &input.terminal_id)?;
                 check_grid(input.cols, input.rows)?;
@@ -106,7 +125,15 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
                         input.worktree_path = Some(Some(w.worktree_path.clone()));
                     }
                 }
-                let _lease = r.lease(worktree.as_ref()).await;
+                // As at open; only an attach that starts a shell takes a lease.
+                let folder = input.worktree_path.clone().flatten();
+                let _lease = match (&worktree, input.cwd.as_deref()) {
+                    (Some(_), _) => r.lease(worktree.as_ref()).await,
+                    (None, Some(cwd)) if launches => {
+                        lease(leases.as_deref(), Some(folder.as_deref().unwrap_or(cwd))).await
+                    }
+                    (None, _) => None,
+                };
                 let sub = match m.attach(input.clone(), ctx.connection_id) {
                     Err(TerminalOpenError::TerminalCwdNotFoundError(_))
                         if r.restore(worktree.as_ref()).await =>
