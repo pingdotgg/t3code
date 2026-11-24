@@ -3411,6 +3411,38 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.effect("removes an eligible worktree whose ignored files take over 30 seconds to walk", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fs = yield* FileSystem.FileSystem;
+        const walking = yield* Deferred.make<void>();
+        let slowPath: string | undefined;
+        // Stands in for a flat Bun or npm node_modules with hundreds of thousands of files.
+        const fixture = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            lstat: (target) =>
+              Effect.gen(function* () {
+                if (target === slowPath) {
+                  yield* Deferred.succeed(walking, undefined);
+                  yield* Effect.sleep("31 seconds");
+                }
+                return yield* fs.lstat(target);
+              }),
+          }),
+        );
+        yield* fs.makeDirectory(`${fixture.worktree}/node_modules/pkg`, { recursive: true });
+        yield* fs.writeFileString(`${fixture.worktree}/node_modules/pkg/index.js`, "export {};\n");
+        slowPath = `${yield* fs.realPath(fixture.worktree)}/node_modules`;
+        const run = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(walking);
+        yield* TestClock.adjust("31 seconds");
+        expect((yield* Fiber.join(run)).entries[0]).toMatchObject({ outcome: "removed" });
+        expect(yield* fs.exists(fixture.worktree)).toBe(false);
+      }),
+    ),
+  );
   it.effect("removes a worktree owned by a repository other than the project root", () =>
     runCleanupTest(
       Effect.gen(function* () {
