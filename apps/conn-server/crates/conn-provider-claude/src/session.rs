@@ -162,7 +162,8 @@ impl AppContextState {
     }
 
     /// Records a message that carries notes as offered: a turn's first message starts the
-    /// turn's offer, a steer adds to it. Returns the offer's id for the SDK's answer.
+    /// turn's offer, a steer replaces it with the app's current notes (T3's `commitOffer`).
+    /// Returns the offer's id for the SDK's answer.
     fn offer(
         &mut self,
         native: String,
@@ -176,6 +177,15 @@ impl AppContextState {
         }
         let mut replaced = Vec::new();
         if let Some((_, notes)) = self.offered.as_mut() {
+            let removed: Vec<String> = notes
+                .keys()
+                .filter(|key| !entries.iter().any(|e| &e.key == *key))
+                .cloned()
+                .collect();
+            for key in removed {
+                let prior = notes.remove(&key);
+                replaced.push((key, prior));
+            }
             for entry in entries {
                 if notes.get(&entry.key).map(|(t, _)| t) != Some(&entry.text) {
                     let prior = notes.insert(entry.key.clone(), (entry.text.clone(), id));
@@ -198,12 +208,17 @@ impl AppContextState {
         let Some(replaced) = self.pending.remove(&offer) else {
             return;
         };
+        // A note this offer removed comes back unless a newer offer followed.
+        let latest = offer == self.next_offer;
         for map in [self.offered.as_mut(), self.delivered.as_mut()]
             .into_iter()
             .flatten()
         {
             for (key, prior) in &replaced {
-                if map.1.get(key).is_some_and(|(_, id)| *id == offer) {
+                let current = map.1.get(key);
+                if current.is_some_and(|(_, id)| *id == offer)
+                    || (current.is_none() && prior.is_some() && latest)
+                {
                     match prior {
                         Some(prior) => {
                             map.1.insert(key.clone(), prior.clone());

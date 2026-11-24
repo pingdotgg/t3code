@@ -1001,6 +1001,25 @@ async fn mcp_app_notes_reach_the_claude_prompt_until_a_turn_takes_them_in() {
         last_input()
     );
 
+    // Pass-4 gate finding 5: the app removed note 1. A steer that carries note 2 replaces the
+    // turn's offer with the app's notes, so note 1 coming back is sent again (T3's
+    // `commitOffer`).
+    let mut only_two = steer("drop one", "unused");
+    only_two.app_context = vec![conn_provider::AppContextEntry {
+        key: "mcp_app_item-2".into(),
+        text: "Opened PR #9".into(),
+    }];
+    session.steer_turn(only_two.clone()).await.unwrap();
+    assert!(last_input().to_string().contains("Opened PR #9"));
+    let mut both = steer("both", "Created Jira issue PROJ-46");
+    both.app_context.extend(only_two.app_context);
+    session.steer_turn(both).await.unwrap();
+    let sent = last_input().to_string();
+    assert!(
+        sent.contains("PROJ-46") && !sent.contains("Opened PR #9"),
+        "{sent}"
+    );
+
     // Round-2 gate finding 6: the turn completes, then the SDK refuses a steer it raced. The
     // refused note never reached Claude, so the next turn sends it.
     assert!(

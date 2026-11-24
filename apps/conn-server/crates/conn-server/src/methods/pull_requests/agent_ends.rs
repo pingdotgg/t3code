@@ -13,10 +13,6 @@ use std::{
 use conn_source_control::close_commands::ClosedBy;
 use tokio::sync::Notify;
 
-/// Commands one thread holds at once. Past it the oldest is dropped; an agent does not run
-/// this many merges in one run.
-const COMMANDS_PER_THREAD: usize = 1024;
-
 struct Command {
     item_id: String,
     closed: ClosedBy,
@@ -60,9 +56,6 @@ impl AgentEnds {
             let commands = state.threads.entry(thread_id.to_owned()).or_default();
             commands.retain(|c| c.item_id != item_id);
             if succeeded != Some(false) {
-                if commands.len() >= COMMANDS_PER_THREAD {
-                    commands.remove(0);
-                }
                 commands.push(Command {
                     item_id: item_id.to_owned(),
                     closed,
@@ -173,12 +166,12 @@ mod tests {
         assert!(!ends.ends("t1", REPO, 9));
     }
 
-    /// Round-2 gate finding 8: past 64 commands, each is still released on its own: a failed
-    /// one at once, a finished one with its read, and the others keep theirs.
+    /// Round-2 gate finding 8: past 1,024 commands, each is still released on its own: a
+    /// failed one at once, a finished one with its read, and the others keep theirs.
     #[test]
     fn many_commands_keep_their_own_lifetimes() {
         let ends = AgentEnds::default();
-        for i in 0..100u64 {
+        for i in 0..1025u64 {
             ends.command("t1", &format!("c{i}"), numbers(&[i]), None, None);
         }
         ends.command("t1", "c70", numbers(&[70]), None, Some(false));
@@ -191,7 +184,7 @@ mod tests {
         let reads = ends.take_reads();
         ends.read_done("t1", &reads[0].1);
         assert!(!ends.ends("t1", REPO, 90), "released with its read");
-        assert!(ends.ends("t1", REPO, 99) && ends.ends("t1", REPO, 1));
+        assert!(ends.ends("t1", REPO, 1024) && ends.ends("t1", REPO, 0));
     }
 
     /// Round-2 gate finding 7: finished commands ask for reads without waiting on the loop;

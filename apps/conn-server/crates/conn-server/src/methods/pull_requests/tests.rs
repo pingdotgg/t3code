@@ -1833,6 +1833,49 @@ async fn ended_merges_never_block_the_feed() {
     assert_eq!(ends.take_reads()[0].1.len(), 200);
 }
 
+/// Pass-4 gate finding 4: the feed remembers every ended command for its whole life, as T3's
+/// `finished`, so a late update of the first of 1,025 merges is not taken for a new merge.
+#[tokio::test]
+async fn an_ended_merge_is_never_claimed_again() {
+    // Room for one event: a send returns once the feed has applied the event before it.
+    let (feed, events) = tokio::sync::mpsc::channel(1);
+    let ends = agent_ends::AgentEnds::default();
+    let task = tokio::spawn(watches::agent_events(events, ends.clone()));
+    let item = |id: String, input: String| {
+        let event = json!({"type": "turn-item.updated", "payload": {"id": id,
+            "type": "command_execution", "input": input, "status": "completed",
+            "output": "Merged"}});
+        ("t1".to_owned(), event)
+    };
+    for i in 0..1025 {
+        feed.send(item(format!("m{i}"), format!("gh pr merge {i}")))
+            .await
+            .expect("feed");
+    }
+    for _ in 0..2 {
+        feed.send(item("ls".into(), "ls".into()))
+            .await
+            .expect("feed");
+    }
+    for (thread, items) in ends.take_reads() {
+        ends.read_done(&thread, &items);
+    }
+    assert!(
+        !ends.ends("t1", "github.com/a/b", 0),
+        "released by its read"
+    );
+    feed.send(item("m0".into(), "gh pr merge 0".into()))
+        .await
+        .expect("feed");
+    drop(feed);
+    task.await.expect("feed task");
+    assert!(
+        !ends.ends("t1", "github.com/a/b", 0),
+        "a late update of an ended merge"
+    );
+    assert!(ends.take_reads().is_empty());
+}
+
 /// Gate finding 1: ownership changes apply while a host read is held, in both orders: an
 /// agent's merge that starts during a slow read keeps the end quiet, and a merge command that
 /// fails during it lets the end wake.

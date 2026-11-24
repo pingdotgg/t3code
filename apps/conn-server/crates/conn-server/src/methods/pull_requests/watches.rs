@@ -131,10 +131,6 @@ pub(super) struct Watcher {
     held: Vec<Held>,
 }
 
-/// Command items a thread's agent ran that the feed already saw end, so a later update of
-/// the same item is not taken for a second merge (T3's `finished`).
-const FINISHED_COMMANDS_KEPT: usize = 1024;
-
 /// `checksPendingBefore`: lets the engine tell that a push cleared the answer during the read.
 fn identity(target: &Target) -> serde_json::Map<String, Value> {
     let mut map = serde_json::Map::new();
@@ -891,7 +887,9 @@ fn run_ended(status: &str) -> bool {
 /// Applies the engine's command events to [`AgentEnds`] as they arrive; a close command that
 /// ended asks it for a read. Other commands are skipped. It never waits on the watch loop.
 pub(super) async fn agent_events(mut events: mpsc::Receiver<(String, Value)>, ends: AgentEnds) {
-    let mut finished: std::collections::VecDeque<String> = Default::default();
+    // Close commands the feed saw end, for the feed's whole life, so a later update of the
+    // same item is not taken for a second merge (T3's `finished`).
+    let mut finished = std::collections::HashSet::new();
     while let Some((thread_id, event)) = events.recv().await {
         let payload = &event["payload"];
         if event["type"] == "run.updated" {
@@ -913,10 +911,7 @@ pub(super) async fn agent_events(mut events: mpsc::Receiver<(String, Value)>, en
             text(payload, "status") == "completed" && !close_commands::command_failed(payload)
         });
         if succeeded.is_some() {
-            if finished.len() >= FINISHED_COMMANDS_KEPT {
-                finished.pop_front();
-            }
-            finished.push_back(item_id.clone());
+            finished.insert(item_id.clone());
         }
         ends.command(&thread_id, &item_id, closed, None, succeeded);
     }
