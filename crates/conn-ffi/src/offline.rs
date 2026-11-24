@@ -364,27 +364,9 @@ async fn replace_history(
     prefix: &[Message],
     messages: &[Message],
 ) -> Result<(), FfiError> {
-    let (prefix, tail) = if messages.is_empty() {
-        prefix.split_at(prefix.len().saturating_sub(1))
-    } else {
-        (prefix, messages)
-    };
-    if let Some(anchor) = tail.first() {
-        let rows = tail.iter().map(|m| (m.id(), m)).collect::<Vec<_>>();
-        db.merge(env, thread, &rows).await.map_err(read_error)?;
-        if !db
-            .merge_prefix(env, thread, anchor.id(), prefix)
-            .await
-            .map_err(read_error)?
-        {
-            return Err(read_error(
-                "Saved history changed before the prefix could be applied.",
-            ));
-        }
-    } else {
-        db.remove(env, thread).await.map_err(read_error)?;
-    }
-    Ok(())
+    db.replace(env, thread, prefix, messages)
+        .await
+        .map_err(read_error)
 }
 
 struct Subscription {
