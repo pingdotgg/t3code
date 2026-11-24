@@ -3604,6 +3604,14 @@ export const OrchestrationV2Command = Schema.Union([
     senderThreadId: Schema.optional(ThreadId),
     linkedSender: Schema.optional(OrchestrationV2LinkedSender),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
+    /** Expected thread state captured before lock acquisition for automatic idle compaction. */
+    idleCompactionGuard: Schema.optional(
+      Schema.Struct({
+        expectedRunId: RunId,
+        expectedModelSelection: ModelSelection,
+        expiresAtMs: Schema.Number,
+      }),
+    ),
     /** Start a new provider session without the thread's earlier context. Never steers. */
     freshContext: Schema.optional(Schema.Boolean),
     /** Asks the run for a result as data matching this JSON Schema. Never steers. */

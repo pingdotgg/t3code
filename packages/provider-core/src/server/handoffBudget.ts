@@ -30,7 +30,7 @@ function isCompactionClearTokenUsage(
 }
 
 // Only accepted roots with matching native identity count; row reuse and completed compactions must not revive old usage.
-export function latestNativeContextUsage(
+function latestNativeContextEntry(
   projection: Pick<OrchestrationV2ThreadProjection, "providerTurns" | "attempts" | "runs">,
   providerThread: OrchestrationV2ProviderThread,
 ) {
@@ -44,6 +44,7 @@ export function latestNativeContextUsage(
         modelSelection: ModelSelection;
         reportedAt: string;
         reportedAtMs: number;
+        runOrdinal: number;
         cleared: boolean;
       }
     | undefined;
@@ -81,9 +82,18 @@ export function latestNativeContextUsage(
       modelSelection: run.modelSelection,
       reportedAt: turn.tokenUsage.updatedAt,
       reportedAtMs,
+      runOrdinal: run.ordinal,
       cleared: isCompactionClearTokenUsage(turn.tokenUsage),
     };
   }
+  return latest;
+}
+
+export function latestNativeContextUsage(
+  projection: Pick<OrchestrationV2ThreadProjection, "providerTurns" | "attempts" | "runs">,
+  providerThread: OrchestrationV2ProviderThread,
+) {
+  const latest = latestNativeContextEntry(projection, providerThread);
   if (latest === undefined || latest.cleared) return undefined;
   return {
     usage: latest.usage,
@@ -92,12 +102,22 @@ export function latestNativeContextUsage(
   };
 }
 
+/** Run ordinal of the latest native compaction-clear marker when no newer usage followed it. */
+export function latestNativeCompactionClearOrdinal(
+  projection: Pick<OrchestrationV2ThreadProjection, "providerTurns" | "attempts" | "runs">,
+  providerThread: OrchestrationV2ProviderThread,
+): number | undefined {
+  const latest = latestNativeContextEntry(projection, providerThread);
+  return latest?.cleared === true ? latest.runOrdinal : undefined;
+}
+
 /** Combine provider-thread telemetry with the latest turn usage, preferring whichever dated sample is newer. */
 export function mergeHandoffContextUsage(
   threadUsage: ThreadTokenUsageSnapshot | null | undefined,
   measuredContext:
     | { readonly usage: ThreadTokenUsageSnapshot; readonly reportedAt: string }
     | undefined,
+  preserveReportedAt = false,
 ): ThreadTokenUsageSnapshot | null | undefined {
   if (measuredContext === undefined) return threadUsage;
   if (threadUsage?.updatedAt !== undefined) {
@@ -112,7 +132,9 @@ export function mergeHandoffContextUsage(
       updatedAt: measuredContext.reportedAt,
     };
   }
-  return { ...threadUsage, ...measuredContext.usage };
+  return preserveReportedAt
+    ? { ...threadUsage, ...measuredContext.usage, updatedAt: measuredContext.reportedAt }
+    : { ...threadUsage, ...measuredContext.usage };
 }
 
 /** Native occupancy survives selection changes; the previous model window and compaction threshold do not. */

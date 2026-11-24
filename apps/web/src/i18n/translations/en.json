@@ -10196,7 +10196,7 @@
   "f300ec21e6391b6c": "Expanded",
   "a0eb0e4f76608833": "Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines.",
   "16bdc70b858c223f": "Reset proactive panels to default",
-  "64f1e1f692c68cdc": "When to compact an idle Claude or Antigravity thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude or Antigravity provider can override this.",
+  "6071f800fbb82c23": "When to compact an idle Claude or Antigravity Gemini thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude or Antigravity provider can override this.",
   "3e99c5c14f4939c8": "Reset compact idle threads to default",
   "cd72fe451ba0d6aa": "New projects",
   "394c3bd0a1782c8e": "Leave empty to use \"~/\" when the Add Project browser opens.",

@@ -56,7 +56,6 @@ import {
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
 } from "./AntigravityAdapterV2.ts";
-import { idleCompactionWindow } from "../IdleCompaction.ts";
 
 const flavor = makeAntigravityAcpAdapterFlavor({
   instanceId: ProviderInstanceId.make("antigravity-test"),
@@ -3443,8 +3442,15 @@ describe("AntigravityAdapterV2 prompt cache expiry", () => {
                         toolCallId: "par_2",
                         status: "completed",
                       });
+                      // Duplicate terminal update for par_1 at T+2m30s must NOT advance the anchor.
+                      yield* TestClock.adjust("30 seconds");
+                      yield* send({
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: "par_1",
+                        status: "completed",
+                      });
                       // Follow-up reply finishes at T+3m with fractional usage.
-                      yield* TestClock.adjust("1 minute");
+                      yield* TestClock.adjust("30 seconds");
                       yield* send({
                         sessionUpdate: "agent_message_chunk",
                         content: { type: "text", text: "Both tools finished." },
@@ -3529,11 +3535,26 @@ describe("AntigravityAdapterV2 prompt cache expiry", () => {
                       });
                       return { stopReason: "end_turn" as const };
                     }
-                    // Turn 7: `/compact` completes structured compaction with no follow-up usage.
+                    if (promptCall === 7) {
+                      // Turn 7: `/compact` completes structured compaction with no follow-up usage.
+                      yield* send({
+                        sessionUpdate: "compaction_update",
+                        compactionId: "compact-no-usage",
+                        status: "completed",
+                      });
+                      return { stopReason: "end_turn" as const };
+                    }
+                    // Turn 8: ordinary turn reports usage and leaves an in_progress compaction open
+                    // at turn end; projected settlement must not clear the measured usage.
+                    yield* send({
+                      sessionUpdate: "usage_update",
+                      used: 120_000,
+                      size: 1_048_576,
+                    });
                     yield* send({
                       sessionUpdate: "compaction_update",
-                      compactionId: "compact-no-usage",
-                      status: "completed",
+                      compactionId: "compact-projected-only",
+                      status: "in_progress",
                     });
                     return { stopReason: "end_turn" as const };
                   }),
@@ -3604,64 +3625,14 @@ describe("AntigravityAdapterV2 prompt cache expiry", () => {
           "2026-11-23T12:15:00.000Z",
         );
 
-        // Turn 2: mid-turn compaction overwrites prior 245K usage with 0 and no expiry so
-        // ProjectionStore + idleCompactionWindow will NOT schedule another /compact.
+        // Turn 2: mid-turn compaction overwrites prior 245K usage with a 0-token clear marker.
         yield* TestClock.adjust("1 minute");
         const turn2 = yield* runTurn(2, "Keep going");
         const turn2Completed = turn2.turnUpdates.at(-1)?.providerTurn;
         assert.strictEqual(turn2Completed?.tokenUsage?.usedTokens, 0);
+        assert.strictEqual(turn2Completed?.tokenUsage?.maxTokens, undefined);
+        assert.strictEqual(turn2Completed?.tokenUsage?.promptCacheTtlMs, undefined);
         assert.strictEqual(turn2Completed?.tokenUsage?.promptCacheExpiresAt, undefined);
-        const now = yield* DateTime.now;
-        const windowAfterMidTurnCompaction = idleCompactionWindow(
-          {
-            thread: {
-              ...turn2.turnInput.appThread,
-              activeProviderThreadId: providerThread.id,
-            },
-            runs: [
-              {
-                id: turn2.turnInput.runId,
-                threadId,
-                ordinal: 2,
-                providerInstanceId: instanceId,
-                modelSelection,
-                providerThreadId: providerThread.id,
-                userMessageId: turn2.turnInput.message.messageId,
-                rootNodeId: turn2.turnInput.rootNodeId,
-                activeAttemptId: null,
-                status: "completed",
-                requestedAt: now,
-                startedAt: now,
-                completedAt: now,
-                checkpointId: null,
-                contextHandoffId: null,
-              },
-            ],
-            messages: [
-              {
-                id: turn2.turnInput.message.messageId,
-                threadId,
-                runId: turn2.turnInput.runId,
-                nodeId: turn2.turnInput.rootNodeId,
-                role: "user",
-                text: "Keep going",
-                attachments: [],
-                streaming: false,
-                createdBy: "user",
-                creationSource: "web",
-                createdAt: now,
-                updatedAt: now,
-              },
-            ],
-            providerThreads: [providerThread],
-            providerTurns: [turn1Completed!, turn2Completed!],
-            runtimeRequests: [],
-            turnItems: [],
-            contextTransfers: [],
-          },
-          DateTime.toEpochMillis(now),
-        );
-        assert.isNull(windowAfterMidTurnCompaction);
 
         // Turn 3: mixed-case instructed `/COMPACT keep API notes` emits a compaction-clear marker
         // with no cache TTL / promptCacheExpiresAt and clears pre-compaction contextUsage.
@@ -3763,6 +3734,14 @@ describe("AntigravityAdapterV2 prompt cache expiry", () => {
         assert.strictEqual(turn7Completed?.tokenUsage?.usedTokens, 0);
         assert.strictEqual(turn7Completed?.tokenUsage?.maxTokens, undefined);
         assert.strictEqual(turn7Thread?.contextUsage, null);
+
+        // Turn 8: an unconfirmed in_progress compaction settled at turn end preserves measured usage.
+        yield* TestClock.adjust("1 minute");
+        const turn8 = yield* runTurn(8, "Finish with open compaction");
+        const turn8Completed = turn8.turnUpdates.at(-1)?.providerTurn;
+        const turn8Thread = turn8.threadUpdates.at(-1)?.providerThread;
+        assert.strictEqual(turn8Completed?.tokenUsage?.usedTokens, 120_000);
+        assert.strictEqual(turn8Thread?.contextUsage?.usedTokens, 120_000);
       }).pipe(Effect.provide(layerSession)),
   );
 

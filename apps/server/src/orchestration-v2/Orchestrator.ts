@@ -7452,31 +7452,47 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
 
-    // The service checked idleness before this command; a run or a delegated result that landed
-    // since makes the thread busy, and that turn refreshes the cache anyway.
-    if (
-      command.idleCompaction === "beforeCacheExpires" &&
-      projection.runs.some(
-        (run) =>
-          run.status === "queued" ||
-          isActiveRun(run) ||
-          (run.delegatedCompletion?.disposition === "open" &&
-            run.delegatedCompletion.delivery !== null &&
-            !projection.messages.some(
-              (message) => message.id === run.delegatedCompletion?.delivery?.messageId,
-            )),
-      )
-    ) {
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "thread.metadata-updated",
-        threadId: command.threadId,
-        occurredAt: yield* DateTime.now,
-        payload: projection.thread,
-      });
-      return;
+    // The service checked idleness before this command; recheck under the thread lock so a newer
+    // run, pending delegated result, model switch, or elapsed cache deadline skips compaction.
+    if (command.idleCompaction === "beforeCacheExpires") {
+      const guard = command.idleCompactionGuard;
+      const now = yield* DateTime.now;
+      const latestStartedRun = projection.runs
+        .filter((run) => run.status !== "cancelled" || run.startedAt !== null)
+        .reduce<(typeof projection.runs)[number] | undefined>(
+          (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
+          undefined,
+        );
+      const staleGuard =
+        guard !== undefined &&
+        (DateTime.toEpochMillis(now) >= guard.expiresAtMs ||
+          !modelSelectionsEqual(projection.thread.modelSelection, guard.expectedModelSelection) ||
+          latestStartedRun?.id !== guard.expectedRunId ||
+          latestStartedRun.status !== "completed");
+      if (
+        staleGuard ||
+        projection.runs.some(
+          (run) =>
+            run.status === "queued" ||
+            isActiveRun(run) ||
+            (run.delegatedCompletion?.disposition === "open" &&
+              run.delegatedCompletion.delivery !== null &&
+              !projection.messages.some(
+                (message) => message.id === run.delegatedCompletion?.delivery?.messageId,
+              )),
+        )
+      ) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: now,
+          payload: projection.thread,
+        });
+        return;
+      }
     }
 
     if (projection.thread.lastVisitedAt === null && !isNativeMaintenanceCommand(command)) {
@@ -8675,16 +8691,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }
           : {
               ...reusableProviderThread,
-              ...(reusableProviderThread.driver === "antigravity" &&
-              reusableProviderThread.contextUsage != null &&
-              reusableProviderThread.contextUsage.updatedAt === undefined
-                ? {
-                    contextUsage: {
-                      ...reusableProviderThread.contextUsage,
-                      updatedAt: DateTime.formatIso(reusableProviderThread.updatedAt),
-                    },
-                  }
-                : {}),
               providerSessionId,
               lastRunOrdinal: ordinal,
               handoffIds: appendContextHandoffId(

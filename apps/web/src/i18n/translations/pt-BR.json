@@ -10186,7 +10186,7 @@
   "f300ec21e6391b6c": "Expandido",
   "a0eb0e4f76608833": "Abre primeiro os pull requests vinculados. Caso contrário, abre Alterações para edições em pelo menos 3 arquivos ou 50 linhas.",
   "16bdc70b858c223f": "Redefinir os painéis proativos para o padrão",
-  "64f1e1f692c68cdc": "Quando compactar uma thread ociosa do Claude ou Antigravity com mais de 200.000 tokens: depois que você voltar, logo antes de o cache do prompt expirar ou nunca. Cada provedor Claude ou Antigravity pode substituir isso.",
+  "6071f800fbb82c23": "Quando compactar uma thread ociosa do Claude ou Antigravity Gemini com mais de 200.000 tokens: depois que você voltar, logo antes de o cache do prompt expirar ou nunca. Cada provedor Claude ou Antigravity pode substituir isso.",
   "3e99c5c14f4939c8": "Redefinir a compactação de threads ociosas para o padrão",
   "cd72fe451ba0d6aa": "Novos projetos",
   "394c3bd0a1782c8e": "Deixe vazio para usar \"~/\" quando o navegador de Adicionar projeto abrir.",

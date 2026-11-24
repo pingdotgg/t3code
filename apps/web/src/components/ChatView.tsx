@@ -364,6 +364,8 @@ import {
   hasDismissedResumeCompaction,
   hasInterveningRunWithoutUsage,
   latestProviderTurnTokenUsage,
+  latestStartedRunModel,
+  resumeCompactionCacheTiming,
   shouldOfferResumeCompaction,
 } from "@t3tools/client-runtime/state/context-window";
 import {
@@ -2699,10 +2701,12 @@ export default function ChatView(props: ChatViewProps) {
     shouldOfferResumeCompaction({
       provider: selectedProvider,
       model: activeUsageModel,
+      lastRunModel:
+        serverProjection === null
+          ? undefined
+          : latestStartedRunModel(serverProjection.runs, activeProviderThread),
       usedTokens: activeContextWindow.usedTokens,
-      updatedAt: activeContextWindow.updatedAt,
-      promptCacheTtlMs: activeThreadLiveTokenUsage?.promptCacheTtlMs,
-      hasLiveUsage: activeThreadLiveTokenUsage !== null,
+      ...resumeCompactionCacheTiming(activeThreadLiveTokenUsage, activeContextWindow),
       now: `${nowMinute}:00.000Z`,
     })
       ? activeContextWindow.usedTokens

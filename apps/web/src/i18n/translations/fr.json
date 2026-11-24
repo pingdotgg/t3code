@@ -10186,7 +10186,7 @@
   "f300ec21e6391b6c": "Développés",
   "a0eb0e4f76608833": "Ouvre d’abord les pull requests associées. Sinon, ouvre Modifications pour des changements touchant au moins 3 fichiers ou 50 lignes.",
   "16bdc70b858c223f": "Réinitialiser les panneaux proactifs à la valeur par défaut",
-  "64f1e1f692c68cdc": "Quand compacter un fil Claude ou Antigravity inactif de plus de 200 000 tokens : à votre retour, juste avant l’expiration de son cache de prompt, ou jamais. Chaque fournisseur Claude ou Antigravity peut remplacer ce paramètre.",
+  "6071f800fbb82c23": "Quand compacter un fil Claude ou Antigravity Gemini inactif de plus de 200 000 tokens : à votre retour, juste avant l’expiration de son cache de prompt, ou jamais. Chaque fournisseur Claude ou Antigravity peut remplacer ce paramètre.",
   "3e99c5c14f4939c8": "Réinitialiser le compactage des fils inactifs à la valeur par défaut",
   "cd72fe451ba0d6aa": "Nouveaux projets",
   "394c3bd0a1782c8e": "Laissez vide pour utiliser « ~/ » à l’ouverture du navigateur Ajouter un projet.",

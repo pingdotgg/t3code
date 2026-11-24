@@ -26,6 +26,7 @@ import * as Schema from "effect/Schema";
 import {
   contextUsageForHandoff,
   handoffBudget,
+  latestNativeCompactionClearOrdinal,
   latestNativeContextUsage,
   mergeHandoffContextUsage,
   handoffCoverage,
@@ -394,6 +395,18 @@ describe("handoff budget", () => {
         },
       ),
       { usedTokens: 210_000, maxTokens: 1_000_000 },
+    );
+    // Antigravity preserves the measured turn's reportedAt when no dated thread snapshot exists.
+    assert.deepEqual(
+      mergeHandoffContextUsage(
+        null,
+        {
+          usage: { usedTokens: 245_000, maxTokens: 1_048_576 },
+          reportedAt: "2026-11-23T12:00:00.000Z",
+        },
+        true,
+      ),
+      { usedTokens: 245_000, maxTokens: 1_048_576, updatedAt: "2026-11-23T12:00:00.000Z" },
     );
 
     const preserved = contextUsageForHandoff({
@@ -967,6 +980,7 @@ describe("handoff delivery", () => {
         assert.deepEqual(turn3Start.turnItems, []);
         const measuredAfterCompact = latestNativeContextUsage(turn3Start, agProviderThread);
         assert.isUndefined(measuredAfterCompact);
+        assert.strictEqual(latestNativeCompactionClearOrdinal(turn3Start, agProviderThread), 2);
         const nextTurnUsage = contextUsageForHandoff({
           sameNativeThread: true,
           sameSelection: true,
@@ -974,6 +988,7 @@ describe("handoff delivery", () => {
           previousUsage: mergeHandoffContextUsage(
             agProviderThread.contextUsage,
             measuredAfterCompact,
+            true,
           ),
         });
         assert.isNull(nextTurnUsage);
@@ -983,7 +998,7 @@ describe("handoff delivery", () => {
             userText: "Continue",
             attachments: [],
             providerThread: { ...agProviderThread, contextUsage: nextTurnUsage },
-            nativeContextEstimate: 20_000,
+            nativeContextEstimate: 0,
             modelContextWindow: 256_000,
           }),
           0,
@@ -1017,6 +1032,7 @@ describe("handoff delivery", () => {
         });
         yield* putRun(run4Id, 4, node4Id, "queued", t4);
         const turn4Start = yield* projectionStore.getTurnStartContext(compactThreadId, run4Id);
+        assert.isUndefined(latestNativeCompactionClearOrdinal(turn4Start, agProviderThread));
         assert.deepEqual(latestNativeContextUsage(turn4Start, agProviderThread)?.usage, {
           usedTokens: 60_000,
           maxTokens: 256_000,

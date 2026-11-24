@@ -291,9 +291,11 @@ export function hasDismissedResumeCompaction(
 export function shouldOfferResumeCompaction(input: {
   readonly provider: string | null | undefined;
   readonly model?: string | null | undefined;
+  readonly lastRunModel?: string | null | undefined;
   readonly usedTokens: number | null | undefined;
   readonly updatedAt: string | null | undefined;
   readonly promptCacheTtlMs?: number | undefined;
+  readonly promptCacheExpiresAt?: string | undefined;
   /** True when the turn itself reported live tokenUsage (even without a cache TTL). */
   readonly hasLiveUsage?: boolean | undefined;
   readonly now: string;
@@ -309,8 +311,11 @@ export function shouldOfferResumeCompaction(input: {
   if (input.provider === "claudeAgent") {
     ttlMs = input.promptCacheTtlMs ?? CLAUDE_RESUME_COMPACTION_FALLBACK_MS;
   } else {
-    // Switching from Gemini to a non-Gemini model on the same Antigravity instance
-    // must not inherit the prior Gemini turn's cache TTL.
+    // Switching models on the same Antigravity instance (Gemini -> non-Gemini, or
+    // Gemini A -> Gemini B) must not reuse the prior run's cache report.
+    if (input.lastRunModel != null && input.model != null && input.lastRunModel !== input.model) {
+      return false;
+    }
     if (
       input.model != null &&
       input.model !== ANTIGRAVITY_DEFAULT_MODEL &&
@@ -325,13 +330,78 @@ export function shouldOfferResumeCompaction(input: {
       input.promptCacheTtlMs ??
       (input.hasLiveUsage === true ? undefined : antigravityPromptCacheTtlMs(input.model));
   }
+  const now = Date.parse(input.now);
+  if (!Number.isFinite(now)) {
+    return false;
+  }
+  if (input.promptCacheExpiresAt !== undefined) {
+    const expiresAt = Date.parse(input.promptCacheExpiresAt);
+    return Number.isFinite(expiresAt) && now >= expiresAt;
+  }
   if (ttlMs === undefined) {
     return false;
   }
 
   const updatedAt = Date.parse(input.updatedAt ?? "");
-  const now = Date.parse(input.now);
-  return Number.isFinite(updatedAt) && Number.isFinite(now) && now - updatedAt >= ttlMs;
+  return Number.isFinite(updatedAt) && now - updatedAt >= ttlMs;
+}
+
+/**
+ * Latest started, non-rolled-back run's model on the active provider thread, used to prevent
+ * reusing an earlier model's cache report after switching models on the same Antigravity instance.
+ */
+export function latestStartedRunModel(
+  runs: ReadonlyArray<
+    Pick<
+      OrchestrationV2ThreadProjection["runs"][number],
+      "ordinal" | "status" | "startedAt" | "providerThreadId" | "modelSelection"
+    >
+  >,
+  providerThread: Pick<OrchestrationV2ProviderThread, "id"> | null | undefined,
+): string | undefined {
+  if (providerThread == null) return undefined;
+  let latestRun: (typeof runs)[number] | null = null;
+  for (const run of runs) {
+    if (run.status === "rolled_back" || run.startedAt === null) {
+      continue;
+    }
+    if (run.providerThreadId !== undefined && run.providerThreadId !== providerThread.id) {
+      continue;
+    }
+    if (latestRun === null || run.ordinal > latestRun.ordinal) {
+      latestRun = run;
+    }
+  }
+  return latestRun?.modelSelection.model;
+}
+
+/**
+ * Cache expiry inputs for `shouldOfferResumeCompaction`: keeps a live turn's cache timestamp/expiry
+ * even when a newer usage-only correction replaced the displayed token count.
+ */
+export function resumeCompactionCacheTiming(
+  liveUsage: OrchestrationV2ProviderTurnTokenUsage | null | undefined,
+  contextWindow: Pick<ContextWindowSnapshot, "updatedAt">,
+): {
+  readonly updatedAt: string;
+  readonly promptCacheTtlMs: number | undefined;
+  readonly promptCacheExpiresAt: string | undefined;
+  readonly hasLiveUsage: boolean;
+} {
+  if (liveUsage == null) {
+    return {
+      updatedAt: contextWindow.updatedAt,
+      promptCacheTtlMs: undefined,
+      promptCacheExpiresAt: undefined,
+      hasLiveUsage: false,
+    };
+  }
+  return {
+    updatedAt: liveUsage.updatedAt,
+    promptCacheTtlMs: liveUsage.promptCacheTtlMs,
+    promptCacheExpiresAt: liveUsage.promptCacheExpiresAt,
+    hasLiveUsage: true,
+  };
 }
 
 /**
@@ -348,7 +418,7 @@ export function hasInterveningRunWithoutUsage(
   providerTurns: ReadonlyArray<
     Pick<OrchestrationV2ProviderTurn, "providerThreadId" | "nodeId" | "tokenUsage">
   >,
-  providerThread: Pick<OrchestrationV2ProviderThread, "id"> | null | undefined,
+  providerThread: Pick<OrchestrationV2ProviderThread, "id" | "contextUsage"> | null | undefined,
   usageUpdatedAt?: string | null | undefined,
 ): boolean {
   if (providerThread == null) return false;
@@ -365,6 +435,13 @@ export function hasInterveningRunWithoutUsage(
     }
   }
   if (latestRun === null) return false;
+  const startedMs =
+    latestRun.startedAt == null
+      ? Number.NaN
+      : typeof latestRun.startedAt === "string"
+        ? Date.parse(latestRun.startedAt)
+        : DateTime.toEpochMillis(latestRun.startedAt);
+  const usageMs = usageUpdatedAt == null ? Number.NaN : Date.parse(usageUpdatedAt);
   let latestUsageTurn: (typeof providerTurns)[number] | null = null;
   for (const turn of providerTurns) {
     if (turn.providerThreadId !== providerThread.id || turn.tokenUsage === undefined) continue;
@@ -375,6 +452,16 @@ export function hasInterveningRunWithoutUsage(
       latestUsageTurn = turn;
     }
   }
+  // A dated provider-thread measurement captured at or after the latest run started is fresh
+  // even when no providerTurn.tokenUsage row has been written for that run.
+  if (
+    providerThread.contextUsage?.updatedAt !== undefined &&
+    usageUpdatedAt === providerThread.contextUsage.updatedAt &&
+    Number.isFinite(startedMs) &&
+    Number.isFinite(usageMs)
+  ) {
+    return latestUsageTurn === null ? usageMs <= startedMs : usageMs < startedMs;
+  }
   if (
     latestUsageTurn !== null &&
     latestUsageTurn.nodeId !== undefined &&
@@ -383,17 +470,8 @@ export function hasInterveningRunWithoutUsage(
   ) {
     return true;
   }
-  if (latestRun.startedAt != null && usageUpdatedAt != null) {
-    const startedMs =
-      typeof latestRun.startedAt === "string"
-        ? Date.parse(latestRun.startedAt)
-        : DateTime.toEpochMillis(latestRun.startedAt);
-    const usageMs = Date.parse(usageUpdatedAt);
-    if (
-      Number.isFinite(startedMs) &&
-      Number.isFinite(usageMs) &&
-      (latestUsageTurn === null ? startedMs >= usageMs : startedMs > usageMs)
-    ) {
+  if (Number.isFinite(startedMs) && Number.isFinite(usageMs)) {
+    if (latestUsageTurn === null ? startedMs >= usageMs : startedMs > usageMs) {
       return true;
     }
   }
@@ -486,13 +564,13 @@ export function compactBeforeSendTokens(input: {
   ) {
     return null;
   }
+  const cacheTiming = resumeCompactionCacheTiming(liveUsage, contextWindow);
   return shouldOfferResumeCompaction({
     provider: provider.driver,
     model: input.selection.model,
+    lastRunModel: latestStartedRunModel(projection.runs, providerThread),
     usedTokens: contextWindow.usedTokens,
-    updatedAt: contextWindow.updatedAt,
-    promptCacheTtlMs: liveUsage?.promptCacheTtlMs,
-    hasLiveUsage: liveUsage !== null,
+    ...cacheTiming,
     now: input.now,
   })
     ? contextWindow.usedTokens

@@ -324,6 +324,49 @@ describe("idleCompactionWindow", () => {
     ];
     expect(idleCompactionWindow(delegating, NOW_MS)?.runId).toBe(runId);
   });
+
+  it("removes the idle window on the same latest Antigravity run only when replaced by a clear marker", () => {
+    const agInstanceId = ProviderInstanceId.make("antigravity");
+    const agSelection = { instanceId: agInstanceId, model: "gemini-4-neon" };
+    const base = records({ usedTokens: 245_000, cacheExpiresInMs: 15 * MINUTE_MS });
+    const eligible = {
+      ...base,
+      thread: {
+        ...base.thread,
+        providerInstanceId: agInstanceId,
+        modelSelection: agSelection,
+      },
+      runs: [
+        {
+          ...base.runs[0]!,
+          providerInstanceId: agInstanceId,
+          modelSelection: agSelection,
+        },
+      ],
+      providerThreads: [
+        {
+          ...base.providerThreads[0]!,
+          driver: ProviderDriverKind.make("antigravity"),
+          providerInstanceId: agInstanceId,
+        },
+      ],
+    };
+    expect(idleCompactionWindow(eligible, NOW_MS)?.runId).toBe(runId);
+
+    const cleared = {
+      ...eligible,
+      providerTurns: [
+        {
+          ...eligible.providerTurns[0]!,
+          tokenUsage: {
+            usedTokens: 0,
+            updatedAt: DateTime.formatIso(at()),
+          },
+        },
+      ],
+    };
+    expect(idleCompactionWindow(cleared, NOW_MS)).toBeNull();
+  });
 });
 
 describe("IdleCompactionService", () => {
@@ -541,7 +584,10 @@ describe("IdleCompactionService", () => {
         occurredAt: at(),
         payload: run,
       });
-      const dispatched: Array<string> = [];
+      const dispatched: Array<{
+        readonly commandId: string;
+        readonly idleCompactionGuard?: unknown;
+      }> = [];
       const streamDone = yield* Deferred.make<void>();
       const dependencies = Layer.mergeAll(
         Layer.mock(Orchestrator.OrchestratorV2)({
@@ -551,7 +597,12 @@ describe("IdleCompactionService", () => {
           ),
           dispatch: (command) =>
             Effect.sync(() => {
-              dispatched.push(command.commandId);
+              dispatched.push({
+                commandId: command.commandId,
+                ...(command.type === "message.dispatch" && command.idleCompactionGuard !== undefined
+                  ? { idleCompactionGuard: command.idleCompactionGuard }
+                  : {}),
+              });
               return { sequence: 1, storedEvents: [] };
             }),
         }),
@@ -580,7 +631,16 @@ describe("IdleCompactionService", () => {
         yield* Deferred.await(streamDone);
         yield* TestClock.adjust(9 * MINUTE_MS);
       }).pipe(Effect.provide(dependencies));
-      expect(dispatched).toEqual(["server:idle-compact:idle-thread:run-2"]);
+      expect(dispatched).toEqual([
+        {
+          commandId: "server:idle-compact:idle-thread:run-2",
+          idleCompactionGuard: {
+            expectedRunId: laterRunId,
+            expectedModelSelection: data.thread.modelSelection,
+            expiresAtMs: NOW_MS + 10 * MINUTE_MS,
+          },
+        },
+      ]);
     }),
   );
 });

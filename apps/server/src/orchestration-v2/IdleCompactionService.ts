@@ -118,6 +118,11 @@ export const make = Effect.gen(function* () {
           createdBy: "agent",
           creationSource: "server",
           idleCompaction: "beforeCacheExpires",
+          idleCompactionGuard: {
+            expectedRunId: runId,
+            expectedModelSelection: records.thread.modelSelection,
+            expiresAtMs: window.endMs,
+          },
           dispatchMode: { type: "start_immediately" },
         });
         return;

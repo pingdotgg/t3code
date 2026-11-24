@@ -10194,7 +10194,7 @@
   "f300ec21e6391b6c": "Utfällda",
   "a0eb0e4f76608833": "Öppna länkade pull requests först. Annars öppnas Ändringar för redigeringar av minst 3 filer eller 50 rader.",
   "16bdc70b858c223f": "Återställ proaktiva paneler till standard",
-  "64f1e1f692c68cdc": "När en inaktiv Claude- eller Antigravity-tråd på över 200 000 token ska komprimeras: när du kommer tillbaka, precis innan dess promptcache går ut, eller aldrig. Varje Claude- eller Antigravity-leverantör kan åsidosätta detta.",
+  "6071f800fbb82c23": "När en inaktiv Claude- eller Antigravity Gemini-tråd på över 200 000 token ska komprimeras: när du kommer tillbaka, precis innan dess promptcache går ut, eller aldrig. Varje Claude- eller Antigravity-leverantör kan åsidosätta detta.",
   "3e99c5c14f4939c8": "Återställ komprimering av inaktiva trådar till standard",
   "cd72fe451ba0d6aa": "Nya projekt",
   "394c3bd0a1782c8e": "Lämna tomt för att använda ”~/” när bläddraren Lägg till projekt öppnas.",

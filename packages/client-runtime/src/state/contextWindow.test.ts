@@ -14,7 +14,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { compactBeforeSendTokens } from "./contextWindow.ts";
+import { compactBeforeSendTokens, hasInterveningRunWithoutUsage } from "./contextWindow.ts";
 import type { ThreadStructure } from "./models.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 
@@ -30,6 +30,7 @@ function sendInput(
   overrides: {
     readonly usedTokens?: number;
     readonly promptCacheTtlMs?: number;
+    readonly promptCacheExpiresAt?: string;
     readonly omitTurnTokenUsage?: boolean;
     readonly threadContextUsage?: {
       readonly usedTokens: number;
@@ -143,6 +144,9 @@ function sendInput(
                 ...(overrides.promptCacheTtlMs === undefined
                   ? {}
                   : { promptCacheTtlMs: overrides.promptCacheTtlMs }),
+                ...(overrides.promptCacheExpiresAt === undefined
+                  ? {}
+                  : { promptCacheExpiresAt: overrides.promptCacheExpiresAt }),
               },
             },
           ],
@@ -410,6 +414,34 @@ describe("compactBeforeSendTokens", () => {
       expected: false,
     },
     {
+      name: "on an Antigravity thread after switching to a different Gemini model",
+      source: antigravity,
+      selected: antigravity,
+      sourceModel: "gemini-4-neon",
+      model: "gemini-3.1-pro",
+      promptCacheTtlMs: 15 * 60_000,
+      now: "2026-10-30T14:40:00.000Z",
+      expected: false,
+    },
+    {
+      name: "on an Antigravity thread with a newer usage correction keeping the original cache expiry",
+      source: antigravity,
+      selected: antigravity,
+      model: "gemini-4-neon",
+      usedTokens: 190_000,
+      promptCacheTtlMs: 15 * 60_000,
+      promptCacheExpiresAt: "2026-10-30T14:38:02.000Z",
+      threadContextUsage: {
+        usedTokens: 293_611,
+        maxTokens: 1_048_576,
+        updatedAt: "2026-10-30T14:24:02.000Z",
+      },
+      // At 14:38:30 the original 14:38:02 expiry has passed, even though the 14:24:02 correction
+      // + 15m would be 14:39:02.
+      now: "2026-10-30T14:38:30.000Z",
+      expected: true,
+    },
+    {
       name: "on an Antigravity thread without advertised /compact",
       source: antigravity,
       selected: antigravity,
@@ -460,5 +492,46 @@ describe("compactBeforeSendTokens", () => {
     expect(compactBeforeSendTokens(sendInput(overrides as Parameters<typeof sendInput>[0]))).toBe(
       expected ? 293_611 : null,
     );
+  });
+
+  it("treats a dated provider-thread usage at or after the latest run start as fresh", () => {
+    const thread = {
+      id: ProviderThreadId.make("pt-1"),
+      contextUsage: { usedTokens: 240_000, updatedAt: "2026-10-30T14:38:00.000Z" },
+    };
+    const runs = [
+      {
+        ordinal: 1,
+        status: "completed" as const,
+        startedAt: DateTime.makeUnsafe("2026-10-30T14:20:00.000Z"),
+        rootNodeId: "node-1" as never,
+        providerThreadId: thread.id,
+      },
+      {
+        ordinal: 2,
+        status: "completed" as const,
+        startedAt: DateTime.makeUnsafe("2026-10-30T14:37:00.000Z"),
+        rootNodeId: "node-2" as never,
+        providerThreadId: thread.id,
+      },
+    ];
+    const turns = [
+      {
+        providerThreadId: thread.id,
+        nodeId: "node-1" as never,
+        tokenUsage: { usedTokens: 210_000, updatedAt: "2026-10-30T14:23:00.000Z" },
+      },
+    ];
+    expect(hasInterveningRunWithoutUsage(runs, turns, thread, "2026-10-30T14:38:00.000Z")).toBe(
+      false,
+    );
+    expect(
+      hasInterveningRunWithoutUsage(
+        runs,
+        turns,
+        { ...thread, contextUsage: { usedTokens: 240_000, updatedAt: "2026-10-30T14:36:00.000Z" } },
+        "2026-10-30T14:36:00.000Z",
+      ),
+    ).toBe(true);
   });
 });

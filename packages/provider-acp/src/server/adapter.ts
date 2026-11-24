@@ -1766,6 +1766,8 @@ interface ActiveAcpTurn {
   readonly attemptedInputRecoveryKeys: Set<string>;
   /** Tools the agent failed after Stop; later updates keep them interrupted. */
   readonly stoppedToolCallIds: Set<string>;
+  /** Tools that already transitioned to a terminal state, so duplicate updates do not move cache expiry. */
+  readonly terminalToolCallIds: Set<string>;
   readonly toolUpdatesSkipped: Map<string, number>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   readonly subagents: Map<string, ActiveAcpSubagent>;
@@ -4887,26 +4889,28 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ...(beforeTokenCount === undefined ? {} : { beforeTokenCount }),
             };
             if (status === "completed" && !isRepeatedCompletion) {
-              if (projectedStatus === undefined && compactionKey !== undefined) {
-                yield* Ref.update(completedCompactionDetails, (current) =>
-                  new Map(current).set(compactionKey, {
-                    runId: context.input.runId,
-                    completedAt: completedAt ?? now,
-                    beforeTokenCount,
-                  }),
-                );
+              if (projectedStatus === undefined) {
+                if (compactionKey !== undefined) {
+                  yield* Ref.update(completedCompactionDetails, (current) =>
+                    new Map(current).set(compactionKey, {
+                      runId: context.input.runId,
+                      completedAt: completedAt ?? now,
+                      beforeTokenCount,
+                    }),
+                  );
+                }
+                context.hadCompletedCompaction = true;
+                context.contextUsage = null;
+                context.lastUsageSnapshot = null;
+                context.lastUsageUpdatedAt = null;
+                context.lastUsageRequestedAt = null;
+                context.compactedAfterUsage = true;
+                yield* Ref.update(contextUsageBySessionId, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(context.nativeThreadId);
+                  return updated;
+                });
               }
-              context.hadCompletedCompaction = true;
-              context.contextUsage = null;
-              context.lastUsageSnapshot = null;
-              context.lastUsageUpdatedAt = null;
-              context.lastUsageRequestedAt = null;
-              context.compactedAfterUsage = true;
-              yield* Ref.update(contextUsageBySessionId, (current) => {
-                const updated = new Map(current);
-                updated.delete(context.nativeThreadId);
-                return updated;
-              });
               // A completion projected at turn end must not swallow the agent's later real one.
               yield* markSessionCompacted(
                 context.nativeThreadId,
@@ -6068,15 +6072,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             context !== null &&
             context.nativeThreadId === notification.sessionId &&
             !context.finalized &&
-            !context.replayingWakeBuffer &&
-            context.usageObservedForLastModelRequest
+            !context.replayingWakeBuffer
           ) {
-            if (update.sessionUpdate === "tool_call_update") {
-              if (update.status === "completed" || update.status === "failed") {
-                context.lastModelRequestAt = yield* DateTime.now;
-                context.toolCompletedSinceUsage = true;
+            if (
+              update.sessionUpdate === "tool_call_update" &&
+              (update.status === "completed" || update.status === "failed")
+            ) {
+              const firstTerminal = !context.terminalToolCallIds.has(update.toolCallId);
+              if (firstTerminal) {
+                context.terminalToolCallIds.add(update.toolCallId);
+                if (context.usageObservedForLastModelRequest) {
+                  context.lastModelRequestAt = yield* DateTime.now;
+                  context.toolCompletedSinceUsage = true;
+                }
               }
             } else if (
+              context.usageObservedForLastModelRequest &&
+              update.sessionUpdate !== "tool_call_update" &&
               update.sessionUpdate !== "usage_update" &&
               update.sessionUpdate !== "compaction_update" &&
               update.sessionUpdate !== "compaction_summary_chunk" &&
@@ -9061,11 +9073,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           yield* reportAgentModeChanges(context.input.threadId);
           if (flavor.promptCacheTtlMs !== undefined) {
+            const ttlMs = flavor.promptCacheTtlMs(
+              context.resolvedModel ?? context.input.modelSelection.model,
+            );
             if (!isCompactCommand(context.input.message)) {
               if (context.lastUsageSnapshot !== null) {
-                const ttlMs = flavor.promptCacheTtlMs(
-                  context.resolvedModel ?? context.input.modelSelection.model,
-                );
                 const canCompact =
                   flavor.compactViaAdvertisedCommand !== true ||
                   (yield* SubscriptionRef.get(advertisedCommandNames))
@@ -9094,7 +9106,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   updatedAt: DateTime.formatIso(now),
                 };
               }
-            } else if (compactsContext && settledStatus === "completed") {
+            } else if (compactsContext && settledStatus === "completed" && ttlMs !== undefined) {
               if (context.hadCompletedCompaction && context.lastUsageSnapshot !== null) {
                 context.tokenUsage = {
                   usedTokens: Math.max(0, Math.round(context.lastUsageSnapshot.usedTokens)),
@@ -10072,6 +10084,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               blockedInputRecoveryKeys: new Set(),
               attemptedInputRecoveryKeys: new Set(),
               stoppedToolCallIds: new Set(),
+              terminalToolCallIds: new Set(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
               subagents: new Map(),

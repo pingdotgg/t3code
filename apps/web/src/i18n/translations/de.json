@@ -10187,7 +10187,7 @@
   "f300ec21e6391b6c": "Ausgeklappt",
   "a0eb0e4f76608833": "Verknüpfte Pull Requests zuerst öffnen. Andernfalls „Änderungen“ bei Bearbeitungen an mindestens 3 Dateien oder 50 Zeilen öffnen.",
   "16bdc70b858c223f": "Proaktive Panels auf Standard zurücksetzen",
-  "64f1e1f692c68cdc": "Wann ein inaktiver Claude- oder Antigravity-Thread über 200.000 Tokens komprimiert wird: nach deiner Rückkehr, kurz bevor sein Prompt-Cache abläuft, oder nie. Jeder Claude- oder Antigravity-Anbieter kann das überschreiben.",
+  "6071f800fbb82c23": "Wann ein inaktiver Claude- oder Antigravity-Gemini-Thread über 200.000 Tokens komprimiert wird: nach deiner Rückkehr, kurz bevor sein Prompt-Cache abläuft, oder nie. Jeder Claude- oder Antigravity-Anbieter kann das überschreiben.",
   "3e99c5c14f4939c8": "Inaktive Threads komprimieren auf Standard zurücksetzen",
   "cd72fe451ba0d6aa": "Neue Projekte",
   "394c3bd0a1782c8e": "Leer lassen, um „~/“ zu verwenden, wenn sich der Dialog „Projekt hinzufügen“ öffnet.",
