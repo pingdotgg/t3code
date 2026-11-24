@@ -118,9 +118,40 @@ pub async fn managed_path(cwd: &Path, branch: &str, worktrees_dir: &Path) -> Vcs
 
 /// Creates a worktree at the managed path and returns it. With `new_ref_name`, creates that
 /// branch at `ref_name` first (tracking it when it is a remote branch) and removes it again if
-/// the checkout fails.
+/// the checkout fails. A caller that drops this future mid-checkout (an RPC whose client left)
+/// loses nothing to a lock: a background task removes the checkout and its new branch, as the
+/// TypeScript server does on an interrupt.
 pub async fn create_worktree(input: &CreateWorktree) -> VcsResult<Worktree> {
-    create_worktree_claiming(input, &mut None).await
+    let mut pending = DiscardOnDrop {
+        cwd: input.cwd.clone(),
+        branch: input.new_ref_name.clone(),
+        claim: None,
+    };
+    let result = create_worktree_claiming(input, &mut pending.claim).await;
+    pending.claim = None;
+    result
+}
+
+/// Discards a claimed checkout when its [`create_worktree`] future is dropped before it ends.
+struct DiscardOnDrop {
+    cwd: PathBuf,
+    branch: Option<String>,
+    claim: Option<Claim>,
+}
+
+impl Drop for DiscardOnDrop {
+    fn drop(&mut self) {
+        let (Some(claim), Some(branch)) = (self.claim.take(), self.branch.take()) else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let cwd = std::mem::take(&mut self.cwd);
+        runtime.spawn(async move {
+            let _ = discard_claim(&cwd, &claim, &branch).await;
+        });
+    }
 }
 
 /// A checkout [`create_worktree_claiming`] started: its path, and the lock reason Git holds on

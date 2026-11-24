@@ -728,6 +728,68 @@ async fn a_cancel_during_post_checkout_removes_the_checkout_and_branch() {
     }
 }
 
+/// The direct `vcs.createWorktree` RPC: a dropped call (a client that disconnects) during a
+/// slow `post-checkout` hook leaves no locked checkout. Like the TypeScript server's
+/// interrupt, it removes the checkout and its branch.
+#[tokio::test]
+async fn a_dropped_create_worktree_leaves_no_locked_checkout() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fx = Fixture::new("dropped-create");
+    let pids_dir = fx.root.path().join("pids");
+    std::fs::create_dir_all(&pids_dir).unwrap();
+    let hook = fx.work.join(".git/hooks/post-checkout");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    let pids = pids_dir.display();
+    std::fs::write(
+        &hook,
+        format!("#!/bin/sh\necho $$ > {pids}/hook\nsleep 31 &\necho $! > {pids}/child\nwait\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let input = CreateWorktree {
+        cwd: fx.work.clone(),
+        ref_name: "main".into(),
+        new_ref_name: Some("feature-dropped".into()),
+        base_ref_name: Some("main".into()),
+        worktrees_dir: fx.root.path().join("worktrees"),
+    };
+    let call = tokio::spawn(async move { worktree::create_worktree(&input).await });
+    let pids = [
+        read_pid(&pids_dir.join("hook")).await,
+        read_pid(&pids_dir.join("child")).await,
+    ];
+    call.abort();
+    assert!(call.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        survivors(&pids).await,
+        Vec::<u32>::new(),
+        "the hook kept running"
+    );
+
+    let mut list = String::new();
+    for _ in 0..200 {
+        list = git(&fx.work, &["worktree", "list", "--porcelain"]);
+        let branch = git(&fx.work, &["branch", "--list", "feature-dropped"]);
+        if !list.contains("feature-dropped") && !branch.contains("feature-dropped") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(
+        !list.contains("locked"),
+        "the checkout stayed locked: {list}"
+    );
+    assert!(
+        !list.contains("feature-dropped"),
+        "the checkout stayed registered: {list}"
+    );
+    assert!(
+        !git(&fx.work, &["branch", "--list", "feature-dropped"]).contains("feature-dropped"),
+        "the branch stayed"
+    );
+}
+
 /// A worktree the cleanup cannot remove (a locked one) keeps its branch, and the failed setup
 /// says what it left behind instead of failing quietly.
 #[tokio::test]
