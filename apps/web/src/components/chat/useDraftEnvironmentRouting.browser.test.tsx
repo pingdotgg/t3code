@@ -210,6 +210,27 @@ it("refreshes a stored automatic choice before sending an unsent draft", async (
   expect(appAtomRegistry.get(destinationSelections)).toEqual(selections);
 });
 
+it("balances onto a machine whose matching provider has another instance id", async () => {
+  const { a, b, input } = setup();
+  const [provider] = input.providersByEnvironment.get(a)!;
+  const named = { ...provider!, displayName: "Claude (team)" };
+  await using screen = await render(
+    <Harness
+      input={{
+        ...input,
+        providersByEnvironment: new Map([
+          [a, [named]],
+          [b, [{ ...named, instanceId: ProviderInstanceId.make("codexTeam") }]],
+        ]),
+        loadBalancingSettings: { loadBalancingWeights: { [a]: 0 } },
+      }}
+    />,
+  );
+  await screen.getByRole("button", { name: "Send" }).click();
+  await expect.element(screen.getByText(b)).toBeInTheDocument();
+  expect(resources.refreshSelection).toHaveBeenCalledWith([b]);
+});
+
 it.each(["manual", "attachments", "promoted"] as const)(
   "keeps the machine for %s drafts",
   async (kind) => {
