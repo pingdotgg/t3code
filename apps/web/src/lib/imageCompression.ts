@@ -10,6 +10,23 @@ import {
 import { msg } from "gt-react";
 
 import { m } from "../i18n/messages";
+import {
+  type BitmapEncodeOptions,
+  type ImageCompressionFailureReason,
+  type ImageSize,
+  QUALITY_STEPS,
+  type ReencodeBitmapOptions,
+  type ReencodeResult,
+  createCanvas,
+  dataUrlLength,
+  encodeBitmapOnCanvas,
+  reencodeBitmapWithinBudgetOnCanvas,
+  thumbnailEncodeOptions,
+} from "./imageCompressionCodec";
+import type {
+  ImageCompressionWorkerRequest,
+  ImageCompressionWorkerResponse,
+} from "./imageCompression.worker";
 
 const MAX_DIMENSION = IMAGE_ATTACHMENT_MAX_EDGE;
 export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
@@ -17,12 +34,10 @@ export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
 export const MAX_COMPRESSIBLE_SOURCE_BYTES = 50 * 1024 * 1024;
 const MAX_HEIC_DECODE_PIXELS = 64_000_000;
 const MAX_HEIC_METADATA_BYTES = 1024 * 1024;
-const QUALITY_STEPS = [0.92, 0.85, 0.78, 0.68] as const;
-const FALLBACK_SCALE_STEPS = [0.75, 0.55] as const;
 const HEIC_IMAGE_MIME_TYPE = /^image\/hei(?:c|f)$/i;
 const HEIC_IMAGE_EXTENSION = /\.(?:heic|heif)$/i;
 
-type ImageSize = { width: number; height: number };
+export type { ImageCompressionFailureReason };
 
 export interface CompressedStashImage {
   imageSize?: ImageSize;
@@ -31,8 +46,6 @@ export interface CompressedStashImage {
   sizeBytes: number;
   recompressed: boolean;
 }
-
-export type ImageCompressionFailureReason = "too-large" | "unreadable";
 
 export type CompressStashImageResult =
   | { ok: true; image: CompressedStashImage }
@@ -299,12 +312,6 @@ export function readFileAsDataUrl(file: Blob): Promise<string> {
   });
 }
 
-function dataUrlLength(blob: Blob): number {
-  return (
-    `data:${blob.type || "application/octet-stream"};base64,`.length + 4 * Math.ceil(blob.size / 3)
-  );
-}
-
 export function dataUrlToFile(dataUrl: string, name: string, mimeType: string): File {
   const payload = dataUrl.slice(dataUrl.indexOf(",") + 1);
   const binary = atob(payload);
@@ -329,43 +336,173 @@ function canRecompress(): boolean {
   );
 }
 
-interface Canvas2D {
-  canvas: OffscreenCanvas | HTMLCanvasElement;
-  context: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
+type PendingWorkerRequest =
+  | {
+      kind: "encode";
+      resolve: (blob: Blob | null) => void;
+      reject: (error: Error) => void;
+      onThumbnail?: (blob: Blob | null) => void;
+    }
+  | {
+      kind: "reencode";
+      resolve: (result: ReencodeResult) => void;
+      reject: (error: Error) => void;
+    };
+
+interface ActiveCompressionWorker {
+  worker: Worker;
+  nextId: number;
+  pending: Map<number, PendingWorkerRequest>;
 }
 
-function createCanvas(
-  width: number,
-  height: number,
-  colorSpace: PredefinedColorSpace,
-): Canvas2D | null {
-  if (typeof OffscreenCanvas === "function") {
-    const canvas = new OffscreenCanvas(width, height);
-    const context = canvas.getContext("2d", { colorSpace });
-    if (!context) return null;
-    return { canvas, context };
+let activeCompressionWorker: ActiveCompressionWorker | null = null;
+
+function canUseImageCompressionWorker(bitmap: ImageBitmap): boolean {
+  return (
+    typeof Worker === "function" &&
+    typeof OffscreenCanvas === "function" &&
+    typeof ImageBitmap === "function" &&
+    bitmap instanceof ImageBitmap
+  );
+}
+
+function releaseCompressionWorker(session: ActiveCompressionWorker) {
+  if (session.pending.size > 0) return;
+  session.worker.terminate();
+  if (activeCompressionWorker === session) activeCompressionWorker = null;
+}
+
+function failCompressionWorker(session: ActiveCompressionWorker, error: Error) {
+  if (activeCompressionWorker === session) activeCompressionWorker = null;
+  session.worker.terminate();
+  const entries = [...session.pending.values()];
+  session.pending.clear();
+  for (const entry of entries) entry.reject(error);
+}
+
+/**
+ * Main-thread `OffscreenCanvas.convertToBlob` runs on Chromium's idle task queue and can stall
+ * for seconds on high-refresh displays while the UI animates. Dedicated workers encode directly.
+ */
+function acquireCompressionWorker(): ActiveCompressionWorker | null {
+  if (activeCompressionWorker) return activeCompressionWorker;
+  let worker: Worker;
+  try {
+    worker = new Worker(new URL("./imageCompression.worker.ts", import.meta.url), {
+      type: "module",
+    });
+  } catch {
+    return null;
   }
-  if (typeof document === "undefined") return null;
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d", { colorSpace });
-  if (!context) return null;
-  return { canvas, context };
+  const session: ActiveCompressionWorker = {
+    worker,
+    nextId: 0,
+    pending: new Map(),
+  };
+  worker.addEventListener("message", (event: MessageEvent<ImageCompressionWorkerResponse>) => {
+    const entry = session.pending.get(event.data.id);
+    if (!entry) return;
+    if (event.data.kind === "thumbnail") {
+      if (entry.kind === "encode") entry.onThumbnail?.(event.data.blob);
+      return;
+    }
+    session.pending.delete(event.data.id);
+    releaseCompressionWorker(session);
+    if (event.data.kind === "encode-result" && entry.kind === "encode") {
+      entry.resolve(event.data.blob);
+    } else if (event.data.kind === "reencode-result" && entry.kind === "reencode") {
+      entry.resolve(event.data.result);
+    } else {
+      entry.reject(new Error("Image compression worker failed."));
+    }
+  });
+  worker.addEventListener("error", () =>
+    failCompressionWorker(session, new Error("Image compression worker failed.")),
+  );
+  worker.addEventListener("messageerror", () =>
+    failCompressionWorker(session, new Error("Image compression worker message failed.")),
+  );
+  activeCompressionWorker = session;
+  return session;
 }
 
-async function encodeCanvas(
-  canvas: OffscreenCanvas | HTMLCanvasElement,
-  quality: number,
-  mimeType: string,
+async function encodeBitmap(
+  bitmap: ImageBitmap,
+  options: BitmapEncodeOptions,
+  extra?: {
+    thumbnailOptions?: BitmapEncodeOptions | null;
+    onThumbnail?: (blob: Blob | null) => void;
+  },
 ): Promise<Blob | null> {
-  let blob: Blob | null;
-  if (typeof HTMLCanvasElement !== "undefined" && canvas instanceof HTMLCanvasElement) {
-    blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, quality));
-  } else {
-    blob = await (canvas as OffscreenCanvas).convertToBlob({ type: mimeType, quality });
+  if (canUseImageCompressionWorker(bitmap)) {
+    const session = acquireCompressionWorker();
+    if (session) {
+      return new Promise<Blob | null>((resolve, reject) => {
+        const id = ++session.nextId;
+        session.pending.set(id, {
+          kind: "encode",
+          resolve,
+          reject,
+          ...(extra?.onThumbnail ? { onThumbnail: extra.onThumbnail } : {}),
+        });
+        const request: ImageCompressionWorkerRequest = {
+          id,
+          kind: "encode",
+          bitmap,
+          options,
+          ...(extra?.thumbnailOptions !== undefined
+            ? { thumbnailOptions: extra.thumbnailOptions }
+            : {}),
+        };
+        try {
+          session.worker.postMessage(request, [bitmap]);
+        } catch (error) {
+          session.pending.delete(id);
+          releaseCompressionWorker(session);
+          reject(error instanceof Error ? error : new Error("Failed to dispatch image encode."));
+        }
+      });
+    }
   }
-  return blob?.type === mimeType ? blob : null;
+  const mainEncode = encodeBitmapOnCanvas(bitmap, options);
+  const thumbnailEncode = extra?.thumbnailOptions
+    ? encodeBitmapOnCanvas(bitmap, extra.thumbnailOptions)
+        .catch(() => null)
+        .then((blob) => {
+          extra.onThumbnail?.(blob);
+        })
+    : Promise.resolve();
+  const [blob] = await Promise.all([mainEncode, thumbnailEncode]);
+  return blob;
+}
+
+async function reencodeBitmapWithinBudget(
+  bitmap: ImageBitmap,
+  options: ReencodeBitmapOptions,
+): Promise<ReencodeResult> {
+  if (canUseImageCompressionWorker(bitmap)) {
+    const session = acquireCompressionWorker();
+    if (session) {
+      return new Promise<ReencodeResult>((resolve, reject) => {
+        const id = ++session.nextId;
+        session.pending.set(id, { kind: "reencode", resolve, reject });
+        const request: ImageCompressionWorkerRequest = {
+          id,
+          kind: "reencode",
+          bitmap,
+          options,
+        };
+        try {
+          session.worker.postMessage(request, [bitmap]);
+        } catch (error) {
+          session.pending.delete(id);
+          releaseCompressionWorker(session);
+          reject(error instanceof Error ? error : new Error("Failed to dispatch image reencode."));
+        }
+      });
+    }
+  }
+  return reencodeBitmapWithinBudgetOnCanvas(bitmap, options);
 }
 
 const composerThumbnails = new WeakMap<File, Promise<string | null>>();
@@ -417,81 +554,16 @@ async function renderComposerImageThumbnail(file: File): Promise<string | null> 
   try {
     const colorSpace = await readImageColorSpace(file);
     bitmap = await createImageBitmap(file);
-    return await renderComposerImageThumbnailFromBitmap(bitmap, colorSpace);
+    const options = thumbnailEncodeOptions(bitmap, colorSpace);
+    if (!options) return null;
+    const blob = await encodeBitmap(bitmap, options);
+    return blob ? await readFileAsDataUrl(blob) : null;
   } catch {
     return null;
   } finally {
     bitmap?.close();
   }
 }
-
-async function renderComposerImageThumbnailFromBitmap(
-  bitmap: ImageBitmap,
-  colorSpace: PredefinedColorSpace,
-): Promise<string | null> {
-  try {
-    const side = Math.min(bitmap.width, bitmap.height);
-    if (side <= 0) return null;
-    const dimension = Math.min(256, side);
-    const surface = createCanvas(dimension, dimension, colorSpace);
-    if (!surface) return null;
-    surface.context.drawImage(
-      bitmap,
-      (bitmap.width - side) / 2,
-      (bitmap.height - side) / 2,
-      side,
-      side,
-      0,
-      0,
-      dimension,
-      dimension,
-    );
-    const blob = await encodeCanvas(surface.canvas, 1, "image/png");
-    return blob ? await readFileAsDataUrl(blob) : null;
-  } catch {
-    return null;
-  }
-}
-
-async function encodeWithinBudget(
-  bitmap: ImageBitmap,
-  colorSpace: PredefinedColorSpace,
-  maxDimension: number,
-  budgetChars: number,
-  preferredMimeType?: "image/jpeg",
-): Promise<{ blob: Blob; mimeType: string; imageSize: ImageSize } | null> {
-  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
-  const target = createCanvas(width, height, colorSpace);
-  if (!target) return null;
-
-  // Probe the codec before drawing; JPEG needs a white matte because it has no alpha.
-  const mimeType =
-    preferredMimeType ??
-    ((await encodeCanvas(target.canvas, QUALITY_STEPS[0], "image/webp"))
-      ? "image/webp"
-      : "image/jpeg");
-
-  if (mimeType === "image/jpeg") {
-    target.context.fillStyle = "#ffffff";
-    target.context.fillRect(0, 0, width, height);
-  }
-  target.context.drawImage(bitmap, 0, 0, width, height);
-
-  for (const quality of QUALITY_STEPS) {
-    const encoded = await encodeCanvas(target.canvas, quality, mimeType);
-    if (!encoded) break;
-    if (dataUrlLength(encoded) <= budgetChars) {
-      return { blob: encoded, mimeType, imageSize: { width, height } };
-    }
-  }
-  return null;
-}
-
-type ReencodeResult =
-  | { ok: true; blob: Blob; mimeType: string; imageSize: ImageSize }
-  | { ok: false; reason: ImageCompressionFailureReason };
 
 async function reencodeWithinBudget(
   file: File,
@@ -512,35 +584,14 @@ async function reencodeWithinBudget(
   }
 
   try {
-    // Shrink the previous target; using MAX_DIMENSION leaves smaller images unchanged.
-    const baseDimension = Math.min(MAX_DIMENSION, Math.max(bitmap.width, bitmap.height));
-    let encodeFailed = false;
-    for (const dimensionScale of [1, ...FALLBACK_SCALE_STEPS]) {
-      const targetDimension = Math.max(1, Math.round(baseDimension * dimensionScale));
-      let encoded: Awaited<ReturnType<typeof encodeWithinBudget>>;
-      try {
-        encoded = await encodeWithinBudget(
-          bitmap,
-          colorSpace,
-          targetDimension,
-          budgetChars,
-          preferredMimeType,
-        );
-      } catch {
-        encodeFailed = true;
-        continue;
-      }
-      encodeFailed = false;
-      if (encoded) {
-        return {
-          ok: true,
-          blob: encoded.blob,
-          mimeType: encoded.mimeType,
-          imageSize: encoded.imageSize,
-        };
-      }
-    }
-    return { ok: false, reason: encodeFailed ? "unreadable" : "too-large" };
+    return await reencodeBitmapWithinBudget(bitmap, {
+      colorSpace,
+      maxDimension: MAX_DIMENSION,
+      budgetChars,
+      ...(preferredMimeType ? { preferredMimeType } : {}),
+    });
+  } catch {
+    return { ok: false, reason: "unreadable" };
   } finally {
     bitmap.close();
   }
@@ -593,11 +644,14 @@ async function fitImageToMaxEdge(file: File): Promise<{ file: File; imageSize: I
     bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
     const imageSize = fitImageAttachmentSize(bitmap);
     if (!imageSize) return null;
-    const target = createCanvas(imageSize.width, imageSize.height, await readImageColorSpace(file));
-    if (!target) return null;
-    target.context.imageSmoothingQuality = "high";
-    target.context.drawImage(bitmap, 0, 0, imageSize.width, imageSize.height);
-    const blob = await encodeCanvas(target.canvas, QUALITY_STEPS[0], mimeType);
+    const blob = await encodeBitmap(bitmap, {
+      width: imageSize.width,
+      height: imageSize.height,
+      colorSpace: await readImageColorSpace(file),
+      mimeType,
+      quality: QUALITY_STEPS[0],
+      imageSmoothingQuality: "high",
+    });
     if (!blob) return null;
     return {
       file: new File([blob], file.name, { type: mimeType, lastModified: file.lastModified }),
@@ -716,13 +770,26 @@ async function convertHeicImage(
       if (!bitmap) return { ok: false, reason: "unreadable" };
     }
     const colorSpace = metadata.displayP3 ? "display-p3" : "srgb";
-    const surface = createCanvas(imageSize.width, imageSize.height, colorSpace);
-    if (!surface) return { ok: false, reason: "unreadable" };
-    surface.context.drawImage(bitmap, 0, 0, imageSize.width, imageSize.height);
-    const [converted] = await Promise.all([
-      encodeCanvas(surface.canvas, QUALITY_STEPS[0], "image/jpeg"),
-      renderComposerImageThumbnailFromBitmap(bitmap, colorSpace).then(onThumbnail),
-    ]);
+    let thumbnailPromise: Promise<void> | undefined;
+    const converted = await encodeBitmap(
+      bitmap,
+      {
+        width: imageSize.width,
+        height: imageSize.height,
+        colorSpace,
+        mimeType: "image/jpeg",
+        quality: QUALITY_STEPS[0],
+      },
+      {
+        thumbnailOptions: thumbnailEncodeOptions(bitmap, colorSpace),
+        onThumbnail: (blob) => {
+          thumbnailPromise = (
+            blob ? readFileAsDataUrl(blob).catch(() => null) : Promise.resolve(null)
+          ).then(onThumbnail);
+        },
+      },
+    );
+    await thumbnailPromise;
     if (!converted) return { ok: false, reason: "unreadable" };
     return {
       ok: true,

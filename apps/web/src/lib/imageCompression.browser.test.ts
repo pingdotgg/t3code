@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import heicUrl from "../../test/fixtures/images/photo.heic?url";
 import {
   compressImageForStash,
+  createComposerImageThumbnail,
   dataUrlToFile,
   prepareImageForAttachment,
   readFileAsDataUrl,
@@ -149,6 +150,43 @@ describe("prepareImageForAttachment color", () => {
       );
       if (!result.ok) throw new Error(result.reason);
       expectNear(await readPixel(result.file), decoded);
+    }
+  });
+
+  it("encodes attachments, thumbnails, and stashed images in a worker instead of the main thread", async () => {
+    const source = await makeImage("srgb", "#ff0000", "image/png");
+    const stashBudget = (await readFileAsDataUrl(source)).length - 1;
+    using convertToBlob = vi.spyOn(OffscreenCanvas.prototype, "convertToBlob");
+    using toBlob = vi.spyOn(HTMLCanvasElement.prototype, "toBlob");
+
+    const [prepared, thumbnail, stashed] = await Promise.all([
+      prepareImageForAttachment(source, 20 * 1024 * 1024),
+      createComposerImageThumbnail(source),
+      compressImageForStash(source, stashBudget),
+    ]);
+
+    if (!prepared.ok) throw new Error(prepared.reason);
+    expect(prepared.recompressed).toBe(true);
+    expect(prepared.imageSize).toEqual({ width: 2000, height: 1333 });
+    expect(thumbnail).toMatch(/^data:image\/png;base64,/);
+    if (!stashed.ok) throw new Error(stashed.reason);
+    expect(stashed.image.recompressed).toBe(true);
+    expect(convertToBlob).not.toHaveBeenCalled();
+    expect(toBlob).not.toHaveBeenCalled();
+  });
+
+  it("falls back to main-thread canvas encoding when Worker is unavailable", async () => {
+    const source = await makeImage("srgb", "#00ff00", "image/png");
+    vi.stubGlobal("Worker", undefined);
+    try {
+      using convertToBlob = vi.spyOn(OffscreenCanvas.prototype, "convertToBlob");
+      const prepared = await prepareImageForAttachment(source, 20 * 1024 * 1024);
+      if (!prepared.ok) throw new Error(prepared.reason);
+      expect(prepared.recompressed).toBe(true);
+      expect(prepared.imageSize).toEqual({ width: 2000, height: 1333 });
+      expect(convertToBlob).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });
