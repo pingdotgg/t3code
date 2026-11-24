@@ -360,6 +360,19 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
               AND json_extract(payload_json, '$.title') IS NOT ${DELETED_THREAD_TITLE}
           )`,
                 sql`json_type(thread.payload_json, '$.guestShare') IS NOT NULL`,
+                // An interrupted pass leaves events the purge does not keep.
+                sql`EXISTS (
+                  SELECT 1 FROM orchestration_events
+                    INDEXED BY idx_orchestration_events_agent_stream_sequence
+                  WHERE application_event_version = 2
+                    AND aggregate_kind = 'thread'
+                    AND stream_id = thread.thread_id
+                    AND event_type NOT IN ('thread.created', 'thread.deleted')
+                    AND NOT (
+                      event_type = 'run.updated'
+                      AND json_extract(payload_json, '$.status') = 'running'
+                    )
+                )`,
                 // The purge deletes settled requests and clears a failed one's error.
                 sql`EXISTS (
                   SELECT 1 FROM orchestration_v2_effect_outbox AS effect

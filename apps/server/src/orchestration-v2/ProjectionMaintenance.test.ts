@@ -619,5 +619,18 @@ it.effect("a deleted thread's leftover settled request is purged", () =>
     // The sweep alone finds the leftover request too.
     yield* maintenance.pruneEventStore();
     assert.deepEqual(yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox`, []);
+
+    // A pass interrupted after the content rows went still leaves a content event.
+    yield* Effect.flatMap(EventSink.EventSinkV2, (sink) =>
+      sink.write({ events: [itemEvent(thread.id, now, itemSpecs[0], 0, "event:purge:stray")] }),
+    );
+    yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${thread.id}`;
+    yield* sql`DELETE FROM orchestration_v2_turn_item_positions WHERE thread_id = ${thread.id}`;
+    yield* maintenance.pruneEventStore();
+    // It is the stream head, so its row stays as the tombstone.
+    assert.deepEqual(
+      yield* sql`SELECT event_type FROM orchestration_events WHERE event_id = 'event:purge:stray'`,
+      [{ event_type: "thread.deleted" }],
+    );
   }).pipe(Effect.provide(layerTest)),
 );
