@@ -938,7 +938,7 @@ export const make = Effect.gen(function* () {
             environment.platform === "darwin" &&
             archive !== null &&
             archive.version === downloadedVersion &&
-            !(yield* fileSystem.exists(archive.path))
+            !(yield* fileSystem.exists(archive.path).pipe(Effect.orElseSucceed(() => true)))
           ) {
             yield* updateState((current) =>
               reduceDesktopUpdateStateOnDownloadFailure(
