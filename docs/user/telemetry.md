@@ -1,6 +1,7 @@
 # Product usage data
 
-HYR Code release builds do not send product usage events. A server built from source without
+HYR Code release builds do not send product usage events, and do not read your Codex or Claude
+account files to identify you. A server built from source without
 the release patch sends them by default to upstream T3 Code's endpoint at `ingest.t3.codes`,
 associated with a hashed account or installation identifier. To count how many installations one person
 uses, the server also sends hashed account identifiers: your T3 Connect account, your OpenAI and
@@ -64,7 +65,8 @@ exactly what each one holds.
 
 ## Relay connection diagnostics
 
-HYR Code sends relay connection traces to Axiom to diagnose T3 Connect connectivity. These are
+HYR Code release builds do not send relay connection traces. A build from source without the
+release patch sends them to Axiom to diagnose T3 Connect connectivity. These are
 separate from product events. Depending on the client version, traces can include connection
 timings, environment identifiers and the connected machine's name. Failed spans can include error
 messages and stack traces; error text can quote a value the app was handling.
