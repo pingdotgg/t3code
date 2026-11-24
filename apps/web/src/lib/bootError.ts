@@ -1,6 +1,7 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
-import { CLI_RELEASES_PAGE_URL, FORK_REPOSITORY_URL } from "@t3tools/shared/cliRelease";
 
+// This page runs before the app bundle loads, so it cannot import workspace packages.
+const FORK_REPOSITORY_URL = "https://github.com/pseudoseed/t3code_dev";
 const ISSUE_URL = `${FORK_REPOSITORY_URL}/issues/new`;
 const LAST_FAILURE_KEY = "t3code:boot-failed-at";
 const REPEAT_FAILURE_MS = 5 * 60_000;
@@ -297,7 +298,7 @@ export function showBootError(error: unknown) {
   const more = element("details", { open: isRepeatFailure(Date.now()) }, [
     element("summary", { textContent: "More options if it keeps failing" }),
     ...(bridge
-      ? [link(`${CLI_RELEASES_PAGE_URL}/latest`, "Download and reinstall PseudoCode")]
+      ? [link(`${FORK_REPOSITORY_URL}/releases/latest`, "Download and reinstall PseudoCode")]
       : []),
     element("div", {}, [
       details,
