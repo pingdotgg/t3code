@@ -517,6 +517,15 @@ async fn preview(
         return StatusCode::NOT_FOUND.into_response();
     };
     let gate = SessionGate(handle);
-    crate::routes::preview::upgrade_viewer(ws, preview, &thread, &tab, false, &query, Some(gate))
-        .await
+    crate::routes::preview::upgrade_viewer(
+        ws,
+        preview,
+        &thread,
+        &tab,
+        false,
+        &query,
+        Some(gate),
+        None,
+    )
+    .await
 }

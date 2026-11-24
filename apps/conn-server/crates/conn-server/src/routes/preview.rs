@@ -15,7 +15,8 @@ use conn_preview::tabs::{Viewer, ViewerOutput};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::session::SessionGate;
+use crate::{auth::AuthStore, session::SessionGate};
+use std::sync::Arc;
 
 // Viewer file transfer and clipboard messages are not served yet.
 pub(super) fn router() -> Router<AppState> {
@@ -51,11 +52,30 @@ async fn upgrade(
     }
     let can_operate = principal.has_scope("preview:operate")
         && query.get("interactive").is_none_or(|v| v != "false");
-    upgrade_viewer(ws, preview, &thread, &tab, can_operate, &query, None).await
+    let session = Some((state.auth.clone(), principal.session_id));
+    upgrade_viewer(
+        ws,
+        preview,
+        &thread,
+        &tab,
+        can_operate,
+        &query,
+        None,
+        session,
+    )
+    .await
 }
 
+/// The session a stream ends with when it is revoked or logs out, as `/ws` does.
+pub(crate) type EndsWith = Option<(Arc<AuthStore>, String)>;
+
 /// Attaches a viewer and upgrades to its stream. With a `gate` (managed access) the stream
-/// checks it before every input and every frame, and ends when it closes.
+/// checks it before every input and every frame, and ends when it closes. With a `session`
+/// it ends when that session does.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the managed and the native route pass different end conditions"
+)]
 pub(crate) async fn upgrade_viewer(
     ws: WebSocketUpgrade,
     preview: conn_preview::tabs::Preview,
@@ -64,6 +84,7 @@ pub(crate) async fn upgrade_viewer(
     can_operate: bool,
     query: &HashMap<String, String>,
     gate: Option<SessionGate>,
+    session: EndsWith,
 ) -> Response {
     let number = |key: &str, default: u64, max: u64| {
         query
@@ -117,7 +138,15 @@ pub(crate) async fn upgrade_viewer(
         .max_write_buffer_size(8 * 1024 * 1024)
         .on_upgrade(move |mut socket| async move {
             match viewer {
-                Ok(viewer) => drive(socket, viewer, gate).await,
+                // As `/ws` does: revocation drops the whole viewer loop, even mid-command, and
+                // the socket closes with it. Unsent frames ack when dropped.
+                Ok(viewer) => match session {
+                    Some((auth, id)) => tokio::select! {
+                        () = drive(socket, viewer, gate) => {}
+                        () = crate::http::revoked(&auth, &id) => {}
+                    },
+                    None => drive(socket, viewer, gate).await,
+                },
                 Err(_) => {
                     let _ = socket
                         .send(Message::Close(Some(CloseFrame {

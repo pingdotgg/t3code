@@ -347,7 +347,13 @@ fn with_tools<T>(state_dir: &Path, work: impl FnOnce(&mut Tools) -> Outcome<T>) 
     let auth = AuthStore::open(auth_path.clone())
         .map_err(|e| Exit::fail(format!("could not read {}: {e}", auth_path.display())))?;
     let issued = auth
-        .issue_mcp_client_session(SESSION_LABEL, "full-access", false, ClientInfo::default())
+        .issue_mcp_client_session(
+            SESSION_LABEL,
+            "full-access",
+            false,
+            ClientInfo::default(),
+            crate::auth::MCP_CLIENT_SESSION_TTL_MS,
+        )
         .map_err(|e| Exit::fail(format!("could not issue a session: {e}")))?;
     let mut tools = Tools {
         client: McpClient::new(&runtime.origin, &issued.token),
