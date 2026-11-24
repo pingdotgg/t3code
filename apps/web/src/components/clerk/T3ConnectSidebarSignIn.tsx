@@ -32,7 +32,12 @@ function ConfiguredT3ConnectSidebarAvatar() {
         elements: {
           avatarBox: "size-7",
           // Clerk's unlayered trigger reset (padding, radius, background) beats layered utilities.
-          userButtonTrigger: "mb-1! rounded-lg! p-1! hover:bg-sidebar-row-hover!",
+          userButtonTrigger:
+            "mb-1! rounded-lg! p-1! hover:bg-sidebar-row-hover! [anchor-name:--t3-account-avatar]",
+          // Clerk pins this popover to bottom-end. Anchor it above the avatar instead; fixed lets it see
+          // an anchor inside the fixed settings modal.
+          userButtonPopoverCard:
+            "fixed! top-auto! left-auto! mb-2 [position-anchor:--t3-account-avatar] [position-area:top_span-right]",
         },
       }}
     >
