@@ -6,10 +6,18 @@ const USER_AVATAR_PATH = /^\/uploads\/-\/system\/user\/avatar\/\d+\/([^/]+)$/u;
 export const isGitLabHostname = (hostname: string) =>
   hostname === "gitlab.com" || hostname.split(".").includes("gitlab");
 
-export function gitLabMediaUrl(url: URL, host?: string): SourceControlMediaUrl | null {
+const isBlockedHostname = (hostname: string) => {
+  const host = hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (/^(?:\d{1,3}\.){3}\d{1,3}$/u.test(host)) return true;
+  return host.includes(":");
+};
+
+export function gitLabMediaUrl(url: URL): SourceControlMediaUrl | null {
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   if (url.username || url.password) return null;
-  if (host !== undefined && url.host.toLowerCase() !== host.toLowerCase()) return null;
+  // Self-managed GitLab is often not named "gitlab", and its SSH host is not its web origin.
+  if (isBlockedHostname(url.hostname)) return null;
   const fileName = USER_AVATAR_PATH.exec(url.pathname)?.[1];
   return fileName === undefined
     ? null

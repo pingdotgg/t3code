@@ -14,9 +14,7 @@ export const make = Effect.gen(function* () {
 
   return Effect.fn("GitLabMediaFetch.fetchMedia")(function* (request: SourceControlMediaRequest) {
     const url = URL.parse(request.url);
-    if (request.host === undefined || url === null || gitLabMediaUrl(url, request.host) === null) {
-      return null;
-    }
+    if (url === null || gitLabMediaUrl(url) === null) return null;
     // No token: UploadsController ignores PAT, and a Private-Token would ride a redirect to object storage.
     const response = yield* httpClient
       .execute(

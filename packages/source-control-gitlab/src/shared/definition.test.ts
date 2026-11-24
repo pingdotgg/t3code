@@ -160,6 +160,9 @@ describe("GitLab media URLs", () => {
       "https://gitlab.example.test/group/project/uploads/0123456789abcdef/shot.png",
       "https://gitlab.example.test/uploads/-/system/project/avatar/12/logo.png",
       "https://user:secret@gitlab.example.test/uploads/-/system/user/avatar/857/avatar.png",
+      "http://127.0.0.1:8080/uploads/-/system/user/avatar/857/avatar.png",
+      "http://169.254.169.254/uploads/-/system/user/avatar/857/avatar.png",
+      "http://localhost/uploads/-/system/user/avatar/857/avatar.png",
     ]) {
       expect(media(url), url).toBeNull();
     }

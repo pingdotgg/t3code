@@ -6,7 +6,6 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as GitLabMediaFetch from "./gitLabMediaFetch.ts";
 
 const AVATAR = "https://git.example.test/uploads/-/system/user/avatar/857/avatar.png";
-const HOST = "git.example.test";
 
 const httpLayer = (onRequest: (request: HttpClientRequest.HttpClientRequest) => Response) =>
   Layer.succeed(
@@ -22,7 +21,7 @@ it.effect("loads an uploaded avatar over HTTP and never sends a GitLab token", (
   return Effect.gen(function* () {
     const fetchMedia = yield* GitLabMediaFetch.make;
     const url = `${AVATAR}?v=1`;
-    const response = yield* fetchMedia({ url, headers: {}, host: HOST });
+    const response = yield* fetchMedia({ url, headers: {} });
     expect(requests).toEqual([{ url }]);
     expect(response?.status).toBe(200);
     expect(new Uint8Array(yield* response!.arrayBuffer)).toEqual(png);
@@ -44,7 +43,7 @@ it.effect("loads an uploaded avatar over HTTP and never sends a GitLab token", (
 it.effect("returns nothing when the host answers with a sign-in page", () =>
   Effect.gen(function* () {
     const fetchMedia = yield* GitLabMediaFetch.make;
-    const response = yield* fetchMedia({ url: AVATAR, headers: {}, host: HOST });
+    const response = yield* fetchMedia({ url: AVATAR, headers: {} });
     expect(response).toBeNull();
   }).pipe(
     Effect.provide(
@@ -59,7 +58,7 @@ it.effect("returns nothing when the host answers with a sign-in page", () =>
   ),
 );
 
-it.effect("does not fetch an avatar on any origin other than the repository's GitLab host", () => {
+it.effect("does not fetch an avatar from a loopback or link-local address", () => {
   const requests: string[] = [];
   return Effect.gen(function* () {
     const fetchMedia = yield* GitLabMediaFetch.make;
@@ -67,10 +66,8 @@ it.effect("does not fetch an avatar on any origin other than the repository's Gi
       yield* fetchMedia({
         url: "http://169.254.169.254/uploads/-/system/user/avatar/857/avatar.png",
         headers: {},
-        host: HOST,
       }),
     ).toBeNull();
-    expect(yield* fetchMedia({ url: AVATAR, headers: {} })).toBeNull();
     expect(requests).toEqual([]);
   }).pipe(
     Effect.provide(

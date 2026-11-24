@@ -4,7 +4,7 @@ import type { AssetResource, EnvironmentId, PullRequestActor } from "@t3tools/co
 import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
 import { Image } from "expo-image";
 import { useGT } from "gt-react-native";
-import { useContext } from "react";
+import { useContext, useState } from "react";
 import { View } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
@@ -108,13 +108,15 @@ function AvatarImage(props: {
   readonly size: number;
 }) {
   const { size } = props;
-  return props.uri ? (
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  return props.uri && failedUri !== props.uri ? (
     <Image
       source={props.cacheKey ? { uri: props.uri, cacheKey: props.cacheKey } : { uri: props.uri }}
       recyclingKey={props.cacheKey ?? props.uri}
       accessibilityLabel={props.actor?.login}
       style={{ width: size, height: size, borderRadius: size / 2 }}
       cachePolicy="memory-disk"
+      onError={() => setFailedUri(props.uri)}
     />
   ) : (
     <View
