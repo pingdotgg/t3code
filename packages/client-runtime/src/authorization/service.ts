@@ -127,6 +127,8 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
   }
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
+// Only direct addresses get this cap. A cached-token ticket through T3 Connect keeps the default
+// remote timeout: it can take seconds on a slow network, and timing out there discards the token.
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
 const CHECKED_DESCRIPTOR_TTL_NANOS = 5_000_000_000n;
@@ -718,7 +720,10 @@ export const make = Effect.gen(function* () {
     });
     let selected = yield* getDpopToken(input);
     if (selected.fromCache) {
-      const cachedSocket = yield* openSocket(selected, CACHED_ENDPOINT_SOCKET_TIMEOUT_MS);
+      const cachedSocket = yield* openSocket(
+        selected,
+        endpoint === undefined ? undefined : CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
+      );
       if (Result.isSuccess(cachedSocket)) {
         yield* assertSession(selected.identity);
         return cachedSocket.success;
