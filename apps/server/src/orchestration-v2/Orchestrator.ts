@@ -4963,15 +4963,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     // A running turn keeps the mode it started with; detachSessionsBehindRuntimeMode closes
-    // its session once the run ends.
+    // its session once the run ends. A run not yet running records the new mode when its turn
+    // starts, so its old-mode session closes now.
     const runtimeModeWaitsForRun =
       command.type === "thread.runtime-mode.set" &&
       liveSessions.length > 0 &&
       (yield* projectionStore
-        .getThreadRecords(command.threadId, ["runs"], {
-          runStatuses: ["preparing", "starting", "running", "waiting"],
-        })
-        .pipe(mapDispatchError(command))).runs.some(isActiveRun);
+        .getThreadRecords(command.threadId, ["runs"], { runStatuses: ["running", "waiting"] })
+        .pipe(mapDispatchError(command))).runs.length > 0;
 
     const now = yield* DateTime.now;
     if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
