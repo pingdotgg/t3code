@@ -629,6 +629,55 @@ impl Connection {
         .await
     }
 
+    /// Mints an inline HTML attachment URL with the server's matching sandbox policy.
+    pub async fn attachment_document_url(
+        &self,
+        attachment_id: &str,
+        is_mcp: bool,
+    ) -> Result<url::Url, ClientError> {
+        self.inline_attachment_url(attachment_id, "document.html", "text/html", is_mcp)
+            .await
+    }
+
+    /// Mints the signed media URL used by a sent video's inline player.
+    pub async fn attachment_video_url(
+        &self,
+        attachment_id: &str,
+        name: &str,
+        mime: &str,
+    ) -> Result<url::Url, ClientError> {
+        self.inline_attachment_url(attachment_id, name, mime, false)
+            .await
+    }
+
+    async fn inline_attachment_url(
+        &self,
+        attachment_id: &str,
+        name: &str,
+        mime: &str,
+        is_mcp: bool,
+    ) -> Result<url::Url, ClientError> {
+        let payload = conn_contract::AssetCreateUrlInput {
+            resource: conn_contract::AssetResource::Attachment(
+                conn_contract::AssetResourceAttachment {
+                    tag: lit::Attachment,
+                    attachment_id: attachment_id.to_owned(),
+                    file_name: Some(name.to_owned()),
+                    mime_type: Some(mime.to_owned()),
+                    disposition: Some(conn_contract::AssetResourceAttachmentDisposition::Inline),
+                    render_intent: is_mcp.then_some(lit::McpApp),
+                },
+            ),
+        };
+        let created = self
+            .call::<_, conn_contract::rpc::assets::create_url::Success>(
+                "assets.createUrl",
+                &payload,
+            )
+            .await?;
+        Ok(self.http_base_url.join(&created.relative_url)?)
+    }
+
     /// Asks the server for a signed URL to the workspace file `path` of thread `thread_id`
     /// (`assets.createUrl`, `workspace-file`), as web Conn's file previews do.
     ///

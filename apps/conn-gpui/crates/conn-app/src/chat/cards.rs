@@ -31,6 +31,12 @@ use gpui_kit::{
     linear_gradient, px,
 };
 
+use super::card_face::{
+    CARD_ACTION_BOX_PX, CARD_ACTION_ICON_PX, CARD_BODY_RADIUS_PX, CARD_CHEVRON_ROOM_PX,
+    CARD_ICON_PX, CARD_LINE_PX, CARD_META_LINE_PX, CARD_PREVIEW_LINES, CARD_TEXT_PX, CHECKLIST,
+    CardFace, DOWNLOAD, card_body, card_colors, card_header, card_hover_surface, card_shell,
+    disclosure_chevron, icon_with_dot, one_line_preview,
+};
 use super::color::{hsla, hsla_alpha, muted_icon, prose_foreground};
 use super::composer_state::{ComposerPendingRequest, PendingQuestion};
 use super::{
@@ -39,12 +45,6 @@ use super::{
 };
 use crate::a11y::ConnA11yExt as _;
 use crate::panels::chrome::ConnTooltipExt as _;
-
-/// Subagent summary: four body lines (`BODY_LINE_HEIGHT_PX`, 1.625 relative) before the fade.
-const SUMMARY_CLAMP_PX: f32 = 4.0 * BODY_LINE_HEIGHT_PX;
-const SUMMARY_FADE_PX: f32 = 32.0;
-/// Where a card's second and third lines start: icon (16) + gap (10).
-const SUBAGENT_TEXT_INDENT_PX: f32 = 26.0;
 
 fn attachment_name(att: &conn_contract::ChatAttachment) -> &str {
     match att {
@@ -58,44 +58,6 @@ fn attachment_name(att: &conn_contract::ChatAttachment) -> &str {
 pub(super) fn subagent_summary_key(entry_id: &str) -> String {
     format!("subagent-summary-{entry_id}")
 }
-
-/// Whether a summary is long enough to clamp: over about four lines of card width, or more than
-/// four lines of its own.
-fn summary_needs_clamp(text: &str) -> bool {
-    text.chars().count() > 200 || text.lines().filter(|line| !line.trim().is_empty()).count() > 4
-}
-
-/// The proposed-plan card's own fill (`bg-card/70`), translucent over the chat page.
-fn plan_card_fill(tokens: &conn_theme::Tokens) -> conn_theme::Rgba {
-    tokens.card.with_alpha(0.70)
-}
-
-/// What the plan card looks like over the page: the colour its collapse fade must end in.
-fn plan_card_surface(tokens: &conn_theme::Tokens) -> conn_theme::Rgba {
-    super::color::composite_over(plan_card_fill(tokens), super::color::chat_page(tokens))
-}
-
-/// A subagent card's fill: translucent glass in dark, the opaque card in light.
-fn subagent_card_fill(tokens: &conn_theme::Tokens) -> conn_theme::Rgba {
-    match tokens.appearance {
-        Appearance::Dark => tokens
-            .shell_highlight
-            .with_alpha(tokens.shell_highlight.a * 0.70),
-        Appearance::Light => tokens.shell_card,
-    }
-}
-
-/// What the subagent card looks like over the page: the colour its summary fade must end in.
-fn subagent_card_surface(tokens: &conn_theme::Tokens) -> conn_theme::Rgba {
-    super::color::composite_over(subagent_card_fill(tokens), super::color::chat_page(tokens))
-}
-
-/// Message action buttons are 24px boxes around 12px glyphs, so each glyph sits 6px inside its
-/// box. Text beside the buttons gets the same 6px, so the glyph-to-glyph and glyph-to-text gaps
-/// match.
-const ACTION_BOX_PX: f32 = 24.0;
-const ACTION_GLYPH_PX: f32 = 12.0;
-const ACTION_ICON_INSET_PX: f32 = (ACTION_BOX_PX - ACTION_GLYPH_PX) / 2.0;
 
 /// Conn's single-select auto-advance delay after picking an option.
 const AUTO_ADVANCE_DELAY: Duration = Duration::from_millis(200);
@@ -209,39 +171,51 @@ impl ChatView {
         text: String,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
+        self.render_copy_action(key, label, move || text.clone(), cx)
+    }
+
+    fn render_copy_action(
+        &self,
+        key: &str,
+        label: &'static str,
+        copy_text: impl Fn() -> String + 'static,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
         let copied = self.copied_message_key.as_deref() == Some(key);
         let fg = hsla(self.tokens.foreground);
         let muted = hsla(self.tokens.muted_foreground);
-        let hover_bg = hsla(self.tokens.shell_highlight);
+        let hover_bg = hsla_alpha(self.tokens.foreground, 0.06);
         let icon_color = if copied {
             hsla(self.tokens.primary)
         } else {
             muted
         };
         let key_owned = key.to_owned();
-        div()
+        let button = div()
             .id(SharedString::from(format!("copy-{key}")))
             .a11y_button(SharedString::from(format!("chat.copy.{key}")), label)
             .flex()
             .items_center()
             .justify_center()
-            .size(px(24.0))
+            .size(px(CARD_ACTION_BOX_PX))
             .rounded(px(6.0))
             .cursor_pointer()
             .hover(move |s| s.bg(hover_bg).text_color(fg))
             .on_click(cx.listener(move |view, _, _, cx| {
-                view.copy_with_confirmation(key_owned.clone(), text.clone(), cx);
+                view.copy_with_confirmation(key_owned.clone(), copy_text(), cx);
             }))
             .conn_tooltip(if copied { "Copied" } else { label }, &self.tokens)
             .child(icons::icon(
                 if copied { icons::CHECK } else { icons::COPY },
-                12.0,
+                CARD_ACTION_ICON_PX,
                 icon_color,
-            ))
-            .into_any_element()
+            ));
+        #[cfg(test)]
+        let button = gpui_kit::TestSupportExt::test_support(button);
+        button.into_any_element()
     }
 
-    /// Conn's hover timestamp: `text-xs tabular-nums text-muted-foreground` + full tooltip.
+    /// The hover timestamp, 13px muted like the card text, with the full time as its tooltip.
     pub(super) fn render_timestamp(&self, key: &str, iso: Option<&str>) -> Option<AnyElement> {
         let (label, tooltip) = timestamp_labels(iso?)?;
         Some(
@@ -254,8 +228,8 @@ impl ChatView {
                 )
                 .flex_none()
                 .whitespace_nowrap()
-                .text_size(px(12.0))
-                .line_height(px(16.0))
+                .text_size(px(CARD_TEXT_PX))
+                .line_height(px(CARD_META_LINE_PX))
                 .text_color(hsla(self.tokens.muted_foreground))
                 .conn_tooltip(tooltip, &self.tokens)
                 .child(label)
@@ -401,8 +375,8 @@ impl ChatView {
         }
     }
 
-    /// Attachment chips/thumbnails shown in queued bubbles and in sent bubbles with files only
-    /// (a sent bubble with images uses [`Self::render_sent_attachments`]). Images are `4:3`
+    /// Attachment chips/thumbnails shown in queued bubbles (a sent bubble uses
+    /// [`Self::render_sent_attachments`]). Images are `4:3`
     /// cells with `object-cover`, `rounded-lg` and a `border-border/80` edge, `20rem` wide for one image
     /// and two columns for several (`TimelineUserMessageRow.tsx`).
     pub(super) fn render_attachment_chips(
@@ -499,66 +473,48 @@ impl ChatView {
     }
 
     /// The attachments of a sent user bubble, in their own order: each run of images is one
-    /// gallery painted straight on the bubble, each run of files a row of pills. The bubble owns
-    /// the insets of the galleries; the pill rows carry the 16px side padding of the caption.
-    /// `has_caption` tells a leading pill row whether the caption sits above it.
+    /// gallery, each run of videos one stack of players, each run of files one stack of rows. The
+    /// bubble's own 3px padding frames all three, so none carries an inset.
     pub(super) fn render_sent_attachments(
         &self,
         key: &str,
         attachments: &[conn_contract::ChatAttachment],
-        has_caption: bool,
         cx: &mut Context<'_, Self>,
     ) -> Vec<AnyElement> {
-        use super::attachment_thumb::{gallery_columns, runs_by};
-        let is_image = |att: &conn_contract::ChatAttachment| {
-            matches!(att, conn_contract::ChatAttachment::Image(_))
-        };
+        use super::attachment_thumb::{AttachmentKind, attachment_kind, gallery_columns, runs_by};
         // One column count for the whole message, so every run's tiles are the same size.
-        let columns = gallery_columns(attachments.iter().filter(|att| is_image(att)).count());
-        let runs = runs_by(attachments, is_image);
-        let last = runs.len().saturating_sub(1);
-        runs.into_iter()
-            .enumerate()
-            .map(|(position, (is_image, range))| {
+        let columns = gallery_columns(
+            attachments
+                .iter()
+                .filter(|att| attachment_kind(att) == AttachmentKind::Image)
+                .count(),
+        );
+        runs_by(attachments, attachment_kind)
+            .into_iter()
+            .map(|(kind, range)| {
                 let start = range.start;
                 let run = &attachments[range];
-                if is_image {
-                    self.render_image_gallery(key, start, run, columns, cx)
-                } else {
-                    // The bubble's top inset is 3px: without a caption above, a pill row
-                    // starts 10px down. The bubble's bottom inset is 3px: a last pill row sits
-                    // 12px above the edge.
-                    let mut row = div()
-                        .flex()
-                        .flex_row()
-                        .flex_wrap()
-                        .items_center()
-                        .gap(px(8.0))
-                        .px(px(16.0));
-                    if position == 0 && !has_caption {
-                        row = row.pt(px(7.0));
+                match kind {
+                    AttachmentKind::Image => {
+                        self.render_image_gallery(key, start, run, columns, cx)
                     }
-                    if position == last {
-                        row = row.pb(px(9.0));
-                    }
-                    for (offset, att) in run.iter().enumerate() {
-                        let idx = start + offset;
-                        let chip_id = (SharedString::from(format!("att-{key}")), idx);
-                        row = row.child(self.file_attachment_pill(chip_id, att).a11y_group(
-                            format!("chat.attachment.{key}.{idx}"),
-                            format!("Attachment {}", attachment_name(att)),
-                        ));
-                    }
-                    row.into_any_element()
+                    AttachmentKind::Video => self.render_video_run(key, start, run),
+                    AttachmentKind::File => self.render_file_rows(key, start, run, cx),
                 }
             })
             .collect()
     }
 
-    /// One run of images as a grid of `columns` equal columns of 4:3 cover tiles, 3px apart and
-    /// inset 3px from the bubble's sides. `columns` comes from the whole message, so a run with
-    /// fewer images than columns (or a partial last row) stays left aligned at the same tile
-    /// size. Tiles carry no border; the bubble is the frame.
+    /// One run of images as rows of `columns` equal 4:3 cover tiles, 3px apart. The bubble's
+    /// padding is the gallery's inset. `columns` comes from the whole message, so a run with
+    /// fewer images than columns (or a partial last row) keeps the same tile size and stays left
+    /// aligned: the short row is filled out with empty cells of the same share. Tiles carry no
+    /// border; the bubble is the frame.
+    ///
+    /// Rows are flex rows, not a grid: a grid sizes its row tracks while the bubble's own width
+    /// is still being fitted to its caption, so it reserved tile heights for the cap width and
+    /// left a blank band under tiles that then painted narrower. A flex cell gets its width first
+    /// and its 4:3 height from that width.
     fn render_image_gallery(
         &self,
         key: &str,
@@ -571,30 +527,345 @@ impl ChatView {
             GALLERY_INSET_PX, gallery_cell, gallery_tile, gallery_tile_target, tile_radii,
         };
         let target = gallery_tile_target(columns, self.thumb_scale);
-        let mut grid = div()
-            .grid()
-            .grid_cols(columns as u16)
-            .gap(px(GALLERY_INSET_PX))
-            .mx(px(GALLERY_INSET_PX))
-            .min_w_0();
-        for (offset, att) in run.iter().enumerate() {
-            let conn_contract::ChatAttachment::Image(image) = att else {
-                continue;
-            };
-            let idx = start + offset;
-            let loaded = self
-                .attachment_image(image, target, cx)
-                .map(|(image, _)| image);
-            let radii = tile_radii(offset, run.len(), columns);
-            let cell = gallery_cell((SharedString::from(format!("att-{key}")), idx))
-                .conn_tooltip(image.name.clone(), &self.tokens)
-                .child(gallery_tile(loaded, &self.tokens, radii));
-            grid = grid.child(cell.a11y_group(
-                format!("chat.attachment.{key}.{idx}"),
-                format!("Attachment {}", image.name),
-            ));
+        let mut gallery = div().flex().flex_col().gap(px(GALLERY_INSET_PX)).min_w_0();
+        for (row_index, chunk) in run.chunks(columns).enumerate() {
+            let mut row = div()
+                .flex()
+                .flex_row()
+                .items_start()
+                .gap(px(GALLERY_INSET_PX))
+                .min_w_0();
+            for (column, att) in chunk.iter().enumerate() {
+                let conn_contract::ChatAttachment::Image(image) = att else {
+                    continue;
+                };
+                let offset = row_index * columns + column;
+                let idx = start + offset;
+                let loaded = self
+                    .attachment_image(image, target, cx)
+                    .map(|(image, _)| image);
+                let radii = tile_radii(offset, run.len(), columns);
+                let cell = gallery_cell((SharedString::from(format!("att-{key}")), idx))
+                    .flex_1()
+                    .conn_tooltip(image.name.clone(), &self.tokens)
+                    .child(gallery_tile(loaded, &self.tokens, radii));
+                let cell = cell.a11y_group(
+                    format!("chat.attachment.{key}.{idx}"),
+                    format!("Attachment {}", image.name),
+                );
+                #[cfg(test)]
+                let cell = gpui_kit::TestSupportExt::test_support(cell);
+                row = row.child(cell);
+            }
+            for _ in chunk.len()..columns {
+                row = row.child(div().flex_1().min_w_0());
+            }
+            gallery = gallery.child(row);
         }
-        grid.into_any_element()
+        gallery.into_any_element()
+    }
+
+    /// One run of videos as a stack of full-width players, 3px apart, joined like file rows. The
+    /// player (`render_sent_video`, in the embed worker) fills the slot in its own 4:3 box. A video
+    /// the server cannot serve gets the same 4:3 tile saying so, never a player.
+    fn render_video_run(
+        &self,
+        key: &str,
+        start: usize,
+        run: &[conn_contract::ChatAttachment],
+    ) -> AnyElement {
+        use super::attachment_thumb::{
+            GALLERY_INSET_PX, attachment_downloadable, file_row_radii, video_mime_type,
+        };
+        let mut stack = div().flex().flex_col().gap(px(GALLERY_INSET_PX)).min_w_0();
+        for (offset, att) in run.iter().enumerate() {
+            let idx = start + offset;
+            let (id, name, mime_type) = match att {
+                conn_contract::ChatAttachment::File(file) => {
+                    (&file.id, &file.name, &file.mime_type)
+                }
+                conn_contract::ChatAttachment::Unknown(unknown) => {
+                    (&unknown.id, &unknown.name, &unknown.mime_type)
+                }
+                conn_contract::ChatAttachment::Image(image) => {
+                    (&image.id, &image.name, &image.mime_type)
+                }
+            };
+            let radii = file_row_radii(offset, run.len());
+            let slot = div()
+                .id((SharedString::from(format!("att-{key}")), idx))
+                .a11y_group(
+                    format!("chat.attachment.{key}.{idx}"),
+                    format!("Attachment {name}"),
+                )
+                .w_full()
+                .min_w_0()
+                .overflow_hidden()
+                .rounded_tl(px(radii.top_left))
+                .rounded_tr(px(radii.top_right))
+                .rounded_br(px(radii.bottom_right))
+                .rounded_bl(px(radii.bottom_left));
+            // The player gets the type the shared rules resolved, so a generic `.mp4` plays as
+            // `video/mp4`.
+            let video_type = video_mime_type(name, mime_type).unwrap_or_else(|| mime_type.clone());
+            stack = stack.child(if attachment_downloadable(id) {
+                slot.child(self.render_sent_video(key, idx, id, name, &video_type))
+            } else {
+                slot.child(self.render_unavailable_video(name))
+            });
+        }
+        stack.into_any_element()
+    }
+
+    /// The 4:3 black tile of a video that cannot play: its name, and why there is no player.
+    fn render_unavailable_video(&self, name: &str) -> AnyElement {
+        let white = |alpha: f32| Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 1.0,
+            a: alpha,
+        };
+        div()
+            .w_full()
+            .aspect_ratio(4.0 / 3.0)
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(4.0))
+            .px(px(8.0))
+            .py(px(12.0))
+            .bg(Hsla {
+                h: 0.0,
+                s: 0.0,
+                l: 0.0,
+                a: 1.0,
+            })
+            .text_size(px(12.0))
+            .line_height(px(16.0))
+            .text_center()
+            .text_color(white(0.7))
+            .child(
+                div()
+                    .min_w_0()
+                    .max_w_full()
+                    .truncate()
+                    .child(name.to_owned()),
+            )
+            .child(div().text_color(white(0.5)).child("Video unavailable"))
+            .into_any_element()
+    }
+
+    /// One run of files as a stack of dark inset rows, 3px apart: the file icon and name on the
+    /// left, the size on the right, never closer than 16px. A row saves its file through the
+    /// native Save dialog (web's `<a download>`); it never opens the file. A file the server
+    /// cannot serve reads "Sending…" and does nothing.
+    fn render_file_rows(
+        &self,
+        key: &str,
+        start: usize,
+        run: &[conn_contract::ChatAttachment],
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        use super::attachment_thumb::{
+            GALLERY_INSET_PX, attachment_downloadable, attachment_size_label, file_row_radii,
+        };
+        let surface = super::color::message_inset_surface(&self.tokens);
+        let fg = hsla(self.tokens.foreground);
+        let muted = hsla_alpha(self.tokens.foreground, 0.68);
+        let mut stack = div()
+            .flex()
+            .flex_col()
+            .gap(px(GALLERY_INSET_PX))
+            .min_w_0()
+            .text_color(fg);
+        for (offset, att) in run.iter().enumerate() {
+            let idx = start + offset;
+            let (id, name, size) = match att {
+                conn_contract::ChatAttachment::File(file) => {
+                    (&file.id, &file.name, file.size_bytes)
+                }
+                conn_contract::ChatAttachment::Unknown(unknown) => {
+                    (&unknown.id, &unknown.name, unknown.size_bytes)
+                }
+                conn_contract::ChatAttachment::Image(image) => {
+                    (&image.id, &image.name, image.size_bytes)
+                }
+            };
+            let radii = file_row_radii(offset, run.len());
+            let file_icon = crate::file_icons::file_icon(name);
+            let downloadable = attachment_downloadable(id);
+            let (save_id, save_name) = (id.clone(), name.clone());
+            let row = div()
+                .id((SharedString::from(format!("att-{key}")), idx))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
+                .min_w_0()
+                .px(px(13.0))
+                .py(px(10.0))
+                .rounded_tl(px(radii.top_left))
+                .rounded_tr(px(radii.top_right))
+                .rounded_br(px(radii.bottom_right))
+                .rounded_bl(px(radii.bottom_left))
+                .bg(surface)
+                .conn_tooltip(name.clone(), &self.tokens);
+            let row = if downloadable {
+                row.a11y_button(
+                    format!("chat.attachment.{key}.{idx}"),
+                    format!("Save attachment {name}"),
+                )
+                .cursor_pointer()
+                .on_click(cx.listener(move |view, _, _, cx| {
+                    view.save_attachment(&save_id, &save_name, cx);
+                }))
+            } else {
+                row.a11y_group(
+                    format!("chat.attachment.{key}.{idx}"),
+                    format!("Attachment {name}, sending"),
+                )
+                .opacity(0.6)
+            };
+            stack = stack.child(
+                row.child(icons::icon(file_icon.asset, 14.0, muted))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .mr(px(8.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(name.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .ml_auto()
+                            .whitespace_nowrap()
+                            .text_color(muted)
+                            .child(if downloadable {
+                                attachment_size_label(size)
+                            } else {
+                                "Sending…".to_owned()
+                            }),
+                    ),
+            );
+        }
+        stack.into_any_element()
+    }
+
+    /// Saves a sent file where the user says: the native Save dialog opens on Downloads with the
+    /// file's own name, and nothing is fetched until a place is chosen. The file is never opened.
+    /// Any failure (no connection, the download, the write) shows in the chat's error banner.
+    fn save_attachment(&mut self, id: &str, name: &str, cx: &mut Context<'_, Self>) {
+        let file_name = super::attachment_thumb::attachment_save_name(name);
+        let Some(connection) = self.connection.clone() else {
+            self.set_error(
+                Some(format!("Could not save {file_name}: not connected")),
+                cx,
+            );
+            return;
+        };
+        let directory = std::env::var_os("HOME")
+            .map(|home| std::path::PathBuf::from(home).join("Downloads"))
+            .filter(|folder| folder.is_dir())
+            .unwrap_or_else(std::env::temp_dir);
+        let prompt = cx.prompt_for_new_path(&directory, Some(&file_name));
+        let id = id.to_owned();
+        cx.spawn(async move |this, cx| {
+            let outcome: Result<(), String> = async {
+                let chosen = match prompt.await {
+                    Ok(Ok(Some(path))) => path,
+                    // The user closed the dialog.
+                    Ok(Ok(None)) | Err(_) => return Ok(()),
+                    Ok(Err(err)) => return Err(err.to_string()),
+                };
+                let bytes = connection
+                    .fetch_attachment_bytes(&id)
+                    .await
+                    .map_err(|err| err.to_string())?;
+                cx.background_executor()
+                    .spawn(async move { std::fs::write(&chosen, bytes).map_err(|e| e.to_string()) })
+                    .await
+            }
+            .await;
+            if let Err(reason) = outcome {
+                let _ = this.update(cx, |view, cx| {
+                    view.set_error(Some(format!("Could not save {file_name}: {reason}")), cx);
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// One review comment of a sent message: the quoted diff lines in a dark inset, headed by the
+    /// file and line (`app.rs · #12`). The user's own note is the bubble's caption, above it.
+    pub(super) fn render_review_comment(
+        &self,
+        key: &str,
+        idx: usize,
+        comment: &conn_state::ReviewComment,
+    ) -> AnyElement {
+        use super::attachment_thumb::GALLERY_INSET_PX;
+        let muted = hsla(self.tokens.muted_foreground);
+        let code_fg = hsla(self.tokens.code_foreground);
+        let added = hsla(self.tokens.diff_added);
+        let removed = hsla(self.tokens.diff_removed);
+        let label = comment.label();
+        let file_icon = crate::file_icons::file_icon(&comment.file_path);
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .overflow_hidden()
+            .rounded(px(super::BUBBLE_RADIUS_PX - 2.0 * GALLERY_INSET_PX))
+            .bg(hsla(self.tokens.code_background))
+            .px(px(14.0))
+            .py(px(12.0))
+            .font_family(MONO_FONT_FAMILY)
+            .text_size(px(13.0))
+            .line_height(px(13.0 * 1.625))
+            .text_color(code_fg);
+        for line in comment.diff.lines() {
+            let color = match line.chars().next() {
+                Some('+') => added,
+                Some('-') => removed,
+                _ => code_fg,
+            };
+            // An empty line keeps its height.
+            let shown = if line.is_empty() { " " } else { line };
+            body = body.child(
+                div()
+                    .whitespace_nowrap()
+                    .text_color(color)
+                    .child(shown.to_owned()),
+            );
+        }
+        div()
+            .id(SharedString::from(format!("review-{key}-{idx}")))
+            .a11y_group(format!("chat.review.{key}.{idx}"), label.clone())
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .gap(px(GALLERY_INSET_PX))
+            .p(px(GALLERY_INSET_PX))
+            .rounded(px(super::BUBBLE_RADIUS_PX - GALLERY_INSET_PX))
+            .bg(super::color::message_inset_surface(&self.tokens))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .min_h(px(30.0 - GALLERY_INSET_PX))
+                    .px(px(11.0))
+                    .text_size(px(UI_FONT_PX))
+                    .line_height(px(UI_LINE_HEIGHT_PX))
+                    .text_color(muted)
+                    .child(icons::icon(file_icon.asset, 14.0, muted))
+                    .child(div().min_w_0().truncate().child(label)),
+            )
+            .when(!comment.diff.is_empty(), |card| card.child(body))
+            .into_any_element()
     }
 
     fn attachment_pill(
@@ -659,13 +930,11 @@ impl ChatView {
             .flex_row()
             .items_center()
             .justify_end()
-            .gap(px(8.0))
+            .gap(px(4.0))
             .opacity(0.0)
             .group_hover(group.clone(), |s| s.opacity(1.0));
         if let Some(ts) = self.render_timestamp(&format!("user-{id}"), created_at) {
-            // The icon buttons pad their glyph, the text does not: add that padding to the text's
-            // side facing an icon so every visual gap in the row is the same (#309).
-            actions = actions.child(div().mr(px(ACTION_ICON_INSET_PX)).child(ts));
+            actions = actions.child(ts);
         }
         if !text.trim().is_empty() {
             actions = actions.child(self.render_copy_button(
@@ -696,7 +965,7 @@ impl ChatView {
     ) -> AnyElement {
         let muted = hsla(self.tokens.muted_foreground);
         let fg = hsla(self.tokens.foreground);
-        let hover_bg = hsla(self.tokens.shell_highlight);
+        let hover_bg = hsla_alpha(self.tokens.foreground, 0.06);
         let mut meta = div()
             .id(SharedString::from(format!("assistant-actions-{id}")))
             .a11y_group(format!("chat.assistant.{id}.actions"), "Message actions")
@@ -734,10 +1003,11 @@ impl ChatView {
             );
         }
         if !markdown.trim().is_empty() {
-            meta = meta.child(self.render_copy_button(
+            let markdown = markdown.to_owned();
+            meta = meta.child(self.render_copy_action(
                 &format!("assistant-{id}"),
                 "Copy message",
-                markdown.to_owned(),
+                move || super::artifact_template::message_copy_text(&markdown),
                 cx,
             ));
         }
@@ -756,7 +1026,7 @@ impl ChatView {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .size(px(24.0))
+                    .size(px(CARD_ACTION_BOX_PX))
                     .rounded(px(6.0))
                     .cursor_pointer()
                     .hover(move |s| s.bg(hover_bg).text_color(fg))
@@ -766,12 +1036,11 @@ impl ChatView {
                         });
                     }))
                     .conn_tooltip("Fork from this response", &self.tokens)
-                    .child(icons::icon(icons::FORK, 12.0, muted)),
+                    .child(icons::icon(icons::FORK, CARD_ACTION_ICON_PX, muted)),
             );
         }
         if let Some(ts) = self.render_timestamp(&format!("assistant-{id}"), created_at) {
-            // See `ACTION_ICON_INSET_PX`: the timestamp has no glyph padding of its own (#309).
-            meta = meta.child(div().ml(px(ACTION_ICON_INSET_PX)).child(ts));
+            meta = meta.child(ts);
         }
         meta.into_any_element()
     }
@@ -983,11 +1252,17 @@ impl ChatView {
         state.responding = true;
         state.error = None;
         let entry_id = entry_id.to_owned();
+        let epoch = self.card_epoch;
         cx.spawn(async move |this, cx| {
             let result = connection.dispatch_command(command).await;
             let _ = this.update(cx, |view, cx| {
+                if view.card_epoch != epoch {
+                    return;
+                }
                 if let Some(state) = view.user_input_cards.get_mut(&entry_id) {
-                    state.responding = false;
+                    // An answered question stays locked until its entry settles, so a second
+                    // click cannot answer it twice.
+                    state.responding = result.is_ok();
                     if let Err(err) = result {
                         state.error = Some(crate::commands::format_client_error(&err));
                     }
@@ -1058,14 +1333,21 @@ impl ChatView {
             return;
         };
         if let Some(state) = self.user_input_cards.get_mut(entry_id) {
+            if state.responding {
+                return;
+            }
             state.responding = true;
         }
         let entry_id = entry_id.to_owned();
+        let epoch = self.card_epoch;
         cx.spawn(async move |this, cx| {
             let result = connection.dispatch_command(command).await;
             let _ = this.update(cx, |view, cx| {
+                if view.card_epoch != epoch {
+                    return;
+                }
                 if let Some(state) = view.user_input_cards.get_mut(&entry_id) {
-                    state.responding = false;
+                    state.responding = result.is_ok();
                     if let Err(err) = result {
                         state.error = Some(crate::commands::format_client_error(&err));
                     }
@@ -1077,8 +1359,8 @@ impl ChatView {
         cx.notify();
     }
 
-    /// A question's timeline row. Conn shows a pending one in the composer banner
-    /// ([`ChatView::render_question_banner`]) and leaves a quiet `Input requested` row here.
+    /// A question's timeline row. Conn shows a pending one in the request stack above the composer
+    /// ([`ChatView::render_question_panel`]) and leaves an empty row here until it settles, then the answers.
     #[expect(
         clippy::too_many_arguments,
         reason = "mirrors the Conn component props one to one"
@@ -1111,6 +1393,11 @@ impl ChatView {
         answers: &[UserInputAnswer],
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
+        // A pending question is answered in the request stack; its row appears once it settles.
+        // The empty row still splits the work around it.
+        if pending {
+            return div().into_any_element();
+        }
         let muted = hsla(self.tokens.muted_foreground);
         let label = if !answers.is_empty() {
             title.map_or_else(
@@ -1129,7 +1416,6 @@ impl ChatView {
                     "Question dismissed".to_owned()
                 }
                 TurnItemStatus::Failed => "Question failed".to_owned(),
-                _ if pending => title.map_or_else(|| "Input requested".to_owned(), str::to_owned),
                 _ => title
                     .map(str::to_owned)
                     .or_else(|| questions.first().map(|q| q.header.clone()))
@@ -1252,6 +1538,13 @@ impl ChatView {
             return;
         }
         let secret = (!decline).then(|| form.input.read(cx).value().to_string());
+        // Enter in an empty field saves nothing.
+        if secret
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return;
+        }
         let Some(payload) =
             crate::commands::secret_answer_payload(&thread_id, entry_id, secret.as_deref())
         else {
@@ -1260,15 +1553,22 @@ impl ChatView {
         form.submitting = true;
         form.error = None;
         let entry_id = entry_id.to_owned();
+        let epoch = self.card_epoch;
         cx.spawn(async move |this, cx| {
             let result = connection
                 .call_json(crate::commands::SECRETS_ANSWER_REQUEST, payload)
                 .await;
             let _ = this.update(cx, |view, cx| {
+                // The thread changed meanwhile: its form, and the secret in it, is gone.
+                if view.card_epoch != epoch {
+                    return;
+                }
                 let Some(form) = view.secret_forms.get_mut(&entry_id) else {
                     return;
                 };
-                form.submitting = false;
+                // An answered request stays locked until its entry settles, so a second click
+                // cannot send the secret twice.
+                form.submitting = result.is_ok();
                 // `secretRequestFailureMessage`: never surface transport details.
                 if let Err(err) = result {
                     let message = crate::commands::format_client_error(&err);
@@ -1278,7 +1578,6 @@ impl ChatView {
                         message
                     });
                 }
-                view.remeasure_for_id(&entry_id);
                 cx.notify();
             });
         })
@@ -1286,121 +1585,110 @@ impl ChatView {
         cx.notify();
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "mirrors the Conn component props one to one"
-    )]
+    /// A secret request's timeline row once it settles. A pending request is answered in the
+    /// request stack above the composer ([`ChatView::render_secret_panel`]); its row stays empty
+    /// so the work around it stays split.
     pub(super) fn render_secret_card(
         &self,
         id: &str,
         label: &str,
-        reason: &str,
-        url: Option<&str>,
-        file_delivery: bool,
         status: SecretRequestStatus,
         pending: bool,
-        cx: &mut Context<'_, Self>,
     ) -> AnyElement {
-        if !pending {
-            let (icon, display) = match status {
-                SecretRequestStatus::Saved => (icons::CHECK, "Saved securely and kept private"),
-                SecretRequestStatus::Declined => (icons::MINUS, "Declined"),
-                SecretRequestStatus::Cancelled => (icons::MINUS, "Request ended"),
-                SecretRequestStatus::Pending => {
-                    (icons::LOCK, "Waiting for an answer in the original thread")
-                }
-            };
-            return div()
-                .w_full()
-                .min_w_0()
-                .pb(px(8.0))
-                .child(
-                    self.work_log_line(
-                        &format!("secret-{id}"),
-                        icon,
-                        &format!("{label} · {display}"),
-                        false,
-                        false,
-                    )
-                    .text_color(hsla(self.tokens.muted_foreground)),
-                )
-                .into_any_element();
+        if pending {
+            return div().into_any_element();
         }
-        let Some(form) = self.secret_forms.get(id) else {
-            return div().h(px(24.0)).into_any_element();
+        let (icon, display) = match status {
+            SecretRequestStatus::Saved => (icons::CHECK, "Saved securely and kept private"),
+            SecretRequestStatus::Declined => (icons::MINUS, "Declined"),
+            SecretRequestStatus::Cancelled => (icons::MINUS, "Request ended"),
+            SecretRequestStatus::Pending => {
+                (icons::LOCK, "Waiting for an answer in the original thread")
+            }
         };
+        div()
+            .w_full()
+            .min_w_0()
+            .pb(px(8.0))
+            .child(
+                self.work_log_line(
+                    &format!("secret-{id}"),
+                    icon,
+                    &format!("{label} · {display}"),
+                    false,
+                    false,
+                )
+                .text_color(hsla(self.tokens.muted_foreground)),
+            )
+            .into_any_element()
+    }
+
+    /// The pending secret request as a card of the request stack: the masked field, then Decline
+    /// and Save below it. The secret lives only in the field until it is sent.
+    pub(super) fn render_secret_panel(
+        &self,
+        id: &str,
+        body_max: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<AnyElement> {
+        let (label, reason, url, file_delivery) =
+            self.cache.rows().iter().find_map(|row| match &row.entry {
+                TimelineEntry::SecretRequest {
+                    id: entry_id,
+                    label,
+                    reason,
+                    url,
+                    file_delivery,
+                    ..
+                } if entry_id == id => {
+                    Some((label.clone(), reason.clone(), url.clone(), *file_delivery))
+                }
+                _ => None,
+            })?;
+        let form = self.secret_forms.get(id)?;
         let fg = hsla(self.tokens.foreground);
         let muted = hsla(self.tokens.muted_foreground);
         let has_value = !form.input.read(cx).value().trim().is_empty();
         let submitting = form.submitting;
 
-        let mut card = div()
-            .id(SharedString::from(format!("secret-card-{id}")))
-            .a11y(
-                gpui_kit::Role::Group,
-                SharedString::from(format!("chat.secret.{id}")),
-                label.to_owned(),
-            )
+        let mut content = div()
             .flex()
             .flex_col()
-            .gap(px(12.0))
-            .w_full()
-            .min_w_0()
-            .rounded(px(12.0))
-            .border_1()
-            .border_color(hsla(self.tokens.shell_divider))
-            .bg(hsla(self.tokens.shell_tile))
-            .p(px(16.0));
-
-        let mut heading = div().flex().flex_col().gap(px(4.0)).min_w_0().child(
-            div()
-                .text_size(px(BODY_FONT_PX))
-                .line_height(px(20.0))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(fg)
-                .child(label.to_owned()),
-        );
-        if !reason.trim().is_empty() {
-            heading = heading.child(
+            .gap(px(10.0))
+            .px(px(17.0))
+            .py(px(16.0))
+            .child(
                 div()
-                    .text_size(px(BODY_FONT_PX))
-                    .line_height(px(20.0))
-                    .text_color(muted)
-                    .child(reason.to_owned()),
-            );
-        }
-        card = card.child(heading);
-
-        let save_id = id.to_owned();
-        card = card.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.0))
-                .min_w_0()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(Input::new(&form.input).disabled(submitting)),
-                )
-                .child(
-                    self.primary_button(
-                        &format!("secret-save-{id}"),
-                        "Save securely",
-                        !submitting && has_value,
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_size(px(BODY_FONT_PX))
+                            .line_height(px(20.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(fg)
+                            .child(label.clone()),
                     )
-                    .when(!submitting && has_value, |d| {
-                        d.on_click(cx.listener(move |view, _, _, cx| {
-                            view.submit_secret(&save_id, false, cx);
-                        }))
+                    .when(!reason.trim().is_empty(), |d| {
+                        d.child(
+                            div()
+                                .text_size(px(BODY_FONT_PX))
+                                .line_height(px(20.0))
+                                .text_color(muted)
+                                .child(reason.clone()),
+                        )
                     }),
-                ),
-        );
-
+            )
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .child(Input::new(&form.input).disabled(submitting)),
+            );
         if let Some(error) = &form.error {
-            card = card.child(
+            content = content.child(
                 div()
                     .text_size(px(UI_FONT_PX))
                     .line_height(px(UI_LINE_HEIGHT_PX))
@@ -1408,60 +1696,89 @@ impl ChatView {
                     .child(error.clone()),
             );
         }
-
         let note = if file_delivery {
             "Kept out of chat, in a private file this agent's commands can read for 24 hours"
         } else {
             "Stored securely, never shown to the agent"
         };
-        let mut footer_right = div().flex().flex_row().items_center().gap(px(4.0));
+        content = content.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.0))
+                .min_w_0()
+                .text_size(px(UI_FONT_PX))
+                .line_height(px(UI_LINE_HEIGHT_PX))
+                .text_color(muted)
+                .child(icons::icon(icons::SHIELD_CHECK, 14.0, muted))
+                .child(div().min_w_0().child(note)),
+        );
+        let body = div()
+            .id(SharedString::from(format!("secret-scroll-{id}")))
+            .max_h(px(body_max))
+            .overflow_y_scroll()
+            .child(content)
+            .into_any_element();
+
+        use gpui_kit::TestSupportExt as _;
+        let mut actions = Self::request_actions();
         if let Some(url) = url {
-            let url = url.to_owned();
-            footer_right = footer_right.child(
+            actions = actions.child(
                 self.ghost_button(&format!("secret-url-{id}"), "Open sign-in page", true, cx)
                     .child(icons::icon(icons::EXTERNAL_LINK, 12.0, muted))
                     .on_click(move |_, _, cx| cx.open_url(&url)),
             );
         }
+        actions = actions.child(div().flex_1());
         let decline_id = id.to_owned();
-        footer_right = footer_right.child(
-            self.ghost_button(&format!("secret-decline-{id}"), "Decline", !submitting, cx)
-                .when(!submitting, |d| {
-                    d.on_click(cx.listener(move |view, _, _, cx| {
+        let save_id = id.to_owned();
+        actions = actions
+            .child(
+                self.request_pill(
+                    format!("secret-decline-{id}"),
+                    format!("chat.secret-decline-{id}"),
+                    "Decline",
+                    "secondary",
+                    !submitting,
+                )
+                .when(!submitting, |pill| {
+                    pill.on_click(cx.listener(move |view, _, _, cx| {
                         view.submit_secret(&decline_id, true, cx);
                     }))
-                }),
-        );
-        card = card.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .gap(px(8.0))
-                .min_w_0()
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(6.0))
-                        .min_w_0()
-                        .text_size(px(UI_FONT_PX))
-                        .line_height(px(UI_LINE_HEIGHT_PX))
-                        .text_color(muted)
-                        .child(icons::icon(icons::SHIELD_CHECK, 14.0, muted))
-                        .child(div().min_w_0().child(note)),
+                })
+                .test_support(),
+            )
+            .child(
+                self.request_pill(
+                    format!("secret-save-{id}"),
+                    format!("chat.secret-save-{id}"),
+                    "Save",
+                    "accept",
+                    !submitting && has_value,
                 )
-                .child(footer_right),
-        );
+                .when(!submitting && has_value, |pill| {
+                    pill.on_click(cx.listener(move |view, _, _, cx| {
+                        view.submit_secret(&save_id, false, cx);
+                    }))
+                })
+                .test_support(),
+            );
 
-        div()
-            .w_full()
-            .min_w_0()
-            .pb(px(12.0))
-            .child(card)
-            .into_any_element()
+        Some(
+            self.request_panel(
+                SharedString::from(format!("secret-card-{id}")),
+                SharedString::from(format!("chat.secret.{id}")),
+                SharedString::from(label),
+                icons::LOCK,
+                "Secret request",
+                None,
+                body,
+                actions.into_any_element(),
+                hsla(super::request_stack::panel_colors(&self.tokens).inner),
+            )
+            .into_any_element(),
+        )
     }
 
     // -----------------------------------------------------------------------------------------
@@ -1484,106 +1801,94 @@ impl ChatView {
         } else {
             strip_displayed_plan_markdown(plan_markdown)
         };
+        let colors = card_colors(&self.tokens, CardFace::Plain);
         let fg = hsla(self.tokens.foreground);
-        let card_bg = hsla(plan_card_fill(&self.tokens));
+        let muted = hsla(self.tokens.muted_foreground);
 
-        let options = self.markdown_options(cx);
-        let mut body =
-            div()
-                .relative()
-                .mt(px(16.0))
-                .w_full()
-                .min_w_0()
-                .child(markdown::render_markdown(
-                    id,
-                    &body_md,
-                    &self.tokens,
-                    &options,
-                ));
+        let mut options = self.markdown_options(cx);
+        options.prose = Some(markdown::ProseStyle {
+            color: prose_foreground(&self.tokens),
+            size: Some((CARD_TEXT_PX, CARD_LINE_PX)),
+        });
+        let mut text = div()
+            .relative()
+            .w_full()
+            .min_w_0()
+            .child(markdown::render_markdown(
+                id,
+                &body_md,
+                &self.tokens,
+                &options,
+            ));
         if is_collapsed {
-            // Ends in the colour the card shows over the page, opaque, so no band is visible.
-            let (hidden, shown) = super::color::fade_ends(plan_card_surface(&self.tokens));
-            body = body.max_h(px(416.0)).overflow_hidden().child(
+            // Ends in the colour of the body, opaque, so no band is visible.
+            let (hidden, shown) = super::color::fade_ends(colors.body);
+            text = text.max_h(px(416.0)).overflow_hidden().child(
                 div()
                     .absolute()
                     .left_0()
                     .right_0()
                     .bottom_0()
                     .h(px(96.0))
-                    .bg(gpui_kit::linear_gradient(
+                    .bg(linear_gradient(
                         0.0,
-                        gpui_kit::linear_color_stop(hidden, 0.0),
-                        gpui_kit::linear_color_stop(shown, 1.0),
+                        linear_color_stop(hidden, 0.0),
+                        linear_color_stop(shown, 1.0),
                     )),
             );
         }
 
         let copy_text = normalize_plan_markdown_for_export(plan_markdown);
-        let mut card = div()
-            .id(SharedString::from(format!("plan-card-{id}")))
-            .a11y(
-                gpui_kit::Role::Article,
-                SharedString::from(format!("chat.plan.{id}")),
-                title.to_owned(),
+        let download = self.render_download_button(
+            &format!("plan-{id}"),
+            "Download plan",
+            "plan.md".to_owned(),
+            copy_text.clone(),
+            cx,
+        );
+        let header = card_header(true)
+            .child(icons::icon(CHECKLIST, CARD_ICON_PX, muted))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(CARD_TEXT_PX))
+                    .line_height(px(CARD_TEXT_PX * 1.5))
+                    .text_color(muted)
+                    .child("Proposed plan"),
             )
-            .flex()
-            .flex_col()
-            .w_full()
-            .min_w_0()
-            .rounded(px(16.0))
-            .border_1()
-            .border_color(hsla_alpha(self.tokens.border, 0.80))
-            .bg(card_bg)
-            .p(px(16.0))
             .child(
                 div()
                     .flex()
                     .flex_row()
-                    .flex_wrap()
                     .items_center()
-                    .justify_between()
-                    .gap(px(12.0))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(8.0))
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .px(px(6.0))
-                                    .rounded(px(6.0))
-                                    .bg(hsla(self.tokens.secondary))
-                                    .text_size(px(12.0))
-                                    .line_height(px(18.0))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(hsla(self.tokens.secondary_foreground))
-                                    .child("Plan"),
-                            )
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(BODY_FONT_PX))
-                                    .line_height(px(20.0))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(fg)
-                                    .child(title.to_owned()),
-                            ),
-                    )
+                    .gap(px(2.0))
                     .child(self.render_copy_button(
                         &format!("plan-{id}"),
                         "Copy to clipboard",
                         copy_text,
                         cx,
-                    )),
+                    ))
+                    .child(download),
+            );
+        let mut body = card_body(colors)
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .child(
+                div()
+                    .text_size(px(CARD_TEXT_PX))
+                    .line_height(px(CARD_LINE_PX))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(fg)
+                    .child(title.to_owned()),
             )
-            .child(body);
+            .child(text);
         if can_collapse {
             let toggle = key;
-            card = card.child(
-                div().mt(px(16.0)).flex().justify_center().child(
+            body = body.child(
+                div().mt(px(10.0)).flex().justify_center().child(
                     self.outline_button(
                         &format!("plan-toggle-{id}"),
                         if expanded {
@@ -1596,6 +1901,15 @@ impl ChatView {
                 ),
             );
         }
+        let card = card_shell(colors)
+            .id(SharedString::from(format!("plan-card-{id}")))
+            .a11y(
+                gpui_kit::Role::Article,
+                SharedString::from(format!("chat.plan.{id}")),
+                title.to_owned(),
+            )
+            .child(header)
+            .child(body);
         div()
             .w_full()
             .min_w_0()
@@ -1604,10 +1918,68 @@ impl ChatView {
             .into_any_element()
     }
 
+    /// A 24px header button that saves `contents` to a file the user names.
+    fn render_download_button(
+        &self,
+        key: &str,
+        label: &'static str,
+        file_name: String,
+        contents: String,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let fg = hsla(self.tokens.foreground);
+        let muted = hsla(self.tokens.muted_foreground);
+        let hover_bg = hsla_alpha(self.tokens.foreground, 0.06);
+        div()
+            .id(SharedString::from(format!("download-{key}")))
+            .a11y_button(SharedString::from(format!("chat.download.{key}")), label)
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(CARD_ACTION_BOX_PX))
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover_bg).text_color(fg))
+            .on_click(cx.listener(move |view, _, _, cx| {
+                view.save_text_file(file_name.clone(), contents.clone(), cx);
+            }))
+            .conn_tooltip(label, &self.tokens)
+            .child(icons::icon(DOWNLOAD, CARD_ACTION_ICON_PX, muted))
+            .into_any_element()
+    }
+
+    /// Asks where to save `contents` (starting in Downloads) and writes it there.
+    fn save_text_file(&mut self, file_name: String, contents: String, cx: &mut Context<'_, Self>) {
+        let directory = std::env::var_os("HOME").map_or_else(std::env::temp_dir, |home| {
+            std::path::PathBuf::from(home).join("Downloads")
+        });
+        let prompt = cx.prompt_for_new_path(&directory, Some(&file_name));
+        cx.spawn(async move |this, cx| {
+            let outcome = match prompt.await {
+                Ok(Ok(Some(path))) => cx
+                    .background_executor()
+                    .spawn(async move { std::fs::write(path, contents).map_err(|e| e.to_string()) })
+                    .await,
+                Ok(Err(err)) => Err(err.to_string()),
+                _ => return,
+            };
+            if let Err(reason) = outcome {
+                let _ = this.update(cx, |view, cx| {
+                    view.set_error(Some(format!("Could not save {file_name}: {reason}")), cx);
+                });
+            }
+        })
+        .detach();
+    }
+
     // -----------------------------------------------------------------------------------------
     // Subagents (`V2LifecycleRow.tsx` `SubagentTimelineLink` + `TASK_CARD_FACE_CLASS`)
     // -----------------------------------------------------------------------------------------
 
+    /// A delegated subagent: its provider mark with a status dot, then the model, effort and
+    /// state, and the run time at the right; below, its title and what it reported. A card with a
+    /// report opens and closes on a tap on its body; a tap on its header opens the subagent's own
+    /// thread. A card with no report is one button for the thread.
     #[expect(
         clippy::too_many_arguments,
         reason = "mirrors the Conn component props one to one"
@@ -1625,6 +1997,7 @@ impl ChatView {
         completed_at: Option<&str>,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
+        let colors = card_colors(&self.tokens, CardFace::Tinted);
         let fg = hsla(self.tokens.foreground);
         let muted = hsla(self.tokens.muted_foreground);
         let (_tone, status_label) = subagent_status_visual(status);
@@ -1640,11 +2013,6 @@ impl ChatView {
             TurnItemStatus::Pending | TurnItemStatus::Running | TurnItemStatus::Waiting
         );
         let failed = status == TurnItemStatus::Failed;
-        let detail_color = if failed {
-            hsla(self.tokens.destructive)
-        } else {
-            muted
-        };
         let elapsed = started_at
             .and_then(conn_state::parse_iso8601_epoch_ms)
             .and_then(|start| {
@@ -1657,140 +2025,178 @@ impl ChatView {
             })
             .map(conn_state::format_duration);
 
-        let (card_fill, card_hover, ring_fill) = match self.tokens.appearance {
-            Appearance::Dark => (
-                hsla(subagent_card_fill(&self.tokens)),
-                hsla(self.tokens.shell_highlight),
-                hsla(conn_theme::color_mix_srgb(
-                    self.tokens.foreground,
-                    0.056,
-                    self.tokens.shell_card,
-                )),
-            ),
-            Appearance::Light => (
-                hsla(subagent_card_fill(&self.tokens)),
-                hsla(
-                    self.tokens
-                        .shell_card
-                        .with_alpha(self.tokens.shell_card.a * 0.70),
-                ),
-                hsla(self.tokens.shell_card),
-            ),
-        };
-
-        // Nick (#290): the text block sits 4px further from the robot icon than Conn's `gap-1.5`
-        // (6px). Lines 2 and the summary indent by icon (16) + this gap so all three stay aligned.
-        const ICON_TEXT_GAP_PX: f32 = 10.0;
-        const TEXT_INDENT_PX: f32 = 16.0 + ICON_TEXT_GAP_PX;
-
-        // Line 1 (`text-ui leading-5`): `StatusDotBadge` over `BotIcon` (`size-4`) + title.
-        let mut lead_icon = div()
-            .relative()
-            .flex()
-            .items_center()
-            .flex_none()
-            .child(crate::icons::provider_mark(role, 16.0, muted));
-        if let Some(dot_color) = dot {
-            lead_icon = lead_icon.child(crate::panels::chrome::status_dot_cutout(
-                dot_color, ring_fill, None, false,
-            ));
+        // Lab `SubagentCard`: `<model> · <effort>` (and the state while no time shows), the run
+        // time at the right.
+        let model_text = self
+            .subagent_models
+            .get(id)
+            .and_then(|model| subagent_model_text(self.server_config.catalog(), model));
+        let mut meta_parts: Vec<String> = Vec::new();
+        if let Some(remote) = remote_child {
+            meta_parts.push(format!("on {}", remote.label));
         }
-        let line1 = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(ICON_TEXT_GAP_PX))
-            .w_full()
-            .min_w_0()
-            .child(lead_icon)
+        meta_parts.extend(model_text);
+        if elapsed.is_none() {
+            meta_parts.push(status_label.to_owned());
+        }
+        let mut header = card_header(false)
+            .child(icon_with_dot(
+                crate::icons::provider_mark(role, CARD_ICON_PX, muted),
+                dot.map(|core| (core, colors.surface())),
+            ))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
-                    .font_weight(if working {
-                        FontWeight::NORMAL
-                    } else {
-                        FontWeight::MEDIUM
-                    })
-                    .text_color(fg)
-                    .child(title.to_owned()),
+                    .text_size(px(CARD_TEXT_PX))
+                    .line_height(px(CARD_META_LINE_PX))
+                    .text_color(muted)
+                    .child(meta_parts.join(" · ")),
             );
-
-        // Line 2 (`ps-5.5 gap-1.5 text-ui leading-4 text-muted-foreground tabular-nums`):
-        // plain `12px` provider mark + optional `on <remote>` + `<provider> · <elapsed/status>`.
-        // Nick (#296): the provider mark leads line 1; line 2 shows `<model> · <effort>` instead of
-        // the provider name, then the elapsed time.
-        let time_text = elapsed.unwrap_or_else(|| status_label.to_owned());
-        let model_text = self
-            .subagent_models
-            .get(id)
-            .and_then(|model| subagent_model_text(self.server_config.catalog(), model));
-        let mut line2 = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.0))
-            .pl(px(TEXT_INDENT_PX))
-            .min_w_0()
-            .text_size(px(UI_FONT_PX))
-            .line_height(px(16.0))
-            .text_color(muted);
-        if let Some(remote) = remote_child {
-            line2 = line2.child(div().flex_none().child(format!("on {}", remote.label)));
-        }
-        line2 = line2.child(div().min_w_0().truncate().child(match model_text {
-            Some(model) => format!("{model} · {time_text}"),
-            None => time_text,
-        }));
-
-        let mut card = div()
-            .id(SharedString::from(format!("subagent-{id}")))
-            .a11y_group(
-                format!("chat.subagent.{id}"),
-                format!("Subagent {title}, {status_label}"),
-            )
-            .flex()
-            .flex_col()
-            .gap(px(4.0))
-            .w_full()
-            .min_w_0()
-            .rounded(px(8.0))
-            .border_1()
-            .border_color(hsla(self.tokens.shell_divider))
-            .bg(card_fill)
-            .px(px(9.0))
-            .pt(px(10.0))
-            .pb(px(12.0))
-            .child(line1)
-            .child(line2);
-
-        if let Some(detail) = summary.map(str::trim).filter(|s| !s.is_empty()) {
-            card = card.child(self.render_subagent_summary(id, detail, detail_color, cx));
+        if let Some(elapsed) = elapsed {
+            header = header.child(
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_size(px(CARD_TEXT_PX))
+                    .line_height(px(CARD_META_LINE_PX))
+                    .text_color(muted)
+                    .child(elapsed),
+            );
         }
 
-        if let Some(child) = remote_child
-            .map(|remote| remote.thread_id.as_str())
-            .or(child_thread_id)
-        {
-            let child = child.to_owned();
-            let environment_id = remote_child.map(|remote| remote.environment_id.clone());
-            card = card
+        let summary = summary.map(str::trim).filter(|s| !s.is_empty());
+        let expanded = self.expanded_ids.contains(&subagent_summary_key(id));
+        let mut title_row = div()
+            .relative()
+            .text_size(px(CARD_TEXT_PX))
+            .line_height(px(CARD_LINE_PX))
+            .font_weight(if working {
+                FontWeight::NORMAL
+            } else {
+                FontWeight::MEDIUM
+            })
+            .text_color(fg)
+            .child(title.to_owned());
+        let body: AnyElement = if let Some(detail) = summary {
+            title_row = title_row
+                .pr(px(CARD_CHEVRON_ROOM_PX))
+                .child(disclosure_chevron(expanded, muted));
+            let report = if expanded {
+                let mut options = self.markdown_options(cx);
+                options.prose = Some(markdown::ProseStyle {
+                    color: prose_foreground(&self.tokens),
+                    size: Some((CARD_TEXT_PX, CARD_LINE_PX)),
+                });
+                div()
+                    .pt(px(6.0))
+                    .w_full()
+                    .min_w_0()
+                    // Links and code buttons in the report are not a tap on the card.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(markdown::render_markdown(
+                        &format!("subagent-{id}"),
+                        detail,
+                        &self.tokens,
+                        &options,
+                    ))
+            } else {
+                div()
+                    .pt(px(6.0))
+                    .min_w_0()
+                    .text_size(px(CARD_TEXT_PX))
+                    .line_height(px(CARD_LINE_PX))
+                    .text_color(if failed {
+                        hsla(self.tokens.destructive)
+                    } else {
+                        muted
+                    })
+                    .text_ellipsis()
+                    .line_clamp(CARD_PREVIEW_LINES)
+                    .child(one_line_preview(detail))
+            };
+            let entry_id = id.to_owned();
+            let toggle = card_body(colors)
+                .child(title_row)
+                .child(report)
+                .id(SharedString::from(subagent_summary_key(id)))
                 .a11y_button(
-                    SharedString::from(format!("chat.subagent.{id}")),
-                    format!("Open {title}"),
+                    format!("chat.subagent.{id}.toggle"),
+                    if expanded {
+                        "Collapse subagent summary"
+                    } else {
+                        "Expand subagent summary"
+                    },
                 )
                 .cursor_pointer()
-                .hover(move |s| s.bg(card_hover))
+                .on_click(cx.listener(move |view, _, _, cx| {
+                    view.toggle_subagent_summary(&entry_id, cx);
+                }));
+            // Tests find a button by its label only when it is observed.
+            #[cfg(test)]
+            let toggle = {
+                use gpui_kit::TestSupportExt as _;
+                toggle.test_support()
+            };
+            toggle.into_any_element()
+        } else {
+            card_body(colors).child(title_row).into_any_element()
+        };
+        let card = card_shell(colors).id(SharedString::from(format!("subagent-{id}")));
+        let open = remote_child
+            .map(|remote| {
+                (
+                    remote.thread_id.clone(),
+                    Some(remote.environment_id.clone()),
+                )
+            })
+            .or_else(|| child_thread_id.map(|child| (child.to_owned(), None)));
+        let a11y_label = format!("Subagent {title}, {status_label}");
+        // A card that opens a thread lightens under the pointer, as the subagent card always did.
+        let hover = card_hover_surface(colors, &self.tokens);
+        let card = match (open, summary.is_some()) {
+            // The header opens the thread; the body opens and closes the report.
+            (Some((thread_id, environment_id)), true) => {
+                let open_header = header
+                    .id(SharedString::from(format!("subagent-open-{id}")))
+                    .a11y_button(format!("chat.subagent.{id}.open"), format!("Open {title}"))
+                    .rounded(px(CARD_BODY_RADIUS_PX))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(ChatEvent::OpenThread {
+                            thread_id: thread_id.clone(),
+                            environment_id: environment_id.clone(),
+                        });
+                    }));
+                #[cfg(test)]
+                let open_header = {
+                    use gpui_kit::TestSupportExt as _;
+                    open_header.test_support()
+                };
+                card.a11y_group(format!("chat.subagent.{id}"), a11y_label)
+                    .child(open_header)
+                    .child(body)
+            }
+            // No report: the whole card is the button for the thread.
+            (Some((thread_id, environment_id)), false) => card
+                .a11y_button(format!("chat.subagent.{id}"), format!("Open {title}"))
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover))
                 .on_click(cx.listener(move |_, _, _, cx| {
                     cx.emit(ChatEvent::OpenThread {
-                        thread_id: child.clone(),
+                        thread_id: thread_id.clone(),
                         environment_id: environment_id.clone(),
                     });
-                }));
-        }
+                }))
+                .child(header)
+                .child(body),
+            (None, _) => card
+                .a11y_group(format!("chat.subagent.{id}"), a11y_label)
+                .child(header)
+                .child(body),
+        };
 
         #[cfg(test)]
         let card = {
@@ -1803,88 +2209,6 @@ impl ChatView {
             .pb(px(8.0))
             .child(card)
             .into_any_element()
-    }
-
-    /// A subagent card's summary (Nick, #340): the agent's Markdown through the thread's renderer, in
-    /// the thread body's size and 1.625 line height, clamped to a few lines under a fade with a
-    /// Show more / Show less toggle when it is long. The toggle does not open the thread.
-    fn render_subagent_summary(
-        &self,
-        id: &str,
-        detail: &str,
-        color: Hsla,
-        cx: &mut Context<'_, Self>,
-    ) -> AnyElement {
-        let clampable = summary_needs_clamp(detail);
-        let expanded = self.expanded_ids.contains(&subagent_summary_key(id));
-        let mut options = self.markdown_options(cx);
-        options.prose = Some(markdown::ProseStyle { color, size: None });
-        let body =
-            markdown::render_markdown(&format!("subagent-{id}"), detail, &self.tokens, &options);
-
-        let mut clipped = div()
-            .relative()
-            .w_full()
-            .min_w_0()
-            .overflow_hidden()
-            .child(body);
-        if clampable && !expanded {
-            // The card's glass fill is translucent: the fade ends in what it looks like over the
-            // page, opaque. Ending in the fill itself would stack a second layer on the first.
-            let (hidden, shown) = super::color::fade_ends(subagent_card_surface(&self.tokens));
-            clipped = clipped.max_h(px(SUMMARY_CLAMP_PX)).child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
-                    .h(px(SUMMARY_FADE_PX))
-                    .bg(linear_gradient(
-                        180.0,
-                        linear_color_stop(shown, 0.0),
-                        linear_color_stop(hidden, 1.0),
-                    )),
-            );
-        }
-
-        let mut block = div()
-            .id(SharedString::from(format!("subagent-summary-{id}")))
-            .a11y_group(
-                format!("chat.subagent.{id}.summary"),
-                "Subagent summary",
-            )
-            .flex()
-            .flex_col()
-            .gap(px(4.0))
-            .pl(px(SUBAGENT_TEXT_INDENT_PX))
-            // Nick (#296): more room between the model line and the text below it.
-            .pt(px(6.0))
-            .min_w_0()
-            .child(clipped);
-        if clampable {
-            let entry_id = id.to_owned();
-            let label = if expanded { "Show less" } else { "Show more" };
-            let muted = hsla(self.tokens.muted_foreground);
-            let fg = hsla(self.tokens.foreground);
-            block = block.child(
-                div()
-                    .id(SharedString::from(format!("subagent-toggle-{id}")))
-                    .a11y_button(format!("chat.subagent.{id}.toggle"), label)
-                    .self_start()
-                    .cursor_pointer()
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
-                    .text_color(muted)
-                    .hover(move |s| s.text_color(fg))
-                    // Not a click on the card: pressing here must not open the thread.
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        view.toggle_subagent_summary(&entry_id, cx);
-                    }))
-                    .child(label),
-            );
-        }
-        block.into_any_element()
     }
 
     // -----------------------------------------------------------------------------------------
@@ -1903,10 +2227,8 @@ impl ChatView {
         let hover_bg = hsla(self.tokens.shell_highlight);
         let added = hsla(self.tokens.diff_added);
         let removed = hsla(self.tokens.diff_removed);
-        let surface = match self.tokens.appearance {
-            conn_theme::Appearance::Dark => hsla_alpha(self.tokens.input, 0.20),
-            conn_theme::Appearance::Light => hsla(self.tokens.secondary),
-        };
+        let surface = hsla(super::color::changed_files_surface(&self.tokens));
+        let panel = super::color::changed_files_panel(&self.tokens);
         let label = if cp.file_count == 1 {
             "1 changed file".to_owned()
         } else {
@@ -1980,7 +2302,7 @@ impl ChatView {
                         } else {
                             icons::CHEVRONS_UP_DOWN
                         },
-                        12.0,
+                        14.0,
                         muted,
                     )),
             );
@@ -1995,16 +2317,12 @@ impl ChatView {
                     format!("Open diff · {label}"),
                 )
                 .flex()
-                .flex_row()
                 .items_center()
-                .gap(px(4.0))
-                .h(px(24.0))
-                .px(px(8.0))
+                .justify_center()
+                .size(px(24.0))
                 .rounded(px(6.0))
                 .cursor_pointer()
-                .text_size(px(UI_FONT_PX))
-                .text_color(muted)
-                .hover(move |s| s.bg(hover_bg).text_color(fg))
+                .hover(move |s| s.bg(hover_bg))
                 .on_click(cx.listener(move |_, _, _, cx| {
                     cx.emit(ChatEvent::OpenTurnDiff {
                         run_id: open_run.clone(),
@@ -2012,18 +2330,19 @@ impl ChatView {
                         file_path: open_path.clone(),
                     });
                 }))
-                .conn_tooltip("Open the full diff", &self.tokens)
-                .child(icons::icon(icons::FILE_DIFF, 12.0, muted))
-                .child("Open diff"),
+                .conn_tooltip("Open diff", &self.tokens)
+                .child(icons::icon(icons::FILE_DIFF, 14.0, muted)),
         );
 
         let mut card = div()
             .id(SharedString::from(format!("changed-files-{run_id}")))
-            .a11y_group(format!("chat.changed-files.{run_id}"), label)
+            .a11y_group(format!("chat.changed-files.group.{run_id}"), label)
             .flex()
             .flex_col()
             .w_full()
             .min_w_0()
+            .gap(px(3.0))
+            .p(px(3.0))
             .rounded(px(14.0))
             .bg(surface)
             .child(
@@ -2033,10 +2352,9 @@ impl ChatView {
                     .items_center()
                     .justify_between()
                     .gap(px(8.0))
-                    .pl(px(18.0))
-                    .pr(px(10.0))
-                    .pt(px(8.0))
-                    .pb(px(4.0))
+                    .min_h(px(30.0))
+                    .pl(px(11.0))
+                    .pr(px(5.0))
                     .child(header_left)
                     .child(header_right),
             );
@@ -2049,9 +2367,14 @@ impl ChatView {
             .unwrap_or(&empty);
         let rows = flatten_turn_diff_tree(&tree, overrides, all_expanded);
         let has_dir_nodes = tree.iter().any(|n| n.is_directory);
-        let mut list = div().flex().flex_col().px(px(4.0)).pb(px(6.0));
+        let mut list = div()
+            .flex()
+            .flex_col()
+            .p(px(3.0))
+            .rounded(px(11.0))
+            .bg(panel);
         for (row_idx, row) in rows.iter().enumerate() {
-            let left = 4.0 + row.depth as f32 * TREE_INDENT_PX;
+            let left = 8.0 + row.depth as f32 * TREE_INDENT_PX;
             let mut el = div()
                 .id((SharedString::from(format!("cf-row-{run_id}")), row_idx))
                 .flex()
@@ -2062,9 +2385,10 @@ impl ChatView {
                 .w_full()
                 .min_w_0()
                 .pl(px(left))
-                .pr(px(10.0))
-                .rounded(px(6.0))
+                .pr(px(8.0))
+                .rounded(px(8.0))
                 .cursor_pointer()
+                .hover(move |s| s.bg(hover_bg))
                 .text_size(px(UI_FONT_PX))
                 .line_height(px(18.0));
             if row.is_directory {
@@ -2118,13 +2442,11 @@ impl ChatView {
                     .color
                     .map(|c| hsla(c.for_appearance(self.tokens.appearance)))
                     .unwrap_or_else(|| hsla_alpha(self.tokens.muted_foreground, 0.7));
-                let hover = hsla_alpha(self.tokens.accent, 0.60);
                 el = el
                     .a11y_button(
                         SharedString::from(format!("chat.changed-files.file.{run_id}.{row_idx}")),
                         row.path.clone(),
                     )
-                    .hover(move |s| s.bg(hover))
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(ChatEvent::OpenTurnDiff {
                             run_id: file_run.clone(),
@@ -2287,34 +2609,6 @@ impl ChatView {
                 ));
         }
         line
-    }
-
-    /// Conn `Button` default (primary) at `size="sm"`.
-    pub(super) fn primary_button(
-        &self,
-        key: &str,
-        label: &str,
-        enabled: bool,
-    ) -> gpui_kit::Stateful<gpui_kit::Div> {
-        let bg = hsla(self.tokens.primary);
-        let fg = hsla(self.tokens.primary_foreground);
-        div()
-            .id(SharedString::from(key.to_owned()))
-            .a11y_button(SharedString::from(format!("chat.{key}")), label.to_owned())
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .h(px(32.0))
-            .px(px(12.0))
-            .rounded(px(8.0))
-            .bg(bg)
-            .text_color(fg)
-            .text_size(px(UI_FONT_PX))
-            .font_weight(FontWeight::MEDIUM)
-            .when(enabled, |d| d.cursor_pointer().hover(|s| s.opacity(0.9)))
-            .when(!enabled, |d| d.opacity(0.5))
-            .child(label.to_owned())
     }
 
     /// Conn `Button variant="ghost-muted" size="xs"`.
@@ -2499,93 +2793,5 @@ mod subagent_model_tests {
             subagent_model_text(&catalog, &SubagentModel::default()),
             None
         );
-    }
-}
-
-#[cfg(test)]
-mod action_row_spacing_tests {
-    use super::{ACTION_BOX_PX, ACTION_GLYPH_PX, ACTION_ICON_INSET_PX};
-
-    /// Row gap 4px: glyph to glyph is gap + both insets; glyph to text must equal it.
-    #[test]
-    fn glyph_to_glyph_and_glyph_to_text_gaps_are_equal() {
-        let gap = 4.0;
-        let glyph_to_glyph = gap + 2.0 * ACTION_ICON_INSET_PX;
-        let glyph_to_text = gap + ACTION_ICON_INSET_PX + ACTION_ICON_INSET_PX;
-        assert_eq!(glyph_to_glyph, glyph_to_text);
-        assert_eq!(ACTION_ICON_INSET_PX * 2.0 + ACTION_GLYPH_PX, ACTION_BOX_PX);
-    }
-}
-
-#[cfg(test)]
-mod subagent_summary_tests {
-    use super::{SUMMARY_CLAMP_PX, summary_needs_clamp};
-    use crate::chat::BODY_LINE_HEIGHT_PX;
-
-    #[test]
-    fn long_or_many_lined_summaries_clamp_and_short_ones_do_not() {
-        assert!(!summary_needs_clamp("All clear."));
-        assert!(!summary_needs_clamp("one\ntwo\nthree\nfour"));
-        assert!(summary_needs_clamp("one\ntwo\nthree\nfour\nfive"));
-        assert!(summary_needs_clamp(&"word ".repeat(60)));
-        assert!(
-            !summary_needs_clamp("one\n\n\ntwo"),
-            "blank lines do not count"
-        );
-    }
-
-    /// A collapse fade ends in exactly the colour the text sits on: the card's fill over the chat
-    /// page, opaque. The fade's other end is the same colour at zero alpha, so nothing tints the
-    /// middle. Holds for the plan card and the subagent summary in every built-in theme.
-    #[test]
-    fn collapse_fades_end_in_the_card_surface_in_every_theme() {
-        use super::{plan_card_fill, plan_card_surface, subagent_card_fill, subagent_card_surface};
-        use crate::chat::color::{chat_page, composite_over, fade_ends};
-        use conn_theme::{Rgba, Tokens, builtin_themes};
-
-        let near = |a: Rgba, b: Rgba| {
-            (a.r - b.r).abs() < 1e-4 && (a.g - b.g).abs() < 1e-4 && (a.b - b.b).abs() < 1e-4
-        };
-        for theme in builtin_themes() {
-            let tokens = Tokens::derive(&theme);
-            let page = chat_page(&tokens);
-            assert!(
-                (page.a - 1.0).abs() < 1e-6,
-                "{} chat page is opaque",
-                theme.id
-            );
-            for (name, fill, surface) in [
-                ("plan", plan_card_fill(&tokens), plan_card_surface(&tokens)),
-                (
-                    "subagent",
-                    subagent_card_fill(&tokens),
-                    subagent_card_surface(&tokens),
-                ),
-            ] {
-                let (hidden, shown) = fade_ends(surface);
-                let seen = composite_over(fill, page);
-                assert!(near(seen, surface), "{} {name} surface", theme.id);
-                assert!(
-                    (hidden.a - 1.0).abs() < 1e-6,
-                    "{} {name} fade is opaque",
-                    theme.id
-                );
-                assert!(shown.a.abs() < 1e-6, "{} {name} fade is clear", theme.id);
-                assert!(
-                    (hidden.h - shown.h).abs() < 1e-6
-                        && (hidden.s - shown.s).abs() < 1e-6
-                        && (hidden.l - shown.l).abs() < 1e-6,
-                    "{} {name} fade ends share one colour",
-                    theme.id
-                );
-            }
-        }
-    }
-
-    /// The clamp is four lines of the thread body's 1.625 relative line height (14px, 22.75px).
-    #[test]
-    fn the_clamp_is_four_body_lines() {
-        assert!((BODY_LINE_HEIGHT_PX / 14.0 - 1.625).abs() < 1e-4);
-        assert!((SUMMARY_CLAMP_PX - 91.0).abs() < 1e-3);
     }
 }

@@ -35,7 +35,7 @@ const TEST_WINDOW_HEIGHT: f32 = 900.0;
 
 /// Mounts a full `ConnApp` window in `TestAppContext` (`1440×900`, Dark Ocean) with keybindings,
 /// theme tokens, and assets initialized.
-fn mount_app(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ConnApp>) {
+pub(crate) fn mount_app(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ConnApp>) {
     mount_app_with_server(cx, None)
 }
 
@@ -268,6 +268,7 @@ fn kitchen_sink_thread() -> ThreadState {
             created_at: Some("2026-11-22T15:00:00.000Z".to_owned()),
             attachments: Vec::new(),
             is_steer: false,
+            review_comments: Vec::new(),
             run_id: Some("run-1".to_owned()),
         },
         TimelineEntry::User {
@@ -277,6 +278,7 @@ fn kitchen_sink_thread() -> ThreadState {
             created_at: Some("2026-11-22T15:00:10.000Z".to_owned()),
             attachments: Vec::new(),
             is_steer: true,
+            review_comments: Vec::new(),
             run_id: Some("run-1".to_owned()),
         },
         TimelineEntry::Thinking {
@@ -1211,7 +1213,84 @@ fn thread_hover_card_top_is_level_with_the_hovered_row(cx: &mut TestAppContext) 
 }
 
 #[gpui_kit::test]
-fn pending_question_banner_sits_on_the_composer_and_digits_pick_its_options(
+fn artifact_template_message_copy_writes_the_rendered_label(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    let mut thread = ThreadState::new("thread-selected".to_owned());
+    thread.entries.push(TimelineEntry::Assistant {
+        id: "template-message".to_owned(),
+        markdown: r#"Before
+
+::artifact-template{artifact_kind="document" display_name="Q&amp;A notes" skill_directory="/skills/artifact-template-report" skill_name="artifact-template-report"}
+
+After"#.to_owned(),
+        streaming: false,
+        created_at: None,
+        run_id: None,
+        status: ItemStatus::Completed,
+    });
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), thread, cx);
+        });
+    });
+    cx.update_window(window, |_, window, cx| {
+        let button = center_by_label(window, cx, "Copy message");
+        window.pointer_move(button, None, cx);
+        window.render_frame(cx);
+        window.pointer_down(button, MouseButton::Left, cx);
+        window.pointer_up(button, MouseButton::Left, cx);
+    })
+    .unwrap();
+    let copied = cx.read(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(
+        copied.as_deref(),
+        Some("Before\n\nQ&A notes (Document template)\n\nAfter")
+    );
+}
+
+#[gpui_kit::test]
+fn a_virtualized_sent_gallery_ends_three_pixels_above_the_bubble_edge(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    let mut thread = kitchen_sink_thread();
+    thread.entries.truncate(1);
+    let TimelineEntry::User { attachments, .. } = &mut thread.entries[0] else {
+        panic!("expected the first user message");
+    };
+    for index in 0..5 {
+        attachments.push(conn_contract::ChatAttachment::Image(
+            conn_contract::ChatImageAttachment {
+                r#type: conn_contract::lit::Image,
+                id: format!("image-{index}"),
+                name: format!("image-{index}.png"),
+                mime_type: "image/png".into(),
+                size_bytes: 100,
+                source: None,
+            },
+        ));
+    }
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), thread, cx);
+        })
+    });
+    // First layout measures the lane. The next lays out the tiles using that width.
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let bubble = window.find_by_label("User message").bounds();
+        let first = window.find_by_label("Attachment image-0.png").bounds();
+        let last = window.find_by_label("Attachment image-4.png").bounds();
+        assert!((f32::from(bubble.bottom() - last.bottom()) - 3.0).abs() <= 0.6);
+        assert!((f32::from(last.top() - first.bottom()) - 3.0).abs() <= 0.6);
+        assert_eq!(first.left(), last.left());
+    })
+    .expect("mounted gallery window");
+}
+
+#[gpui_kit::test]
+fn pending_question_card_sits_above_the_composer_and_digits_pick_its_options(
     cx: &mut TestAppContext,
 ) {
     let (window, app) = mount_app(cx);
@@ -1228,16 +1307,15 @@ fn pending_question_banner_sits_on_the_composer_and_digits_pick_its_options(
     };
     let _ = cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
-        // The banner is a drawer over the composer card: inset, and tucked under its top edge.
-        let banner = window.find_by_label("Mode").bounds();
+        // The question is the front card of the request stack, with the pending secret request
+        // waiting behind it: two requests, one card showing behind the front one.
+        assert_eq!(chat.read(cx).request_stack_for_test(), (2, 1));
+        // Its options sit clear of the composer card.
         let card = window.find_by_label("Message input card").bounds();
+        let headless = window.find_by_label("Headless").bounds();
         assert!(
-            banner.top() < card.top() && banner.bottom() > card.top(),
-            "banner {banner:?} must tuck under the composer card {card:?}"
-        );
-        assert!(
-            banner.left() > card.left() && banner.right() < card.right(),
-            "banner {banner:?} must sit inside the card's width {card:?}"
+            headless.bottom() <= card.top(),
+            "the question's options {headless:?} must sit above the composer card {card:?}"
         );
         assert_eq!(selected(window, cx, "VMPal"), Some(false));
         assert_eq!(selected(window, cx, "Headless"), Some(false));
@@ -1273,6 +1351,44 @@ fn pending_question_banner_sits_on_the_composer_and_digits_pick_its_options(
         window.press("1", cx);
         assert_eq!(selected(window, cx, "VMPal"), Some(true));
         assert_eq!(selected(window, cx, "Headless"), Some(false));
+    });
+}
+
+#[gpui_kit::test]
+fn pending_secret_request_is_answered_in_the_stack_with_decline_and_save_below_the_field(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_app(cx);
+    let chat = cx.read(|cx| app.read(cx).chat_for_test());
+    let mut thread = kitchen_sink_thread();
+    thread
+        .entries
+        .retain(|entry| !matches!(entry, TimelineEntry::UserInputRequest { .. }));
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), thread, cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        // The secret request is the stack's only card.
+        assert_eq!(chat.read(cx).request_stack_for_test(), (1, 0));
+        let card = window.find_by_label("Message input card").bounds();
+        let decline = window.find_by_label("Decline").bounds();
+        let save = window.find_by_label("Save").bounds();
+        assert!(
+            decline.bottom() <= card.top() && save.bottom() <= card.top(),
+            "Decline {decline:?} and Save {save:?} must sit above the composer card {card:?}"
+        );
+        assert!(
+            decline.right() <= save.left(),
+            "Decline {decline:?} comes before Save {save:?}"
+        );
+        assert!(
+            (f32::from(decline.center().y) - f32::from(save.center().y)).abs() < 1.0,
+            "Decline {decline:?} and Save {save:?} share one row"
+        );
     });
 }
 

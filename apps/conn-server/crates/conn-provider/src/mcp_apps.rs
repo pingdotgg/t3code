@@ -37,37 +37,9 @@ pub fn resource_uri(meta: &Value) -> Option<&str> {
         .filter(|uri| uri.starts_with("ui://") && uri.encode_utf16().count() <= 4096)
 }
 
-pub fn claude_name_part(name: &str) -> String {
-    name.encode_utf16()
-        .map(|unit| {
-            char::from_u32(u32::from(unit))
-                .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
-                .unwrap_or('_')
-        })
-        .collect()
-}
+pub use conn_contract::tool_output::{claude_name, claude_name_part, claude_prefix};
 
-pub fn claude_prefix(server: &str) -> String {
-    let name = claude_name_part(server);
-    let name = if server.starts_with("claude.ai ") {
-        name.split('_')
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join("_")
-    } else {
-        name
-    };
-    format!("mcp__{name}__")
-}
-
-pub fn claude_name(server: &str, tool: &str) -> String {
-    format!("{}{}", claude_prefix(server), claude_name_part(tool))
-}
-
-pub fn output_app_reference(output: &Value) -> Option<Value> {
-    crate::tool_output::compact_dynamic_tool_output(output)?
-        .remove(crate::tool_output::MCP_APP_OUTPUT_KEY)
-}
+pub use conn_contract::tool_output::output_app_reference;
 
 pub fn app_reference(item: &Value) -> Option<Value> {
     if item.get("type")?.as_str()? != "dynamic_tool" {

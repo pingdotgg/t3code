@@ -256,8 +256,6 @@ pub(crate) struct Composer {
     /// Popovers open at the last render, to tell which opened since (`popovers.rs`).
     seen_popovers: Vec<popovers::Popover>,
     stash: PromptStash,
-    /// The host draws the stash badge in its own banner dock.
-    stash_docked: bool,
     branch: branch_picker::BranchUi,
     textarea: Entity<TextareaState>,
     model_search_input: Entity<InputState>,
@@ -420,7 +418,6 @@ impl Composer {
             implement_menu_open: false,
             seen_popovers: Vec::new(),
             stash: PromptStash::default(),
-            stash_docked: false,
             branch,
             textarea,
             model_search_input,
@@ -679,6 +676,23 @@ impl Composer {
         let current = self.textarea.read(cx).value().to_string();
         let next = crate::panels::file_path::append_mention(&current, mention);
         self.set_draft_text(next, window, cx);
+    }
+
+    /// Adds an artifact template's prompt at the end of the draft ("Use template") and focuses
+    /// the composer. It never sends. A draft that already ends with the prompt only gains focus.
+    pub(crate) fn use_artifact_template(
+        &mut self,
+        template: &super::artifact_template::ArtifactTemplate,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let current = self.textarea.read(cx).value().to_string();
+        let next = super::artifact_template::append_use_prompt(&current, template);
+        if next == current {
+            self.focus_input(window, cx);
+        } else {
+            self.set_draft_text(next, window, cx);
+        }
     }
 
     /// Shows the draft for `key` (a thread or the new-thread draft), parking the current one.
@@ -1706,22 +1720,6 @@ impl Composer {
         } else {
             self.submit(window, cx);
         }
-    }
-
-    /// Hands the stash badge to the host's banner dock (`ComposerBanner.Dock`), or takes it back.
-    pub(crate) fn set_stash_docked(&mut self, docked: bool, cx: &mut Context<'_, Self>) {
-        if self.stash_docked != docked {
-            self.stash_docked = docked;
-            cx.notify();
-        }
-    }
-
-    /// The stash badge's tab for a host dock; none while the drawer is open.
-    pub(crate) fn dock_stash_badge(&self, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
-        if self.stash.menu_open {
-            return None;
-        }
-        stash::render_stash_badge_tab(&self.stash, &self.tokens, cx)
     }
 
     /// The live draft, to compare with the one an approval send held.
@@ -3185,8 +3183,6 @@ impl Render for Composer {
             .when_some(
                 if self.stash.menu_open {
                     Some(render_stash_menu(&self.stash, &tokens, cx))
-                } else if self.stash_docked {
-                    None
                 } else {
                     render_stash_badge(&self.stash, &tokens, cx)
                 },

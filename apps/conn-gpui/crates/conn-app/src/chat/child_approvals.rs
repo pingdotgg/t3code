@@ -1,30 +1,20 @@
-//! Approvals of child threads (subagents, side chats, delegated tasks), shown above the
-//! composer of their parent (`ChildThreadApprovals.tsx` + `ComposerPendingApprovalActions`
-//! with `presentation="inline"`).
+//! The data of one approval card in the request stack: an approval of the open thread or of one
+//! of its children (subagents, side chats, delegated tasks), as `ChildThreadApprovals.tsx` and
+//! `ComposerPendingApprovalActions` show them above the composer. Drawing is in
+//! `request_stack.rs`.
 
 use conn_contract::{
     OrchestrationV2TurnItemApprovalRequestFullAccessOverride as FullAccessOverride,
     ProviderApprovalDecision,
 };
-use gpui_kit::{
-    AnyElement, Context, FontWeight, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, deferred, div, px,
-};
+use gpui_kit::Context;
 
-use gpui_kit::prelude::FluentBuilder as _;
+use super::{ChatView, request_stack};
 
-use super::color::hsla;
-use super::{ChatEvent, ChatView, MONO_FONT_FAMILY, UI_FONT_PX, UI_LINE_HEIGHT_PX, icons};
-use crate::a11y::ConnA11yExt as _;
-
-/// `max-h-40` of the command block.
-const COMMAND_MAX_HEIGHT_PX: f32 = 160.0;
-/// `max-h-80` of the list of cards.
-const LIST_MAX_HEIGHT_PX: f32 = 320.0;
-const GONE_NOTE: &str =
+pub(super) const GONE_NOTE: &str =
     "Provider process is gone. Interrupt or restart the child thread to respond.";
 
-/// One answer a card offers: the decision sent to the child and its label.
+/// One answer a card offers: the decision sent to the request's thread and its label.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ApprovalChoice {
     pub decision: &'static str,
@@ -32,15 +22,20 @@ pub(crate) struct ApprovalChoice {
     pub warning: Option<String>,
 }
 
-/// One pending approval of a child thread, ready to draw.
+/// One pending approval, ready to draw.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ChildApprovalCard {
+    /// The thread the request belongs to; `runtime-request.respond` goes to it.
     pub thread_id: String,
     pub request_id: String,
-    /// The child's title.
+    /// The timeline entry of an approval of the open thread. `None` for a child's approval.
+    pub entry_id: Option<String>,
+    /// The child's title; empty for an approval of the open thread.
     pub title: String,
     /// The command (or request kind) to approve.
     pub detail: String,
+    /// The provider's request kind or note that came with the command (own approvals only).
+    pub hint: Option<String>,
     pub app_name: Option<String>,
     pub reason: Option<String>,
     pub full_access_note: Option<&'static str>,
@@ -72,8 +67,10 @@ impl ChildApprovalCard {
         Self {
             thread_id: approval.thread_id.clone(),
             request_id: approval.request_id.clone(),
+            entry_id: None,
             title: approval.title.clone(),
             detail: approval.detail.clone(),
+            hint: None,
             app_name: details.app_name.clone(),
             reason: details.reason.clone(),
             full_access_note: details.full_access_override.map(full_access_note),
@@ -84,15 +81,49 @@ impl ChildApprovalCard {
         }
     }
 
+    /// A pending approval of the open thread `thread_id`. `command` is the approval entry's
+    /// title and `hint` its detail (the request kind, or a note).
+    pub(crate) fn own(
+        thread_id: &str,
+        approval: &conn_state::PendingApproval,
+        command: &str,
+        hint: Option<&str>,
+        details: Option<&conn_state::ApprovalDetails>,
+    ) -> Self {
+        let details = details.cloned().unwrap_or(conn_state::ApprovalDetails {
+            request_kind: conn_contract::ProviderRequestKind::Command,
+            prompt: None,
+            reason: None,
+            full_access_override: None,
+            app_name: None,
+            options: None,
+        });
+        let mut card = Self::new(
+            &conn_state::ChildApproval {
+                thread_id: thread_id.to_owned(),
+                title: String::new(),
+                request_id: approval.request_id.clone(),
+                detail: command.to_owned(),
+                details,
+                answerable: approval.answerable,
+            },
+            false,
+            None,
+        );
+        card.entry_id = Some(approval.entry_id.clone());
+        card.hint = hint.map(str::to_owned);
+        card
+    }
+
     /// The Decline and Approve answers, in the provider's order.
-    fn primary(&self) -> impl Iterator<Item = &ApprovalChoice> {
+    pub(super) fn primary(&self) -> impl Iterator<Item = &ApprovalChoice> {
         self.choices
             .iter()
             .filter(|c| matches!(c.decision, "decline" | "accept"))
     }
 
     /// Everything else, behind More.
-    fn more(&self) -> Vec<&ApprovalChoice> {
+    pub(super) fn more(&self) -> Vec<&ApprovalChoice> {
         self.choices
             .iter()
             .filter(|c| !matches!(c.decision, "decline" | "accept"))
@@ -150,301 +181,25 @@ impl ChatView {
         if self.child_approvals == cards {
             return;
         }
-        let open: std::collections::HashSet<&str> =
-            cards.iter().map(|c| c.request_id.as_str()).collect();
-        self.expanded_ids.retain(|id| {
-            id.strip_prefix("child-approval-more:")
-                .is_none_or(|request_id| open.contains(request_id))
-        });
         self.child_approvals = cards;
+        self.refresh_request_stack();
         cx.notify();
     }
 
-    /// `ChildThreadApprovals`: one card per pending approval, above the composer.
-    pub(super) fn render_child_approvals(&self, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
-        if self.child_approvals.is_empty() {
-            return None;
-        }
-        let mut list = div()
-            .id("child-approvals")
-            .a11y_group("chat.child-approvals", "Approvals from child threads")
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .w_full()
-            .max_h(px(LIST_MAX_HEIGHT_PX))
-            .mb(px(8.0))
-            .overflow_y_scroll();
-        for card in &self.child_approvals {
-            list = list.child(self.render_child_approval(card, cx));
-        }
-        Some(list.into_any_element())
-    }
-
-    fn render_child_approval(
-        &self,
-        card: &ChildApprovalCard,
+    /// An answer to an approval of the open thread failed: its buttons work again, with the
+    /// reason under them. A thread that was left meanwhile has nothing to show.
+    pub(crate) fn approval_response_failed(
+        &mut self,
+        entry_id: &str,
+        message: String,
         cx: &mut Context<'_, Self>,
-    ) -> AnyElement {
-        let fg = hsla(self.tokens.foreground);
-        let muted = hsla(self.tokens.muted_foreground);
-        let request = card.request_id.as_str();
-        let enabled = card.answerable && !card.responding;
-
-        let mut section = div()
-            .id(SharedString::from(format!("child-approval-{request}")))
-            .a11y_group(
-                format!("chat.child-approval.{request}"),
-                format!("Approval from {}", card.title),
-            )
-            .flex()
-            .flex_col()
-            .flex_none()
-            .w_full()
-            .min_w_0()
-            .rounded(px(8.0))
-            .border_1()
-            .border_color(hsla(self.tokens.shell_divider))
-            .bg(hsla(self.tokens.background))
-            .p(px(12.0))
-            .text_size(px(UI_FONT_PX))
-            .line_height(px(UI_LINE_HEIGHT_PX))
-            .text_color(fg)
-            .child(
-                div()
-                    .mb(px(8.0))
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(format!("Approval needed from {}", card.title)),
-            )
-            .child(
-                div()
-                    .id(SharedString::from(format!(
-                        "child-approval-command-{request}"
-                    )))
-                    .a11y_group(
-                        format!("chat.child-approval.{request}.command"),
-                        "Command awaiting approval",
-                    )
-                    .max_h(px(COMMAND_MAX_HEIGHT_PX))
-                    .overflow_y_scroll()
-                    .font_family(MONO_FONT_FAMILY)
-                    .child(card.detail.clone()),
-            );
-
-        let note = |text: String| div().mt(px(8.0)).text_color(muted).child(text);
-        if let Some(app_name) = &card.app_name {
-            section = section.child(note(app_name.clone()));
+    ) {
+        if !request_stack::has_own_approval(&self.own_approvals, entry_id) {
+            return;
         }
-        if !card.answerable {
-            section = section.child(
-                div()
-                    .mt(px(8.0))
-                    // `warning` is too light for text on the light surface.
-                    .text_color(hsla(self.tokens.warning_foreground))
-                    .child(GONE_NOTE),
-            );
-        }
-        if let Some(reason) = &card.reason {
-            section = section.child(note(reason.clone()));
-        }
-        if let Some(text) = card.full_access_note {
-            section = section.child(note(text.to_owned()));
-        }
-
-        let mut actions = div().flex().flex_row().flex_wrap().gap(px(8.0)).mt(px(8.0));
-        for choice in card.primary() {
-            actions = actions.child(self.child_approval_button(card, choice, enabled, cx));
-        }
-        let more = card.more();
-        if !more.is_empty() {
-            let key = format!("child-approval-more:{request}");
-            let open = self.expanded_ids.contains(&key);
-            let toggle = cx.listener(move |view, _, _, cx| view.toggle_expanded(&key, cx));
-            let mut menu_anchor = div().relative().flex_none().child(
-                self.inline_button(
-                    format!("child-approval-more-{request}"),
-                    format!("chat.child-approval.{request}.more"),
-                    "More",
-                    true,
-                    enabled,
-                )
-                .when(enabled, move |button| button.on_click(toggle)),
-            );
-            if open && enabled {
-                menu_anchor = menu_anchor.child(
-                    deferred(
-                        div()
-                            .absolute()
-                            .bottom_full()
-                            .right_0()
-                            .mb(px(4.0))
-                            .child(self.render_child_approval_menu(card, &more, cx)),
-                    )
-                    .with_priority(2),
-                );
-            }
-            actions = actions.child(menu_anchor);
-        }
-        section = section.child(actions);
-
-        if let Some(error) = &card.error {
-            section = section.child(
-                div()
-                    .id(SharedString::from(format!(
-                        "child-approval-error-{request}"
-                    )))
-                    .a11y_group(
-                        format!("chat.child-approval.{request}.error"),
-                        error.clone(),
-                    )
-                    .mt(px(8.0))
-                    .text_color(hsla(self.tokens.destructive))
-                    .child(error.clone()),
-            );
-        }
-        section.into_any_element()
-    }
-
-    /// An answer button: Decline in muted text, Approve in foreground (`InlineButton`).
-    fn child_approval_button(
-        &self,
-        card: &ChildApprovalCard,
-        choice: &ApprovalChoice,
-        enabled: bool,
-        cx: &mut Context<'_, Self>,
-    ) -> AnyElement {
-        let request = card.request_id.as_str();
-        let listener = Self::child_approval_listener(card, choice.decision, cx);
-        let mut button = self
-            .inline_button(
-                format!("child-approval-{}-{request}", choice.decision),
-                format!("chat.child-approval.{request}.{}", choice.decision),
-                &choice.label,
-                choice.decision != "accept",
-                enabled,
-            )
-            .when(enabled, move |button| button.on_click(listener));
-        if choice.warning.is_some() {
-            button = button.child(icons::icon(
-                icons::SHIELD_WARNING,
-                12.0,
-                hsla(self.tokens.warning_foreground),
-            ));
-        }
-        button.into_any_element()
-    }
-
-    /// Web's `InlineButton`: `font-medium` text, muted or foreground, underlined on hover.
-    fn inline_button(
-        &self,
-        key: String,
-        ax_id: String,
-        label: &str,
-        muted_tone: bool,
-        enabled: bool,
-    ) -> gpui_kit::Stateful<gpui_kit::Div> {
-        let fg = hsla(self.tokens.foreground);
-        let color = if muted_tone {
-            hsla(self.tokens.muted_foreground)
-        } else {
-            fg
-        };
-        div()
-            .id(SharedString::from(key))
-            .a11y_button(ax_id, label.to_owned())
-            .flex()
-            .flex_row()
-            .flex_none()
-            .items_center()
-            .gap(px(2.0))
-            .font_weight(FontWeight::MEDIUM)
-            .whitespace_nowrap()
-            .text_color(color)
-            .when(enabled, move |d| {
-                d.cursor_pointer()
-                    .hover(move |s| s.text_color(fg).underline())
-            })
-            .when(!enabled, |d| d.opacity(0.64))
-            .child(label.to_owned())
-    }
-
-    fn child_approval_listener(
-        card: &ChildApprovalCard,
-        decision: &'static str,
-        cx: &mut Context<'_, Self>,
-    ) -> impl Fn(&gpui_kit::ClickEvent, &mut gpui_kit::Window, &mut gpui_kit::App) + 'static {
-        let thread_id = card.thread_id.clone();
-        let request_id = card.request_id.clone();
-        cx.listener(move |view, _, _, cx| {
-            view.expanded_ids
-                .remove(&format!("child-approval-more:{request_id}"));
-            cx.emit(ChatEvent::ChildApproval {
-                thread_id: thread_id.clone(),
-                request_id: request_id.clone(),
-                decision: decision.to_owned(),
-            });
-        })
-    }
-
-    /// Menu of the answers behind More.
-    fn render_child_approval_menu(
-        &self,
-        card: &ChildApprovalCard,
-        more: &[&ApprovalChoice],
-        cx: &mut Context<'_, Self>,
-    ) -> AnyElement {
-        let request = card.request_id.as_str();
-        let fg = hsla(self.tokens.foreground);
-        let hover_bg = hsla(self.tokens.shell_highlight);
-        let mut menu = div()
-            .id(SharedString::from(format!("child-approval-menu-{request}")))
-            .a11y(
-                gpui_kit::Role::Menu,
-                format!("chat.child-approval.{request}.more-menu"),
-                "More approval options",
-            )
-            .rounded(px(10.0))
-            .bg(hsla(self.tokens.popover))
-            .border_1()
-            .border_color(hsla(self.tokens.shell_inner_border))
-            .shadow_md()
-            .p(px(4.0))
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-        for choice in more {
-            menu = menu.child(
-                div()
-                    .id(SharedString::from(format!(
-                        "child-approval-{}-{request}",
-                        choice.decision
-                    )))
-                    .a11y_button(
-                        format!("chat.child-approval.{request}.{}", choice.decision),
-                        choice.label.clone(),
-                    )
-                    .flex()
-                    .items_center()
-                    .gap(px(4.0))
-                    .min_h(px(28.0))
-                    .px(px(8.0))
-                    .rounded(px(6.0))
-                    .whitespace_nowrap()
-                    .text_size(px(UI_FONT_PX))
-                    .text_color(fg)
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(hover_bg))
-                    .on_click(Self::child_approval_listener(card, choice.decision, cx))
-                    .when(choice.warning.is_some(), |item| {
-                        item.child(icons::icon(
-                            icons::SHIELD_WARNING,
-                            12.0,
-                            hsla(self.tokens.warning_foreground),
-                        ))
-                    })
-                    .child(choice.label.clone()),
-            );
-        }
-        menu.into_any_element()
+        self.approval_responding.remove(entry_id);
+        self.approval_errors.insert(entry_id.to_owned(), message);
+        cx.notify();
     }
 }
 
@@ -507,5 +262,23 @@ mod tests {
         assert_eq!(primary, [("accept", "Yes"), ("decline", "No")]);
         assert_eq!(card.more()[0].decision, "acceptAlways");
         assert_eq!(card.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn an_approval_of_the_open_thread_answers_on_its_own_entry() {
+        let pending = conn_state::PendingApproval {
+            entry_id: "entry".to_owned(),
+            request_id: "req".to_owned(),
+            answerable: false,
+            supports_feedback: false,
+        };
+        let card =
+            ChildApprovalCard::own("thread", &pending, "rm -rf target", Some("command"), None);
+        assert_eq!(card.entry_id.as_deref(), Some("entry"));
+        assert_eq!(card.thread_id, "thread");
+        assert_eq!(card.hint.as_deref(), Some("command"));
+        assert!(card.title.is_empty());
+        assert!(!card.answerable);
+        assert_eq!(card.choices.len(), 4);
     }
 }

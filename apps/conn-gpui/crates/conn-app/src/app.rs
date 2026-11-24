@@ -529,13 +529,20 @@ impl ConnApp {
                     app.select_model(instance_id, model, options.as_ref(), cx);
                 }
                 crate::chat::ChatEvent::OpenTurnDiff {
-                    app_run_ordinal, ..
+                    app_run_ordinal,
+                    file_path,
+                    ..
                 } => {
-                    // The Diff panel scopes by checkpoint turn; it has no per-file focus yet.
-                    let turn = *app_run_ordinal;
+                    let (turn, file) = (*app_run_ordinal, file_path.clone());
                     app.right_panel
-                        .update(cx, |panel, cx| panel.set_turn_count(turn, cx));
+                        .update(cx, |panel, cx| panel.open_turn_diff(turn, file, cx));
                     app.select_right_panel_tab(RightPanelTab::Diff, cx);
+                }
+                crate::chat::ChatEvent::OpenTask { task_id } => {
+                    let task_id = *task_id;
+                    app.right_panel
+                        .update(cx, |panel, cx| panel.open_task(task_id, cx));
+                    app.select_right_panel_tab(RightPanelTab::Tasks, cx);
                 }
                 crate::chat::ChatEvent::OpenThread {
                     thread_id,
@@ -3222,7 +3229,8 @@ impl ConnApp {
             .update(cx, |chat, cx| chat.set_error(Some(message), cx));
     }
 
-    /// Answers the approval timeline entry `entry_id` of the selected thread.
+    /// Answers the approval timeline entry `entry_id` of the selected thread. A failure goes back
+    /// to its card, which then answers again.
     pub(crate) fn respond_approval(
         &mut self,
         entry_id: &str,
@@ -3233,6 +3241,7 @@ impl ConnApp {
             self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
+            self.approval_failed(entry_id, "Not connected. Try again.".to_owned(), cx);
             return;
         };
         let Some(request_id) = self
@@ -3242,26 +3251,49 @@ impl ConnApp {
             .cloned()
         else {
             eprintln!("approval: no request id for entry {entry_id}");
+            self.approval_failed(
+                entry_id,
+                "This approval is no longer waiting.".to_owned(),
+                cx,
+            );
             return;
         };
         let command = match crate::commands::respond_approval(&thread_id, &request_id, decision) {
             Ok(command) => command,
             Err(e) => {
                 eprintln!("approval: could not build runtime-request.respond: {e}");
+                self.approval_failed(entry_id, "Could not answer the approval.".to_owned(), cx);
                 return;
             }
         };
         // A composer send meanwhile must not decline this request too (`respondingRequestIds`).
         if !self.responding_approvals.insert(request_id.clone()) {
+            self.approval_failed(
+                entry_id,
+                "Another answer to this approval is on its way.".to_owned(),
+                cx,
+            );
             return;
         }
+        let entry_id = entry_id.to_owned();
         cx.spawn(async move |this, cx| {
-            if let Err(e) = connection.dispatch_command(command).await {
-                eprintln!("approval: dispatchCommand failed: {e}");
-            }
-            let _ = this.update(cx, |app, _| app.responding_approvals.remove(&request_id));
+            let result = connection.dispatch_command(command).await;
+            let _ = this.update(cx, |app, cx| {
+                app.responding_approvals.remove(&request_id);
+                if let Err(e) = result {
+                    eprintln!("approval: dispatchCommand failed: {e}");
+                    app.approval_failed(&entry_id, crate::commands::format_client_error(&e), cx);
+                }
+            });
         })
         .detach();
+    }
+
+    /// Tells the approval card of `entry_id` that its answer did not go through.
+    fn approval_failed(&mut self, entry_id: &str, message: String, cx: &mut Context<'_, Self>) {
+        self.chat.update(cx, |chat, cx| {
+            chat.approval_response_failed(entry_id, message, cx)
+        });
     }
 
     /// Forks the selected thread at `run_id` into a new thread and opens it
@@ -3663,6 +3695,7 @@ impl ConnApp {
                 created_at: None,
                 attachments: Vec::new(),
                 is_steer: false,
+                review_comments: Vec::new(),
                 run_id: None,
             });
 

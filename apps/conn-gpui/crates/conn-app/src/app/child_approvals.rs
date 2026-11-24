@@ -18,11 +18,29 @@ use crate::chat::ChildApprovalCard;
 #[derive(Default)]
 pub(super) struct ChildApprovals {
     /// Child threads subscribed for their approvals, with the connection each runs on.
-    subscribed: HashMap<String, Connection>,
+    subscribed: HashMap<String, ChildSubscription>,
     /// The open thread's subscription at the last sync. Opening another thread ends it.
     last_open: Option<String>,
     /// Why the last answer to a request failed, by request id, until its card goes.
     errors: HashMap<String, String>,
+}
+
+struct ChildSubscription {
+    connection: Connection,
+    ready: bool,
+}
+
+/// On a new subscription, the cached detail can still describe a previous approval.
+/// Once the detail has the request named by the shell, keep showing the live queue
+/// while the two streams deliver later requests at different times.
+fn detail_ready(
+    ready: &mut bool,
+    request_id: &str,
+    detail: Option<&conn_state::ThreadState>,
+) -> bool {
+    *ready =
+        *ready || detail.is_some_and(|thread| thread.pending_requests.contains_key(request_id));
+    *ready
 }
 
 /// The children to subscribe to, and the subscribed ones that no longer ask.
@@ -53,7 +71,7 @@ impl ConnApp {
             }
             self.child_approvals.last_open = self.subscribed_thread_id.clone();
         }
-        let children = match self.layout.selected_thread_id.as_deref() {
+        let mut children = match self.layout.selected_thread_id.as_deref() {
             Some(thread_id) if self.draft.is_none() => self.shell.child_approval_threads(thread_id),
             _ => Vec::new(),
         };
@@ -66,13 +84,13 @@ impl ConnApp {
             .collect();
         let (add, stale) = plan_subscriptions(&wanted, &current);
         for id in stale {
-            let connection = self.child_approvals.subscribed.remove(&id);
+            let subscription = self.child_approvals.subscribed.remove(&id);
             // The open thread keeps its own stream.
-            if let Some(connection) = connection
+            if let Some(subscription) = subscription
                 && self.subscribed_thread_id.as_deref() != Some(id.as_str())
                 && !self.offline.watching(self.cache_env(&id), &id)
             {
-                connection.unsubscribe_thread(&id);
+                subscription.connection.unsubscribe_thread(&id);
             }
         }
         for id in add {
@@ -83,9 +101,25 @@ impl ConnApp {
                 .entry(id.clone())
                 .or_insert_with(|| conn_state::ThreadState::new(id.clone()));
             connection.subscribe_thread(&id);
-            self.child_approvals.subscribed.insert(id, connection);
+            self.child_approvals.subscribed.insert(
+                id,
+                ChildSubscription {
+                    connection,
+                    ready: false,
+                },
+            );
         }
 
+        children.retain(|child| {
+            let Some(subscription) = self.child_approvals.subscribed.get_mut(&child.id) else {
+                return false;
+            };
+            detail_ready(
+                &mut subscription.ready,
+                &child.request_id,
+                self.threads.get(&child.id),
+            )
+        });
         let approvals = conn_state::child_approvals(&children, &self.threads);
         self.child_approvals
             .errors
@@ -156,6 +190,29 @@ impl ConnApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resubscribed_child_waits_for_its_new_request_before_showing_cached_cards() {
+        let mut detail = conn_state::ThreadState::default();
+        detail
+            .pending_requests
+            .insert("first".into(), Default::default());
+        let mut ready = false;
+        assert!(detail_ready(&mut ready, "first", Some(&detail)));
+
+        // A new subscription starts while the thread cache still holds the previous command.
+        let mut ready = false;
+        assert!(!detail_ready(&mut ready, "second", Some(&detail)));
+        detail.pending_requests.remove("first");
+        assert!(!detail_ready(&mut ready, "second", Some(&detail)));
+        detail
+            .pending_requests
+            .insert("second".into(), Default::default());
+        assert!(detail_ready(&mut ready, "second", Some(&detail)));
+
+        // A third request joins an active subscription. The second card stays in place.
+        assert!(detail_ready(&mut ready, "third", Some(&detail)));
+    }
 
     #[test]
     fn subscribes_new_children_and_drops_the_ones_that_stopped_asking() {

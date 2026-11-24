@@ -61,6 +61,10 @@ core-text = "21.0"
 objc2 = "0.6"
 objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer", "objc2-metal", "objc2-core-foundation", "objc2-core-graphics"] }
 objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["CGColorSpace"] }
+# The AVFoundation video fallback (`chat/embedded_document/av_player.rs`) hands decoded frames to
+# GPUI's `Window::paint_surface`, which takes these types. Same versions GPUI already builds.
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std"] }
+objc2-core-video = { version = "=0.3.2", default-features = false, features = ["std", "CVBuffer", "CVImageBuffer", "CVPixelBuffer"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -1,10 +1,11 @@
 //! Conn chat card view: messages timeline, collapsible thinking/tool rows,
 //! working indicator, empty state, and bottom composer.
 
-mod approval_card;
 mod approval_state;
+mod artifact_template;
 mod attachment_thumb;
 mod cache;
+mod card_face;
 mod cards;
 mod child_approvals;
 pub(crate) use self::child_approvals::ChildApprovalCard;
@@ -18,6 +19,8 @@ pub(crate) use self::composer_state::{
     local_branch_name_from_remote_ref, plan_approval_send, previous_worktree,
 };
 mod draft_hero;
+mod embedded_document;
+mod embedded_mount;
 mod icons;
 mod inline_code;
 mod link_menu;
@@ -27,12 +30,15 @@ pub(crate) mod markdown;
 mod provider_banner;
 mod question_logic;
 mod question_panel;
+mod request_stack;
 mod spinner;
 mod thumb_cache;
 
 /// A sent image thumbnail: attachment id and decode size.
 type ThumbKey = (String, thumb_cache::TargetPx);
+mod timeline_cards;
 mod toc;
+mod worktree_setup;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -55,7 +61,7 @@ use gpui_kit::{
 
 use self::cache::{CachedRow, RowCache, VirtualItem};
 pub(crate) use self::cache::{ThreadOutline, TocEntry};
-use self::color::{hsla, hsla_alpha, message_highlight, muted_icon, prose_foreground};
+use self::color::{hsla, hsla_alpha, muted_icon, prose_foreground};
 pub(crate) use self::composer::{BranchAction, BranchContext, SendDispatch};
 use self::composer::{Composer, ComposerEvent};
 use self::spinner::{SHIMMER_STEP_INTERVAL, TurningArc, shimmer_text};
@@ -114,6 +120,7 @@ struct UserBubble<'a> {
     id: &'a str,
     text: &'a str,
     attachments: &'a [ChatAttachment],
+    review_comments: &'a [conn_state::ReviewComment],
     is_steer: bool,
     created_at: Option<&'a str>,
     grouped_with_previous: bool,
@@ -168,6 +175,10 @@ pub(crate) enum ChatEvent {
     OpenThread {
         thread_id: String,
         environment_id: Option<String>,
+    },
+    /// Open an Orbit task in the Tasks panel (an Orbit task card).
+    OpenTask {
+        task_id: i64,
     },
     /// Fork the thread from a completed assistant response's run (`thread.fork`).
     ForkFromRun {
@@ -300,6 +311,9 @@ pub(crate) struct ChatView {
     next_thumb_request: std::cell::Cell<u64>,
     /// The window's scale factor while timeline rows render; thumbnails decode at it.
     thumb_scale: f32,
+    /// Content width shared by the composer and timeline rows, measured outside the virtual list.
+    sent_lane_px: Rc<std::cell::Cell<f32>>,
+    sent_lane_applied: f32,
     /// The latest run when it was interrupted (`You stopped after ...`).
     interrupted_run_id: Option<String>,
     /// Copy button currently showing its check (`MessageCopyButton`).
@@ -311,12 +325,27 @@ pub(crate) struct ChatView {
     pending_approval: Option<composer_state::PendingApprovalPrompt>,
     /// The first pending question request, which a composer send answers.
     pending_question_id: Option<String>,
-    /// Pending approvals and the first pending question (entry id, request id), before the
-    /// typing guard hides any of them.
+    /// Pending approvals and pending questions (entry id, request id), before the typing guard
+    /// hides any of them.
     incoming_approvals: Vec<conn_state::PendingApproval>,
-    incoming_question: Option<(String, String)>,
-    /// Pending approvals of the thread's children, shown above the composer.
+    incoming_questions: Vec<(String, String)>,
+    /// Pending approvals of the thread itself, as cards for the request stack.
+    own_approvals: Vec<ChildApprovalCard>,
+    /// Pending approvals of the thread's children, shown in the request stack.
     child_approvals: Vec<ChildApprovalCard>,
+    /// Every request of the thread that waits for an answer, in timeline order, with its
+    /// request id when the typing guard can hold it.
+    incoming_requests: Vec<(request_stack::RequestKey, Option<String>)>,
+    /// Which request each stack slot shows; a new request joins at the back.
+    request_order: request_stack::RequestOrder,
+    /// The stack as last laid out: the current request first.
+    request_stack: Vec<request_stack::RequestKey>,
+    /// Approvals of the thread (entry ids) with an answer on its way, and why the last one failed.
+    approval_responding: HashSet<String>,
+    approval_errors: HashMap<String, String>,
+    /// Counts thread switches, so an answer that comes back late is dropped.
+    card_epoch: u64,
+    mount_epoch: u64,
     /// Holds requests that arrive while the user types (`useComposerTypingGuard`).
     typing_guard: composer_state::TypingGuard,
     _typing_guard_idle: Option<gpui_kit::Task<()>>,
@@ -330,6 +359,8 @@ pub(crate) struct ChatView {
     changed_files_dir_overrides: HashMap<String, HashMap<String, bool>>,
     /// Tool output fetched on demand for rows whose output the snapshot omitted.
     fetched_details: HashMap<String, cards::DetailFetch>,
+    /// Where the open thread's worktree setup stands, and the card that shows it.
+    worktree: worktree_setup::WorktreeSetupState,
 }
 
 /// Snapshot of virtualized timeline & TOC metrics (used for diagnostics and automation).
@@ -527,6 +558,8 @@ impl ChatView {
             thumb_cancels: std::cell::RefCell::new(HashMap::new()),
             next_thumb_request: std::cell::Cell::new(0),
             thumb_scale: 1.0,
+            sent_lane_px: Rc::new(std::cell::Cell::new(0.0)),
+            sent_lane_applied: 0.0,
             interrupted_run_id: None,
             copied_message_key: None,
             _copy_reset: None,
@@ -534,8 +567,16 @@ impl ChatView {
             pending_approval: None,
             pending_question_id: None,
             incoming_approvals: Vec::new(),
-            incoming_question: None,
+            incoming_questions: Vec::new(),
+            own_approvals: Vec::new(),
             child_approvals: Vec::new(),
+            incoming_requests: Vec::new(),
+            request_order: request_stack::RequestOrder::default(),
+            request_stack: Vec::new(),
+            approval_responding: HashSet::new(),
+            approval_errors: HashMap::new(),
+            card_epoch: 0,
+            mount_epoch: 0,
             typing_guard: composer_state::TypingGuard::default(),
             _typing_guard_idle: None,
             user_input_cards: HashMap::new(),
@@ -544,6 +585,7 @@ impl ChatView {
             changed_files_expanded: HashSet::new(),
             changed_files_dir_overrides: HashMap::new(),
             fetched_details: HashMap::new(),
+            worktree: worktree_setup::WorktreeSetupState::default(),
         }
     }
 
@@ -554,6 +596,15 @@ impl ChatView {
         connection: Option<conn_client::Connection>,
         cx: &mut Context<'_, Self>,
     ) {
+        if !matches!((&self.connection, &connection), (None, None))
+            && !self
+                .connection
+                .as_ref()
+                .zip(connection.as_ref())
+                .is_some_and(|(a, b)| a.same_connection(b))
+        {
+            self.mount_epoch = self.mount_epoch.wrapping_add(1);
+        }
         self.connected = connection.is_some();
         self.connection = connection.clone();
         self.clear_thumbs(cx);
@@ -674,6 +725,18 @@ impl ChatView {
     ) {
         self.composer
             .update(cx, |c, cx| c.insert_mention(mention, window, cx));
+    }
+
+    /// "Use template" on an artifact template card: puts the template's prompt in the composer
+    /// draft and focuses it, without sending.
+    fn use_artifact_template(
+        &mut self,
+        template: &artifact_template::ArtifactTemplate,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.composer
+            .update(cx, |c, cx| c.use_artifact_template(template, window, cx));
     }
 
     /// Toggles keeping the `BranchToolbar` context strip visible below the composer on active threads.
@@ -881,15 +944,20 @@ impl ChatView {
             })
             .collect();
         self.incoming_approvals = thread.pending_approvals();
-        self.incoming_question = thread.entries.iter().find_map(|entry| match entry {
-            TimelineEntry::UserInputRequest {
-                id,
-                request_id,
-                pending: true,
-                ..
-            } => Some((id.clone(), request_id.clone())),
-            _ => None,
-        });
+        self.incoming_questions = thread
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                TimelineEntry::UserInputRequest {
+                    id,
+                    request_id,
+                    pending: true,
+                    ..
+                } => Some((id.clone(), request_id.clone())),
+                _ => None,
+            })
+            .collect();
+        self.sync_incoming_requests(thread);
         let request_ids: Vec<String> = self
             .incoming_approvals
             .iter()
@@ -1084,18 +1152,19 @@ impl ChatView {
         self.composer.update(cx, |c, cx| {
             c.set_thread_context(branch, worktree_active, runtime_mode, interaction_mode, cx);
         });
+        self.follow_worktree_setup(cx);
     }
 
-    /// Shows the pending approval and question the typing guard does not hold. A held first
-    /// question hides the question banner, as in Conn.
+    /// Shows the pending approval and question the typing guard does not hold. A held request
+    /// stays out of the request stack, as in Conn.
     fn apply_typing_guard(&mut self, cx: &mut Context<'_, Self>) {
-        let (approval, question) = composer_state::guarded_pending_requests(
+        let (approval, _) = composer_state::guarded_pending_requests(
             &self.incoming_approvals,
-            self.incoming_question.as_ref(),
+            self.incoming_questions.first(),
             self.typing_guard.held(),
         );
         self.pending_approval = approval;
-        self.pending_question_id = question;
+        self.refresh_request_stack();
         cx.notify();
     }
 
@@ -1125,13 +1194,6 @@ impl ChatView {
         self.typing_guard.held()
     }
 
-    /// True while the typing guard holds the approval card `entry_id`.
-    fn approval_held(&self, entry_id: &str) -> bool {
-        self.incoming_approvals.iter().any(|approval| {
-            approval.entry_id == entry_id && self.typing_guard.held().contains(&approval.request_id)
-        })
-    }
-
     /// Drops per-thread card, copy, and fetched-detail state.
     fn reset_card_state(&mut self) {
         self.interrupted_run_id = None;
@@ -1141,7 +1203,14 @@ impl ChatView {
         self.pending_approval = None;
         self.pending_question_id = None;
         self.incoming_approvals.clear();
-        self.incoming_question = None;
+        self.incoming_questions.clear();
+        self.own_approvals.clear();
+        self.incoming_requests.clear();
+        self.request_order = request_stack::RequestOrder::default();
+        self.request_stack.clear();
+        self.approval_responding.clear();
+        self.approval_errors.clear();
+        self.card_epoch += 1;
         self.typing_guard.reset_scope();
         self._typing_guard_idle = None;
         self.user_input_cards.clear();
@@ -1159,6 +1228,7 @@ impl ChatView {
         let entity_file = cx.entity().downgrade();
         let entity_link = cx.entity().downgrade();
         let entity_hover = cx.entity().downgrade();
+        let entity_template = cx.entity().downgrade();
         markdown::MarkdownOptions {
             heading_style: markdown::HeadingStyle::Scale,
             copied_code_key: self.copied_code_key.as_deref(),
@@ -1187,6 +1257,11 @@ impl ChatView {
             })),
             on_link_hover: Some(Rc::new(move |event, _window, cx| {
                 let _ = entity_hover.update(cx, |view, cx| view.link_hover(event, cx));
+            })),
+            on_use_artifact_template: Some(Rc::new(move |template, window, cx| {
+                let _ = entity_template.update(cx, |view, cx| {
+                    view.use_artifact_template(&template, window, cx);
+                });
             })),
             prose: None,
         }
@@ -1750,7 +1825,12 @@ impl ChatView {
             .into_any_element()
     }
 
-    fn render_virtual_item(&self, idx: usize, cx: &mut Context<'_, Self>) -> AnyElement {
+    fn render_virtual_item(
+        &self,
+        idx: usize,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
         let items = self.cache.items();
         let Some(item) = items.get(idx) else {
             return div().into_any_element();
@@ -1770,23 +1850,26 @@ impl ChatView {
                     created_by_agent,
                     created_at,
                     attachments,
+                    review_comments,
                     is_steer,
                     ..
                 } = &rows[*row_idx].entry
                 {
                     if *created_by_agent {
-                        self.render_agent_prompt_row(id, text, cx)
+                        self.render_agent_message_card(id, text, cx)
                     } else {
                         self.render_user_bubble(
                             UserBubble {
                                 id,
                                 text,
                                 attachments,
+                                review_comments,
                                 is_steer: *is_steer,
                                 created_at: created_at.as_deref(),
                                 grouped_with_previous: *grouped_with_previous,
                                 grouped_with_next: *grouped_with_next,
                             },
+                            window,
                             cx,
                         )
                     }
@@ -1907,13 +1990,9 @@ impl ChatView {
                 cx,
             ),
             VirtualItem::Card { row_idx } => self.render_card(&rows[*row_idx].entry, cx),
-            VirtualItem::Approval { row_idx } => {
-                if let TimelineEntry::Approval { id, title, detail } = &rows[*row_idx].entry {
-                    self.render_approval_card(id, title, detail.as_deref(), cx)
-                } else {
-                    div().into_any_element()
-                }
-            }
+            // A pending approval lives in the request stack above the composer. The row only
+            // keeps its place between the work groups it splits.
+            VirtualItem::Approval { .. } => div().into_any_element(),
             VirtualItem::Notice { row_idx } => {
                 if let TimelineEntry::Notice { id, text, is_error } = &rows[*row_idx].entry {
                     self.render_notice_row(id, text, *is_error)
@@ -1924,6 +2003,7 @@ impl ChatView {
             VirtualItem::ChangedFiles { summary, .. } => {
                 self.render_changed_files_card(summary, cx)
             }
+            VirtualItem::WorktreeSetup { .. } => self.render_worktree_setup_row(cx),
             VirtualItem::Working => self.render_working_row(),
         };
 
@@ -2006,6 +2086,7 @@ impl ChatView {
     /// Dispatches a [`VirtualItem::Card`] row to its Conn card renderer.
     fn render_card(&self, entry: &TimelineEntry, cx: &mut Context<'_, Self>) -> AnyElement {
         match entry {
+            TimelineEntry::EmbeddedDocument { .. } => self.render_embedded_document(entry),
             TimelineEntry::UserInputRequest {
                 id,
                 title,
@@ -2026,22 +2107,10 @@ impl ChatView {
             TimelineEntry::SecretRequest {
                 id,
                 label,
-                reason,
-                url,
-                file_delivery,
                 status,
                 pending,
                 ..
-            } => self.render_secret_card(
-                id,
-                label,
-                reason,
-                url.as_deref(),
-                *file_delivery,
-                *status,
-                *pending,
-                cx,
-            ),
+            } => self.render_secret_card(id, label, *status, *pending),
             TimelineEntry::ProposedPlan {
                 id,
                 title,
@@ -2071,32 +2140,196 @@ impl ChatView {
                 completed_at.as_deref(),
                 cx,
             ),
+            TimelineEntry::OrbitTask { id, task, .. } => self.render_orbit_task_card(id, task, cx),
             _ => div().into_any_element(),
         }
     }
 
-    fn render_user_bubble(&self, bubble: UserBubble<'_>, cx: &mut Context<'_, Self>) -> AnyElement {
+    /// Words inside a framed sent bubble: 16px from its sides (13px of padding on the bubble's
+    /// 3px frame), its own Label in the AX tree.
+    fn render_bubble_caption(&self, key: &str, text: &str, bottom_px: f32) -> AnyElement {
+        let caption = SharedString::from(text.to_owned());
+        div()
+            .min_w_0()
+            .px(px(13.0))
+            .pt(px(7.0))
+            .pb(px(bottom_px))
+            .child(
+                div()
+                    .id(SharedString::from(format!("chat-caption-{key}")))
+                    .a11y(
+                        gpui_kit::Role::Label,
+                        SharedString::from(format!("chat.caption.{key}")),
+                        caption.clone(),
+                    )
+                    .min_w_0()
+                    .child(caption),
+            )
+            .into_any_element()
+    }
+
+    /// The widest line of `text` in `font` at `size_px`, unwrapped, in px.
+    fn widest_line_px(window: &Window, text: &str, size_px: f32, font: &gpui_kit::Font) -> f32 {
+        text.lines()
+            .map(|line| {
+                let run = gpui_kit::TextRun {
+                    len: line.len(),
+                    font: font.clone(),
+                    color: gpui_kit::black(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                f32::from(
+                    window
+                        .text_system()
+                        .shape_line(
+                            SharedString::from(line.to_owned()),
+                            px(size_px),
+                            &[run],
+                            None,
+                        )
+                        .width,
+                )
+            })
+            .fold(0.0, f32::max)
+    }
+
+    /// The width a framed sent bubble with a gallery or a player is given: its widest block (the
+    /// caption, each note, each review quote, each file row) measured with the text system, then
+    /// held between 32% and the 80% / 54% cap of the lane (`attachment_thumb::bubble_width_px`).
+    /// Without a measured list yet there is no lane: the caller keeps the fractional caps and a
+    /// repaint is asked for once the list has a width.
+    fn framed_bubble_width(
+        &self,
+        window: &Window,
+        text: &str,
+        notes: &[Option<String>],
+        review_comments: &[conn_state::ReviewComment],
+        attachments: &[ChatAttachment],
+    ) -> Option<f32> {
+        use attachment_thumb::{
+            AttachmentKind, BubbleFit, attachment_kind, attachment_name_and_size,
+            attachment_size_label, bubble_width_px,
+        };
+        let lane_px = self.sent_lane_px.get();
+        if lane_px <= 0.0 {
+            return None;
+        }
+        let has_video = attachments
+            .iter()
+            .any(|att| attachment_kind(att) == AttachmentKind::Video);
+        let has_images = attachments
+            .iter()
+            .any(|att| attachment_kind(att) == AttachmentKind::Image);
+        let has_words = !text.is_empty() || !review_comments.is_empty();
+        let font = window.text_style().font();
+        let medium = gpui_kit::Font {
+            weight: FontWeight::MEDIUM,
+            ..font.clone()
+        };
+        let mono = gpui_kit::Font {
+            family: MONO_FONT_FAMILY.into(),
+            ..font.clone()
+        };
+        // Words sit in 13px of padding on each side.
+        let mut widest = 0.0f32;
+        for words in std::iter::once(text).chain(notes.iter().flatten().map(String::as_str)) {
+            if !words.is_empty() {
+                widest =
+                    widest.max(Self::widest_line_px(window, words, BODY_FONT_PX, &font) + 26.0);
+            }
+        }
+        for comment in review_comments {
+            // Header: 11px padding, a 14px icon, 8px gap, the label; body: 14px padding.
+            let header = 22.0
+                + 14.0
+                + 8.0
+                + Self::widest_line_px(window, &comment.label(), UI_FONT_PX, &font);
+            let body = 28.0 + Self::widest_line_px(window, &comment.diff, 13.0, &mono);
+            // The quote card's own 3px frame, both sides.
+            widest = widest.max(header.max(body) + 6.0);
+        }
+        for att in attachments {
+            if attachment_kind(att) != AttachmentKind::File {
+                continue;
+            }
+            let (name, size) = attachment_name_and_size(att);
+            // 13px padding each side, a 14px icon, the name and its 8px margin, the size, and
+            // three 8px gaps minus the one the margin replaces.
+            let row = 26.0
+                + 14.0
+                + 8.0
+                + Self::widest_line_px(window, name, BODY_FONT_PX, &medium)
+                + 16.0
+                + Self::widest_line_px(window, &attachment_size_label(size), BODY_FONT_PX, &font);
+            widest = widest.max(row);
+        }
+        Some(bubble_width_px(&BubbleFit {
+            lane_px,
+            // The bubble's own 3px frame, both sides.
+            content_px: widest + 6.0,
+            has_words,
+            has_images,
+            has_video,
+        }))
+    }
+
+    fn render_user_bubble(
+        &self,
+        bubble: UserBubble<'_>,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
         let UserBubble {
             id,
             text,
             attachments,
+            review_comments,
             is_steer,
             created_at,
             grouped_with_previous,
             grouped_with_next,
         } = bubble;
+        // A message that carries review comments shows each as a card, so the inline links and
+        // legacy blocks that mark where they sat are dropped from the words shown.
+        let unlinked;
+        let text = if review_comments.is_empty() {
+            text
+        } else {
+            unlinked = conn_state::text_without_review_comments(text);
+            unlinked.as_str()
+        };
         let text = &*cache::humanize_task_ids(self.cache.rows(), text);
-        // Conn `TimelineUserMessageRow`: `max-w-[80%] rounded-bubble border-t border-t-(--message-highlight)!
-        // bg-message text-message-foreground px-4 pt-2.5 pb-3 text-sm leading-relaxed`.
+        // Each comment's own note is regular text above its quote. A note that only repeats the
+        // message's prose shows once; identical comments were already merged where they were read.
+        let notes: Vec<Option<String>> = review_comments
+            .iter()
+            .map(|comment| {
+                let note = comment.text.trim();
+                (!note.is_empty() && note != text.trim())
+                    .then(|| cache::humanize_task_ids(self.cache.rows(), note).into_owned())
+            })
+            .collect();
+        // Copy takes every word of the message: the prose, then each note.
+        let copy_text = std::iter::once(text)
+            .chain(notes.iter().flatten().map(String::as_str))
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
         let has_images = attachments
             .iter()
             .any(|att| matches!(att, ChatAttachment::Image(_)));
-        // An image message labels its Article structurally; its caption is a Label of its own.
-        let article_label: String = if has_images {
+        // Attachments and review comments are painted on the bubble itself: a 3px frame around
+        // the caption and the blocks, which keep the 14px radius when grouped.
+        let framed = !attachments.is_empty() || !review_comments.is_empty();
+        // A framed message labels its Article structurally; its caption is a Label of its own.
+        let article_label: String = if framed {
             "User message".to_owned()
         } else {
             text.chars().take(120).collect()
         };
+        // No top highlight: a sent message is one flat surface.
         let mut bubble = div()
             .id(SharedString::from(format!("chat-user-{id}")))
             .a11y(
@@ -2107,49 +2340,73 @@ impl ChatView {
             .relative()
             .flex()
             .flex_col()
-            .gap(px(8.0))
             .min_w_0()
             .rounded(px(BUBBLE_RADIUS_PX))
             .bg(hsla(self.tokens.message_surface))
-            .border_t_1()
-            .border_color(message_highlight(&self.tokens))
             .text_size(px(BODY_FONT_PX))
             .line_height(px(BODY_LINE_HEIGHT_PX))
             .text_color(hsla(self.tokens.message_foreground));
-        // Image bubble: 80% wide, 3px inset (highlight included) on top, sides and bottom, the
-        // galleries painted on it. The caption comes first (16px sides, text 12px from the top),
-        // then 8px to the attachments. The radius stays 14px when grouped.
-        if has_images {
+        if framed {
+            // Up to 80% wide with words, 54% without (a gallery alone is never narrower than
+            // 32%; a player always fills the cap). The caption comes first (16px sides, 10px
+            // from the top), then each review comment (its note, then its quote), then the
+            // attachments in their own order, all 3px apart. A gallery below the caption sits
+            // 13px under its last line.
+            let gallery_follows = review_comments.is_empty()
+                && matches!(attachments.first(), Some(ChatAttachment::Image(_)));
+            let has_video = attachments.iter().any(|att| {
+                attachment_thumb::attachment_kind(att) == attachment_thumb::AttachmentKind::Video
+            });
+            let has_words = !text.is_empty() || !review_comments.is_empty();
+            let cap = if has_words { 0.8 } else { 0.54 };
             bubble = bubble
-                .w(relative(0.8))
-                .pt(px(attachment_thumb::GALLERY_INSET_PX - 1.0))
-                .pb(px(attachment_thumb::GALLERY_INSET_PX));
+                .gap(px(attachment_thumb::GALLERY_INSET_PX))
+                .p(px(attachment_thumb::GALLERY_INSET_PX));
+            // A gallery or a player has no width of its own, and its height follows its width:
+            // the bubble gets a definite width before layout. Other bubbles fit their content.
+            let definite = (has_images || has_video)
+                .then(|| {
+                    self.framed_bubble_width(window, text, &notes, review_comments, attachments)
+                })
+                .flatten();
+            bubble = match definite {
+                Some(width) => bubble.w(px(width)),
+                // No lane measured yet (the first frame): the fractional caps, until the repaint
+                // that `framed_bubble_width` asked for.
+                None => {
+                    let bubble = bubble.max_w(relative(cap));
+                    let bubble = if has_images {
+                        bubble.min_w(relative(0.32))
+                    } else {
+                        bubble
+                    };
+                    if has_video {
+                        bubble.w(relative(cap))
+                    } else {
+                        bubble
+                    }
+                }
+            };
+
             if !text.is_empty() {
-                let caption = SharedString::from(text.to_owned());
-                bubble = bubble.child(
-                    div()
-                        .min_w_0()
-                        .px(px(16.0))
-                        .pt(px(12.0 - attachment_thumb::GALLERY_INSET_PX))
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("chat-caption-{id}")))
-                                .a11y(
-                                    gpui_kit::Role::Label,
-                                    SharedString::from(format!("chat.caption.{id}")),
-                                    caption.clone(),
-                                )
-                                .min_w_0()
-                                .child(caption),
-                        ),
-                );
+                bubble = bubble.child(self.render_bubble_caption(
+                    id,
+                    text,
+                    if gallery_follows { 10.0 } else { 7.0 },
+                ));
             }
-            for block in self.render_sent_attachments(
-                &format!("user-{id}"),
-                attachments,
-                !text.is_empty(),
-                cx,
-            ) {
+            for (idx, comment) in review_comments.iter().enumerate() {
+                if let Some(note) = &notes[idx] {
+                    bubble = bubble.child(self.render_bubble_caption(
+                        &format!("{id}.note.{idx}"),
+                        note,
+                        7.0,
+                    ));
+                }
+                bubble =
+                    bubble.child(self.render_review_comment(&format!("user-{id}"), idx, comment));
+            }
+            for block in self.render_sent_attachments(&format!("user-{id}"), attachments, cx) {
                 bubble = bubble.child(block);
             }
         } else {
@@ -2158,27 +2415,22 @@ impl ChatView {
                 .px(px(16.0))
                 .pt(px(10.0))
                 .pb(px(12.0));
-            if !attachments.is_empty() {
-                bubble = bubble.child(self.render_attachment_chips(
-                    &format!("user-{id}"),
-                    attachments,
-                    cx,
-                ));
-            }
             if !text.is_empty() {
                 bubble = bubble.child(div().min_w_0().child(text.to_owned()));
             }
         }
 
-        if grouped_with_previous && !has_images {
+        if grouped_with_previous && !framed {
             bubble = bubble.rounded_tr(px(BUBBLE_GROUPED_RADIUS_PX));
         }
-        if grouped_with_next && !has_images {
+        if grouped_with_next && !framed {
             bubble = bubble.rounded_br(px(BUBBLE_GROUPED_RADIUS_PX));
         }
 
+        #[cfg(test)]
+        let bubble = gpui_kit::TestSupportExt::test_support(bubble);
         let group = SharedString::from(format!("user-row-{id}"));
-        let actions = self.render_user_actions(id, text, created_at, &group, cx);
+        let actions = self.render_user_actions(id, &copy_text, created_at, &group, cx);
         let mut row = div()
             .group(group)
             .flex()
@@ -2512,98 +2764,6 @@ impl ChatView {
                     .child(chevron),
             )
             .into_any_element()
-    }
-
-    /// Renders a thread-opening or delegated prompt sent by an agent/CLI as Conn's collapsed
-    /// `"Agent <single-line preview> ▸"` row, expanding on click to show the full text.
-    fn render_agent_prompt_row(
-        &self,
-        id: &str,
-        text: &str,
-        cx: &mut Context<'_, Self>,
-    ) -> AnyElement {
-        let key = format!("agent-msg-{id}");
-        let text = &*cache::humanize_task_ids(self.cache.rows(), text);
-        let expanded = self.expanded_ids.contains(&key);
-        let toggle_key = key.clone();
-        let preview = text
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .unwrap_or("Prompt");
-        let fg = hsla(self.tokens.foreground);
-        let muted = hsla(self.tokens.muted_foreground);
-
-        let mut col = div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .min_w_0()
-            .pb(px(12.0))
-            .child(
-                div()
-                    .id(SharedString::from(key))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.0))
-                    .w_full()
-                    .min_w_0()
-                    .px(px(4.0))
-                    .py(px(2.0))
-                    .rounded(px(6.0))
-                    .cursor_pointer()
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
-                    .text_color(muted)
-                    .hover(move |s| s.text_color(fg))
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        view.toggle_expanded(&toggle_key, cx);
-                    }))
-                    .child(icons::icon("superhero/agent.svg", 14.0, muted))
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child("Agent"),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .child(preview.to_owned()),
-                    )
-                    .child(icons::icon(
-                        if expanded {
-                            "superhero/chevron-down.svg"
-                        } else {
-                            "superhero/chevron-right.svg"
-                        },
-                        13.0,
-                        muted,
-                    )),
-            );
-
-        if expanded {
-            col = col.child(
-                div()
-                    .mt(px(4.0))
-                    .ml(px(20.0))
-                    .px(px(12.0))
-                    .py(px(8.0))
-                    .rounded(px(10.0))
-                    .bg(hsla(self.tokens.shell_control))
-                    .border_1()
-                    .border_color(hsla(self.tokens.shell_inner_border))
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
-                    .text_color(prose_foreground(&self.tokens))
-                    .child(text.to_owned()),
-            );
-        }
-
-        col.into_any_element()
     }
 
     /// Renders a turn's grouped thinking/tool work entries.
@@ -3480,6 +3640,7 @@ impl Render for ChatView {
                 .child(self.render_empty_no_thread(cx));
         }
 
+        self.refresh_request_stack();
         let draft_key = if let Some(draft) = &self.draft {
             Some(composer_state::new_thread_draft_key(&draft.draft_id))
         } else {
@@ -3510,6 +3671,11 @@ impl Render for ChatView {
                 .child(self.render_draft_hero(&draft, window, cx));
         }
 
+        let lane = self.sent_lane_px.get();
+        if (self.sent_lane_applied - lane).abs() > 0.5 {
+            self.sent_lane_applied = lane;
+            self.list_state.remeasure_items(0..self.cache.items().len());
+        }
         let composer_height = self.composer_height.get();
         if (composer_height - self.composer_height_applied).abs() > 0.5 {
             self.composer_height_applied = composer_height;
@@ -3577,7 +3743,7 @@ impl Render for ChatView {
                 list_state.clone(),
                 cx.processor(|this, ix: usize, window, cx| {
                     this.thumb_scale = window.scale_factor();
-                    this.render_virtual_item(ix, cx)
+                    this.render_virtual_item(ix, window, cx)
                 }),
             )
             .size_full()
@@ -3632,11 +3798,7 @@ impl Render for ChatView {
         };
 
         let provider_banner = self.render_provider_banner(cx);
-        let question_banner = self.render_question_banner(window, cx);
-        let child_approvals = self.render_child_approvals(cx);
-        let banner_docked = question_banner.is_some();
-        self.composer
-            .update(cx, |c, cx| c.set_stash_docked(banner_docked, cx));
+        let request_stack = self.render_request_stack(window, cx);
 
         // The lane floats over the timeline's bottom edge; the timeline pads its last row by the
         // measured height so the final message still scrolls fully above the card.
@@ -3665,13 +3827,28 @@ impl Render for ChatView {
         if let Some(error) = self.error_banner.as_deref() {
             composer_lane = composer_lane.child(self.render_error_banner(error, cx));
         }
+        let measured_width = Rc::clone(&self.sent_lane_px);
         composer_lane = composer_lane.child(
             div()
+                .relative()
                 .w_full()
                 .max_w(px(CHAT_CONTENT_MAX_WIDTH_PX))
                 .mx_auto()
-                .when_some(child_approvals, |lane, cards| lane.child(cards))
-                .when_some(question_banner, |lane, banner| lane.child(banner))
+                .child(
+                    gpui_kit::canvas(
+                        move |bounds, window, _| {
+                            let width = f32::from(bounds.size.width);
+                            if (measured_width.get() - width).abs() > 0.5 {
+                                measured_width.set(width);
+                                window.refresh();
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+                .when_some(request_stack, |lane, stack| lane.child(stack))
                 .child(self.composer.clone()),
         );
 
@@ -4104,6 +4281,7 @@ mod worked_label_tests {
             created_at: None,
             attachments: Vec::new(),
             is_steer: false,
+            review_comments: Vec::new(),
             run_id: Some("run-2".to_owned()),
         });
         assert_eq!(

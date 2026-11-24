@@ -12,7 +12,7 @@ use conn_state::{
     build_user_input_answers, collapsed_plan_preview, flatten_turn_diff_tree,
     format_chat_timestamp_tooltip, format_day_aware_timestamp, format_duration,
     format_subagent_display_title, plan_can_collapse, request_kind_label,
-    strip_displayed_plan_markdown, subagent_status_visual,
+    strip_displayed_plan_markdown, subagent_status_visual, text_without_review_comments,
 };
 use serde_json::{Value, json};
 
@@ -510,6 +510,7 @@ fn thread_snapshot_and_streaming_deltas_flip_working() {
             created_at: Some("2026-11-13T09:00:00.000Z".to_owned()),
             attachments: Vec::new(),
             is_steer: false,
+            review_comments: Vec::new(),
             run_id: Some("run-1".to_owned()),
         },
         "first entry should be user message"
@@ -838,6 +839,7 @@ fn a_childs_pending_approval_reaches_its_parent_with_the_childs_own_details() {
     let threads = std::collections::HashMap::from([("child".to_owned(), child)]);
     let listed = |id: &str| conn_state::ChildApprovalThread {
         id: id.to_owned(),
+        request_id: threads["child"].pending_approvals()[0].request_id.clone(),
         title: "Review #278".to_owned(),
     };
 
@@ -2216,6 +2218,41 @@ fn run_event(
 }
 
 #[test]
+fn handoff_notice_shows_endpoints_without_the_provider_transcript() {
+    let mut item = json!({
+        "id": "handoff-row", "type": "handoff", "status": "completed",
+        "contextHandoffId": "handoff-1", "strategy": "full_thread_summary",
+        "fromProviderThreadIds": ["source"], "toProviderThreadId": "target",
+        "fromProviderInstanceIds": ["claude"], "toProviderInstanceId": "codex",
+        "fromModelSelections": [{"instanceId": "claude", "model": "sonnet"}],
+        "toModel": "gpt-5", "summary": "Provider context handoff.\n[Historical user]".repeat(100)
+    });
+    let mut state = ThreadState::new("thread-cards");
+    assert!(
+        state.apply(turn_item_event(1, item.clone())),
+        "handoff added"
+    );
+    assert!(
+        matches!(&state.entries[..], [TimelineEntry::Notice { text, is_error: false, .. }]
+        if text == "Context handoff · sonnet → gpt-5"),
+        "handoff shows model endpoints"
+    );
+
+    item["fromModelSelections"] = Value::Null;
+    item["toModel"] = Value::Null;
+    item["status"] = json!("failed");
+    assert!(
+        state.apply(turn_item_event(2, item)),
+        "failed handoff updated"
+    );
+    assert!(
+        matches!(&state.entries[..], [TimelineEntry::Notice { text, is_error: true, .. }]
+        if text == "Context handoff · claude → codex"),
+        "older handoffs fall back to provider endpoints"
+    );
+}
+
+#[test]
 fn user_input_request_maps_to_interactive_card_and_answer_history() {
     let mut state = ThreadState::new("thread-cards");
     let pending = turn_item_event(
@@ -2586,6 +2623,52 @@ fn subagent_maps_to_clickable_link_with_status_and_detail() {
         conn_state::plain_subagent_detail("Reading [main.rs](src/main.rs)\n- `cargo test`"),
         "Reading main.rs cargo test"
     );
+}
+
+#[test]
+fn user_message_keeps_review_comments_from_context_records() {
+    let mut state = ThreadState::new("thread-review");
+    let message = turn_item_event(
+        1,
+        json!({
+            "id": "item-review",
+            "status": "completed",
+            "createdBy": "user",
+            "creationSource": "web",
+            "type": "user_message",
+            "messageId": "msg-review",
+            "inputIntent": "turn_start",
+            "text": "[app.rs L12](t3-context://v1/review-comment/review_1)",
+            "attachments": [],
+            "context": { "version": 1, "records": [
+                { "version": 1, "contextId": "review_1", "kind": "review-comment",
+                  "label": "app.rs L12", "sectionId": "file:src/app.rs",
+                  "sectionTitle": "File comment", "filePath": "src/app.rs",
+                  "startIndex": 11, "endIndex": 11, "rangeLabel": "L12",
+                  "text": " Keep this check here. ", "diff": "- a\n+ b\n",
+                  "fenceLanguage": "diff" },
+                { "version": 1, "contextId": "mention_1", "kind": "mention",
+                  "label": "x", "path": "x" },
+                { "version": 1, "contextId": "review_bad", "kind": "review-comment",
+                  "rangeLabel": "L1" }
+            ] }
+        }),
+    );
+    assert!(state.apply(message));
+    let Some(TimelineEntry::User {
+        review_comments,
+        text,
+        ..
+    }) = state.entries.first()
+    else {
+        panic!("expected user entry, got {:?}", state.entries);
+    };
+    assert_eq!(review_comments.len(), 1, "only the complete review record");
+    assert_eq!(review_comments[0].label(), "app.rs · #12");
+    assert_eq!(review_comments[0].text, "Keep this check here.");
+    assert_eq!(review_comments[0].diff, "- a\n+ b");
+    assert_eq!(review_comments[0].fence_language.as_deref(), Some("diff"));
+    assert_eq!(text_without_review_comments(text), "");
 }
 
 #[test]
@@ -3078,4 +3161,107 @@ fn a_replayed_deletion_evicts_the_cached_thread() {
         Some("model-b"),
         "the thread record follows thread.model-selection-updated"
     );
+}
+
+#[test]
+fn document_tools_keep_their_attachment_and_source_identity() {
+    let html = json!({"attachmentId":"signed-html", "title":"Preview", "height":160});
+    let app = json!({"attachmentId":"signed-app","resourceUri":"ui://preview/card","server":"sample","tool":"preview"});
+    for (name, output, status, expected) in [
+        (
+            "mcp__conn__html_render",
+            json!({"structuredContent":{"htmlRender":html}}),
+            "completed",
+            Some(false),
+        ),
+        (
+            "sample.preview",
+            json!({"content":[{"text":json!({"t3McpApp":app}).to_string()}]}),
+            "completed",
+            Some(true),
+        ),
+        (
+            "sample.preview",
+            json!({"t3McpApp":app}),
+            "failed",
+            Some(true),
+        ),
+        ("other.preview", json!({"t3McpApp":app}), "completed", None),
+        ("html_render", json!({"htmlRender":html}), "running", None),
+        (
+            "html_preview",
+            json!({"htmlRender":html}),
+            "completed",
+            None,
+        ),
+        (
+            "html_render",
+            json!({"isError":true,"structuredContent":{"htmlRender":html}}),
+            "completed",
+            None,
+        ),
+    ] {
+        let mut state = ThreadState::default();
+        state.apply(turn_item_event(1,json!({"id":"tool-1","type":"dynamic_tool","toolName":name,"status":status,"input":{"key":1},"output":output})));
+        match (&state.entries[..], expected) {
+            (
+                [
+                    TimelineEntry::EmbeddedDocument {
+                        is_mcp,
+                        document,
+                        input,
+                        source_thread_id,
+                        source_item_id,
+                        ..
+                    },
+                ],
+                Some(kind),
+            ) => {
+                assert_eq!(source_thread_id, "thread-cards");
+                assert_eq!(source_item_id, "tool-1");
+                assert_eq!(*is_mcp, kind);
+                assert_eq!(document, if kind { &app } else { &html });
+                assert_eq!(input, &json!({"key":1}));
+            }
+            ([TimelineEntry::Tool { .. }], None) => {}
+            _ => panic!(
+                "unexpected document mapping for {name}: {:?}",
+                state.entries
+            ),
+        }
+    }
+}
+
+#[test]
+fn inherited_document_uses_the_source_item_for_app_requests_after_reopening_and_paging() {
+    let event = turn_item_event(
+        1,
+        json!({
+            "type":"dynamic_tool", "id":"visible-id", "toolName":"qa.preview", "status":"completed",
+            "input":{}, "output":{"t3McpApp":{"attachmentId":"document","resourceUri":"ui://qa/card","server":"qa","tool":"preview"}}
+        }),
+    );
+    let item = serde_json::to_value(event).expect("turn item event")["event"]["payload"].clone();
+    let row = json!({"position":1, "visibility":"inherited", "sourceThreadId":"child",
+                    "sourceItemId":"child-item", "item":item});
+    let mut snapshot =
+        parse_json_array(include_str!("fixtures/thread_permission_stream.json"))[0].clone();
+    snapshot["projection"]["visibleTurnItems"] = json!([row]);
+    let mut reopened = ThreadState::default();
+    reopened.apply(decode_thread(snapshot));
+    let mut paged = ThreadState::default();
+    assert_eq!(
+        paged.prepend_history_page(
+            from_json(json!({
+                "snapshotSequence":1, "items":[row], "hasMoreHistory":false, "nextCursor":null
+            }))
+            .expect("history page")
+        ),
+        1
+    );
+    for state in [reopened, paged] {
+        assert!(matches!(state.entries.as_slice(),
+            [TimelineEntry::EmbeddedDocument { id, source_thread_id, source_item_id, .. }]
+                if id == "visible-id" && source_thread_id == "child" && source_item_id == "child-item"));
+    }
 }

@@ -123,7 +123,7 @@ Lint check: `cargo clippy -p conn-web -p conn-app --all-targets --features conn-
 
 ## Visual fixes made from screenshots
 
-- Sent image captions precede the attachments in the layout and accessibility tree. Native VM captures show 12 px above the caption, 16 px at its sides and 8 px before the gallery. Image-only bubbles have a 3 px inset on all sides. The grid supports up to four equal-width 4:3 tiles per row with 11 px outside corners and 3 px tile corners.
+- Sent image captions precede the attachments in the layout and accessibility tree. The caption line box starts 10 px below the bubble edge, has 16 px side insets and ends 13 px above the gallery. Image-only bubbles have a 3 px inset on all sides. The grid supports up to four equal-width 4:3 tiles per row with 11 px outside corners and 3 px tile corners.
 - Inline code chips: foreground 10% fill (Conn `.chat-markdown :not(pre) > code`), was invisible in dark.
 - Tool row paths shown relative to the workspace root (also strips the `/private` symlink prefix).
 - Diff lines no longer wrap; narrower line-number gutter and file list.

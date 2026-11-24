@@ -1,11 +1,6 @@
 //! Pure view model for the pending-approval card (no gpui): splits the raw approval `title` /
 //! `detail` into a kind heading, the real command (shell wrapper stripped) and a short note.
 
-/// Lines shown while the command is collapsed.
-pub(super) const COLLAPSED_LINES: usize = 3;
-/// Character budget for the collapsed command; a single very long line still wraps in the card.
-pub(super) const COLLAPSED_CHARS: usize = 240;
-
 const DEFAULT_TITLE: &str = "Approval requested";
 const SHELLS: [&str; 6] = ["sh", "bash", "zsh", "dash", "fish", "ksh"];
 
@@ -109,45 +104,6 @@ fn unquote(text: &str) -> Option<String> {
     Some(out)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Clipped {
-    pub text: String,
-    /// True when text was cut off.
-    pub truncated: bool,
-}
-
-/// Keeps at most `max_lines` logical lines and `max_chars` characters of `text`.
-pub(super) fn clip(text: &str, max_lines: usize, max_chars: usize) -> Clipped {
-    let mut out = String::new();
-    let mut chars = 0;
-    for (lines, line) in text.lines().enumerate() {
-        if lines == max_lines {
-            return Clipped {
-                text: out.trim_end().to_owned(),
-                truncated: true,
-            };
-        }
-        let remaining = max_chars.saturating_sub(chars);
-        let count = line.chars().count();
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        if count > remaining {
-            out.extend(line.chars().take(remaining));
-            return Clipped {
-                text: out.trim_end().to_owned(),
-                truncated: true,
-            };
-        }
-        out.push_str(line);
-        chars += count;
-    }
-    Clipped {
-        text: out,
-        truncated: false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,32 +136,6 @@ mod tests {
         assert_eq!(strip_shell_wrapper("bash -c 'a' 'b'"), None);
         assert_eq!(strip_shell_wrapper("bash -c 'unterminated"), None);
         assert_eq!(strip_shell_wrapper("bash -c ''"), None);
-    }
-
-    #[test]
-    fn clips_by_lines_and_chars() {
-        let text = "a\nb\nc\nd";
-        assert_eq!(
-            clip(text, 3, 100),
-            Clipped {
-                text: "a\nb\nc".into(),
-                truncated: true
-            }
-        );
-        assert_eq!(
-            clip(text, 4, 100),
-            Clipped {
-                text: text.into(),
-                truncated: false
-            }
-        );
-        assert_eq!(
-            clip("abcdefghij", 3, 4),
-            Clipped {
-                text: "abcd".into(),
-                truncated: true
-            }
-        );
     }
 
     #[test]

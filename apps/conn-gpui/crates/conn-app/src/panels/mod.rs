@@ -825,10 +825,29 @@ impl RightPanel {
         });
     }
 
-    /// Optional hint for the active thread's completed turn count used by `orchestration.getFullThreadDiff`.
-    pub fn set_turn_count(&mut self, turn_count: Option<i64>, cx: &mut Context<'_, Self>) {
+    /// Points the Diff panel at one turn's checkpoint diff (`Turn n-1 → n`), or every turn when
+    /// the run has no ordinal, and reveals `file_path` once it loads. The caller selects the Diff
+    /// tab.
+    pub fn open_turn_diff(
+        &mut self,
+        turn: Option<i64>,
+        file_path: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.diff
-            .update(cx, |p, cx| p.set_turn_count(turn_count, cx));
+            .update(cx, |p, cx| p.open_turn_diff(turn, file_path, cx));
+    }
+
+    /// The Diff panel's scope label and the file still waiting to be revealed, for tests.
+    #[cfg(test)]
+    pub(crate) fn diff_focus_state(&self, cx: &gpui_kit::App) -> (String, Option<String>) {
+        self.diff.read(cx).focus_state()
+    }
+
+    /// Shows one Orbit task's detail in the Tasks panel. The caller selects the Tasks tab.
+    pub fn open_task(&mut self, task_id: i64, cx: &mut Context<'_, Self>) {
+        self.tasks
+            .update(cx, |panel, cx| panel.open_task(task_id, cx));
     }
 
     /// Whether live surfaces (native CEF browser view, device video/input streams) may run:

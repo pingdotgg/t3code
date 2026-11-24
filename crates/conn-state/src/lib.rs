@@ -19,6 +19,7 @@ mod drafts;
 pub mod environments;
 mod layout;
 pub mod model_preferences;
+mod orbit_task;
 mod order_keys;
 mod panel_tabs;
 pub mod project_groups;
@@ -27,6 +28,7 @@ pub mod provider_auth;
 pub mod provider_settings;
 pub mod providers;
 mod question;
+mod review_comment;
 mod scheduled;
 mod settled_shelf;
 mod shell;
@@ -87,6 +89,7 @@ pub use crate::layout::{
     SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, right_panel_max_width,
     sidebar_max_width,
 };
+pub use crate::orbit_task::{is_orbit_task_create_tool, orbit_task_create_row};
 pub use crate::order_keys::{
     OrderAssignment, order_key_between, plan_reorder, sort_active, sort_pinned, spread_order_keys,
     top_of_pinned_run_key,
@@ -98,6 +101,7 @@ pub use crate::panel_tabs::{
 pub use crate::question::{
     clamp_context, markdown_preview_text, seed_user_input_drafts, split_recommended_label,
 };
+pub use crate::review_comment::{ReviewComment, text_without_review_comments};
 pub use crate::settled_shelf::{
     MoreState, SETTLED_MORE_ROW, SETTLED_TAIL_INITIAL_COUNT, SETTLED_TAIL_PAGE_COUNT, SettledTail,
     ShelfInput, ShelfView, SidebarPrefs, more_label, shelf_view,

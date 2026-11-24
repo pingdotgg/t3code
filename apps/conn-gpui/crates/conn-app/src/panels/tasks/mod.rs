@@ -544,7 +544,8 @@ impl TasksPanel {
         .detach();
     }
 
-    fn open_task(&mut self, task_id: i64, cx: &mut Context<'_, Self>) {
+    /// Shows one task's detail, from the board or from an Orbit task card in a thread.
+    pub(crate) fn open_task(&mut self, task_id: i64, cx: &mut Context<'_, Self>) {
         let key = self.nav_key().to_owned();
         let now = now_epoch_ms().max(0) as u64;
         self.panel_state.open_task(&key, task_id, now);

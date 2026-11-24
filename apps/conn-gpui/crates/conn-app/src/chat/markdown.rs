@@ -18,6 +18,12 @@ use markdown::mdast::Node;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
+use super::artifact_template::{self, ArtifactTemplate, Segment, UseArtifactTemplateCallback};
+use super::card_face::{
+    CARD_ACTION_BOX_PX, CARD_ACTION_ICON_PX, CARD_BODY_RADIUS_PX, CARD_ICON_GAP_PX, CARD_ICON_PX,
+    CARD_META_LINE_PX, CARD_TEXT_PX, CardFace, card_colors, card_header, card_shell,
+    fence_display_name,
+};
 use super::color::{SyntaxRole, hsla, hsla_alpha, prose_foreground};
 use super::icons;
 use super::inline_code::{self, Built, ChipPlan, InlineCodeText};
@@ -29,8 +35,9 @@ const BODY_FONT_PX: f32 = 14.0;
 const BODY_LINE_HEIGHT_PX: f32 = 22.75;
 /// Vertical spacing between Markdown blocks matching `.chat-markdown` (`0.65rem`).
 const BLOCK_GAP_PX: f32 = 10.4;
-/// Rounded corners for fenced code blocks matching Conn's `--radius-bubble` (`calc(0.5rem + 6px)`).
-const CODE_BLOCK_RADIUS_PX: f32 = 14.0;
+/// The wrap toggle's glyph: the lab draws it at 16px, two px over the header's other glyphs.
+const CODE_WRAP_GLYPH: &str = "superhero/wrap-lines.svg";
+const CODE_WRAP_GLYPH_PX: f32 = 16.0;
 /// Monospace code size inside fenced blocks: web's `--font-size-code` (13px default) at
 /// `--line-height-code` (1.625), so 21.125px.
 const CODE_FONT_PX: f32 = 13.0;
@@ -116,6 +123,9 @@ pub(crate) struct MarkdownOptions<'a> {
     /// Optional callback invoked as the pointer moves on and off a pull request or issue link
     /// (the hover preview card).
     pub(crate) on_link_hover: Option<LinkHoverCallback>,
+    /// Optional callback invoked when an artifact template card's "Use template" button is
+    /// clicked. Without it the card has no button.
+    pub(crate) on_use_artifact_template: Option<UseArtifactTemplateCallback>,
 }
 
 /// Tells the chat where the pointer is relative to the preview-able links of a paragraph.
@@ -159,6 +169,10 @@ impl fmt::Debug for MarkdownOptions<'_> {
             .field("has_on_open_file", &self.on_open_file.is_some())
             .field("has_on_link_menu", &self.on_link_menu.is_some())
             .field("has_on_link_hover", &self.on_link_hover.is_some())
+            .field(
+                "has_on_use_artifact_template",
+                &self.on_use_artifact_template.is_some(),
+            )
             .finish()
     }
 }
@@ -187,10 +201,30 @@ pub(super) enum MarkdownBlock {
         rows: Vec<Vec<Vec<InlineSpan>>>,
     },
     ThematicBreak,
+    /// A top-level `::artifact-template{...}` directive with valid attributes.
+    ArtifactTemplate(ArtifactTemplate),
 }
 
-/// Parses GitHub-flavored Markdown into a list of render-ready [`MarkdownBlock`]s.
+/// Parses GitHub-flavored Markdown into a list of render-ready [`MarkdownBlock`]s. Top-level
+/// `::artifact-template` directives become [`MarkdownBlock::ArtifactTemplate`]; one with invalid
+/// attributes stays a paragraph of its source line.
 pub(super) fn parse_markdown(src: &str) -> Vec<MarkdownBlock> {
+    let mut blocks = Vec::new();
+    for segment in artifact_template::split_segments(src) {
+        match segment {
+            Segment::Markdown(text) => blocks.extend(parse_markdown_segment(text)),
+            Segment::Template(template) => blocks.push(MarkdownBlock::ArtifactTemplate(template)),
+            Segment::Literal(text) => blocks.push(MarkdownBlock::Paragraph(vec![InlineSpan {
+                text: text.to_owned(),
+                style: InlineStyle::default(),
+                link: None,
+            }])),
+        }
+    }
+    blocks
+}
+
+fn parse_markdown_segment(src: &str) -> Vec<MarkdownBlock> {
     if src.trim().is_empty() {
         return Vec::new();
     }
@@ -813,6 +847,13 @@ fn render_block(
                 .bg(hr_color)
                 .into_any_element()
         }
+
+        MarkdownBlock::ArtifactTemplate(template) => artifact_template::render_card(
+            block_id,
+            template,
+            tokens,
+            options.on_use_artifact_template.as_ref(),
+        ),
     }
 }
 
@@ -824,10 +865,7 @@ fn render_code_block(
     tokens: &Tokens,
     options: &MarkdownOptions<'_>,
 ) -> AnyElement {
-    let lang_label = match language {
-        None | Some("text") => "Text".to_owned(),
-        Some(other) => other.to_owned(),
-    };
+    let lang_label = fence_display_name(language);
     let is_copied = options.copied_code_key == Some(block_id);
     let is_wrapped = options
         .wrapped_code_keys
@@ -854,17 +892,21 @@ fn render_code_block(
 
     let styled_code = StyledText::new(SharedString::from(code.to_owned())).with_highlights(runs);
 
-    // Conn `MarkdownCodeBlock`: icon-only `size="icon-xs"` (24px) button with 12px (`size-3`) glyph.
+    // Lab `.m-code`: the 24px icon buttons of the card header, 14px glyphs; the wrap toggle's
+    // glyph is drawn larger (16px) in the lab and stays so.
+    let card = card_colors(tokens, CardFace::Tinted);
+    let muted = hsla(tokens.muted_foreground);
+    let action_hover = hsla_alpha(tokens.foreground, 0.06);
     let copy_btn = div()
         .id(SharedString::from(format!("copy-{block_id}")))
         .a11y_button(md_ax_id(block_id, "code.copy"), "Copy code")
         .flex()
         .items_center()
         .justify_center()
-        .size(px(24.0))
+        .size(px(CARD_ACTION_BOX_PX))
         .rounded(px(6.0))
         .cursor_pointer()
-        .hover(|s| s.bg(hsla(tokens.shell_highlight)))
+        .hover(move |s| s.bg(action_hover))
         .on_click(move |_, window, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string(copy_code.clone()));
             if let Some(cb) = &on_copy {
@@ -873,37 +915,36 @@ fn render_code_block(
         })
         .child(icons::icon(
             if is_copied { icons::CHECK } else { icons::COPY },
-            12.0,
+            CARD_ACTION_ICON_PX,
             if is_copied {
                 hsla(tokens.success)
             } else {
-                hsla_alpha(tokens.code_foreground, 0.72)
+                muted
             },
         ));
 
     let lang_icon = language
         .and_then(language_sample_filename)
         .map(crate::file_icons::file_icon);
-    let lang_muted = hsla_alpha(tokens.code_foreground, 0.72);
     let mut lang_header = div()
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(6.0))
+        .gap(px(CARD_ICON_GAP_PX))
         .min_w_0();
     if let Some(icon) = lang_icon {
         let icon_color = icon
             .color
             .map(|c| hsla(c.for_appearance(tokens.appearance)))
-            .unwrap_or(lang_muted);
-        lang_header = lang_header.child(icons::icon(icon.asset, 13.0, icon_color));
+            .unwrap_or(muted);
+        lang_header = lang_header.child(icons::icon(icon.asset, CARD_ICON_PX, icon_color));
     }
+    // The language is named in full, in the card's sans text, not in code type.
     lang_header = lang_header.child(
         div()
-            .font_family(MONO_FONT_FAMILY)
-            .text_size(px(11.0))
-            .line_height(px(16.0))
-            .text_color(lang_muted)
+            .text_size(px(CARD_TEXT_PX))
+            .line_height(px(CARD_META_LINE_PX))
+            .text_color(muted)
             .child(lang_label),
     );
 
@@ -917,7 +958,7 @@ fn render_code_block(
         let wrap_color = if is_wrapped {
             hsla(tokens.code_foreground)
         } else {
-            hsla_alpha(tokens.code_foreground, 0.72)
+            muted
         };
         let wrap_btn = div()
             .id(SharedString::from(format!("wrap-{block_id}")))
@@ -925,25 +966,20 @@ fn render_code_block(
             .flex()
             .items_center()
             .justify_center()
-            .size(px(24.0))
+            .size(px(CARD_ACTION_BOX_PX))
             .rounded(px(6.0))
             .cursor_pointer()
-            .hover(|s| s.bg(hsla(tokens.shell_highlight)))
+            .hover(move |s| s.bg(action_hover))
             .on_click(move |_, window, cx| {
                 on_wrap_cb(wrap_key.clone(), window, cx);
             })
-            .child(icons::icon("superhero/wrap-lines.svg", 12.0, wrap_color));
+            .child(icons::icon(CODE_WRAP_GLYPH, CODE_WRAP_GLYPH_PX, wrap_color));
         header_actions = header_actions.child(wrap_btn);
     }
     header_actions = header_actions.child(copy_btn);
 
-    // Conn `MarkdownCodeBlockFrame`: `rounded-bubble` (14px), no header divider,
-    // `pt-1.5 pr-1.5 pb-0 pl-3` header, `0.8rem 0.9rem` code body padding.
-    let border_color = match tokens.appearance {
-        Appearance::Dark => hsla(tokens.border),
-        Appearance::Light => hsla_alpha(tokens.border, 0.70),
-    };
-    div()
+    // Lab `.m-code`: the card's frame around a header and the code on its own darker surface.
+    card_shell(card)
         .id(md_element_id(block_id, "code"))
         .a11y(
             Role::Code,
@@ -953,40 +989,33 @@ fn render_code_block(
                 Some(lang) => format!("Code block ({lang})"),
             },
         )
-        .w_full()
-        .min_w_0()
-        .overflow_hidden()
-        .rounded(px(CODE_BLOCK_RADIUS_PX))
-        .bg(hsla(tokens.code_background))
-        .border_1()
-        .border_color(border_color)
         .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
+            card_header(true)
                 .justify_between()
-                .gap(px(8.0))
-                .pt(px(6.0))
-                .pr(px(6.0))
-                .pb(px(0.0))
-                .pl(px(12.0))
                 .child(lang_header)
                 .child(header_actions),
         )
         .child(
             div()
-                .id(SharedString::from(format!("code-scroll-{block_id}")))
                 .w_full()
                 .min_w_0()
-                .px(px(14.4))
-                .py(px(12.8))
-                .font_family(MONO_FONT_FAMILY)
-                .text_size(px(CODE_FONT_PX))
-                .line_height(px(CODE_LINE_HEIGHT_PX))
-                .text_color(hsla(tokens.code_foreground))
-                .when(!is_wrapped, |el| el.overflow_x_scroll().whitespace_nowrap())
-                .child(styled_code),
+                .overflow_hidden()
+                .rounded(px(CARD_BODY_RADIUS_PX))
+                .bg(hsla(tokens.code_background))
+                .child(
+                    div()
+                        .id(SharedString::from(format!("code-scroll-{block_id}")))
+                        .w_full()
+                        .min_w_0()
+                        .px(px(14.4))
+                        .py(px(12.8))
+                        .font_family(MONO_FONT_FAMILY)
+                        .text_size(px(CODE_FONT_PX))
+                        .line_height(px(CODE_LINE_HEIGHT_PX))
+                        .text_color(hsla(tokens.code_foreground))
+                        .when(!is_wrapped, |el| el.overflow_x_scroll().whitespace_nowrap())
+                        .child(styled_code),
+                ),
         )
         .into_any_element()
 }

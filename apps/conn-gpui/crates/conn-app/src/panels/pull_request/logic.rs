@@ -1340,6 +1340,7 @@ pub(super) fn build_unified_diff_from_contents(
         additions,
         deletions,
         is_binary: false,
+        index: None,
         hunks,
     }
 }

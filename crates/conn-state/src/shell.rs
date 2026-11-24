@@ -106,6 +106,8 @@ pub enum PendingSubagentRequest {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChildApprovalThread {
     pub id: String,
+    /// The pending request advertised by the shell.
+    pub request_id: String,
     /// The child's display title (`formatSubagentDisplayTitle` for a subagent).
     pub title: String,
 }
@@ -170,8 +172,12 @@ fn as_rolled(kind: PendingRequestKind) -> Rolled {
 }
 
 /// `hasPendingApprovals`: the thread waits on a request that is not a question or an auth refresh.
-fn asks_approval(thread: &ThreadShell) -> bool {
-    request_kind(thread).is_some_and(|kind| kind != PendingRequestKind::UserInput)
+fn pending_approval_id(thread: &ThreadShell) -> Option<&str> {
+    let request = thread.pending_runtime_request.as_ref()?;
+    match request.kind {
+        PendingRequestKind::UserInput | PendingRequestKind::AuthRefresh => None,
+        _ => Some(&request.id),
+    }
 }
 
 /// A subagent's own live request. Provider-native subagents ask on their parent, so they are
@@ -642,7 +648,11 @@ impl ShellState {
     #[must_use]
     pub fn child_approval_threads(&self, parent_id: &str) -> Vec<ChildApprovalThread> {
         // Runs on every event batch: skip the walk while no thread asks for an approval.
-        if !self.threads.iter().any(asks_approval) {
+        if !self
+            .threads
+            .iter()
+            .any(|thread| pending_approval_id(thread).is_some())
+        {
             return Vec::new();
         }
         let mut children: HashMap<&str, Vec<&ThreadShell>> = HashMap::new();
@@ -672,9 +682,10 @@ impl ShellState {
                 }
                 walk.push(child.id.as_str());
                 let asks = subagent_request(child).is_some() || side_chat_request(child).is_some();
-                if asks && asks_approval(child) {
+                if asks && let Some(request_id) = pending_approval_id(child) {
                     found.push(ChildApprovalThread {
                         id: child.id.clone(),
+                        request_id: request_id.to_owned(),
                         title: if child.lineage.relationship_to_parent
                             == Some(Relationship::Subagent)
                         {
@@ -1228,24 +1239,28 @@ mod tests {
                     t["lineage"]["relationshipToParent"] = json!("fork");
                     t["lineage"]["sideChat"] = json!(true);
                     t["title"] = json!("Side chat");
-                    t["pendingRuntimeRequest"] = json!({"id": "r", "kind": "permission", "createdAt": "2026-11-13T09:00:00.000Z"});
+                    t["pendingRuntimeRequest"] = json!({"id": "side-permission", "kind": "permission", "createdAt": "2026-11-13T09:00:00.000Z"});
                 }),
                 thread_json("task", "p", |t| {
                     t["delegatedFrom"] =
                         json!({"environmentId": "env-b", "threadId": "root", "title": "Root"});
                     t["status"] = json!("running");
                     t["title"] = json!("Review #278");
-                    t["pendingRuntimeRequest"] = json!({"id": "r", "kind": "command", "createdAt": "2026-11-13T09:00:00.000Z"});
+                    t["pendingRuntimeRequest"] = json!({"id": "task-command", "kind": "command", "createdAt": "2026-11-13T09:00:00.000Z"});
                 }),
                 thread_json("other", "p", child_of("elsewhere", |_| {})),
             ],
             None,
         );
-        let found: Vec<(String, String)> = state
-            .child_approval_threads("root")
-            .into_iter()
-            .map(|c| (c.id, c.title))
-            .collect();
+        let children = state.child_approval_threads("root");
+        assert_eq!(
+            children
+                .iter()
+                .map(|child| child.request_id.as_str())
+                .collect::<Vec<_>>(),
+            ["side-permission", "task-command", "r"]
+        );
+        let found: Vec<(String, String)> = children.into_iter().map(|c| (c.id, c.title)).collect();
         // `mid` only asks a question; `leaf` is two levels down; `other` belongs to another parent.
         assert_eq!(
             found,

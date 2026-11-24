@@ -5,7 +5,7 @@
 mod store;
 use conn_client::{ClientError, Connection};
 use conn_contract::ChatAttachment;
-use conn_state::{ItemStatus, ThreadState, TimelineEntry};
+use conn_state::{ItemStatus, ReviewComment, ThreadState, TimelineEntry};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 pub use store::MessageCache;
@@ -21,6 +21,9 @@ pub enum Message {
         created_at: Option<String>,
         attachments: Vec<ChatAttachment>,
         is_steer: bool,
+        /// Rows saved before review comments were kept have none.
+        #[serde(default)]
+        review_comments: Vec<ReviewComment>,
         run_id: Option<String>,
     },
     Assistant {
@@ -47,6 +50,7 @@ impl Message {
                 created_at,
                 attachments,
                 is_steer,
+                review_comments,
                 run_id,
             } => Some(Self::User {
                 id: id.clone(),
@@ -55,6 +59,7 @@ impl Message {
                 created_at: created_at.clone(),
                 attachments: attachments.clone(),
                 is_steer: *is_steer,
+                review_comments: review_comments.clone(),
                 run_id: run_id.clone(),
             }),
             TimelineEntry::Assistant {
@@ -82,6 +87,7 @@ impl Message {
                 created_at,
                 attachments,
                 is_steer,
+                review_comments,
                 run_id,
             } => TimelineEntry::User {
                 id,
@@ -90,6 +96,7 @@ impl Message {
                 created_at,
                 attachments,
                 is_steer,
+                review_comments,
                 run_id,
             },
             Self::Assistant {

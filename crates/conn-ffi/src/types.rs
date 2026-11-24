@@ -989,6 +989,7 @@ pub(crate) fn map_timeline_entry_with_context(
             attachments,
             is_steer,
             run_id,
+            ..
         } => FfiTimelineEntry::User {
             id: id.clone(),
             text: text.clone(),
@@ -1040,6 +1041,41 @@ pub(crate) fn map_timeline_entry_with_context(
                 id: id.clone(),
                 text: text.clone(),
                 streaming: *streaming,
+                run_id: timing.and_then(|t| t.run_id.clone()),
+                duration_ms: entry_duration_ms(timing),
+            }
+        }
+        TimelineEntry::EmbeddedDocument {
+            id,
+            title,
+            detail,
+            status,
+            output_omitted,
+            ..
+        } => {
+            let timing = entry_timings.get(id);
+            FfiTimelineEntry::Tool {
+                id: id.clone(),
+                title: title.clone(),
+                kind: "dynamic_tool".to_owned(),
+                detail: detail.clone(),
+                status: (*status).into(),
+                output_omitted: *output_omitted,
+                run_id: timing.and_then(|t| t.run_id.clone()),
+                duration_ms: entry_duration_ms(timing),
+            }
+        }
+        TimelineEntry::OrbitTask {
+            id, title, detail, ..
+        } => {
+            let timing = entry_timings.get(id);
+            FfiTimelineEntry::Tool {
+                id: id.clone(),
+                title: title.clone(),
+                kind: "dynamic_tool".to_owned(),
+                detail: detail.clone(),
+                status: FfiItemStatus::Completed,
+                output_omitted: false,
                 run_id: timing.and_then(|t| t.run_id.clone()),
                 duration_ms: entry_duration_ms(timing),
             }
@@ -1233,6 +1269,7 @@ mod tests {
                 source: None,
             })],
             is_steer: true,
+            review_comments: Vec::new(),
             run_id: Some("r1".to_owned()),
         };
         assert_eq!(
@@ -1609,6 +1646,7 @@ mod tests {
                 created_at: Some("2026-11-22T10:00:00Z".to_owned()),
                 attachments: Vec::new(),
                 is_steer: false,
+                review_comments: Vec::new(),
                 run_id: Some("r1".to_owned()),
             },
             TimelineEntry::Thinking {
@@ -1639,6 +1677,7 @@ mod tests {
                 created_at: Some("2026-11-22T10:00:09Z".to_owned()),
                 attachments: Vec::new(),
                 is_steer: true,
+                review_comments: Vec::new(),
                 run_id: Some("r2".to_owned()),
             },
             TimelineEntry::Tool {

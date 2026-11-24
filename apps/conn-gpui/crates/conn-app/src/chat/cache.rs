@@ -113,6 +113,11 @@ pub(super) enum VirtualItem {
         run_id: String,
         summary: TurnCheckpointSummary,
     },
+    /// The worktree setup card: where a new worktree's setup stands. `fingerprint` changes with
+    /// what the card shows, so the list measures it again.
+    WorktreeSetup {
+        fingerprint: u64,
+    },
     Working,
 }
 
@@ -201,6 +206,7 @@ impl VirtualItem {
                 summary.deletions,
                 summary.files.len()
             ),
+            Self::WorktreeSetup { fingerprint } => format!("worktree-setup:{fingerprint:016x}"),
             Self::Working => "working".to_owned(),
         }
     }
@@ -237,7 +243,10 @@ impl VirtualItem {
             Self::ChangedFiles { run_id, .. } => {
                 target_id.strip_prefix("changed-files:") == Some(run_id.as_str())
             }
-            Self::LoadEarlier { .. } | Self::QueuedToggle { .. } | Self::Working => false,
+            Self::LoadEarlier { .. }
+            | Self::QueuedToggle { .. }
+            | Self::WorktreeSetup { .. }
+            | Self::Working => false,
         }
     }
 }
@@ -403,6 +412,8 @@ pub(super) struct RowCache {
     items: Vec<VirtualItem>,
     item_keys: Vec<String>,
     toc: Vec<TocEntry>,
+    /// The worktree setup card's fingerprint while the card shows.
+    worktree_setup: Option<u64>,
 }
 
 impl RowCache {
@@ -497,7 +508,6 @@ impl RowCache {
             .map(|row| (row.entry.id().to_owned(), row))
             .collect();
         let old_keys = std::mem::take(&mut self.item_keys);
-        let old_item_count = old_keys.len();
 
         let mut reused = 0usize;
         let mut invalidated = 0usize;
@@ -548,6 +558,47 @@ impl RowCache {
             loading_earlier,
         );
 
+        self.splice_stats(&old_keys, entries.len(), reused, invalidated)
+    }
+
+    /// Re-derives the list items from the cached rows, when only what surrounds the rows changed
+    /// (the worktree setup card).
+    pub(super) fn resync(
+        &mut self,
+        entry_timings: &HashMap<String, EntryTiming>,
+        turn_checkpoints: &HashMap<String, TurnCheckpointSummary>,
+        working: bool,
+        has_more_history: bool,
+        loading_earlier: bool,
+    ) -> SyncStats {
+        let old_keys = std::mem::take(&mut self.item_keys);
+        self.rebuild_virtual_items(
+            entry_timings,
+            turn_checkpoints,
+            working,
+            has_more_history,
+            loading_earlier,
+        );
+        let total = self.rows.len();
+        self.splice_stats(&old_keys, total, total, 0)
+    }
+
+    /// Sets what the worktree setup card shows (`None`: no card). True when it changed.
+    pub(super) fn set_worktree_setup(&mut self, fingerprint: Option<u64>) -> bool {
+        let changed = self.worktree_setup != fingerprint;
+        self.worktree_setup = fingerprint;
+        changed
+    }
+
+    /// The part of the list that changed between `old_keys` and the items now.
+    fn splice_stats(
+        &self,
+        old_keys: &[String],
+        total: usize,
+        reused: usize,
+        invalidated: usize,
+    ) -> SyncStats {
+        let old_item_count = old_keys.len();
         let new_item_count = self.items.len();
         let splice_start = old_keys
             .iter()
@@ -573,7 +624,7 @@ impl RowCache {
         };
 
         SyncStats {
-            total: entries.len(),
+            total,
             reused,
             invalidated,
             splice_start,
@@ -691,6 +742,7 @@ impl RowCache {
                                 | TimelineEntry::Approval { .. }
                                 | TimelineEntry::UserInputRequest { .. }
                                 | TimelineEntry::SecretRequest { .. }
+                                | TimelineEntry::OrbitTask { .. }
                                 | TimelineEntry::Subagent { .. }
                         );
                     base_items.push(VirtualItem::Assistant {
@@ -706,6 +758,8 @@ impl RowCache {
                 }
                 TimelineEntry::UserInputRequest { .. }
                 | TimelineEntry::SecretRequest { .. }
+                | TimelineEntry::EmbeddedDocument { .. }
+                | TimelineEntry::OrbitTask { .. }
                 | TimelineEntry::ProposedPlan { .. }
                 | TimelineEntry::Subagent { .. } => {
                     base_items.push(VirtualItem::Card { row_idx: idx });
@@ -732,6 +786,7 @@ impl RowCache {
                 | VirtualItem::QueuedUser { .. }
                 | VirtualItem::QueuedToggle { .. }
                 | VirtualItem::ChangedFiles { .. }
+                | VirtualItem::WorktreeSetup { .. }
                 | VirtualItem::Working => return None,
             };
             entry_timings.get(id).and_then(|t| t.run_id.as_deref())
@@ -761,6 +816,8 @@ impl RowCache {
             });
         }
 
+        // The worktree setup card follows the first user message (web `MessagesTimeline.logic`).
+        let mut worktree_placed = false;
         for (base_idx, item) in base_items.iter().enumerate() {
             if working_before_idx == Some(base_idx) {
                 items.push(VirtualItem::Working);
@@ -844,6 +901,13 @@ impl RowCache {
             }
 
             items.push(item.clone());
+            if let Some(fingerprint) = self.worktree_setup
+                && !worktree_placed
+                && matches!(item, VirtualItem::User { .. })
+            {
+                items.push(VirtualItem::WorktreeSetup { fingerprint });
+                worktree_placed = true;
+            }
 
             // Insert ChangedFiles card after the final non-user item belonging to a run.
             if !matches!(item, VirtualItem::User { .. })
@@ -869,6 +933,11 @@ impl RowCache {
 
         if working && working_before_idx.is_none() {
             items.push(VirtualItem::Working);
+        }
+        if let Some(fingerprint) = self.worktree_setup
+            && !worktree_placed
+        {
+            items.push(VirtualItem::WorktreeSetup { fingerprint });
         }
 
         // Queued user messages always render at the bottom of the timeline, after Working.
@@ -977,6 +1046,7 @@ mod tests {
                 created_by_agent: false,
                 created_at: None,
                 attachments: Vec::new(),
+                review_comments: Vec::new(),
                 is_steer: false,
                 run_id: None,
             },
@@ -1086,6 +1156,7 @@ mod tests {
                 created_by_agent: false,
                 created_at: None,
                 attachments: Vec::new(),
+                review_comments: Vec::new(),
                 is_steer: false,
                 run_id: None,
             });
@@ -1163,6 +1234,7 @@ mod tests {
                 created_by_agent: false,
                 created_at: None,
                 attachments: Vec::new(),
+                review_comments: Vec::new(),
                 is_steer: false,
                 run_id: None,
             },
@@ -1172,6 +1244,7 @@ mod tests {
                 created_by_agent: false,
                 created_at: None,
                 attachments: Vec::new(),
+                review_comments: Vec::new(),
                 is_steer: false,
                 run_id: None,
             },
@@ -1286,6 +1359,7 @@ mod tests {
                 created_by_agent: false,
                 created_at: None,
                 attachments: Vec::new(),
+                review_comments: Vec::new(),
                 is_steer: false,
                 run_id: None,
             },
@@ -1342,6 +1416,7 @@ mod tests {
                 created_by_agent: false,
                 created_at: None,
                 attachments: Vec::new(),
+                review_comments: Vec::new(),
                 is_steer: false,
                 run_id: None,
             },
@@ -1378,6 +1453,7 @@ mod tests {
                 created_by_agent: false,
                 created_at: None,
                 attachments: Vec::new(),
+                review_comments: Vec::new(),
                 is_steer: false,
                 run_id: None,
             },
@@ -1441,6 +1517,7 @@ mod tests {
                 created_by_agent: false,
                 created_at: None,
                 attachments: Vec::new(),
+                review_comments: Vec::new(),
                 is_steer: false,
                 run_id: None,
             },
@@ -1528,5 +1605,60 @@ mod tests {
             humanize_task_ids(&[], &text),
             "Delegated task reached a terminal state."
         );
+    }
+
+    #[test]
+    fn a_pending_request_keeps_the_work_around_it_in_separate_groups() {
+        let tool = |id: &str| TimelineEntry::Tool {
+            id: id.to_owned(),
+            kind: "command".to_owned(),
+            title: "cargo test".to_owned(),
+            detail: None,
+            status: ItemStatus::Completed,
+            output_omitted: false,
+        };
+        let entries = vec![
+            tool("t1"),
+            TimelineEntry::UserInputRequest {
+                id: "input".to_owned(),
+                request_id: "req".to_owned(),
+                title: None,
+                questions: Vec::new(),
+                status: conn_state::TurnItemStatus::Pending,
+                pending: true,
+                answers: Vec::new(),
+                dismissible: false,
+                created_at: None,
+            },
+            tool("t2"),
+            TimelineEntry::SecretRequest {
+                id: "secret".to_owned(),
+                label: "Token".to_owned(),
+                reason: String::new(),
+                url: None,
+                placeholder: None,
+                file_delivery: false,
+                status: conn_state::SecretRequestStatus::Pending,
+                pending: true,
+                created_at: None,
+            },
+            tool("t3"),
+        ];
+        let mut cache = RowCache::default();
+        cache.sync(
+            &entries,
+            &empty_timings(),
+            &empty_checkpoints(),
+            false,
+            false,
+            false,
+        );
+        let items = cache.items();
+        assert_eq!(items.len(), 5, "three work groups and the two requests");
+        assert!(matches!(items[0], VirtualItem::WorkGroup { .. }));
+        assert!(matches!(items[1], VirtualItem::Card { row_idx: 1 }));
+        assert!(matches!(items[2], VirtualItem::WorkGroup { .. }));
+        assert!(matches!(items[3], VirtualItem::Card { row_idx: 3 }));
+        assert!(matches!(items[4], VirtualItem::WorkGroup { .. }));
     }
 }

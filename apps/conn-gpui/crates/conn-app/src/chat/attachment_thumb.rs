@@ -288,12 +288,203 @@ pub(super) fn tile_radii(index: usize, count: usize, columns: usize) -> TileRadi
     }
 }
 
+/// Corner radius where two file rows meet.
+const FILE_ROW_JOIN_RADIUS_PX: f32 = 4.0;
+
+/// Corner radii of file row `index` of `count`. The first row takes the outer radius on top, the
+/// last row on the bottom; every corner where two rows meet takes the small join radius.
+pub(super) fn file_row_radii(index: usize, count: usize) -> TileRadii {
+    let outer = gallery_outer_radius_px();
+    let top = if index == 0 {
+        outer
+    } else {
+        FILE_ROW_JOIN_RADIUS_PX
+    };
+    let bottom = if index + 1 >= count {
+        outer
+    } else {
+        FILE_ROW_JOIN_RADIUS_PX
+    };
+    TileRadii {
+        top_left: top,
+        top_right: top,
+        bottom_right: bottom,
+        bottom_left: bottom,
+    }
+}
+
+/// The size shown on a file row, as web's `formatAttachmentSize`: whole KB (at least 1), or MB
+/// with one decimal from 1024 KB up.
+pub(super) fn attachment_size_label(size_bytes: i64) -> String {
+    let bytes = size_bytes.max(0) as f64;
+    let kilobytes = (bytes / 1024.0).ceil().max(1.0);
+    if kilobytes >= 1024.0 {
+        format!("{:.1} MB", bytes / (1024.0 * 1024.0))
+    } else {
+        format!("{kilobytes} KB")
+    }
+}
+
+/// The name a saved attachment is offered under: the last path component of its name, without
+/// control characters. A name with nothing usable becomes `attachment`.
+pub(super) fn attachment_save_name(name: &str) -> String {
+    let file: String = name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+    let file = file.trim();
+    if matches!(file, "" | "." | "..") {
+        "attachment".to_owned()
+    } else {
+        file.to_owned()
+    }
+}
+
+/// What a sent attachment is drawn as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AttachmentKind {
+    /// A tile in a gallery.
+    Image,
+    /// An inline player.
+    Video,
+    /// A file row.
+    File,
+}
+
+/// `packages/shared/src/image.ts` `GENERIC_MIME_TYPES`: types that say nothing about the content.
+const GENERIC_MIME_TYPES: [&str; 5] = [
+    "application/octet-stream",
+    "binary/octet-stream",
+    "application/unknown",
+    "video/mp2t",
+    "video/vnd.dlna.mpeg-tts",
+];
+
+/// `packages/shared/src/video.ts` `VIDEO_MIME_TYPE_BY_EXTENSION`.
+const VIDEO_MIME_BY_EXTENSION: [(&str, &str); 7] = [
+    ("avi", "video/x-msvideo"),
+    ("m4v", "video/mp4"),
+    ("mkv", "video/x-matroska"),
+    ("mov", "video/quicktime"),
+    ("mp4", "video/mp4"),
+    ("ogv", "video/ogg"),
+    ("webm", "video/webm"),
+];
+
+/// `packages/shared/src/video.ts` `videoMimeType`: a real `video/*` type wins; a generic or empty
+/// type falls back to the file extension; any other explicit type (HTML included) is not video.
+pub(super) fn video_mime_type(name: &str, mime_type: &str) -> Option<String> {
+    let mime = mime_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let generic = GENERIC_MIME_TYPES.contains(&mime.as_str());
+    if mime.starts_with("video/") && !generic {
+        return Some(mime);
+    }
+    if !mime.is_empty() && !generic {
+        return None;
+    }
+    let (_, extension) = name.rsplit_once('.')?;
+    let extension = extension.to_ascii_lowercase();
+    VIDEO_MIME_BY_EXTENSION
+        .iter()
+        .find(|(known, _)| *known == extension)
+        .map(|(_, mime)| (*mime).to_owned())
+}
+
+/// How a sent attachment is drawn: images as tiles, files whose type is video as players,
+/// everything else as file rows.
+pub(super) fn attachment_kind(att: &conn_contract::ChatAttachment) -> AttachmentKind {
+    use conn_contract::ChatAttachment;
+    match att {
+        ChatAttachment::Image(_) => AttachmentKind::Image,
+        ChatAttachment::File(file) if video_mime_type(&file.name, &file.mime_type).is_some() => {
+            AttachmentKind::Video
+        }
+        ChatAttachment::Unknown(unknown)
+            if video_mime_type(&unknown.name, &unknown.mime_type).is_some() =>
+        {
+            AttachmentKind::Video
+        }
+        ChatAttachment::File(_) | ChatAttachment::Unknown(_) => AttachmentKind::File,
+    }
+}
+
+/// Whether a sent attachment can be fetched. The contract has no `downloadable` flag (web sets
+/// `downloadable: false` on its own optimistic rows), so this holds what native can know: an
+/// attachment with no id has not been uploaded, and the server cannot serve it.
+pub(super) fn attachment_downloadable(id: &str) -> bool {
+    !id.trim().is_empty()
+}
+
+/// The name and size of an attachment, however it is typed.
+pub(super) fn attachment_name_and_size(att: &conn_contract::ChatAttachment) -> (&str, i64) {
+    use conn_contract::ChatAttachment;
+    match att {
+        ChatAttachment::Image(image) => (&image.name, image.size_bytes),
+        ChatAttachment::File(file) => (&file.name, file.size_bytes),
+        ChatAttachment::Unknown(unknown) => (&unknown.name, unknown.size_bytes),
+    }
+}
+
+/// Share of the chat lane a sent bubble may take with words (or a review quote) in it.
+const BUBBLE_CAP_WITH_WORDS: f32 = 0.8;
+/// Share of the lane a bubble of attachments alone may take.
+const BUBBLE_CAP_WITHOUT_WORDS: f32 = 0.54;
+/// Share of the lane a bubble with images is never narrower than.
+const BUBBLE_MIN_WITH_IMAGES: f32 = 0.32;
+/// Slack added to a measured text width, so a line that just fits never wraps.
+const MEASURE_SLACK_PX: f32 = 2.0;
+
+/// What sizes a framed sent bubble that holds a gallery or a player.
+pub(super) struct BubbleFit {
+    /// Width of the chat lane the bubble sits in.
+    pub(super) lane_px: f32,
+    /// The widest block's own width, 3px frame included. A gallery has none of its own.
+    pub(super) content_px: f32,
+    /// A caption, a note or a review quote is in the bubble.
+    pub(super) has_words: bool,
+    pub(super) has_images: bool,
+    pub(super) has_video: bool,
+}
+
+/// The definite width of a bubble that holds a gallery or a player.
+///
+/// A gallery's rows get their height from their width, so the bubble's width must be known
+/// before layout: content-fitting it (`max-w` plus intrinsic width) measured the tiles at the
+/// cap and then painted them narrower, leaving a blank band. This is CSS `fit-content` done by
+/// hand: the content width, never under 32% of the lane with images, never over 80% of it (54%
+/// without words). A player always takes the cap.
+pub(super) fn bubble_width_px(fit: &BubbleFit) -> f32 {
+    let cap = fit.lane_px
+        * if fit.has_words {
+            BUBBLE_CAP_WITH_WORDS
+        } else {
+            BUBBLE_CAP_WITHOUT_WORDS
+        };
+    if fit.has_video {
+        return cap;
+    }
+    let min = if fit.has_images {
+        (fit.lane_px * BUBBLE_MIN_WITH_IMAGES).min(cap)
+    } else {
+        0.0
+    };
+    (fit.content_px + MEASURE_SLACK_PX).clamp(min, cap)
+}
+
 /// Splits `items` into runs of equal `kind`, keeping their order: `(kind, start..end)`.
-pub(super) fn runs_by<T>(
+pub(super) fn runs_by<T, K: PartialEq>(
     items: &[T],
-    kind: impl Fn(&T) -> bool,
-) -> Vec<(bool, std::ops::Range<usize>)> {
-    let mut runs: Vec<(bool, std::ops::Range<usize>)> = Vec::new();
+    kind: impl Fn(&T) -> K,
+) -> Vec<(K, std::ops::Range<usize>)> {
+    let mut runs: Vec<(K, std::ops::Range<usize>)> = Vec::new();
     for (index, item) in items.iter().enumerate() {
         let kind = kind(item);
         match runs.last_mut() {
@@ -540,6 +731,140 @@ mod tests {
             [(true, 0..2), (false, 2..4), (true, 4..5)]
         );
         assert!(runs_by(&[] as &[bool], |kind| *kind).is_empty());
+    }
+
+    #[test]
+    fn file_rows_join_with_small_corners_and_close_with_the_outer_one() {
+        let outer = super::super::BUBBLE_RADIUS_PX - GALLERY_INSET_PX;
+        let corners = |r: TileRadii| (r.top_left, r.top_right, r.bottom_right, r.bottom_left);
+        assert_eq!(
+            corners(file_row_radii(0, 1)),
+            (outer, outer, outer, outer),
+            "a lone row is rounded on every corner"
+        );
+        assert_eq!(
+            corners(file_row_radii(0, 3)),
+            (outer, outer, 4.0, 4.0),
+            "the first row opens the stack"
+        );
+        assert_eq!(corners(file_row_radii(1, 3)), (4.0, 4.0, 4.0, 4.0));
+        assert_eq!(
+            corners(file_row_radii(2, 3)),
+            (4.0, 4.0, outer, outer),
+            "the last row closes it"
+        );
+    }
+
+    #[test]
+    fn video_types_follow_the_shared_rules() {
+        let video = |name: &str, mime: &str| video_mime_type(name, mime);
+        assert_eq!(video("a.bin", "video/webm"), Some("video/webm".to_owned()));
+        assert_eq!(
+            video("a.bin", "Video/MP4; codecs=avc1"),
+            Some("video/mp4".to_owned()),
+            "parameters and case are dropped"
+        );
+        assert_eq!(video("clip.MOV", ""), Some("video/quicktime".to_owned()));
+        assert_eq!(
+            video("clip.mp4", "application/octet-stream"),
+            Some("video/mp4".to_owned()),
+            "a generic type falls back to the extension"
+        );
+        assert_eq!(
+            video("clip.ts", "video/mp2t"),
+            None,
+            "a transport stream is not playable"
+        );
+        assert_eq!(
+            video("clip.mp4", "text/html"),
+            None,
+            "explicit HTML is never video"
+        );
+        assert_eq!(video("notes.pdf", "application/pdf"), None);
+        assert_eq!(video("clip", ""), None, "no extension, no type");
+        assert_eq!(video("clip.txt", ""), None);
+    }
+
+    #[test]
+    fn attachments_are_drawn_by_kind() {
+        use conn_contract::{ChatAttachment, ChatFileAttachment, ChatUnknownAttachment, lit};
+        let file = |name: &str, mime: &str| {
+            ChatAttachment::File(ChatFileAttachment {
+                r#type: lit::File,
+                id: "f".to_owned(),
+                name: name.to_owned(),
+                mime_type: mime.to_owned(),
+                size_bytes: 1,
+                source: None,
+            })
+        };
+        assert_eq!(
+            attachment_kind(&file("a.mp4", "video/mp4")),
+            AttachmentKind::Video
+        );
+        assert_eq!(
+            attachment_kind(&file("a.mp4", "text/html")),
+            AttachmentKind::File
+        );
+        assert_eq!(
+            attachment_kind(&file("a.pdf", "application/pdf")),
+            AttachmentKind::File
+        );
+        let unknown = ChatAttachment::Unknown(ChatUnknownAttachment {
+            r#type: "audio".to_owned(),
+            id: "u".to_owned(),
+            name: "a.webm".to_owned(),
+            mime_type: String::new(),
+            size_bytes: 1,
+        });
+        assert_eq!(attachment_kind(&unknown), AttachmentKind::Video);
+        assert!(attachment_downloadable("att-1"));
+        assert!(!attachment_downloadable("  "));
+    }
+
+    #[test]
+    fn bubbles_fit_their_content_between_the_caps() {
+        let fit = |content_px, has_words, has_images, has_video| {
+            bubble_width_px(&BubbleFit {
+                lane_px: 700.0,
+                content_px,
+                has_words,
+                has_images,
+                has_video,
+            })
+        };
+        let near = |actual: f32, expected: f32| {
+            assert!((actual - expected).abs() < 0.01, "{actual} != {expected}");
+        };
+        // Images alone have no width of their own: the 32% floor.
+        near(fit(6.0, false, true, false), 224.0);
+        // A short caption stays at the floor; a longer one grows the bubble.
+        near(fit(120.0, true, true, false), 224.0);
+        near(fit(400.0, true, true, false), 402.0);
+        // A long caption stops at 80%; without words the cap is 54%.
+        near(fit(2_000.0, true, true, false), 560.0);
+        near(fit(2_000.0, false, true, false), 378.0);
+        // A player takes the cap whatever the content.
+        near(fit(10.0, false, false, true), 378.0);
+        near(fit(10.0, true, true, true), 560.0);
+    }
+
+    #[test]
+    fn file_sizes_read_like_the_web_row() {
+        assert_eq!(attachment_size_label(0), "1 KB");
+        assert_eq!(attachment_size_label(1025), "2 KB");
+        assert_eq!(attachment_size_label(1023 * 1024), "1023 KB");
+        assert_eq!(attachment_size_label(1024 * 1024), "1.0 MB");
+        assert_eq!(attachment_size_label(-5), "1 KB");
+    }
+
+    #[test]
+    fn saved_names_drop_folders_and_control_characters() {
+        assert_eq!(attachment_save_name("../../etc/pass wd.txt"), "pass wd.txt");
+        assert_eq!(attachment_save_name("C:\\temp\\a.mov"), "a.mov");
+        assert_eq!(attachment_save_name("a\u{7}b.md"), "ab.md");
+        assert_eq!(attachment_save_name(".."), "attachment");
+        assert_eq!(attachment_save_name(""), "attachment");
     }
 
     #[test]

@@ -37,6 +37,9 @@ pub(crate) struct DiffFile {
     pub(crate) additions: usize,
     pub(crate) deletions: usize,
     pub(crate) is_binary: bool,
+    /// The blob hashes and mode of git's `index <old>..<new> <mode>` header line, when the diff
+    /// has one. They change with the content, so a binary or a mode-only change has an identity.
+    pub(crate) index: Option<String>,
     pub(crate) hunks: Vec<DiffHunk>,
 }
 
@@ -78,6 +81,7 @@ pub(crate) fn parse_unified_diff(patch: &str) -> Vec<DiffFile> {
                 additions: 0,
                 deletions: 0,
                 is_binary: false,
+                index: None,
                 hunks: Vec::new(),
             });
             continue;
@@ -92,6 +96,7 @@ pub(crate) fn parse_unified_diff(patch: &str) -> Vec<DiffFile> {
                     additions: 0,
                     deletions: 0,
                     is_binary: false,
+                    index: None,
                     hunks: Vec::new(),
                 });
             }
@@ -118,6 +123,14 @@ pub(crate) fn parse_unified_diff(patch: &str) -> Vec<DiffFile> {
         if let Some(renamed_to) = line.strip_prefix("rename to ") {
             if let Some(file) = current_file.as_mut() {
                 file.new_path = Some(renamed_to.to_owned());
+            }
+            continue;
+        }
+
+        // Hunk lines start with ' ', '+', '-' or '\', so `index ` is always a header line.
+        if let Some(hashes) = line.strip_prefix("index ") {
+            if let Some(file) = current_file.as_mut() {
+                file.index = Some(hashes.to_owned());
             }
             continue;
         }

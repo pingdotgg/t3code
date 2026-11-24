@@ -2,7 +2,7 @@
 //! `ComposerBanner.Dock` of `ChatComposer.tsx`), with the lead-in the agent wrote before it
 //! asked (`ComposerPendingUserInputContext.tsx`) and the `1`-`9` option shortcuts.
 //!
-//! The timeline keeps a quiet `Input requested` row. Answer state and actions live in
+//! The timeline shows the question only once it is answered. Answer state and actions live in
 //! `cards.rs`; the pure logic is in `question_logic.rs`.
 
 use conn_state::{ThreadState, TimelineEntry, UserInputQuestion};
@@ -15,7 +15,7 @@ use gpui_kit::{
     canvas, div, px,
 };
 
-use super::color::{banner_surface, hsla, hsla_alpha};
+use super::color::{fade_ends, hsla, hsla_alpha};
 use super::composer_state::thread_draft_key;
 use super::markdown::{self, MarkdownOptions, ProseStyle};
 use super::question_logic::{
@@ -23,28 +23,22 @@ use super::question_logic::{
     carry_displaced_into_prompt, clamp_context, every_question_answered, markdown_preview_text,
     question_primary, shortcut_option_index, split_recommended_label,
 };
-use super::{BODY_FONT_PX, CHAT_CONTENT_MAX_WIDTH_PX, ChatView, UI_FONT_PX, UI_LINE_HEIGHT_PX};
+use super::request_stack::panel_colors;
+use super::{
+    BODY_FONT_PX, CHAT_CONTENT_MAX_WIDTH_PX, ChatView, UI_FONT_PX, UI_LINE_HEIGHT_PX, icons,
+};
 use crate::a11y::ConnA11yExt as _;
 
-/// `--chat-composer-drawer-inset` (`1.375rem`): the banner's side inset from the composer.
-const INSET_PX: f32 = 22.0;
-/// `--chat-composer-attachment-overlap` (`1rem + 1px`): how far the banner tucks under the card.
-const OVERLAP_PX: f32 = 17.0;
-/// `rounded-t-2xl`.
-const RADIUS_PX: f32 = 16.0;
-/// `max-h-[min(24rem,40dvh)]` of `ComposerBanner.Scroll`.
-const MAX_HEIGHT_PX: f32 = 384.0;
-const MAX_HEIGHT_VIEWPORT_SHARE: f32 = 0.4;
 /// `scrollFade` of `ComposerBanner.Scroll`.
 const FADE_PX: f32 = 24.0;
-/// Height of the stash badge's tab, which shares the dock with the banner.
-const STASH_TAB_PX: f32 = 28.0;
 /// The context text is `text-sm leading-5`, clamped to three lines.
 const CONTEXT_FONT_PX: f32 = 14.0;
 const CONTEXT_LINE_PX: f32 = 20.0;
 const CONTEXT_MAX_LINES: usize = 3;
-/// The question text and the context sit 12px inside the content column (`px-3`).
-const TEXT_INSET_PX: f32 = 12.0;
+/// The question text and the context sit 17px inside the panel body (`--composer-panel-content-padding`).
+const TEXT_INSET_PX: f32 = 17.0;
+/// Longest typed answer the "Your answer" row shows before it cuts the text.
+const TYPED_PREVIEW_CHARS: usize = 400;
 const SHOW_MORE: &str = "Show more";
 
 /// What the panel remembers between frames.
@@ -80,7 +74,7 @@ impl QuestionPanelState {
             can_respond: true,
             context: None,
             scroll: ScrollHandle::new(),
-            content_width: CHAT_CONTENT_MAX_WIDTH_PX - 2.0 * INSET_PX - 16.0,
+            content_width: CHAT_CONTENT_MAX_WIDTH_PX - 6.0 - 8.0,
             clamp: None,
             focus_claimed: None,
             displaced: DisplacedAnswers::default(),
@@ -488,11 +482,12 @@ impl ChatView {
         }
     }
 
-    /// The panel and the stash tab beside it, tucked under the composer card
-    /// (`ComposerBanner.Dock`). `None` while no question waits.
-    pub(super) fn render_question_banner(
+    /// The pending question as a card of the request stack. `None` while no question is the
+    /// current request.
+    pub(super) fn render_question_panel(
         &mut self,
         window: &mut Window,
+        body_max: f32,
         cx: &mut Context<'_, Self>,
     ) -> Option<AnyElement> {
         let (entry_id, questions, dismissible) = self.pending_question()?;
@@ -551,7 +546,8 @@ impl ChatView {
             .flex()
             .flex_col()
             .gap(px(2.0))
-            .mt(px(4.0));
+            .mt(px(4.0))
+            .mx(px(TEXT_INSET_PX - 6.0));
         for (opt_idx, option) in question.options.iter().enumerate() {
             let value = option.answer_value().to_owned();
             let selected = !typed_active && question.is_option_selected(draft.as_ref(), &value);
@@ -622,10 +618,10 @@ impl ChatView {
                 .flex_col()
                 .gap(px(6.0))
                 .w_full()
-                .rounded(px(12.0))
+                .rounded(px(16.0))
                 .px(px(12.0))
                 .py(px(14.0))
-                .when(selected, |d| d.bg(hsla(tokens.shell_highlight)))
+                .when(selected, |d| d.bg(hsla_alpha(tokens.foreground, 0.06)))
                 .when(recommended, |d| {
                     // On its own line above the title, so the mark lines up with the title.
                     d.child(
@@ -680,6 +676,10 @@ impl ChatView {
                     });
             options = options.child(div().child(row).when_some(preview, |d, p| d.child(p)));
         }
+        if typed_active {
+            let typed: String = status.typed.chars().take(TYPED_PREVIEW_CHARS).collect();
+            options = options.child(self.render_typed_answer_row(&entry_id, typed, &question));
+        }
 
         // The content column. A canvas reads its width for the context clamp.
         let weak = cx.weak_entity();
@@ -705,7 +705,8 @@ impl ChatView {
             .flex()
             .flex_col()
             .gap(px(8.0))
-            .pb(px(4.0))
+            .pt(px(16.0))
+            .pb(px(12.0))
             .child(measure)
             .child(
                 div()
@@ -735,14 +736,12 @@ impl ChatView {
 
         // `ComposerBanner.Scroll`: capped height, faded where more waits beyond the edge.
         let scroll = &self.question_panel.scroll;
-        let max_height = (f32::from(window.viewport_size().height) * MAX_HEIGHT_VIEWPORT_SHARE)
-            .min(MAX_HEIGHT_PX);
         let offset = f32::from(scroll.offset().y);
         let reach = f32::from(scroll.max_offset().y);
         let overflows = reach > 0.5;
-        let (surface, outline) = banner_surface(tokens);
+        let colors = panel_colors(tokens);
         let fade = |top: bool| {
-            let (from, to) = (surface, hsla_alpha(tokens.shell_raised, 0.0));
+            let (from, to) = fade_ends(colors.inner);
             let mut el = div().absolute().left_0().right_0().h(px(FADE_PX));
             el = if top {
                 el.top_0().bg(gpui_kit::linear_gradient(
@@ -765,7 +764,7 @@ impl ChatView {
                 div()
                     .id(SharedString::from(format!("question-scroll-{entry_id}")))
                     .track_scroll(scroll)
-                    .max_h(px(max_height))
+                    .max_h(px(body_max))
                     .overflow_y_scroll()
                     .child(div().when(overflows, |d| d.pr(px(8.0))).child(content)),
             )
@@ -782,68 +781,90 @@ impl ChatView {
             primary,
             cx,
         );
+        let progress = (questions.len() > 1).then(|| {
+            div()
+                .font_weight(FontWeight::NORMAL)
+                .child(format!("{} of {}", index + 1, questions.len()))
+                .into_any_element()
+        });
 
-        let panel = div()
-            .flex()
-            .flex_col()
-            .px(px(4.0))
-            .pt(px(12.0))
-            .pb(px(4.0))
-            .child(scroll_area)
-            .child(actions);
-
-        let banner = div()
-            .id(SharedString::from(format!("question-banner-{entry_id}")))
+        let panel = self
+            .request_panel(
+                SharedString::from(format!("question-banner-{entry_id}")),
+                SharedString::from(format!("chat.question.{entry_id}")),
+                SharedString::from(question.header.clone()),
+                icons::CHAT_CIRCLE,
+                "Question",
+                progress,
+                scroll_area.into_any_element(),
+                actions,
+                hsla(colors.inner),
+            )
             .test_support()
             .track_focus(&self.question_panel.focus)
             .on_key_down(cx.listener(|view, event, window, cx| {
                 view.on_question_key(event, window, cx, false);
-            }))
-            .a11y_group(
-                SharedString::from(format!("chat.question.{entry_id}")),
-                question.header.clone(),
-            )
-            .flex()
-            .flex_col()
-            .w_full()
-            .min_w_0()
-            .rounded_t(px(RADIUS_PX))
-            .bg(surface)
-            .border_1()
-            .border_b_0()
-            .border_color(outline)
-            .px(px(4.0))
-            .pt(px(4.0))
-            .child(panel)
-            // Four more below the panel, then the strip that sits under the card.
-            .child(div().h(px(4.0 + OVERLAP_PX)));
-
-        let badge = self
-            .composer
-            .update(cx, |composer, cx| composer.dock_stash_badge(cx));
-        Some(
-            div()
-                .flex()
-                .flex_row()
-                .items_end()
-                .gap(px(4.0))
-                .mx(px(INSET_PX))
-                .mb(px(-OVERLAP_PX))
-                .child(div().flex_1().min_w_0().child(banner))
-                .when_some(badge, |d, tab| {
-                    // The tab reaches under the card like the banner, so it meets the card.
-                    d.child(
-                        div()
-                            .flex_none()
-                            .h(px(STASH_TAB_PX + OVERLAP_PX))
-                            .child(tab),
-                    )
-                })
-                .into_any_element(),
-        )
+            }));
+        Some(panel.into_any_element())
     }
 
-    /// The bottom row: `N of M`, `Skip`, `Back` and the Next / Send pill.
+    /// What the user typed as the answer, shown beside the options it replaces
+    /// (`Your answer`): selected, and set by typing, so it cannot be picked again.
+    fn render_typed_answer_row(
+        &self,
+        entry_id: &str,
+        typed: String,
+        question: &UserInputQuestion,
+    ) -> AnyElement {
+        let indicator: AnyElement = if question.multi_select {
+            self.render_checkbox_mark(true)
+        } else {
+            self.render_option_radio(true)
+        };
+        div()
+            .id(SharedString::from(format!("question-typed-{entry_id}")))
+            .a11y_group(
+                SharedString::from(format!("chat.question.typed.{entry_id}")),
+                "Your answer",
+            )
+            .flex()
+            .flex_row()
+            .items_start()
+            .gap(px(10.0))
+            .w_full()
+            .rounded(px(16.0))
+            .px(px(12.0))
+            .py(px(14.0))
+            .bg(hsla_alpha(self.tokens.foreground, 0.06))
+            .child(div().flex().items_center().h(px(20.0)).child(indicator))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .line_height(px(16.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(hsla(self.tokens.muted_foreground))
+                            .child("Your answer"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(BODY_FONT_PX))
+                            .line_height(px(20.0))
+                            .text_color(hsla(self.tokens.foreground))
+                            .child(typed),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// The bottom row: `Back` at the left, `Skip` in the middle and the Next / Send pill at the
+    /// right. `N of M` sits in the panel's header.
     #[expect(
         clippy::too_many_arguments,
         reason = "the row's inputs are the panel's own values"
@@ -860,48 +881,18 @@ impl ChatView {
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let tokens = &self.tokens;
-        let muted = hsla(tokens.muted_foreground);
         let is_last = index + 1 >= total;
         let via_composer = question.allow_custom_answer;
-        let mut actions = div()
-            .mt(px(8.0))
+        let mut back = div()
             .flex()
             .flex_row()
+            .flex_1()
             .items_center()
-            .gap(px(16.0))
-            .min_h(px(32.0));
-        if total > 1 {
-            actions = actions.child(
-                div()
-                    .pl(px(TEXT_INSET_PX))
-                    .text_size(px(12.0))
-                    .text_color(muted)
-                    .child(format!("{} of {total}", index + 1)),
-            );
-        }
-        actions = actions.child(div().flex_1());
-        if dismissible {
-            let dismiss_id = entry_id.to_owned();
-            actions = actions.child(
-                super::cards::question_text_action(
-                    tokens,
-                    format!("question-dismiss-{entry_id}"),
-                    format!("chat.question.dismiss.{entry_id}"),
-                    "Skip question",
-                    "Skip",
-                    !responding,
-                    index == 0 && !primary.show,
-                )
-                .when(!responding, |d| {
-                    d.on_click(cx.listener(move |view, _, _, cx| {
-                        view.dismiss_user_input(&dismiss_id, cx);
-                    }))
-                }),
-            );
-        }
+            .justify_start()
+            .pl(px(8.0));
         if index > 0 {
             let back_id = entry_id.to_owned();
-            actions = actions.child(
+            back = back.child(
                 super::cards::question_text_action(
                     tokens,
                     format!("question-back-{entry_id}"),
@@ -909,7 +900,7 @@ impl ChatView {
                     "Back",
                     "Back",
                     !responding,
-                    !primary.show,
+                    false,
                 )
                 .when(!responding, |d| {
                     d.on_click(cx.listener(move |view, _, _, cx| {
@@ -918,51 +909,61 @@ impl ChatView {
                 }),
             );
         }
-        if primary.show {
-            let (ax_label, text) = if responding {
-                ("Submitting", "Submitting...")
-            } else if is_last {
-                ("Send answers", "Send")
-            } else {
-                ("Next", "Next")
-            };
-            let primary_id = entry_id.to_owned();
-            let hover_bg = hsla_alpha(tokens.primary, 0.88);
-            actions = actions.child(
-                div()
-                    .id(SharedString::from(format!("question-submit-{entry_id}")))
-                    .a11y_button(
-                        SharedString::from(format!("chat.question-submit-{entry_id}")),
-                        ax_label,
-                    )
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_center()
-                    .h(px(32.0))
-                    .px(px(16.0))
-                    .rounded_full()
-                    .bg(hsla(tokens.primary))
-                    .text_color(hsla(tokens.primary_foreground))
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(20.0))
-                    .font_weight(FontWeight::MEDIUM)
-                    .when(!primary.enabled, |d| d.opacity(0.64))
-                    .when(primary.enabled, |d| {
-                        d.cursor_pointer()
-                            .hover(move |s| s.bg(hover_bg))
-                            .on_click(cx.listener(move |view, _, window, cx| {
-                                view.answer_question_from_panel(
-                                    &primary_id,
-                                    via_composer,
-                                    window,
-                                    cx,
-                                );
-                            }))
-                    })
-                    .child(text),
+        let mut skip = div().flex().flex_row().flex_none().items_center();
+        if dismissible {
+            let dismiss_id = entry_id.to_owned();
+            skip = skip.child(
+                super::cards::question_text_action(
+                    tokens,
+                    format!("question-dismiss-{entry_id}"),
+                    format!("chat.question.dismiss.{entry_id}"),
+                    "Skip question",
+                    "Skip",
+                    !responding,
+                    false,
+                )
+                .when(!responding, |d| {
+                    d.on_click(cx.listener(move |view, _, _, cx| {
+                        view.dismiss_user_input(&dismiss_id, cx);
+                    }))
+                }),
             );
         }
-        actions.into_any_element()
+        let mut next = div()
+            .flex()
+            .flex_row()
+            .flex_1()
+            .items_center()
+            .justify_end();
+        if primary.show {
+            let text = if responding {
+                "Submitting..."
+            } else if is_last {
+                "Send"
+            } else {
+                "Next"
+            };
+            let primary_id = entry_id.to_owned();
+            next = next.child(
+                self.request_pill(
+                    format!("question-submit-{entry_id}"),
+                    format!("chat.question-submit-{entry_id}"),
+                    text,
+                    "accept",
+                    primary.enabled,
+                )
+                .when(primary.enabled, |pill| {
+                    pill.on_click(cx.listener(move |view, _, window, cx| {
+                        view.answer_question_from_panel(&primary_id, via_composer, window, cx);
+                    }))
+                })
+                .test_support(),
+            );
+        }
+        Self::request_actions()
+            .child(back)
+            .child(skip)
+            .child(next)
+            .into_any_element()
     }
 }

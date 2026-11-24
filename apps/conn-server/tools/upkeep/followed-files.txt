@@ -16,7 +16,7 @@ apps/server/src/mcp/toolkits/device
 packages/contracts/src/device.ts
 packages/ssh/src/command.ts
 
-[crates/conn-provider/src/tool_output.rs]
+[crates/conn-contract/src/tool_output.rs]
 packages/shared/src/toolOutput.ts
 packages/shared/src/t3McpToolPresentation.ts
 packages/shared/src/mcpApp.ts
