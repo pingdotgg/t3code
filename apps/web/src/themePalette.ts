@@ -307,11 +307,37 @@ function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
 }
 
 /** The file that publishes `theme`; its id is the file's name. */
-export function environmentThemeFile(theme: ThemeDefinition): EnvironmentThemeFile {
+export function environmentThemeFile(
+  theme: ThemeDefinition,
+  original: ThemeDefinition,
+): EnvironmentThemeFile {
+  const seeds = theme.managed ? theme.colors : original.colors;
+  const canvas = themeColorToHex(seeds.canvas);
+  const accent = themeColorToHex(seeds.accent);
+  const seeded =
+    !theme.variants &&
+    (theme.managed || original.managed) &&
+    canvas?.length === 7 &&
+    accent?.length === 7;
+  const generated = seeded
+    ? createVividThemeColors(theme.appearance, seeds.canvas, seeds.accent)
+    : null;
+  const overrides = generated
+    ? THEME_COLOR_ROLES.filter((role) => theme.colors[role] !== generated[role])
+    : [];
+  const palette = seeded
+    ? {
+        canvas,
+        accent,
+        ...(overrides.length > 0
+          ? { colors: Object.fromEntries(overrides.map((role) => [role, theme.colors[role]])) }
+          : {}),
+      }
+    : { colors: theme.colors };
   return {
     name: theme.label,
     appearance: theme.appearance,
-    colors: theme.colors,
+    ...palette,
     ...(theme.variants ? { variants: theme.variants } : {}),
     ...(theme.css ? { css: theme.css } : {}),
   };
@@ -382,14 +408,6 @@ export function storePublishedEnvironmentThemes(definitions: ReadonlyArray<Theme
 
 function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
   return appAtomRegistry.get(environmentThemeDefinitionsAtom);
-}
-
-/** True when `themeId` resolves to a theme the environment publishes, not a saved one. */
-export function isPublishedTheme(themeId: string): boolean {
-  return (
-    !getCustomThemes().some((theme) => theme.id === themeId) &&
-    getEnvironmentThemes().some((theme) => theme.id === themeId)
-  );
 }
 
 export function isReservedThemeId(themeId: string): boolean {

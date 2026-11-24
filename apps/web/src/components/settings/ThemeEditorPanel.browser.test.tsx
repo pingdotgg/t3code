@@ -1,3 +1,4 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -11,6 +12,8 @@ import {
   type ThemeDefinition,
 } from "../../themePalette";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
+import { ThemeEditorHost } from "./ThemeEditorHost";
+import { useThemeEditorStore } from "./themeEditorStore";
 import { ThemeEditorPanel } from "./ThemeEditorPanel";
 
 const LOOK = {
@@ -177,6 +180,34 @@ describe("ThemeEditorPanel", () => {
         (theme: ThemeDefinition) => theme.id,
       ),
     ).toEqual(["dusk"]);
+  });
+
+  it("keeps a published edit in place when its environment is unavailable", async () => {
+    const store = useThemeEditorStore.getState();
+    const storedThemes = window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY);
+    store.openThemeEditor({
+      editingThemeId: null,
+      published: {
+        environmentId: EnvironmentId.make("unavailable-environment"),
+        theme: publishedThemeDefinitions([LOOK])[0]!,
+      },
+      seedThemeId: null,
+      seedName: null,
+      initialAppearance: "dark",
+    });
+    const sessionId = useThemeEditorStore.getState().session!.id;
+    try {
+      await using screen = await render(<ThemeEditorHost />);
+      const name = screen.getByRole("textbox", { name: "Theme name" });
+      await expect.element(name).toHaveValue("Look");
+      await userEvent.fill(name, "Unsaved draft");
+      await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+      await expect.element(screen.getByText("Could not save the theme.")).toBeVisible();
+      await expect.element(name).toHaveValue("Unsaved draft");
+      expect(window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY)).toBe(storedThemes);
+    } finally {
+      store.closeThemeEditor(sessionId);
+    }
   });
 
   it("keeps its left edge when resized after the window shrank", async () => {

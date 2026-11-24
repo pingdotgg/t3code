@@ -1,8 +1,10 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import { create } from "zustand";
 
 import {
   getThemeDefinition,
   type ThemeAppearance,
+  type ThemeDefinition,
   type ThemeHalves,
   type ThemePreference,
 } from "../../themePalette";
@@ -12,6 +14,7 @@ export type ThemeEditorSessionInput = {
   seedThemeId: string | null;
   seedName: string | null;
   initialAppearance: ThemeAppearance;
+  published?: { environmentId: EnvironmentId; theme: ThemeDefinition };
 };
 
 export type ThemeEditorSession = ThemeEditorSessionInput & {
@@ -21,7 +24,7 @@ export type ThemeEditorSession = ThemeEditorSessionInput & {
 type ThemeEditorStore = {
   session: ThemeEditorSession | null;
   openThemeEditor: (session: ThemeEditorSessionInput) => void;
-  closeThemeEditor: () => void;
+  closeThemeEditor: (sessionId: number) => void;
 };
 
 let nextSessionId = 0;
@@ -29,7 +32,8 @@ let nextSessionId = 0;
 export const useThemeEditorStore = create<ThemeEditorStore>((set) => ({
   session: null,
   openThemeEditor: (session) => set({ session: { ...session, id: ++nextSessionId } }),
-  closeThemeEditor: () => set({ session: null }),
+  closeThemeEditor: (sessionId) =>
+    set((store) => (store.session?.id === sessionId ? { session: null } : store)),
 }));
 
 export function toggleThemeEditorForTheme(input: {
@@ -39,7 +43,7 @@ export function toggleThemeEditorForTheme(input: {
 }): void {
   const store = useThemeEditorStore.getState();
   if (store.session) {
-    store.closeThemeEditor();
+    store.closeThemeEditor(store.session.id);
     return;
   }
 

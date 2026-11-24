@@ -498,14 +498,30 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const requirePublished = Effect.fnUntraced(function* (themeId: string) {
+    const known = (yield* refresh).themes.map(({ id }) => id);
+    if (!known.includes(themeId)) {
+      return yield* new EnvironmentThemeRefusedError({
+        themeId,
+        problem: "is not a published theme.",
+        known,
+      });
+    }
+  });
+
   const save: EnvironmentThemeService["Service"]["save"] = Effect.fn(
     "EnvironmentThemeService.save",
   )(function* ({ themeId, theme }) {
     if (!isEnvironmentThemeId(themeId)) {
       return yield* new EnvironmentThemeRefusedError({ themeId, problem: INVALID_ID });
     }
-    // A saved edit is kept, so the effect that would undo it is dropped.
-    yield* publishSemaphore.withPermits(1)(publish(themeId, theme)).pipe(Effect.asVoid);
+    yield* publishSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        yield* requirePublished(themeId);
+        // A saved edit is kept, so the effect that would undo it is dropped.
+        yield* publish(themeId, theme);
+      }),
+    );
   });
 
   const remove: EnvironmentThemeService["Service"]["remove"] = Effect.fn(
@@ -513,21 +529,32 @@ const make = Effect.gen(function* () {
   )(function* (themeId) {
     yield* publishSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        const known = (yield* refresh).themes.map(({ id }) => id);
-        if (!known.includes(themeId)) {
-          return yield* new EnvironmentThemeRefusedError({
-            themeId,
-            problem: "is not a published theme.",
-            known,
-          });
-        }
-        // Every extension, so a later theme with this id does not show a leftover image.
-        const files = [THEME_FILE_SUFFIX, ...THEME_BACKGROUND_EXTENSIONS.map((ext) => `.${ext}`)];
+        yield* requirePublished(themeId);
+        // Keep the JSON published until image cleanup succeeds so removal can be retried.
         yield* Effect.forEach(
-          files,
-          (suffix) => fs.remove(`${environmentThemesDir}/${themeId}${suffix}`, { force: true }),
+          THEME_BACKGROUND_EXTENSIONS,
+          (extension) => {
+            const file = NodePath.join(environmentThemesDir, `${themeId}.${extension}`);
+            return Effect.tryPromise(async () => {
+              try {
+                return (await NodeFS.promises.lstat(file)).isFile();
+              } catch (error) {
+                if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+                  return false;
+                }
+                throw error;
+              }
+            }).pipe(
+              Effect.flatMap((isFile) => (isFile ? fs.remove(file, { force: true }) : Effect.void)),
+            );
+          },
           { discard: true },
         ).pipe(
+          Effect.andThen(
+            fs.remove(NodePath.join(environmentThemesDir, `${themeId}${THEME_FILE_SUFFIX}`), {
+              force: true,
+            }),
+          ),
           Effect.ensuring(refresh),
           Effect.mapError(
             (cause) => new EnvironmentThemeRefusedError({ themeId, problem: NOT_REMOVED, cause }),

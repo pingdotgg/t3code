@@ -9,6 +9,7 @@ import {
   applyThemePalette,
   canonicalThemePreference,
   contextChipVariables,
+  environmentThemeFile,
   getThemeDefinition,
   getThemeColorsForMode,
   getThemeModes,
@@ -36,6 +37,34 @@ import {
   toCanonicalThemeColor,
   THEME_FILE_VERSION,
 } from "./themePalette";
+
+describe("published theme files", () => {
+  it("keeps a renamed guided palette seeded and writes only advanced overrides", () => {
+    const [theme] = publishedThemeDefinitions([
+      {
+        id: "nightfall",
+        name: "Nightfall",
+        appearance: "dark",
+        canvas: "#1a1b26",
+        accent: "#7aa2f7",
+      },
+    ]);
+    if (!theme) throw new Error("Expected a published theme");
+    const renamed = environmentThemeFile({ ...theme, label: "Night sky" }, theme);
+    expect(renamed).toEqual({
+      name: "Night sky",
+      appearance: "dark",
+      canvas: "#1a1b26",
+      accent: "#7aa2f7",
+    });
+    const edited = environmentThemeFile(
+      { ...theme, managed: false, colors: { ...theme.colors, error: "#fa1234" } },
+      theme,
+    );
+    expect(edited.colors).toEqual({ error: "#fa1234" });
+    expect(publishedThemeDefinitions([{ id: theme.id, ...renamed }])[0]?.managed).toBe(true);
+  });
+});
 
 function asHex(value: string): string {
   const hex = themeColorToHex(value);

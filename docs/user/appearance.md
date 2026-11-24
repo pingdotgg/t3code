@@ -89,7 +89,9 @@ it. app.t3.codes and other connections do not use them.
 Select a published theme in **Settings → Appearance** to follow its palette as the server updates
 it. Published themes, including the ones agents make, can be managed like imported ones: **Edit**
 saves your changes to the server and **Remove** deletes the theme there, for every app that uses
-its themes. **Duplicate** makes an independent copy on this device. A saved custom theme with the
+its themes, including its background images. **Download** saves the theme JSON. Back up any
+background image files from the server’s themes directory separately before removing the theme.
+**Duplicate** makes an independent copy on this device. A saved custom theme with the
 same ID takes precedence. If the server stops publishing the selected theme, T3 Code falls back to
 its standard theme.
 

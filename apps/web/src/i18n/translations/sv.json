@@ -11446,7 +11446,7 @@
   "dac65b49475f44f4": "Ta bort teman från ”{removeDialogCollectionLabel}”?",
   "cef1425a3e8f58ba": "Ta bort ”{label}”?",
   "00d3bf1d39252e4c": "Välj de varianter du vill ta bort. Du kan återställa dem genom att importera tillägget igen.",
-  "fce48979adbbd004": "Det tas bort från servern för alla appar som använder dess teman. Ladda ned det först för att behålla en kopia.",
+  "505af092f486d96c": "Det här tar bort temat och dess bakgrundsbilder från servern. Nedladdningen sparar bara temats JSON-fil. Säkerhetskopiera eventuella bakgrundsbilder separat innan du tar bort temat.",
   "f1867714fb89fc82": "Du kan ta tillbaka det när som helst genom att importera dess JSON-fil.",
   "fc24985dbbec6590": "Ta bort valda ({count})",
   "74dc33e6ce1e87be": "Ta bort valda",

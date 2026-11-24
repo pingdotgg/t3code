@@ -886,7 +886,11 @@ export function ThemeLibrary({
                 : {
                     onEdit: () =>
                       openThemeEditor({
-                        editingThemeId: environmentTheme.id,
+                        editingThemeId: null,
+                        published: {
+                          environmentId: editableEnvironmentId,
+                          theme: environmentTheme,
+                        },
                         seedThemeId: null,
                         seedName: null,
                         initialAppearance,
@@ -1036,7 +1040,7 @@ export function ThemeLibrary({
                   )
                 : themeRemovalTarget?.published
                   ? gt(
-                      "It’s deleted from the server for every app that uses its themes. Download it first to keep a copy.",
+                      "This deletes the theme and its background images from the server. Download saves only the theme JSON. Back up any background image files separately before removing the theme.",
                     )
                   : gt("You can bring it back anytime by importing its JSON file.")}
             </AlertDialogDescription>

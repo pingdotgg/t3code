@@ -708,6 +708,27 @@ describe("environment theme", () => {
     ),
   );
 
+  it.effect("removes regular backgrounds beside a directory and refuses a stale edit", () =>
+    withEnvironmentThemes(
+      { "look.json": encodeThemeFile(NIGHTFALL_THEME), "look.png": "png" },
+      Effect.gen(function* () {
+        const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(environmentThemesDir, "look.webp"));
+
+        yield* themes.remove("look");
+        const refused = yield* themes
+          .save({ themeId: "look", theme: NIGHTFALL_THEME })
+          .pipe(Effect.flip);
+        assert.match(refused.message, /not a published theme/);
+        assert.deepEqual(yield* themes.current, []);
+        assert.deepEqual(yield* fs.readDirectory(environmentThemesDir), ["look.webp"]);
+      }),
+    ),
+  );
+
   it.effect(
     "reports the image beside a theme as its background, with a new revision per file",
     () =>

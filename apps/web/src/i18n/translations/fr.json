@@ -11438,7 +11438,7 @@
   "dac65b49475f44f4": "Supprimer des thèmes de « {removeDialogCollectionLabel} » ?",
   "cef1425a3e8f58ba": "Supprimer « {label} » ?",
   "00d3bf1d39252e4c": "Sélectionnez les variantes à supprimer. Vous pourrez les restaurer en important à nouveau l’extension.",
-  "fce48979adbbd004": "Il est supprimé du serveur pour toutes les apps qui utilisent ses thèmes. Téléchargez-le d’abord pour en garder une copie.",
+  "505af092f486d96c": "Le thème et ses images d’arrière-plan seront supprimés du serveur. Le téléchargement enregistre uniquement le fichier JSON du thème. Sauvegardez séparément les fichiers d’images d’arrière-plan avant de supprimer le thème.",
   "f1867714fb89fc82": "Vous pouvez le récupérer à tout moment en important son fichier JSON.",
   "fc24985dbbec6590": "Supprimer la sélection ({count})",
   "74dc33e6ce1e87be": "Supprimer la sélection",
