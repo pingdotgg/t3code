@@ -598,7 +598,8 @@ struct ExtendRequest {
 }
 
 /// `POST /api/auth/clients/extend` (Conn only): moves a session's end out, the caller's own
-/// without `sessionId`. Orbit upgrades held sessions here instead of pairing again.
+/// without `sessionId`. Orbit upgrades held sessions here instead of pairing again, and a
+/// peer link's holder upgrades its own MCP session.
 async fn extend_client(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -614,14 +615,20 @@ fn extend_client_blocking(
     headers: &HeaderMap,
     request: ExtendRequest,
 ) -> Response {
-    let principal = match require_scope(state, headers, "access:write") {
-        Ok(principal) => principal,
-        Err(response) => return *response,
+    // A peer link's MCP session may extend itself, so links upgrade without a re-pair.
+    // Any other MCP session, and any `sessionId`, needs a native session with access:write.
+    let mcp = bearer(headers).and_then(|token| state.auth.authenticate_mcp_client(token));
+    let id = match (mcp, request.session_id) {
+        (Some(mcp), None) if mcp.peer_link => mcp.session_id,
+        (Some(_), _) => return scope_required("access:write"),
+        (None, session_id) => match require_scope(state, headers, "access:write") {
+            Ok(principal) => session_id.unwrap_or(principal.session_id),
+            Err(response) => return *response,
+        },
     };
     let Some(ttl_ms) = session_ttl(&request.session_ttl) else {
         return invalid_session_ttl();
     };
-    let id = request.session_id.unwrap_or(principal.session_id);
     match state.auth.extend_session(&id, ttl_ms) {
         Ok(Ok(expires_at_ms)) => Json(json!({
             "sessionId": id,
@@ -1917,6 +1924,50 @@ mod tests {
                 .expires_at_ms,
             before
         );
+        // A peer link's MCP session extends itself, and only itself. Other MCP sessions may not.
+        let mcp_session = |peer_link| {
+            auth.issue_mcp_client_session(
+                "Conn · holder",
+                "auto-accept-edits",
+                peer_link,
+                ClientInfo::default(),
+                auth::MCP_CLIENT_SESSION_TTL_MS,
+            )
+            .unwrap()
+        };
+        let (peer, agent) = (mcp_session(true), mcp_session(false));
+        let mcp_head = |token: &str| {
+            format!(
+                "POST /api/auth/clients/extend HTTP/1.1\r\nauthorization: Bearer {token}\r\ncontent-type: application/json"
+            )
+        };
+        for (token, body) in [
+            (
+                &peer.token,
+                format!(
+                    r#"{{"sessionId":"{}","sessionTtl":"until-revoked"}}"#,
+                    peer.principal.session_id
+                ),
+            ),
+            (&agent.token, r#"{"sessionTtl":"until-revoked"}"#.to_owned()),
+        ] {
+            let (status, reply) = call(addr, &mcp_head(token), &body).await;
+            assert_eq!(status, 403, "{body}: {reply}");
+        }
+        let (status, body) = call(
+            addr,
+            &mcp_head(&peer.token),
+            r#"{"sessionTtl":"until-revoked"}"#,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        let extended: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(extended["sessionId"], peer.principal.session_id.as_str());
+        let a_year_on = iso_from_ms(peer.principal.expires_at_ms + 365 * 24 * 3_600_000);
+        assert!(extended["expiresAt"].as_str().unwrap() > a_year_on.as_str());
+        for token in [&peer.token, &agent.token] {
+            auth.logout(token).unwrap().unwrap();
+        }
         let device_ttl =
             |ttl: &str| format!(r#"{{"sessionId":"{}"{ttl}}}"#, device.principal.session_id);
         for ttl in [

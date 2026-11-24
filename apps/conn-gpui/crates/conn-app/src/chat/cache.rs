@@ -1512,7 +1512,7 @@ mod tests {
                 role: "claudeAgent".to_owned(),
                 status: conn_state::TurnItemStatus::Completed,
                 summary: None,
-                remote_label: None,
+                remote_child: None,
                 created_at: None,
                 started_at: None,
                 completed_at: None,

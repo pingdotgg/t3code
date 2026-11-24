@@ -366,7 +366,7 @@ fn kitchen_sink_thread() -> ThreadState {
             role: "claudeAgent".to_owned(),
             status: TurnItemStatus::Completed,
             summary: Some("Verified receded card hover branch".to_owned()),
-            remote_label: None,
+            remote_child: None,
             created_at: Some("2026-11-22T15:04:00.000Z".to_owned()),
             started_at: Some("2026-11-22T15:04:00.000Z".to_owned()),
             completed_at: Some("2026-11-22T15:04:20.000Z".to_owned()),
@@ -3881,6 +3881,61 @@ fn linked_mini_shell(project_root: &str, thread_title: &str) -> ShellState {
     // A scratch thread has no branch.
     thread.branch = None;
     ShellState::from_parts(vec![project], vec![thread], Vec::new(), Some(1))
+}
+
+#[gpui_kit::test]
+fn remote_child_opens_from_its_parent_card_without_a_sidebar_row(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            let mut mini = linked_mini_shell("/work/mini", "Mini diagnostics");
+            mini.threads[0].delegated_from = Some(
+                from_json(json!({
+                    "environmentId": "agent", "threadId": "thread-selected", "title": "Parent"
+                }))
+                .unwrap(),
+            );
+            app.add_linked_shell_for_test("mini", "mini", mini, cx);
+            let mut parent = kitchen_sink_thread();
+            parent
+                .entries
+                .retain(|row| matches!(row, TimelineEntry::Subagent { .. }));
+            if let TimelineEntry::Subagent {
+                child_thread_id,
+                remote_child,
+                ..
+            } = &mut parent.entries[0]
+            {
+                *child_thread_id = None;
+                *remote_child = Some(
+                    from_json(json!({
+                        "threadId": "thread-mini", "environmentId": "mini", "label": "Mini"
+                    }))
+                    .unwrap(),
+                );
+            }
+            app.set_thread_for_test("thread-selected".to_owned(), parent, cx);
+        });
+    });
+    cx.update_window(window, |_, w, cx| w.render_frame(cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(w.try_find_by_label("Mini diagnostics").is_none());
+        let card = center_by_label(w, cx, "Open Inspect sidebar card hover styles");
+        w.pointer_down(card, MouseButton::Left, cx);
+        w.pointer_up(card, MouseButton::Left, cx);
+        w.render_frame(cx);
+        assert!(w.try_find_by_label("Thread favicon: thread-mini").is_none());
+    })
+    .unwrap();
+    assert_eq!(open_thread(cx, &app).as_deref(), Some("thread-mini"));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).thread_environment_for_test("thread-mini")),
+        Some("mini".to_owned())
+    );
 }
 
 #[gpui_kit::test]

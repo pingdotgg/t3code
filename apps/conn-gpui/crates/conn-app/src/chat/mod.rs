@@ -161,7 +161,10 @@ pub(crate) enum ChatEvent {
         file_path: Option<String>,
     },
     /// Open another thread (a subagent's child thread).
-    OpenThread(String),
+    OpenThread {
+        thread_id: String,
+        environment_id: Option<String>,
+    },
     /// Fork the thread from a completed assistant response's run (`thread.fork`).
     ForkFromRun {
         run_id: String,
@@ -1998,7 +2001,7 @@ impl ChatView {
                 role,
                 status,
                 summary,
-                remote_label,
+                remote_child,
                 started_at,
                 completed_at,
                 ..
@@ -2009,7 +2012,7 @@ impl ChatView {
                 role,
                 *status,
                 summary.as_deref(),
-                remote_label.as_deref(),
+                remote_child.as_ref(),
                 started_at.as_deref(),
                 completed_at.as_deref(),
                 cx,
