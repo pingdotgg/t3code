@@ -2314,6 +2314,85 @@ it.effect("thread resume replays a deleted thread's deletion and nothing recorde
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
+it.effect("thread resume past the replay limit tells the client a deleted thread is gone", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-10-13T00:00:00.000Z";
+    const threadId = ThreadId.make("thread:deleted-snapshot-resume");
+    const insert = (version: number, type: string, payload: object) => sql`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        ${`deleted-snapshot-resume:${version}`}, 'thread', ${threadId}, ${version}, ${type},
+        ${now}, 'server', ${JSON.stringify(payload)}, '{}', 2
+      )
+    `;
+    const detached = { providerSessionId: "session:deleted-snapshot-resume", detachedAt: now };
+    // More than THREAD_RESUME_MAX_REPLAY_EVENTS after the cursor forces the snapshot fallback.
+    for (let version = 0; version <= 130; version++) {
+      yield* insert(version, "provider-session.detached", detached);
+    }
+    yield* insert(131, "thread.deleted", {
+      createdBy: "user",
+      creationSource: "web",
+      id: threadId,
+      projectId: "project:deleted-snapshot-resume",
+      title: "Deleted",
+      providerInstanceId: "codex",
+      modelSelection: { instanceId: "codex", model: "default" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      deletedAt: now,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+    });
+    // The projection store reads a deleted thread's snapshot as missing.
+    const missing = new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId });
+
+    const exit = yield* subscribeOrchestrationV2Thread({ threadId, afterSequence: 0 }).pipe(
+      Effect.flatMap(Stream.runCollect),
+      Effect.provideService(ThreadManagement.ThreadManagementService, {
+        ensureLegacyTranscript: () => Effect.void,
+        getThreadShell: () => Effect.succeed(null),
+        getThreadSnapshot: () => Effect.fail(missing),
+        getThreadSnapshotWindow: () => Effect.fail(missing),
+        streamStoredEventsFrom: () => Stream.empty,
+      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+      Effect.exit,
+    );
+
+    // A client holding cached detail must learn the thread is gone: either the
+    // deletion is delivered, or the failure says the thread was not found.
+    const toldDeleted = Exit.match(exit, {
+      onSuccess: (items) =>
+        Array.from(items).some(
+          (item) => item.kind === "event" && item.event.type === "thread.deleted",
+        ),
+      onFailure: (cause) => {
+        const error = Cause.findErrorOption(cause);
+        return (
+          error._tag === "Some" &&
+          (error.value as { readonly reason?: string }).reason === "thread_not_found"
+        );
+      },
+    });
+    assert.isTrue(
+      toldDeleted,
+      `resume outcome did not identify the deletion: ${Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "stream completed without thread.deleted"}`,
+    );
+  }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
 // A prune pass can delete replayed rows after the boundary check; the read must not be trusted.
 it.effect.each(["thread", "shell"] as const)(
   "%s resume loads a snapshot when pruning advances during the replay read",
