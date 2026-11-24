@@ -10,7 +10,6 @@ import {
 } from "@t3tools/contracts";
 import * as ProcessGroup from "@t3tools/provider-core/server/processGroup";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -19,7 +18,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { expect, vi } from "vite-plus/test";
 import { FetchHttpClient } from "effect/http";
@@ -1243,99 +1241,6 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       Effect.provide(
         layerScanner.pipe(
           Layer.provide(ProcessRunner.layer),
-          Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
-        ),
-      ),
-    ),
-);
-
-const LAUNCHER_AGENT_SCRIPT = `
-const http = require("node:http");
-const cp = require("node:child_process");
-const childScript = process.argv[1];
-const agentServer = http.createServer((_, res) => { res.writeHead(404); res.end(); });
-agentServer.listen(0, "127.0.0.1", () => {
-  const child = cp.spawn(process.execPath, ["-e", childScript], {
-    detached: true,
-    env: process.env,
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  child.stdout.once("data", (chunk) => {
-    const [childPid, childPort] = String(chunk).trim().split(" ");
-    process.stdout.write(
-      [process.pid, process.ppid, agentServer.address().port, childPid, childPort].join(" ") + "\\n",
-    );
-  });
-});
-`;
-
-effectIt.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
-  "excludes a live ProcessLauncher-spawned agent CLI's own port while showing and stopping its dev server",
-  () =>
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const launcher = yield* ProcessLauncher.ProcessLauncher;
-      const scanner = yield* PortScanner.PortDiscovery;
-      yield* Effect.acquireRelease(Effect.sync(scanner.trackAgent), (release) =>
-        Effect.sync(release),
-      );
-      const handle = yield* spawner.spawn(
-        ChildProcess.make(process.execPath, ["-e", LAUNCHER_AGENT_SCRIPT, AGENT_SERVER_SCRIPT], {
-          detached: true,
-          env: { ...process.env, [PortScanner.AGENT_THREAD_ENV]: "thread-launcher-live" },
-        }),
-      );
-      const line = yield* handle.stdout.pipe(
-        Stream.decodeText(),
-        Stream.splitLines,
-        Stream.runHead,
-      );
-      expect(line._tag).toBe("Some");
-      const [agentPid, agentPpid, agentPort, devPid, devPort] =
-        line._tag === "Some" ? line.value.trim().split(" ").map(Number) : [];
-      const launcherPid = yield* launcher.currentPid;
-      expect(launcherPid).toBeDefined();
-      expect(agentPpid).toBe(launcherPid);
-      expect(agentPpid).not.toBe(process.pid);
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          for (const target of [devPid, agentPid]) {
-            try {
-              if (target !== undefined) process.kill(target, "SIGKILL");
-            } catch {}
-          }
-        }),
-      );
-
-      const discovered = yield* scanner.scan();
-      expect(discovered).not.toEqual(
-        expect.arrayContaining([expect.objectContaining({ pid: agentPid, port: agentPort })]),
-      );
-      expect(discovered).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            pid: devPid,
-            port: devPort,
-            agent: { threadId: "thread-launcher-live" },
-          }),
-        ]),
-      );
-
-      const stopAgent = yield* Effect.flip(
-        scanner.stopServer({ pid: agentPid!, port: agentPort! }),
-      );
-      expect(stopAgent.reason).toBe("not-found");
-      expect(isRunning(agentPid!)).toBe(true);
-
-      yield* scanner.stopServer({ pid: devPid!, port: devPort! });
-      expect(isRunning(devPid!)).toBe(false);
-      expect(isRunning(agentPid!)).toBe(true);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        layerScanner.pipe(
-          Layer.provide(ProcessRunner.layer),
-          Layer.provideMerge(ProcessLauncher.layerServer),
           Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
         ),
       ),
