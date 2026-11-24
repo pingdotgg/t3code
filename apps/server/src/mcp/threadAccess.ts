@@ -24,7 +24,6 @@ import { hasPendingBackgroundSubagent } from "@t3tools/shared/orchestrationV2Pen
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
-import { isProviderSignOutPrompt } from "../orchestration-v2/CommandPolicy.ts";
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
@@ -99,20 +98,6 @@ export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")
     message: `${message}${mcpHint}${linksHint}`,
   });
 });
-
-/** Over RPC `/logout` needs `providers:manage`, which no MCP caller holds. */
-export const refuseProviderSignOut = (
-  text: string,
-  attachments: ReadonlyArray<unknown> = [],
-): Effect.Effect<void, OrchestratorMcpFailure> =>
-  attachments.length === 0 && isProviderSignOutPrompt({ text, attachments: [] })
-    ? Effect.fail(
-        new OrchestratorMcpFailure({
-          code: "capability_denied",
-          message: "Only the user can sign a provider out, by sending `/logout` themselves.",
-        }),
-      )
-    : Effect.void;
 
 export const unavailable = () =>
   new OrchestratorMcpFailure({

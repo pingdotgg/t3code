@@ -31,7 +31,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as TaskFolders from "../workspace/TaskFolders.ts";
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
-import { refuseProviderSignOut } from "./threadAccess.ts";
 
 export class WorktreeMcpService extends Context.Service<
   WorktreeMcpService,
@@ -477,10 +476,6 @@ const make = Effect.gen(function* () {
     function* (callerScope, input) {
       yield* requireCapability(callerScope);
       const scope = yield* requireThreadScope(callerScope);
-      if (input.continuationPrompt !== undefined)
-        yield* refuseProviderSignOut(input.continuationPrompt).pipe(
-          Effect.mapError((error) => failure("capability_denied", error.message)),
-        );
       // Acquire and register cleanup atomically so cancellation cannot strand the guard until restart.
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.suspend(() => {

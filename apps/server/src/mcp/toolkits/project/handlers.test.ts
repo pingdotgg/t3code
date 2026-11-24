@@ -3,7 +3,6 @@ import * as NodeFSP from "node:fs/promises";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
-  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   GitCommandError,
   ProjectId,
@@ -15,7 +14,6 @@ import {
   type ProjectScript,
   type RuntimeMode,
   type OrchestrationV2ThreadShell,
-  ServerSettingsError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -36,7 +34,6 @@ import * as TestClock from "effect/testing/TestClock";
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
-import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
@@ -80,7 +77,6 @@ const clientLaunchHarness = (input: {
     model: input.overrideModel === undefined ? modelSelection : null,
   };
   const layerDependencies = Layer.mergeAll(
-    ThreadCommandExecutor.layer,
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(input.providers ?? []),
       refreshWorkspaceSnapshot: () => Effect.succeed(input.providers ?? []),
@@ -269,17 +265,6 @@ it.effect(
       });
       expect(titled.launched[0]).toMatchObject({ title: "Fix", generateTitle: true });
       expect(titled.launched[0]?.titleRenamed).toBeUndefined();
-
-      // Over RPC a bare `/logout` needs providers:manage, which agents never hold.
-      const signOut = yield* launchWith("full-access", "full-access", {
-        title: "Out",
-        message: " /LOGOUT ",
-      });
-      expect(signOut.result).toMatchObject({
-        code: "capability_denied",
-        message: expect.stringContaining("sign a provider out"),
-      });
-      expect(signOut.launched).toHaveLength(0);
 
       for (const message of [undefined, "", " \n "]) {
         const idleTitled = yield* launchWith("full-access", "full-access", {
@@ -1261,41 +1246,6 @@ it.effect("creating a project through MCP refuses a model default instead of dro
   }),
 );
 
-it.effect("creating a project through MCP saves no actions", () =>
-  Effect.gen(function* () {
-    const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
-    const created: unknown[] = [];
-    const dependencies = Layer.merge(
-      harness.dependencies,
-      Layer.mock(Project.ProjectService)({
-        create: (input) =>
-          Effect.sync(() => created.push(input)).pipe(
-            Effect.andThen(
-              Effect.fail(
-                new Project.ProjectInvalidError({ projectId: input.projectId, detail: "Stop." }),
-              ),
-            ),
-          ),
-      }),
-    );
-    const toolkit = yield* ProjectToolkit.pipe(
-      Effect.provide(
-        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
-      ),
-    );
-
-    yield* toolkit
-      .handle("t3_project_create", {
-        title: "client-target",
-        workspaceRoot: "/projects/client-target",
-        scripts: [{ id: "x", name: "X", command: "true", icon: "play", runOnWorktreeCreate: true }],
-      } as never)
-      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
-
-    expect(created).toEqual([expect.not.objectContaining({ scripts: expect.anything() })]);
-  }),
-);
-
 it.effect("an agent's clone is not cut off while git is still transferring", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1499,230 +1449,6 @@ it.effect("reading a project shows the default model and actions saved in Settin
     expect(read.at(-1)?.result).toMatchObject({
       defaultModelSelection: overrideModel,
       scripts: overrideScripts,
-    });
-  }),
-);
-
-it.effect(
-  "a project update saves its defaults where Settings reads them, and leaves actions alone",
-  () =>
-    Effect.gen(function* () {
-      const overrideModel = {
-        instanceId: ProviderInstanceId.make("claudeAgent"),
-        model: "claude-sonnet",
-      };
-      const harness = clientLaunchHarness({
-        runtimeModeCeiling: "full-access",
-        overrideModel,
-        launched: [],
-      });
-      const rowWrites: unknown[] = [];
-      const dependencies = Layer.merge(
-        harness.dependencies,
-        Layer.mock(Project.ProjectService)({
-          update: (input) =>
-            Effect.sync(() => rowWrites.push(input)).pipe(
-              Effect.as({
-                id: input.projectId,
-                title: "Client target",
-                workspaceRoot: "/projects/client-target",
-                defaultModelSelection: null,
-                scripts: [],
-                createdAt: "2026-01-01T00:00:00.000Z",
-                updatedAt: "2026-01-01T00:00:00.000Z",
-                deletedAt: null,
-              }),
-            ),
-        }),
-      );
-      yield* Effect.gen(function* () {
-        const toolkit = yield* ProjectToolkit;
-        const updated = yield* toolkit
-          .handle("t3_project_update", {
-            projectId: harness.projectId,
-            scripts: [
-              { id: "x", name: "X", command: "true", icon: "play", runOnWorktreeCreate: true },
-            ],
-            defaultModelSelection: null,
-            defaultThreadEnvMode: "worktree",
-            autoPull: true,
-          } as never)
-          .pipe(Stream.unwrap, Stream.runCollect);
-        expect(updated.at(-1)?.result).toMatchObject({
-          defaultModelSelection: null,
-          defaultThreadEnvMode: "worktree",
-          autoPull: true,
-          scripts: [],
-        });
-        const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
-        expect(settings.projectSettingsOverrides[harness.projectId]).toEqual({
-          defaultThreadEnvMode: "worktree",
-          defaultAutoPull: true,
-        });
-        expect(rowWrites).toEqual([expect.not.objectContaining({ scripts: expect.anything() })]);
-      }).pipe(
-        Effect.provide(
-          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
-            Layer.provideMerge(dependencies),
-          ),
-        ),
-      );
-    }),
-);
-
-it.effect("a project update changes Settings and the project together or not at all", () =>
-  Effect.gen(function* () {
-    const overrideModel = {
-      instanceId: ProviderInstanceId.make("claudeAgent"),
-      model: "claude-sonnet",
-    };
-    const harness = clientLaunchHarness({
-      runtimeModeCeiling: "full-access",
-      overrideModel,
-      launched: [],
-    });
-    const run = <ROut, E>(layer: Layer.Layer<ROut, E>, params: object) =>
-      Effect.gen(function* () {
-        const toolkit = yield* ProjectToolkit;
-        const result = yield* toolkit
-          .handle("t3_project_update", params as never)
-          .pipe(Stream.unwrap, Stream.runCollect);
-        const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
-        return { result: result.at(-1)?.result, settings };
-      }).pipe(
-        Effect.provide(
-          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provideMerge(layer)),
-        ),
-      );
-
-    // A managed lock refuses the settings write before the project row changes.
-    const rowWrites: unknown[] = [];
-    const locked = yield* run(
-      Layer.merge(
-        Layer.merge(
-          harness.dependencies,
-          Layer.mock(Project.ProjectService)({
-            update: (input) =>
-              Effect.sync(() => rowWrites.push(input)).pipe(
-                Effect.andThen(Effect.die("unreachable")),
-              ),
-          }),
-        ),
-        Layer.mock(ServerSettings.ServerSettingsService)({
-          managedPolicy: undefined,
-          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-          updateProjectSettingsOverrides: () =>
-            Effect.fail(
-              new ServerSettingsError({
-                settingsPath: "settings.json",
-                operation: "write-managed-setting",
-                managedSetting: "defaultAutoPull",
-                managedBy: "Example Corp",
-              }),
-            ),
-        }),
-      ),
-      { projectId: harness.projectId, title: "Renamed", autoPull: true },
-    );
-    expect(locked.result).toMatchObject({
-      code: "capability_denied",
-      message: expect.stringContaining("Example Corp"),
-    });
-    expect(rowWrites).toEqual([]);
-
-    // A project update that fails puts the previous overrides back.
-    const refused = yield* run(
-      Layer.merge(
-        harness.dependencies,
-        Layer.mock(Project.ProjectService)({
-          update: (input) =>
-            Effect.fail(
-              new Project.ProjectInvalidError({ projectId: input.projectId, detail: "Bad icon." }),
-            ),
-        }),
-      ),
-      { projectId: harness.projectId, autoPull: true },
-    );
-    expect(refused.result).toMatchObject({ code: "invalid_request", message: "Bad icon." });
-    expect(refused.settings.projectSettingsOverrides[harness.projectId]).toEqual({
-      defaultModelSelection: overrideModel,
-    });
-
-    // When the overrides can't be put back, the agent hears that rather than the row's error.
-    let overrideWrites = 0;
-    const stranded = yield* run(
-      Layer.merge(
-        Layer.merge(
-          harness.dependencies,
-          Layer.mock(Project.ProjectService)({
-            update: (input) =>
-              Effect.fail(
-                new Project.ProjectInvalidError({
-                  projectId: input.projectId,
-                  detail: "Bad icon.",
-                }),
-              ),
-          }),
-        ),
-        Layer.mock(ServerSettings.ServerSettingsService)({
-          managedPolicy: undefined,
-          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-          updateProjectSettingsOverrides: () =>
-            ++overrideWrites === 1
-              ? Effect.succeed(DEFAULT_SERVER_SETTINGS)
-              : Effect.fail(
-                  new ServerSettingsError({
-                    settingsPath: "settings.json",
-                    operation: "write-file",
-                  }),
-                ),
-        }),
-      ),
-      { projectId: harness.projectId, autoPull: true },
-    );
-    expect(overrideWrites).toBe(2);
-    expect(stranded.result).toMatchObject({
-      code: "orchestration_error",
-      message: expect.stringContaining("could not be put back"),
-    });
-
-    // A read that fails after the row committed is retried with the same command, which replays
-    // the commit; the new overrides stay.
-    const attempts: Array<{ readonly commandId: unknown }> = [];
-    const reread = yield* run(
-      Layer.merge(
-        harness.dependencies,
-        Layer.mock(Project.ProjectService)({
-          update: (input) =>
-            Effect.suspend(() =>
-              attempts.push(input) === 1
-                ? Effect.fail(
-                    new Project.ProjectOperationError({
-                      operation: "read-project",
-                      projectId: input.projectId,
-                      cause: "read failed",
-                    }),
-                  )
-                : Effect.succeed({
-                    id: input.projectId,
-                    title: "Client target",
-                    workspaceRoot: "/projects/client-target",
-                    defaultModelSelection: null,
-                    scripts: [],
-                    createdAt: "2026-01-01T00:00:00.000Z",
-                    updatedAt: "2026-01-01T00:00:00.000Z",
-                    deletedAt: null,
-                  } as never),
-            ),
-        }),
-      ),
-      { projectId: harness.projectId, autoPull: true },
-    );
-    expect(attempts).toHaveLength(2);
-    expect(attempts[1]?.commandId).toBe(attempts[0]?.commandId);
-    expect(reread.result).toMatchObject({ autoPull: true });
-    expect(reread.settings.projectSettingsOverrides[harness.projectId]).toMatchObject({
-      defaultAutoPull: true,
     });
   }),
 );

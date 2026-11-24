@@ -72,8 +72,7 @@ Choose **On webhook** as a task's schedule to trigger runs from external service
 
 An agent can change an environment's settings for you, for example "stop keeping my machine awake
 while agents work" or "name new branches with the prefix jl". The thread must run in Full access.
-It changes the environment value, not a preference saved on this device. Of a project's overrides,
-it can change the default model, new-thread mode, and auto-pull.
+It changes the environment value, not a preference saved on this device.
 
 Some settings stay with you: secrets and credentials, providers, access and sharing, cleanup that
 deletes files, actions, instructions that other models follow, and anything that widens what agents
