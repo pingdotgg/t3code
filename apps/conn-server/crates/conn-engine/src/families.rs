@@ -262,19 +262,11 @@ fn result_for_run<E>(
             }
         }
     }
-    let mut text = "Child task completed without an assistant result.".to_owned();
-    if let Some(notice) = notice {
-        text.push_str("\n\n");
-        text.push_str(&notice);
-    }
-    Ok(text)
+    Ok(commands::completed_without_result(notice.as_deref()))
 }
 
 fn stop_notice_id(run: &Value) -> String {
-    format!(
-        "turn-item:{}:provider-stop-reason",
-        run["id"].as_str().unwrap_or_default()
-    )
+    commands::provider_stop_reason_id(run["id"].as_str().unwrap_or_default())
 }
 
 fn notice_text(item: &Value) -> Option<String> {

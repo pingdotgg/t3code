@@ -25,6 +25,7 @@ mod calls;
 mod checkpoint;
 mod clock;
 mod commands;
+pub use commands::{completed_without_result, provider_stop_reason_id};
 mod engine;
 mod feedback;
 mod guard;

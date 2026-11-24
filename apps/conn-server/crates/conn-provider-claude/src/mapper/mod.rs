@@ -1455,6 +1455,7 @@ impl<E: Env> Mapper<E> {
             failure: failure.and_then(|f| from_json(f).ok()),
             retry,
             thread_disposition: ThreadDisposition::Reusable,
+            reason: None,
         })));
     }
 

@@ -389,6 +389,131 @@ async fn a_failed_turn_shows_its_error() {
     );
 }
 
+/// `RunExecutionService`'s provider stop reason: a turn a hook stopped ends completed, with
+/// the hook's reason kept as a "Stopped by the provider" warning on its run. The work log
+/// shows it after a reload; an ordinary completed turn gets none.
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_stop_reason_stays_on_the_completed_run() {
+    let db = TempDb::new("stop-reason");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hook-stop")).await;
+    until_run_ends(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "plain")).await;
+    until_run_ends(&mut thread).await;
+    drop(thread);
+    drop(engine);
+
+    let (engine, _) = open(&db);
+    let p = projection(&engine, "t1").await;
+    let warnings: Vec<(Value, Value, Value, Value)> = p["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["type"] == "system_notice")
+        .map(|item| {
+            (
+                item["runId"].clone(),
+                item["title"].clone(),
+                item["level"].clone(),
+                item["message"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        warnings,
+        [(
+            json!("run:t1:1"),
+            json!("Stopped by the provider"),
+            json!("warning"),
+            json!(crate::fake::HOOK_STOP_REASON)
+        )]
+    );
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".to_owned(), "completed".to_owned()),
+            ("run:t1:2".to_owned(), "completed".to_owned())
+        ]
+    );
+    // `subagentProjection.ts` finds the notice by `runSignalTurnItem`'s id.
+    let id = conn_support::ids::join_id(
+        "turn-item",
+        &["run", "run:t1:1", "signal", "provider-stop-reason"],
+    );
+    assert_eq!(item_of(&p, &id)["message"], crate::fake::HOOK_STOP_REASON);
+}
+
+/// `RunExecutionService`'s interrupted terminal: the Stop result takes the stored Stop
+/// request's reason, else the provider's stop reason, and never shows a stop-reason warning.
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_stop_reason_backs_the_stop_result() {
+    let db = TempDb::new("stop-reason-interrupt");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hook-interrupt")).await;
+    until_run_ends(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "hook-hang")).await;
+    until_provider_turn(&mut thread).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    dispatch(&engine, stop("t1", "c4")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(
+        item_of(&p, "turn-item:run:t1:1:interrupt-result")["message"],
+        crate::fake::HOOK_STOP_REASON
+    );
+    assert_eq!(
+        item_of(&p, "turn-item:run:t1:2:interrupt-result")["message"],
+        "Stopped by user"
+    );
+    let notices = p["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["type"] == "system_notice")
+        .count();
+    assert_eq!(notices, 0, "an interrupted run shows no warning");
+}
+
+/// `subagentResultForRun`: a delegated child a hook stopped before any answer gives its
+/// parent the hook's reason, not an empty result.
+#[tokio::test(flavor = "current_thread")]
+async fn a_hook_stopped_child_gives_its_parent_the_reason() {
+    let db = TempDb::new("stop-reason-child");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(&engine, delegate("d1", "hook-stop", None)).await;
+    let child = "thread:delegated-task:d1";
+    run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    let parent = projection(&engine, "t1").await;
+    let expected = format!(
+        "Child task completed without an assistant result.\n\n{}",
+        crate::fake::HOOK_STOP_REASON
+    );
+    assert_eq!(parent["subagents"][0]["result"], expected.as_str());
+    assert_eq!(
+        item_of(&parent, "turn-item:delegated-task:d1")["result"],
+        expected.as_str()
+    );
+}
+
 /// Starts a `hang` turn on t1 and drops the engine while it runs, as a killed process would.
 async fn die_during_a_turn(db: &TempDb, command: &str) {
     let (engine, _) = open(db);
