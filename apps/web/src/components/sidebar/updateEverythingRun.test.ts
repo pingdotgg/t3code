@@ -159,4 +159,55 @@ describe("retryFailedUpdateRunServers", () => {
       { environmentId: "behind", result: null, retryable: true },
     ]);
   });
+
+  it("retries a row restored after a relaunch with the target it is given", () => {
+    const environmentId = EnvironmentId.make("restored");
+    using _config = vi
+      .spyOn(serverEnvironment, "configValueAtom")
+      .mockImplementation(() =>
+        Atom.make({ environment: { serverVersion: "9.9.8" } } as unknown as ServerConfig),
+      );
+    setUpdateEverythingRun(() => ({
+      localVersion: null,
+      phase: "servers",
+      restartAt: null,
+      machines: [
+        {
+          environmentId,
+          label: "restored",
+          updatesProviders: false,
+          server: null,
+          handedOffVersion: "9.9.9",
+          startedAt: 0,
+          result: "failed",
+          failure: "Not back after 32 minutes",
+          providerFailure: null,
+        },
+      ],
+    }));
+    const target: ServerUpdateTarget = {
+      environmentId,
+      serverLabel: "restored",
+      selfUpdate: "boot-service",
+      targetVersion: "9.9.9",
+    };
+    const update = vi.fn(
+      (_target: ServerUpdateTarget) => new Promise<ServerUpdateOutcome>(() => {}),
+    );
+
+    retryFailedUpdateRunServers(update, new Map([[environmentId, target]]));
+
+    let run: UpdateEverythingRun | null = null;
+    setUpdateEverythingRun((current) => {
+      run = current;
+      return null;
+    });
+    expect(update.mock.calls.map(([called]) => called)).toEqual([target]);
+    // Downloading again, not "restarting" from the old handoff, and retryable if it fails again.
+    expect((run as UpdateEverythingRun | null)?.machines[0]).toMatchObject({
+      result: null,
+      server: target,
+      handedOffVersion: null,
+    });
+  });
 });

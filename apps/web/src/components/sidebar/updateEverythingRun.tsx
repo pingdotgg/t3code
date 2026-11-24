@@ -25,6 +25,7 @@ import {
   closeFinishedUpdateRun,
   getUpdateEverythingToastView,
   isServerUpdateHandedOff,
+  type RestoredRetry,
   type UpdateEverythingResult,
   type UpdateEverythingRun,
   type UpdateRunMachine,
@@ -84,37 +85,52 @@ export function retryFailedUpdateRunServers(
     target: ServerUpdateTarget,
     options: { readonly quiet: boolean },
   ) => Promise<ServerUpdateOutcome>,
+  restored: ReadonlyMap<EnvironmentId, RestoredRetry> = new Map(),
 ): void {
   const failed = (appAtomRegistry.get(updateEverythingRunAtom)?.machines ?? []).flatMap(
-    (machine) =>
-      machine.result === "failed" && machine.server !== null
-        ? [{ target: machine.server, providerFailure: machine.providerFailure }]
-        : [],
+    (machine) => {
+      const target = machine.server ?? restored.get(machine.environmentId);
+      return machine.result === "failed" && target !== undefined
+        ? [
+            {
+              environmentId: machine.environmentId,
+              target,
+              providerFailure: machine.providerFailure,
+            },
+          ]
+        : [];
+    },
   );
-  const pending: typeof failed = [];
-  for (const entry of failed) {
+  const pending: Array<{ target: ServerUpdateTarget; providerFailure: string | null }> = [];
+  for (const { environmentId, target, providerFailure } of failed) {
     // The host rejects a same-version update; a server that came back on the target is done.
     if (
+      target === "current" ||
       runsVersion(
-        appAtomRegistry.get(serverEnvironment.configValueAtom(entry.target.environmentId)),
-        entry.target.targetVersion,
+        appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId)),
+        target.targetVersion,
       )
     ) {
-      settleUpdateRunMachine(entry.target.environmentId, entry.providerFailure, {
-        serverUpdated: true,
-      });
+      settleUpdateRunMachine(environmentId, providerFailure, { serverUpdated: true });
     } else {
-      pending.push(entry);
+      pending.push({ target, providerFailure });
     }
   }
-  const targets = pending.map(({ target }) => target);
-  const retried = new Set(targets.map((target) => target.environmentId));
+  const retried = new Map(pending.map(({ target }) => [target.environmentId, target]));
   const startedAt = Date.now();
-  updateRunMachines((machine) =>
-    retried.has(machine.environmentId)
-      ? { ...machine, result: null, failure: null, startedAt }
-      : machine,
-  );
+  updateRunMachines((machine) => {
+    const target = retried.get(machine.environmentId);
+    return target === undefined
+      ? machine
+      : {
+          ...machine,
+          server: target,
+          handedOffVersion: null,
+          result: null,
+          failure: null,
+          startedAt,
+        };
+  });
   for (const { target, providerFailure } of pending) {
     void update(target, { quiet: true }).then((outcome) =>
       settleUpdateRunMachine(
@@ -338,7 +354,12 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
     const timer = setTimeout(
       () =>
         settle(
-          m(msg("Not back after {minutes} minutes", { minutes: HANDOFF_TIMEOUT_MS / 60_000 })),
+          m(
+            msg(
+              "Not back after {minutes} minutes. Check that the machine is on and T3 Code is running there.",
+              { minutes: HANDOFF_TIMEOUT_MS / 60_000 },
+            ),
+          ),
         ),
       server.startedAt + HANDOFF_TIMEOUT_MS - Date.now(),
     );

@@ -12170,7 +12170,7 @@
   "d13e6ed5f93fc0a0": "Actualizar {items}",
   "987fb3befba9a863": "No se pudo iniciar la actualización",
   "82583b5a529f0ee4": "{machine}: {failure}",
-  "19a7891b5f5274ae": "No ha vuelto tras {minutes} minutos",
+  "b71d1f7bd235182b": "No ha vuelto tras {minutes} minutos. Comprueba que el equipo esté encendido y que T3 Code se esté ejecutando en él.",
   "ffaa75d2db1e7cc1": "No se aplicó la actualización",
   "626bcbe04dc55f93": "T3 Code sigue en {current}. Vuelve a instalar {version} desde el botón de actualizar.",
   "49214c047fbb1606": "Actualización del proveedor interrumpida",
