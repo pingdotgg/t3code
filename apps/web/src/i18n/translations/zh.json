@@ -12866,5 +12866,8 @@
   "27d76249d09eb69f": "审查导览已就绪",
   "faa3bb26abb39c93": "审查导览生成失败",
   "b7df38b7d8792d78": "打开导览",
-  "9e91e9a77b664e4e": "无法开始生成审查导览"
+  "9e91e9a77b664e4e": "无法开始生成审查导览",
+  "4a18481bea4b4ad5": "有新设备登录了 {environmentLabel}",
+  "4144ab6aa487528a": "{device} 已通过 {product} 连接。不是你本人？请检查。",
+  "a10cfdb27152c757": "{count, plural, other {{count} 台设备}}已通过 {product} 连接。不是你本人？请检查。"
 }

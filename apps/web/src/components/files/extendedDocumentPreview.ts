@@ -6,7 +6,10 @@ import {
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { decodeHTMLAttribute, decodeHTMLStrict as decodeEntities } from "entities";
 import type JSZip from "jszip";
-import { terminalOutputPlainText } from "@t3tools/shared/terminalOutput";
+import {
+  terminalOutputCollapseRedraws,
+  terminalOutputPlainText,
+} from "@t3tools/shared/terminalOutput";
 
 import { type OfficeWorkerResult, type NotebookCell } from "./officePreviewProtocol";
 import { PreviewError } from "./previewFailure";
@@ -526,9 +529,11 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
           }
           const html = notebookText(data["text/html"]);
           if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
-          const text = terminalOutputPlainText(
+          const plain = terminalOutputPlainText(
             notebookText(output.text ?? data["text/plain"] ?? tracebackLines(output.traceback)),
           );
+          const text =
+            output.output_type === "stream" ? terminalOutputCollapseRedraws(plain) : plain;
           if (text.trim() || output.output_type !== "error") return { kind: "text" as const, text };
           const summary = [output.ename, output.evalue]
             .filter((part) => typeof part === "string")

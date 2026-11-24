@@ -1148,7 +1148,11 @@ export const make = Effect.gen(function* () {
             ? fs.exists(headDirectory).pipe(Effect.map((exists) => !exists))
             : Effect.succeed(false),
         ),
-        Stream.filter((event) => path.basename(event.path) === "HEAD"),
+        // A terminal commit moves the branch ref but not HEAD; it always rewrites the index beside it.
+        Stream.filter((event) => {
+          const name = path.basename(event.path);
+          return name === "HEAD" || name === "index";
+        }),
         // On arrival: the cache keeps the old branch until reads below land, and they can retry.
         Stream.tap(() =>
           Effect.sync(() => {
