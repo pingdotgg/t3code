@@ -645,6 +645,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly verdict: PullRequestReviewVerdict;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+      /** The head the caller reviewed; an approval refuses any other. */
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<void, GitLabPullRequestCliError>;
 
     readonly replyToDiscussion: (input: {
@@ -3037,6 +3039,11 @@ export const make = Effect.gen(function* () {
           host: input.host,
           path: `${mergeRequest}/approve`,
           method: "POST",
+          // GitLab answers 409 when `sha` is no longer the merge request's head.
+          ...(input.expectedHeadSha === undefined
+            ? {}
+            : // @effect-diagnostics-next-line globalJsonInEffect:off
+              { stdin: JSON.stringify({ sha: input.expectedHeadSha }) }),
         });
       }
     }),
