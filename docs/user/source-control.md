@@ -373,7 +373,9 @@ Thread badges show a stack's layer count or the current review number with a cou
 links. Clicking a badge with more than one review opens the **Linked items** panel. When a thread
 also has linked issues, the review badge adds the issue icon and counts both as `+N`: two reviews
 and one issue show `+3`. Hover over it to see the issues and reviews, or click it to open
-**Linked items**. On mobile, the Git overview lists linked reviews and their stacks; tap a review to open it.
+**Linked items**. The issue icon takes the color of the issues' state, and the review icon and
+count take the reviews'. A thread with only issues shows the issue badge, whose key or count takes
+the issues' color. On mobile, the Git overview lists linked reviews and their stacks; tap a review to open it.
 Linking and unlinking are available in the web and desktop clients.
 
 The **Linked items** panel lists every review and groups stacks. Unlink a review from its

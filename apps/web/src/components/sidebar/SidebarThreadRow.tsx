@@ -1190,7 +1190,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         }
       >
         {issueMark}
-        <span className="max-w-16 truncate text-xs font-normal text-secondary-label tabular-nums">
+        <span
+          className={cn(
+            "max-w-16 truncate text-xs font-normal tabular-nums",
+            issueStatus?.toneClassName ?? "text-secondary-label",
+          )}
+        >
           {issueCount === 1 ? firstIssue.displayKey : issueCount}
         </span>
       </TooltipTrigger>

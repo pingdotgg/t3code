@@ -233,10 +233,14 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   });
   await expect.element(badge).toBeVisible();
   expect(badge.element().querySelector("svg")).toHaveClass(/text-emerald-600/);
+  await expect
+    .element(badge.getByText(issue.displayKey, { exact: true }))
+    .toHaveClass(/text-emerald-600/);
   const groupedBadge = page.getByRole("button", { name: "2 linked issues" });
-  await vi.waitFor(() =>
-    expect(groupedBadge.element().querySelector("svg")).toHaveClass(/text-emerald-600/),
-  );
+  await vi.waitFor(() => {
+    expect(groupedBadge.element().querySelector("svg")).toHaveClass(/text-emerald-600/);
+    expect(groupedBadge.getByText("2", { exact: true }).element()).toHaveClass(/text-emerald-600/);
+  });
   await userEvent.hover(badge);
   const issueName = `Issue ${issue.displayKey}: ${liveTitle}`;
   const previewLink = page.getByRole("link", { name: issueName });
