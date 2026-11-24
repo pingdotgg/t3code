@@ -23,6 +23,7 @@ import {
 } from "../layout/workspace/workspace-selection-store";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useThreadShell } from "../../state/entities";
+import { readShareableOrigin } from "../../state/shareableOrigin";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 import { GitActionProgressOverlay } from "../threads/GitActionProgressOverlay";
 import { CommandPalette } from "./CommandPalette";
@@ -71,6 +72,7 @@ export function HardwareKeyboardCommandProvider({
               pullRequests: activeThread?.pullRequests,
               linkedPullRequestUrl:
                 (activeThread?.linkedPullRequest ?? activeThread?.branchPullRequest)?.url ?? null,
+              linkOrigin: readShareableOrigin(activeThreadRef.environmentId),
             },
             messages,
           ),

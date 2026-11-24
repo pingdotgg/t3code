@@ -1,24 +1,35 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import type { AdvertisedEndpoint } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
 
-import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
+import {
+  endpointShareHint,
+  resolveAdvertisedEndpointPairingUrl,
+} from "./ConnectionsSettings.logic";
+import { resolveDesktopPairingUrl } from "./pairingUrls";
+
+const tailnetEndpoint = {
+  id: "tailscale-magicdns:host",
+  label: "Tailscale",
+  provider: { id: "tailscale", label: "Tailscale", kind: "private-network", isAddon: false },
+  httpBaseUrl: "https://host.tailnet.example.ts.net:3773",
+  wsBaseUrl: "wss://host.tailnet.example.ts.net:3773",
+  reachability: "private-network",
+  compatibility: { hostedHttpsApp: "compatible", desktopApp: "compatible" },
+  source: "desktop-core",
+  status: "available",
+} satisfies AdvertisedEndpoint;
 
 describe("settings pairing URL helpers", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   it("uses direct backend pairing URLs for HTTP endpoints", () => {
-    expect(resolveHostedPairingUrl("http://192.168.1.44:3773", "PAIRCODE")).toBeNull();
     expect(resolveDesktopPairingUrl("http://192.168.1.44:3773", "PAIRCODE")).toBe(
       "http://192.168.1.44:3773/pair#token=PAIRCODE",
     );
   });
 
-  it("uses hosted pairing URLs for HTTPS endpoints", () => {
-    vi.stubEnv("VITE_HOSTED_APP_URL", "https://preview.t3.codes");
-
-    expect(resolveHostedPairingUrl("https://host.tailnet.example.ts.net:3773", "PAIRCODE")).toBe(
-      "https://preview.t3.codes/pair?host=https%3A%2F%2Fhost.tailnet.example.ts.net%3A3773#token=PAIRCODE",
+  it("pairs an HTTPS endpoint on its own origin", () => {
+    expect(resolveAdvertisedEndpointPairingUrl(tailnetEndpoint, "PAIRCODE")).toBe(
+      "https://host.tailnet.example.ts.net:3773/pair#token=PAIRCODE",
     );
+    expect(endpointShareHint(tailnetEndpoint)).toBe("Devices on your private network");
   });
 });

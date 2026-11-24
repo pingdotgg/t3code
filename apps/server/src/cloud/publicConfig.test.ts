@@ -18,10 +18,10 @@ it.effect("rejects an insecure runtime relay URL override", () =>
 it.effect("rejects malformed or insecure hosted app URLs", () =>
   Effect.gen(function* () {
     for (const value of [
-      "app.t3.codes",
-      "http://app.t3.codes",
-      "https://app.t3.codes/nested",
-      "https://app.t3.codes?alias=true",
+      "hosted.example",
+      "http://hosted.example",
+      "https://hosted.example/nested",
+      "https://hosted.example?alias=true",
     ]) {
       const result = yield* hostedAppUrlConfig.pipe(
         provideEnv({ T3CODE_HOSTED_APP_URL: value }),
@@ -29,6 +29,13 @@ it.effect("rejects malformed or insecure hosted app URLs", () =>
       );
       assert.isTrue(Result.isFailure(result), value);
     }
+  }),
+);
+
+it.effect("has no hosted app unless one is configured", () =>
+  Effect.gen(function* () {
+    const result = yield* hostedAppUrlConfig.pipe(provideEnv({}), Effect.result);
+    assert.isTrue(Result.isFailure(result));
   }),
 );
 

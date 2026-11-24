@@ -85,8 +85,8 @@ import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
   hasThreadLinks,
-  hostedThreadLink,
   parseThreadLinkHref,
+  shareableThreadLink,
   threadLinkRefs,
 } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
@@ -278,6 +278,7 @@ import { ThreadMcpApp } from "./McpAppWebView";
 import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
+import { readShareableOrigin } from "../../state/shareableOrigin";
 import { environmentProjects, projectEnvironment } from "../../state/projects";
 import {
   agentWorkingDirectories,
@@ -3515,7 +3516,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       const thread = resolveLinkedThread(href);
       if (thread) {
         if (actionId === "open-thread") onMarkdownLinkPress(href);
-        else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
+        else if (actionId === "copy-thread-link")
+          copyTextWithHaptic(
+            shareableThreadLink(thread, readShareableOrigin(thread.environmentId)),
+          );
         return;
       }
       const deviceUrl = deviceLoopbackUrl(href);
