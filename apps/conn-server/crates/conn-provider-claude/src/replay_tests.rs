@@ -192,7 +192,10 @@ fn replay(name: &str, runtime_mode: &str) -> Replay {
                 }
                 Out::Write(line) => replay.writes.push(serde_json::from_str(&line).unwrap()),
                 Out::Skipped(kind) => replay.skipped.push(kind),
-                Out::TailOutput { .. } | Out::StopTail { .. } | Out::StopTask { .. } => {}
+                Out::TailOutput { .. }
+                | Out::StopTail { .. }
+                | Out::StopTask { .. }
+                | Out::ReadMemberTranscript(_) => {}
             }
         }
     }
@@ -619,7 +622,8 @@ fn subagent_compaction_and_retry_frames_decode_without_failing() {
                 Out::Write(_)
                 | Out::TailOutput { .. }
                 | Out::StopTail { .. }
-                | Out::StopTask { .. } => {}
+                | Out::StopTask { .. }
+                | Out::ReadMemberTranscript(_) => {}
             }
         }
     }
@@ -1077,4 +1081,256 @@ fn an_idle_restart_then_completion_leaves_the_workflow_finished() {
         .unwrap();
     assert_eq!(last["subagent"]["status"], "completed");
     assert!(!mapper.has_pending_background_work());
+}
+
+/// `readContainedWorkflowFile` refuses a path that is not absolute: a relative
+/// `transcriptDir` is never read, and the progress excerpt stands in.
+#[test]
+fn a_relative_transcript_dir_is_not_read() {
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    let thread = provider_thread("workflow-relative");
+    mapper.begin_turn(&turn_input(1, &thread, "x", "full-access"), "default");
+    let frames = [
+        json!({"type":"assistant", "parent_tool_use_id":null, "uuid":"wf-2", "message":{
+            "id":"m-wf", "content":[{"type":"tool_use", "id":"tool-workflow", "name":"Run",
+            "input":{"script":"await workflow.run()"}}]}}),
+        json!({"type":"system", "subtype":"task_started", "task_id":"wf1",
+            "tool_use_id":"tool-workflow", "task_type":"local_workflow", "workflow_name":"Audit",
+            "description":"Audit code", "prompt":"await workflow.run()"}),
+        json!({"type":"user", "parent_tool_use_id":null, "uuid":"wf-4", "message":{"role":"user",
+            "content":[{"type":"tool_result", "tool_use_id":"tool-workflow", "content":"launched"}]},
+            "tool_use_result":{"taskType":"local_workflow", "runId":"wf-run",
+            "transcriptDir":"projects/workflow"}}),
+        json!({"type":"system", "subtype":"task_progress", "task_id":"wf1",
+            "tool_use_id":"tool-workflow", "description":"Review", "workflow_progress":[
+            {"type":"workflow_agent", "index":0, "label":"Reviewer", "state":"done", "attempt":1,
+             "startedAt":1, "lastProgressAt":5, "agentId":"a1", "resultPreview":"Looks good"}]}),
+    ];
+    let outs: Vec<Out> = frames
+        .into_iter()
+        .flat_map(|frame| mapper.handle(Inbound::from_value(frame)))
+        .collect();
+    assert!(
+        !outs
+            .iter()
+            .any(|o| matches!(o, Out::ReadMemberTranscript(_)))
+    );
+    assert!(outs.iter().any(|o| matches!(o,
+        Out::Event(ProviderEvent::TurnItemUpdated { turn_item })
+            if to_json(turn_item)["text"] == "Partial answer from workflow progress:\n\nLooks good")));
+}
+
+/// A workflow with one member, `a1`, whose transcripts live in `dir`.
+fn member_workflow(dir: &std::path::Path) -> (Mapper<FixedEnv>, Vec<Out>) {
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    let thread = provider_thread("workflow-member");
+    mapper.begin_turn(&turn_input(1, &thread, "x", "full-access"), "default");
+    let frames = [
+        json!({"type":"assistant", "parent_tool_use_id":null, "uuid":"wf-2", "message":{
+            "id":"m-wf", "content":[{"type":"tool_use", "id":"tool-workflow", "name":"Run",
+            "input":{"script":"await workflow.run()"}}]}}),
+        json!({"type":"system", "subtype":"task_started", "task_id":"wf1",
+            "tool_use_id":"tool-workflow", "task_type":"local_workflow", "workflow_name":"Audit",
+            "description":"Audit code", "prompt":"await workflow.run()"}),
+        json!({"type":"user", "parent_tool_use_id":null, "uuid":"wf-4", "message":{"role":"user",
+            "content":[{"type":"tool_result", "tool_use_id":"tool-workflow", "content":"launched"}]},
+            "tool_use_result":{"taskType":"local_workflow", "runId":"wf-run", "transcriptDir":dir}}),
+    ];
+    let outs = frames
+        .into_iter()
+        .flat_map(|frame| mapper.handle(Inbound::from_value(frame)))
+        .collect();
+    (mapper, outs)
+}
+
+fn member_progress(uuid: &str, result: Option<&str>) -> Inbound {
+    let mut entry = json!({"type":"workflow_agent", "index":0, "label":"Reviewer",
+        "state":"done", "attempt":1, "startedAt":0, "agentId":"a1"});
+    if let Some(result) = result {
+        entry["resultPreview"] = json!(result);
+    }
+    Inbound::from_value(
+        json!({"type":"system", "subtype":"task_progress", "uuid":uuid,
+        "task_id":"wf1", "tool_use_id":"tool-workflow", "description":"Review",
+        "workflow_progress":[entry]}),
+    )
+}
+
+fn coordinator_done() -> Inbound {
+    Inbound::from_value(json!({"type":"system", "subtype":"task_notification",
+        "task_id":"wf1", "tool_use_id":"tool-workflow", "status":"completed",
+        "summary":"Audited."}))
+}
+
+fn transcript_line(uuid: &str, stop_reason: &str, text: &str) -> String {
+    let line = json!({"type":"assistant", "uuid":uuid, "message":{"id":format!("m-{uuid}"),
+        "role":"assistant", "stop_reason":stop_reason,
+        "content":[{"type":"text","text":text}]}});
+    format!("{line}\n")
+}
+
+fn append(file: &std::path::Path, text: &str) {
+    use std::io::Write;
+    let mut handle = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)
+        .unwrap();
+    handle.write_all(text.as_bytes()).unwrap();
+}
+
+/// Runs the session's side of each transcript read the mapper asks for, as the session does.
+/// `before_read` runs before the n-th read (0-based).
+fn import_reads(
+    mapper: &mut Mapper<FixedEnv>,
+    outs: Vec<Out>,
+    reads: &mut usize,
+    before_read: &mut dyn FnMut(usize),
+) -> Vec<Out> {
+    let mut done = Vec::new();
+    let mut queue: std::collections::VecDeque<Out> = outs.into();
+    while let Some(out) = queue.pop_front() {
+        let Out::ReadMemberTranscript(member) = out else {
+            done.push(out);
+            continue;
+        };
+        before_read(*reads);
+        *reads += 1;
+        let read = crate::session::read_member_transcript(&member, &member.dir);
+        queue.extend(mapper.member_transcript(member, read));
+    }
+    done
+}
+
+/// The assistant texts of the member's child thread, by item id in the order first seen.
+fn member_answers(outs: &[Out]) -> Vec<String> {
+    let child = outs
+        .iter()
+        .find_map(|out| match out {
+            Out::Event(event @ ProviderEvent::SubagentUpdated { .. }) => {
+                let event = serde_json::to_value(event).unwrap();
+                let member = event["subagent"]["nativeTaskRef"]["nativeId"]
+                    .as_str()
+                    .is_some_and(|id| id.ends_with(":agent:0"));
+                member.then(|| event["subagent"]["childThreadId"].clone())
+            }
+            _ => None,
+        })
+        .unwrap();
+    let mut items: Vec<(String, String)> = Vec::new();
+    for out in outs {
+        let Out::Event(ProviderEvent::TurnItemUpdated { turn_item }) = out else {
+            continue;
+        };
+        let item = to_json(turn_item);
+        if item["type"] != "assistant_message" || item["threadId"] != child {
+            continue;
+        }
+        let (id, text) = (
+            item["id"].as_str().unwrap().to_owned(),
+            item["text"].as_str().unwrap_or_default().to_owned(),
+        );
+        match items.iter_mut().find(|(seen, _)| *seen == id) {
+            Some(entry) => entry.1 = text,
+            None => items.push((id, text)),
+        }
+    }
+    items.into_iter().map(|(_, text)| text).collect()
+}
+
+fn scratch(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("conn-claude-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.canonicalize().unwrap()
+}
+
+/// `ClaudeAdapterV2.test.ts` "answers settled workflow members from a transcript, or the
+/// snapshot excerpt": a line Claude flushes after the member settled shows on the next settled
+/// snapshot ("A1 continued"); a member without a transcript shows the excerpt, then its
+/// transcript once it appears.
+#[test]
+fn a_late_transcript_line_shows_on_the_next_settled_snapshot() {
+    let dir = scratch("late-line");
+    let file = dir.join("agent-a1.jsonl");
+    append(
+        &file,
+        &transcript_line("wf-line-3", "end_turn", "A1 from the transcript"),
+    );
+    let (mut mapper, mut outs) = member_workflow(&dir);
+    let mut reads = 0;
+    let mut nothing = |_| {};
+    let step = mapper.handle(member_progress("p-1", Some("A1 excerpt")));
+    outs.extend(import_reads(&mut mapper, step, &mut reads, &mut nothing));
+    assert_eq!(member_answers(&outs), ["A1 from the transcript"]);
+    append(
+        &file,
+        &transcript_line("wf-line-4", "end_turn", "A1 continued"),
+    );
+    let step = mapper.handle(member_progress("p-2", Some("A1 excerpt")));
+    let stale = step.iter().find_map(|o| match o {
+        Out::ReadMemberTranscript(member) => Some(member.clone()),
+        _ => None,
+    });
+    outs.extend(import_reads(&mut mapper, step, &mut reads, &mut nothing));
+    assert_eq!(
+        member_answers(&outs),
+        ["A1 from the transcript", "A1 continued"]
+    );
+    // A late result for a cursor that has moved on since is dropped.
+    let stale = stale.unwrap();
+    let read = crate::session::read_member_transcript(&stale, &stale.dir);
+    assert!(mapper.member_transcript(stale, read).is_empty());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS`: when the coordinator ends while a settled member's
+/// reply is not in its transcript yet, the reader waits out the flush window once and reads
+/// again before it falls back to the excerpt.
+#[test]
+fn a_final_flush_after_the_coordinator_ends_shows_the_answer() {
+    let dir = scratch("final-flush");
+    let file = dir.join("agent-a1.jsonl");
+    append(
+        &file,
+        &transcript_line("wf-line-1", "tool_use", "Let me look."),
+    );
+    let (mut mapper, mut outs) = member_workflow(&dir);
+    let mut reads = 0;
+    let step = mapper.handle(member_progress("p-1", Some("Looks good")));
+    outs.extend(import_reads(&mut mapper, step, &mut reads, &mut |_| {}));
+    let step = mapper.handle(coordinator_done());
+    let mut flush = |n: usize| {
+        if n == 2 {
+            append(
+                &file,
+                &transcript_line("wf-line-2", "end_turn", "FINAL ANSWER"),
+            );
+        }
+    };
+    outs.extend(import_reads(&mut mapper, step, &mut reads, &mut flush));
+    assert_eq!(member_answers(&outs), ["Let me look.", "FINAL ANSWER"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `ClaudeAdapterV2.ts` shows the progress excerpt only when the attempt showed no transcript
+/// text: a read the byte bound cut short still shows its answers and no excerpt.
+#[test]
+fn a_byte_truncated_transcript_shows_no_excerpt() {
+    let dir = scratch("byte-truncated");
+    let file = dir.join("agent-a1.jsonl");
+    let filler = "x".repeat(5 * 1024 * 1024);
+    append(&file, &transcript_line("wf-line-1", "end_turn", &filler));
+    append(&file, &transcript_line("wf-line-2", "end_turn", &filler));
+    append(
+        &file,
+        &transcript_line("wf-line-3", "end_turn", "FINAL ANSWER"),
+    );
+    let (mut mapper, mut outs) = member_workflow(&dir);
+    let step = mapper.handle(member_progress("p-1", Some("Looks good")));
+    outs.extend(import_reads(&mut mapper, step, &mut 0, &mut |_| {}));
+    let answers = member_answers(&outs);
+    assert_eq!(answers.last().map(String::as_str), Some("FINAL ANSWER"));
+    assert!(!answers.iter().any(|a| a.starts_with("Partial answer")));
+    std::fs::remove_dir_all(&dir).unwrap();
 }
