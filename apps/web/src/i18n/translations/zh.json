@@ -12817,5 +12817,8 @@
     "）"
   ],
   "33d18dda74f6d7b3": "取消堆叠自动合并",
-  "012c67c7f1a99e33": "自动合并堆叠"
+  "012c67c7f1a99e33": "自动合并堆叠",
+  "4a18481bea4b4ad5": "有新设备登录了 {environmentLabel}",
+  "4144ab6aa487528a": "{device} 已通过 {product} 连接。不是你本人？请检查。",
+  "a10cfdb27152c757": "{count, plural, other {{count} 台设备}}已通过 {product} 连接。不是你本人？请检查。"
 }
