@@ -117,6 +117,8 @@ export class EngineLink extends Context.Service<
           readonly list: ListRuns;
           /** Tell the run that invoked `runId`, if one did, how it ended. */
           readonly ended: (runId: string) => Effect.Effect<void>;
+          /** Watch the agent turn behind an open wait of `runId` until it ends. */
+          readonly watchTurn: (runId: string, wait: string) => Effect.Effect<void>;
         }
       | undefined;
     /** The steps of each run that are running in this process right now. */

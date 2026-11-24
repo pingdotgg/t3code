@@ -173,9 +173,22 @@ function sourceForBinding(binding: ResolvedKeybindingRule): KeybindingSource {
 
 function defaultBindingForBinding(
   binding: ResolvedKeybindingRule,
+  keybindings: ResolvedKeybindingsConfig,
 ): ResolvedKeybindingRule | undefined {
   const bindingKey = shortcutToKeybindingInput(binding.shortcut);
   const bindingWhen = whenAstToExpression(binding.whenAst);
+  const isBound = (entry: ResolvedKeybindingRule) =>
+    keybindings.some(
+      (other) =>
+        other.command === entry.command &&
+        shortcutToKeybindingInput(other.shortcut) === shortcutToKeybindingInput(entry.shortcut) &&
+        [whenAstToExpression(entry.whenAst), "false"].includes(whenAstToExpression(other.whenAst)),
+    );
+  // An edited row does not record which default it replaced; a default the command still has,
+  // or that is unassigned, cannot be it.
+  const findDefault = (matches: (entry: ResolvedKeybindingRule) => boolean) =>
+    DEFAULT_RESOLVED_KEYBINDINGS.find((entry) => matches(entry) && !isBound(entry)) ??
+    DEFAULT_RESOLVED_KEYBINDINGS.find(matches);
 
   return (
     DEFAULT_RESOLVED_KEYBINDINGS.find(
@@ -191,11 +204,11 @@ function defaultBindingForBinding(
             shortcutToKeybindingInput(entry.shortcut) === bindingKey,
         )
       : undefined) ??
-    DEFAULT_RESOLVED_KEYBINDINGS.find(
+    findDefault(
       (entry) =>
         entry.command === binding.command && whenAstToExpression(entry.whenAst) === bindingWhen,
     ) ??
-    DEFAULT_RESOLVED_KEYBINDINGS.find((entry) => entry.command === binding.command)
+    findDefault((entry) => entry.command === binding.command)
   );
 }
 
@@ -312,7 +325,7 @@ export function buildKeybindingRows(
   }
   const rowsById = new Map<string, KeybindingRow>();
   for (const [index, binding] of keybindings.entries()) {
-    const defaultBinding = defaultBindingForBinding(binding);
+    const defaultBinding = defaultBindingForBinding(binding, keybindings);
     const key = shortcutToKeybindingInput(binding.shortcut);
     const when = whenAstToExpression(binding.whenAst);
     const id = keybindingRowId(binding.command, key, when);
@@ -558,8 +571,9 @@ function titleCaseCommandSegment(segment: string): string {
 
 function recordedLayoutShortcutKey(
   event: Pick<KeyboardEvent, "key" | "code" | "shiftKey" | "altKey">,
+  platform: string,
 ): string {
-  const physicalKey = shortcutKeyFromEvent(event);
+  const physicalKey = shortcutKeyFromEvent(event, platform);
   const layoutKey = event.key.toLowerCase();
   if (event.altKey || layoutKey.length !== 1) return physicalKey;
   // Normalize only US shifted glyphs at their US position. Other layouts can
@@ -606,7 +620,9 @@ export function keybindingFromKeyboardEvent(
   },
 ): string | null {
   const keyToken = normalizeShortcutKeyToken(
-    options?.layoutCharacter ? recordedLayoutShortcutKey(event) : shortcutKeyFromEvent(event),
+    options?.layoutCharacter
+      ? recordedLayoutShortcutKey(event, platform)
+      : shortcutKeyFromEvent(event, platform),
   );
   if (!keyToken) return null;
 

@@ -35,8 +35,9 @@ const SIDE_CHAT_PANE_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
 interface ChatShortcutsInput {
   readonly enabled: boolean;
   /**
-   * A side chat inside another chat leaves the window to the outer chat. It runs only
-   * composer chords and scroll-to-end, scoped to its composer and message area.
+   * A side chat inside another chat leaves the window to the outer chat. It listens on its
+   * side chat pane, around `composerElement`: find, scroll-to-end and Escape closing find
+   * anywhere in the pane, composer chords only inside `composerElement`.
    */
   readonly embedded?: boolean;
   readonly composerElement?: HTMLElement | null;
@@ -73,6 +74,7 @@ function canScrollToEnd(context: ShortcutMatchContext) {
  */
 export function useChatShortcuts(input: ChatShortcutsInput) {
   const embedded = input.embedded === true;
+  const composerElement = embedded ? (input.composerElement ?? null) : null;
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
     const { keybindings } = input;
     if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
@@ -125,49 +127,46 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       event.isComposing ||
       event.keyCode === 229 ||
       isCommandPaletteOpen() ||
-      isInSideChatPane(event.target)
+      isInSideChatPane(event.target) !== embedded
     )
       return;
     const context = input.getShortcutContext(event.target);
     if (context.terminalFocus || context.previewFocus || context.modelPickerOpen) return;
+    // The narrow right panel sheet closes on Escape and ignores defaultPrevented.
     event.preventDefault();
+    event.stopPropagation();
     input.closeThreadFind();
   });
-  const handleEmbeddedShortcut = useEffectEvent((event: KeyboardEvent) => {
-    const context = input.getShortcutContext(event.target);
-    const composerTarget =
-      event.target instanceof Node && input.composerElement?.contains(event.target);
-    if (!context.messageAreaFocus && !composerTarget) return;
+  const handleSideChatShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || isCommandPaletteOpen()) return;
     const command = resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
       context: input.getShortcutContext(event.target),
     });
-    const run =
-      command === "chat.scrollToEnd"
-        ? canScrollToEnd(context)
-          ? input.commands[command]
-          : undefined
-        : command && composerTarget
-          ? composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command]
-          : undefined;
+    let run: ChatShortcutHandler | undefined;
+    if (command === "chat.find") run = input.commands[command];
+    else if (command === "chat.scrollToEnd") {
+      if (canScrollToEnd(input.getShortcutContext(event.target))) run = input.commands[command];
+    } else if (command && event.target instanceof Node && composerElement?.contains(event.target)) {
+      run = composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command];
+    }
     if (!run || run({ event, terminalFocusOwner: null }) === false) return;
     event.preventDefault();
     event.stopPropagation();
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches keydown listeners for chat shortcuts and find dismissal: on the window, scoped to the active chat
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches keydown listeners for chat shortcuts and find dismissal: on the window, or on an embedded chat's side chat pane
   useEffect(() => {
-    if (embedded) {
-      const onEmbeddedKeyDown = (event: KeyboardEvent) => handleEmbeddedShortcut(event);
-      window.addEventListener("keydown", onEmbeddedKeyDown, true);
-      return () => window.removeEventListener("keydown", onEmbeddedKeyDown, true);
-    }
-    const onKeyDownCapture = (event: KeyboardEvent) => handleShortcut(event);
+    const target: Pick<HTMLElement, "addEventListener" | "removeEventListener"> | null = embedded
+      ? (composerElement?.closest<HTMLElement>("[data-side-chat-pane]") ?? null)
+      : window;
+    if (!target) return;
+    const onKeyDownCapture = (event: KeyboardEvent) =>
+      embedded ? handleSideChatShortcut(event) : handleShortcut(event);
     const onKeyDown = (event: KeyboardEvent) => dismissFind(event);
-    window.addEventListener("keydown", onKeyDownCapture, true);
-    window.addEventListener("keydown", onKeyDown);
+    target.addEventListener("keydown", onKeyDownCapture, true);
+    target.addEventListener("keydown", onKeyDown);
     return () => {
-      window.removeEventListener("keydown", onKeyDownCapture, true);
-      window.removeEventListener("keydown", onKeyDown);
+      target.removeEventListener("keydown", onKeyDownCapture, true);
+      target.removeEventListener("keydown", onKeyDown);
     };
-  }, [embedded]);
+  }, [composerElement, embedded]);
 }
