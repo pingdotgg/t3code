@@ -702,6 +702,48 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("offers OpenCode 2's primary agents as an Agent choice next to Reasoning", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode v2.4.1\n";
+      runtimeMock.state.inventory = {
+        providerList: { connected: [], all: [], default: {} },
+        agents: [
+          { name: "build", hidden: false, mode: "primary" },
+          { name: "plan", hidden: false, mode: "primary" },
+          { name: "general", hidden: false, mode: "subagent" },
+          { name: "title", hidden: true, mode: "primary" },
+        ],
+      };
+
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        undefined,
+        undefined,
+        Effect.succeed([
+          {
+            providerID: "opencode-go",
+            id: "deepseek-v4.1-flash",
+            name: "DeepSeek V4.1 Flash",
+            variants: [{ id: "low" }, { id: "high" }, { id: "max" }],
+          },
+        ]),
+      );
+      const descriptors = snapshot.models.find(
+        (model) => model.slug === "opencode-go/deepseek-v4.1-flash",
+      )?.capabilities?.optionDescriptors;
+
+      NodeAssert.ok(descriptors?.some((descriptor) => descriptor.id === "variant"));
+      const agent = descriptors?.find((descriptor) => descriptor.id === "agent");
+      NodeAssert.ok(agent?.type === "select", "OpenCode 2 models expose no Agent selector");
+      NodeAssert.deepEqual(
+        agent.options.map((option) => option.id),
+        ["build", "plan"],
+      );
+      NodeAssert.equal(agent.currentValue, "build");
+    }),
+  );
+
   it.effect.each(["1.x", "2.x"] as const)(
     "offers a Default reasoning choice for a %s custom model with no inferable default",
     (generation) =>
