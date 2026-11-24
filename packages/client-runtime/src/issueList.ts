@@ -31,6 +31,8 @@ export interface HeldIssuePage {
   readonly nextCursors: IssueListCursors;
   /** Why the last "Load more" failed, until a retry succeeds or a new first page arrives. */
   readonly moreFailure: string | null;
+  /** `scope` when a scope it asked for failed instead: that error is among `errors`. */
+  readonly moreFailureKind: "request" | "scope" | null;
 }
 
 export function issueTrackerKey(tracker: Pick<IssueTrackerSummary, "tracker" | "host">): string {
@@ -56,6 +58,7 @@ export function holdIssuePages(
             moreErrors: [],
             nextCursors: answer.nextCursors,
             moreFailure: null,
+            moreFailureKind: null,
           },
     );
   }
@@ -77,7 +80,7 @@ export function continueIssuePage(
   next: IssueListResult | { readonly failure: string },
   asked: IssueListCursors = page.nextCursors,
 ): HeldIssuePage {
-  if ("failure" in next) return { ...page, moreFailure: next.failure };
+  if ("failure" in next) return { ...page, moreFailure: next.failure, moreFailureKind: "request" };
   const moreErrors = page.moreErrors.filter((more) => !more.asked.some((key) => key in asked));
   if (next.errors.length > 0) moreErrors.push({ asked: Object.keys(asked), errors: next.errors });
   return {
@@ -90,6 +93,8 @@ export function continueIssuePage(
       ...next.nextCursors,
     },
     moreFailure: null,
+    // A scope that failed keeps its cursor, so the page failed even though the request answered.
+    moreFailureKind: next.errors.length > 0 ? "scope" : null,
   };
 }
 
