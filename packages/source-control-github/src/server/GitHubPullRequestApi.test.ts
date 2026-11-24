@@ -2808,6 +2808,55 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("merges a stack that is already mergeable instead of arming auto-merge", () =>
+    Effect.gen(function* () {
+      route(
+        [
+          "stacks?pull_request=7",
+          [
+            {
+              number: 3,
+              url: "https://api.github.com/repos/acme/web/stacks/3",
+              base: { ref: "main" },
+              pull_requests: [
+                { number: 7, head: { ref: "two", sha: "bbb" }, state: "open", draft: false },
+              ],
+            },
+          ],
+        ],
+        ["PullRequestNodeId", { data: { repository: { pullRequest: { id: "PR_7" } } } }],
+        [
+          "enablePullRequestAutoMerge(",
+          {
+            data: { enablePullRequestAutoMerge: null },
+            errors: [
+              {
+                type: "UNPROCESSABLE",
+                message:
+                  "Auto-merge is not needed because all requested pull requests are already mergeable",
+              },
+            ],
+          },
+        ],
+        ["merge-async", { status: "merged", details: {} }],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "enable-auto-merge",
+        mergeMethod: "squash",
+        stackNumber: 3,
+        expectedStackHeads: [{ number: 7, headSha: "bbb" }],
+      });
+      expect(restCallsTo("merge-async")).toMatchObject([
+        { method: "PUT", body: { merge_method: "squash", sha: "bbb" } },
+      ]);
+    }),
+  );
+
   it.effect.each(["merge", "enable-auto-merge"] as const)(
     "removes agent credits from the proposed message for %s",
     (action) =>
