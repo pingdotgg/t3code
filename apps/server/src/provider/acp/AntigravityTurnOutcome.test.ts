@@ -60,6 +60,59 @@ const STATUS_NOT_FOUND_ERROR = Buffer.concat([
     'NOT_FOUND (code 404): Requested entity was not found.\u001a\u0080\u0001HTTP 404 Not Found\n\n{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}',
   ),
 ]);
+const protobufString = (tag: number, text: string) => {
+  const bytes = Buffer.from(text);
+  const length: Array<number> = [];
+  for (let rest = bytes.length; ; rest >>>= 7) {
+    if (rest < 0x80) {
+      length.push(rest);
+      break;
+    }
+    length.push((rest & 0x7f) | 0x80);
+  }
+  return Buffer.concat([Buffer.from([tag, ...length]), bytes]);
+};
+// Antigravity 1.5's quota error carries its reset in Google's JSON body.
+const statusQuotaError = (details: ReadonlyArray<object>) =>
+  Buffer.concat([
+    protobufString(
+      0x12,
+      "RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4h9m37s.",
+    ),
+    protobufString(
+      0x1a,
+      `HTTP 429 Too Many Requests\n\n${JSON.stringify(
+        {
+          error: {
+            code: 429,
+            details,
+            message:
+              "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4h9m37s.",
+            status: "RESOURCE_EXHAUSTED",
+          },
+        },
+        null,
+        2,
+      )}`,
+    ),
+  ]);
+const STATUS_QUOTA_ERROR = statusQuotaError([
+  {
+    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+    domain: "cloudcode-pa.googleapis.com",
+    metadata: {
+      model: "gemini-4-neon-medium",
+      quotaResetDelay: "4h9m37.328623207s",
+      quotaResetTimeStamp: "2026-11-23T23:51:59Z",
+      uiMessage: "true",
+    },
+    reason: "QUOTA_EXHAUSTED",
+  },
+  { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "14977.328623207s" },
+]);
+const STATUS_RETRY_ERROR = statusQuotaError([
+  { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "42s" },
+]);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
@@ -221,6 +274,21 @@ describe("watchAntigravityPromptOutcome", () => {
           [ERROR_MESSAGE, STATUS_NOT_FOUND_ERROR],
         ]))?.failure.retryable,
         false,
+      );
+      // Antigravity 1.5 writes the quota reset as JSON, not as a Go map.
+      assert.deepInclude(
+        (yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, STATUS_QUOTA_ERROR],
+        ]))?.failure,
+        { class: "usage_limit", resetAt: "2026-11-23T23:51:59.000Z" },
+      );
+      assert.deepInclude(
+        (yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, STATUS_RETRY_ERROR],
+        ]))?.failure,
+        { class: "usage_limit", resetAt: "1970-01-01T00:00:42.000Z" },
       );
       // A saved thinking block without a valid signature fails every later prompt.
       for (const error of [MISSING_SIGNATURE_ERROR, INVALID_SIGNATURE_ERROR]) {
