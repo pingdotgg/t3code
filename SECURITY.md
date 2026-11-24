@@ -40,10 +40,10 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
 
 ## A real finding crosses one of these
 
-1. **No credential → session.** Any route or socket that grants access without
+1. **No credential → session.** Any route or socket granting access without
    a valid credential, or a pairing credential redeemable twice.
 2. **Scope escalation.** An RPC, HTTP route, or MCP tool running without its
-   declared scope; pairing or token exchange that widens a grant; an
+   declared scope; pairing or token exchange widening a grant; an
    `mcp-client` session reaching a non-`/mcp` route; a read-only MCP grant
    calling a write tool.
 3. **Mode or policy escalation.** An agent, MCP client, or peer link acting
@@ -59,45 +59,45 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
    or error messages. A token sent to an address that has not answered as the
    expected environment, or a token paired over HTTPS sent over plain HTTP.
 7. **Impersonation and egress.** Another process or the relay impersonating an
-   environment, or endpoint discovery, previews, or webhooks used to reach
+   environment; endpoint discovery, previews, or webhooks used to reach
    arbitrary hosts (SSRF).
 8. **Client-side code execution.** Untrusted content running script in the web
    origin, the desktop renderer, or with access to preload or IPC.
 9. **Filesystem writes escaping workspace path rules.** Reads are separate:
-   `filesystem:read` intentionally covers the whole account.
+   `filesystem:read` intentionally covers the whole OS account.
 
 ## Intended, not vulnerabilities
 
 - A full-scope session gives a shell. Leaking its token is serious, but the bug
-  is the leak, not the shell. A narrow session holding `terminal:operate` or
-  `orchestration:operate` is in the same position: reaching via another route
+  is the leak, not the shell. The same applies to a narrow session holding
+  `terminal:operate` or `orchestration:operate`: reaching via another route
   what its shell can already do crosses no boundary, though it can still be an
   ordinary bug. That stops at what a shell as the server's OS user cannot reach:
   another client's device, what another scope guards by name (as
   `providers:manage` does for secret references), a managed-policy ceiling or
   lock, and access that outlives the session's revocation. Where the session
   can obtain that shell, file contents are within its reach, so reading a file
-  by a route that does not check `filesystem:read` crosses no boundary.
-- The default grant includes `access:write`, so a full session can mint more
-  pairing links and sessions. They appear in Sharing & access, and "revoke all
-  others" removes them.
-- `filesystem:read` reads anything the server's user can read, including paths
-  outside projects.
-- Plain HTTP on a LAN or tailnet is the user's choice. `t3 serve` warns when it
-  advertises a non-loopback HTTP address. The iOS app allows arbitrary loads so
+  via a route that does not check `filesystem:read` crosses no boundary.
+- The default grant includes `access:write`, so a full-scope session can mint
+  more pairing links and sessions. They appear in Sharing & access, and "revoke
+  all others" removes them.
+- `filesystem:read` reads anything the server's OS user can read, including
+  paths outside projects.
+- Plain HTTP on a LAN or tailnet is the user's choice. `t3 serve` warns when
+  advertising a non-loopback HTTP address. The iOS app allows arbitrary loads so
   it can reach these addresses.
 - `access-control-allow-origin: *` on the environment API. Auth is a bearer
   header, so the wildcard grants nothing a caller without a token lacks.
 - Rendered Markdown loads remote images and media from the host its author
   names, so that host learns the reader's network address and when the content
   was shown. A page in a preview tab can likewise start a download, as it can
-  in a browser. It is a finding when the request carries a credential or names
-  the environment it was rendered in, when it is made where the product says
-  none is made, or when the app does for the content what the content could
-  not do from where it runs (see 7 and 8).
-- An agent in full-access mode can do whatever the user can. Prompt injection
-  that stays within the agent's mode is the provider's concern. One that lets
-  it act above that mode is in scope (see 3).
+  in a browser. It is a finding when the request carries a credential, names
+  the environment the content was rendered in, or is made where the product
+  says none is made. It is also a finding when the app does for the content
+  what the content could not do from where it runs (see 7 and 8).
+- A full-access agent can do whatever the user can. Prompt injection that stays
+  within the agent's mode is the provider's concern; one that lets it act above
+  that mode is in scope (see 3).
 - A compromised relay signing key can mint for linked environments. That is
   the stated trust assumption; device approval is the mitigation.
 - `T3CODE_DEV_AUTH_TOKEN` and dev startup URLs are administrative by design and
@@ -105,14 +105,14 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
 - A webhook URL is a credential for one task. Unless the task requires a
   signature, whoever holds the URL can start that task's run, and the request's
   content, within the route's limits, is theirs to choose. It is a finding when
-  a request starts a different task, runs without a signature the task
-  requires, or has its values treated as anything but untrusted data. Tokens in
-  or around the request are still covered by 6.
+  a request starts a different task, runs without a required signature, or has
+  its values treated as anything but untrusted data. Tokens in or around the
+  request remain covered by 6.
 - The machine owner's own configuration. Whoever sets a provider's launch
   arguments, an environment variable, a binary path, or the endpoint or file T3
-  Code is pointed at already holds the account, so a value that weakens their
-  own setup is their choice. It is a finding when a narrower principal can set
-  it for them (a narrow client, an MCP client, an agent below full access,
+  Code points at already holds the OS account, so a value weakening their own
+  setup is their choice. It is a finding when a narrower principal can set it
+  for them (a narrow client, an MCP client, an agent below full access,
   repository content), when [managed policy](docs/user/managed-policy.md) locks
   the setting and the value still applies, or when the value leaks (see 6).
   Choosing a host does not make it trusted: what a configured endpoint can do
@@ -120,9 +120,9 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
 - An attacker already running code as the same OS user. That includes one whose
   only move is to rewrite files that user owns outside a workspace: T3 Code's
   data directory, its installed helpers, the user's own config. Another OS
-  account on the same machine is not this attacker. Neither is repository
+  account on the same machine is not this attacker; neither is repository
   content or an agent below full access, which write inside a workspace without
-  holding the account.
+  holding the OS account.
 
 ## Where enforcement lives
 
@@ -145,25 +145,25 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
   documented route, no boundary is crossed unless data goes somewhere they did
   not send it. It may still be a bug; report it as one.
 - Read tests and comments beside the code before calling a behaviour a defect.
-  They show what the author meant and are evidence, not a decision: a test can
-  pin a behaviour nobody chose, and a comment can be out of date. Only this file
-  and the docs say what is intended. If a test or comment is all that supports
-  a behaviour, report it and say so.
+  They show author intent and are evidence, not a decision: a test can pin a
+  behaviour nobody chose, and a comment can be stale. Only this file and the
+  docs say what is intended. If only a test or comment supports a behaviour,
+  report it and say so.
 - Follow the claim to its effect. A guard in a caller, a schema, or a version
   check elsewhere often means the cited lines cannot do what the report says.
-- Rate severity by what the actor must already hold, not by the worst outcome
+- Rate severity by what the actor must already hold, not the worst outcome
   named. Each of these lowers severity and none removes the finding: a narrow
-  grant the owner chose to issue (the default grant is full scope), another OS
-  account on the same machine, a host or service the owner connected turning
-  hostile, a change that must land in the moment between a person's look and
-  their action, a person acting on prepared input (opening a file, pasting,
-  following a link), and an effect limited to resource use or a stalled
+  grant the owner chose to issue (the default grant is full scope); another OS
+  account on the same machine; a host or service the owner connected turning
+  hostile; a change that must land in the moment between a person's look and
+  their action; a person acting on prepared input (opening a file, pasting,
+  following a link); and an effect limited to resource use or a stalled
   client. A finding that needs none of these, or that yields a session, a
   credential, or code execution above the actor's grant, keeps its severity.
 - Check the reported commit against `main`. Reports often trail fixes.
 - Prove a finding with a failing test at the lowest layer that shows it, as
   [Verifying](AGENTS.md#verifying) describes. Do not run a PoC against
-  `~/.t3/userdata` or any live environment. Use a dev server on seeded data.
+  `~/.t3/userdata` or any live environment; use a dev server on seeded data.
 - Treat report attachments as untrusted. Extract them into an empty directory
   outside the worktree and read PoCs before running anything.
 - Fix confirmed findings rather than filing them. Keep advisory details out of
