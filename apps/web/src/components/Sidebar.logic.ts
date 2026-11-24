@@ -166,11 +166,18 @@ export function useSnoozeWakeClock(
   return clockMs;
 }
 
-// Live status that says the cwd is not a repository means the checkout was removed.
+// Live status that says the cwd is not a repository means the checkout was removed. A worktree
+// thread of a project with tracked folders may sit in a plain task folder, which never is one.
 export function withoutRemovedCheckout<
   T extends { readonly branch: string | null; readonly worktreePath: string | null },
->(thread: T, gitStatus: { readonly isRepo?: boolean | undefined } | null): T {
-  return gitStatus?.isRepo === false ? { ...thread, branch: null, worktreePath: null } : thread;
+>(
+  thread: T,
+  gitStatus: { readonly isRepo?: boolean | undefined } | null,
+  project: { readonly trackedFolders?: ReadonlyArray<unknown> | undefined } | null,
+): T {
+  if (gitStatus?.isRepo !== false) return thread;
+  if (thread.worktreePath !== null && (project?.trackedFolders?.length ?? 0) > 0) return thread;
+  return { ...thread, branch: null, worktreePath: null };
 }
 
 export function useRetainedValue<T>(key: string | null, value: T | null): T | null {
@@ -1176,6 +1183,8 @@ export function pullRequestMatchesSearchQuery(
   return normalizedQuery.split(" ").every((token) => haystack.includes(token));
 }
 
+export const ADD_PROJECT_SCOPE_ITEM_VALUE = "add-project";
+
 export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
   items: readonly TItem[];
   query: string;
@@ -1183,7 +1192,12 @@ export function filterSidebarProjectScopeItems<TItem extends { readonly value: s
 }): readonly TItem[] {
   const query = input.query.trim();
   if (query.length === 0) return input.items;
-  return input.items.filter((item) => item.value !== "all" && input.matches(item, query));
+  return input.items.filter(
+    (item) =>
+      item.value !== "all" &&
+      item.value !== ADD_PROJECT_SCOPE_ITEM_VALUE &&
+      input.matches(item, query),
+  );
 }
 
 interface SidebarProjectScopeMenuState {

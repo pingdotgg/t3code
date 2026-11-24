@@ -1,17 +1,19 @@
-import type {
-  NodeId,
-  OrchestrationV2ConversationMessage,
-  OrchestrationV2PendingBackgroundTask,
-  OrchestrationV2ProviderThread,
-  OrchestrationV2ProviderTurn,
-  OrchestrationV2RestartCancelledBackgroundWork,
-  OrchestrationV2Run,
-  OrchestrationV2RunAttempt,
-  OrchestrationV2Subagent,
-  OrchestrationV2TurnItem,
+import {
+  isDeliveredProviderTurn,
+  type NodeId,
+  type OrchestrationV2ConversationMessage,
+  type OrchestrationV2PendingBackgroundTask,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2RestartCancelledBackgroundWork,
+  type OrchestrationV2Run,
+  type OrchestrationV2RunAttempt,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { subagentHoldsCompletion } from "@t3tools/provider-core/server/subagentProjection";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import * as DateTime from "effect/DateTime";
 import { latestRootProviderFailure, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
@@ -133,19 +135,96 @@ export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTa
 
 const MAX_NOTE_ENTRIES = 10;
 
+/** Why background work stopped: a T3 server restart, or the provider process exiting under a live server. */
+export type BackgroundWorkLossCause = "server_restart" | "provider_exit";
+
 /** Bounds entries and labels to protect the context budget. */
-export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): string {
+export function restartCancelledBackgroundWorkNote(
+  work: ReadonlyArray<Work>,
+  cause: BackgroundWorkLossCause = "server_restart",
+): string {
   const omitted = work.length - MAX_NOTE_ENTRIES;
   return [
-    "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
+    `Note: ${cause === "provider_exit" ? "the agent runtime process exited" : "the T3 server restarted"}, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:`,
     ...work.slice(0, MAX_NOTE_ENTRIES).map((entry) => `- ${entry.kind}: ${entry.label}`),
+    ...(omitted > 0 ? [`- and ${omitted} more`] : []),
+  ].join("\n");
+}
+
+/**
+ * Delegated tasks a Stop on this provider thread interrupted, until a turn requested after they
+ * ended completes. A run's turn start reads tasks after its request, but can record startedAt
+ * later. A fresh context starts a new provider thread, so it never inherits the note.
+ */
+export function pendingStoppedDelegatedTasks(input: {
+  readonly providerThreadId: OrchestrationV2Run["providerThreadId"];
+  readonly runs: ReadonlyArray<OrchestrationV2Run>;
+  readonly providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>;
+  readonly attempts: ReadonlyArray<Attempt>;
+  readonly subagents: ReadonlyArray<OrchestrationV2Subagent>;
+  readonly compactionMessageIds: ReadonlySet<string>;
+}): ReadonlyArray<OrchestrationV2Subagent> {
+  const stoppedRunIds = new Set(
+    input.runs
+      .filter(
+        (run) =>
+          run.providerThreadId === input.providerThreadId &&
+          run.delegatedCompletion?.disposition === "stopped",
+      )
+      .map((run) => run.id),
+  );
+  if (stoppedRunIds.size === 0) return [];
+  const completedAttemptIds = new Set(
+    input.providerTurns
+      .filter((turn) => turn.status === "completed")
+      .map((turn) => turn.runAttemptId),
+  );
+  const toldRunRequests = input.runs
+    .filter(
+      (run) =>
+        run.providerThreadId === input.providerThreadId &&
+        !input.compactionMessageIds.has(run.userMessageId) &&
+        input.attempts.some(
+          (attempt) => attempt.runId === run.id && completedAttemptIds.has(attempt.id),
+        ),
+    )
+    .map((run) => DateTime.toEpochMillis(run.requestedAt));
+  return input.subagents.filter(
+    (task) =>
+      task.origin === "app_owned" &&
+      task.runId !== null &&
+      stoppedRunIds.has(task.runId) &&
+      task.status === "interrupted" &&
+      task.cancelledRunId === undefined &&
+      task.completionDelivery?.state === "disposed" &&
+      task.completedAt !== null &&
+      !toldRunRequests.some(
+        (requestedAt) => requestedAt > DateTime.toEpochMillis(task.completedAt!),
+      ),
+  );
+}
+
+export function stoppedDelegatedTasksNote(tasks: ReadonlyArray<OrchestrationV2Subagent>): string {
+  const omitted = tasks.length - MAX_NOTE_ENTRIES;
+  return [
+    "Note: Stop on this thread also stopped these delegated tasks before they finished. They will not report back on their own, so check them with task_status and start again what you still need:",
+    ...tasks
+      .slice(0, MAX_NOTE_ENTRIES)
+      .map(
+        (task) =>
+          `- ${labelWithId(
+            compactLabel(task.title) === undefined ? task.prompt : task.title,
+            "delegated task",
+            ` (task ${task.id})`,
+          )}`,
+      ),
     ...(omitted > 0 ? [`- and ${omitted} more`] : []),
   ].join("\n");
 }
 
 type ProviderTurnState = Pick<
   OrchestrationV2ProviderTurn,
-  "runAttemptId" | "providerThreadId" | "status"
+  "runAttemptId" | "providerThreadId" | "status" | "promptDropped"
 >;
 
 export function isRestartNoteSource(
@@ -187,6 +266,24 @@ export function runOutcome(
     (run.restartCancelledBackgroundWork ?? []).some(isAwaitedWork)
     ? "interrupted"
     : run.status;
+}
+
+/** The run whose continuation carries a provider thread's lost background work. */
+export function latestStartedRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  providerThreadId: OrchestrationV2Run["providerThreadId"],
+): OrchestrationV2Run | undefined {
+  return runs.reduce<OrchestrationV2Run | undefined>(
+    (latest, run) =>
+      run.providerThreadId === providerThreadId &&
+      run.status !== "queued" &&
+      run.status !== "rolled_back" &&
+      !neverStarted(run) &&
+      (latest === undefined || runRanAfter(run, latest))
+        ? run
+        : latest,
+    undefined,
+  );
 }
 
 /** Unstarted runs have no lost work to continue, except prepared continuations carrying a source run. */
@@ -283,12 +380,14 @@ export function delegatedTaskResultRun(
 /** The provider never accepted this continuation's prompt, so starting it again repeats nothing. */
 export function continuationFailedBeforePrompt(
   run: Pick<OrchestrationV2Run, "status" | "activeAttemptId" | "restartContinuationOfRunId">,
-  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId">>,
+  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "promptDropped">>,
 ): boolean {
   return (
     run.status === "failed" &&
     run.restartContinuationOfRunId !== undefined &&
-    !providerTurns.some((turn) => turn.runAttemptId === run.activeAttemptId)
+    !providerTurns.some(
+      (turn) => turn.runAttemptId === run.activeAttemptId && isDeliveredProviderTurn(turn),
+    )
   );
 }
 
@@ -299,7 +398,9 @@ export function continuationStartRetryDelayMs(
   run: OrchestrationV2Run,
   projection: {
     readonly runs: ReadonlyArray<OrchestrationV2Run>;
-    readonly providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId">>;
+    readonly providerTurns: ReadonlyArray<
+      Pick<ProviderTurnState, "runAttemptId" | "promptDropped">
+    >;
     readonly turnItems: Parameters<typeof latestRootProviderFailure>[1];
   },
 ): number | undefined {

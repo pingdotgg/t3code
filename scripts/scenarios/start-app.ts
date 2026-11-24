@@ -39,9 +39,13 @@ const REAL_PROVIDERS = [
 ];
 
 /** Captures must not depend on, or show, the machine that made them. */
+/** Where a scenario serves a fake Linear API; nothing listens there unless one does. */
+export const SCENARIO_LINEAR_PORT = 13_997;
+
 export const SCENARIO_MACHINE_ENV = {
   T3CODE_ENVIRONMENT_LABEL: "Scenario",
   T3CODE_ENVIRONMENT_MACHINE_KIND: "laptop",
+  T3CODE_LINEAR_API_URL: `http://127.0.0.1:${SCENARIO_LINEAR_PORT}/graphql`,
 };
 
 const encodeSettings = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -144,6 +148,11 @@ const startApp = Effect.fn("startApp")(function* (input: {
     const origin = `http://${host}:${webPort}`;
     const serverPort = String(yield* net.reserveLoopbackPort());
     const token = yield* (yield* SecureRandom.SecureRandom).uuidV4();
+    const credential = `${token}${token}`.replaceAll("-", "");
+    // The fixture can retry this credential even if a session response was lost.
+    yield* fs.writeFileString(path.join(input.home, "browser-dev-token"), credential, {
+      mode: 0o600,
+    });
     const ports = ["--port", serverPort, "--dev-url", origin];
     const webEnv = { ...env, T3CODE_PORT_OFFSET: String(Number(webPort) - BASE_WEB_PORT) };
     const server = yield* start({
@@ -153,18 +162,9 @@ const startApp = Effect.fn("startApp")(function* (input: {
       env: {
         ...webEnv,
         T3CODE_DEV_ALLOWED_ORIGINS: origin,
-        // Makes the startup pairing link reusable, so every test can sign in with it.
-        T3CODE_DEV_AUTH_TOKEN: `${token}${token}`.replaceAll("-", ""),
+        T3CODE_DEV_AUTH_TOKEN: credential,
       },
-      onLine: (line) => {
-        const url = /pairingUrl:\s*(\S+)/.exec(line)?.[1];
-        if (url === undefined) return Console.log(line);
-        // The link is a credential: it goes to a file the tests read, never to the log.
-        const { pathname, search, hash } = new URL(url);
-        return fs
-          .writeFileString(path.join(input.home, "pairing-path"), `${pathname}${search}${hash}`)
-          .pipe(Effect.ignore);
-      },
+      onLine: (line) => (line.includes("pairingUrl:") ? Effect.void : Console.log(line)),
     });
     const web = yield* start({
       cwd: checkout,

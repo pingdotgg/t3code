@@ -30,6 +30,8 @@ jobs:
       # The checkout is the PR merged onto main; compare with that merge's main parent. A fresh
       # fetch of main can be newer and lower, which reports the PR as growing what main just cut.
       - name: Compare with main
+        # HEAD is the PR merge commit; its first parent is the main it was built on. A freshly
+        # fetched main can hold lower values the PR never saw, which would read as growth.
         run: |
           if ! git cat-file -e "HEAD^1:$BUDGET" 2>/dev/null; then
             echo "main has no agent context budget yet."
