@@ -350,6 +350,9 @@ struct MessageDispatch {
     scheduled_task_id: Option<String>,
     /// Start a new provider conversation without the thread's earlier context. Never steers.
     fresh_context: Option<bool>,
+    /// The run's provider instance's capabilities, which the engine adds before the command
+    /// reaches its handler (`ensureContextHandoff` for a provider switch).
+    target_capabilities: Option<Value>,
 }
 
 /// How a message reaches the thread, after the busy-thread rules.
@@ -422,8 +425,20 @@ fn delivery(
             });
         }
     }
-    let restart =
-        c.dispatch_mode.kind == "restart_active" || c.delivery_intent.as_deref() == Some("restart");
+    // A steer on another instance cannot join the running turn: it restarts there, with the
+    // conversation (`selectionMustApplyNow` in `dispatchMessage`).
+    let requested = match &c.model_selection {
+        Some(selection) => selection["instanceId"].clone(),
+        None => tx
+            .thread(&c.thread_id)?
+            .map_or(Value::Null, |t| t["modelSelection"]["instanceId"].clone()),
+    };
+    let switches = steer_target
+        .as_ref()
+        .is_some_and(|t| requested.is_string() && t["providerInstanceId"] != requested);
+    let restart = switches
+        || c.dispatch_mode.kind == "restart_active"
+        || c.delivery_intent.as_deref() == Some("restart");
     Ok(match steer_target {
         // Interrupt-and-restart: the message goes first in the queue and the turn stops.
         Some(target) if restart => (Delivery::Queue { first: true }, Some(target)),
@@ -587,12 +602,16 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
                 .command(Some(&c.command_id)),
         )?;
     }
-    crate::fork::ensure_native_fork(
+    let fork = crate::fork::decide_fork_execution(
         tx,
-        &c.thread_id,
-        thread["modelSelection"]["instanceId"]
+        &thread,
+        c.model_selection
+            .as_ref()
+            .unwrap_or(&thread["modelSelection"])["instanceId"]
             .as_str()
             .unwrap_or_default(),
+        c.target_capabilities.as_ref(),
+        &c.command_id,
     )?;
     if !matches!(
         c.dispatch_mode.kind.as_str(),
@@ -653,13 +672,51 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             .unwrap_or(&thread["modelSelection"]),
     );
     // A fresh run starts a new provider thread when it runs.
-    let provider_thread_id = if fresh {
+    let mut provider_thread_id = if fresh {
         Value::Null
     } else {
         thread["activeProviderThreadId"].clone()
     };
     let now = tx.now().to_owned();
     let cid = Some(c.command_id.as_str());
+    // A run on another instance than the conversation's carries its history there. A queued
+    // run decides when it starts (`start_next_queued`).
+    let from = if fresh || queued {
+        None
+    } else {
+        crate::provider_handoff::conversation_instance(tx, &thread, c.notification.is_some())?
+    };
+    let created_by = json!(c.created_by);
+    let place = crate::provider_handoff::Place {
+        thread_id: &c.thread_id,
+        run_id: &run_id,
+        root_node_id: &root,
+        ordinal,
+        model_selection: &model,
+        created_by: &created_by,
+        requires_full: !crate::merge_back::pending(tx, &c.thread_id)?.is_empty(),
+        queued: false,
+        now: &now,
+    };
+    let switch = match (&fork, from) {
+        (crate::fork::ForkExecution::Portable(pending), _) => Some(
+            crate::provider_handoff::prepare_fork(tx, &thread, &place, pending)?,
+        ),
+        (_, Some(from)) if from != model["instanceId"] => {
+            crate::provider_handoff::prepare(tx, &thread, &place)?
+        }
+        _ => None,
+    };
+    if let Some(switch) = &switch {
+        if let Some(capabilities) = &c.target_capabilities {
+            switch.ensure_supported(
+                capabilities,
+                model["instanceId"].as_str().unwrap_or_default(),
+                &c.command_id,
+            )?;
+        }
+        provider_thread_id = switch.provider_thread_id.clone();
+    }
     let draft = |event_type, payload| {
         Draft::new(&c.thread_id, event_type, payload)
             .run(Some(&run_id))
@@ -739,7 +796,11 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         "startedAt": null,
         "completedAt": null,
         "checkpointId": null,
-        "contextHandoffId": merge_back.as_ref().map(|m| m.handoff["id"].clone()),
+        "contextHandoffId": switch
+            .as_ref()
+            .map(|s| &s.handoff)
+            .or(merge_back.as_ref().map(|m| &m.handoff))
+            .map(|h| h["id"].clone()),
     });
     if held {
         run["queueHeld"] = json!(true);
@@ -774,6 +835,9 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         && task.is_string()
     {
         run["delegatedTaskId"] = task.clone();
+    }
+    if let Some(switch) = &switch {
+        switch.append_records(tx, &c.thread_id, &run_id, cid)?;
     }
     if let Some(merge_back) = &merge_back {
         crate::merge_back::append_records(
@@ -837,8 +901,21 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Some(sender) = &c.sender_thread_id {
         message["senderThreadId"] = json!(sender);
     }
-    if let Some(merge_back) = &merge_back {
-        tx.append(draft("turn-item.updated", merge_back.turn_item.clone()))?;
+    // One handoff item per run: the merge-back's, with the switch's sources when both.
+    let handoff_item = match (&merge_back, &switch) {
+        (Some(merge_back), Some(switch)) => {
+            let mut item = merge_back.turn_item.clone();
+            let (instances, selections) = switch.sources();
+            item["fromProviderInstanceIds"] = instances;
+            item["fromModelSelections"] = selections;
+            Some(item)
+        }
+        (Some(merge_back), None) => Some(merge_back.turn_item.clone()),
+        (None, Some(switch)) => Some(switch.turn_item.clone()),
+        (None, None) => None,
+    };
+    if let Some(item) = handoff_item {
+        tx.append(draft("turn-item.updated", item))?;
     }
     tx.append(draft("message.updated", message))?;
     crate::families::record_follow_up(
@@ -1509,7 +1586,37 @@ fn start_next_queued_as(
             .run(Some(&run_id))
             .node(Some(&root))
     };
-    if let Some(message) = tx.entity(thread_id, "messages", &message_id)? {
+    let message = tx.entity(thread_id, "messages", &message_id)?;
+    // A run queued for another instance than the last run carries the history there.
+    let switch = if run["freshContext"] == true {
+        None
+    } else {
+        crate::provider_handoff::prepare(
+            tx,
+            &thread,
+            &crate::provider_handoff::Place {
+                thread_id,
+                run_id: &run_id,
+                root_node_id: &root,
+                ordinal: run["ordinal"].as_u64().unwrap_or(0),
+                model_selection: &run["modelSelection"],
+                created_by: message.as_ref().map_or(&Value::Null, |m| &m["createdBy"]),
+                requires_full: false,
+                queued: true,
+                now: &now,
+            },
+        )?
+    };
+    let provider_thread_id = match &switch {
+        Some(switch) => switch.provider_thread_id.clone(),
+        None => queued_provider_thread(&run, &thread),
+    };
+    if let Some(switch) = &switch {
+        switch.append_records(tx, thread_id, &run_id, None)?;
+        tx.append(draft("turn-item.updated", switch.turn_item.clone()))?;
+        run["contextHandoffId"] = switch.handoff["id"].clone();
+    }
+    if let Some(message) = message {
         let item_id = format!("turn-item:{message_id}");
         let mut item = tx
             .entity(thread_id, "turnItems", &item_id)?
@@ -1542,7 +1649,7 @@ fn start_next_queued_as(
         }
         item["runId"] = json!(run_id);
         item["nodeId"] = json!(root);
-        item["providerThreadId"] = queued_provider_thread(&run, &thread);
+        item["providerThreadId"] = provider_thread_id.clone();
         item["inputIntent"] = json!("queued_turn");
         item["status"] = json!("completed");
         item["completedAt"] = json!(now);
@@ -1555,7 +1662,7 @@ fn start_next_queued_as(
     run["status"] = json!("starting");
     run["queuePosition"] = Value::Null;
     run["queueHeld"] = json!(false);
-    run["providerThreadId"] = queued_provider_thread(&run, &thread);
+    run["providerThreadId"] = provider_thread_id;
     tx.append(draft("run.updated", run))?;
     Ok(Some(Effect::StartTurn {
         thread_id: thread_id.to_owned(),
@@ -1715,6 +1822,7 @@ fn queued_run_edit(tx: &mut Tx<'_>, command: Value) -> Outcome {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PromoteToSteer {
+    command_id: String,
     thread_id: String,
     queued_run_id: String,
     target_run_id: String,
@@ -1766,6 +1874,25 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
         });
     }
     finish_run(tx, &c.thread_id, &c.queued_run_id, "cancelled", None)?;
+    // Queued on another instance: the message restarts there, as a direct steer does.
+    let selection = &queued["modelSelection"];
+    if selection["instanceId"].is_string()
+        && selection["instanceId"] != target["providerInstanceId"]
+    {
+        let mut command = json!({
+            "type": "message.dispatch", "commandId": c.command_id, "threadId": c.thread_id,
+            "messageId": message_id, "text": message["text"], "attachments": message["attachments"],
+            "modelSelection": selection, "createdBy": message["createdBy"],
+            "creationSource": message["creationSource"],
+            "dispatchMode": {"type": "steer_active", "targetRunId": c.target_run_id},
+        });
+        for field in ["context", "notification", "scheduledTaskId"] {
+            if message[field].is_object() || message[field].is_string() {
+                command[field] = message[field].clone();
+            }
+        }
+        return message_dispatch(tx, command);
+    }
     let dispatch = MessageDispatch {
         command_id: String::new(),
         thread_id: c.thread_id.clone(),
@@ -1791,6 +1918,7 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
         restart_continuation_of_run_id: None,
         sender_thread_id: None,
         title_seed: None,
+        target_capabilities: None,
         notification: message
             .get("notification")
             .filter(|v| v.is_object())
@@ -4096,8 +4224,8 @@ fn provider_session_detach(tx: &mut Tx<'_>, command: Value) -> Outcome {
     Ok(vec![Effect::CloseSession { thread_id }])
 }
 
-/// `provider.switch`: the next turn runs on another provider instance. Its history does not
-/// move to the new provider (no context handoff yet), so the new provider starts fresh.
+/// `provider.switch`: the next turn runs on another provider instance. That run carries the
+/// conversation's history to the new provider (`provider_handoff.rs`).
 fn provider_switch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let thread_id = command["threadId"].as_str().unwrap_or_default();
     if active_run(tx, thread_id)?.is_some() {

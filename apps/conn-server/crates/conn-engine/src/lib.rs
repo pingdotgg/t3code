@@ -57,6 +57,7 @@ mod link_requests;
 mod outbox;
 mod output;
 mod projects;
+mod provider_handoff;
 mod pull_requests;
 mod push;
 mod reads;

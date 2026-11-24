@@ -1,11 +1,12 @@
 //! Context handoffs, as the T3 server prepares and delivers them: the history a provider gets
-//! when a fork's work is merged back into its parent (`merge_back`).
+//! when a fork's work is merged back into its parent (`merge_back`), or when the thread moves
+//! to another provider (`provider_handoff`).
 //!
 //! - The budget and the selection follow `packages/provider-core/src/server/handoffBudget.ts`
 //!   (`historicalMessage`, `selectHistory`, `renderHistory`, `historyResponseItems`,
 //!   `handoffCoverage`, `handoffBudget`).
 //! - The record follows `ContextHandoffService.ts` (`prepareForkDelta`, its summary and
-//!   `visibleDeltaRunOrdinals`).
+//!   `visibleDeltaRunOrdinals`; `prepareProviderHandoff`).
 //! - Delivery follows `ContextHandoffDelivery.ts` (`deliverContextHandoffs`): injected into
 //!   the native thread when the provider can, else inline ahead of the user's text.
 //!
@@ -457,6 +458,73 @@ pub(crate) fn prepare_fork_delta(input: &ForkDelta<'_>) -> Value {
     })
 }
 
+/// What `prepareProviderHandoff` needs.
+pub(crate) struct ProviderHandoff<'a> {
+    pub(crate) id: String,
+    pub(crate) thread_id: &'a str,
+    /// The thread the items came from, when it is not `thread_id`.
+    pub(crate) source_thread_id: Option<&'a str>,
+    pub(crate) target_run_id: &'a str,
+    pub(crate) transfer_id: &'a Value,
+    pub(crate) from_provider_thread_ids: Vec<Value>,
+    pub(crate) to_provider_thread_id: Value,
+    pub(crate) covered: Value,
+    /// `full_thread_summary` or `delta_since_target_last_seen`.
+    pub(crate) strategy: &'a str,
+    pub(crate) items: &'a [Value],
+    /// The runs whose status each message carries (`runStatus`).
+    pub(crate) runs: &'a [Value],
+    pub(crate) token_cap: u64,
+    pub(crate) now: &'a str,
+}
+
+/// `prepareProviderHandoff`: the history a provider switch delivers to the new provider.
+pub(crate) fn prepare_provider_handoff(input: &ProviderHandoff<'_>) -> Value {
+    let coverage = coverage(
+        input.source_thread_id.unwrap_or(input.thread_id),
+        &input.covered,
+        input.items,
+    );
+    let messages: Vec<Value> = input
+        .items
+        .iter()
+        .filter_map(|item| {
+            let mut message = historical_message(item)?;
+            let status = item["runId"]
+                .as_str()
+                .and_then(|run| input.runs.iter().find(|r| r["id"] == run))
+                .map(|run| run["status"].clone());
+            if let Some(status) = status {
+                message["runStatus"] = status;
+            }
+            Some(message)
+        })
+        .collect();
+    let selected = select_history(&messages, &coverage, 0, &[], input.token_cap);
+    json!({
+        "id": input.id,
+        "transferId": input.transfer_id,
+        "threadId": input.thread_id,
+        "targetRunId": input.target_run_id,
+        "fromProviderThreadIds": input.from_provider_thread_ids,
+        "toProviderThreadId": input.to_provider_thread_id,
+        "coveredRunOrdinals": input.covered,
+        "strategy": input.strategy,
+        "status": "ready",
+        "summaryMessageId": null,
+        "summaryText": render_history(&selected.messages, &selected.context),
+        "history": {
+            "messages": selected.messages,
+            "coverage": coverage,
+            "omittedItems": selected.omitted_items,
+            "omittedItemIds": selected.omitted_item_ids,
+        },
+        "createdByProviderInstanceId": null,
+        "createdAt": input.now,
+        "updatedAt": input.now,
+    })
+}
+
 /// The history `deliverContextHandoffs` sends, and the records it keeps.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Delivery {
@@ -495,6 +563,7 @@ impl DeliveryError {
 pub(crate) fn plan_delivery(
     handoffs: &[Value],
     native_thread_id: Option<&str>,
+    app_thread_id: Option<&str>,
     budget: u64,
     already_delivered: &[String],
     injects: bool,
@@ -539,10 +608,16 @@ pub(crate) fn plan_delivery(
                 strategies.push(s);
             }
         }
-        let first_thread = pending
-            .first()
-            .map(|h| js_text(&h["threadId"]))
-            .unwrap_or_default();
+        // The provider thread's app thread, else the first handoff's thread.
+        let first_thread = app_thread_id.map_or_else(
+            || {
+                pending
+                    .first()
+                    .map(|h| js_text(&h["threadId"]))
+                    .unwrap_or_default()
+            },
+            str::to_owned,
+        );
         coverage = format!(
             "Context handoff ({}). {} handoff records; detailed coverage references omitted. Recover an omitted item only when the request needs it, with conn_thread_read({{threadId:\"{first_thread}\",view:\"activity\",itemId:\"<omitted item ID>\",maxCharsPerItem:4000}}); continue long text with textOffset=nextTextOffset until null. Follow fork/handoff source references in activity. Items included below need no read.",
             strategies.join(", "),
@@ -756,10 +831,31 @@ mod tests {
                     handoff["id"] = json!("handoff-id");
                     handoff
                 }
+                "providerHandoff" => {
+                    let transfer = input["transferId"].clone();
+                    let mut handoff = prepare_provider_handoff(&ProviderHandoff {
+                        id: "handoff-id".into(),
+                        thread_id: input["threadId"].as_str().unwrap_or_default(),
+                        source_thread_id: input["sourceThreadId"].as_str(),
+                        target_run_id: input["targetRunId"].as_str().unwrap_or_default(),
+                        transfer_id: &transfer,
+                        from_provider_thread_ids: list(&input["fromProviderThreadIds"]),
+                        to_provider_thread_id: input["toProviderThreadId"].clone(),
+                        covered: input["coveredRunOrdinals"].clone(),
+                        strategy: input["strategy"].as_str().unwrap_or_default(),
+                        items: &list(&input["items"]),
+                        runs: &list(&input["runs"]),
+                        token_cap: input["tokenCap"].as_u64().unwrap_or(DEFAULT_TOKEN_CAP),
+                        now: input["createdAt"].as_str().unwrap_or_default(),
+                    });
+                    handoff["id"] = json!("handoff-id");
+                    handoff
+                }
                 "deliver" => {
                     let plan = plan_delivery(
                         &list(&input["handoffs"]),
                         input["nativeThreadId"].as_str(),
+                        input["appThreadId"].as_str(),
                         input["budget"].as_u64().unwrap_or(0),
                         &strings(&input["alreadyDelivered"]),
                         input["inject"] == true,

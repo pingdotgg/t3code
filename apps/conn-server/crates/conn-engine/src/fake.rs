@@ -81,6 +81,12 @@ pub struct FakeProvider {
     /// The `nativeConversationHeadRef` of the provider thread each turn starts on. A rollback
     /// sets it to `rolled-back:<target>`, so a test sees which row a turn continues.
     pub turn_heads: Arc<Mutex<Vec<Value>>>,
+    /// The text each turn got, in order: the user's, after any inline history.
+    pub prompts: Arc<Mutex<Vec<String>>>,
+    /// History injected into a native thread (`inject_history`): `(native id, items)`.
+    pub injected: Arc<Mutex<Vec<(String, Value)>>>,
+    /// Sessions take injected history, as Codex's `thread/inject_items`.
+    injects: bool,
     /// Provider threads made per app thread (`ensure_thread`); the second and later get a
     /// numbered id, as a real provider gives each new conversation its own.
     ensured: Arc<Mutex<std::collections::HashMap<String, usize>>>,
@@ -143,6 +149,9 @@ impl FakeProvider {
             resumes: Arc::new(Mutex::new(vec![])),
             calls: Arc::new(Mutex::new(vec![])),
             turn_heads: Arc::default(),
+            prompts: Arc::default(),
+            injected: Arc::default(),
+            injects: false,
             ensured: Arc::default(),
             fail_rollbacks: Arc::new(AtomicUsize::new(0)),
             control_delay: std::time::Duration::ZERO,
@@ -175,6 +184,13 @@ impl FakeProvider {
     /// rows still say it can.
     pub fn without_rollback(mut self) -> Self {
         self.capabilities["threads"]["canRollbackThread"] = json!(false);
+        self
+    }
+
+    /// A provider whose `capabilities` say it takes no context handoff; its sessions' rows
+    /// still say it does.
+    pub fn without_context_handoff(mut self) -> Self {
+        self.capabilities["context"]["canConsumeHandoffSummaries"] = json!(false);
         self
     }
 
@@ -217,6 +233,13 @@ impl FakeProvider {
     /// A provider whose Stop and rollback take `delay` after their work.
     pub fn with_control_delay(mut self, delay: std::time::Duration) -> Self {
         self.control_delay = delay;
+        self
+    }
+
+    /// A provider whose sessions take context handoff history into the native thread, as
+    /// Codex does (`injectHistory`).
+    pub fn with_history_injection(mut self) -> Self {
+        self.injects = true;
         self
     }
 
@@ -284,6 +307,9 @@ struct FakeSession {
     resumes: Arc<Mutex<Vec<String>>>,
     calls: Arc<Mutex<Vec<String>>>,
     turn_heads: Arc<Mutex<Vec<Value>>>,
+    prompts: Arc<Mutex<Vec<String>>>,
+    injected: Arc<Mutex<Vec<(String, Value)>>>,
+    injects: bool,
     ensured: Arc<Mutex<std::collections::HashMap<String, usize>>>,
     fail_rollbacks: Arc<AtomicUsize>,
     control_delay: std::time::Duration,
@@ -407,6 +433,9 @@ impl Provider for FakeProvider {
                     resumes: self.resumes.clone(),
                     calls: self.calls.clone(),
                     turn_heads: self.turn_heads.clone(),
+                    prompts: self.prompts.clone(),
+                    injected: self.injected.clone(),
+                    injects: self.injects,
                     ensured: self.ensured.clone(),
                     fail_rollbacks: self.fail_rollbacks.clone(),
                     control_delay: self.control_delay,
@@ -579,6 +608,25 @@ impl Session for FakeSession {
         &self.id
     }
 
+    fn injects_history(&self) -> bool {
+        self.injects
+    }
+
+    fn inject_history(
+        &self,
+        input: conn_provider::InjectHistoryInput,
+    ) -> BoxFuture<'_, ProviderResult<bool>> {
+        Box::pin(async move {
+            let native =
+                conn_contract::to_json(&input.provider_thread)["nativeThreadRef"]["nativeId"]
+                    .as_str()
+                    .unwrap_or("-")
+                    .to_owned();
+            crate::lock(&self.injected).push((native, input.items));
+            Ok(true)
+        })
+    }
+
     fn ensure_thread(
         &self,
         input: EnsureThreadInput,
@@ -667,6 +715,7 @@ impl Session for FakeSession {
                 conn_contract::to_json(&input.provider_thread)["nativeConversationHeadRef"].clone(),
             );
             let text = input.message.text.clone();
+            crate::lock(&self.prompts).push(text.clone());
             // `slowstart`: a slow cold start that fails when the session was closed meanwhile.
             if text.starts_with("slowstart") {
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;

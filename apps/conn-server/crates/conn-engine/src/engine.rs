@@ -901,6 +901,7 @@ impl Inner {
         let (command, claimed) = self.claim_attachments(command).await?;
         let command = self.plan_selection(command).await?;
         let command = self.rollback_capabilities(command).await?;
+        let command = self.target_capabilities(command).await?;
         let (command, worktree) = match self.delegated_worktree(command).await {
             Ok(prepared) => prepared,
             Err(error) => {
@@ -1167,6 +1168,45 @@ impl Inner {
             None => json!({"instanceId": instance,
                 "error": format!("No provider instance `{instance}` is configured on this server.")}),
         };
+        Ok(command)
+    }
+
+    /// A message's run may switch providers; the handler checks that the run's instance takes
+    /// the history (`ensureContextHandoff`), as T3 asks `getCapabilities` of the target adapter.
+    async fn target_capabilities(&self, mut command: Value) -> Result<Value, DispatchError> {
+        if command["type"] != "message.dispatch" {
+            return Ok(command);
+        }
+        let instance = match command["modelSelection"]["instanceId"].as_str() {
+            Some(instance) => instance.to_owned(),
+            None => {
+                let tid = command["threadId"].as_str().unwrap_or_default().to_owned();
+                let instance = self
+                    .db(move |store| -> Result<Option<String>, String> {
+                        let tx = store.tx()?;
+                        let thread = tx.thread(&tid)?;
+                        tx.rollback();
+                        Ok(thread.and_then(|t| {
+                            t["modelSelection"]["instanceId"]
+                                .as_str()
+                                .map(str::to_owned)
+                        }))
+                    })
+                    .await
+                    .map_err(DispatchError::Internal)?;
+                // No thread: the handler refuses the command.
+                let Some(instance) = instance else {
+                    return Ok(command);
+                };
+                instance
+            }
+        };
+        // An instance this server does not serve fails at the turn start, as before.
+        if let Some(provider) = self.providers.resolve(&instance)
+            && let Ok(capabilities) = provider.capabilities().await
+        {
+            command["targetCapabilities"] = to_json(&capabilities);
+        }
         Ok(command)
     }
 

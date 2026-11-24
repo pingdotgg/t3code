@@ -647,8 +647,13 @@ impl Inner {
                     let provider_thread = match active {
                         _ if fresh => None,
                         Some(pt) => Some(pt),
-                        None => tx
-                            .entities_where(
+                        None => {
+                            // A thread older than the last `/clear` holds cleared history.
+                            let boundary = crate::fresh::boundary(
+                                &tx.entities(&tid, "runs")?,
+                                &tx.entities_where(&tid, "turnItems", "type", "user_message")?,
+                            );
+                            tx.entities_where(
                                 &tid,
                                 "providerThreads",
                                 "providerInstanceId",
@@ -658,13 +663,15 @@ impl Inner {
                             .filter(|pt| {
                                 pt["ownerNodeId"].is_null()
                                     && pt["appThreadId"].as_str().is_none_or(|a| a == tid)
+                                    && !crate::fresh::predates(pt, boundary)
                             })
                             .max_by_key(|pt| {
                                 (
                                     pt["lastRunOrdinal"].as_u64().unwrap_or(0),
                                     pt["updatedAt"].as_str().unwrap_or_default().to_owned(),
                                 )
-                            }),
+                            })
+                        }
                     };
                     let fork = match provider_thread {
                         Some(_) => None,
@@ -1193,9 +1200,15 @@ impl Inner {
             None,
         );
         let injects = live.session.injects_history();
-        let plan =
-            crate::handoff::plan_delivery(&ready, native.as_deref(), budget, &delivered, injects)
-                .map_err(|e| StartError::Failed(e.message().to_owned()))?;
+        let plan = crate::handoff::plan_delivery(
+            &ready,
+            native.as_deref(),
+            provider_thread_json["appThreadId"].as_str(),
+            budget,
+            &delivered,
+            injects,
+        )
+        .map_err(|e| StartError::Failed(e.message().to_owned()))?;
         let Some(plan) = plan else {
             return Ok(None);
         };

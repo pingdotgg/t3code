@@ -40,6 +40,9 @@ const { resolveMergeBackTargetThreadId, deriveThreadRelationshipGraph } = await 
 const { boundedSnapshotProjection } = await load(
   "packages/shared/src/orchestrationV2BoundedSnapshot.ts",
 );
+const { threadSupportsProviderHandoff } = await load(
+  "packages/client-runtime/src/state/threadWorkflows.ts",
+);
 
 const exportPath = process.argv[2];
 if (!exportPath) throw new Error("usage: client-check.mjs <export.json>");
@@ -465,6 +468,53 @@ check("merge-back: a pending transfer, then the fork's delta in the next run", (
   assert.equal(visible[marker].summary, handoff.summaryText);
   // The history goes to the provider, never into the user's message.
   assert.ok(!visible.some((item) => item.type === "user_message" && item.text.includes("Context handoff (")));
+});
+
+// Provider switch: a Claude turn, the thread moved to Codex, a Codex turn. The client opens
+// the model picker to other providers only when the live session says the server hands the
+// history over (`threadSupportsProviderHandoff`); the handoff, its transfer and its item.
+check("provider switch: the picker opens, and the next run carries the history", () => {
+  const items = exported.providerSwitchItems;
+  const firstEnd = items.findIndex(
+    (item) => item.event?.type === "run.updated" && item.event.payload.id === "run:thread-sw:1" && item.event.payload.status === "completed",
+  );
+  assert.ok(firstEnd !== -1, "the first run completes");
+  const before = followThread(items.slice(0, firstEnd + 1)).projection;
+  assert.equal(before.providerSessions.at(-1)?.capabilities.sessions.supportsProviderSwitchingViaHandoff, true);
+  assert.equal(threadSupportsProviderHandoff(before), true, "the picker offers other providers");
+  const { projection, status } = followThread(items);
+  assert.equal(status, "live");
+  assert.equal(projection.thread.providerInstanceId, "codex");
+  const run = projection.runs.find((r) => r.id === "run:thread-sw:2");
+  assert.equal(run.status, "completed");
+  assert.equal(run.providerInstanceId, "codex");
+  const transfers = projection.contextTransfers.filter((t) => t.type === "provider_handoff");
+  assert.equal(transfers.length, 1);
+  const [transfer] = transfers;
+  assert.equal(transfer.status, "consumed");
+  assert.equal(transfer.sourcePoint.runId, "run:thread-sw:1");
+  assert.equal(transfer.sourceProviderInstanceId, "claudeAgent");
+  assert.equal(transfer.targetProviderInstanceId, "codex");
+  assert.equal(transfer.resolution.strategy, "portable_context");
+  const handoff = projection.contextHandoffs.find((h) => h.id === transfer.resolution.contextHandoffId);
+  assert.ok(handoff, "the transfer names its handoff");
+  assert.equal(run.contextHandoffId, handoff.id);
+  assert.equal(handoff.strategy, "full_thread_summary");
+  assert.deepEqual(handoff.coveredRunOrdinals, { from: 1, to: 1 });
+  assert.equal(handoff.toProviderThreadId, run.providerThreadId);
+  assert.ok(handoff.summaryText.includes("remember blue-17"), handoff.summaryText);
+  // The fake Codex takes injected history, as `thread/inject_items`.
+  assert.equal(handoff.delivery?.status, "injected");
+  const visible = projection.visibleTurnItems.map(({ item }) => item);
+  const marker = visible.findIndex((item) => item.type === "handoff");
+  const message = visible.findIndex(
+    (item) => item.type === "user_message" && item.text === "what was the marker?",
+  );
+  assert.ok(marker !== -1 && message === marker + 1, "the handoff item shows just before the message");
+  assert.equal(visible[marker].title, "Provider handoff");
+  assert.deepEqual(visible[marker].fromProviderInstanceIds, ["claudeAgent"]);
+  assert.equal(visible[marker].toProviderInstanceId, "codex");
+  assert.equal(visible[marker].toModel, "gpt-5");
 });
 
 // Pull request links: T3's GitHub keys, a stack tombstone lifted by hand.

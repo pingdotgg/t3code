@@ -235,14 +235,39 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
 - **Selection plan.** A model change on the thread's instance asks that provider's
   `plan_selection_transition` with the live session's capabilities (`ProviderSwitchService`):
   `reject` refuses the command; `restart_session` releases the session between turns and is
-  refused during a run; `create_with_handoff` is refused (no handoff here). Without a session
-  row the change applies at the next turn. Claude and Codex answer `apply_on_next_turn`.
+  refused during a run; `create_with_handoff` is refused. No provider here or in T3 answers it
+  for a change on the same instance (T3 accepts it and continues the native thread), so the
+  refusal is never reached. Without a session row the change applies at the next turn.
+  Claude and Codex answer `apply_on_next_turn`.
 - **Session row.** `open_session` returns the provider session; the engine stores it before
   any event. A session whose background tasks end with its process (Claude) clears its
   provider threads' rosters when it is released.
 - **Provider switch.** A `thread.model-selection.set` to another instance is a provider switch
   (refused while a run is active). A run on another instance than the live session closes it
   and opens one on its own instance; a provider thread of another instance is never resumed.
+- **Provider handoff** (`src/provider_handoff.rs`, T3's `dispatchMessage` and
+  `startNextQueuedRun`). A message whose run goes to another instance than the conversation's
+  carries the history: a `provider_handoff` transfer (`consumed`), a context handoff
+  (`handoff::prepare_provider_handoff`), the run's `contextHandoffId` and a "Provider handoff"
+  item before the message. The covered runs are those that reached a provider
+  (`isHandoffSourceRun`) after the context boundary and after the last run the target's own
+  provider thread took part in. Without such a thread, or with a native ref missing, or with
+  a merge-back pending, the strategy is `full_thread_summary` (with inherited fork history and
+  v1 imported rows) and the transfer resolves `portable_context`; else
+  `delta_since_target_last_seen` and `delta_context`. A queued run decides when it starts,
+  against the newest such run's instance. The target's capabilities must take the handoff
+  (`ensureContextHandoff`, checked for a message from the provider's `capabilities`, before the
+  command reaches its handler), else T3's refusal text. The turn start delivers it as a
+  merge-back: injected (Codex) or inline (Claude, Grok, Antigravity). Every provider now says
+  `supportsProviderSwitchingViaHandoff: true`, as in T3, so clients open the model picker to
+  other providers. Tests: `a_provider_switch_hands_the_history_to_the_new_provider`,
+  `a_queued_run_on_another_provider_carries_the_history`,
+  `a_switch_to_a_provider_without_handoff_is_refused`,
+  `a_steer_to_another_provider_restarts_there`.
+  Not built (T3 has them): the `prepareLegacyImport` recovery handoff of a v1 import with no
+  completed run, the turn start's resume-fallback and missed-run retry handoffs, cross-instance resume for instances that share native
+  history (`restart_and_resume`; here every instance change hands off), the capability check
+  for a queued run (all four providers pass it), and the provider thread's `handoffIds`.
 - **Live command output.** `command_output.delta` (Codex) feeds a bounded hub in `output.rs`:
   at most 8 running commands, a 64 KiB tail each, dropped when the command settles.
 

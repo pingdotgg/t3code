@@ -9798,6 +9798,330 @@ async fn a_dispatch_on_another_instance_runs_on_that_provider() {
     assert_eq!(count(&codex.closed), 1);
 }
 
+/// Claude, and Codex that takes injected history (`thread/inject_items`), as a server with both.
+fn open_two_injecting(db: &TempDb) -> (SqliteEngine, Arc<FakeProvider>, Arc<FakeProvider>) {
+    let claude = Arc::new(FakeProvider::new("claudeAgent"));
+    let codex = Arc::new(FakeProvider::new("codex").with_history_injection());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![claude.clone(), codex.clone()];
+    (SqliteEngine::open(config).unwrap(), claude, codex)
+}
+
+fn handoff_of<'a>(p: &'a Value, run: &str) -> &'a Value {
+    p["contextHandoffs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["targetRunId"] == run)
+        .unwrap_or_else(|| panic!("no handoff for {run}: {p}"))
+}
+
+/// A provider switch carries the conversation to the new provider, as T3's `dispatchMessage`
+/// does: the first run on Codex gets Claude's history in full (`full_thread_summary`),
+/// injected into its native thread; back on Claude, the run gets what happened since Claude's
+/// thread last took part (`delta_since_target_last_seen`), inline ahead of the user's text.
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_switch_hands_the_history_to_the_new_provider() {
+    let db = TempDb::new("switch-handoff");
+    let (engine, claude, codex) = open_two_injecting(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "remember the marker blue-17")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+
+    dispatch(&engine, model_selection_set("c3", "codex")).await;
+    dispatch(&engine, message("t1", "c4", "what is the marker?")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][1]["status"], "completed");
+    let handoff = handoff_of(&p, "run:t1:2");
+    assert_eq!(handoff["strategy"], "full_thread_summary");
+    assert_eq!(handoff["coveredRunOrdinals"], json!({"from": 1, "to": 1}));
+    assert_eq!(
+        handoff["fromProviderThreadIds"],
+        json!(["provider-thread:t1"])
+    );
+    assert_eq!(handoff["toProviderThreadId"], "provider-thread:codex:t1");
+    assert_eq!(handoff["delivery"]["status"], "injected");
+    assert_eq!(p["runs"][1]["contextHandoffId"], handoff["id"]);
+    let transfer = p["contextTransfers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["type"] == "provider_handoff")
+        .unwrap();
+    assert_eq!(transfer["status"], "consumed");
+    assert_eq!(transfer["sourceProviderInstanceId"], "claudeAgent");
+    assert_eq!(transfer["targetProviderInstanceId"], "codex");
+    assert_eq!(transfer["basePoint"], Value::Null);
+    assert_eq!(
+        transfer["resolution"],
+        json!({"strategy": "portable_context", "contextHandoffId": handoff["id"]})
+    );
+    let item = p["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["type"] == "handoff")
+        .unwrap();
+    assert_eq!(item["title"], "Provider handoff");
+    assert_eq!(item["fromProviderInstanceIds"], json!(["claudeAgent"]));
+    assert_eq!(item["toProviderInstanceId"], "codex");
+    // Codex took the history natively; its prompt is the user's text alone.
+    let injected = crate::lock(&codex.injected).clone();
+    assert_eq!(injected.len(), 1);
+    let history = injected[0].1.to_string();
+    assert!(history.contains("remember the marker blue-17"), "{history}");
+    assert!(
+        history.contains("echo: remember the marker blue-17"),
+        "{history}"
+    );
+    assert_eq!(*crate::lock(&codex.prompts), ["what is the marker?"]);
+
+    // Back on Claude: its own thread resumes and gets only the Codex run.
+    dispatch(&engine, model_selection_set("c5", "claudeAgent")).await;
+    dispatch(&engine, message("t1", "c6", "and now?")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:3").await;
+    assert_eq!(p["runs"][2]["status"], "completed");
+    assert_eq!(p["runs"][2]["providerThreadId"], "provider-thread:t1");
+    let handoff = handoff_of(&p, "run:t1:3");
+    assert_eq!(handoff["strategy"], "delta_since_target_last_seen");
+    assert_eq!(handoff["coveredRunOrdinals"], json!({"from": 2, "to": 2}));
+    assert_eq!(handoff["delivery"]["status"], "inline");
+    let prompts = crate::lock(&claude.prompts).clone();
+    assert_eq!(prompts.len(), 2);
+    let prompt = &prompts[1];
+    assert!(prompt.contains("what is the marker?"), "{prompt}");
+    assert!(
+        !prompt.contains("blue-17"),
+        "Claude's thread holds run 1 already: {prompt}"
+    );
+    assert!(prompt.ends_with("\n\nUser message:\nand now?"), "{prompt}");
+    // The Codex exchange reaches Claude once: its user line and its reply, one of each.
+    for line in ["what is the marker?", "echo: what is the marker?"] {
+        assert_eq!(
+            prompt.lines().filter(|l| l.trim() == line).count(),
+            1,
+            "{line}: {prompt}"
+        );
+    }
+    let transfer = p["contextTransfers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rfind(|t| t["type"] == "provider_handoff")
+        .unwrap();
+    assert_eq!(transfer["basePoint"]["runId"], "run:t1:1");
+    assert_eq!(transfer["resolution"]["strategy"], "delta_context");
+
+    // A run on the same provider carries nothing.
+    dispatch(&engine, message("t1", "c7", "plain")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:4").await;
+    assert_eq!(p["runs"][3]["contextHandoffId"], Value::Null);
+    assert_eq!(crate::lock(&claude.prompts).last().unwrap(), "plain");
+
+    // A fresh-context request on another provider carries nothing over.
+    dispatch(&engine, model_selection_set("c8", "codex")).await;
+    let mut fresh = message("t1", "c9", "start over");
+    fresh["freshContext"] = json!(true);
+    dispatch(&engine, fresh).await;
+    let p = run_to_end(&engine, "t1", "run:t1:5").await;
+    assert_eq!(p["runs"][4]["contextHandoffId"], Value::Null);
+    assert_eq!(crate::lock(&codex.injected).len(), 1);
+    assert_eq!(crate::lock(&codex.prompts).last().unwrap(), "start over");
+
+    // Back on Claude after the clear: a new native thread, never the cleared one
+    // (`rootProviderThreadsForProvider` skips threads older than the boundary).
+    dispatch(&engine, model_selection_set("c10", "claudeAgent")).await;
+    dispatch(&engine, message("t1", "c11", "after the clear")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:6").await;
+    assert_eq!(p["runs"][5]["status"], "completed");
+    assert_eq!(p["runs"][5]["providerThreadId"], "provider-thread:t1:2");
+    assert_eq!(
+        handoff_of(&p, "run:t1:6")["strategy"],
+        "full_thread_summary"
+    );
+    let prompt = crate::lock(&claude.prompts).last().unwrap().clone();
+    assert!(prompt.contains("start over"), "{prompt}");
+    assert!(!prompt.contains("blue-17"), "{prompt}");
+}
+
+/// A steer that picks another instance than the running turn's does not join that turn: the
+/// turn stops and the message restarts on the new provider with the conversation
+/// (`dispatchMessage`, `selectionMustApplyNow` for a provider instance change).
+#[tokio::test(flavor = "current_thread")]
+async fn a_steer_to_another_provider_restarts_there() {
+    let db = TempDb::new("steer-switch");
+    let (engine, claude, codex) = open_two_injecting(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let mut steer = message_with(
+        "t1",
+        "c3",
+        "now on codex",
+        json!({"type": "steer_active", "targetRunId": "run:t1:1"}),
+        None,
+    );
+    steer["modelSelection"] = json!({"instanceId": "codex", "model": "m"});
+    dispatch(&engine, steer).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][0]["status"], "interrupted");
+    assert_eq!(p["runs"][1]["providerInstanceId"], "codex");
+    assert_eq!(p["runs"][1]["status"], "completed");
+    assert!(
+        !crate::lock(&claude.prompts)
+            .iter()
+            .any(|prompt| prompt.contains("now on codex")),
+        "the steer never reaches the Claude session"
+    );
+    assert_eq!(*crate::lock(&codex.prompts), ["now on codex"]);
+    let injected = crate::lock(&codex.injected).clone();
+    assert_eq!(injected.len(), 1);
+    assert!(injected[0].1.to_string().contains("hang"));
+}
+
+/// Steer on a queued message keeps that message's provider: a queued Codex message promoted
+/// while Claude runs restarts on Codex, as a direct steer does.
+#[tokio::test(flavor = "current_thread")]
+async fn a_promoted_steer_on_another_provider_restarts_there() {
+    let db = TempDb::new("promote-switch");
+    let (engine, claude, codex) = open_two_injecting(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let mut queued = message_with(
+        "t1",
+        "c3",
+        "queued for codex",
+        json!({"type": "queue_after_active"}),
+        None,
+    );
+    queued["modelSelection"] = json!({"instanceId": "codex", "model": "m"});
+    dispatch(&engine, queued).await;
+    dispatch(
+        &engine,
+        json!({"type": "queued-message.promote-to-steer", "commandId": "c4", "threadId": "t1",
+            "queuedRunId": "run:t1:2", "targetRunId": "run:t1:1"}),
+    )
+    .await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    let codex_run = p["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| {
+            r["userMessageId"] == "message:c3"
+                && r["providerInstanceId"] == "codex"
+                && r["status"] != "cancelled"
+        })
+        .unwrap_or_else(|| panic!("no Codex run for the promoted message: {}", p["runs"]))
+        .clone();
+    let p = run_to_end(&engine, "t1", codex_run["id"].as_str().unwrap()).await;
+    assert_eq!(p["runs"][0]["status"], "interrupted");
+    assert_eq!(*crate::lock(&codex.prompts), ["queued for codex"]);
+    assert!(
+        !crate::lock(&claude.prompts)
+            .iter()
+            .any(|prompt| prompt.contains("queued for codex"))
+    );
+    assert!(
+        crate::lock(&codex.injected)[0]
+            .1
+            .to_string()
+            .contains("hang")
+    );
+}
+
+/// A switch to a provider that cannot take the history is refused with T3's text
+/// (`ensureContextHandoff`), and the thread keeps no run of it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_switch_to_a_provider_without_handoff_is_refused() {
+    let db = TempDb::new("switch-unsupported");
+    let claude = Arc::new(FakeProvider::new("claudeAgent"));
+    let codex = Arc::new(FakeProvider::new("codex").without_context_handoff());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![claude, codex];
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hi")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(&engine, model_selection_set("c3", "codex")).await;
+    let refused = engine
+        .dispatch(from_json(message("t1", "c4", "hi")).unwrap())
+        .await;
+    assert!(
+        matches!(&refused, Err(EngineError::Rejected(e)) if to_json(e).to_string().contains(
+            "codex cannot satisfy context_handoff for command c4: providerInstanceId cannot consume handoff summaries"
+        )),
+        "{refused:?}"
+    );
+    assert_eq!(
+        projection(&engine, "t1").await["runs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// A queued run on another instance switches when it starts (`startNextQueuedRun`): the
+/// stopped run before it reached Claude, so Codex gets it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_queued_run_on_another_provider_carries_the_history() {
+    let db = TempDb::new("switch-queued");
+    let (engine, _claude, codex) = open_two_injecting(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let mut queued = message("t1", "c3", "on codex");
+    queued["modelSelection"] = json!({"instanceId": "codex", "model": "gpt"});
+    queued["dispatchMode"] = json!({"type": "queue_after_active"});
+    dispatch(&engine, queued).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c4", "threadId": "t1"}),
+    )
+    .await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    // Stop holds the queue; the user starts the queued run.
+    dispatch(
+        &engine,
+        json!({"type": "queued-run.start", "commandId": "c5", "threadId": "t1", "runId": "run:t1:2"}),
+    )
+    .await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][1]["status"], "completed");
+    let handoff = handoff_of(&p, "run:t1:2");
+    assert_eq!(handoff["strategy"], "full_thread_summary");
+    assert_eq!(handoff["delivery"]["status"], "injected");
+    assert_eq!(p["runs"][1]["contextHandoffId"], handoff["id"]);
+    let history = crate::lock(&codex.injected)[0].1.to_string();
+    assert!(history.contains("run-status=interrupted"), "{history}");
+    assert_eq!(*crate::lock(&codex.prompts), ["on codex"]);
+}
+
 /// An instance the server does not have fails the run; it never goes to another provider.
 #[tokio::test(flavor = "current_thread")]
 async fn an_unknown_instance_fails_the_run_even_with_one_provider() {
