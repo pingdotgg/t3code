@@ -44,7 +44,10 @@ import {
   subscriptionRetryDelay,
 } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
-import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
+import {
+  applyOrchestrationV2ProjectionEvent,
+  restoreCachedProjectionVisibility,
+} from "./orchestrationV2Projection.ts";
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
@@ -221,6 +224,7 @@ function matchesThreadSnapshot(
 function cachedThreadState(value: EnvironmentThreadState): EnvironmentThreadState {
   return {
     ...value,
+    data: Option.map(value.data, restoreCachedProjectionVisibility),
     status:
       value.status === "deleted" || (value.status === "live" && Option.isSome(value.data))
         ? value.status
@@ -290,7 +294,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     loaded,
     (snapshot) => !hasMissingPendingQuestionCard(snapshot.projection),
   );
-  const cachedThread = Option.map(cached, (snapshot) => snapshot.projection);
+  const cachedThread = Option.map(cached, (snapshot) =>
+    restoreCachedProjectionVisibility(snapshot.projection),
+  );
   // Seed the resume cursor from the cached snapshot so a warm cache can catch up
   // via `afterSequence` instead of re-downloading the full thread body.
   const initialSequence =
