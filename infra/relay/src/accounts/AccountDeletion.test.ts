@@ -54,8 +54,8 @@ const clerkRequest = Effect.fn(function* (
 });
 
 describe("Clerk webhook", () => {
-  it.effect("deletes only for a signed user.deleted event", () => {
-    const deleted: Array<string> = [];
+  it.effect("records a deletion only for a signed user.deleted event", () => {
+    const requested: Array<string> = [];
     const respond = (request: ReturnType<typeof clerkRequest>) =>
       request.pipe(
         Effect.flatMap(AccountDeletion.handleClerkWebhook),
@@ -72,27 +72,69 @@ describe("Clerk webhook", () => {
       expect(yield* respond(clerkRequest({ type: "user.created", data: { id: "user_2" } }))).toBe(
         204,
       );
-      expect(deleted).toEqual([]);
-      expect(yield* respond(clerkRequest(userDeleted))).toBe(204);
-      expect(deleted).toEqual(["user_1"]);
+      expect(requested).toEqual([]);
+      expect(yield* respond(clerkRequest(userDeleted))).toBe(200);
+      expect(requested).toEqual(["user_1"]);
     }).pipe(
       Effect.provideService(RelayConfiguration.RelayConfiguration, config),
-      Effect.provideService(AccountDeletion.AccountDeletion, {
-        deleteAccount: ({ userId }) => Effect.sync(() => void deleted.push(userId)),
-      }),
-      Effect.provide(Mac.layerWebCrypto.pipe(Layer.provide(SecureRandom.layerWebCrypto))),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(AccountDeletion.AccountDeletion, {
+            request: ({ userId }) => Effect.sync(() => void requested.push(userId)),
+          }),
+          Mac.layerWebCrypto.pipe(Layer.provide(SecureRandom.layerWebCrypto)),
+        ),
+      ),
     );
   });
 });
+
+const layerAccountDeletionTest = (fakeDb: RelayDb.RelayDb["Service"], calls: Array<string>) =>
+  AccountDeletion.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(RelayDb.RelayDb, fakeDb),
+        Layer.succeed(RelayDb.RelayTransactions, { withTransaction: (effect) => effect }),
+        Layer.succeed(RelayConfiguration.RelayConfiguration, config),
+        Layer.mock(T3ChatAccounts.T3ChatAccounts, {
+          available: true,
+          getLink: () => Effect.succeed({} as never),
+          unlink: ({ userId }) =>
+            userId === "user_broken"
+              ? Effect.fail(
+                  new T3ChatAccounts.T3ChatRequestFailed({
+                    operation: "unlink",
+                    cause: new Error("unavailable"),
+                  }),
+                )
+              : Effect.sync(() => void calls.push(`unlink-t3chat ${userId}`)),
+        }),
+        Layer.mock(EnvironmentLinks.EnvironmentLinks, {
+          getForUser: () => Effect.succeed(null),
+        }),
+        Layer.mock(EnvironmentCredentials.EnvironmentCredentials, {}),
+        Layer.mock(HookInbox.HookInbox, {}),
+        Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {
+          prepareDeprovision: () => Effect.succeed(null),
+          deprovision: ({ environmentId }) =>
+            Effect.sync(() => {
+              calls.push(`deprovision ${environmentId}`);
+              return true;
+            }),
+        }),
+      ),
+    ),
+  );
+
+const dialect = new PgDialect();
+const params = (condition: SQL | undefined) =>
+  condition === undefined ? [] : dialect.sqlToQuery(condition).params;
 
 describe("AccountDeletion", () => {
   it.effect(
     "tears down tunnels before deleting rows and keeps environments another account links",
     () => {
       const calls: Array<string> = [];
-      const dialect = new PgDialect();
-      const params = (condition: SQL | undefined) =>
-        condition === undefined ? [] : dialect.sqlToQuery(condition).params;
       const selects: Record<string, ReadonlyArray<{ environmentId: string }>> = {
         relay_environment_links: [{ environmentId: "env-own" }, { environmentId: "env-shared" }],
         relay_managed_endpoint_allocations: [{ environmentId: "env-own" }],
@@ -140,38 +182,49 @@ describe("AccountDeletion", () => {
           "delete relay_managed_tunnel_limits user_1",
           "unlink-t3chat user_1",
         ]);
-      }).pipe(
-        Effect.provide(
-          AccountDeletion.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(RelayDb.RelayDb, fakeDb),
-                Layer.succeed(RelayDb.RelayTransactions, { withTransaction: (effect) => effect }),
-                Layer.succeed(RelayConfiguration.RelayConfiguration, config),
-                Layer.mock(T3ChatAccounts.T3ChatAccounts, {
-                  available: true,
-                  getLink: () => Effect.succeed({} as never),
-                  unlink: ({ userId }) =>
-                    Effect.sync(() => void calls.push(`unlink-t3chat ${userId}`)),
-                }),
-                Layer.mock(EnvironmentLinks.EnvironmentLinks, {
-                  getForUser: () => Effect.succeed(null),
-                }),
-                Layer.mock(EnvironmentCredentials.EnvironmentCredentials, {}),
-                Layer.mock(HookInbox.HookInbox, {}),
-                Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {
-                  prepareDeprovision: () => Effect.succeed(null),
-                  deprovision: ({ environmentId }) =>
-                    Effect.sync(() => {
-                      calls.push(`deprovision ${environmentId}`);
-                      return true;
-                    }),
-                }),
-              ),
-            ),
-          ),
-        ),
-      );
+      }).pipe(Effect.provide(layerAccountDeletionTest(fakeDb, calls)));
     },
   );
+
+  it.effect("keeps retrying a deletion until a pass succeeds after relay tokens expire", () => {
+    const calls: Array<string> = [];
+    const pending = [
+      { userId: "user_settled", requestedAt: "2026-11-24T11:00:00.000Z", attempts: 0 },
+      { userId: "user_fresh", requestedAt: "2026-11-24T11:59:00.000Z", attempts: 0 },
+      { userId: "user_broken", requestedAt: "2026-11-24T11:00:00.000Z", attempts: 2 },
+    ];
+    const fakeDb = {
+      select: () => ({
+        from: () => ({
+          where: () => Effect.succeed([]),
+          orderBy: () => ({ limit: () => Effect.succeed(pending) }),
+        }),
+      }),
+      update: (table: Table) => ({
+        set: () => ({
+          where: (condition: SQL | undefined) =>
+            Effect.sync(() => {
+              calls.push(`retry ${getTableName(table)} ${params(condition).join(",")}`);
+            }),
+        }),
+      }),
+      delete: (table: Table) => ({
+        where: (condition: SQL | undefined) =>
+          Effect.sync(() => {
+            calls.push(`delete ${getTableName(table)} ${params(condition).join(",")}`);
+          }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-24T12:00:00.000Z"));
+      const accounts = yield* AccountDeletion.AccountDeletion;
+      expect(yield* accounts.processPending).toEqual({ completed: 1, failed: 1 });
+      expect(calls).toContain("delete relay_mobile_devices user_fresh");
+      expect(calls.filter((call) => call.includes("relay_account_deletions"))).toEqual([
+        "delete relay_account_deletions user_settled",
+        "retry relay_account_deletions user_broken",
+      ]);
+    }).pipe(Effect.provide(layerAccountDeletionTest(fakeDb, calls)));
+  });
 });

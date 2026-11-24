@@ -307,6 +307,7 @@ export const layer = Api.make(
           EnvironmentPublishSignatures.layer,
           ManagedEndpointReaper.layer,
           HeldHooks.layer,
+          AccountDeletion.layer,
         ),
       ),
       Layer.provideMerge(
@@ -446,7 +447,7 @@ export const layer = Api.make(
         Layer.provide(layerHookRateLimiter),
       ),
       MobileTelemetry.layerApi.pipe(Layer.provide(layerMobileTelemetry)),
-      AccountDeletion.layerApi.pipe(Layer.provide(AccountDeletion.layer)),
+      AccountDeletion.layerApi,
     ).pipe(
       Layer.provideMerge(RelayHttpApi.layerClientAuth),
       Layer.provideMerge(RelayHttpApi.layerDpopClientAuth),
@@ -511,6 +512,19 @@ export const layer = Api.make(
                 : Effect.logWarning("Failed to prune expired relay state", { cause }),
             ),
           ),
+          AccountDeletion.AccountDeletion.pipe(
+            Effect.flatMap((accounts) => accounts.processPending.pipe(Effect.timeout("2 minutes"))),
+            Effect.tap((result) =>
+              result.failed > 0
+                ? Effect.logError("Account deletions failed; retrying next sweep", result)
+                : Effect.void,
+            ),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause)
+                ? Effect.interrupt
+                : Effect.logError("Failed to process account deletions", { cause }),
+            ),
+          ),
           ManagedEndpointReaper.ManagedEndpointReaper.pipe(
             Effect.flatMap((reaper) => reaper.sweep.pipe(Effect.timeout("2 minutes"))),
             Effect.tap((result) =>
@@ -533,7 +547,7 @@ export const layer = Api.make(
             ),
           ),
         ],
-        { concurrency: 3, discard: true },
+        { concurrency: 4, discard: true },
       ).pipe(
         Effect.withSpan("relay.cron.prune_expired_state"),
         Observability.withSchemaErrorSpanAttributes,

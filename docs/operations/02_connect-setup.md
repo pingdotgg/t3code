@@ -50,7 +50,7 @@ Use Clerk's allowlist or Restricted mode for new sign-ups (an enabled empty allo
 
 ### Account deletion webhook
 
-Under Clerk **Webhooks**, add an endpoint at `https://<relay domain>/v1/webhooks/clerk` subscribed to `user.deleted`, and set its signing secret as `CLERK_WEBHOOK_SIGNING_SECRET` on the relay. Deleting a user in Clerk then tears down their managed tunnels and deletes their relay rows; failures return 500 so Clerk retries. Without the secret the route answers 404.
+Under Clerk **Webhooks**, add an endpoint at `https://<relay domain>/v1/webhooks/clerk` subscribed to `user.deleted`, and set its signing secret as `CLERK_WEBHOOK_SIGNING_SECRET` on the relay. Deleting a user in Clerk then records the deletion, and the relay's five-minute cron tears down their managed tunnels and deletes their relay rows, retrying until a pass succeeds after the user's relay tokens have expired. Pending deletions are rows in `relay_account_deletions`; `attempts` climbing means a deletion keeps failing. Without the secret the route answers 404.
 
 ## Android FCM push setup
 

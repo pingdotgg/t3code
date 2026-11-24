@@ -200,3 +200,11 @@ export const relayDpopProofs = pgTable(
     primaryKey({ columns: [table.thumbprint, table.jti] }),
   ],
 );
+
+// Pending Clerk account deletions. A row stays until a pass succeeds after every relay token
+// issued before the request has expired, then it is deleted with the rest of the account.
+export const relayAccountDeletions = pgTable("relay_account_deletions", {
+  userId: varchar("user_id", { length: 255 }).primaryKey(),
+  requestedAt: varchar("requested_at", { length: 64 }).notNull(),
+  attempts: integer("attempts").notNull().default(0),
+});

@@ -1,7 +1,9 @@
 import { RelayApi } from "@t3tools/contracts/relay";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,9 +16,11 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as RelayConfiguration from "../Config.ts";
+import { RELAY_DPOP_ACCESS_TOKEN_TTL } from "../auth/RelayTokens.ts";
 import * as RelayDb from "../db.ts";
 import { unlinkEnvironmentRecord } from "../http/Api.ts";
 import {
+  relayAccountDeletions,
   relayAgentActivityRows,
   relayDeliveryAttempts,
   relayEnvironmentCredentials,
@@ -32,7 +36,13 @@ export class AccountDeletionFailed extends Schema.TaggedError<AccountDeletionFai
   "AccountDeletionFailed",
   {
     userId: Schema.String,
-    stage: Schema.Literals(["list-environments", "deprovision", "delete-rows", "unlink-t3chat"]),
+    stage: Schema.Literals([
+      "record-request",
+      "list-environments",
+      "deprovision",
+      "delete-rows",
+      "unlink-t3chat",
+    ]),
     cause: Schema.Defect(),
   },
 ) {
@@ -41,13 +51,35 @@ export class AccountDeletionFailed extends Schema.TaggedError<AccountDeletionFai
   }
 }
 
+export class AccountDeletionQueueFailed extends Schema.TaggedError<AccountDeletionQueueFailed>()(
+  "AccountDeletionQueueFailed",
+  { cause: Schema.Defect() },
+) {}
+
+// A client can keep calling the relay until its access token expires, so a pass only counts as
+// final once every token issued before the request is dead; earlier passes still run.
+const DELETION_SETTLE = Duration.sum(
+  Duration.fromInputUnsafe(RELAY_DPOP_ACCESS_TOKEN_TTL),
+  Duration.minutes(5),
+);
+const PENDING_BATCH_SIZE = 10;
+
 /** Hard-deletes everything the relay holds for a cloud account. Safe to retry. */
 export class AccountDeletion extends Context.Service<
   AccountDeletion,
   {
+    /** Durably records a deletion; `processPending` carries it out. */
+    readonly request: (input: {
+      readonly userId: string;
+    }) => Effect.Effect<void, AccountDeletionFailed>;
     readonly deleteAccount: (input: {
       readonly userId: string;
     }) => Effect.Effect<void, AccountDeletionFailed>;
+    /** Runs pending deletions, retrying failures on the next call until one settles. */
+    readonly processPending: Effect.Effect<
+      { readonly completed: number; readonly failed: number },
+      AccountDeletionQueueFailed
+    >;
   }
 >()("t3code-relay/accounts/AccountDeletion") {}
 
@@ -146,7 +178,66 @@ const make = Effect.gen(function* () {
     }
   });
 
-  return AccountDeletion.of({ deleteAccount });
+  const request = Effect.fn("relay.account_deletion.request")(function* (input: {
+    readonly userId: string;
+  }) {
+    yield* Effect.annotateCurrentSpan({ "relay.user_id": input.userId });
+    const now = DateTime.formatIso(yield* DateTime.now);
+    yield* db
+      .insert(relayAccountDeletions)
+      .values({ userId: input.userId, requestedAt: now })
+      .onConflictDoNothing()
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new AccountDeletionFailed({ userId: input.userId, stage: "record-request", cause }),
+        ),
+      );
+  });
+
+  const processPending = Effect.gen(function* () {
+    const settledBefore = DateTime.formatIso(
+      DateTime.subtractDuration(yield* DateTime.now, DELETION_SETTLE),
+    );
+    const pending = yield* db
+      .select()
+      .from(relayAccountDeletions)
+      .orderBy(relayAccountDeletions.requestedAt)
+      .limit(PENDING_BATCH_SIZE)
+      .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
+    let completed = 0;
+    let failed = 0;
+    for (const row of pending) {
+      const result = yield* Effect.exit(deleteAccount({ userId: row.userId }));
+      if (result._tag === "Failure") {
+        failed += 1;
+        yield* Effect.logWarning("Account deletion attempt failed; retrying next sweep", {
+          "relay.user_id": row.userId,
+          attempts: row.attempts + 1,
+          cause: result.cause,
+        });
+        yield* db
+          .update(relayAccountDeletions)
+          .set({ attempts: sql`${relayAccountDeletions.attempts} + 1` })
+          .where(eq(relayAccountDeletions.userId, row.userId))
+          .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
+      } else if (row.requestedAt <= settledBefore) {
+        completed += 1;
+        yield* db
+          .delete(relayAccountDeletions)
+          .where(eq(relayAccountDeletions.userId, row.userId))
+          .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
+      }
+    }
+    yield* Effect.annotateCurrentSpan({
+      "relay.account_deletion.pending": pending.length,
+      "relay.account_deletion.completed": completed,
+      "relay.account_deletion.failed": failed,
+    });
+    return { completed, failed };
+  }).pipe(Effect.withSpan("relay.account_deletion.process_pending"));
+
+  return AccountDeletion.of({ request, deleteAccount, processPending });
 });
 
 export const layer = Layer.effect(AccountDeletion, make);
@@ -226,11 +317,11 @@ export const handleClerkWebhook = Effect.fn("relay.account_deletion.clerk_webhoo
     return HttpServerResponse.empty({ status: 400 });
   }
   const accounts = yield* AccountDeletion;
-  // A failure answers 500 so Clerk retries; every step is idempotent.
-  return yield* accounts.deleteAccount({ userId: user.value.id }).pipe(
-    Effect.as(HttpServerResponse.empty({ status: 204 })),
+  // Once recorded, the deletion is ours to retry. Clerk retries only if recording fails.
+  return yield* accounts.request({ userId: user.value.id }).pipe(
+    Effect.as(HttpServerResponse.empty({ status: 200 })),
     Effect.catch((error) =>
-      Effect.logError("Account deletion failed", { stage: error.stage, cause: error.cause }).pipe(
+      Effect.logError("Could not record account deletion", { cause: error.cause }).pipe(
         Effect.as(HttpServerResponse.empty({ status: 500 })),
       ),
     ),
