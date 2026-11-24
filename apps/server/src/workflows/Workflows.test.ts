@@ -2255,6 +2255,13 @@ it.effect("a step finds runs by their key, wakes everyone at a key, and cancels 
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it("tags refuses a list with a gap in it", () => {
+  // The same list `tags([, "pr"])` makes: a first entry that was never set.
+  const gapped = new Array<string>(2);
+  gapped[1] = "pr";
+  assert.throws(() => tags(gapped), /tags takes one list of words/);
+});
+
 it.effect("questions carry their kind and runs their tags, and both can be filtered by", () =>
   Effect.gen(function* () {
     const { boot } = yield* harness();

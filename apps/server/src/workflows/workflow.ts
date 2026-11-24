@@ -618,7 +618,8 @@ export const tags = (
   if (
     !Array.isArray(values) ||
     rest.length > 0 ||
-    values.some((value) => typeof value !== "string" || value.trim() === "")
+    // Array.from fills a gap, as in `tags([, "pr"])`, which `some` would step over.
+    Array.from(values).some((value) => typeof value !== "string" || value.trim() === "")
   ) {
     throw new Error('tags takes one list of words, as in tags(["pr", "backlog"]).');
   }
