@@ -406,6 +406,8 @@ export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAd
     providerThreadId: ProviderThreadId,
     runId: RunId,
     cause: Schema.optional(Schema.Defect()),
+    /** The agent received no part of the turn, so context staged for it is still unsent. */
+    refusedBeforePrompt: Schema.optional(Schema.Boolean),
   },
 ) {
   override get message(): string {
