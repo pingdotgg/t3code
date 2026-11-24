@@ -520,6 +520,7 @@ function markJoinAtStart(entry: PaneStrip): void {
   const scrollLeft = stripScrollLeft(entry);
   const atStart =
     shown !== null &&
+    !(scrollLeft > 0.5 && hasFinePointer()) &&
     shown.x - scrollLeft <= PANE_JOIN_EAR_PX + 1 &&
     shown.x + shown.w - scrollLeft >= PANE_JOIN_EAR_PX + 14 &&
     stripAtPaneEdge(strip, row);
@@ -636,8 +637,10 @@ function markJoinFoot(
 function markPaneLit(entry: PaneStrip, scrollLeft: number): void {
   const { strip, lit, shown, footOffset } = entry;
   const overflowEnd = strip.scrollWidth - strip.clientWidth - scrollLeft;
-  const lead = scrollLeft > 0.5 && entry.atPaneEdge ? PANE_JOIN_EAR_PX : 0;
-  const visibleEnd = entry.width - (overflowEnd > 0.5 ? PANE_JOIN_TAIL_PX : 0);
+  const canStart = scrollLeft > 0.5;
+  const canEnd = overflowEnd > 0.5;
+  const lead = canStart && entry.atPaneEdge ? PANE_JOIN_EAR_PX : 0;
+  const visibleEnd = entry.width - (canEnd ? PANE_JOIN_TAIL_PX : 0);
   if (footOffset !== null) {
     setPaneLitProperty(entry.joinLayer, "--pane-join-layer-x", `${footOffset + lead}px`);
     setPaneLitProperty(
@@ -646,14 +649,22 @@ function markPaneLit(entry: PaneStrip, scrollLeft: number): void {
       `${Math.max(0, visibleEnd - lead)}px`,
     );
   }
+  setPaneLitProperty(entry.joinLayer, "--pane-join-layer-lead", `${lead}px`);
+  setPaneLitProperty(entry.joinLayer, "--pane-join-layer-tail", `${entry.width - visibleEnd}px`);
   const maxScroll = Math.max(0, strip.scrollWidth - strip.clientWidth);
   setPaneLitProperty(entry.join, "--pane-join-max-scroll", `${maxScroll}px`);
   setPaneLitProperty(entry.join, "--pane-join-lead-x", `${lead}px`);
   setPaneLitProperty(entry.join, "--pane-join-scroll", `${scrollLeft + lead}px`);
-  markJoinFoot(entry, scrollLeft, lead, visibleEnd);
+  const fine = hasFinePointer();
+  const chevronFade = fine ? PANE_STRIP_CHEVRON_PX + PANE_STRIP_FADE_PX : 0;
+  const footLead = canStart && chevronFade > 0 ? PANE_JOIN_EAR_PX + chevronFade : lead;
+  const footEnd = canEnd && chevronFade > 0 ? visibleEnd - chevronFade : visibleEnd;
+  markJoinFoot(entry, scrollLeft, footLead, footEnd);
   if (!lit) return;
-  const start = shown ? Math.max(lead, shown.x - scrollLeft - PANE_JOIN_EAR_PX) : 0;
-  const end = shown ? Math.min(visibleEnd, shown.x + shown.w - scrollLeft + PANE_JOIN_EAR_PX) : 0;
+  const litLead = canStart && fine ? PANE_JOIN_EAR_PX + PANE_STRIP_CHEVRON_PX : lead;
+  const litEnd = canEnd && fine ? visibleEnd - PANE_STRIP_CHEVRON_PX : visibleEnd;
+  const start = shown ? Math.max(litLead, shown.x - scrollLeft - PANE_JOIN_EAR_PX) : 0;
+  const end = shown ? Math.min(litEnd, shown.x + shown.w - scrollLeft + PANE_JOIN_EAR_PX) : 0;
   if (entry.join.hidden || end <= start) {
     clearPaneLit(entry);
     return;
@@ -1000,7 +1011,7 @@ function PaneStripScrollButton({ entry, side }: { entry: PaneStrip; side: "start
   return (
     <Button
       ref={(node) => attachScrollButton(entry, side, node)}
-      variant="floating"
+      variant="ghost"
       size="icon-xs"
       aria-label={side === "start" ? gt("Previous tabs") : gt("Next tabs")}
       data-strip-scroll-button={side}

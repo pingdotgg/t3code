@@ -311,6 +311,7 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
     expect(startChevron!.getAttribute("aria-disabled")).toBe("true");
     expect(endChevron!.hasAttribute("data-can-scroll")).toBe(true);
   });
+  expect(getComputedStyle(endChevron!).backgroundColor).toBe("rgba(0, 0, 0, 0)");
   endChevron!.click();
   await vi.waitFor(() => expect(strip.scrollLeft).toBeGreaterThan(0));
   await vi.waitFor(() => expect(startChevron!.hasAttribute("data-can-scroll")).toBe(true));

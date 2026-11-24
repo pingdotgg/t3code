@@ -3472,7 +3472,7 @@ html[data-theme-id] [data-chat-header] {
   color: var(--contrast-toolbar-foreground);
 }
 
-html[data-theme-id] [data-chat-header] [data-slot="button"],
+html[data-theme-id] [data-chat-header] [data-slot="button"]:not([data-strip-scroll-button]),
 html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"],
 html[data-theme-id] [data-chat-header] [data-toolbar-control] {
   --control-icon-color: var(--contrast-toolbar-control-foreground);
@@ -3506,22 +3506,15 @@ html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="tooltip-trigg
   color: color-mix(in oklab, var(--contrast-toolbar-foreground) 55%, var(--toolbar-background));
 }
 
-html[data-theme-id] [data-chat-header] [data-slot="button"]:hover,
-html[data-theme-id] [data-chat-header] [data-slot="button"][data-pressed],
+html[data-theme-id] [data-chat-header] [data-slot="button"]:not([data-strip-scroll-button]):hover,
+html[data-theme-id]
+  [data-chat-header]
+  [data-slot="button"]:not([data-strip-scroll-button])[data-pressed],
 html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"]:hover,
 html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"][data-pressed],
 html[data-theme-id] [data-chat-header] [data-toolbar-control]:hover,
 html[data-theme-id] [data-chat-header] [data-toolbar-control][data-pressed] {
   background-color: var(--toolbar-control-hover);
-}
-
-/* The strip's floating chevrons sit over tab labels: lay a translucent hover
-   tint over the opaque control fill so the labels never show through. */
-html[data-theme-id]
-  [data-chat-header]
-  .surface-floating[data-slot="button"]:is(:hover, [data-pressed]) {
-  background-color: var(--toolbar-control);
-  background-image: linear-gradient(var(--toolbar-control-hover), var(--toolbar-control-hover));
 }
 
 html[data-theme-id] [data-chat-header] [data-slot="separator"] {
@@ -6904,6 +6897,42 @@ body {
   inherits: false;
   initial-value: 0px;
 }
+@property --strip-chevron-start-shown {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+@property --strip-chevron-end-shown {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+@property --pane-join-layer-lead {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --pane-join-layer-tail {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --join-fade-lead {
+  syntax: "*";
+  inherits: false;
+}
+@property --join-fade-start {
+  syntax: "*";
+  inherits: false;
+}
+@property --join-fade-end {
+  syntax: "*";
+  inherits: false;
+}
+@property --join-fade-end-at {
+  syntax: "*";
+  inherits: false;
+}
 
 /* Pane tab strip scroll chevrons (PaneTabs.tsx): mouse/fine pointer only, and
    only on a side with hidden tabs. Touch keeps the edge fade alone. */
@@ -6923,8 +6952,107 @@ body {
 }
 
 @media (any-pointer: fine) {
+  [data-layout-tab-strip],
+  [data-pane-join-layer] {
+    --strip-chevron-space: 1.75rem;
+    --strip-chevron-start-delay: var(--panel-animation-duration, 150ms);
+    --strip-chevron-end-delay: var(--panel-animation-duration, 150ms);
+
+    @variant sm {
+      --strip-chevron-space: 1.5rem;
+    }
+  }
+
+  /* Match the chevron's show/hide timing so no tab label paints under a
+     visible chevron and no hole remains after it hides. The 0.0001 target
+     for the 500ms disabled-hover auto-hide is distinct from 0 so moving the
+     pointer off early cancels the 500ms delay for the 150ms fade-out. */
   [data-layout-tab-strip] {
-    --strip-chevron-space: 1.5rem;
+    transition:
+      --strip-fade-start-shown var(--panel-animation-duration, 150ms) ease-out,
+      --strip-chevron-start-shown 0s var(--strip-chevron-start-delay),
+      --strip-chevron-end-shown 0s var(--strip-chevron-end-delay);
+    --strip-fade-lead: calc(var(--strip-chevron-space) * var(--strip-chevron-start-shown));
+    --strip-fade-start: calc(1.5rem * var(--strip-chevron-start-shown));
+    --strip-fade-end: calc(1.5rem * var(--strip-chevron-end-shown));
+    --strip-fade-end-at: calc(100% - var(--strip-chevron-space) * var(--strip-chevron-end-shown));
+    mask-image: linear-gradient(
+      to right,
+      transparent var(--strip-fade-lead),
+      #000 calc(var(--strip-fade-lead) + var(--strip-fade-start)),
+      #000 calc(var(--strip-fade-end-at) - var(--strip-fade-end)),
+      transparent var(--strip-fade-end-at)
+    );
+  }
+
+  [data-pane-join-layer] {
+    transition:
+      --strip-chevron-start-shown 0s var(--strip-chevron-start-delay),
+      --strip-chevron-end-shown 0s var(--strip-chevron-end-delay);
+  }
+
+  [data-layout-tab-strip-frame]:has(
+      > [data-strip-scroll-button="start"]:is(
+        [data-can-scroll],
+        [aria-disabled="true"]:is(:hover, :focus-visible)
+      )
+    )
+    > span
+    > [data-layout-tab-strip],
+  [data-layout-tab-strip-frame]:has(
+      > [data-strip-scroll-button="start"]:is(
+        [data-can-scroll],
+        [aria-disabled="true"]:is(:hover, :focus-visible)
+      )
+    )
+    ~ [data-pane-join-layer] {
+    --strip-chevron-start-shown: 1;
+    --strip-chevron-start-delay: 0s;
+  }
+
+  [data-layout-tab-strip-frame]:has(
+      > [data-strip-scroll-button="start"][aria-disabled="true"]:hover:not(:active, :focus-visible)
+    )
+    > span
+    > [data-layout-tab-strip],
+  [data-layout-tab-strip-frame]:has(
+      > [data-strip-scroll-button="start"][aria-disabled="true"]:hover:not(:active, :focus-visible)
+    )
+    ~ [data-pane-join-layer] {
+    --strip-chevron-start-shown: 0.0001;
+    --strip-chevron-start-delay: 500ms;
+  }
+
+  [data-layout-tab-strip-frame]:has(
+      > [data-strip-scroll-button="end"]:is(
+        [data-can-scroll],
+        [aria-disabled="true"]:is(:hover, :focus-visible)
+      )
+    )
+    > span
+    > [data-layout-tab-strip],
+  [data-layout-tab-strip-frame]:has(
+      > [data-strip-scroll-button="end"]:is(
+        [data-can-scroll],
+        [aria-disabled="true"]:is(:hover, :focus-visible)
+      )
+    )
+    ~ [data-pane-join-layer] {
+    --strip-chevron-end-shown: 1;
+    --strip-chevron-end-delay: 0s;
+  }
+
+  [data-layout-tab-strip-frame]:has(
+      > [data-strip-scroll-button="end"][aria-disabled="true"]:hover:not(:active, :focus-visible)
+    )
+    > span
+    > [data-layout-tab-strip],
+  [data-layout-tab-strip-frame]:has(
+      > [data-strip-scroll-button="end"][aria-disabled="true"]:hover:not(:active, :focus-visible)
+    )
+    ~ [data-pane-join-layer] {
+    --strip-chevron-end-shown: 0.0001;
+    --strip-chevron-end-delay: 500ms;
   }
 
   [data-strip-scroll-button] {
@@ -6983,6 +7111,12 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  [data-layout-tab-strip],
+  [data-pane-join-layer] {
+    --strip-chevron-start-delay: 0s;
+    --strip-chevron-end-delay: 0s;
+  }
+
   [data-strip-scroll-button],
   [data-strip-scroll-button][data-can-scroll],
   [data-strip-scroll-button][aria-disabled="true"]:is(:hover, :focus-visible) {
@@ -7117,17 +7251,27 @@ body {
       /* Where tabs are scrolled out, the strip fades as scroll areas do
          (ScrollArea's scrollFade); its end fades before the control that
          overlaps the rim's tail. PaneTabs sets the overflow. At the pane's
-         edge its start begins past the ear room the pane clips. */
+         edge its start begins past the ear room the pane clips. While a
+         scroll chevron shows, the mask clears the chevron before fading in. */
       --strip-fade-lead: calc(
-        var(--pane-join-ear) * (1 - var(--pane-titlebar-inset, 0)) *
-          var(--strip-overflowing-start, 0)
+        var(--pane-join-ear) *
+          max(1 - var(--pane-titlebar-inset, 0), var(--strip-chevron-start-shown)) *
+          max(var(--strip-overflowing-start, 0), var(--strip-chevron-start-shown)) +
+          var(--strip-chevron-space) * var(--strip-chevron-start-shown)
       );
-      --strip-fade-start: calc(
-        min(1.5rem, var(--strip-overflow-start, 0px)) * var(--strip-fade-start-shown)
+      --strip-fade-start: max(
+        calc(min(1.5rem, var(--strip-overflow-start, 0px)) * var(--strip-fade-start-shown)),
+        calc(1.5rem * var(--strip-chevron-start-shown))
       );
-      transition: --strip-fade-start-shown var(--panel-animation-duration, 150ms) ease-out;
-      --strip-fade-end: min(1.5rem, var(--strip-overflow-end, 0px));
-      --strip-fade-end-at: calc(100% - var(--pane-join-tail) * var(--strip-overflowing-end, 0));
+      --strip-fade-end: max(
+        min(1.5rem, var(--strip-overflow-end, 0px)),
+        calc(1.5rem * var(--strip-chevron-end-shown))
+      );
+      --strip-fade-end-at: calc(
+        100% - var(--pane-join-tail) *
+          max(var(--strip-overflowing-end, 0), var(--strip-chevron-end-shown)) -
+          var(--strip-chevron-space) * var(--strip-chevron-end-shown)
+      );
       mask-image: linear-gradient(
         to right,
         transparent var(--strip-fade-lead),
@@ -7229,7 +7373,8 @@ body {
 
     /* The joined tab shape sits behind the strip's alpha mask, clipped to its
        visible ends, so its fill and rim never dissolve into the chrome while
-       the tab labels above it still fade into what is behind them. */
+       the tab labels above it still fade into what is behind them. When a
+       scroll chevron shows, the shape fades before it like the other tabs. */
     & [data-pane-notch=""] > [data-layout-tab-strip-slot] > [data-pane-join-layer] {
       display: block;
       position: absolute;
@@ -7240,6 +7385,24 @@ body {
       height: calc(var(--pane-join-h) + 1px);
       overflow: hidden;
       pointer-events: none;
+      --join-fade-lead: calc(
+        (var(--pane-join-ear) - var(--pane-join-layer-lead, 0px) + var(--strip-chevron-space)) *
+          var(--strip-chevron-start-shown)
+      );
+      --join-fade-start: calc(1.5rem * var(--strip-chevron-start-shown));
+      --join-fade-end: calc(1.5rem * var(--strip-chevron-end-shown));
+      --join-fade-end-at: calc(
+        100% -
+          (var(--pane-join-tail) - var(--pane-join-layer-tail, 0px) + var(--strip-chevron-space)) *
+          var(--strip-chevron-end-shown)
+      );
+      mask-image: linear-gradient(
+        to right,
+        transparent var(--join-fade-lead),
+        #000 calc(var(--join-fade-lead) + var(--join-fade-start)),
+        #000 calc(var(--join-fade-end-at) - var(--join-fade-end)),
+        transparent var(--join-fade-end-at)
+      );
     }
 
     @supports (timeline-scope: --pane-strip-scroll) {
