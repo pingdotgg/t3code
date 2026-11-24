@@ -49,6 +49,8 @@ async function encodeBitmap(task: Extract<ImageWorkerTask, { kind: "encode" }>) 
 }
 
 async function run(task: ImageWorkerTask): Promise<ImageWorkerResults[ImageWorkerTask["kind"]]> {
+  // Without a canvas here the shared helpers report "nothing to do"; the page must draw instead.
+  if (typeof OffscreenCanvas !== "function") throw new Error("OffscreenCanvas unavailable");
   switch (task.kind) {
     case "encode":
       return encodeBitmap(task);
