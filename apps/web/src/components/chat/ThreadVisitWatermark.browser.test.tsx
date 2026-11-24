@@ -59,6 +59,7 @@ it("records the visit of the next thread at once after switching threads", async
   mocks.visitRun.mockReturnValue(Effect.void);
   setShell(threadA, "2026-01-02T00:00:00.000Z");
   setShell(threadB, "2026-01-03T00:00:00.000Z");
+  using _focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
   using _timers = fakeTimers();
   vi.setSystemTime(NOW);
   // A palette pick already sent B's open with its query, so B's visit is a plain watermark advance.
@@ -120,4 +121,11 @@ it("does not mark a run that finishes in a background window as seen", async () 
   vi.advanceTimersByTime(60_000);
 
   expect(visitedThreadIds()).toEqual(["c"]);
+
+  focused = true;
+  visibility = "visible";
+  document.dispatchEvent(new Event("visibilitychange"));
+  window.dispatchEvent(new Event("focus"));
+
+  expect(visitedThreadIds()).toEqual(["c", "c"]);
 });
