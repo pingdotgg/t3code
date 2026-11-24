@@ -1017,6 +1017,7 @@ function ThreadDetailBody(
           props.serverConfig?.providers ?? [],
           props.serverConfig?.usageLimitSources ?? [],
           usageLimitsPanel.now,
+          props.selectedThread.modelSelection.model,
         )
       : null;
   const showUsageLimits = (report: UsageLimitsReport | null) =>
@@ -1158,6 +1159,9 @@ function ThreadDetailBody(
     return userInputMotion === "fresh" ? 1 : withTiming(1, USER_INPUT_TOGGLE_TIMING);
   }, [userInputMotion]);
   const userInputCardCoverage = useSharedValue(0);
+  // The control already sits above every panel row, so it lifts only by how far the iOS card rises past the top of the panels.
+  const userInputPanelsTop = useSharedValue(0);
+  const userInputCardTop = useSharedValue(0);
   const composerPopoverHeight = useSharedValue(0);
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
   const reduceMotion = useReducedMotion();
@@ -1193,7 +1197,11 @@ function ThreadDetailBody(
   const floatingControlLift = useDerivedValue(
     () =>
       Math.max(
-        userInputCoverageApplies ? userInputCardProgress.value * userInputCardCoverage.value : 0,
+        userInputCoverageApplies
+          ? userInputCardProgress.value * userInputCardCoverage.value -
+              userInputPanelsTop.value -
+              userInputCardTop.value
+          : 0,
         composerPopoverLift.value,
       ),
     [userInputCoverageApplies],
@@ -1615,9 +1623,6 @@ function ThreadDetailBody(
           }
           offset={{ closed: 0, opened: composerKeyboardOffset }}
         >
-          {questionInFlow ? (
-            <Animated.View pointerEvents="none" style={questionStatusSpace} />
-          ) : null}
           <ComposerPopoverHost
             hidden={composerSlotHidden}
             popoverHeight={composerPopoverHeight}
@@ -1637,6 +1642,7 @@ function ThreadDetailBody(
                           position: "absolute",
                           bottom: controlInsets.bottom,
                           left: controlInsets.left,
+                          paddingTop: FLOATING_WORKING_CONTROL_COVERAGE,
                         },
                         columnComposerWidthStyle,
                       ]
@@ -1646,11 +1652,17 @@ function ThreadDetailBody(
                           bottom: controlInsets.bottom,
                           left: controlInsets.left,
                           right: controlInsets.right,
+                          paddingTop: FLOATING_WORKING_CONTROL_COVERAGE,
                         },
                         composerWidthStyle,
                       ]
               }
             >
+              {/* Android clips accessibility bounds to the parent, so the floating control's
+                space stays inside this host, or TalkBack cannot reach the pill. */}
+              {questionInFlow ? (
+                <Animated.View pointerEvents="none" style={questionStatusSpace} />
+              ) : null}
               {/* No paddingTop here: the overlay's measured height becomes the
                 list's bottom inset, so any padding above the pill/composer
                 pushes the resting content floor up by the same amount. */}
@@ -1807,6 +1819,11 @@ function ThreadDetailBody(
                             ? { paddingBottom: composerBottomInset }
                             : undefined
                         }
+                        onLayout={
+                          Platform.OS === "ios"
+                            ? (event) => userInputPanelsTop.set(event.nativeEvent.layout.y)
+                            : undefined
+                        }
                         entering={FadeInDown.duration(220)}
                         exiting={FadeOut.duration(140)}
                       >
@@ -1838,6 +1855,11 @@ function ThreadDetailBody(
                             onStopThread={props.onStopThread}
                             cardProgress={userInputCardProgress}
                             cardCoverage={userInputCardCoverage}
+                            onLayout={
+                              Platform.OS === "ios"
+                                ? (event) => userInputCardTop.set(event.nativeEvent.layout.y)
+                                : undefined
+                            }
                             onInputFocusChange={handleOwnedInputFocusChange}
                             drafts={props.activePendingUserInputDrafts}
                             answers={props.activePendingUserInputAnswers}

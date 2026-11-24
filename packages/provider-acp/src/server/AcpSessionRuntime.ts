@@ -31,6 +31,7 @@ import * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { AgentScope, AgentScopeThreadId, RAISE_OOM_SCORE_LINE } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./stderr.ts";
@@ -85,6 +86,8 @@ export type AcpSessionRuntimeEvent =
     };
 
 const defaultSessionLoadTimeout = Duration.seconds(90);
+// A live child that never answers the handshake would otherwise hold the start open forever.
+const startupRequestTimeout = Duration.seconds(90);
 const defaultSessionLoadReplayIdleGap = Duration.seconds(2);
 const defaultCancelTimeout = Duration.seconds(15);
 const maxStartupMetadataUpdates = 32;
@@ -135,6 +138,8 @@ export interface AcpSessionRuntimeOptions {
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /** Sent on every session/new, load, resume and fork; omitting them clears an agent's stored roots. */
   readonly additionalDirectories?: ReadonlyArray<string>;
+  /** The thread's other folders, sent the same way when the agent advertises the capability. */
+  readonly extraRoots?: ReadonlyArray<string>;
   /** Session `_meta`, chosen from the negotiated agent before each session setup or activation. */
   readonly sessionMeta?: (
     initializeResult: EffectAcpSchema.InitializeResponse,
@@ -1040,7 +1045,12 @@ const terminateWindowsProcessTreeWithTaskkill = (
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const taskkill = yield* spawner.spawn(
-        ChildProcess.make("taskkill", ["/PID", String(pid), "/T", "/F"]),
+        ChildProcess.make(windowsSystem32Path(yield* HostProcess.Environment, "taskkill.exe"), [
+          "/PID",
+          String(pid),
+          "/T",
+          "/F",
+        ]),
       );
       const outputFiber = yield* Stream.decodeText(taskkill.all).pipe(
         Stream.mkString,
@@ -1395,6 +1405,25 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   ): Effect.Effect<A, EffectAcpErrors.AcpError> =>
     Ref.update(sessionChangeCountRef, (count) => count + 1).pipe(
       Effect.andThen(runLoggedRequest(method, payload, effect)),
+    );
+
+  const withStartupTimeout = <A>(
+    method: string,
+    effect: Effect.Effect<A, EffectAcpErrors.AcpError>,
+  ): Effect.Effect<A, EffectAcpErrors.AcpError> =>
+    effect.pipe(
+      Effect.timeoutOrElse({
+        duration: startupRequestTimeout,
+        orElse: () =>
+          Effect.fail(
+            new EffectAcpErrors.AcpTransportError({
+              operation: "call-rpc",
+              method,
+              detail: `${method} timed out waiting for RPC response`,
+              cause: undefined,
+            }),
+          ),
+      }),
     );
 
   const runLoggedRequest = <A>(
@@ -2295,7 +2324,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     const initializeResult = yield* runLoggedRequest(
       "initialize",
       initializePayload,
-      acp.agent.initialize(initializePayload),
+      withStartupTimeout("initialize", acp.agent.initialize(initializePayload)),
     );
     yield* options.onInitialized?.(initializeResult) ?? Effect.void;
     return initializeResult;
@@ -2352,10 +2381,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 
   const sessionSetupFields = (initializeResult: EffectAcpSchema.InitializeResponse) => {
     const meta = options.sessionMeta?.(initializeResult);
+    const additionalDirectories = [
+      ...(options.additionalDirectories ?? []),
+      ...(initializeResult.agentCapabilities?.sessionCapabilities?.additionalDirectories == null
+        ? []
+        : (options.extraRoots ?? [])),
+    ];
     return {
-      ...(options.additionalDirectories?.length
-        ? { additionalDirectories: options.additionalDirectories }
-        : {}),
+      ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
       ...(meta == null ? {} : { _meta: meta }),
     };
   };
@@ -2439,7 +2472,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           sessionSetupResult = yield* runLoggedRequest(
             "session/resume",
             resumePayload,
-            acp.agent.resumeSession(resumePayload),
+            withStartupTimeout("session/resume", acp.agent.resumeSession(resumePayload)),
           );
         } else {
           return yield* new EffectAcpErrors.AcpRequestError({
@@ -2456,7 +2489,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         const created = yield* runLoggedRequest(
           "session/new",
           createPayload,
-          acp.agent.createSession(createPayload),
+          withStartupTimeout("session/new", acp.agent.createSession(createPayload)),
         );
         sessionId = created.sessionId;
         sessionSetupResult = created;
@@ -3055,10 +3088,25 @@ const handleSessionUpdate =
       );
     }
     const parsed = parseSessionUpdateEvent(params);
-    if (parsed.modeId) {
+    const modeId = parsed.modeId;
+    if (modeId) {
       yield* Ref.update(modeStateRef, (current) =>
-        current === undefined ? current : updateModeState(current, parsed.modeId!),
+        current === undefined ? current : updateModeState(current, modeId),
       );
+      // A mode-only update would otherwise leave the mode option showing the old mode.
+      const configOptions = yield* SubscriptionRef.get(configOptionsRef);
+      const isStaleMode = (option: (typeof configOptions)[number]) =>
+        option.category === "mode" && option.type === "select" && option.currentValue !== modeId;
+      if (configOptions.some(isStaleMode)) {
+        yield* SubscriptionRef.set(
+          configOptionsRef,
+          configOptions.map((option) =>
+            option.category === "mode" && option.type === "select"
+              ? { ...option, currentValue: modeId }
+              : option,
+          ),
+        );
+      }
     }
     for (const event of parsed.events) {
       if (event._tag === "ToolCallUpdated") {

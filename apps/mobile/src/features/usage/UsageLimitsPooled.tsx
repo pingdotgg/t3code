@@ -19,7 +19,9 @@ import {
 } from "@t3tools/shared/usageLimitsCopy";
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { Fragment, type ReactNode, useId, useState } from "react";
-import { Linking, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { useNowMinuteMs } from "../../lib/clock";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { Defs, Path, Pattern, Rect, Svg } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -200,7 +202,6 @@ function PoolWindowCard({
       windowId: pool.id,
       windowKind: pool.kind,
       environmentIds,
-      now,
     });
   const summary = (
     <>
@@ -210,7 +211,7 @@ function PoolWindowCard({
             <Text className="text-sm font-t3-medium text-foreground">{label ?? pool.label}</Text>
           ) : null}
           <View className="flex-row items-baseline gap-1.5">
-            <Text className="text-sm text-foreground-muted">
+            <Text className="text-sm leading-(--text-3xl--line-height) text-foreground-muted">
               <T>
                 <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
                   <Var>{pool.remainingPercent}</Var>%
@@ -543,7 +544,7 @@ export function UsageLimitsSection({
           <Pressable
             accessibilityRole="link"
             className="min-h-11 justify-center"
-            onPress={() => void Linking.openURL(link.url).catch(() => undefined)}
+            onPress={() => void tryOpenExternalUrl(link.url)}
           >
             <Text className="text-sm font-t3-medium text-primary">
               <T>Manage usage</T>
@@ -589,13 +590,13 @@ type AccountScreenProps = StaticScreenProps<{
   windowId: string;
   windowKind: LimitPoolWindow["kind"];
   environmentIds: readonly string[] | null;
-  now: number;
 }>;
 
 export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const insets = useSafeAreaInsets();
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
-  const { accountKey, windowId, windowKind, environmentIds, now } = route.params;
+  const { accountKey, windowId, windowKind, environmentIds } = route.params;
+  const now = useNowMinuteMs();
   const selectedIds =
     environmentIds === null ? null : new Set(environmentIds.map((id) => EnvironmentId.make(id)));
   const selected =

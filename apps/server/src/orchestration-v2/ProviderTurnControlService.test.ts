@@ -187,6 +187,7 @@ function layerProjectionStore(
       getCheckpointRollbackContext: () => Effect.die("unused rollback context"),
       getCheckpointCaptureContext: () => Effect.die("not used"),
       getRunMessage: () => Effect.die("not used"),
+      getDelegatedChildControls: () => Effect.die("not used"),
       getRun: () => Effect.die("not used"),
       isNodeStored: () => Effect.die("not used"),
       canStartQueuedRun: () => Effect.die("not used"),

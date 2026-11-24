@@ -23,7 +23,11 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../serverSettings.ts";
-import { makeSpeechTextCorrector, normalizeSpeechCustomWords } from "./customWords.ts";
+import {
+  makeSpeechTextCorrector,
+  normalizeSpeechCustomWords,
+  speechRecognitionWords,
+} from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import {
   DEFAULT_SPEECH_MODEL_ID,
@@ -626,9 +630,10 @@ const make = Effect.gen(function* () {
             const vadPath = yield* silenceModelPath(loaded, options, false);
             const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
             const customWords = dictionary.map(({ term }) => term);
+            const recognitionWords = speechRecognitionWords(options.speechHints, customWords);
             // The vocabulary capability guarantees plain transcription, not translation.
             const vocabularyFor = (inference: LoadedModel) =>
-              inference.supportsVocabulary && !translateToEnglish ? customWords : [];
+              inference.supportsVocabulary && !translateToEnglish ? recognitionWords : [];
             const transcribeWith = (inference: LoadedModel) =>
               Effect.tryPromise({
                 try: (signal) => {
@@ -643,7 +648,9 @@ const make = Effect.gen(function* () {
                       ...(translateToEnglish
                         ? { task: "translate" as const, targetLanguage: "en" as const }
                         : {}),
-                      ...(vocabularyFor(inference).length > 0 ? { vocabulary: customWords } : {}),
+                      ...(vocabularyFor(inference).length > 0
+                        ? { vocabulary: recognitionWords }
+                        : {}),
                     },
                     options.speechSilenceFiltering,
                     vadPath,
@@ -753,6 +760,7 @@ const make = Effect.gen(function* () {
     const language = effectiveSpeechLanguage(definition, options.speechLanguage);
     const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
     const customWords = dictionary.map(({ term }) => term);
+    const recognitionWords = speechRecognitionWords(options.speechHints, customWords);
     let correct = makeSpeechTextCorrector(customWords, dictionary);
     const modelPath = yield* installedModelPath(definition);
     let streamModel = yield* attempt(operation, () =>
@@ -768,8 +776,8 @@ const make = Effect.gen(function* () {
         streamModel.supportsTranslation &&
         language !== "en";
       const vocabulary =
-        streamModel.supportsVocabulary && !translateToEnglish && customWords.length
-          ? customWords
+        streamModel.supportsVocabulary && !translateToEnglish && recognitionWords.length
+          ? recognitionWords
           : undefined;
       const hint = nativeSpeechLanguage(streamModel.languages, language);
       await streamModel.begin(

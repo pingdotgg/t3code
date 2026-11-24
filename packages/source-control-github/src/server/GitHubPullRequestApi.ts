@@ -811,12 +811,14 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly verdict: PullRequestReviewVerdict;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
 
     readonly replyToReviewThread: (input: {
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
+      readonly number: number;
       readonly threadId: string;
       readonly body: string;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
@@ -825,6 +827,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
+      readonly number: number;
       readonly threadId: string;
       readonly resolved: boolean;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
@@ -874,6 +877,29 @@ const decodeRunJobs = Schema.decodeEffect(
         Schema.Struct({ id: Schema.Number, conclusion: Schema.NullOr(Schema.String) }),
       ),
     }),
+  ),
+);
+const decodeCheckRun = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      conclusion: Schema.optional(Schema.NullOr(Schema.String)),
+      output: Schema.optional(
+        Schema.Struct({
+          title: Schema.optional(Schema.NullOr(Schema.String)),
+          summary: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
+      ),
+    }),
+  ),
+);
+const decodeCheckRunAnnotations = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        annotation_level: Schema.optional(Schema.NullOr(Schema.String)),
+        message: Schema.String,
+      }),
+    ),
   ),
 );
 const FAILED_CONCLUSIONS = new Set(["failure", "cancelled", "timed_out", "startup_failure"]);
@@ -1301,6 +1327,24 @@ export const make = Effect.gen(function* () {
       .PullRequestSubject({ owner, name, number: input.number, subjectId: input.subjectId })
       .pipe(graphql({ ...input, allowReserve: true }), Effect.map(isSubjectOfPullRequest));
   };
+
+  const requireThreadOfPullRequest = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly host: string;
+    readonly number: number;
+    readonly threadId: string;
+    readonly operation: string;
+  }) =>
+    subjectBelongsToPullRequest({ ...input, subjectId: input.threadId }).pipe(
+      Effect.flatMap((belongs) =>
+        belongs
+          ? Effect.void
+          : Effect.fail(
+              new GitHubSubjectScopeError({ cwd: input.cwd, operation: input.operation }),
+            ),
+      ),
+    );
 
   const decodeWith = <A>(
     cwd: string,
@@ -2912,6 +2956,43 @@ export const make = Effect.gen(function* () {
 
     readCheckLogs: Effect.fn("GitHubPullRequestApi.readCheckLogs")(function* (input) {
       const { owner, name } = parseRepositorySelector(input.repository);
+      const readCheckRun = <A, E>(path: string, decode: (body: string) => Effect.Effect<A, E>) =>
+        api
+          .rest({ host: input.host, operation: "readCheckRun", path })
+          .pipe(Effect.flatMap((response) => decode(response.body)));
+      // A job that never started (billing block, skipped) or whose log expired has no log;
+      // its check run (an Actions job id is its check run id) says why.
+      const missingLog = (check: ProviderCheckReference, jobId: string, fallback: string) =>
+        Effect.all(
+          [
+            readCheckRun(`repos/${owner}/${name}/check-runs/${jobId}`, decodeCheckRun),
+            readCheckRun(
+              `repos/${owner}/${name}/check-runs/${jobId}/annotations?per_page=50`,
+              decodeCheckRunAnnotations,
+            ),
+          ],
+          { concurrency: 2 },
+        ).pipe(
+          Effect.map(([run, annotations]) =>
+            [
+              `GitHub returned no log for this job${run.conclusion ? `; it concluded ${run.conclusion}` : ""}.`,
+              run.output?.title,
+              run.output?.summary,
+              ...annotations.map(
+                (annotation) =>
+                  `${annotation.annotation_level ? `${annotation.annotation_level}: ` : ""}${annotation.message}`,
+              ),
+            ]
+              .filter((line) => typeof line === "string" && line.trim() !== "")
+              .join("\n"),
+          ),
+          Effect.catchTags({
+            GitHubApiNotFoundError: () => Effect.succeed(fallback),
+            GitHubApiResponseError: () => Effect.succeed(fallback),
+            SchemaError: () => Effect.succeed(fallback),
+          }),
+          Effect.map((detail) => ({ ...check, log: null, truncated: false, detail })),
+        );
       return yield* Effect.forEach(
         input.checks,
         (check) => {
@@ -2947,10 +3028,8 @@ export const make = Effect.gen(function* () {
               }),
               // Sign-in and rate-limit failures fail the call; the rest are this check's.
               Effect.catchTags({
-                GitHubApiNotFoundError: (error) =>
-                  Effect.succeed({ ...check, log: null, truncated: false, detail: error.message }),
-                GitHubApiResponseError: (error) =>
-                  Effect.succeed({ ...check, log: null, truncated: false, detail: error.message }),
+                GitHubApiNotFoundError: (error) => missingLog(check, jobId, error.message),
+                GitHubApiResponseError: (error) => missingLog(check, jobId, error.message),
               }),
             );
         },
@@ -3061,15 +3140,21 @@ export const make = Effect.gen(function* () {
             verdict: input.verdict,
             body: input.body,
             comments: input.comments,
+            expectedHeadSha: input.expectedHeadSha,
           }),
         })
         .pipe(Effect.asVoid);
     }),
 
     replyToReviewThread: Effect.fn("GitHubPullRequestApi.replyToReviewThread")(function (input) {
-      return client
-        .AddReviewThreadReply({ threadId: input.threadId, body: input.body })
-        .pipe(graphql({ ...input, operation: "replyToReviewThread" }), Effect.asVoid);
+      const target = { ...input, operation: "replyToReviewThread" };
+      return requireThreadOfPullRequest(target).pipe(
+        Effect.andThen(
+          client
+            .AddReviewThreadReply({ threadId: input.threadId, body: input.body })
+            .pipe(graphql(target), Effect.asVoid),
+        ),
+      );
     }),
 
     getPullRequestFilesViewed: Effect.fn("GitHubPullRequestApi.getPullRequestFilesViewed")(
@@ -3156,11 +3241,15 @@ export const make = Effect.gen(function* () {
 
     setReviewThreadResolution: Effect.fn("GitHubPullRequestApi.setReviewThreadResolution")(
       function (input) {
-        return (
-          input.resolved
-            ? client.ResolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
-            : client.UnresolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
-        ).pipe(graphql({ ...input, operation: "setReviewThreadResolution" }));
+        const target = { ...input, operation: "setReviewThreadResolution" };
+        return requireThreadOfPullRequest(target).pipe(
+          Effect.andThen(
+            (input.resolved
+              ? client.ResolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
+              : client.UnresolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
+            ).pipe(graphql(target)),
+          ),
+        );
       },
     ),
 

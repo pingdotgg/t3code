@@ -20,11 +20,9 @@ import {
   useRightPanelStore,
   type RightPanelSurface,
 } from "../rightPanelStore";
-import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readThreadShell } from "../state/entities";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
-import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -72,13 +70,12 @@ export function useRightPanelSurfaceClose(input: {
       }
     }
     if (
-      surface.kind === "side-chat" &&
-      readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope) &&
-      // A live shell without the side chat means it is already deleted.
-      !(
-        appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live" &&
-        readThreadShell(scopeThreadRef(ref.environmentId, surface.threadId)) === null
-      )
+      surface.kind === "thread" &&
+      // Only a side chat the shell still lists is thrown away with its tab; a subagent belongs to
+      // its parent's work, and an unlisted side chat is already deleted.
+      readThreadShell(scopeThreadRef(ref.environmentId, surface.threadId))?.lineage.sideChat ===
+        true &&
+      readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)
     ) {
       // The server keeps a side chat with a run or message. Reopen skips one it deleted.
       void deleteThread({
