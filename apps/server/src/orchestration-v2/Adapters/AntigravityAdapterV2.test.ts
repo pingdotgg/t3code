@@ -1334,6 +1334,8 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     readonly initialToolCalls?: ReadonlyArray<EffectAcpSchema.SessionUpdate>;
     /** The agent answers the first prompt with this error. */
     readonly promptFailure?: EffectAcpErrors.AcpRequestError;
+    /** The first this many session/cancel calls fail. */
+    readonly cancelFailures?: number;
   },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1392,8 +1394,13 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
         Effect.provideService(SecureRandom.SecureRandom, crypto),
         Effect.map((runtime): RuntimeService => ({
           ...runtime,
-          cancel: Effect.sync(() => {
+          cancel: Effect.suspend(() => {
             cancels += 1;
+            return cancels <= (options?.cancelFailures ?? 0)
+              ? Effect.fail(
+                  new EffectAcpErrors.AcpTransportError({ detail: "cancel failed", cause: "test" }),
+                )
+              : Effect.void;
           }),
           handleSessionUpdate: (handler) =>
             Effect.sync(() => {
@@ -2471,13 +2478,14 @@ describe("AntigravityAdapterV2 a prompt the agent still holds", () => {
       method: "session/prompt",
       errorMessage,
     });
+  const heldRefusal = refusal(
+    "Can't add this prompt to session mock-session-1: the running prompt is waiting for a permission or question answer; answer it or send session/cancel, then send this prompt again",
+  );
 
   it.effect.each([
     {
       name: "refused because an earlier prompt waits on an answer",
-      error: refusal(
-        "Can't add this prompt to session mock-session-1: the running prompt is waiting for a permission or question answer; answer it or send session/cancel, then send this prompt again",
-      ),
+      error: heldRefusal,
       held: true,
     },
     { name: "failed for another reason", error: refusal("prompt failed"), held: false },
@@ -2516,6 +2524,36 @@ describe("AntigravityAdapterV2 a prompt the agent still holds", () => {
       }
       yield* stop;
       assert.equal(opened.cancels(), held ? 1 : 0, "a second Stop has nothing left to cancel");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("keeps Stop for a retry when cancelling the held prompt fails", () =>
+    Effect.gen(function* () {
+      const opened = yield* openSessionWithRunningCommand({}, undefined, undefined, {
+        promptFailure: heldRefusal,
+        cancelFailures: 1,
+      });
+      yield* opened.startTurn(1, false);
+      const seen = yield* opened.throughTerminal;
+      const turn = seen.find((event) => event.type === "provider_turn.updated");
+      if (turn?.type !== "provider_turn.updated") return assert.fail("the turn must start");
+      const thread = seen.findLast((event) => event.type === "provider_thread.updated");
+      if (thread?.type !== "provider_thread.updated") return assert.fail("the thread must update");
+      const stop = opened.session.interruptTurn({
+        providerThread: thread.providerThread,
+        providerTurnId: turn.providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+
+      const failed = yield* Effect.flip(stop);
+      assert.equal(failed._tag, "ProviderAdapterInterruptError");
+      yield* stop;
+      assert.equal(opened.cancels(), 2, "the retry cancels again");
+      const released = (yield* opened.until(
+        (event) => event.type === "provider_thread.updated",
+      )).at(-1);
+      if (released?.type !== "provider_thread.updated") return assert.fail("Stop must publish");
+      assert.deepEqual(released.providerThread.pendingBackgroundTasks, []);
     }).pipe(Effect.provide(layerSession)),
   );
 });

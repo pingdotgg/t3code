@@ -10804,7 +10804,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         heldPromptSessionId === (yield* Ref.get(activeSessionId))
                       ) {
                         const heldSessionId = heldPromptSessionId;
-                        heldPromptSessionId = null;
                         yield* cancelPendingRuntimeRequests();
                         // The agent ends a prompt it holds only on session/cancel.
                         const cancelled = yield* restore(
@@ -10813,9 +10812,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             Effect.exit,
                           ),
                         );
+                        // Keep the marker and its Stop for a retry; the next prompt restarts the agent.
                         if (!Exit.isSuccess(cancelled) || Option.isNone(cancelled.value)) {
                           yield* Ref.set(runtimeRestartRequired, true);
+                          return yield* Exit.isSuccess(cancelled)
+                            ? new ProviderAdapter.ProviderAdapterInterruptTimeoutError({
+                                driver,
+                                providerThreadId: turnInput.providerThread.id,
+                                providerTurnId: turnInput.providerTurnId,
+                                timeoutMs: ACP_STOP_CONFIRM_TIMEOUT_MS,
+                              })
+                            : new ProviderAdapter.ProviderAdapterProtocolError({
+                                driver,
+                                detail: "The agent refused to cancel the prompt it still holds",
+                                cause: Cause.squash(cancelled.cause),
+                              });
                         }
+                        heldPromptSessionId = null;
                         const heldThread =
                           (yield* Ref.get(providerThreadByNativeSessionId)).get(heldSessionId) ??
                           turnInput.providerThread;
