@@ -282,6 +282,8 @@ pub async fn serve_with_instances(
         environment: environment.clone(),
         scheduled_tasks: OnceLock::new(),
         devices: OnceLock::new(),
+        settlement_wake: Arc::default(),
+        idle_compaction: OnceLock::new(),
         worktree_cleanup: OnceLock::new(),
         previews: OnceLock::new(),
         settle_cleanups: Arc::default(),
@@ -445,6 +447,21 @@ pub async fn serve_with_instances(
         let _ = host.devices.set(devices.clone());
     }
     start_agent_tools(&mut deps, &host, &sqlite_engine, addr);
+    // After the MCP service, which settled threads' cleanup uses: the first sweep may settle.
+    // An inert rehearsal copy settles and compacts nothing: its threads belong to the original.
+    let settlement = (!inert).then(|| {
+        let _ = host
+            .idle_compaction
+            .set(crate::idle_compaction::IdleCompaction::new(
+                sqlite_engine.clone(),
+                environment.clone(),
+            ));
+        crate::settlement::start(
+            sqlite_engine.clone(),
+            environment.clone(),
+            host.settlement_wake.clone(),
+        )
+    });
     let state = AppState {
         table: Arc::new(method_table(&deps)),
         auth: auth.clone(),
@@ -557,6 +574,14 @@ pub async fn serve_with_instances(
     }
     if let Some(managed) = managed_server {
         managed.abort();
+    }
+    // Settlement and compaction stop before the engine does, so neither dispatches into it.
+    if let Some(settlement) = settlement {
+        settlement.abort();
+        let _ = settlement.await;
+    }
+    if let Some(idle) = host.idle_compaction.get() {
+        idle.shutdown().await;
     }
     // No removal starts once the server stops; one under way ends before terminals and
     // sessions drain.

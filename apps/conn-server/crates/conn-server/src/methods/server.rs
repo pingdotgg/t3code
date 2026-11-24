@@ -881,6 +881,8 @@ mod tests {
             devices: std::sync::OnceLock::new(),
             previews: std::sync::OnceLock::new(),
             settle_cleanups: Arc::default(),
+            settlement_wake: Arc::default(),
+            idle_compaction: std::sync::OnceLock::new(),
             worktree_cleanup: std::sync::OnceLock::new(),
         });
         let provider = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));

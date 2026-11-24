@@ -350,6 +350,8 @@ struct MessageDispatch {
     scheduled_task_id: Option<String>,
     /// Start a new provider conversation without the thread's earlier context. Never steers.
     fresh_context: Option<bool>,
+    /// The server's own `/compact` before a prompt cache expires (`IdleCompactionService`).
+    idle_compaction: Option<String>,
     /// The run's provider instance's capabilities, which the engine adds before the command
     /// reaches its handler (`ensureContextHandoff` for a provider switch).
     target_capabilities: Option<Value>,
@@ -626,6 +628,21 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             c.dispatch_mode.kind
         ));
     }
+    // The service checked idleness before this command; a run or a delegated result that
+    // landed since makes the thread busy, and that turn refreshes the cache anyway
+    // (`Orchestrator.ts:7027`). A result is undelivered while its wake message is pending.
+    if c.idle_compaction.as_deref() == Some("beforeCacheExpires")
+        && (tx
+            .entities(&c.thread_id, "runs")?
+            .iter()
+            .any(|run| run["status"] == "queued" || is_active(run))
+            || tx
+                .entities(&c.thread_id, "subagents")?
+                .iter()
+                .any(crate::families::completion_undelivered))
+    {
+        return Ok(vec![]);
+    }
     // After a failed or stopped worktree setup, work waits for a worktree rather than start
     // in the project checkout (`worktreeMissingRun`).
     let worktree_missing = matches!(
@@ -900,6 +917,9 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     }
     if let Some(sender) = &c.sender_thread_id {
         message["senderThreadId"] = json!(sender);
+    }
+    if let Some(mode) = &c.idle_compaction {
+        message["idleCompaction"] = json!(mode);
     }
     // One handoff item per run: the merge-back's, with the switch's sources when both.
     let handoff_item = match (&merge_back, &switch) {
@@ -1925,6 +1945,7 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
             .cloned(),
         scheduled_task_id: message["scheduledTaskId"].as_str().map(str::to_owned),
         fresh_context: None,
+        idle_compaction: None,
     };
     let mut effects = steer_into(tx, &dispatch, &target)?;
     // The item records that it came from the queue.

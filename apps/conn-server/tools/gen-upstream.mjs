@@ -310,6 +310,8 @@ const secretProviders = await importSource("apps/server/src/secrets/secretProvid
 const secretProviderKinds = secretProviders.secretProviderDefinitions.definitions.map((d) => d.kind).sort();
 
 const background = await importSource("packages/shared/src/backgroundActivitySettings.ts");
+const claudeCompaction = await importSource("packages/shared/src/claudeCompaction.ts");
+const autoSettleAfterDays = settings.DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays;
 const Duration = await packageImporter("packages/shared")("effect/Duration");
 const backgroundPresets = [...contracts.BackgroundActivityProfile.literals].sort().map((profile) => {
   const preset = background.getBackgroundActivityPresetSettings(profile);
@@ -388,6 +390,17 @@ const secretsRs = rustfmt(
     "// secrets/secretProviderDefinitions.ts.",
     "",
     `pub(super) const DEFAULT_AGENT_BROWSER_ACCESS: bool = ${settings.DEFAULT_SERVER_SETTINGS.enableAgentBrowserAccess};`,
+    "",
+    "/// `DEFAULT_SERVER_SETTINGS`' automatic settlement: days of inactivity (`None`: never),",
+    "/// settle on merge, keep threads with a pull request.",
+    `pub(crate) const DEFAULT_AUTO_SETTLE_AFTER_DAYS: Option<f64> = ${autoSettleAfterDays === null ? "None" : `Some(${autoSettleAfterDays}_f64)`};`,
+    `pub(crate) const DEFAULT_AUTO_SETTLE_ON_MERGE: bool = ${settings.DEFAULT_SERVER_SETTINGS.sidebarAutoSettleOnMerge};`,
+    `pub(crate) const DEFAULT_AUTO_SETTLE_KEEP_PULL_REQUESTS: bool = ${settings.DEFAULT_SERVER_SETTINGS.sidebarAutoSettleKeepPullRequests};`,
+    "",
+    "/// `IDLE_COMPACTION_TEXT` and `COMPACTION_SUGGESTION_MIN_TOKENS`: the server's own compaction",
+    "/// prompt, and the smallest context it compacts.",
+    `pub(crate) const IDLE_COMPACTION_TEXT: &str = ${str(orchestration.IDLE_COMPACTION_TEXT)};`,
+    `pub(crate) const COMPACTION_MIN_TOKENS: u64 = ${claudeCompaction.COMPACTION_SUGGESTION_MIN_TOKENS};`,
     "",
     "/// Secret fields of `providerInstances.*.config`, by the instance's `driver`.",
     "pub(super) const PROVIDER_CONFIG: &[(&str, &[&str])] = &[",

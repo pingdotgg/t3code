@@ -407,6 +407,12 @@ pub(crate) fn on_run_end(
     Ok(effects)
 }
 
+/// A finished task whose result still waits for its wake message (`delegatedCompletion`
+/// `delivery` planned, its message not yet in the thread).
+pub(crate) fn completion_undelivered(task: &Value) -> bool {
+    task["origin"] == "app_owned" && task["completionDelivery"]["state"] == "pending"
+}
+
 /// `isOrchestrationV2WorkActive` for a subagent row.
 fn work_active(row: &Value) -> bool {
     matches!(

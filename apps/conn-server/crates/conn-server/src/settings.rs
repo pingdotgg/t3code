@@ -37,7 +37,7 @@ pub const SECRET_REDACTED: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{20
 
 mod file;
 
-mod generated;
+pub(crate) mod generated;
 
 mod secrets;
 
@@ -775,7 +775,7 @@ fn translate_legacy_project_overrides(
 }
 
 /// `globalIdleCompaction`: the stored mode, else the legacy switch, else `onReturn`.
-fn global_idle_compaction(source: &Map<String, Value>) -> String {
+pub(crate) fn global_idle_compaction(source: &Map<String, Value>) -> String {
     match (
         source.get("idleCompaction"),
         source.get("compactIdleThreads"),

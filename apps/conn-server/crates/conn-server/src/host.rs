@@ -33,6 +33,10 @@ pub struct Host {
     pub scheduled_tasks: OnceLock<conn_features::scheduled::ScheduledTasks>,
     /// Device sessions a closed thread held (`ResourceCleanupService.cleanupDevices`).
     pub devices: OnceLock<conn_devices::Devices>,
+    /// Wakes the automatic settlement sweep: a settlement can free a parent's delegates.
+    pub settlement_wake: Arc<tokio::sync::Notify>,
+    /// Compacts idle Claude threads before their prompt cache expires.
+    pub idle_compaction: OnceLock<Arc<crate::idle_compaction::IdleCompaction>>,
     /// Set once the engine exists; a deleted thread or a stopped session may free a worktree.
     pub worktree_cleanup: OnceLock<crate::worktree_cleanup::WorktreeCleanup>,
     /// Preview tabs a deleted thread held (`ResourceCleanupService.cleanupPreviews`).
@@ -467,7 +471,12 @@ impl EngineHost for Host {
                 self.clean_up_settled(thread_id, None, false);
                 return Box::pin(std::future::ready(Ok(())));
             }
-            ThreadClose::Archived | ThreadClose::Deleted => {}
+            ThreadClose::Archived | ThreadClose::Deleted => {
+                // A closed thread compacts nothing: its waiting timer ends now.
+                if let Some(idle) = self.idle_compaction.get() {
+                    idle.cancel(thread_id);
+                }
+            }
         }
         let deleted = reason == ThreadClose::Deleted;
         // `ThreadDeletion`'s `preview.cleanup`: a deleted thread's tabs free their slots.
@@ -550,31 +559,38 @@ impl Host {
     /// named by `settled_at`, one cleanup at a time. While that settlement is still the
     /// thread's, `closeOnSettle` closes its `stopOnSettle` terminals and then every idle one;
     /// then a new settlement (`first`) runs the project's settle script in the worktree.
-    /// Without `settled_at`, the thread's current settlement is the one.
+    /// Without `settled_at`, the thread's current settlement is the one. The settlement sweep
+    /// wakes after it, even when the settlement is no longer current.
     fn clean_up_settled(&self, thread_id: &str, settled_at: Option<String>, first: bool) {
         let (terminals, mcp) = (self.terminals.clone(), self.mcp.get().cloned());
         let cleanups = self.settle_cleanups.clone();
         let thread_id = thread_id.to_owned();
+        let wake = self.settlement_wake.clone();
         tokio::spawn(async move {
             let _one_at_a_time = cleanups.lock().await;
-            let settled_at = match (settled_at, &mcp) {
-                (Some(settled_at), _) => settled_at,
-                (None, Some(mcp)) => match mcp.current_settlement(&thread_id).await {
-                    Some(settled_at) => settled_at,
-                    None => return,
-                },
-                (None, None) => String::new(),
-            };
-            if let Some(mcp) = &mcp
-                && !mcp.is_current_settlement(&thread_id, &settled_at).await
-            {
-                return;
+            async {
+                let settled_at = match (settled_at, &mcp) {
+                    (Some(settled_at), _) => settled_at,
+                    (None, Some(mcp)) => match mcp.current_settlement(&thread_id).await {
+                        Some(settled_at) => settled_at,
+                        None => return,
+                    },
+                    (None, None) => String::new(),
+                };
+                if let Some(mcp) = &mcp
+                    && !mcp.is_current_settlement(&thread_id, &settled_at).await
+                {
+                    return;
+                }
+                terminals.close_on_settle(&thread_id);
+                terminals.close_idle(&thread_id, None).await;
+                if first && let Some(mcp) = mcp {
+                    mcp.run_settle_script(&thread_id, &settled_at).await;
+                }
             }
-            terminals.close_on_settle(&thread_id);
-            terminals.close_idle(&thread_id, None).await;
-            if first && let Some(mcp) = mcp {
-                mcp.run_settle_script(&thread_id, &settled_at).await;
-            }
+            .await;
+            // A settlement can free a parent's delegates (`ThreadSettlementService.ts:752`).
+            wake.notify_one();
         });
     }
 }
@@ -597,7 +613,13 @@ impl TurnObserver for Host {
     }
 
     /// The turn may have changed files: refresh the status the VCS streams show.
-    fn turn_ended(&self, point: TurnPoint, _status: String) -> BoxFuture<'_, ()> {
+    fn turn_ended(&self, point: TurnPoint, status: String) -> BoxFuture<'_, ()> {
+        // `IdleCompactionService`: a completed run starts its thread's timer over.
+        if status == "completed"
+            && let Some(idle) = self.idle_compaction.get()
+        {
+            idle.run_completed(&point.thread_id, &point.run_id);
+        }
         Box::pin(async move {
             if let Some(cwd) = point.cwd {
                 let _ = self.vcs.hub.refresh_local(&cwd).await;
@@ -612,6 +634,145 @@ mod tests {
     use crate::{methods::Deps, routes::mcp};
     use conn_engine::Engine;
     use serde_json::json;
+
+    /// `IdleCompactionService` through the production path: the engine's turn end reaches the
+    /// host, whose timer sends `/compact` two minutes before the cache expires, on a clock the
+    /// test moves. Without the host's hook no compaction runs.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_completed_turn_reaches_idle_compaction_through_the_host() {
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("conn-host-idle-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(dir.join("project")).unwrap();
+        let root = dir.join("project").to_string_lossy().into_owned();
+        let environment =
+            Arc::new(Environment::load(&dir, None, dir.clone(), Default::default()).unwrap());
+        environment
+            .settings
+            .update(json!({"idleCompaction": "beforeCacheExpires"}), None)
+            .unwrap();
+        let host = Arc::new(Host {
+            mcp: OnceLock::new(),
+            files: None,
+            vcs: VcsShared::default(),
+            terminals: crate::methods::terminal::manager(Some(&environment)),
+            environment: environment.clone(),
+            scheduled_tasks: OnceLock::new(),
+            devices: OnceLock::new(),
+            previews: OnceLock::new(),
+            settle_cleanups: Arc::default(),
+            settlement_wake: Arc::default(),
+            idle_compaction: OnceLock::new(),
+            worktree_cleanup: OnceLock::new(),
+        });
+        let t0 = 1_800_000_000_000_u64;
+        let clock = Arc::new(conn_engine::ManualClock::at(t0));
+        let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
+        config.projects = vec![conn_engine::ProjectConfig {
+            title: "Project".into(),
+            workspace_root: root.clone(),
+        }];
+        config.providers = vec![Arc::new(conn_engine::fake::FakeProvider::new(
+            "claudeAgent",
+        ))];
+        config.host = Some(host.clone());
+        config.turn_observer = Some(host.clone());
+        config.clock = clock.clone();
+        let engine = Arc::new(conn_engine::SqliteEngine::open(config).unwrap());
+        let _ = host
+            .idle_compaction
+            .set(crate::idle_compaction::IdleCompaction::new(
+                engine.clone(),
+                environment.clone(),
+            ));
+        let expires = conn_support::time::iso_from_millis(i64::try_from(t0 + 10 * 60_000).unwrap());
+        for command in [
+            json!({"type":"thread.create","commandId":"create","threadId":"thread",
+                "projectId":conn_engine::SqliteEngine::project_id_for(&root),"title":"Idle",
+                "modelSelection":{"instanceId":"claudeAgent","model":"claude-haiku-5-5"},
+                "runtimeMode":"auto","interactionMode":"default","branch":null,"worktreePath":null,
+                "createdBy":"user","creationSource":"web"}),
+            json!({"type":"message.dispatch","commandId":"send","threadId":"thread",
+                "messageId":"message-1","text":format!("large-context:{expires}"),"attachments":[],
+                "dispatchMode":{"type":"start_immediately"},"createdBy":"user","creationSource":"web"}),
+        ] {
+            engine
+                .dispatch(conn_contract::from_json(command).unwrap())
+                .await
+                .unwrap();
+        }
+        let run_of = |message: String| {
+            let engine = engine.clone();
+            async move {
+                for _ in 0..500 {
+                    let p = engine.get_thread_projection("thread".into()).await.unwrap();
+                    if let Some(run) = p["runs"].as_array().and_then(|runs| {
+                        runs.iter().find(|r| {
+                            r["userMessageId"] == message.as_str() && r["status"] == "completed"
+                        })
+                    }) {
+                        return run["id"].as_str().unwrap().to_owned();
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                panic!("no completed run for {message}");
+            }
+        };
+        let run = run_of("message-1".into()).await;
+        let step = Duration::from_secs(8 * 60 + 1);
+        clock.advance(step);
+        tokio::time::advance(step).await;
+        run_of(format!("idle-compact:thread:{run}")).await;
+
+        // An archived or deleted thread's waiting timer ends at once, long before its deadline.
+        let idle = host.idle_compaction.get().unwrap().clone();
+        let expires = conn_support::time::iso_from_millis(
+            i64::try_from(t0 + step.as_millis() as u64 + 10 * 60_000).unwrap(),
+        );
+        for (thread, close) in [("archived", "thread.archive"), ("deleted", "thread.delete")] {
+            for command in [
+                json!({"type":"thread.create","commandId":format!("create-{thread}"),"threadId":thread,
+                    "projectId":conn_engine::SqliteEngine::project_id_for(&root),"title":thread,
+                    "modelSelection":{"instanceId":"claudeAgent","model":"claude-haiku-5-5"},
+                    "runtimeMode":"auto","interactionMode":"default","branch":null,
+                    "worktreePath":null,"createdBy":"user","creationSource":"web"}),
+                json!({"type":"message.dispatch","commandId":format!("send-{thread}"),
+                    "threadId":thread,"messageId":format!("message-{thread}"),
+                    "text":format!("large-context:{expires}"),"attachments":[],
+                    "dispatchMode":{"type":"start_immediately"},"createdBy":"user",
+                    "creationSource":"web"}),
+            ] {
+                engine
+                    .dispatch(conn_contract::from_json(command).unwrap())
+                    .await
+                    .unwrap();
+            }
+            let mut waited = 0;
+            while !idle.waiting(thread) {
+                assert!(waited < 500, "{thread}: no timer");
+                waited += 1;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            engine
+                .dispatch(
+                    conn_contract::from_json(
+                        json!({"type":close,"commandId":format!("close-{thread}"),"threadId":thread}),
+                    )
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+            for _ in 0..500 {
+                if !idle.waiting(thread) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(!idle.waiting(thread), "{close} cancels the waiting timer");
+        }
+        engine.shutdown().await;
+        drop(host);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     fn cleanup_host(dir: &std::path::Path) -> Host {
         let environment =
@@ -634,6 +795,8 @@ mod tests {
             devices: OnceLock::new(),
             previews: OnceLock::new(),
             settle_cleanups: Arc::default(),
+            settlement_wake: Arc::default(),
+            idle_compaction: OnceLock::new(),
             worktree_cleanup: OnceLock::new(),
         }
     }
@@ -919,6 +1082,8 @@ mod tests {
             devices: OnceLock::new(),
             previews: OnceLock::new(),
             settle_cleanups: Arc::default(),
+            settlement_wake: Arc::default(),
+            idle_compaction: OnceLock::new(),
             worktree_cleanup: OnceLock::new(),
         });
         let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
@@ -1148,6 +1313,8 @@ mod tests {
             previews: OnceLock::new(),
             settle_cleanups: Arc::default(),
             worktree_cleanup: OnceLock::new(),
+            settlement_wake: Arc::default(),
+            idle_compaction: OnceLock::new(),
         });
         let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
         config.projects = vec![conn_engine::ProjectConfig {
@@ -1375,6 +1542,8 @@ mod tests {
             worktree_cleanup: OnceLock::new(),
             previews: OnceLock::new(),
             settle_cleanups: Arc::default(),
+            settlement_wake: Arc::default(),
+            idle_compaction: OnceLock::new(),
         };
         host.mcp.set(service.clone()).unwrap();
         let issue = |project: Option<&str>| {
@@ -1495,6 +1664,8 @@ mod tests {
             previews: OnceLock::new(),
             devices: OnceLock::new(),
             settle_cleanups: Arc::default(),
+            settlement_wake: Arc::default(),
+            idle_compaction: OnceLock::new(),
             worktree_cleanup: OnceLock::new(),
         });
         let provider = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));

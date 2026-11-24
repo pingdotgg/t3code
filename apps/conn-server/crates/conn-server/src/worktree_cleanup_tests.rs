@@ -484,6 +484,8 @@ impl Fixture {
             worktree_cleanup: std::sync::OnceLock::new(),
             previews: std::sync::OnceLock::new(),
             settle_cleanups: Arc::default(),
+            settlement_wake: Arc::default(),
+            idle_compaction: std::sync::OnceLock::new(),
         });
         let mut config = EngineConfig::new(state.join("engine.sqlite"));
         config.projects = vec![ProjectConfig {

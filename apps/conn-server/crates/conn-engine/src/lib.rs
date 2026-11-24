@@ -65,6 +65,7 @@ mod restart;
 mod rollback;
 mod runner;
 mod secret_requests;
+mod settlement;
 mod shell;
 mod store;
 mod streaming;

@@ -14733,3 +14733,67 @@ async fn a_bounded_snapshot_leaves_out_old_subagents() {
         .collect();
     assert_eq!(kept, ["recent"]);
 }
+
+/// `Orchestrator.ts:7031`: a delegated result recorded for the thread but not yet delivered as
+/// its message keeps the thread busy, so an idle compaction is a no-op until it is delivered.
+#[tokio::test(flavor = "current_thread")]
+async fn an_idle_compaction_waits_for_an_undelivered_delegated_result() {
+    let db = TempDb::new("compaction-undelivered");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hello")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    // The window before delivery: the result is in, its wake message is not.
+    engine
+        .inner()
+        .db(|store| {
+            let mut tx = store.tx()?;
+            tx.append(
+                crate::store::Draft::new(
+                    "t1",
+                    "subagent.updated",
+                    json!({"id": "node:delegated-task:d1", "origin": "app_owned",
+                        "status": "completed", "result": "done", "runId": "run:t1:1",
+                        "completionDelivery": {"state": "pending", "observedByRunId": null}}),
+                )
+                .run(Some("run:t1:1")),
+            )?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    let compact = |n: u32| {
+        json!({"type": "message.dispatch", "commandId": format!("server:idle-compact:t1:{n}"),
+            "threadId": "t1", "messageId": format!("idle-compact:t1:{n}"), "text": "/compact",
+            "attachments": [], "createdBy": "agent", "creationSource": "server",
+            "idleCompaction": "beforeCacheExpires", "dispatchMode": {"type": "start_immediately"}})
+    };
+    dispatch(&engine, compact(1)).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"].as_array().unwrap().len(), 1, "no compaction run");
+    assert!(
+        !p["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == "idle-compact:t1:1")
+    );
+    // Once the parent has the result, the thread is idle again.
+    dispatch(
+        &engine,
+        json!({"type": "delegated_task.completion-delivery.acknowledge", "commandId": "ack",
+            "parentThreadId": "t1", "taskId": "node:delegated-task:d1",
+            "observedByRunId": "run:t1:1"}),
+    )
+    .await;
+    dispatch(&engine, compact(2)).await;
+    let p = projection(&engine, "t1").await;
+    assert!(
+        p["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == "idle-compact:t1:2"),
+        "the compaction runs"
+    );
+}

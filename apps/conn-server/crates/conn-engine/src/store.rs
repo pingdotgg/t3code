@@ -713,6 +713,81 @@ impl Store {
         }))
     }
 
+    /// The stored shell row of a live thread.
+    pub(crate) fn stored_shell(&self, thread_id: &str) -> StoreResult<Option<Value>> {
+        self.conn
+            .query_row(
+                "SELECT shell FROM threads WHERE id = ?1 AND deleted = 0 AND shell IS NOT NULL",
+                [thread_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(err)?
+            .map(parse)
+            .transpose()
+    }
+
+    /// A live thread's stored record, without its history.
+    pub(crate) fn thread_record(&self, thread_id: &str) -> StoreResult<Option<Value>> {
+        thread(&self.conn, thread_id)
+    }
+
+    /// The records idle compaction decides on (`IdleCompactionService.ts:56`), shaped as a
+    /// projection: the thread, its latest run that ran, that run's user message, the active
+    /// provider thread with its latest token usage, and pending requests and transfers.
+    pub(crate) fn idle_compaction_records(&self, thread_id: &str) -> StoreResult<Option<Value>> {
+        let Some(thread) = thread(&self.conn, thread_id)? else {
+            return Ok(None);
+        };
+        let provider_thread = thread["activeProviderThreadId"]
+            .as_str()
+            .unwrap_or_default();
+        let runs = self.query_json(
+            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'runs'
+             AND NOT (json_extract(body, '$.status') = 'cancelled'
+                      AND json_extract(body, '$.startedAt') IS NULL)
+             ORDER BY ordinal DESC LIMIT 1",
+            [thread_id],
+        )?;
+        let message = runs
+            .first()
+            .and_then(|run| run["userMessageId"].as_str())
+            .unwrap_or_default();
+        let one = |kind: &str, id: &str| -> StoreResult<Vec<Value>> {
+            self.query_json(
+                "SELECT body FROM entities WHERE thread_id = ?1 AND kind = ?2 AND id = ?3",
+                params![thread_id, kind, id],
+            )
+        };
+        let pending = |kind: &str| -> StoreResult<Vec<Value>> {
+            self.query_json(
+                "SELECT body FROM entities WHERE thread_id = ?1 AND kind = ?2
+                 AND json_extract(body, '$.status') = 'pending'",
+                params![thread_id, kind],
+            )
+        };
+        Ok(Some(json!({
+            "messages": one("messages", message)?,
+            "providerThreads": one("providerThreads", provider_thread)?,
+            "providerTurns": self.query_json(
+                "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'providerTurns'
+                 AND json_extract(body, '$.providerThreadId') = ?2
+                 AND json_type(body, '$.tokenUsage') = 'object'
+                 ORDER BY json_extract(body, '$.tokenUsage.updatedAt') DESC LIMIT 1",
+                params![thread_id, provider_thread],
+            )?,
+            "runtimeRequests": pending("runtimeRequests")?,
+            "contextTransfers": pending("contextTransfers")?,
+            "runs": runs,
+            "thread": thread,
+        })))
+    }
+
+    /// See [`crate::settlement`].
+    pub(crate) fn settlement_candidates(&self, thread_id: Option<&str>) -> StoreResult<Vec<Value>> {
+        crate::settlement::candidates(&self.conn, thread_id)
+    }
+
     /// What worktree cleanup weighs (T3 `storageCleanup.ts`): the shells of live and archived
     /// threads, and deleted threads that had a worktree and a branch, each
     /// with its project's root as `workspaceRoot`.

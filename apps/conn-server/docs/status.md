@@ -193,6 +193,27 @@ because a silent dead socket would otherwise hold its session forever. Proof: se
 `a_suspended_client_stays_connected` (failed with 1001 before), `disconnect_stops_every_stream`,
 `a_dead_peer_is_cleaned_up_on_a_failed_write`, `accepted_sockets_get_keepalive`.
 
+## Automatic settlement and idle compaction (2026-11-23)
+
+- **Automatic settlement** (`settlement.rs`, T3's `ThreadSettlementService`): a sweep at start,
+  every minute, after a settings change and after a settlement. It settles a thread idle longer
+  than `sidebarAutoSettleAfterDays` at its last activity, a thread whose stored pull request link
+  merged or closed after the user's last action, and a delegate whose parent is gone, archived
+  or settled. The candidates come from the engine (`getSettlementCandidates`: no pin, no opt-out,
+  no running work, request, waiting link card or pending guest message; the server's own
+  compactions are no activity). Each settlement reads the settings right before its command, and
+  `thread.auto-settle` refuses a thread that changed after the sweep read it, as T3.
+  **Not built:** settling on a pull request found by a branch lookup on the host.
+- **Idle compaction** (`idle_compaction.rs`, T3's `IdleCompactionService`): after a completed
+  run on a Claude instance in `beforeCacheExpires` mode, a timer sends `/compact` two minutes
+  before the prompt cache of the run's last request expires, with every condition checked
+  again then. `message.dispatch` takes `idleCompaction` and is a no-op while the thread is busy
+  or a delegated result waits for delivery; the shell leaves the compaction run out
+  (`isSilentRunForShell`). Timers live in memory, as T3's; archive and delete cancel a thread's
+  timer, and both services stop before the engine at shutdown.
+- **Proof:** T3's settlement and compaction cases as unit tests; the sweep, its loop and the
+  compaction on a real engine with a moved clock, including user activity between the decision
+  and its command; the host's turn end starting the compaction (`host.rs`).
 ## Provider switch handoff (2026-11-22)
 
 **Forks on another provider (2026-11-23):** as T3's `decideForkExecution`, a fork's first
