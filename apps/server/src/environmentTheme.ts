@@ -543,11 +543,6 @@ const make = Effect.gen(function* () {
                 })
                 .pipe(Effect.mapError(removalError));
               const moved: string[] = [];
-              const stagedIsFile = (name: string) =>
-                Effect.try({
-                  try: () => NodeFS.lstatSync(NodePath.join(staging, name)).isFile(),
-                  catch: removalError,
-                });
               // Another writer can swap a directory in after the scan, so each moved entry is
               // checked and anything but a regular file is moved back.
               const stage = Effect.fnUntraced(function* (name: string) {
@@ -556,7 +551,11 @@ const make = Effect.gen(function* () {
                   NodePath.join(staging, name),
                 );
                 moved.push(name);
-                if (!(yield* stagedIsFile(name))) {
+                const isFile = yield* Effect.try({
+                  try: () => NodeFS.lstatSync(NodePath.join(staging, name)).isFile(),
+                  catch: removalError,
+                });
+                if (!isFile) {
                   return yield* removalError(`${name} is not a regular file.`);
                 }
               });
@@ -565,9 +564,6 @@ const make = Effect.gen(function* () {
                 try: () => NodeFS.rmdirSync(staging),
                 catch: removalError,
               }).pipe(Effect.ignoreCause({ log: true }));
-              const cleanup = Effect.forEach(moved, (name) =>
-                fs.remove(NodePath.join(staging, name)).pipe(Effect.ignoreCause({ log: true })),
-              ).pipe(Effect.andThen(removeStaging));
 
               const removal = yield* Effect.exit(
                 Effect.gen(function* () {
@@ -598,7 +594,10 @@ const make = Effect.gen(function* () {
                 if (restored.every(Exit.isSuccess)) yield* removeStaging;
                 return yield* removalError(removal.cause);
               }
-              yield* cleanup;
+              yield* Effect.forEach(moved, (name) =>
+                fs.remove(NodePath.join(staging, name)).pipe(Effect.ignoreCause({ log: true })),
+              );
+              yield* removeStaging;
             }).pipe(Effect.uninterruptible),
           )
           .pipe(Effect.ensuring(refresh));
