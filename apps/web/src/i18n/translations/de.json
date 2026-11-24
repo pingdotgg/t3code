@@ -11438,6 +11438,7 @@
   "dac65b49475f44f4": "Designs aus „{removeDialogCollectionLabel}“ entfernen?",
   "cef1425a3e8f58ba": "„{label}“ entfernen?",
   "00d3bf1d39252e4c": "Wähle die Varianten, die du entfernen möchtest. Du kannst sie wiederherstellen, indem du die Erweiterung erneut importierst.",
+  "fce48979adbbd004": "Es wird vom Server gelöscht, für jede App, die dessen Designs verwendet. Lade es vorher herunter, um eine Kopie zu behalten.",
   "f1867714fb89fc82": "Du kannst es jederzeit zurückholen, indem du seine JSON-Datei importierst.",
   "fc24985dbbec6590": "Ausgewählte entfernen ({count})",
   "74dc33e6ce1e87be": "Ausgewählte entfernen",

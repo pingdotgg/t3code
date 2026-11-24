@@ -187,6 +187,20 @@ export const themeServerEnvironmentThemesAtom = Atom.make(
   },
 ).pipe(Atom.withLabel("web-theme-server-environment-themes"));
 
+/** The environment whose published themes this client may edit and remove, if any. */
+export const themeServerEditableEnvironmentIdAtom = Atom.make((get) => {
+  const environmentId = get(localEnvironmentIdAtom);
+  if (
+    environmentId === null ||
+    get(themeServerConfigAtom)?.environment.capabilities.environmentThemeEditing !== true
+  ) {
+    return null;
+  }
+  return get(serverEnvironment.saveEnvironmentTheme.permissionAtom(environmentId))
+    ? environmentId
+    : null;
+}).pipe(Atom.withLabel("web-theme-server-editable-environment-id"));
+
 export const themeServerSettingsAtom = Atom.make(
   (get): ServerSettings => get(themeServerConfigAtom)?.settings ?? DEFAULT_SERVER_SETTINGS,
 ).pipe(Atom.withLabel("web-theme-server-settings"));

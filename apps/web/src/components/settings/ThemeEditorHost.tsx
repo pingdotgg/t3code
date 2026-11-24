@@ -1,10 +1,17 @@
+import { useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { msg } from "gt-react";
 import { lazy, Suspense, useSyncExternalStore } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
 import { m } from "../../i18n/messages";
+import { serverEnvironment, themeServerEditableEnvironmentIdAtom } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
+  environmentThemeFile,
   getThemeDefinition,
+  isPublishedTheme,
   subscribeToCustomThemes,
   type ThemeAppearance,
   type ThemeDefinition,
@@ -30,6 +37,25 @@ export function ThemeEditorHost() {
   const { theme, setTheme, themeHalves, refreshTheme } = useTheme();
   const editingTheme = useThemeDefinition(session?.editingThemeId);
   const seedTheme = useThemeDefinition(session?.seedThemeId);
+  const editableEnvironmentId = useAtomValue(themeServerEditableEnvironmentIdAtom);
+  const saveEnvironmentTheme = useAtomCommand(serverEnvironment.saveEnvironmentTheme, {
+    reportFailure: false,
+  });
+  const savesToEnvironment =
+    editingTheme !== null && editableEnvironmentId !== null && isPublishedTheme(editingTheme.id);
+
+  const handleSaveToEnvironment = async (edited: ThemeDefinition) => {
+    if (editableEnvironmentId === null) return false;
+    const result = await saveEnvironmentTheme({
+      environmentId: editableEnvironmentId,
+      input: { themeId: edited.id, theme: environmentThemeFile(edited) },
+    });
+    if (result._tag === "Success") return true;
+    const error = Option.getOrNull(Cause.findErrorOption(result.cause));
+    // The server's refusal says what to change, such as CSS that loads files.
+    if (error?._tag === "EnvironmentThemeError") throw new Error(error.message);
+    return false;
+  };
 
   const handleSaved = (
     savedTheme: ThemeDefinition,
@@ -83,6 +109,7 @@ export function ThemeEditorHost() {
           if (!open) closeThemeEditor();
         }}
         onSaved={handleSaved}
+        onSaveToEnvironment={savesToEnvironment ? handleSaveToEnvironment : undefined}
         open
         restoreTheme={refreshTheme}
         seedName={session.seedName ?? undefined}

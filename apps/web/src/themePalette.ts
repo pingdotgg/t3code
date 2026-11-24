@@ -1,5 +1,9 @@
 import { pipe } from "effect/Function";
-import { THEME_CSS_MAX_LENGTH, type EnvironmentTheme } from "@t3tools/contracts";
+import {
+  THEME_CSS_MAX_LENGTH,
+  type EnvironmentTheme,
+  type EnvironmentThemeFile,
+} from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -302,6 +306,17 @@ function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
   };
 }
 
+/** The file that publishes `theme`; its id is the file's name. */
+export function environmentThemeFile(theme: ThemeDefinition): EnvironmentThemeFile {
+  return {
+    name: theme.label,
+    appearance: theme.appearance,
+    colors: theme.colors,
+    ...(theme.variants ? { variants: theme.variants } : {}),
+    ...(theme.css ? { css: theme.css } : {}),
+  };
+}
+
 /**
  * Published palettes this client can render. Reserved ids are dropped here rather
  * than rendered: a published `t3-iris.json` would show this palette on its
@@ -367,6 +382,14 @@ export function storePublishedEnvironmentThemes(definitions: ReadonlyArray<Theme
 
 function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
   return appAtomRegistry.get(environmentThemeDefinitionsAtom);
+}
+
+/** True when `themeId` resolves to a theme the environment publishes, not a saved one. */
+export function isPublishedTheme(themeId: string): boolean {
+  return (
+    !getCustomThemes().some((theme) => theme.id === themeId) &&
+    getEnvironmentThemes().some((theme) => theme.id === themeId)
+  );
 }
 
 export function isReservedThemeId(themeId: string): boolean {

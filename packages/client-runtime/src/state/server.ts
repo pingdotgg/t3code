@@ -2040,6 +2040,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,
     }),
+    saveEnvironmentTheme: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:save-environment-theme",
+      tag: WS_METHODS.serverSaveEnvironmentTheme,
+    }),
+    removeEnvironmentTheme: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:remove-environment-theme",
+      tag: WS_METHODS.serverRemoveEnvironmentTheme,
+    }),
     checkSecretSource: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-secret-source",
       tag: WS_METHODS.serverCheckSecretSource,

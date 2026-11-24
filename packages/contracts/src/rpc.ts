@@ -370,6 +370,9 @@ import {
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
   ServerPrepareTriageError,
+  EnvironmentThemeError,
+  EnvironmentThemeRemoveInput,
+  EnvironmentThemeSaveInput,
   ServerPrepareTriageInput,
   ServerPrepareTriageResult,
   OtlpEndpointCheckResult,
@@ -626,6 +629,8 @@ export const WS_METHODS = {
   serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
   serverRetryResourceTelemetry: "server.retryResourceTelemetry",
   serverCheckOtlpEndpoint: "server.checkOtlpEndpoint",
+  serverSaveEnvironmentTheme: "server.saveEnvironmentTheme",
+  serverRemoveEnvironmentTheme: "server.removeEnvironmentTheme",
   serverListTextGeneratorModels: "server.listTextGeneratorModels",
   serverPrepareTriage: "server.prepareTriage",
   serverSignalProcess: "server.signalProcess",
@@ -1157,6 +1162,16 @@ const WsServerCheckOtlpEndpointRpc = Rpc.make(WS_METHODS.serverCheckOtlpEndpoint
   payload: OtlpEndpointCheckInput,
   success: OtlpEndpointCheckResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsServerSaveEnvironmentThemeRpc = Rpc.make(WS_METHODS.serverSaveEnvironmentTheme, {
+  payload: EnvironmentThemeSaveInput,
+  error: Schema.Union([EnvironmentThemeError, EnvironmentAuthorizationError]),
+});
+
+const WsServerRemoveEnvironmentThemeRpc = Rpc.make(WS_METHODS.serverRemoveEnvironmentTheme, {
+  payload: EnvironmentThemeRemoveInput,
+  error: Schema.Union([EnvironmentThemeError, EnvironmentAuthorizationError]),
 });
 
 const WsServerListTextGeneratorModelsRpc = Rpc.make(WS_METHODS.serverListTextGeneratorModels, {
@@ -2535,6 +2550,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerCheckOtlpEndpointRpc,
+  WsServerSaveEnvironmentThemeRpc,
+  WsServerRemoveEnvironmentThemeRpc,
   WsServerListTextGeneratorModelsRpc,
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,

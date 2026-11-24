@@ -11448,6 +11448,7 @@
   "dac65b49475f44f4": "Remove themes from “{removeDialogCollectionLabel}”?",
   "cef1425a3e8f58ba": "Remove “{label}”?",
   "00d3bf1d39252e4c": "Select the variants you want to remove. You can restore them by importing the extension again.",
+  "fce48979adbbd004": "It’s deleted from the server for every app that uses its themes. Download it first to keep a copy.",
   "f1867714fb89fc82": "You can bring it back anytime by importing its JSON file.",
   "fc24985dbbec6590": "Remove selected ({count})",
   "74dc33e6ce1e87be": "Remove selected",

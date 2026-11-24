@@ -9,10 +9,13 @@ import {
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
 import { useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
 import { readThemeHalvesRaw } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
+import { serverEnvironment, themeServerEditableEnvironmentIdAtom } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   getThemeDefinition,
   singleAppearanceOf,
@@ -584,9 +587,16 @@ export function ThemeLibrary({
   const gt = useGT();
   const openThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
   const environmentThemes = useEnvironmentThemeDefinitions();
+  const editableEnvironmentId = useAtomValue(themeServerEditableEnvironmentIdAtom);
+  const removeEnvironmentTheme = useAtomCommand(serverEnvironment.removeEnvironmentTheme, {
+    reportFailure: false,
+  });
+  const [isRemovingTheme, setIsRemovingTheme] = useState(false);
   const [themeRemovalTarget, setThemeRemovalTarget] = useState<{
     theme: ThemeDefinition;
     collectionThemes: ReadonlyArray<ThemeDefinition>;
+    /** Published by the environment, so removing it deletes the server's file. */
+    published: boolean;
   } | null>(null);
   const [isThemeRemovalOpen, setIsThemeRemovalOpen] = useState(false);
   const [themeIdsToRemove, setThemeIdsToRemove] = useState<ReadonlyArray<string>>([]);
@@ -626,13 +636,14 @@ export function ThemeLibrary({
   const handleRemoveTheme = (
     customTheme: ThemeDefinition,
     collectionThemes: ReadonlyArray<ThemeDefinition>,
+    published = false,
   ) => {
-    setThemeRemovalTarget({ theme: customTheme, collectionThemes });
+    setThemeRemovalTarget({ theme: customTheme, collectionThemes, published });
     setThemeIdsToRemove(collectionThemes.length > 1 ? [] : [customTheme.id]);
     setIsThemeRemovalOpen(true);
   };
 
-  const handleConfirmRemoveTheme = () => {
+  const handleConfirmRemoveTheme = async () => {
     if (!themeRemovalTarget) return;
     const removedIds = new Set(themeIdsToRemove);
     if (removedIds.size === 0) return;
@@ -640,6 +651,20 @@ export function ThemeLibrary({
     // Read raw halves before persistTheme clears them; themeHalves omits published themes not yet streamed
     // in.
     const storedHalves = readThemeHalvesRaw();
+    const removesPublished = themeRemovalTarget.published;
+    if (removesPublished) {
+      if (editableEnvironmentId === null) return;
+      setIsRemovingTheme(true);
+      const removed = await removeEnvironmentTheme({
+        environmentId: editableEnvironmentId,
+        input: { themeId: themeRemovalTarget.theme.id },
+      });
+      setIsRemovingTheme(false);
+      if (removed._tag === "Failure") {
+        notifyThemeRemovalFailure();
+        return;
+      }
+    }
     if (removesBase && !persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) {
       return;
     }
@@ -652,11 +677,13 @@ export function ThemeLibrary({
         return;
       }
     }
-    try {
-      removeCustomThemes([...removedIds]);
-    } catch {
-      notifyThemeRemovalFailure();
-      return;
+    if (!removesPublished) {
+      try {
+        removeCustomThemes([...removedIds]);
+      } catch {
+        notifyThemeRemovalFailure();
+        return;
+      }
     }
     setIsThemeRemovalOpen(false);
   };
@@ -840,6 +867,12 @@ export function ThemeLibrary({
               activeModes={pickedModesFor(environmentTheme.id)}
               isActive={false}
               key={environmentTheme.id}
+              onDownload={() =>
+                downloadThemeFile(
+                  `${environmentTheme.id}.json`,
+                  serializeThemeFile(environmentTheme),
+                )
+              }
               onDuplicate={() =>
                 openThemeEditor({
                   editingThemeId: null,
@@ -848,6 +881,18 @@ export function ThemeLibrary({
                   initialAppearance,
                 })
               }
+              {...(editableEnvironmentId === null
+                ? {}
+                : {
+                    onEdit: () =>
+                      openThemeEditor({
+                        editingThemeId: environmentTheme.id,
+                        seedThemeId: null,
+                        seedName: null,
+                        initialAppearance,
+                      }),
+                    onRemove: () => handleRemoveTheme(environmentTheme, [environmentTheme], true),
+                  })}
               onUse={() => {
                 const half = singleAppearanceOf(environmentTheme);
                 if (half === null) persistTheme(environmentTheme.id);
@@ -989,7 +1034,11 @@ export function ThemeLibrary({
                 ? gt(
                     "Select the variants you want to remove. You can restore them by importing the extension again.",
                   )
-                : gt("You can bring it back anytime by importing its JSON file.")}
+                : themeRemovalTarget?.published
+                  ? gt(
+                      "It’s deleted from the server for every app that uses its themes. Download it first to keep a copy.",
+                    )
+                  : gt("You can bring it back anytime by importing its JSON file.")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {canRemoveCollection ? (
@@ -1047,9 +1096,9 @@ export function ThemeLibrary({
               <T>Cancel</T>
             </AlertDialogClose>
             <Button
-              disabled={themeIdsToRemove.length === 0}
+              disabled={themeIdsToRemove.length === 0 || isRemovingTheme}
               variant="destructive"
-              onClick={handleConfirmRemoveTheme}
+              onClick={() => void handleConfirmRemoveTheme()}
             >
               {canRemoveCollection
                 ? themeIdsToRemove.length > 0

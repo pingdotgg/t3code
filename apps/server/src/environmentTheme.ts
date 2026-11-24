@@ -72,6 +72,7 @@ interface PublishedThemes {
 const INVALID_ID =
   "is not a valid theme id. Use lowercase letters, digits, and hyphens, and not a built-in name.";
 const NOT_PUBLISHED = "could not be published. The themes directory may be full or not writable.";
+const NOT_REMOVED = "could not be removed. The themes directory may not be writable.";
 
 /** A theme the service will not publish or select. `problem` ends the sentence naming it. */
 export class EnvironmentThemeRefusedError extends Schema.TaggedError<EnvironmentThemeRefusedError>()(
@@ -135,6 +136,15 @@ export class EnvironmentThemeService extends Context.Service<
           }
         | { readonly appearance: Exclude<DefaultAppearancePreference, ""> },
     ) => Effect.Effect<void, EnvironmentThemeRefusedError | EnvironmentThemeNotSelectedError>;
+
+    /** Publishes `theme` under `themeId`, replacing a file already there, without selecting it. */
+    readonly save: (input: {
+      readonly themeId: string;
+      readonly theme: EnvironmentThemeFile;
+    }) => Effect.Effect<void, EnvironmentThemeRefusedError>;
+
+    /** Stops publishing `themeId`: removes its file and any background image beside it. */
+    readonly remove: (themeId: string) => Effect.Effect<void, EnvironmentThemeRefusedError>;
 
     /** Subscribes before reading to retain changes during connection. */
     readonly streamChanges: Stream.Stream<ReadonlyArray<EnvironmentTheme>>;
@@ -488,6 +498,45 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const save: EnvironmentThemeService["Service"]["save"] = Effect.fn(
+    "EnvironmentThemeService.save",
+  )(function* ({ themeId, theme }) {
+    if (!isEnvironmentThemeId(themeId)) {
+      return yield* new EnvironmentThemeRefusedError({ themeId, problem: INVALID_ID });
+    }
+    // A saved edit is kept, so the effect that would undo it is dropped.
+    yield* publishSemaphore.withPermits(1)(publish(themeId, theme)).pipe(Effect.asVoid);
+  });
+
+  const remove: EnvironmentThemeService["Service"]["remove"] = Effect.fn(
+    "EnvironmentThemeService.remove",
+  )(function* (themeId) {
+    yield* publishSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const known = (yield* refresh).themes.map(({ id }) => id);
+        if (!known.includes(themeId)) {
+          return yield* new EnvironmentThemeRefusedError({
+            themeId,
+            problem: "is not a published theme.",
+            known,
+          });
+        }
+        // Every extension, so a later theme with this id does not show a leftover image.
+        const files = [THEME_FILE_SUFFIX, ...THEME_BACKGROUND_EXTENSIONS.map((ext) => `.${ext}`)];
+        yield* Effect.forEach(
+          files,
+          (suffix) => fs.remove(`${environmentThemesDir}/${themeId}${suffix}`, { force: true }),
+          { discard: true },
+        ).pipe(
+          Effect.ensuring(refresh),
+          Effect.mapError(
+            (cause) => new EnvironmentThemeRefusedError({ themeId, problem: NOT_REMOVED, cause }),
+          ),
+        );
+      }),
+    );
+  });
+
   const read: EnvironmentThemeService["Service"]["read"] = Effect.fn(
     "EnvironmentThemeService.read",
   )(function* (themeId) {
@@ -510,6 +559,8 @@ const make = Effect.gen(function* () {
     current: Effect.map(refresh, (state) => state.themes),
     read,
     apply,
+    save,
+    remove,
     get streamChanges() {
       return Stream.unwrap(
         Effect.gen(function* () {

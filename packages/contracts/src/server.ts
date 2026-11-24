@@ -677,6 +677,25 @@ export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boole
   );
 }
 
+export const EnvironmentThemeSaveInput = Schema.Struct({
+  themeId: EnvironmentThemeId,
+  theme: EnvironmentThemeFile,
+});
+export type EnvironmentThemeSaveInput = typeof EnvironmentThemeSaveInput.Type;
+
+export const EnvironmentThemeRemoveInput = Schema.Struct({ themeId: EnvironmentThemeId });
+export type EnvironmentThemeRemoveInput = typeof EnvironmentThemeRemoveInput.Type;
+
+/** The server refused to save or remove a published theme; `detail` says why. */
+export class EnvironmentThemeError extends Schema.TaggedError<EnvironmentThemeError>()(
+  "EnvironmentThemeError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 /** tailnet means this machine's Tailscale interface; other private addresses are lan. */
 export const ServerDirectEndpointKind = Schema.Literals(["lan", "tailnet"]);
 export type ServerDirectEndpointKind = typeof ServerDirectEndpointKind.Type;

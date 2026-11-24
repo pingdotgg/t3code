@@ -326,6 +326,7 @@ export function ThemeEditorPanel({
   open,
   onOpenChange,
   onSaved,
+  onSaveToEnvironment,
   editingTheme,
   initialAppearance,
   seedTheme,
@@ -341,6 +342,11 @@ export function ThemeEditorPanel({
       mergedAppearance?: ThemeAppearance;
     },
   ) => boolean;
+  /**
+   * Set when `editingTheme` is published by the environment: saves go there instead of this
+   * browser's themes. Resolves false, or rejects with a reason, when the save failed.
+   */
+  onSaveToEnvironment?: ((theme: ThemeDefinition) => Promise<boolean>) | undefined;
   editingTheme: ThemeDefinition | null;
   initialAppearance: ThemeAppearance;
   seedTheme?: ThemeDefinition | null;
@@ -363,6 +369,7 @@ export function ThemeEditorPanel({
   const [css, setCss] = useState("");
   const [cssOpen, setCssOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSavingToEnvironment, setIsSavingToEnvironment] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [roleQuery, setRoleQuery] = useState("");
   const [isInspecting, setIsInspecting] = useState(false);
@@ -425,8 +432,9 @@ export function ThemeEditorPanel({
 
   const nameTargetId = themeIdFromName(name);
   const normalizedName = name.trim().toLowerCase();
+  // A published theme keeps its id, so it never merges into a saved theme.
   const mergeTarget =
-    normalizedName === ""
+    normalizedName === "" || onSaveToEnvironment
       ? null
       : (getCustomThemes().find(
           (theme) =>
@@ -775,6 +783,28 @@ export function ThemeEditorPanel({
     setShouldRegenerateGuidedColors(false);
   };
 
+  const saveToEnvironment = (
+    save: (theme: ThemeDefinition) => Promise<boolean>,
+    editedTheme: ThemeDefinition,
+  ) => {
+    setIsSavingToEnvironment(true);
+    void save(editedTheme).then(
+      (saved) => {
+        setIsSavingToEnvironment(false);
+        if (!saved) {
+          setError(gt("Could not save the theme."));
+          return;
+        }
+        onSaved(editedTheme, { created: false });
+        onOpenChange(false);
+      },
+      (cause: unknown) => {
+        setIsSavingToEnvironment(false);
+        setError(cause instanceof Error ? cause.message : gt("Could not save the theme."));
+      },
+    );
+  };
+
   const handleSubmit = () => {
     if (!name.trim()) {
       setError(gt("Name your theme first."));
@@ -842,7 +872,7 @@ export function ThemeEditorPanel({
       } else if (editingTheme) {
         const baseAppearance = editingTheme.appearance;
         const variantAppearance = baseAppearance === "light" ? "dark" : "light";
-        savedTheme = updateCustomTheme({
+        const editedTheme: ThemeDefinition = {
           ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: editingTheme.id,
@@ -856,7 +886,12 @@ export function ThemeEditorPanel({
             ...(cssForSave ? { css: cssForSave } : {}),
           }),
           ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
-        });
+        };
+        if (onSaveToEnvironment) {
+          saveToEnvironment(onSaveToEnvironment, editedTheme);
+          return;
+        }
+        savedTheme = updateCustomTheme(editedTheme);
       } else if (mergeTarget) {
         if (takenAppearances.includes(activeAppearance)) {
           setError(
@@ -1309,7 +1344,11 @@ export function ThemeEditorPanel({
             <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
               <T>Cancel</T>
             </Button>
-            <Button disabled={!name.trim()} size="sm" onClick={handleSubmit}>
+            <Button
+              disabled={!name.trim() || isSavingToEnvironment}
+              size="sm"
+              onClick={handleSubmit}
+            >
               {isEditing ? (
                 mergeTarget ? (
                   gt("Merge into “{label}”", { label: mergeTarget.label })
