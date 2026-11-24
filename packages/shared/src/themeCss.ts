@@ -109,5 +109,5 @@ export const THEME_GUIDE = [
   ...THEME_CSS_HOOKS.map((hook) => `- ${hook.selector}: ${hook.styles}`),
   "",
   "You cannot see the result. Make small changes, then ask the user how it looks.",
-  "To undo, set `t3-code`, the stock T3 Code theme, or another built-in theme. An empty `current` means the stock theme or no environment theme.",
+  "To undo, set the theme that was `current` before. When that was empty, set `kompas`, the app's own look, with `appearance` `system`.",
 ].join("\n");
