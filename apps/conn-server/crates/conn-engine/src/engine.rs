@@ -1418,6 +1418,20 @@ impl Engine for SqliteEngine {
         })
     }
 
+    fn subagent_rows(&self, thread_id: &str) -> BoxFuture<'_, Result<Vec<Value>, String>> {
+        let thread_id = thread_id.to_owned();
+        Box::pin(async move {
+            self.inner
+                .db(move |store| -> Result<Vec<Value>, String> {
+                    let tx = store.tx()?;
+                    let rows = tx.entities(&thread_id, "subagents");
+                    tx.rollback();
+                    rows
+                })
+                .await
+        })
+    }
+
     fn open_remote_tasks(
         &self,
         limit: usize,

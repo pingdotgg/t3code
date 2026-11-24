@@ -330,7 +330,7 @@ pub struct McpService {
     /// kept a minute, at most 1,000 threads.
     forges: Mutex<std::collections::HashMap<String, (bool, std::time::Instant)>>,
     /// Followers of tasks that run in linked environments.
-    remote: remote_tasks::Followers,
+    remote: Arc<remote_tasks::Followers>,
 }
 
 impl std::fmt::Debug for McpService {
@@ -441,7 +441,7 @@ impl McpService {
             upload_owners: Mutex::new(tools::attachments::UploadOwners::default()),
             handoffs: Mutex::new(std::collections::HashSet::new()),
             forges: Mutex::new(std::collections::HashMap::new()),
-            remote: remote_tasks::Followers::default(),
+            remote: Arc::default(),
         })
     }
 

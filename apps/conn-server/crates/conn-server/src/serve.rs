@@ -507,6 +507,7 @@ pub async fn serve_with_instances(
     }
 
     let devices = state.deps.devices.clone();
+    let mcp = state.deps.mcp.clone();
     let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
     let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
     let listener = axum::serve::ListenerExt::tap_io(listener, |stream| {
@@ -528,6 +529,9 @@ pub async fn serve_with_instances(
             eprintln!("conn-server: {signal}, stopping");
             // Mark shutdown before draining: provider exits must leave runs for restart recovery.
             engine.begin_shutdown();
+            if let Some(mcp) = &mcp {
+                mcp.begin_stopping_remote_tasks();
+            }
             let _ = stop_tx.send(true);
             // Open WebSockets keep the graceful stop waiting; give them a moment, no more.
             let _ = tokio::time::timeout(Duration::from_secs(2), &mut server).await;
@@ -539,6 +543,12 @@ pub async fn serve_with_instances(
     // Shells and provider processes end with their whole process groups, so nothing they
     // started outlives the server.
     terminals.shutdown().await;
+    // Remote task followers stop before the engine closes, so none settles a task or wakes a
+    // parent during shutdown. Unbounded: a follower stops at its next await, and a write the
+    // engine already took must commit before the engine closes.
+    if let Some(mcp) = &mcp {
+        mcp.stop_remote_tasks().await;
+    }
     engine.shutdown().await;
     preview.shutdown().await;
     // Device hubs and agent daemons stop, here and on SSH hosts, as T3's finalizers do;
