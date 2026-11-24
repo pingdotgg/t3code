@@ -7,10 +7,8 @@ import {
   resolveWorkEntryToolPresentation,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
-  workEntriesViewedImagePaths,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
-  workEntryViewedImagePath,
 } from "./presentation.js";
 
 function commandItem(
@@ -204,41 +202,5 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "another-server", tool: "preview_click" },
       }),
     ).toBeNull();
-  });
-});
-
-describe("workEntryViewedImagePath", () => {
-  it("omits failed image reads from viewed-image previews", () => {
-    const read = (
-      toolLifecycleStatus: "completed" | "failed",
-      filePath: string,
-    ): WorkLogPresentationEntry => ({
-      id: `read-${toolLifecycleStatus}-${filePath}`,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      label: "Read",
-      tone: "tool",
-      itemType: "dynamic_tool",
-      toolLifecycleStatus,
-      viewedImagePath: filePath,
-      detail: filePath,
-    });
-
-    const ok = read("completed", "/repo/ok.png");
-    const missing = read("failed", "/repo/missing.png");
-    const detailOnlyFailed: WorkLogPresentationEntry = {
-      id: "read-failed-detail",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      label: "Read",
-      tone: "tool",
-      itemType: "dynamic_tool",
-      toolLifecycleStatus: "failed",
-      requestKind: "file-read",
-      detail: "/repo/missing-detail.png",
-    };
-
-    expect(workEntryViewedImagePath(ok)).toBe("/repo/ok.png");
-    expect(workEntryViewedImagePath(missing)).toBeNull();
-    expect(workEntryViewedImagePath(detailOnlyFailed)).toBeNull();
-    expect(workEntriesViewedImagePaths([ok, missing, detailOnlyFailed])).toEqual(["/repo/ok.png"]);
   });
 });
