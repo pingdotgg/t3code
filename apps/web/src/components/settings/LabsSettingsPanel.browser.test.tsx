@@ -8,6 +8,7 @@ import type { ScopedSettingsPatch } from "./scopedSettings";
 
 const state = vi.hoisted(() => ({
   workflowsEnabled: true,
+  mixed: false,
   updateSettings: vi.fn<(patch: ScopedSettingsPatch) => void>(),
 }));
 
@@ -17,7 +18,7 @@ vi.mock(import("./useScopedSettings"), async (original) => ({
     ...DEFAULT_UNIFIED_SETTINGS,
     workflowsEnabled: state.workflowsEnabled,
   })) as never,
-  useScopedSettingsMixed: () => false,
+  useScopedSettingsMixed: () => state.mixed,
   useUpdateScopedSettings: () => state.updateSettings,
 }));
 vi.mock(import("./settingsLayout"), async (original) => ({
@@ -30,6 +31,7 @@ import { WorkflowSkippedRunsRow } from "./LabsSettingsPanel";
 describe("WorkflowSkippedRunsRow", () => {
   it("saves the number of skipped runs kept when the field is left", async () => {
     state.workflowsEnabled = true;
+    state.mixed = false;
     state.updateSettings.mockReset();
     await using _screen = await render(<WorkflowSkippedRunsRow />, { router: false });
 
@@ -39,6 +41,20 @@ describe("WorkflowSkippedRunsRow", () => {
     await userEvent.type(field, "50");
     await userEvent.tab();
     expect(state.updateSettings).toHaveBeenCalledWith({ workflowSkippedRunsKept: 50 });
+  });
+
+  it("saves to every target when they hold different numbers, even the first one's", async () => {
+    state.workflowsEnabled = true;
+    state.mixed = true;
+    state.updateSettings.mockReset();
+    await using _screen = await render(<WorkflowSkippedRunsRow />, { router: false });
+
+    const field = page.getByRole("textbox", { name: "Skipped runs kept" });
+    await expect.element(field).toHaveValue("");
+    await expect.element(field).toHaveAttribute("placeholder", "Mixed");
+    await userEvent.type(field, "500");
+    await userEvent.tab();
+    expect(state.updateSettings).toHaveBeenCalledWith({ workflowSkippedRunsKept: 500 });
   });
 
   it("shows nothing while workflows are off", async () => {

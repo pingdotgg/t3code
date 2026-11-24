@@ -620,3 +620,37 @@ it.effect("keeps each workflow's latest skipped runs and deletes older ones with
     }),
   ),
 );
+
+it.effect("prunes past the kept number when runs share a start time, and tells watchers once", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      // A webhook burst: every run starts in the same instant.
+      for (const runId of ["a", "b", "c", "d"]) {
+        yield* store.runStarted({
+          runId,
+          workflow: "intake",
+          version: 1,
+          engineTag: "intake@1",
+          idempotencyKey: runId,
+          input: {},
+        });
+        yield* store.runEnded(runId, "skipped", "only a ping", null);
+        yield* store.enginePruned(runId);
+      }
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const told = yield* PubSub.subscribe(store.changes);
+          assert.equal(yield* store.pruneSkipped(2, 100), 2);
+          assert.equal(yield* PubSub.remaining(told), 1);
+          assert.equal(yield* store.pruneSkipped(2, 100), 0);
+          assert.equal(yield* PubSub.remaining(told), 1);
+        }),
+      );
+      assert.deepStrictEqual((yield* store.runs(undefined)).map((run) => run.run_id).toSorted(), [
+        "c",
+        "d",
+      ]);
+    }),
+  ),
+);

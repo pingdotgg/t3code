@@ -237,6 +237,7 @@ export function WorkflowSkippedRunsRow() {
   const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["workflowSkippedRunsKept"]);
   const gt = useGT();
   if (!settings.workflowsEnabled) return null;
   const kept = settings.workflowSkippedRunsKept;
@@ -249,7 +250,7 @@ export function WorkflowSkippedRunsRow() {
         "How many skipped runs each workflow keeps in its history. Older skipped runs are deleted; runs that did something are always kept.",
       )}
       resetAction={
-        kept !== DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT ? (
+        mixed || kept !== DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT ? (
           <SettingResetButton
             ariaLabel={gt("Reset skipped runs kept to default")}
             onClick={() =>
@@ -259,22 +260,26 @@ export function WorkflowSkippedRunsRow() {
         ) : null
       }
       control={
-        <NumberField
-          value={kept}
-          min={0}
-          max={MAX_WORKFLOW_SKIPPED_RUNS_KEPT}
-          format={NO_GROUPING}
-          size="sm"
-          className="w-24"
-          onValueCommitted={(value) => {
-            if (value === null || !Number.isInteger(value) || value === kept) return;
-            updateSettings({ workflowSkippedRunsKept: value });
-          }}
-        >
-          <NumberFieldGroup>
-            <NumberFieldInput aria-label={gt("Skipped runs kept")} />
-          </NumberFieldGroup>
-        </NumberField>
+        <div className="w-24">
+          <NumberField
+            value={mixed ? null : kept}
+            min={0}
+            max={MAX_WORKFLOW_SKIPPED_RUNS_KEPT}
+            format={NO_GROUPING}
+            size="sm"
+            onValueCommitted={(value) => {
+              if (value === null || !Number.isInteger(value) || (!mixed && value === kept)) return;
+              updateSettings({ workflowSkippedRunsKept: value });
+            }}
+          >
+            <NumberFieldGroup>
+              <NumberFieldInput
+                aria-label={gt("Skipped runs kept")}
+                placeholder={mixed ? gt("Mixed") : undefined}
+              />
+            </NumberFieldGroup>
+          </NumberField>
+        </div>
       }
     />
   );

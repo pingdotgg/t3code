@@ -576,6 +576,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "workflow-skipped-runs",
     title: msg("Skipped runs kept"),
     to: "/settings/labs",
+    // Shown only while workflows are on, so search lands on the switch that turns them on.
+    targetId: "workflows-beta",
     scope: "environment",
     searchTerms: [msg("workflow history retention delete old skipped runs webhook")],
   },
