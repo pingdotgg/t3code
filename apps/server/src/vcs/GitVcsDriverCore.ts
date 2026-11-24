@@ -193,7 +193,6 @@ class BaseBranchCacheKey extends Data.Class<{
   cwd: string;
   refName: string;
   allowRemoteOfCurrent: boolean;
-  inputsStamp: string;
 }> {}
 
 class GitRefsSnapshotCacheKey extends Data.Class<{
@@ -2574,8 +2573,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     },
   );
+  const readCurrentBaseBranchInputsStamp = Effect.fnUntraced(function* (cwd: string) {
+    const gitCommonDir = (yield* resolveRepositoryPaths(cwd).pipe(Effect.orElseSucceed(() => null)))
+      ?.gitCommonDir;
+    if (gitCommonDir === undefined) return null;
+    return yield* readBaseBranchInputsStamp(cwd, gitCommonDir).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+  });
+  // The stamp lives in the value, not the key: a key per stamp would leave every superseded
+  // stamp's entry behind until capacity evicts it, since TTL only expires a key that is read again.
   const baseBranchCache = yield* Cache.makeWith(
     Effect.fnUntraced(function* (key: BaseBranchCacheKey) {
+      const inputsStamp = yield* readCurrentBaseBranchInputsStamp(key.cwd);
       const trace = { dependsOnRemoteOfCurrent: false, degraded: false };
       const base = yield* findBaseBranchForNoUpstream(
         key.cwd,
@@ -2583,7 +2593,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { allowRemoteOfCurrent: key.allowRemoteOfCurrent },
         trace,
       );
-      return { base, ...trace };
+      return { base, inputsStamp, ...trace };
     }),
     {
       capacity: 2_048,
@@ -2599,28 +2609,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       refName: string,
       options?: { readonly allowRemoteOfCurrent?: boolean },
     ) {
-      const gitCommonDir = (yield* resolveRepositoryPaths(cwd).pipe(
-        Effect.orElseSucceed(() => null),
-      ))?.gitCommonDir;
-      const inputsStamp =
-        gitCommonDir === undefined
-          ? null
-          : yield* readBaseBranchInputsStamp(cwd, gitCommonDir).pipe(
-              Effect.orElseSucceed(() => null),
-            );
-      if (inputsStamp === null) {
-        return yield* findBaseBranchForNoUpstream(cwd, refName, options);
-      }
-      const key = {
-        cwd: normalizeRepositoryPathsCacheKey(cwd),
-        refName,
-        inputsStamp,
-      };
+      const key = { cwd: normalizeRepositoryPathsCacheKey(cwd), refName };
       const allowRemoteOfCurrent = options?.allowRemoteOfCurrent === true;
       const cacheKey = new BaseBranchCacheKey({ ...key, allowRemoteOfCurrent });
+      const cached = yield* Cache.getOption(baseBranchCache, cacheKey);
+      if (Option.isSome(cached)) {
+        const inputsStamp = yield* readCurrentBaseBranchInputsStamp(cwd);
+        if (inputsStamp !== null && inputsStamp === cached.value.inputsStamp) {
+          return cached.value.base;
+        }
+        yield* Cache.invalidate(baseBranchCache, cacheKey);
+      }
       const entry = yield* Cache.get(baseBranchCache, cacheKey);
       // A fallback forced by a failed remote lookup must not outlive the failure.
-      if (entry.degraded) {
+      if (entry.degraded || entry.inputsStamp === null) {
         yield* Cache.invalidate(baseBranchCache, cacheKey);
       } else if (!entry.dependsOnRemoteOfCurrent) {
         yield* Cache.set(
