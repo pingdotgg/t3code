@@ -422,6 +422,9 @@ if is_true "${T3CODE_NIGHTLY_SKIP_BUILD:-}"; then
   [ -f "$dmg_path" ] || fail "T3CODE_NIGHTLY_SKIP_BUILD is set but $dmg_path does not exist"
   say "Skipping the build; using the existing DMG"
 else
+  say "Installing dependencies"
+  (cd "$REPO_ROOT" && vp i) || fail "dependency install failed"
+
   # Official Nightly carries the production T3 Connect identifiers. A checkout
   # without .env would otherwise build with cloud features disabled.
   if [ ! -f "$REPO_ROOT/.env" ] && [ ! -f "$REPO_ROOT/.env.local" ]; then
