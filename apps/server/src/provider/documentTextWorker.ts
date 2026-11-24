@@ -5,6 +5,7 @@ import * as NodeUtil from "node:util";
 import { characterEntities } from "character-entities";
 import { SaxesParser } from "saxes";
 import * as Yauzl from "yauzl";
+import { terminalOutputCollapseRedraws } from "@t3tools/shared/terminalOutput";
 
 const MAX_INPUT = 16 * 1024 * 1024;
 const MAX_EXPANDED = 32 * 1024 * 1024;
@@ -185,10 +186,14 @@ function hasInlineTab(node: XmlNode, names: readonly string[]): boolean {
     (names.includes(node.name) || children(node).some((child) => hasInlineTab(child, names)))
   );
 }
-function* all(node: XmlNode, name: string | readonly string[]): Generator<XmlNode, void> {
+function* all(
+  node: XmlNode,
+  name: string | readonly string[],
+  skip: readonly string[] = [],
+): Generator<XmlNode, void> {
   for (const child of children(node)) {
     if (typeof name === "string" ? child.name === name : name.includes(child.name)) yield child;
-    else yield* all(child, name);
+    else if (!skip.includes(child.name)) yield* all(child, name, skip);
   }
 }
 function* text(node: XmlNode): Generator<TextPart, void> {
@@ -231,7 +236,8 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
     else if (["br", "line-break", "cr"].includes(child.name)) yield "\n";
     else if (["tbl", "table"].includes(child.name)) yield* table(child);
     else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
-      const style = all(child, "pStyle").next().value?.attrs.val ?? "";
+      const style =
+        all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value?.attrs.val ?? "";
       const level =
         child.name === "h"
           ? Number(child.attrs["outline-level"]) || 1
@@ -422,9 +428,10 @@ function* notebook(source: string): Generator<string, void> {
         if (typeof line === "string") yield line;
       }
   }
-  function outputText(value: unknown): string {
-    // Notebook fragments can split a terminal escape sequence.
-    return NodeUtil.stripVTControlCharacters([...lines(value)].join(""));
+  function outputText(value: unknown, stream = false): string {
+    // Notebook fragments can split a terminal escape sequence or a CRLF pair.
+    const plain = NodeUtil.stripVTControlCharacters([...lines(value)].join(""));
+    return stream ? terminalOutputCollapseRedraws(plain) : plain;
   }
   for (const [index, cell] of book.cells.entries()) {
     if (index >= 10_000) throw new Truncation("Notebook cell limit");
@@ -437,7 +444,8 @@ function* notebook(source: string): Generator<string, void> {
       yield "\nOutput:\n";
       for (const output of cell.outputs) {
         if (!output || typeof output !== "object") continue;
-        if ("text" in output) yield outputText(output.text);
+        if ("text" in output)
+          yield outputText(output.text, "output_type" in output && output.output_type === "stream");
         else if (
           "data" in output &&
           output.data &&

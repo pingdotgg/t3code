@@ -505,8 +505,23 @@ describe("question answer paths", () => {
             outputs: [
               { output_type: "stream", name: "stdout", text: "\u001b[32m301\u001b[0m\n" },
               {
+                output_type: "stream",
+                name: "stderr",
+                text: [
+                  "\r\u001b[32m 10%|#         |\u001b[0m",
+                  "\r\u001b[32m100%|##########|\u001b[0m\n",
+                  "done\r",
+                  "\n",
+                ],
+              },
+              {
                 output_type: "display_data",
                 data: { "text/plain": ["\u001b[", "33m42\u001b[0m\n", "Next line"] },
+                metadata: {},
+              },
+              {
+                output_type: "display_data",
+                data: { "text/plain": "raw\rvalue" },
                 metadata: {},
               },
               {
@@ -534,7 +549,10 @@ describe("question answer paths", () => {
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Vessel: Larkspur");
       const extracted = NodeFS.readFileSync(`${path}.txt`, "utf8");
       expect(extracted).toContain("Output:\n301\n");
+      expect(extracted).toContain("100%|##########|\ndone\n");
+      expect(extracted).not.toContain("10%|#");
       expect(extracted).toContain("42\nNext line");
+      expect(extracted).toContain("raw\rvalue");
       expect(extracted).toContain(`## Cell 3 (raw)\n${rawSource}`);
       expect(extracted).toContain(
         "ZeroDivisionError: division by zero\nCell In[1], line 1\n----> 1 1 / 0\nZeroDivisionError: division by zero",
@@ -908,13 +926,13 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "word/document.xml":
-              '<w:document xmlns:w="urn:w"><w:body><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Report &amp; totals</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>North</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>12</w:t></w:r></w:p><w:p><w:r><w:t>34</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:sdt><w:sdtPr><w:alias w:val="Title"/></w:sdtPr><w:sdtContent><w:tc><w:p><w:r><w:t>Annual report</w:t></w:r></w:p></w:tc></w:sdtContent></w:sdt><w:tc><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Neighbor</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>',
+              '<w:document xmlns:w="urn:w" xmlns:wps="urn:wps"><w:body><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Report &amp; totals</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>North</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>12</w:t></w:r></w:p><w:p><w:r><w:t>34</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:sdt><w:sdtPr><w:alias w:val="Title"/></w:sdtPr><w:sdtContent><w:tc><w:p><w:r><w:t>Annual report</w:t></w:r></w:p></w:tc></w:sdtContent></w:sdt><w:tc><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Neighbor</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:pPrChange><w:pPr><w:pStyle w:val="Heading2"/></w:pPr></w:pPrChange></w:pPr><w:r><w:t>Demoted</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Intro. </w:t></w:r><w:r><w:drawing><wps:wsp><wps:txbx><w:txbxContent><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Box title</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></w:r></w:p></w:body></w:document>',
           },
           expected: [
             "## Report & totals",
             "North\t12 34",
             "Annual report\tDraft",
-            "Before Inner After\tNeighbor\t\u2011\n\u2011",
+            "Before Inner After\tNeighbor\t\u2011\n\u2011\nDemoted\nIntro. # Box title",
           ],
         },
         {
@@ -1585,6 +1603,33 @@ describe("question answer paths", () => {
         notebookPath + ".txt",
       );
       expect(NodeFS.readFileSync(notebookPath + ".txt", "utf8")).toBe(notebookLimited);
+      const progressPath = NodePath.join(config.attachmentsDir, "progress.ipynb");
+      NodeFS.writeFileSync(
+        progressPath,
+        JSON.stringify({
+          cells: [
+            {
+              cell_type: "code",
+              source: "train()",
+              outputs: [
+                {
+                  output_type: "stream",
+                  name: "stderr",
+                  text: [`${"  1%|#               |\r".repeat(50_000)}100%|################|\n`],
+                },
+              ],
+            },
+            { cell_type: "markdown", source: "Later cell survived" },
+          ],
+        }),
+      );
+      const progressExtracted = yield* Effect.promise(() =>
+        extractDocumentText(progressPath, ".ipynb"),
+      );
+      expect(progressExtracted).toContain("100%|################|");
+      expect(progressExtracted).not.toContain("1%|#");
+      expect(progressExtracted).toContain("Later cell survived");
+      expect(progressExtracted).not.toContain("[Extracted text truncated");
       const errorPath = NodePath.join(config.attachmentsDir, "limited-error.ipynb");
       NodeFS.writeFileSync(
         errorPath,
