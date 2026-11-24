@@ -3628,6 +3628,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerAttachButton = showComposerAttachAction ? (
     <ComposerAttachButton onOpenPicker={() => composerAttachInputRef.current?.click()} />
   ) : null;
+  // Kept out of the JSX: inline, its read of `prompt` shares the footer's compiler cache scope,
+  // so the primary actions re-render on every keystroke.
+  const sendAlternateShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "composer.sendAlternate",
+    {
+      context: {
+        composerFocus: true,
+        draftThreadRoute: routeKind === "draft",
+        turnRunning: true,
+        composerRequiresModifier: composerRequiresModifier(settings.sendShortcut, prompt),
+      },
+    },
+  );
   return (
     <form
       ref={composerFormRef}
@@ -4090,21 +4104,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     runId={activeThread?.runtime?.activeRunId ?? null}
                     followUpBehavior={followUpBehavior}
                     canSteer={canSteer}
-                    alternateShortcutLabel={shortcutLabelForCommand(
-                      keybindings,
-                      "composer.sendAlternate",
-                      {
-                        context: {
-                          composerFocus: true,
-                          draftThreadRoute: routeKind === "draft",
-                          turnRunning: true,
-                          composerRequiresModifier: composerRequiresModifier(
-                            settings.sendShortcut,
-                            prompt,
-                          ),
-                        },
-                      },
-                    )}
+                    alternateShortcutLabel={sendAlternateShortcutLabel}
                     voiceInputActive={voiceInputActive}
                     isSendBusy={isSendBusy}
                     isSendHeld={composerSendHeld}
