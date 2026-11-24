@@ -1637,6 +1637,26 @@ async fn a_sparse_worktree_leaves_out_what_t3_json_excludes() {
     assert!(!sparse.join("excluded/asset").exists());
     assert!(sparse.join("README.md").exists() && sparse.join("src/lib.rs").exists());
 
+    // `parseT3ProjectFile` is lenient JSON: comments and trailing commas are fine.
+    write(
+        &fx.work,
+        "t3.json",
+        "{\n  // keep assets out\n  \"worktreeSparsePatternsPath\": \"./patterns\",\n}\n",
+    );
+    commit_all(&fx.work, "jsonc t3.json");
+    let jsonc = create("probe-jsonc").await.unwrap().path;
+    assert!(!jsonc.join("excluded/asset").exists());
+
+    // One invalid field rejects the whole file, so the checkout is full.
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSparsePatternsPath":"./patterns","worktreeSubmodules":"bogus"}"#,
+    );
+    commit_all(&fx.work, "invalid t3.json");
+    let full = create("probe-invalid").await.unwrap().path;
+    assert!(full.join("excluded/asset").exists());
+
     write(
         &fx.work,
         "t3.json",
@@ -1693,6 +1713,26 @@ async fn submodule_mode_follows_the_setting_then_t3_json() {
     );
     assert_eq!(
         mode(Some("recursive")).await,
+        Some((Submodules::Recursive, Origin::Settings))
+    );
+    write(
+        &fx.work,
+        "t3.json",
+        "{\n  /* a setup script fills it */\n  \"worktreeSubmodules\": \"none\",\n}\n",
+    );
+    commit_all(&fx.work, "jsonc t3.json");
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::None, Origin::ProjectFile))
+    );
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSubmodules":"none","scripts":[{"name":" ","command":"x"}]}"#,
+    );
+    commit_all(&fx.work, "invalid t3.json");
+    assert_eq!(
+        mode(None).await,
         Some((Submodules::Recursive, Origin::Settings))
     );
     worktree::update_submodules(&fx.work, Submodules::None)

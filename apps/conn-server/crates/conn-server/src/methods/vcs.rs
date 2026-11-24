@@ -302,15 +302,12 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
                 })
                 .await
                 .map_err(|e| git_failure(&e))?;
-                // `projectSettingsFor`: the project whose workspace root is `cwd`.
+                // `projectSettingsFor`: the project whose workspace root is `cwd` as given.
                 let project_id = match &engine {
                     Some(engine) => engine.projects_snapshot().await.ok().and_then(|projects| {
-                        let wanted = conn_vcs::hub::normalize(&input.cwd);
                         projects.into_iter().find_map(|p| {
                             (p["deletedAt"].is_null()
-                                && p["workspaceRoot"]
-                                    .as_str()
-                                    .is_some_and(|r| conn_vcs::hub::normalize(r) == wanted))
+                                && p["workspaceRoot"].as_str() == Some(input.cwd.as_str()))
                             .then(|| p["id"].as_str().map(str::to_owned))
                             .flatten()
                         })
@@ -615,6 +612,107 @@ mod tests {
                 "{tag} read outside every project: {outside:?}"
             );
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `projectSettingsFor` finds the project by the `cwd` string as given, as
+    /// `findActiveByWorkspaceRoot` does: a symlink to the root does not take its override.
+    #[tokio::test(flavor = "current_thread")]
+    async fn create_worktree_takes_the_override_of_the_exact_workspace_root() {
+        let root = std::env::temp_dir().join(format!(
+            "conn-server-wt-override-{}",
+            crate::auth::random_hex(6)
+        ));
+        std::fs::create_dir_all(root.join("project")).unwrap();
+        let root = std::fs::canonicalize(&root).unwrap();
+        let project = root.join("project");
+        git(&project, &["init", "-q", "-b", "main"]);
+        std::fs::write(
+            project.join(".gitmodules"),
+            "[submodule \"module\"]\n\tpath = module\n\turl = ../missing\n",
+        )
+        .unwrap();
+        git(&project, &["add", "."]);
+        git(&project, &["commit", "-qm", "init"]);
+        let head = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&project)
+            .output()
+            .unwrap();
+        let head = String::from_utf8(head.stdout).unwrap();
+        let gitlink = format!("160000,{},module", head.trim());
+        git(
+            &project,
+            &["update-index", "--add", "--cacheinfo", &gitlink],
+        );
+        git(&project, &["commit", "-qm", "module"]);
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(&project, &alias).unwrap();
+
+        let engine: Arc<dyn conn_engine::Engine> = Arc::new(
+            conn_engine::SqliteEngine::open(conn_engine::EngineConfig::new(
+                root.join("engine.sqlite"),
+            ))
+            .unwrap(),
+        );
+        let environment = Arc::new(
+            Environment::load(
+                &root.join("state"),
+                None,
+                project.clone(),
+                Default::default(),
+            )
+            .unwrap(),
+        );
+        environment
+            .settings
+            .update(
+                json!({"projectSettingsOverrides": {"p1": {"worktreeSubmodules": "none"}}}),
+                None,
+            )
+            .unwrap();
+        let deps = Deps {
+            engine: Some(engine),
+            environment: Some(environment),
+            ..Deps::default()
+        };
+        let mut table = MethodTable::new();
+        register(&mut table, &deps);
+        super::super::projects::register(&mut table, &deps);
+        unary(
+            &table,
+            "projects.mutate",
+            json!({"type": "project.create", "commandId": "c1", "projectId": "p1",
+                   "title": "Project", "workspaceRoot": project.to_string_lossy()}),
+        )
+        .await
+        .unwrap();
+        // `git submodule init` records the URL; `none` never runs it.
+        let initialized = || {
+            Command::new("git")
+                .args(["config", "--get", "submodule.module.url"])
+                .current_dir(&project)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        };
+        let create = |cwd: &Path, branch: &str| {
+            unary(
+                &table,
+                "vcs.createWorktree",
+                json!({ "cwd": cwd.to_string_lossy(), "refName": "main",
+                        "newRefName": branch, "path": null }),
+            )
+        };
+
+        create(&project, "wt/exact").await.unwrap();
+        assert!(!initialized(), "the project's override is none");
+        create(&alias, "wt/alias").await.unwrap();
+        assert!(
+            initialized(),
+            "an alias is no project, so submodules are recursive"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

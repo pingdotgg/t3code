@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -245,30 +246,102 @@ pub async fn create_worktree(input: &CreateWorktree) -> VcsResult<Worktree> {
     })
 }
 
-/// `t3.json` at `rev`, or `None` when it is missing or not a JSON object (T3 then checks out
-/// every file and initializes submodules recursively).
-async fn project_file(cwd: &Path, rev: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+/// `t3.json` at `rev` as `parseT3ProjectFile` reads it: lenient JSON that decodes as a whole,
+/// else `None` (T3 then checks out every file and initializes submodules recursively).
+async fn project_file(cwd: &Path, rev: &str) -> Option<ProjectFile> {
     let spec = format!("{rev}:t3.json");
     let text = repo::optional_text(git(OPERATION, cwd, ["show", spec.as_str()]))
         .await
         .ok()??;
-    match serde_json::from_str(&text) {
-        Ok(serde_json::Value::Object(file)) => Some(file),
-        _ => None,
+    conn_support::json::parse_lenient(&text)
+}
+
+/// `T3ProjectFile`. Fields Conn does not use are decoded only so an invalid one rejects the
+/// file, as in T3; unknown keys are ignored.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[expect(dead_code, reason = "decoded only to validate the file")]
+struct ProjectFile {
+    #[serde(rename = "$schema", default, deserialize_with = "present")]
+    schema: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    icon_path: Option<Trimmed<PATH_MAX>>,
+    #[serde(default, deserialize_with = "present")]
+    default_thread_env_mode: Option<conn_contract::ThreadEnvMode>,
+    #[serde(default, deserialize_with = "present")]
+    worktree_submodules: Option<Submodules>,
+    #[serde(default, deserialize_with = "present")]
+    worktree_sparse_patterns_path: Option<Trimmed<PATH_MAX>>,
+    #[serde(default, deserialize_with = "scripts")]
+    scripts: Option<Vec<ProjectFileScript>>,
+}
+
+/// `T3ProjectFileScript`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[expect(dead_code, reason = "decoded only to validate the file")]
+struct ProjectFileScript {
+    name: Trimmed<{ usize::MAX }>,
+    command: Trimmed<{ usize::MAX }>,
+    #[serde(default, deserialize_with = "present")]
+    icon: Option<conn_contract::ProjectScriptIcon>,
+    #[serde(default, deserialize_with = "present")]
+    run_on_worktree_create: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    run_on_settle: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    stop_on_settle: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    r#async: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    preview_url: Option<Trimmed<{ usize::MAX }>>,
+    #[serde(default, deserialize_with = "present")]
+    auto_open_preview: Option<bool>,
+}
+
+const PATH_MAX: usize = 512;
+
+/// `trimmedNonEmpty`: at most `MAX` UTF-16 units before trimming, not empty after.
+struct Trimmed<const MAX: usize>(String);
+
+impl<'de, const MAX: usize> Deserialize<'de> for Trimmed<MAX> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(d)?;
+        let trimmed = conn_support::text::js_trim(&raw);
+        if trimmed.is_empty() || raw.encode_utf16().count() > MAX {
+            return Err(serde::de::Error::custom(
+                "expected a trimmed non-empty string",
+            ));
+        }
+        Ok(Self(trimmed.to_owned()))
     }
+}
+
+/// `Schema.optionalKey`: the key may be missing, but `null` is not a value.
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
+}
+
+fn scripts<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Vec<ProjectFileScript>>, D::Error> {
+    let scripts = Vec::deserialize(d)?;
+    if scripts.len() > 50 {
+        return Err(serde::de::Error::custom("at most 50 scripts"));
+    }
+    Ok(Some(scripts))
 }
 
 /// `readWorktreeSparsePatterns`: the non-cone patterns named by `t3.json`'s
 /// `worktreeSparsePatternsPath` at `rev`, or `None` for a full checkout. A named file that
 /// is not in `rev` fails the worktree, so it never checks out everything by mistake.
 async fn sparse_patterns(cwd: &Path, rev: &str, ref_name: &str) -> VcsResult<Option<Vec<u8>>> {
-    let Some(named) = project_file(cwd, rev).await.and_then(|file| {
-        file.get("worktreeSparsePatternsPath")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-            .map(str::to_owned)
-    }) else {
+    let Some(Trimmed(named)) = project_file(cwd, rev)
+        .await
+        .and_then(|file| file.worktree_sparse_patterns_path)
+    else {
         return Ok(None);
     };
     // Git reads `<rev>:./path` from the working folder, so keep it repository-relative.
@@ -323,7 +396,8 @@ async fn sparse_checkout(path: &Path, workers: &str, patterns: Vec<u8>) -> VcsRe
 }
 
 /// `worktreeSubmodules`: how a new worktree fills its submodules.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Submodules {
     None,
     TopLevel,
@@ -378,11 +452,9 @@ pub async fn submodule_mode(
     if let Some(mode) = setting.and_then(Submodules::parse) {
         return Some((mode, Origin::Settings));
     }
-    let from_file = project_file(worktree, "HEAD").await.and_then(|file| {
-        file.get("worktreeSubmodules")
-            .and_then(serde_json::Value::as_str)
-            .and_then(Submodules::parse)
-    });
+    let from_file = project_file(worktree, "HEAD")
+        .await
+        .and_then(|file| file.worktree_submodules);
     Some(match from_file {
         Some(mode) => (mode, Origin::ProjectFile),
         None => (Submodules::Recursive, Origin::Settings),
