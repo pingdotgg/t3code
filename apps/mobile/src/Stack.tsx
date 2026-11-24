@@ -545,6 +545,7 @@ function NotFoundScreen() {
         <T>Route not found</T>
       </Text>
       <Pressable
+        accessibilityRole="button"
         style={returnHomeButtonStyle}
         onPress={() => navigation.dispatch(StackActions.replace("Home"))}
       >

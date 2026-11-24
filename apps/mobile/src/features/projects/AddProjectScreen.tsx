@@ -240,10 +240,15 @@ function ListRow(props: {
   readonly icon: ReactNode;
   readonly disabled?: boolean;
   readonly selected?: boolean;
+  readonly switchOn?: boolean;
   readonly isFirst?: boolean;
   readonly right?: ReactNode;
   readonly onPress?: () => void;
 }) {
+  const accessibilityRole =
+    props.switchOn !== undefined ? "switch" : props.selected !== undefined ? "radio" : "button";
+  const checked = props.switchOn ?? props.selected;
+  const accessibilityState = checked !== undefined ? { checked } : undefined;
   if (Platform.OS === "android") {
     return (
       <NavigationRow
@@ -254,8 +259,8 @@ function ListRow(props: {
         trailing={props.right}
         disabled={props.disabled}
         onPress={props.onPress}
-        accessibilityRole={props.selected !== undefined ? "radio" : "button"}
-        accessibilityState={props.selected !== undefined ? { checked: props.selected } : undefined}
+        accessibilityRole={accessibilityRole}
+        accessibilityState={accessibilityState}
       />
     );
   }
@@ -263,6 +268,8 @@ function ListRow(props: {
     <Pressable
       disabled={props.disabled}
       onPress={props.onPress}
+      accessibilityRole={accessibilityRole}
+      accessibilityState={accessibilityState}
       className={cn(
         "bg-grouped-card px-3.5 py-2.5 active:opacity-70",
         !props.isFirst && "border-t border-border-subtle",
@@ -1368,6 +1375,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
                   />
                 }
                 isFirst
+                switchOn={publishes}
                 right={
                   <ThemedSwitch
                     accessibilityLabel={gt("Create private repository on {provider}", {

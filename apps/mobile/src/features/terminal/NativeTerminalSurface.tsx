@@ -186,6 +186,8 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
         />
         <Pressable
           disabled={!props.isRunning || props.readOnly}
+          accessibilityRole="button"
+          accessibilityLabel={gt("Send Ctrl-C")}
           style={({ pressed }) => ({
             opacity: !props.isRunning || props.readOnly ? 0.35 : pressed ? 0.65 : 1,
             paddingHorizontal: 10,
