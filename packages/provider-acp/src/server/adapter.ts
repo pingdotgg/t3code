@@ -4464,6 +4464,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
           rawPayload?: unknown,
+          options?: { readonly rearmDeferredFinalize?: boolean },
         ) => Effect.Effect<void> = () => Effect.void;
 
         const markAwaitingBackgroundHydration =
@@ -4517,6 +4518,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
           rawPayload?: unknown,
+          emitOptions?: { readonly rearmDeferredFinalize?: boolean },
         ) {
           if (context.assistant.current?.sourceMessageId == null)
             yield* closeTextStream(context, "assistant");
@@ -5144,7 +5146,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
           }
           yield* emitProviderEvent({ type: "turn_item.updated", driver, turnItem });
-          yield* rearmDeferredFinalize(context);
+          if (emitOptions?.rearmDeferredFinalize !== false) {
+            yield* rearmDeferredFinalize(context);
+          }
         });
 
         /**
@@ -8718,7 +8722,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (!acpCompletedTurnShouldTerminalizeTool(tool, { ...flavor, extractSubagentUpdate }))
               continue;
             if (options?.unstartedOnly === true && tool.status !== "pending") continue;
-            yield* emitTool(context, tool, status);
+            yield* emitTool(context, tool, status, undefined, { rearmDeferredFinalize: false });
           }
         });
 
@@ -8973,10 +8977,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
           }
-          yield* Ref.set(activeTurn, null);
-          if (settledStatus === "completed" && !directStopQuarantine) {
-            yield* detachBackgroundCommands(context);
-          }
           yield* Ref.set(
             pendingContinuationOutcome,
             postSettleContinuationEnabled &&
@@ -8989,6 +8989,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }
               : null,
           );
+          yield* Ref.set(activeTurn, null);
+          if (settledStatus === "completed" && !directStopQuarantine) {
+            yield* detachBackgroundCommands(context);
+          }
           steerInjections.clear();
           if (
             postSettleContinuationEnabled &&
