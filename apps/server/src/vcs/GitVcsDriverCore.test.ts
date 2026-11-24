@@ -6976,6 +6976,50 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect(
+      "tracks the real branch name and refuses local collisions for remotes containing slashes",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const slashedRemote = yield* makeTmpDir("git-remote-slashed-");
+          yield* git(slashedRemote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "team/origin", slashedRemote]);
+          yield* git(cwd, ["push", "team/origin", "HEAD:refs/heads/feature/demo"]);
+          yield* git(cwd, ["push", "team/origin", "HEAD:refs/heads/conflict"]);
+          yield* git(cwd, ["fetch", "team/origin"]);
+
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const switched = yield* driver.switchRef({ cwd, refName: "team/origin/feature/demo" });
+
+          assert.equal(switched.refName, "feature/demo");
+          assert.equal(yield* git(cwd, ["branch", "--show-current"]), "feature/demo");
+          assert.equal(
+            yield* git(cwd, ["for-each-ref", "--format=%(upstream)", "refs/heads/feature/demo"]),
+            "refs/remotes/team/origin/feature/demo",
+          );
+          assert.equal(
+            yield* git(cwd, ["for-each-ref", "--format=%(refname)", "refs/heads/origin"]),
+            "",
+          );
+
+          yield* git(cwd, ["checkout", "--no-track", "-b", "conflict"]);
+          yield* git(cwd, ["commit", "--allow-empty", "-m", "Local conflict work"]);
+          yield* git(cwd, ["checkout", initialBranch]);
+
+          const conflicted = yield* driver
+            .switchRef({ cwd, refName: "team/origin/conflict" })
+            .pipe(Effect.flip);
+
+          assert.equal(conflicted.reason, "branch_already_exists");
+          assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+          assert.equal(
+            yield* git(cwd, ["for-each-ref", "--format=%(refname)", "refs/heads/origin"]),
+            "",
+          );
+        }),
+    );
+
     it.effect("rejects a missing branch without restoring a matching dirty file", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
