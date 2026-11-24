@@ -130,7 +130,11 @@ import {
   getSidebarProjectSettingsKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { resolveProjectExpanded, useUiStateStore } from "../uiStateStore";
+import {
+  legacyProjectCwdPreferenceKey,
+  resolveProjectExpanded,
+  useUiStateStore,
+} from "../uiStateStore";
 import {
   getThreadKeysToDeselectAfterDelete,
   useThreadSelectionStore,
@@ -2258,7 +2262,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         group.memberProjects.map((project) => project.physicalProjectKey);
       useUiStateStore
         .getState()
-        .reorderProjects(projectGroups.flatMap(orderKeys), orderKeys(source), orderKeys(target));
+        .reorderProjects(
+          projectGroups.flatMap(orderKeys),
+          orderKeys(source),
+          orderKeys(target),
+          new Map(
+            projectGroups.flatMap((group) =>
+              group.memberProjects.map(
+                (project) =>
+                  [
+                    project.physicalProjectKey,
+                    legacyProjectCwdPreferenceKey(project.workspaceRoot),
+                  ] as const,
+              ),
+            ),
+          ),
+        );
       if (getClientSettings().sidebarProjectSortOrder !== "manual") {
         void updateClientSettings({ sidebarProjectSortOrder: "manual" });
       }

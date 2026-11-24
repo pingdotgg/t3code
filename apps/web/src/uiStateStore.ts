@@ -321,6 +321,7 @@ export function reorderProjects(
   currentProjectOrder: readonly string[],
   draggedProjectIds: readonly string[],
   targetProjectIds: readonly string[],
+  legacyKeyById: ReadonlyMap<string, string> = new Map(),
 ): UiState {
   if (draggedProjectIds.length === 0) {
     return state;
@@ -349,12 +350,20 @@ export function reorderProjects(
   // Shown projects with no saved place were listed first, so they take room before the
   // first saved slot.
   const loaded = new Set(currentProjectOrder);
-  const firstSlot = state.projectOrder.findIndex((id) => loaded.has(id));
+  // A legacy folder entry is the saved slot of the shown projects at that path.
+  const saved = new Set(state.projectOrder);
+  const savedOrder = state.projectOrder.flatMap((id) =>
+    loaded.has(id)
+      ? [id]
+      : currentProjectOrder.some((key) => legacyKeyById.get(key) === id)
+        ? currentProjectOrder.filter((key) => legacyKeyById.get(key) === id && !saved.has(key))
+        : [id],
+  );
+  const firstSlot = savedOrder.findIndex((id) => loaded.has(id));
   const insertAt = firstSlot === -1 ? 0 : firstSlot;
-  const unsavedCount =
-    projectOrder.length - state.projectOrder.filter((id) => loaded.has(id)).length;
+  const unsavedCount = projectOrder.length - savedOrder.filter((id) => loaded.has(id)).length;
   let next = unsavedCount;
-  const merged = state.projectOrder.map((id) => (loaded.has(id) ? projectOrder[next++]! : id));
+  const merged = savedOrder.map((id) => (loaded.has(id) ? projectOrder[next++]! : id));
   merged.splice(insertAt, 0, ...projectOrder.slice(0, unsavedCount));
   return {
     ...state,
@@ -373,6 +382,7 @@ interface UiStateStore extends UiState {
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
+    legacyKeyById?: ReadonlyMap<string, string>,
   ) => void;
 }
 
@@ -389,9 +399,15 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
-  reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
+  reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds, legacyKeyById) =>
     set((state) =>
-      reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
+      reorderProjects(
+        state,
+        currentProjectOrder,
+        draggedProjectIds,
+        targetProjectIds,
+        legacyKeyById,
+      ),
     ),
 }));
 

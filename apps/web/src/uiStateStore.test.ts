@@ -131,6 +131,14 @@ describe("uiStateStore pure functions", () => {
     ]);
   });
 
+  it("moves a project whose saved place is a legacy folder entry", () => {
+    const state = makeUiState({ projectOrder: ["legacy-a", "b"] });
+    const legacyKeyById = new Map([["a", "legacy-a"]]);
+    expect(
+      reorderProjects(state, ["c", "a", "b"], ["b"], ["c"], legacyKeyById).projectOrder,
+    ).toEqual(["b", "c", "a"]);
+  });
+
   it("keeps a hidden project's saved place when other projects move", () => {
     const next = reorderProjects(
       makeUiState({ projectOrder: ["a", "offline-b", "c", "d"] }),
