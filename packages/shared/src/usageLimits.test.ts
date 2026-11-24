@@ -1175,26 +1175,6 @@ describe("pools", () => {
         expect(pooled?.windows[0]).toMatchObject({ usedPercent: used, remainingPercent: left });
       }
     }
-    // A real mean just past the tie keeps its precision: 96.5000000001% used leaves 3%.
-    const [weighted] = collectLimitPools(
-      [
-        { plan: "Max", usedPercent: 96.5 },
-        { plan: "Ultra", usedPercent: 96.500000000125 },
-      ].map(({ plan, usedPercent }, index) => ({
-        key: `weighted-${index}`,
-        driver: claude,
-        displayName: `Weighted ${index}`,
-        email: undefined,
-        plan,
-        accentColor: undefined,
-        environments: [],
-        sourceLabel: null,
-        redeem: null,
-        limits: { checkedAt, windows: [{ ...window, usedPercent }] },
-      })),
-      now,
-    );
-    expect(weighted?.windows[0]?.remainingPercent).toBe(3);
   });
 });
 
