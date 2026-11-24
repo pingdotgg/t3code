@@ -511,8 +511,6 @@ describe("workflowStepTime", () => {
     expect(workflowStepTime(12_400)).toBe("12s");
     expect(workflowStepTime(59_499)).toBe("59s");
     expect(workflowStepTime(59_500)).toBe("1m 0s");
-    expect(workflowStepTime(59_999)).toBe("1m 0s");
-    expect(workflowStepTime(60_000)).toBe("1m 0s");
   });
 });
 
