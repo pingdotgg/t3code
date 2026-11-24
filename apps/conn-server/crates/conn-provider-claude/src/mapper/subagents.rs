@@ -295,7 +295,7 @@ impl<E: Env> Mapper<E> {
             Some("inherit") if owner.is_none() => Some(root_model),
             Some("inherit") | None => None,
             Some(m) if m.trim().is_empty() => None,
-            Some(m) => Some(crate::catalog::resolve_slug(m)),
+            Some(m) => Some(self.resolve_model(m)),
         };
         let effort = input
             .get("effort")
@@ -577,10 +577,11 @@ impl<E: Env> Mapper<E> {
                     && model != "<synthetic>"
                     && !self.subagents.launches.contains_key(parent)
                 {
+                    let model = self.resolve_model(model);
                     self.subagents.remember_launch(
                         parent,
                         Launch {
-                            model: Some(crate::catalog::resolve_slug(model)),
+                            model: Some(model),
                             effort: None,
                             owner_tool_use_id: None,
                         },
@@ -611,7 +612,7 @@ impl<E: Env> Mapper<E> {
         let model = if raw.is_empty() || raw == "<synthetic>" {
             raw.to_string()
         } else {
-            crate::catalog::resolve_slug(raw)
+            self.resolve_model(raw)
         };
         let Some(sub) = self.subagents.by_task.get(task_id) else {
             return;

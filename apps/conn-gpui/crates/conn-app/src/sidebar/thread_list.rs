@@ -458,6 +458,18 @@ pub(crate) fn render_thread_sidebar(
     let highlighted_id = search_highlight_index(&result_ids, search_highlight)
         .and_then(|at| result_ids.get(at).map(String::as_str));
 
+    // Projects group by repository across every listed environment; a folder is one project only
+    // within its environment (`derivePhysicalProjectKey`).
+    let project_labels = match hover
+        .origins
+        .filter(|o| !o.linked_environments().is_empty())
+    {
+        Some(origins) => conn_state::project_groups::project_group_labels_across_environments(
+            &shell.projects,
+            |id| origins.environment_of_project(id).to_owned(),
+        ),
+        None => conn_state::project_groups::project_group_labels(&shell.projects),
+    };
     let mut thread_rows: Vec<gpui_kit::AnyElement> =
         Vec::with_capacity(pinned.len() + active.len() + drafts.rows.len() + 2);
     // The row of `thread`, whatever list it is in.
@@ -467,6 +479,7 @@ pub(crate) fn render_thread_sidebar(
             row_key,
             thread,
             project: shell.project(&thread.project_id),
+            project_label: project_labels.get(&thread.project_id).map(String::as_str),
             selected,
             picked: marks.selection.contains(&thread.id),
             jump_hint: jump_hint_number(marks.jump_order, &thread.id).map(jump_hint_label),
@@ -478,6 +491,29 @@ pub(crate) fn render_thread_sidebar(
             hover_open: hover.open_for == Some(thread.id.as_str()),
             hover_rect: hover.rect,
             environment_label: hover.environment_label,
+            scratch_machine: hover
+                .origins
+                .filter(|o| {
+                    o.spans_environments()
+                        && hover.scratch_projects.contains(&thread.project_id)
+                        && thread.branch.as_deref().is_none_or(str::is_empty)
+                })
+                .map(|o| LinkedMark {
+                    icon: if o.is_linked_thread(&thread.id) {
+                        hover
+                            .machine_icons
+                            .get(o.environment_of_thread(&thread.id))
+                            .copied()
+                            .unwrap_or("superhero/server.svg")
+                    } else {
+                        hover.primary_machine_icon
+                    },
+                    label: o
+                        .thread_environment_label(&thread.id)
+                        .unwrap_or_default()
+                        .to_owned(),
+                }),
+            environment_icon: hover.environment_icon_of(&thread.id),
             subagent_request: shell.subagent_request(&thread.id),
             drag: row_drag(marks, &thread.id),
             focus,
@@ -513,6 +549,7 @@ pub(crate) fn render_thread_sidebar(
                 hover_open: hover.open_for == Some(thread.id.as_str()),
                 hover_rect: hover.rect,
                 environment_label: hover.environment_label,
+                environment_icon: hover.environment_icon_of(&thread.id),
                 // Only a thread listed for its messages shows the message (`searchMatch`).
                 excerpt: message_ids
                     .contains(thread.id.as_str())
@@ -985,6 +1022,11 @@ pub(crate) fn resolve_listed_row_status(
     if subagent == Some(PendingSubagentRequest::UserInput) || own == Some(Kind::UserInput) {
         return Some(RowStatus::Input);
     }
+    // Work the agent waits on (a subagent, a background task) parks the thread at `idle`, which
+    // reads as Waiting whatever its run says (`shellRuntime` `parkAtIdle`).
+    if conn_state::sidebar_rows::parks_at_idle(thread) {
+        return Some(RowStatus::Waiting);
+    }
     let running_like = matches!(
         thread.status,
         Status::Preparing | Status::Queued | Status::Starting | Status::Running | Status::Waiting
@@ -1121,11 +1163,20 @@ fn branch_char_budget(
     chars.max(5)
 }
 
+/// The marker of a thread that lives on a linked environment.
+struct LinkedMark {
+    icon: &'static str,
+    label: String,
+}
+
 /// Shared row context for [`render_thread_card`] and [`render_settled_row`].
 struct RowCtx<'a> {
     row_key: usize,
     thread: &'a ThreadShell,
     project: Option<&'a ProjectShell>,
+    /// The project name the row shows: its repository group's label, not its own title
+    /// (`projectDisplayNameByKey`).
+    project_label: Option<&'a str>,
     selected: bool,
     /// Picked with `⌘`-click or `Shift`-click for a bulk action (`isSelected`).
     picked: bool,
@@ -1141,6 +1192,11 @@ struct RowCtx<'a> {
     /// This thread's hover flyout is open.
     hover_open: bool,
     environment_label: Option<&'a str>,
+    /// The machine icon of the environment the thread lives on, for its hover card.
+    environment_icon: &'static str,
+    /// Set on a scratch-project thread without a branch while the list spans environments: its
+    /// machine takes the branch's place on the meta line (`scratchMachineLabel`).
+    scratch_machine: Option<LinkedMark>,
     /// What its subagents, side chats and delegated tasks ask of the user
     /// (`pendingSubagentRequest`).
     subagent_request: Option<PendingSubagentRequest>,
@@ -1183,6 +1239,28 @@ pub(crate) struct ThreadHoverView<'a> {
     pub(crate) rect: &'a RowRectCell,
     pub(crate) open_for: Option<&'a str>,
     pub(crate) environment_label: Option<&'a str>,
+    /// Where each project and thread of the list lives, when it spans linked environments.
+    pub(crate) origins: Option<&'a conn_state::environments::Origins>,
+    /// The machine icon of each linked environment, by environment id.
+    pub(crate) machine_icons: &'a HashMap<String, &'static str>,
+    /// The projects that are scratch projects on their own environment.
+    pub(crate) scratch_projects: &'a HashSet<String>,
+    /// The machine icon of the primary environment's rows.
+    pub(crate) primary_machine_icon: &'static str,
+}
+
+impl ThreadHoverView<'_> {
+    /// The machine icon of the environment a thread lives on (`EnvironmentMachineIcon`).
+    fn environment_icon_of(&self, thread_id: &str) -> &'static str {
+        match self.origins {
+            Some(origins) if origins.is_linked_thread(thread_id) => self
+                .machine_icons
+                .get(origins.environment_of_thread(thread_id))
+                .copied()
+                .unwrap_or("superhero/server.svg"),
+            _ => self.primary_machine_icon,
+        }
+    }
 }
 
 /// Inline rename field (`ThreadRenameInput`): Enter and blur commit, Escape cancels.
@@ -1283,6 +1361,7 @@ fn attach_row_interactions(
                 thread,
                 ctx.project,
                 ctx.environment_label,
+                ctx.environment_icon,
                 ctx.hover_rect,
                 cx.entity().downgrade(),
                 ctx.tokens,
@@ -1729,6 +1808,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
     }
     let settle_id = thread.id.clone();
     let press_id = thread.id.clone();
+    let settle_group = SharedString::from(format!("thread-settle-icon-{}", row.row_key));
     let settle_btn = div()
         .id(("thread-settle-btn", row.row_key))
         .a11y_button(
@@ -1747,8 +1827,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .invisible()
         .group_hover(group.clone(), |s| s.visible())
         .cursor_pointer()
-        .text_color(muted)
-        .hover(move |s| s.text_color(fg))
+        .group(settle_group.clone())
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |app, event: &gpui_kit::MouseDownEvent, _, cx| {
@@ -1770,7 +1849,12 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
             }
         }))
         .conn_tooltip("Settle thread", tokens)
-        .child(icons::concept("superhero/check-circle.svg", 14.0, muted));
+        // Only the icon highlights on hover, with no background (`text-muted-foreground
+        // hover:text-foreground`).
+        .child(
+            icons::concept("superhero/check-circle.svg", 14.0, muted)
+                .group_hover(settle_group, move |s| s.text_color(fg)),
+        );
     line1 = match (&row.jump_hint, row.drop_verb()) {
         (_, Some(verb)) => line1.child(render_drop_badge(verb, tokens)),
         (Some(label), None) => line1.child(render_jump_hint(row, label)),
@@ -1795,8 +1879,12 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
     {
         format_working_duration(row.now_secs - started)
     } else {
-        format_compact_relative_age_at(thread_time_timestamp(thread), row.now_secs)
-            .unwrap_or_default()
+        // `resolveThreadActivityTimestamp`: the card dates the last message or run, not the update.
+        format_compact_relative_age_at(
+            conn_state::sidebar_rows::thread_activity_timestamp(thread),
+            row.now_secs,
+        )
+        .unwrap_or_default()
     };
     let branch = thread.branch.as_deref().filter(|b| !b.is_empty());
 
@@ -1816,16 +1904,17 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
 
     let mut project_width_px = 0.0_f32;
     if let Some(project) = row.project
-        && !project.title.is_empty()
+        && let label = row.project_label.unwrap_or(project.title.as_str())
+        && !label.is_empty()
     {
         let project_max_w = (row.sidebar_width * 0.36).clamp(64.0, 128.0);
-        project_width_px = ((project.title.chars().count() as f32) * 7.0).min(project_max_w);
+        project_width_px = ((label.chars().count() as f32) * 7.0).min(project_max_w);
         line2 = line2.child("·").child(
             div()
                 .max_w(px(project_max_w))
                 .flex_shrink_0()
                 .truncate()
-                .child(project.title.clone()),
+                .child(label.to_owned()),
         );
     }
 
@@ -1844,11 +1933,35 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         );
     }
 
+    if branch.is_none()
+        && let Some(mark) = &row.scratch_machine
+    {
+        line2 = line2.child("·").child(
+            div()
+                .id(("thread-scratch-machine", row.row_key))
+                .test_support()
+                .a11y(
+                    gpui_kit::Role::Image,
+                    SharedString::from(format!("sidebar.thread.{}.machine", thread.id)),
+                    SharedString::from(format!("Machine {}", mark.label)),
+                )
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .min_w_0()
+                .child(icons::concept(mark.icon, 12.0, secondary))
+                .child(div().min_w_0().truncate().child(mark.label.clone())),
+        );
+    }
+
     if !time_label.is_empty() {
         line2 = line2
             .child("·")
             .child(div().flex_shrink_0().child(time_label));
     }
+
+    // The linked issues are not on the row: the hover card lists them.
 
     let mut card = div()
         .id(("thread-row", row.row_key))
@@ -2165,6 +2278,7 @@ struct SearchResultRow<'a> {
     hover_open: bool,
     hover_rect: &'a RowRectCell,
     environment_label: Option<&'a str>,
+    environment_icon: &'static str,
     /// The message that put the thread in the results, for a thread listed for its messages.
     excerpt: Option<&'a Excerpt>,
     /// The query `excerpt` was found for, which lags the box while a search runs.
@@ -2346,6 +2460,7 @@ fn render_search_result_row(
             thread,
             row.project,
             row.environment_label,
+            row.environment_icon,
             row.hover_rect,
             cx.entity().downgrade(),
             tokens,
@@ -2633,7 +2748,12 @@ pub(crate) fn sidebar_lists<'a>(
         thread_matches_search(thread, shell.project(&thread.project_id), query)
     };
     let held_out = pending.map(|(drop, _)| drop.id.as_str());
-    let kept = |thread: &&ThreadShell| Some(thread.id.as_str()) != held_out;
+    // `filterSidebarV2VisibleThreads`: an archived thread is on no list of the sidebar, the
+    // Settled shelf included (the Archived page that lists them is dropped, `docs/scope.md` #9).
+    let kept = |thread: &&ThreadShell| {
+        Some(thread.id.as_str()) != held_out
+            && thread.archived_at.as_deref().is_none_or(str::is_empty)
+    };
     let (mut pinned, mut active): (Vec<&ThreadShell>, Vec<&ThreadShell>) = shell
         .top_level_active_threads()
         .filter(kept)
@@ -2988,6 +3108,75 @@ mod tests {
         assert_eq!(
             resolve_listed_row_status(&thread, Some(PendingSubagentRequest::UserInput)),
             Some(RowStatus::Approval)
+        );
+    }
+
+    #[test]
+    fn work_the_agent_waits_on_parks_a_finished_thread_at_waiting() {
+        use conn_contract::OrchestrationV2PendingBackgroundTask as Task;
+        use conn_contract::OrchestrationV2ShellThreadStatus as Status;
+        let task = |json: serde_json::Value| -> Task {
+            serde_json::from_value(json).expect("task decodes")
+        };
+        let shell = crate::fixture::demo_shell_state();
+        let mut thread = shell
+            .find_thread("thread-sqlite-wal")
+            .expect("fixture thread")
+            .clone();
+        thread.pending_runtime_request = None;
+        thread.status = Status::Completed;
+        thread.activity_run_status = None;
+        thread.latest_run_completed_at = Some(Some("2026-11-21T01:00:00.000Z".to_owned()));
+        thread.last_visited_at = Some(Some("2026-11-21T02:00:00.000Z".to_owned()));
+        assert_eq!(
+            resolve_row_status(&thread),
+            None,
+            "a visited, finished thread is quiet"
+        );
+
+        thread.pending_background_tasks = Some(Some(vec![task(
+            serde_json::json!({ "kind": "subagent", "taskId": "s" }),
+        )]));
+        assert_eq!(resolve_row_status(&thread), Some(RowStatus::Waiting));
+
+        thread.pending_background_tasks = Some(Some(vec![task(
+            serde_json::json!({ "kind": "command", "taskId": "c" }),
+        )]));
+        assert_eq!(
+            resolve_row_status(&thread),
+            None,
+            "a command the agent does not wait on holds nothing"
+        );
+        thread.pending_background_tasks = Some(Some(vec![task(
+            serde_json::json!({ "kind": "command", "taskId": "c", "awaited": true }),
+        )]));
+        assert_eq!(resolve_row_status(&thread), Some(RowStatus::Waiting));
+
+        // A failure is not parked.
+        thread.status = Status::Failed;
+        assert_eq!(resolve_row_status(&thread), Some(RowStatus::Failed));
+    }
+
+    #[test]
+    fn an_archived_thread_is_on_no_list_of_the_sidebar() {
+        let mut shell = crate::fixture::demo_shell_state();
+        let mut archived = shell
+            .top_level_active_threads()
+            .next()
+            .expect("an active thread")
+            .clone();
+        archived.id = "archived-thread".to_owned();
+        archived.archived_at = Some("2026-11-20T10:00:00.000Z".to_owned());
+        shell.archived_threads.push(archived);
+        let lists = sidebar_lists(&shell, &[], None, "", &[], None);
+        let listed = |threads: &[&ThreadShell]| threads.iter().any(|t| t.id == "archived-thread");
+        assert!(!listed(&lists.pinned));
+        assert!(!listed(&lists.active));
+        assert!(!listed(&lists.settled));
+        assert!(!listed(&lists.listed_settled));
+        assert!(
+            shell.find_thread("archived-thread").is_some(),
+            "the shell still holds it, so a link to it opens"
         );
     }
 

@@ -189,6 +189,8 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
         attachments_dir: None,
         auth_method: None,
         runtime_version: None,
+        default_model: None,
+        observer: None,
     };
     let (tx, mut rx) = mpsc::channel::<ProviderEvent>(session::EVENT_CAPACITY);
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -669,4 +671,69 @@ async fn an_abandoned_start_sends_no_prompt() {
         .filter(|e| e["type"] == "turn.terminal")
         .count();
     assert_eq!(terminals, 1, "only the second run's turn ran");
+}
+
+/// The recorded `gemini-3.8-flash` session defaults to Low thinking and offers High. A turn
+/// that chose High writes it with `session/set_config_option` before its prompt, as T3's
+/// selection loop does (`adapter.ts`, `configSelections`).
+#[tokio::test(flavor = "current_thread")]
+async fn an_antigravity_turn_applies_the_chosen_thinking_level() {
+    let recording = read_golden("antigravity", "turns");
+    let mut entries = recording["entries"].as_array().cloned().unwrap();
+    // The recording's sign-in method is its own; this session has none configured.
+    for entry in &mut entries {
+        if entry["frame"]["method"] == "authenticate" && entry["frame"]["kind"] == "request" {
+            entry["frame"]["params"] = json!("<any>");
+        }
+    }
+    let prompt_at = entries
+        .iter()
+        .position(|e| e["frame"]["method"] == "session/prompt")
+        .unwrap();
+    let answered_at = entries
+        .iter()
+        .position(|e| e["frame"]["kind"] == "response" && e["frame"]["method"] == "session/prompt")
+        .unwrap();
+    let session = "00000000-0000-4000-8000-00000000a6f1";
+    let mut script: Vec<Value> = entries[..prompt_at].to_vec();
+    script.push(
+        json!({"type": "expect_outbound", "frame": {"kind": "request",
+        "method": "session/set_config_option",
+        "params": {"sessionId": session, "configId": "thought_level", "value": "high"}}}),
+    );
+    script.push(json!({"type": "emit_inbound", "frame": {"kind": "response",
+        "method": "session/set_config_option", "result": {}}}));
+    script.extend_from_slice(&entries[prompt_at..=answered_at]);
+    script.extend(entries.iter().rev().take(2).rev().cloned());
+    let grok = read_golden("grok", "tool_call_read_only_on_request");
+    let find = |method: &str| {
+        let mut call = grok["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["method"] == method)
+            .unwrap()
+            .clone();
+        let selection = json!({"instanceId": "antigravity", "model": "gemini-3.8-flash"});
+        call["input"]["modelSelection"] = selection;
+        if method == "startTurn" {
+            call["input"]["modelSelection"]["options"] =
+                json!([{"id": "thought_level", "value": "high"}]);
+        }
+        call
+    };
+    let golden = json!({
+        "calls": [find("openSession"), find("ensureThread"), find("startTurn")],
+        "transcripts": [script],
+        "events": [],
+    });
+    let run = replay(&crate::antigravity::ANTIGRAVITY, &golden).await;
+    let script = crate::lock(&run.script);
+    assert!(
+        script.complete(),
+        "stopped at {}: {:?} {:?}",
+        script.cursor,
+        script.failure,
+        run.errors
+    );
 }

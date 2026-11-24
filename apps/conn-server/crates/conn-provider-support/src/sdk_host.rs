@@ -80,13 +80,29 @@ impl HelperCommand {
 /// The SDK host's script in a release folder (`tools/release-tarball.mjs`), beside the binary.
 pub const INSTALLED_SCRIPT: &str = "sdk-host/index.mjs";
 
-/// The SDK host installed in `dir`, the server binary's folder: the single executable
-/// `conn-sdk-host`, else the release tarball's `sdk-host/index.mjs`, run with `node` from PATH.
+/// The SDK host installed for a server binary in `dir`: the single executable `conn-sdk-host`,
+/// else the release tarball's `sdk-host/index.mjs`, run with `node` from PATH. Looks beside the
+/// binary first; when `dir` is a macOS app bundle's `<name>.app/Contents/MacOS`, then also in
+/// its `Contents/Resources` (`tools/macos-app.sh`).
 pub fn installed_helper(dir: &Path) -> Option<PathBuf> {
-    [HELPER_EXECUTABLE, INSTALLED_SCRIPT]
-        .into_iter()
-        .map(|name| dir.join(name))
+    std::iter::once(dir.to_path_buf())
+        .chain(bundle_resources(dir))
+        .flat_map(|base| [HELPER_EXECUTABLE, INSTALLED_SCRIPT].map(|name| base.join(name)))
         .find(|p| p.is_file())
+}
+
+/// `<name>.app/Contents/Resources` when `dir` is `<name>.app/Contents/MacOS` on macOS, else
+/// `None`. Other systems never look there, whatever the folders are called.
+fn bundle_resources(dir: &Path) -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let contents = dir.parent()?;
+    let app = contents.parent()?;
+    let is_bundle = dir.file_name()? == "MacOS"
+        && contents.file_name()? == "Contents"
+        && app.extension()? == "app";
+    is_bundle.then(|| contents.join("Resources"))
 }
 
 /// `helpers/sdk-host/index.mjs` in this checkout.
@@ -811,6 +827,40 @@ mod tests {
         let sea = dir.join(HELPER_EXECUTABLE);
         std::fs::write(&sea, "").unwrap();
         assert_eq!(installed_helper(&dir), Some(sea));
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        // An ordinary release folder never reaches a sibling `Resources`.
+        let bin = dir.join("bin");
+        let sibling = dir.join("Resources").join(INSTALLED_SCRIPT);
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(sibling.parent().unwrap()).unwrap();
+        std::fs::write(&sibling, "").unwrap();
+        assert_eq!(installed_helper(&bin), None);
+        // Nor does a `Contents/MacOS` outside a `.app`.
+        let plain = dir.join("plain/Contents/MacOS");
+        let plain_res = dir.join("plain/Contents/Resources").join(INSTALLED_SCRIPT);
+        std::fs::create_dir_all(&plain).unwrap();
+        std::fs::create_dir_all(plain_res.parent().unwrap()).unwrap();
+        std::fs::write(&plain_res, "").unwrap();
+        assert_eq!(installed_helper(&plain), None);
+
+        // A macOS app bundle: the binary in Contents/MacOS, the SDK host in Contents/Resources.
+        // Only macOS looks there; elsewhere the same layout finds nothing.
+        let macos = dir.join("Conn Server.app/Contents/MacOS");
+        let bundled = dir
+            .join("Conn Server.app/Contents/Resources")
+            .join(INSTALLED_SCRIPT);
+        std::fs::create_dir_all(&macos).unwrap();
+        std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
+        assert_eq!(installed_helper(&macos), None);
+        std::fs::write(&bundled, "").unwrap();
+        let expected = cfg!(target_os = "macos").then(|| bundled.clone());
+        assert_eq!(installed_helper(&macos), expected);
+        // A helper beside the binary still wins over the bundle's Resources.
+        let beside = macos.join(INSTALLED_SCRIPT);
+        std::fs::create_dir_all(beside.parent().unwrap()).unwrap();
+        std::fs::write(&beside, "").unwrap();
+        assert_eq!(installed_helper(&macos), Some(beside));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

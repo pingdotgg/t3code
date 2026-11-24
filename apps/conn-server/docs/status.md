@@ -13,6 +13,35 @@ Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new contai
 `conn-support/src/input.rs` and the generator walk `tools/schema-rules.mjs`. Proof:
 `tools/check.sh` 46/46, no skips; touched-crate tests pass; the original cases are unchanged.
 
+**Model catalog refresh (2026-11-23):** `server.refreshProviders` follows T3's `ws.ts`.
+- `modelCatalogOnly` answers no providers, refetches a manifest older than 5 minutes, and
+  joins the shared full probe pass until the providers were probed with the manifest now
+  known (`refreshModelCatalog`). One pass runs at a time on its own task; a cancelled caller
+  does not stop it, and it records its manifest only when every probe ended normally.
+- An accepted manifest (`conn_provider::LiveManifest`) reaches Codex, Claude and Antigravity,
+  as T3's drivers read `ModelCatalog.current`.
+- `refreshModels` fetches the manifest at once, probes, then runs each targeted, enabled and
+  installed provider's model refresh (Antigravity only, as in T3). A failure answers
+  `ProviderSetupError` (`refresh-models`) after the config streams heard the entry change.
+- Antigravity: per-model thinking levels, T3's stale-reply rule, slash commands, the drain
+  before close, and the sign-in signals (error replies, stdout and stderr URLs) that sign the
+  entry out and notify the config streams (`conn_provider::StatusNotifier`).
+- A refresh with `instanceId` and `cwd` does not scan the workspace: it probes the instance
+  and answers every entry, as before. Without a `cwd` the reply follows `omitProviders`,
+  `workspaceSnapshotsOnDemand` and `usageLimitsCommand`.
+- The manifest is refused, fetched or cached, unless its Claude adapters and compatibility
+  policies decode as T3's schema requires; the last valid one stays.
+
+Proof: tests in `methods::server`, `catalog` and `lib` (Claude), `antigravity`,
+`antigravity_provider`, `connection` and `process`, including ports of T3's
+`AntigravityProvider.test.ts` and `AntigravityDriver.test.ts` cases; each fails with its fix
+reverted. `check-copies.mjs` holds the T3 texts. Not ported: workspace-scoped refreshes
+(`snapshotForCwd`, the per-workspace snapshot cache, `workspaceScanDirectory`, the scoped
+reply with `providerCatalogsOnDemand` and `machineCatalog`) and advertising
+`providerWorkspaceSnapshotsOnDemand`; T3's rescans; Claude's capability-probe and latest-version caches (this server keeps neither).
+Claude selections compile against the catalog the picker shows (`compileClaudeModelSelection`
+over the accepted manifest, proven equal to T3's output on the bundled one).
+
 **Worktree delegates (2026-11-22):** `delegate_task` with `isolation: worktree` works, as in
 T3: a new worktree from the parent's `HEAD` on a `t3/<8 hex>` branch, uncommitted edits left
 out, the child bound to it; a refused or replayed command removes it. Proof: four `conn-mcp`

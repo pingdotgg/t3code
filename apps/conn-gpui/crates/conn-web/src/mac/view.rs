@@ -5,6 +5,10 @@
 //! explicitly from GPUI.
 
 use crate::context_menu::{self, ContextCommand, Entry, LinkTarget, MenuParams};
+use crate::load_error::{self, LoadError};
+use crate::menu::{
+    self, Answer, ContextMenuEvent, ContextMenuReply, ContextMenuRequest, RawKind, RawMenuItem,
+};
 use crate::{
     CursorKind, EditCommand, FrameSnapshot, KeyEvent, KeyEventKind, Modifiers, MouseButton, Rect,
     WebError, WebRuntimeState,
@@ -21,7 +25,9 @@ const MAX_FRAME_RATE_FPS: i32 = 60;
 
 type FrameCallback = Arc<dyn Fn() + Send + Sync>;
 type LoadEndCallback = Arc<dyn Fn(&str, i32) + Send + Sync>;
+type LoadStartCallback = Arc<dyn Fn(&str) + Send + Sync>;
 type ConsoleMessageCallback = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+type ContextMenuCallback = Arc<dyn Fn(ContextMenuEvent) + Send + Sync>;
 
 struct FrameBuffer {
     generation: u64,
@@ -38,16 +44,44 @@ struct Shared {
     cursor: AtomicU8,
     url: Mutex<String>,
     title: Mutex<String>,
-    loading: AtomicBool,
     can_go_back: AtomicBool,
     can_go_forward: AtomicBool,
     load_count: AtomicU32,
     on_frame: Mutex<Option<FrameCallback>>,
     on_load_end: Mutex<Option<LoadEndCallback>>,
+    on_load_start: Mutex<Option<LoadStartCallback>>,
+    /// The Laravel Toolbar's response headers (`toolbar_hooks`); shared with the request handler.
+    toolbar_response: super::toolbar_hooks::ToolbarResponseSlot,
     on_console_message: Mutex<Option<ConsoleMessageCallback>>,
+    on_context_menu: Mutex<Option<ContextMenuCallback>>,
+    /// When the last `load_url` was called, and how many paints came since (trace only).
+    load_began: Mutex<Option<std::time::Instant>>,
+    paints_since_load: AtomicU32,
+    /// Why the last main-frame load failed, until the next load starts.
+    load_error: Mutex<Option<LoadError>>,
 }
 
 impl Shared {
+    /// Notes the start of a load, for the timings `CONN_WEB_TRACE=1` prints.
+    fn mark_load_began(&self) {
+        if let Ok(mut began) = self.load_began.lock() {
+            *began = Some(std::time::Instant::now());
+        }
+        self.paints_since_load.store(0, Ordering::Release);
+    }
+
+    /// `"+123ms"` since the last `load_url`, or `"+?"` when none was made.
+    fn since_load(&self) -> String {
+        self.load_began
+            .lock()
+            .ok()
+            .and_then(|began| *began)
+            .map_or_else(
+                || "+?".to_owned(),
+                |t| format!("+{}ms", t.elapsed().as_millis()),
+            )
+    }
+
     fn notify_frame(&self) {
         let cb = self.on_frame.lock().ok().and_then(|slot| slot.clone());
         if let Some(callback) = cb {
@@ -107,13 +141,18 @@ impl MacBrowserView {
             cursor: AtomicU8::new(cursor_to_u8(CursorKind::Default)),
             url: Mutex::new(url.to_owned()),
             title: Mutex::new(String::new()),
-            loading: AtomicBool::new(true),
             can_go_back: AtomicBool::new(false),
             can_go_forward: AtomicBool::new(false),
             load_count: AtomicU32::new(0),
             on_frame: Mutex::new(None),
             on_load_end: Mutex::new(None),
+            on_load_start: Mutex::new(None),
+            toolbar_response: Arc::new(Mutex::new(None)),
             on_console_message: Mutex::new(None),
+            on_context_menu: Mutex::new(None),
+            load_began: Mutex::new(None),
+            paints_since_load: AtomicU32::new(0),
+            load_error: Mutex::new(None),
         });
 
         let window_info = WindowInfo {
@@ -133,8 +172,9 @@ impl MacBrowserView {
             ViewLifeSpan::new(),
             ViewLoadHandler::new(shared.clone()),
             ViewDisplayHandler::new(shared.clone()),
-            ViewContextMenu::new(),
+            ViewContextMenu::new(shared.clone()),
             ViewDownloadHandler::new(),
+            super::toolbar_hooks::ToolbarRequestHandler::new(shared.toolbar_response.clone()),
         );
 
         let mut context = request_context_get_global_context();
@@ -182,7 +222,6 @@ impl MacBrowserView {
             return;
         }
 
-        trace(&format!("set_size {width}x{height} @{scale}x"));
         self.size.set((width, height));
         self.scale.set(scale);
 
@@ -206,6 +245,7 @@ impl MacBrowserView {
         if self.closed.get() {
             return;
         }
+        self.shared.mark_load_began();
         if let Ok(mut current) = self.shared.url.lock() {
             *current = url.to_owned();
         }
@@ -256,8 +296,11 @@ impl MacBrowserView {
         self.shared.can_go_forward.load(Ordering::Acquire)
     }
 
+    /// Whether the page is loading, as CEF says: a flag of our own began as `true` and stayed so
+    /// for a page that never reported a loading state (such as the first `about:blank`), so the
+    /// reload glyph kept spinning. `on_loading_state_change` still repaints on every change.
     pub(crate) fn is_loading(&self) -> bool {
-        self.shared.loading.load(Ordering::Acquire)
+        !self.closed.get() && self.browser.is_loading() == 1
     }
 
     pub(crate) fn load_count(&self) -> u32 {
@@ -301,6 +344,34 @@ impl MacBrowserView {
 
     pub(crate) fn on_load_end(&self, callback: impl Fn(&str, i32) + Send + Sync + 'static) {
         if let Ok(mut slot) = self.shared.on_load_end.lock() {
+            *slot = Some(Arc::new(callback));
+        }
+    }
+
+    pub(crate) fn on_load_start(&self, callback: impl Fn(&str) + Send + Sync + 'static) {
+        if let Ok(mut slot) = self.shared.on_load_start.lock() {
+            *slot = Some(Arc::new(callback));
+        }
+    }
+
+    pub(crate) fn on_toolbar_response(
+        &self,
+        callback: impl Fn(crate::ToolbarResponse) + Send + Sync + 'static,
+    ) {
+        if let Ok(mut slot) = self.shared.toolbar_response.lock() {
+            *slot = Some(Arc::new(callback));
+        }
+    }
+
+    pub(crate) fn load_error(&self) -> Option<LoadError> {
+        self.shared.load_error.lock().ok().and_then(|e| e.clone())
+    }
+
+    pub(crate) fn on_context_menu(
+        &self,
+        callback: impl Fn(ContextMenuEvent) + Send + Sync + 'static,
+    ) {
+        if let Ok(mut slot) = self.shared.on_context_menu.lock() {
             *slot = Some(Arc::new(callback));
         }
     }
@@ -685,9 +756,13 @@ wrap_client! {
         display: DisplayHandler,
         menu: ContextMenuHandler,
         downloads: DownloadHandler,
+        requests: RequestHandler,
     }
 
     impl Client {
+        fn request_handler(&self) -> Option<RequestHandler> {
+            Some(self.requests.clone())
+        }
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
             Some(self.menu.clone())
         }
@@ -789,6 +864,16 @@ wrap_download_handler! {
     struct ViewDownloadHandler;
 
     impl DownloadHandler {
+        // CEF's default answer is "no", which cancels every download, "Save image as…" included.
+        fn can_download(
+            &self,
+            _browser: Option<&mut Browser>,
+            _url: Option<&CefString>,
+            _request_method: Option<&CefString>,
+        ) -> c_int {
+            1
+        }
+
         // "Save image as…" (and any other download) asks where to save, starting in Downloads.
         fn on_before_download(
             &self,
@@ -812,8 +897,50 @@ wrap_download_handler! {
     }
 }
 
+/// Chromium's menu model as plain items, submenus included.
+fn read_menu(model: &MenuModel) -> Vec<RawMenuItem> {
+    (0..model.count())
+        .map(|index| {
+            let kind = match model.type_at(index) {
+                kind if kind == MenuItemType::SEPARATOR => RawKind::Separator,
+                kind if kind == MenuItemType::CHECK => RawKind::Check,
+                kind if kind == MenuItemType::RADIO => RawKind::Radio,
+                kind if kind == MenuItemType::SUBMENU => RawKind::Submenu,
+                _ => RawKind::Command,
+            };
+            RawMenuItem {
+                kind,
+                command_id: model.command_id_at(index),
+                label: cef_string(&model.label_at(index)),
+                enabled: model.is_enabled_at(index) == 1,
+                visible: model.is_visible_at(index) == 1,
+                checked: model.is_checked_at(index) == 1,
+                children: if kind == RawKind::Submenu {
+                    model
+                        .sub_menu_at(index)
+                        .map(|sub| read_menu(&sub))
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                },
+            }
+        })
+        .collect()
+}
+
+/// CEF's menu callback, answered from the host (on the main thread, which is also CEF's UI
+/// thread here).
+struct MenuCallback(RunContextMenuCallback);
+
+// SAFETY: CEF's windowless browser runs its UI on the main thread (`multi_threaded_message_loop`
+// is off), and the host answers menus on that same thread. The wrapper only crosses threads as
+// a plain value inside the reply handle, which is never used elsewhere.
+unsafe impl Send for MenuCallback {}
+
 wrap_context_menu_handler! {
-    struct ViewContextMenu;
+    struct ViewContextMenu {
+        shared: Arc<Shared>,
+    }
 
     impl ContextMenuHandler {
         // Chromium's own items stay (Back, Forward, Reload, edit items). Conn removes Print and
@@ -862,6 +989,68 @@ wrap_context_menu_handler! {
                 .collect();
             for index in context_menu::separators_to_remove(&kinds) {
                 model.remove_at(index);
+            }
+        }
+
+        // The view is windowless, so Chromium cannot show a menu: it asks the host to, and waits
+        // for one answer through `callback`. With no host menu registered, say "cancelled" so
+        // later menus still work.
+        fn run_context_menu(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            params: Option<&mut ContextMenuParams>,
+            model: Option<&mut MenuModel>,
+            callback: Option<&mut RunContextMenuCallback>,
+        ) -> c_int {
+            let (Some(params), Some(model), Some(callback)) = (params, model, callback) else {
+                return 0;
+            };
+            let host_menu = self
+                .shared
+                .on_context_menu
+                .lock()
+                .ok()
+                .and_then(|slot| slot.clone());
+            let Some(host_menu) = host_menu else {
+                callback.cancel();
+                return 1;
+            };
+            let entries = menu::menu_entries(&read_menu(model));
+            if !entries.iter().any(menu::MenuEntry::is_actionable) {
+                callback.cancel();
+                return 1;
+            }
+            let cef_callback = MenuCallback(callback.clone());
+            let reply = ContextMenuReply::new(move |answer| match answer {
+                Answer::Choose(command_id) => cef_callback.0.cont(
+                    command_id,
+                    EventFlags::from(cef::sys::cef_event_flags_t::EVENTFLAG_NONE),
+                ),
+                Answer::Cancel => cef_callback.0.cancel(),
+            });
+            host_menu(ContextMenuEvent::Open(ContextMenuRequest {
+                x: params.xcoord(),
+                y: params.ycoord(),
+                entries,
+                reply,
+            }));
+            1
+        }
+
+        fn on_context_menu_dismissed(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+        ) {
+            let host_menu = self
+                .shared
+                .on_context_menu
+                .lock()
+                .ok()
+                .and_then(|slot| slot.clone());
+            if let Some(host_menu) = host_menu {
+                host_menu(ContextMenuEvent::Dismissed);
             }
         }
 
@@ -994,12 +1183,21 @@ wrap_render_handler! {
             // readable bytes of 32-bit BGRA pixel data for the duration of `on_paint`.
             let src = unsafe { std::slice::from_raw_parts(buffer, byte_len) };
 
+            let painted = self.shared.paints_since_load.fetch_add(1, Ordering::AcqRel);
+            if painted < 3 {
+                trace(&format!(
+                    "on_paint #{} {w}x{h} {}",
+                    painted + 1,
+                    self.shared.since_load()
+                ));
+            }
+
             let next_gen = {
                 let Ok(mut frame) = self.shared.frame.lock() else {
                     return;
                 };
-                frame.bgra.resize(byte_len, 0);
-                frame.bgra.copy_from_slice(src);
+                // One copy per frame: the previous frame's buffer goes if the host never took it.
+                frame.bgra = src.to_vec();
                 frame.width = w;
                 frame.height = h;
                 frame.generation = frame.generation.saturating_add(1);
@@ -1053,8 +1251,10 @@ wrap_load_handler! {
             can_go_back: c_int,
             can_go_forward: c_int,
         ) {
-            trace(&format!("cef loading={is_loading}"));
-            self.shared.loading.store(is_loading == 1, Ordering::Release);
+            trace(&format!(
+                "cef loading={is_loading} {}",
+                self.shared.since_load()
+            ));
             self.shared
                 .can_go_back
                 .store(can_go_back == 1, Ordering::Release);
@@ -1062,6 +1262,59 @@ wrap_load_handler! {
                 .can_go_forward
                 .store(can_go_forward == 1, Ordering::Release);
             self.shared.notify_frame();
+        }
+
+        fn on_load_start(
+            &self,
+            _browser: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
+            _transition_type: TransitionType,
+        ) {
+            // A new document of the main frame has begun: its scripts have not run yet.
+            let Some(frame) = frame.filter(|f| f.is_main() == 1) else {
+                return;
+            };
+            let url = CefString::from(&frame.url()).to_string();
+            trace(&format!("on_load_start {url} {}", self.shared.since_load()));
+            if let Ok(mut error) = self.shared.load_error.lock() {
+                *error = None;
+            }
+            let callback = self
+                .shared
+                .on_load_start
+                .lock()
+                .ok()
+                .and_then(|slot| slot.clone());
+            if let Some(callback) = callback {
+                callback(&url);
+            }
+        }
+
+        // A main-frame load that fails: `ERR_ABORTED` is a navigation replaced or cancelled (and
+        // is not an error to show); anything else is kept for the host to show.
+        fn on_load_error(
+            &self,
+            _browser: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
+            error_code: Errorcode,
+            error_text: Option<&CefString>,
+            failed_url: Option<&CefString>,
+        ) {
+            let main = frame.as_ref().is_some_and(|f| f.is_main() == 1);
+            let code = error_code.get_raw();
+            let text = error_text.map(ToString::to_string).unwrap_or_default();
+            let url = failed_url.map(ToString::to_string).unwrap_or_default();
+            trace(&format!(
+                "on_load_error main={main} code={code} ({}) text={text:?} url={url} {}",
+                load_error::net_error_name(code),
+                self.shared.since_load()
+            ));
+            if main && code != load_error::ERR_ABORTED {
+                if let Ok(mut error) = self.shared.load_error.lock() {
+                    *error = Some(LoadError { url, code, text });
+                }
+                self.shared.notify_frame();
+            }
         }
 
         fn on_load_end(
@@ -1073,6 +1326,10 @@ wrap_load_handler! {
             if !frame.as_ref().is_some_and(|f| f.is_main() == 1) {
                 return;
             }
+            trace(&format!(
+                "on_load_end status={http_status_code} {}",
+                self.shared.since_load()
+            ));
             self.shared.load_count.fetch_add(1, Ordering::AcqRel);
             let url = frame
                 .map(|f| CefString::from(&f.url()).to_string())
@@ -1121,6 +1378,7 @@ wrap_display_handler! {
             if let Ok(mut current) = self.shared.url.lock() {
                 *current = url.map(|u| u.to_string()).unwrap_or_default();
             }
+            trace(&format!("address changed {}", self.shared.since_load()));
             self.shared.notify_frame();
         }
 
@@ -1166,16 +1424,7 @@ wrap_display_handler! {
     }
 }
 
-/// With `CONN_WEB_TRACE=1`, logs browser operations with a millisecond clock to stderr.
+/// Logs a browser step; see [`crate::trace`].
 pub(crate) fn trace(what: &str) {
-    use std::sync::OnceLock;
-    static ON: OnceLock<bool> = OnceLock::new();
-    if !*ON.get_or_init(|| std::env::var_os("CONN_WEB_TRACE").is_some()) {
-        return;
-    }
-    let ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() % 100_000)
-        .unwrap_or_default();
-    eprintln!("[conn-web {ms:>5}] {what}");
+    crate::trace::trace("conn-web", what);
 }

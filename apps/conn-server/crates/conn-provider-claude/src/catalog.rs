@@ -31,6 +31,255 @@ pub(crate) fn catalog_json() -> Value {
     serde_json::from_str(CATALOG).unwrap_or(Value::Null)
 }
 
+/// `resolveClaudeModelCatalog` over the current manifest: `providerModels` and their Claude
+/// Code bounds (`compatibility`) from the manifest the server accepted last, else from the
+/// bundled catalog (also when the accepted one has no valid Claude catalog, as in T3).
+/// Selections compile against the same catalog ([`compile`]).
+pub fn current(manifest: &conn_provider::LiveManifest, now_ms: i64) -> Value {
+    manifest
+        .provider_catalog("claudeAgent")
+        .flatten()
+        .and_then(|section| resolve(&section, now_ms))
+        .unwrap_or_else(catalog_json)
+}
+
+/// The picker's models from [`current`].
+pub fn current_provider_models(manifest: &conn_provider::LiveManifest, now_ms: i64) -> Vec<Value> {
+    match current(manifest, now_ms).get("providerModels") {
+        Some(Value::Array(models)) => models.clone(),
+        _ => Vec::new(),
+    }
+}
+
+/// `MODEL_NEW_BADGE_DURATION_MS`.
+const NEW_BADGE_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// `tryResolveClaudeModelCatalog` over `resolveProviderCatalog`: `None` for a repeated slug,
+/// a missing profile, an unlisted default, or adapters that do not decode.
+fn resolve(section: &Value, now_ms: i64) -> Option<Value> {
+    let profiles = section.get("profiles");
+    let default = section.pointer("/defaults/chat").and_then(Value::as_str);
+    let mut slugs: Vec<&str> = Vec::new();
+    let mut models = Vec::new();
+    let mut compatibility = Vec::new();
+    let mut runtime = Vec::new();
+    for entry in section.get("models")?.as_array()? {
+        let slug = entry.get("slug")?.as_str()?;
+        if slugs.contains(&slug) {
+            return None;
+        }
+        slugs.push(slug);
+        let profile = match entry.get("profile").and_then(Value::as_str) {
+            Some(name) => Some(profiles?.get(name)?),
+            None => None,
+        };
+        let profile_adapter = profile.and_then(adapter);
+        if !profile_adapter_is_valid(profile_adapter) {
+            return None;
+        }
+        let bounds = model_adapter_bounds(adapter(entry))?;
+        runtime.push(
+            profile_adapter
+                .and_then(|a| a.get("claudeCode"))
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new())),
+        );
+        let mut model = Map::new();
+        model.insert("slug".into(), Value::from(slug));
+        model.insert("name".into(), entry.get("name")?.clone());
+        for key in ["shortName", "subProvider", "aliases"] {
+            if let Some(value) = entry.get(key).filter(|v| !v.is_null()) {
+                model.insert(key.into(), value.clone());
+            }
+        }
+        let current = entry["status"] == "current";
+        let released = entry["releasedAt"]
+            .as_str()
+            .and_then(conn_support::time::millis_from_iso);
+        if current && released.is_some_and(|r| now_ms >= r && now_ms - r < NEW_BADGE_MS) {
+            model.insert("badge".into(), Value::from("new"));
+        }
+        model.insert("isCustom".into(), Value::Bool(false));
+        if default == Some(slug) {
+            model.insert("isDefault".into(), Value::Bool(true));
+        }
+        if entry["status"] == "legacy" {
+            model.insert("isLegacy".into(), Value::Bool(true));
+        }
+        let capabilities = profile
+            .and_then(|p| p.get("capabilities"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        model.insert("capabilities".into(), with_ultracode_toggle(capabilities));
+        models.push(Value::Object(model));
+        let mut bound = Map::new();
+        bound.insert("slug".into(), Value::from(slug));
+        if let Some(min) = bounds.0 {
+            bound.insert("minVersion".into(), Value::from(min));
+        }
+        if let Some(max) = bounds.1 {
+            bound.insert("maxVersionExclusive".into(), Value::from(max));
+        }
+        compatibility.push(Value::Object(bound));
+    }
+    if default.is_some_and(|chat| !slugs.contains(&chat)) {
+        return None;
+    }
+    Some(serde_json::json!({
+        "providerModels": models,
+        "compatibility": compatibility,
+        "runtime": runtime,
+    }))
+}
+
+/// `hasValidClaudeManifestAdapters`: every Claude profile and model adapter decodes (an
+/// absent or null adapter counts as `{}`). The server refuses a manifest that fails it.
+pub fn manifest_adapters_are_valid(manifest: &Value) -> bool {
+    let Some(catalog) = manifest.pointer("/providers/claudeAgent") else {
+        return true;
+    };
+    let profiles_ok = catalog["profiles"].as_object().is_none_or(|profiles| {
+        profiles
+            .values()
+            .all(|p| profile_adapter_is_valid(adapter(p)))
+    });
+    let models_ok = catalog["models"].as_array().is_none_or(|models| {
+        models
+            .iter()
+            .all(|m| model_adapter_bounds(adapter(m)).is_some())
+    });
+    profiles_ok && models_ok
+}
+
+/// An item's adapter; absent and null both read as `{}` (T3's `adapter ?? {}`).
+fn adapter(item: &Value) -> Option<&Value> {
+    item.get("adapter").filter(|a| !a.is_null())
+}
+
+/// `ClaudeProfileAdapterSchema`: `claudeCode` with an effort map, model suffixes and context
+/// window sizes of the right types.
+fn profile_adapter_is_valid(adapter: Option<&Value>) -> bool {
+    let Some(code) = adapter.and_then(|a| a.get("claudeCode")) else {
+        return adapter.is_none_or(Value::is_object);
+    };
+    let non_empty = |v: &Value| v.as_str().is_some_and(|s| !s.trim().is_empty());
+    let record = |key: &str, check: &dyn Fn(&Value) -> bool| {
+        code.get(key).is_none_or(|map| {
+            map.as_object()
+                .is_some_and(|map| map.iter().all(|(k, v)| !k.trim().is_empty() && check(v)))
+        })
+    };
+    code.is_object()
+        && record("effortMap", &|v| v.is_null() || non_empty(v))
+        && record("modelSuffixes", &|v| {
+            v.as_object()
+                .is_some_and(|m| m.iter().all(|(k, v)| !k.trim().is_empty() && non_empty(v)))
+        })
+        && record("contextWindowTokens", &Value::is_number)
+        && code
+            .get("fixedContextWindowTokens")
+            .is_none_or(Value::is_number)
+}
+
+/// `ClaudeModelAdapterSchema`: the Claude Code bounds, each a version, the minimum below the
+/// maximum. `None` when they do not decode.
+fn model_adapter_bounds(adapter: Option<&Value>) -> Option<(Option<String>, Option<String>)> {
+    let Some(code) = adapter.and_then(|a| a.get("claudeCode")) else {
+        return adapter.is_none_or(Value::is_object).then_some((None, None));
+    };
+    if !code.is_object() {
+        return None;
+    }
+    let version = |key: &str| -> Option<Option<String>> {
+        match code.get(key) {
+            None => Some(None),
+            Some(value) => {
+                let text = value.as_str()?.trim();
+                crate::status::is_semver(text).then(|| Some(text.to_owned()))
+            }
+        }
+    };
+    let (min, max) = (version("minVersion")?, version("maxVersionExclusive")?);
+    if let (Some(min), Some(max)) = (&min, &max)
+        && crate::status::compare_versions(min, max).is_ge()
+    {
+        return None;
+    }
+    Some((min, max))
+}
+
+/// `withUltracodeToggle`: the manifest keeps Ultracode as an effort level; the picker shows it
+/// as a toggle, and a model that offered it keeps (or gains) `xhigh`.
+fn with_ultracode_toggle(capabilities: Value) -> Value {
+    let Some(descriptors) = capabilities["optionDescriptors"].as_array() else {
+        return capabilities;
+    };
+    let Some(at) = descriptors.iter().position(|d| {
+        d["id"] == "effort"
+            && d["type"] == "select"
+            && d["options"]
+                .as_array()
+                .is_some_and(|o| o.iter().any(|o| o["id"] == "ultracode"))
+    }) else {
+        return capabilities;
+    };
+    let effort = &descriptors[at];
+    let options = effort["options"].as_array().cloned().unwrap_or_default();
+    let default_id = effort["currentValue"]
+        .as_str()
+        .or_else(|| {
+            options
+                .iter()
+                .find(|o| o["isDefault"] == true)
+                .and_then(|o| o["id"].as_str())
+        })
+        .map(str::to_owned);
+    let ultracode_by_default = default_id.as_deref() == Some("ultracode");
+    let has_xhigh = options.iter().any(|o| o["id"] == "xhigh");
+    let mut next_options = Vec::new();
+    for option in options {
+        let mut plain = option.clone();
+        let was_default = plain
+            .as_object_mut()
+            .and_then(|o| o.remove("isDefault"))
+            .is_some_and(|d| d == true);
+        if option["id"] == "ultracode" {
+            if !has_xhigh {
+                let mut xhigh = serde_json::json!({"id": "xhigh", "label": "Extra High"});
+                if was_default {
+                    xhigh["isDefault"] = Value::Bool(true);
+                }
+                next_options.push(xhigh);
+            }
+            continue;
+        }
+        let keeps_default = if ultracode_by_default {
+            option["id"] == "xhigh"
+        } else {
+            was_default
+        };
+        if keeps_default {
+            plain["isDefault"] = Value::Bool(true);
+        }
+        next_options.push(plain);
+    }
+    let mut effort = effort.clone();
+    if effort["currentValue"] == "ultracode" {
+        effort["currentValue"] = Value::from("xhigh");
+    }
+    effort["options"] = Value::Array(next_options);
+    let mut toggle =
+        serde_json::json!({"id": "ultracode", "label": "Ultracode", "type": "boolean"});
+    if ultracode_by_default {
+        toggle["currentValue"] = Value::Bool(true);
+    }
+    let mut next = descriptors.clone();
+    next.splice(at..=at, [effort, toggle]);
+    let mut capabilities = capabilities;
+    capabilities["optionDescriptors"] = Value::Array(next);
+    capabilities
+}
+
 /// The models the T3 server offers clients (`ServerProvider.models`): every model of its
 /// bundled catalog, with names, aliases, the legacy flag and option descriptors.
 pub fn provider_models() -> Vec<Value> {
@@ -41,8 +290,295 @@ pub fn provider_models() -> Vec<Value> {
     }
 }
 
-/// Compiles a contract `ModelSelection` (as JSON).
-pub fn compile(selection: &Value) -> Compiled {
+/// Compiles a contract `ModelSelection` (as JSON) against the catalog the picker shows
+/// ([`current`]): the accepted manifest's, else the bundled one.
+pub fn compile(selection: &Value, manifest: &conn_provider::LiveManifest) -> Compiled {
+    match manifest
+        .provider_catalog("claudeAgent")
+        .flatten()
+        .and_then(|section| resolve(&section, 0))
+    {
+        Some(resolved) => compile_resolved(&resolved, selection),
+        None => compile_bundled(selection),
+    }
+}
+
+/// Outside the catalog: a known effort level passes, no option descriptors apply, and an
+/// explicit `thinking` choice still reaches `alwaysThinkingEnabled` (T3's `!inCatalog`).
+fn outside_catalog(model: &str, raw_effort: Option<&str>, selections: &[Value]) -> Compiled {
+    let mut settings = Map::new();
+    if let Some(thinking) = raw_option(selections, "thinking").and_then(Value::as_bool) {
+        settings.insert("alwaysThinkingEnabled".into(), Value::Bool(thinking));
+    }
+    Compiled {
+        api_model_id: model.to_string(),
+        effort: raw_effort
+            .map(str::trim)
+            .filter(|e| EFFORT_LEVELS.contains(e))
+            .map(str::to_string),
+        prompt_effort: None,
+        settings,
+    }
+}
+
+/// `compileClaudeModelSelection` over a resolved catalog ([`resolve`]).
+fn compile_resolved(resolved: &Value, selection: &Value) -> Compiled {
+    let model = selection["model"].as_str().unwrap_or("default").trim();
+    let selections = selection["options"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    let raw_effort = raw_option(selections, "effort").and_then(Value::as_str);
+    let models = resolved["providerModels"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    // `resolveClaudeCatalogModel`: the slug, else an alias in any case.
+    let at = (!model.is_empty())
+        .then(|| {
+            models.iter().position(|m| m["slug"] == model).or_else(|| {
+                models.iter().position(|m| {
+                    m["aliases"].as_array().is_some_and(|aliases| {
+                        aliases
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .any(|a| a.eq_ignore_ascii_case(model))
+                    })
+                })
+            })
+        })
+        .flatten();
+    let (Some(entry), Some(runtime)) = (
+        at.and_then(|at| models.get(at)),
+        at.and_then(|at| resolved["runtime"].get(at)),
+    ) else {
+        return outside_catalog(model, raw_effort, selections);
+    };
+    let caps = &entry["capabilities"];
+    let descriptors = option_descriptors(caps, selections);
+    let supports = |id: &str| {
+        descriptors
+            .iter()
+            .any(|d| d["type"] == "boolean" && d["id"] == id)
+    };
+    let chosen_bool = |id: &str| raw_option(selections, id).and_then(Value::as_bool);
+    // `resolveClaudeCatalogEffort`, then `normalizeClaudeCatalogEffort`.
+    let effort_selection: Vec<Value> = raw_effort
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| vec![serde_json::json!({"id": "effort", "value": raw})])
+        .unwrap_or_default();
+    let effort = option_descriptors(caps, &effort_selection)
+        .iter()
+        .find(|d| d["id"] == "effort")
+        .and_then(current_value)
+        .and_then(|v| v.as_str().map(str::to_owned));
+    let effort = match (effort, runtime["effortMap"].as_object()) {
+        (Some(effort), Some(map)) if map.contains_key(&effort) => {
+            map[&effort].as_str().map(str::to_owned)
+        }
+        (effort, _) => effort,
+    };
+    let mut settings = Map::new();
+    if supports("thinking")
+        && let Some(thinking) = chosen_bool("thinking")
+    {
+        settings.insert("alwaysThinkingEnabled".into(), Value::Bool(thinking));
+    }
+    if supports("fastMode") {
+        let fast = chosen_bool("fastMode").unwrap_or(false);
+        settings.insert("fastMode".into(), Value::Bool(fast));
+    }
+    if let Some(ultracode) = descriptors
+        .iter()
+        .find(|d| d["id"] == "ultracode")
+        .and_then(|d| d["currentValue"].as_bool())
+    {
+        settings.insert("ultracode".into(), Value::Bool(ultracode));
+    }
+    // `resolveClaudeCatalogApiModelId`: the slug with the suffix of a chosen option.
+    let slug = entry["slug"].as_str().unwrap_or(model);
+    let suffix = runtime["modelSuffixes"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .find_map(|(option_id, suffixes)| {
+            let value = descriptors
+                .iter()
+                .find(|d| d["id"] == option_id.as_str())
+                .and_then(current_value)?;
+            suffixes[value.as_str()?]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        });
+    // `resolvePromptInjectedEffort`.
+    let prompt_effort = raw_effort
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .filter(|raw| {
+            option_descriptors(caps, &[]).iter().any(|d| {
+                d["type"] == "select"
+                    && d["promptInjectedValues"]
+                        .as_array()
+                        .is_some_and(|values| values.iter().any(|v| v == *raw))
+            })
+        })
+        .map(str::to_owned);
+    Compiled {
+        api_model_id: format!("{slug}{}", suffix.unwrap_or_default()),
+        effort,
+        prompt_effort,
+        settings,
+    }
+}
+
+/// A boolean option's resolved `currentValue` for `selection` (`getProviderOptionDescriptors`
+/// over the model's `capabilities`): the choice, the legacy Ultracode effort, or the default.
+pub fn resolved_boolean(capabilities: &Value, selection: &Value, id: &str) -> Option<bool> {
+    let selections = selection["options"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    option_descriptors(capabilities, selections)
+        .iter()
+        .find(|d| d["id"] == id && d["type"] == "boolean")
+        .and_then(|d| d["currentValue"].as_bool())
+}
+
+/// `getRawSelectionValueById`: the first selection with `id`, unless its value is null.
+fn raw_option<'a>(selections: &'a [Value], id: &str) -> Option<&'a Value> {
+    selections
+        .iter()
+        .find(|s| s["id"] == id)
+        .map(|s| &s["value"])
+        .filter(|v| !v.is_null())
+}
+
+/// `getProviderOptionDescriptors`: the capabilities' descriptors with the selections (and the
+/// legacy Ultracode effort) applied as their current values.
+fn option_descriptors(caps: &Value, selections: &[Value]) -> Vec<Value> {
+    let base = caps["optionDescriptors"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let selections = with_legacy_ultracode_effort(&base, selections);
+    base.into_iter()
+        .map(|descriptor| {
+            let id = descriptor["id"].as_str().unwrap_or_default();
+            let raw = raw_option(&selections, id)
+                .or_else(|| descriptor.get("currentValue").filter(|v| !v.is_null()))
+                .cloned();
+            with_current_value(descriptor, raw)
+        })
+        .collect()
+}
+
+/// `withLegacyUltracodeEffort`: the Ultracode effort level runs at `xhigh` with the toggle on.
+fn with_legacy_ultracode_effort(base: &[Value], selections: &[Value]) -> Vec<Value> {
+    let has_toggle = base
+        .iter()
+        .any(|d| d["id"] == "ultracode" && d["type"] == "boolean");
+    if raw_option(selections, "effort").and_then(Value::as_str) != Some("ultracode") || !has_toggle
+    {
+        return selections.to_vec();
+    }
+    let mut next: Vec<Value> = selections
+        .iter()
+        .map(|s| {
+            if s["id"] == "effort" && s["value"] == "ultracode" {
+                serde_json::json!({"id": "effort", "value": "xhigh"})
+            } else {
+                s.clone()
+            }
+        })
+        .collect();
+    if raw_option(selections, "ultracode").is_none() {
+        next.push(serde_json::json!({"id": "ultracode", "value": true}));
+    }
+    next
+}
+
+/// `withDescriptorCurrentValue`.
+fn with_current_value(mut descriptor: Value, raw: Option<Value>) -> Value {
+    if descriptor["type"] == "boolean" {
+        if let Some(value) = raw.filter(Value::is_boolean) {
+            descriptor["currentValue"] = value;
+        }
+        return descriptor;
+    }
+    let current = match &raw {
+        Some(Value::String(raw)) => resolve_choice(&descriptor, Some(raw)),
+        _ => resolve_choice(&descriptor, descriptor["currentValue"].as_str()),
+    };
+    match (
+        current.filter(|c| !c.is_empty()),
+        descriptor.as_object_mut(),
+    ) {
+        (Some(current), _) => descriptor["currentValue"] = Value::String(current),
+        (None, Some(fields)) => {
+            fields.remove("currentValue");
+        }
+        (None, None) => {}
+    }
+    descriptor
+}
+
+/// The option a select descriptor marks as default.
+fn default_choice(descriptor: &Value) -> Option<String> {
+    descriptor["options"]
+        .as_array()?
+        .iter()
+        .find(|o| o["isDefault"] == true)
+        .and_then(|o| o["id"].as_str())
+        .map(str::to_owned)
+}
+
+/// `resolveDescriptorChoiceValue`.
+fn resolve_choice(descriptor: &Value, raw: Option<&str>) -> Option<String> {
+    let fallback = || {
+        descriptor["currentValue"]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| default_choice(descriptor))
+    };
+    let Some(trimmed) = raw.map(str::trim).filter(|t| !t.is_empty()) else {
+        return fallback();
+    };
+    let options = descriptor["options"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    if options.is_empty() {
+        return Some(trimmed.to_owned());
+    }
+    let offered = options.iter().any(|o| o["id"] == trimmed);
+    let injected = descriptor["promptInjectedValues"]
+        .as_array()
+        .is_some_and(|values| values.iter().any(|v| v == trimmed));
+    if injected && offered {
+        return default_choice(descriptor);
+    }
+    if offered {
+        return Some(trimmed.to_owned());
+    }
+    fallback()
+}
+
+/// `getProviderOptionCurrentValue` without a selection context.
+fn current_value(descriptor: &Value) -> Option<Value> {
+    if descriptor["type"] == "boolean" {
+        return descriptor
+            .get("currentValue")
+            .filter(|v| v.is_boolean())
+            .cloned();
+    }
+    descriptor["currentValue"]
+        .as_str()
+        .filter(|c| !c.is_empty())
+        .map(str::to_owned)
+        .or_else(|| default_choice(descriptor))
+        .map(Value::String)
+}
+
+/// `compileClaudeModelSelection` from the generated table of T3's results for the bundled
+/// catalog.
+fn compile_bundled(selection: &Value) -> Compiled {
     let model = selection["model"].as_str().unwrap_or("default").trim();
     let options = selection["options"].as_array().cloned().unwrap_or_default();
     let option = |id: &str| options.iter().find(|o| o["id"] == id).map(|o| &o["value"]);
@@ -61,15 +597,7 @@ pub fn compile(selection: &Value) -> Compiled {
         })
     });
     let Some(entry) = entry else {
-        // Outside the catalog: a known effort level passes, no option descriptors apply.
-        return Compiled {
-            api_model_id: model.to_string(),
-            effort: raw_effort
-                .filter(|e| EFFORT_LEVELS.contains(e))
-                .map(str::to_string),
-            prompt_effort: None,
-            settings: Map::new(),
-        };
+        return outside_catalog(model, raw_effort, &options);
     };
     let base = raw_effort
         .and_then(|e| entry["efforts"].get(e))
@@ -146,6 +674,27 @@ pub fn resolve_slug(value: &str) -> String {
         .map_or_else(|| value.to_string(), |(slug, _)| slug.clone())
 }
 
+/// [`resolve_slug`] over `models` (the turn's resolved catalog, as the picker lists it).
+pub fn resolve_slug_in(models: &[Value], value: &str) -> String {
+    let trimmed = value.trim();
+    models
+        .iter()
+        .find(|m| m["slug"] == trimmed)
+        .or_else(|| {
+            models.iter().find(|m| {
+                m["aliases"].as_array().is_some_and(|aliases| {
+                    aliases
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .any(|a| a.eq_ignore_ascii_case(trimmed))
+                })
+            })
+        })
+        .and_then(|m| m["slug"].as_str())
+        .filter(|_| !trimmed.is_empty())
+        .map_or_else(|| value.to_string(), str::to_owned)
+}
+
 /// `applyClaudePromptEffortPrefix`: trims the text, and prefixes `Ultrathink:` for the
 /// `ultrathink` effort unless the text is a slash command or already has it.
 pub fn prompt_text(text: &str, prompt_effort: Option<&str>) -> String {
@@ -178,6 +727,11 @@ fn is_slash_command(text: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Against the bundled catalog (no manifest accepted).
+    fn compile(selection: &Value) -> Compiled {
+        super::compile(selection, &conn_provider::LiveManifest::default())
+    }
 
     fn selection(model: &str, options: Value) -> Value {
         json!({"instanceId": "claudeAgent", "model": model, "options": options})
@@ -234,5 +788,212 @@ mod tests {
             prompt_text("Ultrathink: x", Some("ultrathink")),
             "Ultrathink: x"
         );
+    }
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+
+    /// The port of `tryResolveClaudeModelCatalog` gives, for T3's bundled manifest, the models
+    /// T3's own function gave (`model_catalog.json`, generated). Badges depend on the clock.
+    #[test]
+    fn the_bundled_manifest_resolves_to_t3s_catalog() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../server/src/provider/model-manifest.json"
+        );
+        let manifest: Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let resolved = resolve(&manifest["providers"]["claudeAgent"], 0).expect("resolves");
+        let strip = |models: &Value| -> Vec<Value> {
+            models
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| {
+                    let mut m = m.clone();
+                    m.as_object_mut().unwrap().remove("badge");
+                    m
+                })
+                .collect()
+        };
+        let bundled = catalog_json();
+        assert_eq!(
+            strip(&resolved["providerModels"]),
+            strip(&bundled["providerModels"])
+        );
+        assert_eq!(resolved["compatibility"], bundled["compatibility"]);
+        // `resolveClaudeModelCatalog` falls back to the bundled catalog for an invalid one.
+        let live = conn_provider::LiveManifest::default();
+        let mut broken = manifest;
+        broken["providers"]["claudeAgent"]["models"][0]["adapter"]["claudeCode"]["minVersion"] =
+            Value::from("not a version");
+        live.set(broken);
+        assert_eq!(current(&live, 0)["compatibility"], bundled["compatibility"]);
+    }
+
+    fn bundled_manifest() -> Value {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../server/src/provider/model-manifest.json"
+        );
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    fn selection(model: &str, options: Value) -> Value {
+        serde_json::json!({"instanceId": "claudeAgent", "model": model, "options": options})
+    }
+
+    /// A model only the accepted manifest lists compiles against its profile, as the picker
+    /// shows it: the Ultracode toggle, the effort map and the model suffix all apply.
+    #[test]
+    fn a_manifest_only_model_compiles_from_its_profile() {
+        use serde_json::json;
+        let mut manifest = bundled_manifest();
+        let catalog = &mut manifest["providers"]["claudeAgent"];
+        catalog["profiles"]["next"] = json!({
+            "capabilities": {"optionDescriptors": [
+                {"id": "effort", "label": "Effort", "type": "select", "options": [
+                    {"id": "low", "label": "Low"},
+                    {"id": "high", "label": "High", "isDefault": true},
+                    {"id": "ultracode", "label": "Ultracode"}]},
+                {"id": "contextWindow", "label": "Context", "type": "select", "options": [
+                    {"id": "200k", "label": "200k", "isDefault": true},
+                    {"id": "1m", "label": "1M"}]}]},
+            "adapter": {"claudeCode": {"effortMap": {"high": "max"},
+                "modelSuffixes": {"contextWindow": {"1m": "[1m]"}}}}
+        });
+        catalog["models"].as_array_mut().unwrap().push(
+            json!({"slug": "claude-next", "name": "Claude Next", "status": "current",
+                "profile": "next"}),
+        );
+        let live = conn_provider::LiveManifest::default();
+        live.set(manifest);
+        let picker = current_provider_models(&live, 0);
+        let next = picker.iter().find(|m| m["slug"] == "claude-next").unwrap();
+        assert_eq!(
+            next.pointer("/capabilities/optionDescriptors/1/id"),
+            Some(&json!("ultracode")),
+            "the picker shows the toggle"
+        );
+        let ultracode = compile(
+            &selection("claude-next", json!([{"id": "ultracode", "value": true}])),
+            &live,
+        );
+        assert_eq!(
+            ultracode.settings,
+            json!({"ultracode": true}).as_object().cloned().unwrap()
+        );
+        assert_eq!(ultracode.effort.as_deref(), Some("max"), "high maps to max");
+        let wide = compile(
+            &selection(
+                "claude-next",
+                json!([{"id": "contextWindow", "value": "1m"},
+                                            {"id": "effort", "value": "low"}]),
+            ),
+            &live,
+        );
+        assert_eq!(wide.api_model_id, "claude-next[1m]");
+        assert_eq!(wide.effort.as_deref(), Some("low"));
+        // The legacy Ultracode effort turns the toggle on and runs at xhigh.
+        let legacy = compile(
+            &selection(
+                "claude-next",
+                json!([{"id": "effort", "value": "ultracode"}]),
+            ),
+            &live,
+        );
+        assert_eq!(
+            legacy.settings,
+            json!({"ultracode": true}).as_object().cloned().unwrap()
+        );
+    }
+
+    /// T3 reads an absent or null adapter as `{}` (`adapter ?? {}`), on the model and on its
+    /// profile: a manifest-only model with null adapters reaches the picker.
+    #[test]
+    fn a_null_adapter_counts_as_empty() {
+        use serde_json::json;
+        let mut manifest = bundled_manifest();
+        let catalog = &mut manifest["providers"]["claudeAgent"];
+        catalog["profiles"]["bare"] = json!({"capabilities": {"optionDescriptors": []},
+            "adapter": null});
+        catalog["models"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"slug": "claude-bare",
+            "name": "Claude Bare", "status": "current", "profile": "bare", "adapter": null}));
+        assert!(manifest_adapters_are_valid(&manifest));
+        let live = conn_provider::LiveManifest::default();
+        live.set(manifest);
+        let picker = current_provider_models(&live, 0);
+        assert!(picker.iter().any(|m| m["slug"] == "claude-bare"));
+    }
+
+    /// T3's `compileClaudeModelSelection` passes an explicit `thinking` choice for a model
+    /// outside the catalog (`!inCatalog`), with the bundled and with a fetched manifest.
+    #[test]
+    fn an_out_of_catalog_model_keeps_an_explicit_thinking_choice() {
+        use serde_json::json;
+        let fetched = conn_provider::LiveManifest::default();
+        fetched.set(bundled_manifest());
+        for live in [conn_provider::LiveManifest::default(), fetched] {
+            for thinking in [false, true] {
+                let compiled = compile(
+                    &selection(
+                        "my-proxy-model",
+                        json!([{"id": "thinking", "value": thinking}]),
+                    ),
+                    &live,
+                );
+                assert_eq!(compiled.api_model_id, "my-proxy-model");
+                assert_eq!(
+                    compiled.settings,
+                    json!({"alwaysThinkingEnabled": thinking})
+                        .as_object()
+                        .cloned()
+                        .unwrap()
+                );
+            }
+            let unset = compile(&selection("my-proxy-model", json!([])), &live);
+            assert!(unset.settings.is_empty());
+        }
+    }
+
+    /// The port of `compileClaudeModelSelection` over a resolved manifest gives, for T3's
+    /// bundled manifest, what T3's own function gave (`model_catalog.json`, generated): every
+    /// model, every effort choice and every boolean option.
+    #[test]
+    fn compiling_against_the_bundled_manifest_matches_t3() {
+        let live = conn_provider::LiveManifest::default();
+        live.set(bundled_manifest());
+        let table = catalog_json();
+        let as_json = |c: Compiled| {
+            serde_json::json!({"apiModelId": c.api_model_id, "effort": c.effort,
+                "promptEffort": c.prompt_effort, "settings": c.settings})
+        };
+        let mut compared = 0;
+        for model in table["models"].as_array().unwrap() {
+            let slug = model["slug"].as_str().unwrap();
+            for (effort, expected) in model["efforts"].as_object().unwrap() {
+                let options = if effort.is_empty() {
+                    Value::Null
+                } else {
+                    serde_json::json!([{"id": "effort", "value": effort}])
+                };
+                let got = as_json(compile(&selection(slug, options), &live));
+                assert_eq!(&got, expected, "{slug} effort {effort:?}");
+                compared += 1;
+            }
+            for (flag, expected) in model["flags"].as_object().unwrap() {
+                let (id, value) = flag.split_once('=').unwrap();
+                let options = serde_json::json!([{"id": id, "value": value == "true"}]);
+                let got = as_json(compile(&selection(slug, options), &live));
+                assert_eq!(&got, expected, "{slug} {flag}");
+                compared += 1;
+            }
+        }
+        assert!(compared > 100, "{compared} cases");
     }
 }

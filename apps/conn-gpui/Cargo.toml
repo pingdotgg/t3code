@@ -120,3 +120,9 @@ strip = true
 # `metal_frames`): under the Metal link, frames drawn during key dispatch stayed off screen until
 # the next mouse event (2026-11-21, reproduced in nick-vm). CONN_GPUI_METAL_DISPLAY_LINK=1 opts back in.
 gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
+# gpui-pre-apple 0.3.11 as published, plus conn-gpui's variable-font weights
+# (vendor/gpui-pre-apple/src/text_system.rs, `weight_variation`): GPUI picks the best-matching loaded
+# face and never applies a variation axis, so a variable font drew at its default weight whatever
+# was asked. A face with a `wght` axis now gets one CoreText variation per requested weight; static
+# faces are untouched.
+gpui-pre-apple = { path = "vendor/gpui-pre-apple" }

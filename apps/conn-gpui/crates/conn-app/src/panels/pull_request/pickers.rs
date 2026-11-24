@@ -577,6 +577,11 @@ pub(super) fn render_reaction_bar(
             .id(SharedString::from(format!(
                 "pr-react-{subject_key}-{content:?}"
             )))
+            .a11y_switch(
+                format!("panel.pull-request.react.{subject_key}.{content:?}"),
+                format!("{} {}", reaction_name(content), reaction.count),
+                reacted,
+            )
             .h(px(24.0))
             .px(px(8.0))
             .gap(px(4.0))
@@ -620,6 +625,10 @@ pub(super) fn render_reaction_bar(
         let on_open = on_toggle_picker.clone();
         let add_btn = div()
             .id(SharedString::from(format!("pr-react-add-{subject_key}")))
+            .a11y_button(
+                format!("panel.pull-request.react-add.{subject_key}"),
+                "Add a reaction",
+            )
             .flex()
             .flex_shrink_0()
             .h(px(24.0))
@@ -641,6 +650,10 @@ pub(super) fn render_reaction_bar(
             let divider = chrome::alpha(tokens.foreground, 0.08);
             let mut row = h_flex()
                 .id(SharedString::from(format!("pr-react-picker-{subject_key}")))
+                .a11y_group(
+                    format!("panel.pull-request.react-picker.{subject_key}"),
+                    "Reactions",
+                )
                 .p(px(4.0))
                 .gap(px(2.0))
                 .items_center()
@@ -665,6 +678,11 @@ pub(super) fn render_reaction_bar(
                         .id(SharedString::from(format!(
                             "pr-react-opt-{subject_key}-{content:?}"
                         )))
+                        .a11y_switch(
+                            format!("panel.pull-request.react-opt.{subject_key}.{content:?}"),
+                            reaction_name(content),
+                            reacted,
+                        )
                         .flex()
                         .size(px(28.0))
                         .items_center()

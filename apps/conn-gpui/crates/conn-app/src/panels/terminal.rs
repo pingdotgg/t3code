@@ -21,17 +21,18 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::tty;
 use alacritty_terminal::vte::ansi::{CursorShape, CursorStyle as AnsiCursorStyle};
+use conn_state::terminal_settings::{CursorStyle as TerminalCursorStyle, TerminalSettings};
 use conn_theme::Tokens;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     App, BorderStyle, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, DispatchPhase,
     Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable,
-    Font, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, InteractiveElement,
-    IntoElement, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, ScrollDelta, ScrollEvent, ShapedLine, StrikethroughStyle,
-    Style, Styled, Task, TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, div, fill,
-    font, outline, point, px, relative, size,
+    Font, FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId,
+    InteractiveElement, IntoElement, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollDelta, ScrollEvent,
+    ShapedLine, StrikethroughStyle, Style, Styled, Task, TextAlign, TextRun, UTF16Selection,
+    UnderlineStyle, Window, div, fill, font, outline, point, px, relative, size,
 };
 use tokio::sync::mpsc;
 
@@ -41,7 +42,6 @@ use super::terminal_palette::{
     KeyInput, TerminalKeyAction, TerminalPalette, dim_rgb8, encode_terminal_key,
 };
 
-const TERMINAL_FONT_SIZE_PX: f32 = 13.0;
 const TERMINAL_PAD_START_PX: f32 = 16.0;
 const TERMINAL_PAD_TOP_PX: f32 = 16.0;
 const TERMINAL_PAD_END_PX: f32 = 12.0;
@@ -181,7 +181,16 @@ pub(crate) struct TerminalPanel {
     scroll_remainder: f32,
     drawn_at: Option<DrawnAt>,
     selecting: bool,
+    /// The cursor style last given to the running terminal, to re-apply it when Settings changes.
+    applied_cursor: Option<(TerminalCursorStyle, bool)>,
+    /// The blinking cursor is in its visible half, and the timer that flips it.
+    blink_on: bool,
+    blink_task: Option<Task<()>>,
 }
+
+/// Half a blink period: the cursor is visible for this long, then hidden for this long. The
+/// Settings example blinks on the same period (`terminal_demo`).
+pub(crate) const CURSOR_BLINK_MS: u64 = 530;
 
 impl fmt::Debug for TerminalPanel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -205,6 +214,9 @@ impl TerminalPanel {
             scroll_remainder: 0.0,
             drawn_at: None,
             selecting: false,
+            applied_cursor: None,
+            blink_on: true,
+            blink_task: None,
         }
     }
 
@@ -224,6 +236,47 @@ impl TerminalPanel {
         }
         self.workspace_root = workspace_root;
         cx.notify();
+    }
+
+    /// Gives a running terminal the cursor shape from Settings, once per change.
+    fn apply_cursor_settings(&mut self, settings: &TerminalSettings) {
+        let wanted = (settings.cursor_style, settings.cursor_blink);
+        if self.applied_cursor == Some(wanted) {
+            return;
+        }
+        self.applied_cursor = Some(wanted);
+        if let Some(session) = &self.session {
+            session.term.lock().set_options(terminal_config(settings));
+        }
+    }
+
+    /// Runs the blink timer while a blinking cursor is on a focused terminal, and only then:
+    /// an idle or unfocused terminal repaints on output alone.
+    fn sync_blink(&mut self, active: bool, cx: &mut Context<'_, Self>) {
+        if !active {
+            if self.blink_task.take().is_some() {
+                self.blink_on = true;
+            }
+            return;
+        }
+        if self.blink_task.is_some() {
+            return;
+        }
+        self.blink_on = true;
+        self.blink_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(CURSOR_BLINK_MS))
+                    .await;
+                let alive = this.update(cx, |panel, cx| {
+                    panel.blink_on = !panel.blink_on;
+                    cx.notify();
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        }));
     }
 
     /// Lazily spawns the user's login shell on first display of the Terminal tab.
@@ -268,13 +321,7 @@ impl TerminalPanel {
             sender: OnceLock::new(),
             notes: notes_tx,
         });
-        let config = Config {
-            default_cursor_style: AnsiCursorStyle {
-                shape: CursorShape::Block,
-                blinking: false,
-            },
-            ..Config::default()
-        };
+        let config = terminal_config(&crate::terminal_settings::current(cx));
         let term = Arc::new(FairMutex::new(Term::new(
             config,
             &size,
@@ -357,6 +404,7 @@ impl TerminalPanel {
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.blink_on = true;
         let k = &event.keystroke;
         let m = k.modifiers;
 
@@ -901,31 +949,51 @@ impl CellRun {
     }
 }
 
-struct FontMetrics {
-    font: Font,
-    size: Pixels,
-    cell_width: f32,
-    cell_height: f32,
+pub(super) struct FontMetrics {
+    pub(super) font: Font,
+    pub(super) size: Pixels,
+    pub(super) cell_width: f32,
+    pub(super) cell_height: f32,
 }
 
-fn measure_font(window: &Window, cx: &App) -> FontMetrics {
-    let mono_family = cx.theme().mono_font_family.clone();
-    let f = font(mono_family);
-    let size = px(TERMINAL_FONT_SIZE_PX);
+/// The terminal's cursor as Alacritty's default: Settings' shape and blink.
+fn terminal_config(settings: &TerminalSettings) -> Config {
+    Config {
+        default_cursor_style: AnsiCursorStyle {
+            shape: match settings.cursor_style {
+                TerminalCursorStyle::Block => CursorShape::Block,
+                TerminalCursorStyle::Bar => CursorShape::Beam,
+                TerminalCursorStyle::Underline => CursorShape::Underline,
+            },
+            blinking: settings.cursor_blink,
+        },
+        ..Config::default()
+    }
+}
+
+/// Measures the terminal font from Settings → Terminal. A cell is one glyph advance plus the
+/// letter spacing wide, and the font size times the line height tall, each on the pixel grid.
+pub(super) fn measure_font(window: &Window, cx: &App, settings: &TerminalSettings) -> FontMetrics {
+    let family: gpui_kit::SharedString = if settings.font_family.is_empty() {
+        cx.theme().mono_font_family.clone()
+    } else {
+        settings.font_family.clone().into()
+    };
+    let mut f = font(family);
+    f.weight = FontWeight(f32::from(settings.font_weight));
+    let size = px(settings.font_size);
     let text = window.text_system();
     let id = text.resolve_font(&f);
     let advance = text
         .advance(id, size, 'W')
         .map(|s| f32::from(s.width))
-        .unwrap_or(TERMINAL_FONT_SIZE_PX * 0.6);
-    let raw_height =
-        (f32::from(text.ascent(id, size)) + f32::from(text.descent(id, size)).abs()).ceil();
+        .unwrap_or(settings.font_size * 0.6);
     let scale = window.scale_factor();
     FontMetrics {
         font: f,
         size,
-        cell_width: ((advance * scale).round() / scale).max(1.0),
-        cell_height: ((raw_height * scale).ceil() / scale).max(1.0),
+        cell_width: (((advance + settings.letter_spacing) * scale).round() / scale).max(1.0),
+        cell_height: ((settings.cell_height() * scale).ceil() / scale).max(1.0),
     }
 }
 
@@ -981,7 +1049,8 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> PrepaintedTerminal {
-        let m = measure_font(window, cx);
+        let settings = crate::terminal_settings::current(cx);
+        let m = measure_font(window, cx, &settings);
         let (cw, ch) = (m.cell_width, m.cell_height);
         let cols = ((f32::from(bounds.size.width) / cw).floor() as u16).max(2);
         let rows = ((f32::from(bounds.size.height) / ch).floor() as u16).max(1);
@@ -991,7 +1060,10 @@ impl Element for TerminalElement {
             cell_width: cw,
             cell_height: ch,
         };
-        self.panel.update(cx, |p, _| {
+        let blink_active = settings.cursor_blink && self.focused;
+        self.panel.update(cx, |p, cx| {
+            p.apply_cursor_settings(&settings);
+            p.sync_blink(blink_active, cx);
             p.resize(grid);
             p.drawn_at = Some(DrawnAt {
                 origin: bounds.origin,
@@ -1028,8 +1100,9 @@ impl Element for TerminalElement {
         let selection = content.selection;
         let cursor = content.cursor;
         let cursor_row = cursor.point.line.0 + offset;
-        let cursor_visible =
-            cursor.shape != CursorShape::Hidden && (0..i32::from(rows)).contains(&cursor_row);
+        let cursor_visible = cursor.shape != CursorShape::Hidden
+            && (0..i32::from(rows)).contains(&cursor_row)
+            && (!blink_active || panel.blink_on);
         let solid_cursor = cursor_visible && self.focused && cursor.shape == CursorShape::Block;
         let overrides = content.colors;
 
