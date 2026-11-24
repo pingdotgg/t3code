@@ -444,6 +444,9 @@ export function createDeviceStreamClient(
   let firstFrame = false;
   let configuring = false;
   let mjpeg = false;
+  // Without WebCodecs an iOS feed tries WebRTC before MJPEG and drops to MJPEG once if a
+  // first-frame window passes without video. Cleared then, so MJPEG errors cannot bounce it.
+  let mjpegIfWebRtcStalls = false;
   let generation = 0;
   let decoderEpoch = 0;
   let frameTimer: ReturnType<typeof setTimeout> | null = null;
@@ -513,7 +516,10 @@ export function createDeviceStreamClient(
     firstFrame = false;
     if (frameTimer === null) {
       frameTimer = setTimeout(
-        () => fail(resolve(msg("No video received from the device. Reconnect to try again."))),
+        () =>
+          mjpegIfWebRtcStalls
+            ? webRtcToMjpeg()
+            : fail(resolve(msg("No video received from the device. Reconnect to try again."))),
         FIRST_FRAME_TIMEOUT_MS,
       );
     }
@@ -1076,6 +1082,33 @@ export function createDeviceStreamClient(
     }
   };
 
+  const webRtcToMjpeg = () => {
+    mjpegIfWebRtcStalls = false;
+    videoGeneration++;
+    closePeer();
+    clearTimeout(retryTimers.get("video"));
+    retryTimers.delete("video");
+    clearFrameTimer();
+    fallBackToMjpeg();
+  };
+
+  const startIosWithoutWebCodecs = async () => {
+    const session = generation;
+    const tryWebRtc =
+      typeof RTCPeerConnection !== "undefined" && !target.preferMjpeg && !target.panelId;
+    const settings = tryWebRtc ? await probeWebRtc() : null;
+    if (stopped || generation !== session) return;
+    if (!settings) {
+      // The probe used part of the first-frame window; MJPEG gets a full one.
+      clearFrameTimer();
+      return fallBackToMjpeg();
+    }
+    mjpegIfWebRtcStalls = true;
+    // A restart can follow an MJPEG fallback that left the canvas hidden.
+    events.onCanvasVideo?.();
+    void readWebRtc(settings);
+  };
+
   /**
    * Called once AVCC or MJPEG was refused. `locked` means serve-sim already
    * said it streams WebRTC only, so a missing /api answer still switches.
@@ -1335,7 +1368,7 @@ export function createDeviceStreamClient(
     } else if (platform === "ios") {
       if (!target.videoOnly) void connectIosInput();
       if (useWebCodecs) void readIosVideo();
-      else fallBackToMjpeg();
+      else void startIosWithoutWebCodecs();
     } else void startAndroid();
   };
 
@@ -1350,6 +1383,7 @@ export function createDeviceStreamClient(
     panelClients = [];
     panelSinks = null;
     mjpeg = false;
+    mjpegIfWebRtcStalls = false;
     clearFrameTimer();
     if (videoReadTimer !== null) clearTimeout(videoReadTimer);
     videoReadTimer = null;
