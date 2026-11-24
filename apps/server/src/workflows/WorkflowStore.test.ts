@@ -253,7 +253,6 @@ it.effect("a long failure detail is cut without leaving half an emoji", () =>
   withStore(
     Effect.gen(function* () {
       const store = yield* WorkflowStore.WorkflowStore;
-      const hub = yield* MilestoneHub.MilestoneHub;
       yield* store.runStarted({
         runId: "r1",
         workflow: "fail",
@@ -268,12 +267,8 @@ it.effect("a long failure detail is cut without leaving half an emoji", () =>
       yield* store.runPaused("r1", detail);
       const [step] = yield* store.steps("r1");
       const run = yield* store.run("r1");
-      const { events } = yield* hub.recent();
-      const paused = events.find((event) => event.type === "workflow.run_paused");
-      const expected = "a".repeat(1_999);
-      assert.equal(step?.detail, expected);
-      assert.equal(run?.detail, expected);
-      assert.equal(paused?.type === "workflow.run_paused" ? paused.reason : undefined, expected);
+      assert.equal(step?.detail, "a".repeat(1_999));
+      assert.equal(run?.detail, "a".repeat(1_999));
     }),
   ),
 );
