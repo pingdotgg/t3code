@@ -19,9 +19,8 @@ import { PlusIcon, XIcon } from "lucide-react";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useFormattingLocale } from "../../i18n/I18nProvider";
 import { reconcileSnoozeDraft, sortSnoozeRows } from "./SnoozePresetsSettings.logic";
-import { formatShortTimestamp } from "../../timestampFormat";
+import { formatShortTimestamp, resolveHour12 } from "../../timestampFormat";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -30,6 +29,7 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { TimePicker } from "../ui/time-picker";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 import {
@@ -288,8 +288,13 @@ function SnoozePresetList(props: {
         const list = event.currentTarget;
         const next = event.relatedTarget;
         if (list.contains(next)) return;
-        // Select popups portal out of the list, so focus moving into one is not leaving it.
-        if (next instanceof Element && next.closest('[data-slot="select-popup"]')) return;
+        // Select and time-picker popups portal out of the list, so focus moving into one is not leaving it.
+        if (
+          next instanceof Element &&
+          next.closest('[data-slot="select-popup"], [data-slot="popover-popup"]')
+        ) {
+          return;
+        }
         // Waits for the amount field's blur commit, and skips its Enter blur-and-refocus.
         queueMicrotask(() => {
           if (!list.contains(document.activeElement)) props.onSettle();
@@ -305,7 +310,11 @@ function SnoozePresetList(props: {
             aria-label={gt("Snooze option {number}", { number: index + 1 })}
             className="flex flex-wrap items-center gap-2"
           >
-            <SnoozePresetFields preset={preset} onChange={(next) => props.onChange(index, next)} />
+            <SnoozePresetFields
+              preset={preset}
+              hour12={resolveHour12(props.timestampFormat)}
+              onChange={(next) => props.onChange(index, next)}
+            />
             <div className="ml-auto flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
               {preview.tone === "menu" ? (
                 <span className="truncate">
@@ -357,12 +366,13 @@ function SnoozePresetList(props: {
 
 function SnoozePresetFields(props: {
   preset: SnoozePresetSetting;
+  hour12: boolean;
   onChange: (preset: SnoozePresetSetting) => void;
 }) {
   const gt = useGT();
   const m = useMessages();
   const locale = useLocale();
-  const { preset, onChange } = props;
+  const { preset, hour12, onChange } = props;
   const when = preset.kind === "after" ? "after" : preset.day;
   // Switching between a duration and a set time keeps the other kind's last value, so a
   // misclick on "When" can be undone without retyping it.
@@ -406,18 +416,12 @@ function SnoozePresetFields(props: {
           <span className="text-xs text-muted-foreground">
             {gt("at", { $context: "before a time of day, as in: Monday at 09:00" })}
           </span>
-          <Input
-            nativeInput
+          <TimePicker
             size="sm"
-            type="time"
-            className="w-32"
+            hour12={hour12}
             aria-label={gt("Time", { $context: "time of day" })}
             value={preset.time}
-            onChange={(event) => {
-              if (/^\d{2}:\d{2}$/.test(event.target.value)) {
-                onChange({ ...preset, time: event.target.value });
-              }
-            }}
+            onValueChange={(time) => onChange({ ...preset, time })}
           />
         </div>
       )}
