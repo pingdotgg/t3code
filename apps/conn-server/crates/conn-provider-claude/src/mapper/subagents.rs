@@ -112,6 +112,10 @@ impl Subagents {
         self.by_task.values().any(Sub::running)
     }
 
+    pub(super) fn is_running(&self, task_id: &str) -> bool {
+        self.by_task.get(task_id).is_some_and(Sub::running)
+    }
+
     /// The tool_use id belongs to a tool a subagent runs.
     pub(super) fn owns_tool(&self, tool_use_id: &str) -> bool {
         self.by_task
@@ -121,7 +125,9 @@ impl Subagents {
 
     /// A running subagent's title and child thread, for the wake that its end reports.
     pub(super) fn running_report(&self, task_id: &str) -> Option<(Option<String>, String)> {
-        self.by_task.get(task_id).filter(|s| s.running())?;
+        if !self.is_running(task_id) {
+            return None;
+        }
         self.report(task_id)
     }
 
@@ -546,6 +552,34 @@ impl<E: Env> Mapper<E> {
         out
     }
 
+    /// A root that did not complete stops its own run's running workflows and settles their
+    /// rows; another run's workflows keep running.
+    pub(super) fn end_run_workflows(&mut self, run_id: &str, status: &str, out: &mut Vec<Out>) {
+        let mut owned: Vec<(String, String)> = self
+            .subagents
+            .by_task
+            .iter()
+            .filter(|(_, s)| s.running() && s.task["workflow"].is_object())
+            .filter(|(_, s)| s.parent.run_id == run_id)
+            .map(|(id, s)| (id.clone(), s.tool_use_id.clone()))
+            .collect();
+        owned.sort();
+        for (task_id, tool_use_id) in owned {
+            out.push(Out::StopTask {
+                task_id: task_id.clone(),
+            });
+            self.update_subagent(
+                Update {
+                    task_id: &task_id,
+                    tool_use_id: &tool_use_id,
+                    status,
+                    ..Update::default()
+                },
+                out,
+            );
+        }
+    }
+
     /// The session ended: every running subagent ends with it.
     pub(super) fn end_running_subagents(&mut self, status: &str, out: &mut Vec<Out>) {
         let running: Vec<(String, String)> = self
@@ -779,6 +813,9 @@ impl<E: Env> Mapper<E> {
         if !existing && input.status != "running" {
             return;
         }
+        // `task_started` again: a resumed subagent (SendMessage), or a running one a
+        // continuation picked up, belongs to the turn that reported it.
+        let restarted = input.reopen && input.status == "running";
         let mut is_reopen = false;
         let mut prior_status = String::new();
         let current_parent = self.parent_ctx();
@@ -788,9 +825,8 @@ impl<E: Env> Mapper<E> {
             if terminal && input.status == "running" && !input.reopen {
                 return;
             }
-            is_reopen = terminal && input.reopen && input.status == "running";
-            // A resumed subagent (SendMessage) runs in the turn that resumed it.
-            if is_reopen && let Some(parent) = current_parent {
+            is_reopen = terminal && restarted;
+            if restarted && let Some(parent) = current_parent {
                 sub.parent = parent;
                 sub.process_generation = self.process_generation;
             }
@@ -856,9 +892,7 @@ impl<E: Env> Mapper<E> {
                 },
             );
         }
-        let lifecycle_changed = !existing
-            || prior_status != input.status
-            || (input.reopen && input.status == "running");
+        let lifecycle_changed = !existing || prior_status != input.status || restarted;
         let ordinal_for_title = self.subagents.opened;
         if !existing {
             self.subagents.opened += 1;
@@ -879,9 +913,11 @@ impl<E: Env> Mapper<E> {
         }
         let task = &mut sub.task;
         task["status"] = json!(input.status);
+        if restarted {
+            task["runId"] = json!(sub.parent.run_id);
+        }
         if is_reopen {
             sub.stop_requested = false;
-            task["runId"] = json!(sub.parent.run_id);
             task["startedAt"] = json!(now);
             task["result"] = Value::Null;
             if let Some(map) = task.as_object_mut() {
