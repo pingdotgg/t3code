@@ -76,9 +76,49 @@ describe("splitMarkdown", () => {
       "# literal",
       "</div>",
       "",
+      "<details>",
+      "<summary>Answer</summary>",
+      "",
+      "Inside details",
+      "",
+      "</details>",
+      "",
+      "<table><tr><td>",
+      "",
+      "```ts",
+      "inside a cell",
+      "```",
+      "",
+      "</td></tr></table>",
+      "",
+      '<ol start="10">',
+      "",
+      "<li>one</li>",
+      "",
+      "<li>two</li>",
+      "",
+      "</ol>",
+      "",
+      "```html",
+      "<details>",
+      "```",
+      "",
       "after",
     ].join("\n");
-    expect(starts(text)).toEqual(["<!--", "after"]);
+    expect(starts(text)).toEqual(["<!--", "```html", "after"]);
+    const multiline = [
+      "<details",
+      '  class="faq"><!-- </details> -->',
+      "",
+      "Inside details",
+      "",
+      "</details>",
+      "",
+      "after",
+    ].join("\n");
+    expect(starts(multiline)).toEqual(["<details", "after"]);
+    const unclosed = ["<details>", "", "x".repeat(32 * 1024), "", "after"].join("\n");
+    expect(starts(unclosed)).toEqual(["<details>", "after"]);
   });
 
   it("treats an autolink line as a paragraph, so a following fence still opens", () => {

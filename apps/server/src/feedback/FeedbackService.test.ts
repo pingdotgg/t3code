@@ -314,6 +314,7 @@ const harness = Effect.gen(function* () {
             {
               instanceId,
               driver: "codex",
+              auth: { status: "authenticated" },
               models: [{ slug: "gpt-5.5", isCustom: false }],
             } as unknown as ServerProvider,
           ]),

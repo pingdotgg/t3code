@@ -21,8 +21,19 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 import { issues, pullRequests } from "./forgeApi.ts";
-import { cancel, runs, signal, signalAll, start, store } from "./stepServices.ts";
-import { type InRun, invoke, skip, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
+import { cancel, runs, signalAll, start } from "./stepServices.ts";
+import {
+  type InRun,
+  invoke,
+  skip,
+  sleep,
+  step,
+  stop,
+  text,
+  title,
+  wait,
+  workflow,
+} from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
@@ -243,85 +254,6 @@ const definitions = (
     ),
   ];
 };
-
-/** Write a change, ask a person whether to merge it, then land it in the writer's own thread. */
-const tally = store.entry("tally", Schema.Number);
-const stored = [
-  /** Counts itself in the store, with the first try of the step failing after it counted. */
-  workflow(
-    "tally",
-    {
-      version: 1,
-      payload: Schema.Struct({ wrong: Schema.optional(Schema.Boolean) }),
-      returns: Schema.Number,
-    },
-    (payload) =>
-      payload.wrong === true
-        ? step(
-            "read",
-            { returns: Schema.Number, ...once },
-            Effect.as(store.entry("tally", Schema.String).get, 0),
-          )
-        : step(
-            "count",
-            { returns: Schema.Number, ...once },
-            tally
-              .update((current) => Option.getOrElse(current, () => 0) + 1)
-              .pipe(Effect.map(Option.getOrElse(() => 0))),
-          ),
-  ),
-  /** Waits in line for a door that `opener` opens. */
-  workflow(
-    "door",
-    { version: 1, payload: Schema.Struct({ door: Schema.String }), returns: Schema.String },
-    (payload) =>
-      Effect.map(
-        wait("open", { returns: Schema.String, channel: payload.door }),
-        Option.getOrElse(() => "never"),
-      ),
-  ),
-  workflow(
-    "opener",
-    { version: 1, payload: Schema.Struct({ door: Schema.String, fail: Schema.Boolean }) },
-    (payload) =>
-      step(
-        "open",
-        { returns: Schema.Void, retry: { times: 1 } },
-        Effect.gen(function* () {
-          // Written and taken back together when the step fails after writing.
-          yield* store.transaction(
-            Effect.gen(function* () {
-              yield* store.entry(`doors/${payload.door}`, Schema.String).set("open");
-              const tries = yield* store
-                .entry(`tries/${payload.door}`, Schema.Number)
-                .update((current) => Option.getOrElse(current, () => 0) + 1);
-              if (payload.fail && Option.contains(tries, 1)) return yield* Effect.fail("slipped");
-            }),
-          );
-          yield* signal({ workflow: "door", channel: payload.door }, "came in");
-        }),
-      ),
-  ),
-  /** Opens two doors, fails, and on its second try opens the second and a third. */
-  workflow(
-    "relay",
-    { version: 1, payload: Schema.Struct({ doors: Schema.Array(Schema.String) }) },
-    (payload) =>
-      step(
-        "pass",
-        { returns: Schema.Void, retry: { times: 1 } },
-        Effect.gen(function* () {
-          const tries = yield* store
-            .entry("relay-tries", Schema.Number)
-            .update((current) => Option.getOrElse(current, () => 0) + 1);
-          const [a, b, c] = payload.doors;
-          const doors = Option.contains(tries, 1) ? [a!, b!] : [b!, c!];
-          for (const door of doors) yield* signal({ workflow: "door", channel: door }, "came in");
-          if (Option.contains(tries, 1)) return yield* Effect.fail("slipped");
-        }),
-      ),
-  ),
-];
 
 const kid = workflow(
   "kid",
@@ -788,7 +720,6 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
     ...definitions(counts, failures, latch),
     fix,
     ...triggered,
-    ...stored,
     ...family,
     ...control,
   ];
@@ -1638,84 +1569,6 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
-it.effect(
-  "the store is shared by runs, survives a restart, and a failed transaction writes nothing",
-  () =>
-    Effect.gen(function* () {
-      const { boot } = yield* harness();
-      yield* boot(
-        Effect.gen(function* () {
-          const workflows = yield* Workflows.Workflows;
-          const runs = yield* Effect.forEach(["a", "b", "c"], (key) =>
-            workflows.start("tally", {}, { idempotencyKey: key }),
-          );
-          const counted = yield* Effect.forEach(runs, (run) =>
-            workflows.waitFor(run.runId, status("completed")),
-          );
-          assert.sameMembers(
-            counted.map((run) => run.result),
-            [1, 2, 3],
-          );
-        }),
-      );
-      yield* boot(
-        Effect.gen(function* () {
-          const workflows = yield* Workflows.Workflows;
-          const next = yield* workflows.start("tally", {}, { idempotencyKey: "d" });
-          assert.equal((yield* workflows.waitFor(next.runId, status("completed"))).result, 4);
-          // A key read with another schema is the step's failure, with the key in the reason.
-          const wrong = yield* workflows.start("tally", { wrong: true }, { idempotencyKey: "w" });
-          const paused = yield* workflows.waitFor(wrong.runId, status("paused"));
-          assert.include(paused.detail ?? "", "The stored value at tally does not fit its schema");
-
-          // The first try fails inside the transaction, so the door it opened is not there, and
-          // the try count it raised is 1 again on the second try, which is the one that signals.
-          const waiting = yield* workflows.start("door", { door: "east" }, { idempotencyKey: "e" });
-          yield* workflows.waitFor(waiting.runId, status("waiting"));
-          const opener = yield* workflows.start(
-            "opener",
-            { door: "east", fail: true },
-            { idempotencyKey: "o" },
-          );
-          yield* workflows.waitFor(opener.runId, status("paused"));
-          assert.equal((yield* workflows.get(waiting.runId)).run.status, "waiting");
-          const clean = yield* workflows.start(
-            "opener",
-            { door: "east", fail: false },
-            { idempotencyKey: "o2" },
-          );
-          yield* workflows.waitFor(clean.runId, status("completed"));
-          assert.equal(
-            (yield* workflows.waitFor(waiting.runId, status("completed"))).result,
-            "came in",
-          );
-
-          // A retry sends again what the first try sent, and what it sends anew is new.
-          const doors = ["ra", "rb", "rc"];
-          const held = yield* Effect.forEach(doors, (door) =>
-            workflows.start("door", { door }, { idempotencyKey: door }),
-          );
-          yield* Effect.forEach(held, (run) => workflows.waitFor(run.runId, status("waiting")));
-          const relay = yield* workflows.start("relay", { doors }, { idempotencyKey: "relay" });
-          yield* workflows.waitFor(relay.runId, status("completed"));
-          // Each try is an attempt, though both were one run of the step.
-          assert.equal((yield* workflows.get(relay.runId)).steps[0]?.attempts, 2);
-          assert.equal(
-            yield* workflows.signal({ workflow: "door", channel: "rc" }, "late", { id: "rc-late" }),
-            "buffered",
-          );
-          const opened = yield* Effect.forEach(held, (run) =>
-            workflows.waitFor(run.runId, status("completed")),
-          );
-          assert.deepStrictEqual(
-            opened.map((run) => run.result),
-            ["came in", "came in", "came in"],
-          );
-        }),
-      );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-);
-
 it.effect("an invoked run reports how it ended, and cancelling the parent cancels it", () =>
   Effect.gen(function* () {
     const { boot } = yield* harness();
@@ -2422,3 +2275,11 @@ it.effect("a workflow can take an agent's failure as an answer and go on", () =>
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
+
+it("error text cuts at 2,000 units without leaving half an emoji", () => {
+  assert.equal(text(`${"a".repeat(1_999)}\u{1F680}tail`), "a".repeat(1_999));
+  assert.equal(
+    text(new Error("outer", { cause: `${"a".repeat(1_992)}\u{1F680}tail` })),
+    `outer: ${"a".repeat(1_992)}`,
+  );
+});

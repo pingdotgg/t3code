@@ -95,6 +95,22 @@ describe("parseMarkdownFileLink", () => {
     expect(parseMarkdownFileLink(destination ?? "")?.path).toBe(path);
   });
 
+  // regression: #41223 names the parser rejects bare; the composer adds `./` to them
+  it.each([
+    "C#/Program.cs",
+    "docs/R&D/notes.md",
+    "docs/Bob's notes.md",
+    "docs/a,b.ts",
+    "docs/100%.md",
+    "docs/why?.md",
+    "icon@2x.png",
+  ])("resolves the composer's link to %s", (path) => {
+    const destination = /\]\((.*)\)$/.exec(serializeComposerFileLink(path))?.[1];
+    expect(resolveMarkdownFileLinkTarget(destination ?? "", "/workspace/project")).toBe(
+      `/workspace/project/${path}`,
+    );
+  });
+
   it.each([
     "https://example.com/docs",
     "/chat/settings#L3",
