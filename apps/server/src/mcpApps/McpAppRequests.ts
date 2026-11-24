@@ -57,13 +57,13 @@ const annotation = (tool: ProviderAdapter.ProviderAdapterV2McpTool, name: string
 
 /**
  * Apps call tools without the user asking for each call, so T3 confirms side effects. Read-only tools
- * and app-only tools not marked destructive run silently: the model cannot reach app-only tools, and
- * apps call them for their own state, often on every render.
+ * and app-only tools marked `destructiveHint: false` run silently: apps call those for their own state,
+ * often on every render. MCP treats a missing `destructiveHint` as destructive.
  */
 const skipsApproval = (tool: ProviderAdapter.ProviderAdapterV2McpTool) =>
   tool.requiresApproval !== true &&
   (annotation(tool, "readOnlyHint") === true ||
-    (mcpAppToolIsAppOnly(tool._meta) && annotation(tool, "destructiveHint") !== true));
+    (mcpAppToolIsAppOnly(tool._meta) && annotation(tool, "destructiveHint") === false));
 
 const toolTitle = (tool: ProviderAdapter.ProviderAdapterV2McpTool) => {
   const title = annotation(tool, "title");
