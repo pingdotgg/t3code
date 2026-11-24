@@ -12,8 +12,9 @@
 # hardened.patch is applied only while the build runs, and reverted on exit. It:
 # - sets bundle ID com.hyrmedia.t3code.litellm, Electron profile t3code-hardened,
 #   and data home ~/.t3-hyr, so the app never shares state with T3 Code or its Nightly
-# - turns off telemetry, T3 Connect (relay, tunnels), guest share links,
-#   and the model manifest fetch from upstream. LAN and Tailscale access stay
+# - turns off telemetry (product events, identity file reads, relay traces),
+#   T3 Connect (relay, tunnels), guest share links, and the model manifest
+#   fetch from upstream. LAN and Tailscale access stay
 #   available and are off until the user turns them on in Settings.
 # Installed copies check github.com/$REPO releases for updates.
 set -euo pipefail
@@ -73,6 +74,9 @@ rm -rf release
 env -u ELECTRON_RUN_AS_NODE -u GITHUB_REPOSITORY \
   -u T3CODE_CLERK_PUBLISHABLE_KEY -u T3CODE_CLERK_JWT_TEMPLATE -u T3CODE_CLERK_CLI_OAUTH_CLIENT_ID \
   -u T3CODE_RELAY_URL -u VITE_T3CODE_RELAY_URL -u T3CODE_POSTHOG_KEY -u T3CODE_POSTHOG_HOST \
+  -u T3CODE_RELAY_CLIENT_OTLP_TRACES_URL -u T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET \
+  -u T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN -u VITE_RELAY_OTLP_TRACES_URL \
+  -u VITE_RELAY_OTLP_TRACES_DATASET -u VITE_RELAY_OTLP_TRACES_TOKEN -u T3CODE_DESKTOP_SKIP_BUILD \
   T3CODE_DESKTOP_UPDATE_REPOSITORY="$REPO" \
   vp run dist:desktop:artifact --platform mac --target zip --arch arm64 --build-version "$VERSION"
 git checkout -- .

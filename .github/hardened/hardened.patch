@@ -85,11 +85,22 @@ index 6c9c70246b..69f04fc976 100644
      const parsedOrigin = yield* Effect.try({
        try: () => parseManagedEndpointLocalOrigin(localOrigin),
 diff --git a/apps/server/src/cloud/publicConfig.ts b/apps/server/src/cloud/publicConfig.ts
-index 85ffbbb046..a1fd921a66 100644
+index 85ffbbb046..f8940b4412 100644
 --- a/apps/server/src/cloud/publicConfig.ts
 +++ b/apps/server/src/cloud/publicConfig.ts
-@@ -101,9 +101,9 @@ export function resolveRelayClientTracingConfig(
-     : null;
+@@ -96,14 +96,17 @@ export function resolveRelayClientTracingConfig(
+     env.T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET?.trim() || fallback.tracesDataset;
+   const tracesToken = env.T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() || fallback.tracesToken;
+   const normalizedTracesUrl = normalizeSecureUrl(tracesUrl);
+-  return normalizedTracesUrl && tracesDataset && tracesToken
+-    ? { tracesUrl: normalizedTracesUrl, tracesDataset, tracesToken }
+-    : null;
++  const config =
++    normalizedTracesUrl && tracesDataset && tracesToken
++      ? { tracesUrl: normalizedTracesUrl, tracesDataset, tracesToken }
++      : null;
++  // HYR Code: relay traces never go to Axiom.
++  return false ? config : null;
  }
  
 -export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
@@ -101,7 +112,7 @@ index 85ffbbb046..a1fd921a66 100644
      Config.mapEffect(validateRelayUrl),
    );
  }
-@@ -218,7 +218,7 @@ export function makeCloudCliOAuthConfig({
+@@ -218,7 +221,7 @@ export function makeCloudCliOAuthConfig({
  
  export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
  
@@ -136,8 +147,28 @@ index 7d790b472f..6416c99ebc 100644
  
  export const layerTest = Layer.suspend(() =>
    layerModelCatalog.pipe(Layer.provideMerge(layerBundledOnly)),
+diff --git a/apps/server/src/serverRuntimeStartup.ts b/apps/server/src/serverRuntimeStartup.ts
+index 4bf684def4..24a397026d 100644
+--- a/apps/server/src/serverRuntimeStartup.ts
++++ b/apps/server/src/serverRuntimeStartup.ts
+@@ -46,7 +46,6 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+ import * as ServerSettings from "./serverSettings.ts";
+ import { forkParked, forkParkedFiber } from "./serverActivation.ts";
+ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+-import { getServerOwners } from "./telemetry/Identify.ts";
+ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+ import {
+@@ -175,7 +174,6 @@ const recordStartupHeartbeat = Effect.gen(function* () {
+     threadCount,
+     projectCount,
+   });
+-  yield* analytics.recordOwners(yield* getServerOwners, "server");
+ });
+ 
+ const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({
 diff --git a/apps/server/src/telemetry/AnalyticsService.ts b/apps/server/src/telemetry/AnalyticsService.ts
-index eb222ae743..9bcaf02980 100644
+index eb222ae743..83cb2e5d39 100644
 --- a/apps/server/src/telemetry/AnalyticsService.ts
 +++ b/apps/server/src/telemetry/AnalyticsService.ts
 @@ -66,12 +66,12 @@ function retryDelayMs(failures: number, random: number): number {
@@ -156,6 +187,20 @@ index eb222ae743..9bcaf02980 100644
    flushBatchSize: Config.Number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
    maxBufferedEvents: Config.Number("T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
      Config.withDefault(1_000),
+@@ -363,4 +363,12 @@ export const make = Effect.gen(function* () {
+   return AnalyticsService.of({ record, flush, recordOwners });
+ });
+ 
+-export const layer = Layer.effect(AnalyticsService, make);
++// HYR Code: no product events, and no identity reads, leave the machine.
++export const layer = Layer.succeed(
++  AnalyticsService,
++  AnalyticsService.of({
++    record: Effect.fn("AnalyticsService.record")(() => Effect.succeed(false)),
++    flush: Effect.void,
++    recordOwners: Effect.fn("AnalyticsService.recordOwners")(() => Effect.void),
++  }),
++);
 diff --git a/apps/web/src/branding.logic.ts b/apps/web/src/branding.logic.ts
 index 3071a6c095..0054ec80aa 100644
 --- a/apps/web/src/branding.logic.ts
@@ -179,10 +224,19 @@ index 3071a6c095..0054ec80aa 100644
  }
  
 diff --git a/apps/web/src/cloud/publicConfig.ts b/apps/web/src/cloud/publicConfig.ts
-index ec9cf15bb7..b68ff0f5b0 100644
+index ec9cf15bb7..aaf48474cc 100644
 --- a/apps/web/src/cloud/publicConfig.ts
 +++ b/apps/web/src/cloud/publicConfig.ts
-@@ -86,6 +86,7 @@ export function resolveRelayTracingConfig() {
+@@ -72,6 +72,8 @@ export function relayTelemetryEnabled(): boolean | null {
+ 
+ export function resolveRelayTracingConfig() {
+   // The relay exporter is created during module initialization, so this must be synchronous.
++  // HYR Code: relay traces never go to Axiom.
++  if (import.meta.env.MODE !== "test") return null;
+   if (relayTelemetryEnabled() === false) {
+     return null;
+   }
+@@ -86,6 +88,7 @@ export function resolveRelayTracingConfig() {
  }
  
  export function hasCloudPublicConfig(): boolean {
@@ -213,7 +267,7 @@ index d323c9a26d..ed2d16445e 100644
  export interface DesktopAppBranding {
    baseName: string;
 diff --git a/scripts/build-desktop-artifact.ts b/scripts/build-desktop-artifact.ts
-index a2b35e8196..bd685db6c1 100644
+index 8fa3421fed..9355beb690 100644
 --- a/scripts/build-desktop-artifact.ts
 +++ b/scripts/build-desktop-artifact.ts
 @@ -63,7 +63,7 @@ import { Command, Flag } from "effect/cli";
