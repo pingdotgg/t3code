@@ -1,4 +1,4 @@
-import { useLocation } from "@tanstack/react-router";
+import { redirect, useLocation } from "@tanstack/react-router";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -40,7 +40,13 @@ describe("AppRouteModal", () => {
       ) : null;
     }
     await using screen = await render(<SettingsRoute />, { router: "/" });
-    await screen.router!.navigate({ to: "/settings/general" });
+    // The app redirects /settings, and the router skips onBeforeNavigate after a redirect.
+    screen.router!.routeTree.update({
+      beforeLoad: ({ location }: { location: { pathname: string } }) => {
+        if (location.pathname === "/settings") throw redirect({ to: "/settings/general" });
+      },
+    });
+    await screen.router!.navigate({ to: "/settings" });
 
     await page.getByRole("textbox", { name: "Instructions" }).fill("Keep titles short");
     screen.router!.history.back();
