@@ -1108,17 +1108,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   Effect.gen(function* () {
                     const live =
                       yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(instanceId);
-                    if (live.revision !== revision) {
-                      const currentOptions = acpRegistryCurrentModelOptions(configuration);
-                      if (Option.isSome(live.configuration) && currentOptions !== undefined) {
-                        yield* learnedModelOptions.learn(
-                          currentOptions.modelId,
-                          currentOptions.options,
-                          "live",
-                        );
-                      }
-                      return;
-                    }
+                    // A fresh probe cleared this revision; replaying it would restore a stale catalog.
+                    if (live.revision !== revision && Option.isNone(live.configuration)) return;
                     yield* observeLiveRevision(revision);
                     const current = yield* getSnapshot;
                     const updated = yield* applyLiveConfiguration(current, configuration);
