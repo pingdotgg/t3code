@@ -145,16 +145,19 @@ describe("GitLab media URLs", () => {
 
   it("proxies a user's uploaded avatar and leaves every other image alone", () => {
     expect(
-      media("https://git.example.test/uploads/-/system/user/avatar/857/avatar.png?v=1795510382"),
+      media("https://gitlab.example.test/uploads/-/system/user/avatar/857/avatar.png?v=1795510382"),
     ).toEqual({
-      fetchUrl: "https://git.example.test/uploads/-/system/user/avatar/857/avatar.png?v=1795510382",
+      fetchUrl:
+        "https://gitlab.example.test/uploads/-/system/user/avatar/857/avatar.png?v=1795510382",
       fileName: "avatar.png",
     });
     for (const url of [
       "https://secure.gravatar.com/avatar/c4b495b9?s=80&d=identicon",
-      "https://git.example.test/group/project/uploads/0123456789abcdef/shot.png",
-      "https://git.example.test/uploads/-/system/project/avatar/12/logo.png",
-      "https://user:secret@git.example.test/uploads/-/system/user/avatar/857/avatar.png",
+      "https://gitlab.example.test/group/project/uploads/0123456789abcdef/shot.png",
+      "https://gitlab.example.test/uploads/-/system/project/avatar/12/logo.png",
+      "https://user:secret@gitlab.example.test/uploads/-/system/user/avatar/857/avatar.png",
+      "http://169.254.169.254/uploads/-/system/user/avatar/857/avatar.png",
+      "https://internal.example.test/uploads/-/system/user/avatar/857/avatar.png",
     ]) {
       expect(media(url), url).toBeNull();
     }

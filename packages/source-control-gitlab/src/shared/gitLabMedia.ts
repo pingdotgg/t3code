@@ -3,9 +3,14 @@ import type { SourceControlMediaUrl } from "@t3tools/source-control-core/shared/
 // A phone or a browser off the GitLab network cannot load this URL; the T3 server can.
 const USER_AVATAR_PATH = /^\/uploads\/-\/system\/user\/avatar\/\d+\/([^/]+)$/u;
 
+export const isGitLabHostname = (hostname: string) =>
+  hostname === "gitlab.com" || hostname.split(".").includes("gitlab");
+
 export function gitLabMediaUrl(url: URL): SourceControlMediaUrl | null {
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   if (url.username || url.password) return null;
+  // The server fetches what this claims, so only hosts T3 already treats as GitLab.
+  if (!isGitLabHostname(url.hostname.toLowerCase())) return null;
   const fileName = USER_AVATAR_PATH.exec(url.pathname)?.[1];
   return fileName === undefined
     ? null

@@ -10,7 +10,7 @@ it.effect("loads an uploaded avatar over HTTP and never sends a GitLab token", (
   const requests: Array<{ url: string; authorization?: string }> = [];
   return Effect.gen(function* () {
     const fetchMedia = yield* GitLabMediaFetch.make;
-    const url = "https://git.example.test/uploads/-/system/user/avatar/857/avatar.png?v=1";
+    const url = "https://gitlab.example.test/uploads/-/system/user/avatar/857/avatar.png?v=1";
     const response = yield* fetchMedia({ url, headers: {} });
     expect(requests).toEqual([{ url }]);
     expect(response?.status).toBe(200);
@@ -42,7 +42,7 @@ it.effect("returns nothing when the host answers with a sign-in page", () =>
   Effect.gen(function* () {
     const fetchMedia = yield* GitLabMediaFetch.make;
     const response = yield* fetchMedia({
-      url: "https://git.example.test/uploads/-/system/user/avatar/857/avatar.png",
+      url: "https://gitlab.example.test/uploads/-/system/user/avatar/857/avatar.png",
       headers: {},
     });
     expect(response).toBeNull();
