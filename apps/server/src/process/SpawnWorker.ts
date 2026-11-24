@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - worker threads and Node streams implement the platform spawner boundary.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - worker threads, Node streams, and bounded close fallback implement the platform spawner boundary.
 import * as NodeEvents from "node:events";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeStream from "node:stream";
@@ -15,6 +15,7 @@ import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 // stalls. Workers own the children, so only the worker waits.
 const MAX_WORKERS = 4;
 const MAX_IDLE_WORKERS = 1;
+const CLOSE_REAP_TIMEOUT_MS = 5_000;
 
 type ToWorker =
   | {
@@ -337,6 +338,7 @@ class SpawnWorker {
   launching = 0;
   closed = false;
   #terminated = false;
+  #closeTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(pool: SpawnWorkerPool) {
     this.pool = pool;
@@ -433,6 +435,11 @@ class SpawnWorker {
         break;
       case "exit":
         child.exit(message.code, message.signal);
+        if (this.closed) {
+          child.abandon();
+          child.emit("close", child.exitCode, child.signalCode);
+          this.release(child);
+        }
         break;
       case "close":
         child.emit("close", child.exitCode, child.signalCode);
@@ -494,20 +501,39 @@ class SpawnWorker {
     if (this.closed) return;
     this.closed = true;
     this.pool.workers.delete(this);
+    for (const child of this.children.values()) {
+      if (child.exited) {
+        child.abandon();
+        child.emit("close", child.exitCode, child.signalCode);
+        this.release(child);
+      } else {
+        this.#killForClose(child);
+      }
+    }
     if (this.children.size === 0 && this.launching === 0) {
       this.#terminate();
       return;
     }
-    // Keep the worker alive until live children exit and are reaped, then terminate in release().
-    this.worker.unref();
-    for (const child of this.children.values()) this.#killForClose(child);
+    // Keep the worker referenced until live children exit and are reaped, bounded so an unkillable
+    // child cannot hang shutdown.
+    this.worker.ref();
+    this.#closeTimer = setTimeout(() => {
+      this.#terminate();
+      this.#cleanupChildren(new Error("The process launcher closed."));
+    }, CLOSE_REAP_TIMEOUT_MS);
+    this.#closeTimer.unref();
   }
 
   #terminate(): void {
     if (this.#terminated) return;
     this.#terminated = true;
     this.closed = true;
+    if (this.#closeTimer !== undefined) {
+      clearTimeout(this.#closeTimer);
+      this.#closeTimer = undefined;
+    }
     this.pool.workers.delete(this);
+    this.worker.unref();
     void this.worker.terminate().then(() => {
       // The thread may have died holding the lock, or between its unlock and notify, or after
       // a notify woke it: free the lock and wake every waiter so none sleeps on a free lock.
