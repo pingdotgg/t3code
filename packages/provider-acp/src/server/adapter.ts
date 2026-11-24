@@ -35,6 +35,7 @@ import {
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
+import { parseGrepOutput } from "@t3tools/shared/grepOutput";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -72,7 +73,11 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import {
+  formatReadToolLabel,
+  formatSearchToolLabel,
+  searchToolLabelParts,
+} from "@t3tools/shared/toolActivity";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeAcpMcpOverAcpBridge, type AcpMcpOverAcpBridge } from "./mcpOverAcpBridge.ts";
@@ -5037,6 +5042,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   break;
                 }
                 const pathIsQuery = resolvedPathInfo(toolCall)?.fromQuery === true;
+                const searchOutput = textFromUnknown(rawOutput);
+                const grepResults =
+                  path === undefined || searchOutput === undefined
+                    ? undefined
+                    : parseGrepOutput(searchOutput, path);
+                const pattern = searchToolLabelParts({ input: rawInputRecord }).query ?? path;
                 turnItem = {
                   ...base,
                   title:
@@ -5046,19 +5057,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       ...(path === undefined ? {} : { pattern: path }),
                     }) ?? title,
                   type: "file_search",
-                  ...(path === undefined ? {} : { pattern: path }),
-                  ...(path === undefined ||
-                  (pathIsQuery && textFromUnknown(rawOutput) === undefined)
+                  ...(pattern === undefined ? {} : { pattern }),
+                  ...(path === undefined || (pathIsQuery && searchOutput === undefined)
                     ? {}
                     : {
-                        results: [
-                          {
-                            fileName: path,
-                            ...(textFromUnknown(rawOutput) === undefined
-                              ? {}
-                              : { preview: textFromUnknown(rawOutput) }),
-                          },
-                        ],
+                        results: grepResults
+                          ? [...grepResults]
+                          : [
+                              {
+                                fileName: path,
+                                ...(searchOutput === undefined ? {} : { preview: searchOutput }),
+                              },
+                            ],
                       }),
                 };
                 break;
