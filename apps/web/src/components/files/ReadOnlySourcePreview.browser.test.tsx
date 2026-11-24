@@ -27,6 +27,27 @@ function copiedText(target: Element) {
 }
 
 describe("ReadOnlySourcePreview", () => {
+  it("opens a find field on mod+f after a click in the file, as the editable view does", async () => {
+    await getSyntaxHighlighterPromise("typescript");
+    await using screen = await render(
+      <div className="flex h-[400px] flex-col">
+        <ReadOnlySourcePreview name="other.ts" text={'export const needle = "findme";\n'} />
+      </div>,
+    );
+    const root = screen.container.querySelector("diffs-container")!.shadowRoot!;
+    const firstRow = () => root.querySelector("[data-line]");
+    await vi.waitFor(() => expect(firstRow()?.textContent).toContain("needle"));
+
+    await userEvent.click(firstRow()!);
+    await userEvent.keyboard("{ControlOrMeta>}f{/ControlOrMeta}");
+
+    await vi.waitFor(() => {
+      let active = document.activeElement;
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+      expect(active).toBeInstanceOf(HTMLInputElement);
+    });
+  });
+
   it("copies the whole file after Select All, wherever the preview is scrolled", async () => {
     // File paints nothing until the shared highlighter has loaded; once it has, mount renders synchronously.
     await getSyntaxHighlighterPromise("text");
