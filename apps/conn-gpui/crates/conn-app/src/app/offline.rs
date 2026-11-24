@@ -241,17 +241,9 @@ fn decode_messages(rows: Vec<String>) -> serde_json::Result<Vec<TimelineEntry>> 
 }
 
 fn replace_messages(db: &MessageCache, env: &str, id: &str, rows: &[Message]) -> io::Result<()> {
-    if let Some(tail) = rows.last() {
-        merge_chat(db, env, id, std::slice::from_ref(tail))?;
-        crate::live::RT
-            .block_on(db.merge_prefix(env, id, tail.id(), &rows[..rows.len() - 1]))
-            .map_err(io::Error::other)?;
-    } else {
-        crate::live::RT
-            .block_on(db.remove(env, id))
-            .map_err(io::Error::other)?;
-    }
-    Ok(())
+    crate::live::RT
+        .block_on(db.replace(env, id, &[], rows))
+        .map_err(io::Error::other)
 }
 
 fn save(dir: &Path, db: Option<&MessageCache>, write: Save) -> io::Result<()> {
@@ -276,9 +268,8 @@ fn save(dir: &Path, db: Option<&MessageCache>, write: Save) -> io::Result<()> {
                         stamp,
                     }) => {
                         if let Some(anchor) = anchor {
-                            merge_chat(db, &env, &id, &messages)?;
                             if !crate::live::RT
-                                .block_on(db.merge_prefix(&env, &id, &anchor, &rows))
+                                .block_on(db.merge_prefix(&env, &id, &anchor, &rows, &messages))
                                 .map_err(io::Error::other)?
                             {
                                 return Ok(());
