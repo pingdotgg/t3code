@@ -7,7 +7,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, isNotNull, isNull, lt, notExists, or, sql } from "drizzle-orm";
+import { and, eq, exists, isNotNull, isNull, lt, notExists, or, sql } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/pg-core";
 
 import * as RelayDb from "../db.ts";
@@ -302,12 +302,28 @@ const make = Effect.gen(function* () {
         or(
           ...keys.map((key) => and(eq(table.userId, key.userId), eq(table.deviceId, key.deviceId))),
         );
-      // Live Activity rows have no foreign key; drop them first so none outlives its device.
-      yield* db
-        .delete(relayLiveActivities)
-        .where(
-          and(keyCondition(relayLiveActivities), isNull(relayLiveActivities.activityPushToken)),
-        );
+      // Live Activity rows have no foreign key; drop them first so none outlives its device, and
+      // only while their device is still prunable, so a device re-registered meanwhile keeps its row.
+      yield* db.delete(relayLiveActivities).where(
+        and(
+          keyCondition(relayLiveActivities),
+          isNull(relayLiveActivities.activityPushToken),
+          exists(
+            new QueryBuilder()
+              .select({ deviceId: relayMobileDevices.deviceId })
+              .from(relayMobileDevices)
+              .where(
+                and(
+                  eq(relayMobileDevices.userId, relayLiveActivities.userId),
+                  eq(relayMobileDevices.deviceId, relayLiveActivities.deviceId),
+                  isNull(relayMobileDevices.pushToken),
+                  isNull(relayMobileDevices.pushToStartToken),
+                  lt(relayMobileDevices.updatedAt, before),
+                ),
+              ),
+          ),
+        ),
+      );
       const deleted = yield* db
         .delete(relayMobileDevices)
         .where(and(keyCondition(relayMobileDevices), prunable))
