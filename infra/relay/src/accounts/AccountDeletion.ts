@@ -1,5 +1,5 @@
 import { RelayApi } from "@t3tools/contracts/relay";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -223,6 +223,7 @@ const make = Effect.gen(function* () {
     const pending = yield* db
       .select()
       .from(relayAccountDeletions)
+      .where(isNull(relayAccountDeletions.completedAt))
       .orderBy(relayAccountDeletions.requestedAt)
       .limit(PENDING_BATCH_SIZE)
       .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
@@ -245,7 +246,8 @@ const make = Effect.gen(function* () {
       } else if (row.requestedAt <= settledBefore) {
         completed += 1;
         yield* db
-          .delete(relayAccountDeletions)
+          .update(relayAccountDeletions)
+          .set({ completedAt: DateTime.formatIso(yield* DateTime.now) })
           .where(eq(relayAccountDeletions.userId, row.userId))
           .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
       }

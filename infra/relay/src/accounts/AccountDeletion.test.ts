@@ -208,15 +208,18 @@ describe("AccountDeletion", () => {
     const fakeDb = {
       select: () => ({
         from: () => ({
-          where: () => Effect.succeed([]),
-          orderBy: () => ({ limit: () => Effect.succeed(pending) }),
+          where: () =>
+            Object.assign(Effect.succeed([]), {
+              orderBy: () => ({ limit: () => Effect.succeed(pending) }),
+            }),
         }),
       }),
       update: (table: Table) => ({
-        set: () => ({
+        set: (values: Record<string, unknown>) => ({
           where: (condition: SQL | undefined) =>
             Effect.sync(() => {
-              calls.push(`retry ${getTableName(table)} ${params(condition).join(",")}`);
+              const action = "completedAt" in values ? "complete" : "retry";
+              calls.push(`${action} ${getTableName(table)} ${params(condition).join(",")}`);
             }),
         }),
       }),
@@ -234,7 +237,7 @@ describe("AccountDeletion", () => {
       expect(yield* accounts.processPending).toEqual({ completed: 1, failed: 1 });
       expect(calls).toContain("delete relay_mobile_devices user_fresh");
       expect(calls.filter((call) => call.includes("relay_account_deletions"))).toEqual([
-        "delete relay_account_deletions user_settled",
+        "complete relay_account_deletions user_settled",
         "retry relay_account_deletions user_broken",
       ]);
     }).pipe(Effect.provide(layerAccountDeletionTest(fakeDb, calls)));
