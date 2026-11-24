@@ -1,5 +1,7 @@
 import {
   GitCommandError,
+  linkOriginIsFenced,
+  type OrchestrationV2LinkOrigin,
   type ProjectId,
   type ProjectTrackedFolder,
   TASK_FOLDER_DEFAULT_REPOSITORIES_MAX,
@@ -104,6 +106,11 @@ export class TaskFolders extends Context.Service<
        */
       readonly baseBranch?: string | undefined;
       readonly startFromOrigin: boolean;
+      /**
+       * Whether the project's own layout command may run for whoever asks. A project that
+       * declares one gets no worktree without it: the default layout is not what it asked for.
+       */
+      readonly projectCommands: boolean;
       readonly projectProgress?: GitVcsDriver.CreateWorktreeProgress;
       /** As soon as the folder is recorded, so a cancelled caller knows what to remove. */
       readonly onClaimed?: (taskFolder: TaskFolder, branch: string) => Effect.Effect<void>;
@@ -130,6 +137,7 @@ export class TaskFolders extends Context.Service<
      */
     readonly createForProjectFolder: (
       input: VcsCreateWorktreeInput,
+      options: { readonly projectCommands: boolean },
     ) => Effect.Effect<VcsCreateWorktreeResult | null, TaskFolderError>;
     /**
      * Gives a tracked Git folder its worktree in a thread's task folder, on the thread's branch.
@@ -152,6 +160,8 @@ export class TaskFolders extends Context.Service<
       readonly root: string;
       readonly force: boolean;
       readonly forget: boolean;
+      /** False leaves the project's teardown command out. */
+      readonly projectCommands: boolean;
       readonly deleteBranch?: string | undefined;
       readonly inspect?: (
         checkout: TaskFolderCheckout,
@@ -164,6 +174,7 @@ export class TaskFolders extends Context.Service<
     readonly removeIfTaskFolder: (input: {
       readonly path: string;
       readonly force: boolean;
+      readonly projectCommands: boolean;
     }) => Effect.Effect<boolean, TaskFolderError>;
     /** Renames the branch in every checkout to one name free in all of them. */
     readonly renameBranch: (input: {
@@ -172,9 +183,13 @@ export class TaskFolders extends Context.Service<
       readonly newBranch: string;
       readonly exactName?: boolean;
     }) => Effect.Effect<{ readonly branch: string }, TaskFolderError>;
-    /** Puts back whatever is missing; `recreate` checks a branch out again at a path. */
+    /**
+     * Puts back whatever is missing; `recreate` checks a branch out again at a path. Without
+     * `projectCommands` every missing checkout comes back plain.
+     */
     readonly restore: <E>(input: {
       readonly taskFolder: TaskFolder;
+      readonly projectCommands: boolean;
       /** The thread's branch, for a project that lays its folder out with its own command. */
       readonly branch: string;
       readonly recreate: (checkout: TaskFolderCheckout) => Effect.Effect<void, E>;
@@ -183,6 +198,13 @@ export class TaskFolders extends Context.Service<
 >()("t3/workspace/TaskFolders") {}
 
 const isTaskFolderError = Schema.is(TaskFolderError);
+
+/**
+ * A layout command is the project owner's own code. A link paired below full access grants T3's
+ * tools only (see `mcp/linkOrigin.ts`), so work it started never runs one.
+ */
+export const linkRunsProjectCommands = (origin: OrchestrationV2LinkOrigin | undefined) =>
+  origin === undefined || !linkOriginIsFenced(origin);
 
 const failureDetail = (cause: unknown) =>
   typeof cause === "object" &&
@@ -730,7 +752,8 @@ const make = Effect.gen(function* () {
     });
     // The project's own teardown goes first; what it leaves is removed below as usual. Only when
     // every checkout may go: the command cannot be told which ones to keep.
-    const layout = laidOut ? yield* worktreeLayout(taskFolder.projectRoot) : null;
+    const layout =
+      laidOut && input.projectCommands ? yield* worktreeLayout(taskFolder.projectRoot) : null;
     if (layout?.remove !== undefined) {
       const checkouts = [
         ...taskFolder.repositories,
@@ -975,6 +998,12 @@ const make = Effect.gen(function* () {
         yield* store.put(empty);
         if (input.onClaimed !== undefined) yield* input.onClaimed(empty, branch);
         const layout = yield* worktreeLayout(taskPlan.projectRoot);
+        if (layout !== null && !input.projectCommands) {
+          return yield* new TaskFolderError({
+            operation: "create",
+            detail: `This project lays out its worktrees with its own command (worktreeLayout in ${T3_PROJECT_FILE_NAME}), which this request is not permitted to run.`,
+          });
+        }
         if (layout !== null) {
           const before = yield* branchNames(checkedOutFrom).pipe(Effect.mapError(listFailed));
           for (const [index, repositoryPath] of checkedOutFrom.entries()) {
@@ -1117,7 +1146,12 @@ const make = Effect.gen(function* () {
             Effect.andThen(
               removeLocked(
                 current(),
-                { force: true, forget: true, deleteBranch: branch },
+                {
+                  force: true,
+                  forget: true,
+                  deleteBranch: branch,
+                  projectCommands: input.projectCommands,
+                },
                 hadBranch,
                 layoutStarted,
               ),
@@ -1168,7 +1202,7 @@ const make = Effect.gen(function* () {
 
   const createForProjectFolder: TaskFolders["Service"]["createForProjectFolder"] = Effect.fn(
     "TaskFolders.createForProjectFolder",
-  )(function* (input) {
+  )(function* (input, { projectCommands }) {
     if (input.path !== null || input.newRefName === undefined) return null;
     const project = yield* projects
       .findActiveByWorkspaceRoot(input.cwd)
@@ -1183,6 +1217,7 @@ const make = Effect.gen(function* () {
       projectStart: { refName: input.refName, baseRefName: input.baseRefName ?? input.refName },
       baseBranch: input.baseRefName ?? input.refName,
       startFromOrigin: yield* startsFromOrigin("create", projectId),
+      projectCommands,
     });
     return { worktree: { path: taskFolder.projectPath, refName: branch } };
   });
@@ -1321,7 +1356,11 @@ const make = Effect.gen(function* () {
     const target = path.resolve(input.path);
     if (taskFolder === null || (target !== taskFolder.root && target !== taskFolder.projectPath))
       return false;
-    const { kept } = yield* removeLocked(taskFolder, { force: input.force, forget: true });
+    const { kept } = yield* removeLocked(taskFolder, {
+      force: input.force,
+      forget: true,
+      projectCommands: input.projectCommands,
+    });
     if (kept.length > 0) {
       return yield* new TaskFolderError({
         operation: "remove",
@@ -1380,6 +1419,7 @@ const make = Effect.gen(function* () {
   const restore: TaskFolders["Service"]["restore"] = Effect.fn("TaskFolders.restore")(function* ({
     taskFolder,
     branch,
+    projectCommands,
     recreate,
   }) {
     const restoreFailed = fail("create", "Could not restore the worktrees");
@@ -1422,7 +1462,7 @@ const make = Effect.gen(function* () {
       [taskFolder.projectPath, ...repositories.map((entry) => entry.worktreePath)],
       exists,
     );
-    if (layout !== null && present.includes(false)) {
+    if (layout !== null && projectCommands && present.includes(false)) {
       yield* fileSystem
         .makeDirectory(taskFolder.root, { recursive: true })
         .pipe(Effect.mapError(restoreFailed));

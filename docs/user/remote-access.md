@@ -605,7 +605,11 @@ checkout use that checkout's permissions.
 client: pushing, switching or creating branches, cloning, and removing
 worktrees. It does not restrict what a task does. Starting a task in a new
 worktree still creates that branch and worktree with `orchestration:operate`,
-and the agent it runs can use Git however the environment allows.
+and the agent it runs can use Git however the environment allows. A project
+that [lays out its worktrees with its own command](multi-repo-projects.md#lay-the-folder-out-yourself)
+runs that command on the host, so creating a worktree there from the client also
+needs `orchestration:operate` or `terminal:operate`; without one of them,
+removing a worktree skips the project's `remove` command.
 
 Settings changes, provider management, environment maintenance, access
 management, and T3 Connect preferences can each be granted separately. Setting

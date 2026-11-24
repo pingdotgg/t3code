@@ -11,6 +11,12 @@ import {
   injectMcpAppThemeBootstrap,
 } from "@t3tools/shared/mcpApp";
 import { FILE_PREVIEW_SCROLL_SCRIPT } from "@t3tools/shared/htmlRender";
+import {
+  DESKTOP_READINESS_CHALLENGE_MAX_LENGTH,
+  DESKTOP_READINESS_CHALLENGE_PARAM,
+  DESKTOP_READINESS_PROOF_PATH,
+  desktopReadinessProof,
+} from "@t3tools/shared/desktopReadinessProof";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as ByteSize from "effect/ByteSize";
 import * as Context from "effect/Context";
@@ -404,6 +410,29 @@ export const layerServerEnvironmentHttpApi = HttpApiBuilder.group(
         return yield* serverEnvironment.getDescriptor;
       }, traceRelayRequest),
     );
+  }),
+);
+
+// Answers only for a launch that was handed a readiness secret, so the desktop app can tell the
+// backend it started from any other listener at the same address.
+export const layerDesktopReadinessProofRoute = HttpRouter.add(
+  "GET",
+  DESKTOP_READINESS_PROOF_PATH,
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const secret = config.desktopReadinessSecret;
+    const challenge = Option.getOrUndefined(requestUrl(request))?.searchParams.get(
+      DESKTOP_READINESS_CHALLENGE_PARAM,
+    );
+    if (
+      secret === undefined ||
+      !challenge ||
+      challenge.length > DESKTOP_READINESS_CHALLENGE_MAX_LENGTH
+    ) {
+      return HttpServerResponse.empty({ status: 404 });
+    }
+    return HttpServerResponse.text(yield* desktopReadinessProof(secret, challenge));
   }),
 );
 
