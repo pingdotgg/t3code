@@ -322,6 +322,19 @@ export function QueuedRunsControl({
                 onOpenThread={props.onOpenThread}
                 onImageExpand={props.onImageExpand}
               >
+                {item.runId !== null && item.editable && !isEditing ? (
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    disabled={busyRunId !== null}
+                    onClick={() => {
+                      if (item.runId !== null) void sendAsFork(item.runId);
+                    }}
+                  >
+                    <GitForkIcon />
+                    <T>Send as fork</T>
+                  </Button>
+                ) : null}
                 {canSendRun(item.freshContext) && !isEditing ? (
                   <>
                     <Tooltip>
@@ -367,19 +380,6 @@ export function QueuedRunsControl({
                       </TooltipPopup>
                     </Tooltip>
                   </>
-                ) : null}
-                {item.runId !== null && item.editable && !isEditing ? (
-                  <Button
-                    size="xs"
-                    variant="ghost-muted"
-                    disabled={busyRunId !== null}
-                    onClick={() => {
-                      if (item.runId !== null) void sendAsFork(item.runId);
-                    }}
-                  >
-                    <GitForkIcon />
-                    <T>Send as fork</T>
-                  </Button>
                 ) : null}
                 {item.pending ? (
                   <span className="flex items-center gap-1 px-1">
