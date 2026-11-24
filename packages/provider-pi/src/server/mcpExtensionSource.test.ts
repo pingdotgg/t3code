@@ -210,7 +210,7 @@ describe("Pi MCP tool exposure", () => {
       "read",
       "tool_search",
       ...publicDirect,
-      ...aliases,
+      "mcp__t3_code__preview_snapshot",
     ]);
     assert.deepEqual(bridge.declaredTools(), publicDirect);
     assert.deepEqual(
@@ -257,9 +257,6 @@ describe("Pi MCP tool exposure", () => {
       "tool_search",
       "mcp__t3-code__orchestrator_capabilities",
       "mcp__t3-code__preview_snapshot",
-      "mcp__t3_code__orchestrator_capabilities",
-      "mcp__t3_code__task_status",
-      "mcp__t3_code__preview_snapshot",
     ]);
     await bridge.handlers.get("model_select")!(event, discoveryContext);
     assert.equal(
