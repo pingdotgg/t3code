@@ -13,6 +13,7 @@ import { applyAppearanceFontVariables, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from ".
 import { startElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { startBrowserProfileReporting } from "./browser/BrowserProfileReporter";
 import { startPreviewTitleRecording } from "./browserHistoryStore";
+import { setServerRelayTelemetry } from "./cloud/publicConfig";
 import { retainThreadOverlaysForThread } from "./components/chat/threadOverlayRetention";
 import { resolveWindowTitleThreadStatus } from "./components/Sidebar.logic";
 import { startBackgroundThreadAnnouncements } from "./components/BackgroundThreadAnnouncer";
@@ -254,6 +255,20 @@ function startThreadOverlayRetention(router: AppRouter): void {
   });
 }
 
+/** A browser follows the relay tracing opt-out of the server it was opened from. */
+function startRelayTelemetrySync(): void {
+  appAtomRegistry.subscribe(
+    primaryServerConfigAtom,
+    (config) => {
+      // A dropped connection keeps the last answer, so an opt-out outlives it.
+      if (config !== null) {
+        setServerRelayTelemetry(config.observability.relayTracingAllowed !== false);
+      }
+    },
+    { immediate: true },
+  );
+}
+
 /**
  * Starts every app-lifetime service once, before the first render, and returns the router.
  * They run for the life of the page, so their disposers are dropped here.
@@ -277,6 +292,7 @@ export function startAppServices(): AppRouter {
   startI18n();
   startDocumentTitle(router);
   startHostEnvironmentLookup();
+  startRelayTelemetrySync();
   startEnvironmentThemeRepaint();
   startThemeBackground();
   startBrowserChromeThemeSync(router);

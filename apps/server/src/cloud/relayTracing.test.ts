@@ -9,7 +9,7 @@ import { FetchHttpClient } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import { relayLayer } from "./relayTracing.ts";
+import { allowedFor, relayLayer } from "./relayTracing.ts";
 
 const tracesTo = (policy?: ManagedPolicyDocument) =>
   Effect.service(RelayTracing.RelayClientTracer).pipe(
@@ -42,3 +42,17 @@ it.effect("a policy with telemetry off stops relay tracing to T3 Connect", () =>
     );
   }),
 );
+
+it("tells clients when the environment or a policy opted out of relay tracing", () => {
+  const policy = (telemetry: boolean) => ({
+    organization: "Example Corp",
+    lockedSettings: [],
+    limits: { telemetry },
+  });
+
+  assert.isTrue(allowedFor({}, undefined));
+  assert.isTrue(allowedFor({}, policy(true)));
+  assert.isFalse(allowedFor({}, policy(false)));
+  assert.isFalse(allowedFor({ T3CODE_TELEMETRY_ENABLED: "false" }, undefined));
+  assert.isFalse(allowedFor({ OTEL_SDK_DISABLED: "true" }, undefined));
+});

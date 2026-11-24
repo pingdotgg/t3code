@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -67,6 +68,11 @@ export const withLocalTracing = <A, E, R>(effect: Effect.Effect<A, E, R>): Effec
     ),
   );
 
+// A frame's location is a path under the user's home directory, or in a browser the address
+// of the machine that served the page, so only the file name and position are kept.
+const frameWithoutDirectory = (frame: string) =>
+  frame.replace(/[^\s()]+/g, (token) => token.replace(/^([^\\/]*@)?.*[\\/]/, "$1"));
+
 // Error messages can carry machine names (environment labels) and paths, so
 // relay spans export only the error name and its stack frames.
 function traceFrames(error: Error): Array<string> {
@@ -78,7 +84,9 @@ function traceFrames(error: Error): Array<string> {
   const effectFrameIndex = frames.findIndex((line) =>
     /(?:Generator\.next|~effect\/Effect)/.test(line),
   );
-  return effectFrameIndex < 0 ? frames : frames.slice(0, effectFrameIndex);
+  return (effectFrameIndex < 0 ? frames : frames.slice(0, effectFrameIndex)).map(
+    frameWithoutDirectory,
+  );
 }
 
 function traceSafeError(value: unknown, seen = new WeakSet<object>()): Error {
@@ -123,16 +131,33 @@ function traceSafeExit(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unknown, un
   );
 }
 
+// Requests under a relay span also go to the user's own machines over LAN, Tailscale or a
+// tunnel. Their hosts and ports name those machines and query strings carry what was asked
+// for, so a request keeps only its method, path and status.
+const REQUEST_ADDRESS_ATTRIBUTES = new Set([
+  "url.full",
+  "url.query",
+  "server.address",
+  "server.port",
+]);
+
 export function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
   return Tracer.make({
     span(options) {
       const span = delegate.span(options);
       const end = span.end.bind(span);
+      const attribute = span.attribute.bind(span);
       span.end = (endTime, exit) => {
         try {
           end(endTime, traceSafeExit(exit));
         } catch {}
       };
+      span.attribute = (key, value) => {
+        if (!REQUEST_ADDRESS_ATTRIBUTES.has(key)) attribute(key, value);
+      };
+      // Effect attaches every log line to the current span as an event, with its message,
+      // annotations and pretty-printed cause: the free text `traceSafeExit` removes above.
+      span.event = () => {};
       return span;
     },
     ...(delegate.context ? { context: delegate.context } : {}),
@@ -174,7 +199,11 @@ export function layer(
         ...resource.attributes,
       },
     },
-  }).pipe(Layer.provide(OtlpSerialization.layerJson));
+  }).pipe(
+    Layer.provide(OtlpSerialization.layerJson),
+    // An operator's OTEL_RESOURCE_ATTRIBUTES describe their machines for their own receiver.
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord({}))),
+  );
 
   return Layer.effect(
     RelayClientTracer,

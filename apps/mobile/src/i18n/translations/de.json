@@ -2191,6 +2191,7 @@
   "93eb8ae0bf209025": "Absturzprotokoll wird gelesen…",
   "4429ccae147b2b2f": "Füge den Bericht in ein GitHub-Issue ein. Er enthält die App-Version, die JavaScript-Fehlermeldung und den Komponenten-Stack. Fehlermeldungen können Werte aus der App zitieren, also lies ihn vor dem Teilen durch.",
   "58df920ec2681250": "Wenn die App abstürzt oder auf einen Fehler stößt, sendet sie die Fehlermeldung, den Stacktrace, die App-Version sowie Gerätemodell und Betriebssystemversion an das T3-Code-Team. Jeder Start sendet außerdem Startzeiten. Berichte tragen eine zufällige ID für diese Installation.",
+  "e78e3d92c5840886": "Wenn du das ausschaltest, sendet die App auch keine Verbindungs-Traces mehr, mit denen T3 Connect diagnostiziert wird.",
   "9544305f2964486f": "Diff konnte nicht angezeigt werden",
   "a488d0f5de859d6b": "Versuch, die Diff-Ansicht erneut zu laden.",
   "0c72282254a37568": "Diff erneut laden",

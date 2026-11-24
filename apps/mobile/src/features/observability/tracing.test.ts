@@ -7,6 +7,7 @@ import { vi } from "vite-plus/test";
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 
+import { setDiagnosticsSending } from "./diagnosticsSetting";
 import * as Tracing from "./tracing";
 
 vi.mock("expo-constants", () => ({
@@ -17,9 +18,8 @@ vi.mock("expo-constants", () => ({
   },
 }));
 
-it.effect("does not let OTLP serialization failures alter application effects", () => {
-  const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
-  const layerTracing = Tracing.layerFromConfig(
+const layerTracingTo = (fetchFn: typeof fetch) =>
+  Tracing.layerFromConfig(
     {
       tracesUrl: "https://api.axiom.test/v1/traces",
       tracesDataset: "mobile-traces",
@@ -31,6 +31,32 @@ it.effect("does not let OTLP serialization failures alter application effects", 
       serviceVersion: "1.2.3",
     },
   ).pipe(Layer.provide(layerRemoteHttpClient(fetchFn)));
+
+it.effect("sends relay spans only while crash reports are on", () =>
+  Effect.gen(function* () {
+    const requestsWhile = (sending: boolean) => {
+      setDiagnosticsSending(sending);
+      const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
+      return Effect.void.pipe(
+        Effect.withSpan("mobile.test.span"),
+        withRelayClientTracing,
+        Layer.effectDiscard,
+        Layer.provide(layerTracingTo(fetchFn)),
+        Layer.build,
+        Effect.scoped,
+        Effect.map(() => fetchFn.mock.calls.length),
+      );
+    };
+
+    expect(yield* requestsWhile(false)).toBe(0);
+    expect(yield* requestsWhile(true)).toBe(1);
+  }),
+);
+
+it.effect("does not let OTLP serialization failures alter application effects", () => {
+  setDiagnosticsSending(true);
+  const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
+  const layerTracing = layerTracingTo(fetchFn);
   const failure = { durationNanos: 1n };
   const layerTracedApplication = Layer.effectDiscard(
     Effect.fail(failure).pipe(

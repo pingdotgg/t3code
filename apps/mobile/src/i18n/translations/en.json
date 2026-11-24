@@ -2191,6 +2191,7 @@
   "93eb8ae0bf209025": "Reading crash log…",
   "4429ccae147b2b2f": "Paste the report into a GitHub issue. It contains the app version, the JavaScript error message, and the component stack. Error messages can quote values from the app, so read it over before sharing.",
   "58df920ec2681250": "When the app crashes or hits an error, it sends the error message, the stack trace, the app version, and the device model and OS version to the T3 Code team. Each launch also sends startup timings. Reports carry a random ID for this install.",
+  "e78e3d92c5840886": "Turning this off also stops the connection traces the app sends to diagnose T3 Connect.",
   "9544305f2964486f": "Could not display diff",
   "a488d0f5de859d6b": "Try loading the diff view again.",
   "0c72282254a37568": "Retry diff",

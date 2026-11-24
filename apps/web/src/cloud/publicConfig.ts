@@ -5,6 +5,8 @@ import {
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Schema from "effect/Schema";
 
+import { isHostedStaticApp } from "../hostedPairing";
+
 export class CloudPublicConfigMissingError extends Schema.TaggedError<CloudPublicConfigMissingError>()(
   "CloudPublicConfigMissingError",
   {
@@ -62,12 +64,25 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
 }
 
 let desktopRelayTelemetry: boolean | null = null;
+let serverRelayTelemetry: boolean | null = null;
 
-/** Whether relay spans may be exported now; the desktop host may not know yet at startup. */
+/** What the server this page was opened from says about its own opt-out. */
+export function setServerRelayTelemetry(allowed: boolean): void {
+  serverRelayTelemetry = allowed;
+}
+
+/**
+ * Whether relay spans may be exported now. Null until the host answers: the desktop host reads
+ * the login shell after startup, and a browser waits for its server's config. The hosted app
+ * has no server of its own to ask.
+ */
 export function relayTelemetryEnabled(): boolean | null {
-  if (typeof window === "undefined" || !window.desktopBridge) return true;
-  desktopRelayTelemetry ??= window.desktopBridge.getRelayTelemetryEnabled();
-  return desktopRelayTelemetry;
+  if (typeof window === "undefined") return true;
+  if (window.desktopBridge) {
+    desktopRelayTelemetry ??= window.desktopBridge.getRelayTelemetryEnabled();
+    return desktopRelayTelemetry;
+  }
+  return serverRelayTelemetry ?? (isHostedStaticApp() ? true : null);
 }
 
 export function resolveRelayTracingConfig() {

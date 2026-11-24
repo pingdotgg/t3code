@@ -2191,6 +2191,7 @@
   "93eb8ae0bf209025": "Läser kraschloggen…",
   "4429ccae147b2b2f": "Klistra in rapporten i ett GitHub-ärende. Den innehåller appversionen, JavaScript-felmeddelandet och komponentstacken. Felmeddelanden kan citera värden från appen, så läs igenom den innan du delar den.",
   "58df920ec2681250": "När appen kraschar eller stöter på ett fel skickas felmeddelandet, stackspårningen, appversionen samt enhetsmodell och OS-version till T3 Code-teamet. Varje start skickar också starttider. Rapporterna har ett slumpmässigt id för den här installationen.",
+  "e78e3d92c5840886": "Om du stänger av det här slutar appen också skicka de anslutningsspårningar som används för att felsöka T3 Connect.",
   "9544305f2964486f": "Kunde inte visa diffen",
   "a488d0f5de859d6b": "Försök läsa in diff-vyn igen.",
   "0c72282254a37568": "Försök med diffen igen",
