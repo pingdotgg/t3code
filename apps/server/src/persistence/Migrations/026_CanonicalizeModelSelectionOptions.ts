@@ -9,7 +9,7 @@ export default Effect.gen(function* () {
     SET model_selection_json = json_set(
       model_selection_json,
       '$.options',
-      (
+      json((
         SELECT json_group_array(
           json_object(
             'id', key,
@@ -24,7 +24,7 @@ export default Effect.gen(function* () {
         FROM json_each(json_extract(model_selection_json, '$.options'))
         WHERE (type = 'text' AND trim(coalesce(atom, '')) != '')
            OR type IN ('true', 'false')
-      )
+      ))
     )
     WHERE model_selection_json IS NOT NULL
       AND json_type(model_selection_json, '$.options') = 'object'
@@ -35,7 +35,7 @@ export default Effect.gen(function* () {
     SET default_model_selection_json = json_set(
       default_model_selection_json,
       '$.options',
-      (
+      json((
         SELECT json_group_array(
           json_object(
             'id', key,
@@ -50,7 +50,7 @@ export default Effect.gen(function* () {
         FROM json_each(json_extract(default_model_selection_json, '$.options'))
         WHERE (type = 'text' AND trim(coalesce(atom, '')) != '')
            OR type IN ('true', 'false')
-      )
+      ))
     )
     WHERE default_model_selection_json IS NOT NULL
       AND json_type(default_model_selection_json, '$.options') = 'object'
@@ -61,7 +61,7 @@ export default Effect.gen(function* () {
     SET payload_json = json_set(
       payload_json,
       '$.modelSelection.options',
-      (
+      json((
         SELECT json_group_array(
           json_object(
             'id', key,
@@ -76,7 +76,7 @@ export default Effect.gen(function* () {
         FROM json_each(json_extract(payload_json, '$.modelSelection.options'))
         WHERE (type = 'text' AND trim(coalesce(atom, '')) != '')
            OR type IN ('true', 'false')
-      )
+      ))
     )
     WHERE event_type IN (
       'thread.created',
@@ -91,7 +91,7 @@ export default Effect.gen(function* () {
     SET payload_json = json_set(
       payload_json,
       '$.defaultModelSelection.options',
-      (
+      json((
         SELECT json_group_array(
           json_object(
             'id', key,
@@ -106,7 +106,7 @@ export default Effect.gen(function* () {
         FROM json_each(json_extract(payload_json, '$.defaultModelSelection.options'))
         WHERE (type = 'text' AND trim(coalesce(atom, '')) != '')
            OR type IN ('true', 'false')
-      )
+      ))
     )
     WHERE event_type IN ('project.created', 'project.meta-updated')
       AND json_type(payload_json, '$.defaultModelSelection.options') = 'object'

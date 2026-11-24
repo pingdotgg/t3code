@@ -8,7 +8,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import { assert, it, vi } from "vite-plus/test";
 
-import { fixPath, hydratePosixHome } from "./os-jank.ts";
+import { fixPath, hydratePosixHome, refreshWindowsPath } from "./os-jank.ts";
 
 vi.mock("node:child_process", { spy: true });
 
@@ -149,44 +149,52 @@ effectIt.effect("keeps mise's PATH record with the login shell PATH", () =>
   ),
 );
 
-effectIt.effect("hydrates a missing JAVA_HOME from the login shell and keeps an explicit one", () =>
-  Effect.acquireUseRelease(
-    Effect.sync(() =>
-      vi
-        .spyOn(NodeChildProcess, "execFileSync")
-        .mockReturnValue(
-          [
-            "__T3CODE_ENV_PATH_START__",
-            "/opt/homebrew/bin",
-            "__T3CODE_ENV_PATH_END__",
-            "__T3CODE_ENV_JAVA_HOME_START__",
-            "/opt/homebrew/opt/openjdk@17",
-            "__T3CODE_ENV_JAVA_HOME_END__",
-          ].join("\n"),
-        ),
+effectIt.effect(
+  "hydrates missing JAVA_HOME and feature flags from the login shell and keeps explicit ones",
+  () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() =>
+        vi
+          .spyOn(NodeChildProcess, "execFileSync")
+          .mockReturnValue(
+            [
+              "__T3CODE_ENV_PATH_START__",
+              "/opt/homebrew/bin",
+              "__T3CODE_ENV_PATH_END__",
+              "__T3CODE_ENV_JAVA_HOME_START__",
+              "/opt/homebrew/opt/openjdk@17",
+              "__T3CODE_ENV_JAVA_HOME_END__",
+              "__T3CODE_ENV_T3CODE_FEATURE_FLAGS_START__",
+              "tanstack_source",
+              "__T3CODE_ENV_T3CODE_FEATURE_FLAGS_END__",
+            ].join("\n"),
+          ),
+      ),
+      () =>
+        Effect.gen(function* () {
+          const missing: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+          const explicit: NodeJS.ProcessEnv = {
+            SHELL: "/bin/zsh",
+            PATH: "/usr/bin",
+            JAVA_HOME: "/custom/jdk",
+            T3CODE_FEATURE_FLAGS: "",
+          };
+
+          for (const env of [missing, explicit]) {
+            yield* fixPath().pipe(
+              Effect.provideService(HostProcess.Platform, "darwin"),
+              Effect.provideService(HostProcess.Environment, env),
+              Effect.provide(NodeServices.layer),
+            );
+          }
+
+          assert.equal(missing.JAVA_HOME, "/opt/homebrew/opt/openjdk@17");
+          assert.equal(explicit.JAVA_HOME, "/custom/jdk");
+          assert.equal(missing.T3CODE_FEATURE_FLAGS, "tanstack_source");
+          assert.equal(explicit.T3CODE_FEATURE_FLAGS, "");
+        }),
+      (probe) => Effect.sync(() => probe.mockRestore()),
     ),
-    () =>
-      Effect.gen(function* () {
-        const missing: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
-        const explicit: NodeJS.ProcessEnv = {
-          SHELL: "/bin/zsh",
-          PATH: "/usr/bin",
-          JAVA_HOME: "/custom/jdk",
-        };
-
-        for (const env of [missing, explicit]) {
-          yield* fixPath().pipe(
-            Effect.provideService(HostProcess.Platform, "darwin"),
-            Effect.provideService(HostProcess.Environment, env),
-            Effect.provide(NodeServices.layer),
-          );
-        }
-
-        assert.equal(missing.JAVA_HOME, "/opt/homebrew/opt/openjdk@17");
-        assert.equal(explicit.JAVA_HOME, "/custom/jdk");
-      }),
-    (probe) => Effect.sync(() => probe.mockRestore()),
-  ),
 );
 
 effectIt.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>
@@ -202,5 +210,22 @@ effectIt.effect("replaces a Path-spelled Windows PATH instead of adding a second
     );
 
     assert.deepEqual(env, { PATH: "C:\\Tools;C:\\Windows" });
+  }),
+);
+
+effectIt.effect("adds a directory an installer wrote to the registry after launch", () =>
+  Effect.gen(function* () {
+    const env: NodeJS.ProcessEnv = { Path: "C:\\Tools;C:\\Windows" };
+    const installed = "C:\\Users\\me\\AppData\\Local\\cursor-agent";
+
+    yield* refreshWindowsPath().pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Environment, env),
+      Effect.provideService(WindowsShellEnvironment, () =>
+        Effect.succeed({ PATH: `C:\\Windows;${installed}` }),
+      ),
+    );
+
+    assert.deepEqual(env, { PATH: `C:\\Tools;C:\\Windows;${installed}` });
   }),
 );

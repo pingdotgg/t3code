@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   shells: null as unknown as { set: (id: string, value: unknown) => void },
   navigate: vi.fn(),
   sound: vi.fn(),
+  unlock: vi.fn(),
   badge: vi.fn(),
   settingsListeners: new Set<() => void>(),
 }));
@@ -80,7 +81,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => ({
 vi.mock(import("../threadNotifications"), async (original) => ({
   ...(await original()),
   playNotificationSound: state.sound,
-  unlockNotificationAudio: vi.fn(),
+  unlockNotificationAudio: state.unlock,
   setNotificationBadge: state.badge,
 }));
 
@@ -293,6 +294,19 @@ it("presents completion notifications and sound as soon as the shell completes",
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
 });
 
+it.each([
+  { client: "desktop app", when: "at startup", bridge: {}, beforeGesture: 1 },
+  { client: "browser", when: "on the first gesture", bridge: undefined, beforeGesture: 0 },
+])("readies notification sound in the $client $when", async ({ bridge, beforeGesture }) => {
+  await using app = setup();
+  using _bridge = stubGlobal("desktopBridge", bridge);
+  state.mode = "sound";
+  app.start();
+  expect(state.unlock).toHaveBeenCalledTimes(beforeGesture);
+  document.dispatchEvent(new Event("pointerdown"));
+  expect(state.unlock).toHaveBeenCalledTimes(beforeGesture + 1);
+});
+
 it.each([false, true])(
   "presents one completion when a monitor ends with a final wake (disconnected: %s)",
   async (disconnect) => {
@@ -419,7 +433,7 @@ it.each([false, true])(
   },
 );
 
-it("opening a thread closes only its in-app toasts, and disabling notifications closes the rest", async () => {
+it("opening a thread or removing its environment closes only its in-app toasts, and disabling notifications closes the rest", async () => {
   await using app = setup();
   state.inApp = true;
   focused = true;
@@ -445,11 +459,11 @@ it("opening a thread closes only its in-app toasts, and disabling notifications 
   app.openThread("one", "thread");
   expect(state.closeToast.mock.calls).toEqual([["one-completed"], ["one-approval"]]);
 
+  app.setEnvironmentIds(["one"]);
+  expect(state.closeToast.mock.calls.slice(2)).toEqual([["two-completed"]]);
+
   state.mode = "off";
   state.inApp = false;
   app.changeSettings();
-  expect(state.closeToast.mock.calls.slice(2).flat().toSorted()).toEqual([
-    "one-other",
-    "two-completed",
-  ]);
+  expect(state.closeToast.mock.calls.slice(3)).toEqual([["one-other"]]);
 });

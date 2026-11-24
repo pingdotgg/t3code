@@ -135,12 +135,12 @@ async function addRemote(remoteName: string, sourceRef = branch.name) {
 }
 
 describe("new-task branch checkout", () => {
-  it("switches to a free branch and clears its historical worktree path", async () => {
+  it("switches to a free branch despite stale current and worktree metadata", async () => {
     const previousWorktree = NodePath.join(directory, "previous-worktree");
     await git("worktree", "add", previousWorktree, branch.name);
     await exec("git", ["-C", previousWorktree, "checkout", "-b", "other-branch"]);
     const result = await checkoutNewTaskBranch({
-      branch: { ...branch, worktreePath: previousWorktree },
+      branch: { ...branch, current: true, worktreePath: previousWorktree },
       project: { environmentId, workspaceRoot: cwd },
       workspaceMode: "local",
       readRefs,
