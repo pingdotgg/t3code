@@ -100,6 +100,26 @@ describe("published theme files", () => {
       edited.colors,
     );
   });
+
+  it("keeps a sparse secondary palette sparse through a rename", () => {
+    const file = {
+      id: "nightfall",
+      name: "Nightfall",
+      appearance: "dark",
+      canvas: "#1a1b26",
+      accent: "#7aa2f7",
+      variants: { light: { error: "#fa1234" } },
+    } as const;
+    const [original] = publishedThemeDefinitions([file]);
+    if (!original) throw new Error("Expected a published theme");
+
+    const saved = environmentThemeFile({ ...original, label: "Night sky" }, original);
+
+    expect(saved.variants).toEqual({ light: { error: canonical(file.variants.light.error) } });
+    expect(publishedThemeDefinitions([{ id: file.id, ...saved }])[0]?.variants).toEqual(
+      original.variants,
+    );
+  });
 });
 
 function asHex(value: string): string {

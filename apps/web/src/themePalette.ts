@@ -332,11 +332,21 @@ export function environmentThemeFile(
           : {}),
       }
     : { colors: theme.colors };
+  // Variants are read over their appearance's stock defaults, so only roles that differ
+  // are written and the rest keep following those defaults.
+  const variantEntries = Object.entries(theme.variants ?? {}).flatMap(([appearance, colors]) => {
+    const stock = getDefaultThemeColors(appearance as ThemeAppearance);
+    const changed = THEME_COLOR_ROLES.filter((role) => colors[role] !== stock[role]);
+    return changed.length > 0
+      ? [[appearance, Object.fromEntries(changed.map((role) => [role, colors[role]]))] as const]
+      : [];
+  });
+  const variants = variantEntries.length > 0 ? Object.fromEntries(variantEntries) : undefined;
   return {
     name: theme.label,
     appearance: theme.appearance,
     ...palette,
-    ...(theme.variants ? { variants: theme.variants } : {}),
+    ...(variants ? { variants } : {}),
     ...(theme.css ? { css: theme.css } : {}),
   };
 }
