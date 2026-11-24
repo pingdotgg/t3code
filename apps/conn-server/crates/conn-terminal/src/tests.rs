@@ -356,6 +356,83 @@ async fn shares_the_smallest_viewer_grid() {
     );
 }
 
+/// T3's "keeps a viewer's resized grid when the same viewer attaches again": a client's
+/// attach retry resends its first size, which a later resize replaced.
+#[tokio::test(flavor = "current_thread")]
+async fn keeps_a_viewers_resized_grid_when_the_same_viewer_attaches_again() {
+    let manager = TerminalManager::new(config());
+    let sized = |cols: i64| {
+        let mut input = attach_input("t12", "term-1");
+        (input.cols, input.rows) = (Some(cols), Some(15));
+        input
+    };
+    let grid = |e: &E| match e {
+        E::Activity(a) => (a.cols, a.rows),
+        _ => (None, None),
+    };
+    let mut wide = manager.attach(sized(130), 1).unwrap();
+    let E::Snapshot(first) = wide.next().await else {
+        panic!()
+    };
+    let pid = first.snapshot.pid;
+    let phone = manager.attach(sized(54), 2).unwrap();
+    until(&mut wide, |e| grid(e) == (Some(54), Some(15))).await;
+    let resize = TerminalResizeInput {
+        thread_id: "t12".into(),
+        terminal_id: "term-1".into(),
+        cols: 100,
+        rows: 15,
+    };
+    manager.resize(resize, Some(2)).unwrap();
+    until(&mut wide, |e| grid(e) == (Some(100), Some(15))).await;
+
+    let mut retry = sized(54);
+    retry.resume = Some(true);
+    let retry = manager.attach(retry, 2).unwrap();
+    let snapshot = manager.read("t12", "term-1", Some(0)).unwrap();
+    assert_eq!((snapshot.cols, snapshot.rows), (Some(100), Some(15)));
+    write(&manager, "t12", "term-1", "stty size\n").await;
+    output_contains(&mut wide, "15 100").await;
+
+    // Once the phone's last stream ends, the wide viewer's grid comes back on the same shell.
+    drop(retry);
+    drop(phone);
+    until(&mut wide, |e| grid(e) == (Some(130), Some(15))).await;
+    write(&manager, "t12", "term-1", "stty size\n").await;
+    output_contains(&mut wide, "15 130").await;
+    assert_eq!(manager.read("t12", "term-1", Some(0)).unwrap().pid, pid);
+}
+
+/// A viewer's grid belongs to the viewer, not to the stream that first reported it (T3's
+/// `retainViewer`): it stays until the viewer's last stream closes.
+#[tokio::test(flavor = "current_thread")]
+async fn keeps_a_viewers_grid_while_any_of_its_streams_stays_open() {
+    let manager = TerminalManager::new(config());
+    let sized = |cols: i64| {
+        let mut input = attach_input("t15", "term-1");
+        (input.cols, input.rows) = (Some(cols), Some(15));
+        input
+    };
+    let grid = |e: &E| match e {
+        E::Activity(a) => (a.cols, a.rows),
+        _ => (None, None),
+    };
+    let mut wide = manager.attach(sized(130), 1).unwrap();
+    assert!(matches!(wide.next().await, E::Snapshot(s) if s.snapshot.cols == Some(130)));
+    let unsized_stream = manager.attach(attach_input("t15", "term-1"), 2).unwrap();
+    let sized_stream = manager.attach(sized(54), 2).unwrap();
+    until(&mut wide, |e| grid(e) == (Some(54), Some(15))).await;
+
+    drop(sized_stream);
+    let snapshot = manager.read("t15", "term-1", Some(0)).unwrap();
+    assert_eq!((snapshot.cols, snapshot.rows), (Some(54), Some(15)));
+    write(&manager, "t15", "term-1", "stty size\n").await;
+    output_contains(&mut wide, "15 54").await;
+
+    drop(unsized_stream);
+    until(&mut wide, |e| grid(e) == (Some(130), Some(15))).await;
+}
+
 // T3 `open`: a reused terminal keeps its grid where the input omits a dimension
 // (`input.cols ?? liveSession.cols`). The desktop reruns a project action this way.
 #[tokio::test(flavor = "current_thread")]
