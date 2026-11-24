@@ -538,21 +538,28 @@ export const make = Effect.gen(function* () {
   const saveScripts = (projectId: ProjectId, scripts: ProjectCreateInput["scripts"]) =>
     scripts === undefined
       ? Effect.void
-      : serverSettings
-          .updateSettings({
-            projectSettingsOverrides: { [projectId]: { defaultProjectScripts: scripts } },
-          })
-          .pipe(
-            Effect.asVoid,
-            Effect.mapError(
-              (cause) =>
-                new ProjectOperationError({
-                  operation: "dispatch-project-command",
-                  projectId,
-                  cause,
-                }),
-            ),
-          );
+      : serverSettings.getSettings.pipe(
+          // A patch replaces the project's whole entry, so its other overrides are carried over.
+          Effect.flatMap(({ projectSettingsOverrides }) =>
+            serverSettings.updateSettings({
+              projectSettingsOverrides: {
+                [projectId]: {
+                  ...projectSettingsOverrides[projectId],
+                  defaultProjectScripts: scripts,
+                },
+              },
+            }),
+          ),
+          Effect.asVoid,
+          Effect.mapError(
+            (cause) =>
+              new ProjectOperationError({
+                operation: "dispatch-project-command",
+                projectId,
+                cause,
+              }),
+          ),
+        );
 
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {

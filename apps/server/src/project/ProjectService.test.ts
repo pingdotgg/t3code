@@ -604,15 +604,20 @@ it.layer(layerTest)("ProjectService", (it) => {
         (yield* settings.getSettings).projectSettingsOverrides[projectId]?.defaultProjectScripts,
         [script],
       );
+      yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: { defaultProjectScripts: [script], defaultThreadEnvMode: "worktree" },
+        },
+      });
       yield* service.update({
         commandId: CommandId.make("command:actions:update"),
         projectId,
         scripts: [],
       });
-      assert.deepEqual(
-        (yield* settings.getSettings).projectSettingsOverrides[projectId]?.defaultProjectScripts,
-        [],
-      );
+      assert.deepEqual((yield* settings.getSettings).projectSettingsOverrides[projectId], {
+        defaultProjectScripts: [],
+        defaultThreadEnvMode: "worktree",
+      });
     }),
   );
 
