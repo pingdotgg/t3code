@@ -5,7 +5,7 @@ import type {
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
 import { CheckIcon, ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
-import { Branch, T, useGT } from "gt-react";
+import { Branch, T, msg, useGT, useMessages } from "gt-react";
 import type { ReactNode } from "react";
 
 import { AnimatedWidth } from "~/components/AnimatedWidth";
@@ -79,6 +79,7 @@ export function PullRequestCheckoutMenu({
   handoff,
   checkoutRoot,
   canPrepareWorktree,
+  worktreeBranchAlreadyCheckedOut,
   canCheckoutHere,
   onCheckout,
   pickableEnvironments,
@@ -89,6 +90,7 @@ export function PullRequestCheckoutMenu({
   handoff: string | null;
   checkoutRoot: string | null;
   canPrepareWorktree: boolean;
+  worktreeBranchAlreadyCheckedOut: boolean;
   canCheckoutHere: boolean;
   onCheckout: (mode: "worktree" | "local") => void;
   pickableEnvironments: ReadonlyArray<PickableEnvironment>;
@@ -97,6 +99,7 @@ export function PullRequestCheckoutMenu({
   term: ChangeRequestTermKind;
 }) {
   const gt = useGT();
+  const m = useMessages();
   return (
     <Menu>
       <Tooltip>
@@ -132,14 +135,21 @@ export function PullRequestCheckoutMenu({
         </TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" side="bottom">
-        <MenuItem disabled={!canPrepareWorktree} onClick={() => onCheckout("worktree")}>
+        <MenuItem
+          disabled={!canPrepareWorktree || worktreeBranchAlreadyCheckedOut}
+          onClick={() => onCheckout("worktree")}
+        >
           <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
           <span className="flex min-w-0 flex-col">
             <span>
               <T>In a separate worktree</T>
             </span>
             <span className="text-xs text-muted-foreground">
-              <T>Its own folder and thread. Nothing you have open moves.</T>
+              {worktreeBranchAlreadyCheckedOut ? (
+                m(msg("Checked out here"))
+              ) : (
+                <T>Its own folder and thread. Nothing you have open moves.</T>
+              )}
             </span>
           </span>
         </MenuItem>

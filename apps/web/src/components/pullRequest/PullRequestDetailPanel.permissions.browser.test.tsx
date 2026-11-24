@@ -15,7 +15,7 @@ import { act, fakeTimers, render } from "../../../test/render";
 const { command, permissions, reads, shown } = vi.hoisted(() => ({
   command: vi.fn(),
   permissions: { checkout: true, operate: true },
-  reads: { diff: [] as unknown[] },
+  reads: { diff: [] as unknown[], currentBranch: null as string | null },
   shown: { detail: null as PullRequestDetailView | null },
 }));
 
@@ -73,6 +73,17 @@ vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => command) as never,
 }));
+vi.mock(import("~/state/vcs"), async (original) => {
+  const actual = await original();
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  return {
+    ...actual,
+    vcsEnvironment: {
+      ...actual.vcsEnvironment,
+      status: (() => Atom.make(AsyncResult.success({ refName: reads.currentBranch }))) as never,
+    },
+  };
+});
 
 import { createWorkspaceFocusController, workspaceAreaProps } from "~/lib/workspaceFocus";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
@@ -153,10 +164,34 @@ function setup() {
   permissions.checkout = true;
   permissions.operate = true;
   reads.diff = [];
+  reads.currentBranch = null;
   shown.detail = detail;
   command.mockReset();
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
 }
+
+it.each([
+  { branch: "feature", headRepository: "owner/repo", blocked: true },
+  { branch: "main", headRepository: "owner/repo", blocked: false },
+  { branch: "feature", headRepository: "fork/repo", blocked: false },
+])(
+  "checks worktree checkout for $headRepository with $branch checked out",
+  async ({ branch, headRepository, blocked }) => {
+    setup();
+    reads.currentBranch = branch;
+    shown.detail = { ...detail, headRepositoryNameWithOwner: headRepository };
+    await using screen = await render(panel());
+    await userEvent.click(screen.getByRole("button", { name: "Check out", exact: true }));
+    const worktree = page.getByRole("menuitem", { name: /In a separate worktree/ });
+    if (blocked) {
+      await expect.element(worktree).toBeDisabled();
+      await expect.element(worktree.getByText("Checked out here", { exact: true })).toBeVisible();
+    } else {
+      await expect.element(worktree).toBeEnabled();
+    }
+    await expect.element(page.getByRole("menuitem", { name: /In this repository/ })).toBeEnabled();
+  },
+);
 
 it.each([AuthSourceControlWriteScope, AuthOrchestrationOperateScope])(
   "disables conflict checkout when the connection loses %s",
