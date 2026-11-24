@@ -1185,6 +1185,15 @@ export class GhosttyTerminalSurface {
       }
       return;
     }
+    const copyChord =
+      primaryModifier &&
+      !event.altKey &&
+      (mac ? !event.shiftKey : event.shiftKey || event.key.toLowerCase() === "insert");
+    if (copyChord && isTerminalCopyShortcut(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (isTerminalPasteShortcut(event)) {
       const gesture = { code: event.code, readText: "" };
       this.pasteShortcutGesture = gesture;

@@ -176,7 +176,7 @@ function workflowMembersToRuntime(
   });
 }
 
-function promptTitle(prompt: string): string {
+export function promptTitle(prompt: string): string {
   if (prompt.length <= 80) return prompt;
   let end = 77;
   const previous = prompt.charCodeAt(end - 1);

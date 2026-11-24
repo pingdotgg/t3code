@@ -274,6 +274,12 @@ describe("ssh tunnel scripts", () => {
       assert.include(result.failure.stderr, "It wrote nothing to");
       assert.notInclude(result.failure.stderr, "EARLIER_LAUNCH");
       assert.notInclude(result.failure.stderr, "EARLIER_PROCESS");
+      for (const [path, mode] of [
+        [stateDir, 0o700],
+        [NodePath.join(stateDir, "server.log"), 0o600],
+      ] as const) {
+        assert.equal((yield* fs.stat(path)).mode & 0o777, mode, path);
+      }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -1606,6 +1612,62 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.live(
+    "another desktop with the same connection details neither owns nor stops the server",
+    () =>
+      Effect.gen(function* () {
+        const { fs, home, fakeServer, sshAsLocalShell, stateDir } =
+          yield* prepare("an unrelated process");
+        const launch = (launcherId: string) =>
+          SshTunnel.launchOrReuseRemoteServer(
+            target,
+            undefined,
+            { nodeScriptPath: fakeServer },
+            launcherId,
+          ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell));
+        const runtimePid = fs
+          .readFileString(`${home}/.t3/userdata/server-runtime.json`)
+          .pipe(Effect.map((runtime) => Number(JSON.parse(runtime).pid)));
+
+        assert.equal((yield* launch("a".repeat(32))).remoteServerKind, "managed");
+        const serverPid = yield* runtimePid;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            try {
+              process.kill(serverPid, "SIGKILL");
+            } catch {}
+          }),
+        );
+
+        const otherDesktop = yield* launch("b".repeat(32));
+        assert.equal(
+          yield* fs.readFileString(`${stateDir}/launcher`),
+          `${"a".repeat(32)}\n`,
+          "the second desktop recorded itself as the server's launcher",
+        );
+        assert.equal(otherDesktop.remoteServerKind, "external");
+
+        const layer = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell),
+          Layer.succeed(HttpClient.HttpClient, testHttpClient),
+          Layer.succeed(NetService.NetService, testNetService),
+          SshAuth.SshPasswordPrompt.disabledLayer,
+          SshTunnel.SshEnvironmentManager.layer({
+            resolveCliRunner: Effect.succeed(ARCHIVE),
+            resolveLauncherId: Effect.succeed("b".repeat(32)),
+          }),
+        );
+        yield* Effect.flatMap(SshTunnel.SshEnvironmentManager, (manager) =>
+          manager.disconnectEnvironment(target),
+        ).pipe(Effect.provide(layer));
+        assert.isTrue(
+          yield* isRunning(serverPid),
+          "the second desktop's disconnect stopped the server the first desktop launched",
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.live.each(staleIds)("disconnecting does not signal %s named by the managed pid file", (kind) =>
     Effect.gen(function* () {
       const { fs, holder, sshAsLocalShell, staleId, stateDir } = yield* prepare(kind);
@@ -1759,9 +1821,10 @@ const canBind = (port) =>
       for (const version of versions) {
         const runtimeDir = `${home}/.t3/runtime/versions/${version}`;
         yield* fs.makeDirectory(runtimeDir, { recursive: true });
+        // The runner gets only HOME, so `node` would resolve on sh's default PATH, which may not have it.
         yield* fs.writeFileString(
           `${runtimeDir}/t3`,
-          `#!/bin/sh\nexec node '${fakeT3}' '${version}' "$@"\n`,
+          `#!/bin/sh\nexec '${process.execPath}' '${fakeT3}' '${version}' "$@"\n`,
         );
         yield* fs.chmod(`${runtimeDir}/t3`, 0o755);
         yield* fs.writeFileString(`${runtimeDir}/.install-complete`, `${version}\n`);

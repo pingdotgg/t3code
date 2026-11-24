@@ -13,8 +13,7 @@ export interface ProviderDimensions {
 
 /**
  * Anonymous provider and model for a model selection. Instance ids are
- * user-defined, so only the driver kind is reported. The model is reported
- * only when the selected instance's vendor catalog lists it.
+ * user-defined, so only the driver kind is reported.
  */
 export function providerDimensions(
   providers: ReadonlyArray<ServerProvider>,
@@ -22,15 +21,16 @@ export function providerDimensions(
 ): ProviderDimensions {
   const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
   if (provider === undefined) return { provider: "unknown" };
-  const model = vendorCatalogEntry(provider, [selection.model]);
-  return model === undefined
-    ? { provider: provider.driver }
-    : { provider: provider.driver, model: model.slug };
+  return { provider: provider.driver, model: modelLabel(providers, selection.model) };
 }
 
 const DATED_SNAPSHOT = /-\d{8}$/u;
+// Absolute, home, relative, or Windows paths, such as a local GGUF file. Directories can name the user.
+const FILE_PATH = /^(?:[/~]|\.{1,2}[/\\]|[A-Za-z]:[\\/])|\\/u;
 
-// The bundled manifest is reviewed in this repo. Vendor catalogs ship models before it does.
+const fileName = (model: string) =>
+  FILE_PATH.test(model) ? model.slice(model.search(/[^/\\]*$/u)) : model;
+
 const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
   Object.values(BUNDLED_MODEL_MANIFEST.providers ?? {}).flatMap((catalog) =>
     catalog.models.flatMap((model) =>
@@ -39,43 +39,17 @@ const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
   ),
 );
 
-// Drivers whose model lists come from the vendor. OpenCode, Pi, and ACP agents list the
-// user's own configuration, such as local Ollama tags. Codex and Claude also list
-// early-access code names, so only slugs in the vendor's public family vouch for them.
-const VENDOR_CATALOGS: ReadonlyMap<string, RegExp | undefined> = new Map([
-  ["cursor", undefined],
-  ["grok", undefined],
-  ["antigravity", undefined],
-  ["codex", /^gpt-/u],
-  ["claudeAgent", /^claude-/u],
-]);
-
-// A custom endpoint or gateway serves whatever names its owner chose.
-const isVendorRouted = (auth: ServerProvider["auth"]) =>
-  auth.endpoint === undefined && auth.type !== "customEndpoint" && auth.type !== "bedrock";
-
-function vendorCatalogEntry(provider: ServerProvider, candidates: ReadonlyArray<string>) {
-  if (!VENDOR_CATALOGS.has(provider.driver) || !isVendorRouted(provider.auth)) return undefined;
-  const family = VENDOR_CATALOGS.get(provider.driver);
-  return provider.models.find(
-    (entry) =>
-      !entry.isCustom &&
-      (family === undefined || family.test(entry.slug)) &&
-      (candidates.includes(entry.slug) ||
-        entry.aliases?.some((alias) => candidates.includes(alias)) === true),
-  );
+/**
+ * The model name analytics reports. A routed id, alias, or dated snapshot that the
+ * bundled manifest or a provider's model list knows, such as `anthropic/claude-opus-5-5`
+ * or `antigravity-default`, maps to its catalog slug. A file path reports only its file
+ * name. Any other id is reported as is.
+ */
+export function modelLabel(providers: ReadonlyArray<ServerProvider>, model: string): string {
+  return fileName(catalogSlug(providers, model) ?? model);
 }
 
-/**
- * The vendor catalog slug that a native or routed model id names, such as
- * `anthropic/claude-opus-5-5` or a dated snapshot. Models outside the bundled
- * manifest and vendor-routed provider catalogs, including user-added ones and
- * names a custom endpoint serves, return undefined.
- */
-export function catalogModelLabel(
-  providers: ReadonlyArray<ServerProvider>,
-  model: string,
-): string | undefined {
+function catalogSlug(providers: ReadonlyArray<ServerProvider>, model: string) {
   const leaf = model.slice(model.lastIndexOf("/") + 1);
   const candidates = [model, leaf, leaf.replace(DATED_SNAPSHOT, "")];
   for (const candidate of candidates) {
@@ -83,7 +57,11 @@ export function catalogModelLabel(
     if (label !== undefined) return label;
   }
   for (const provider of providers) {
-    const match = vendorCatalogEntry(provider, candidates);
+    const match = provider.models.find(
+      (entry) =>
+        candidates.includes(entry.slug) ||
+        entry.aliases?.some((alias) => candidates.includes(alias)) === true,
+    );
     if (match !== undefined) return match.slug;
   }
   return undefined;

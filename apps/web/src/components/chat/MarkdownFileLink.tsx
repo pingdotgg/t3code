@@ -11,7 +11,7 @@ import { memo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useGT } from "gt-react";
 import { FolderIcon } from "lucide-react";
 
-import { contextMenuSourceOf } from "../../contextMenuSource";
+import { contextMenuSourceOf, openContextMenuFromKeyboard } from "../../contextMenuSource";
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
 import { shouldOpenMarkdownFileLinkInEditor } from "../../markdown-links";
@@ -363,6 +363,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         handleOpenInFilePreview();
       }}
       onContextMenu={handleContextMenu}
+      onKeyDown={openContextMenuFromKeyboard}
     >
       <FileTagChipContent
         icon={
@@ -386,6 +387,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
       data-markdown-copy={copyMarkdown}
       onClick={handleContextMenu}
       onContextMenu={handleContextMenu}
+      onKeyDown={openContextMenuFromKeyboard}
     >
       <FileTagChipContent
         icon={

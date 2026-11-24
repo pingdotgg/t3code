@@ -22,7 +22,7 @@ jobs:
     if: >-
       github.event.pull_request.head.repo.full_name != github.repository &&
       github.event.label.name == '🚀 Mobile Continuous Deployment'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     concurrency:
       group: mobile-eas-preview-fork-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -43,7 +43,9 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=8192
       MOBILE_VERSION_POLICY: fingerprint
     steps:
-      # If a maintainer removed the label first, that removal wins.
+      # The label counts only from someone with write access, who could push a
+      # same-repo branch and get this build anyway. If a maintainer removed the
+      # label first, that removal wins.
       - id: consume
         name: Consume the deployment label
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
@@ -56,12 +58,23 @@ jobs:
                 issue_number: context.payload.pull_request.number,
                 name: context.payload.label.name,
               });
-              core.setOutput("consumed", "true");
             } catch (error) {
               if (error.status !== 404) throw error;
               core.info("The label was removed before this run could consume it. Skipping.");
               core.setOutput("consumed", "false");
+              return;
             }
+            const sender = context.payload.sender.login;
+            const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: sender,
+            });
+            const authorized = ["admin", "maintain", "write"].includes(access.permission);
+            if (!authorized) {
+              core.warning(`${sender} has ${access.permission} access; a fork preview needs write access. Label removed, nothing built.`);
+            }
+            core.setOutput("consumed", String(authorized));
 
       - id: expo-token
         name: Check for EXPO_PREVIEW_TOKEN
@@ -227,11 +240,10 @@ jobs:
     name: Android preview client
     needs: preview
     if: needs.preview.outputs.build == 'true'
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
-      pull-requests: write
     outputs:
       client: ${{ steps.build.outputs.link }}
     env:
@@ -291,11 +303,10 @@ jobs:
     name: iOS preview client
     needs: preview
     if: needs.preview.outputs.ios_build == 'true'
-    runs-on: blacksmith-12vcpu-macos-27
+    runs-on: macos-26
     timeout-minutes: 60
     permissions:
       contents: read
-      pull-requests: write
     outputs:
       client: ${{ steps.build.outputs.link }}
     env:
@@ -353,7 +364,7 @@ jobs:
     name: Mobile preview comment
     needs: [preview, android-build, ios-build]
     if: always() && !cancelled() && needs.preview.result == 'success'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     concurrency:
       group: mobile-preview-comment-${{ github.event.pull_request.number }}
       cancel-in-progress: false
