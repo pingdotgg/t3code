@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Predicate from "effect/Predicate";
+import { PI_ANTHROPIC_FAST_MODE_MODELS } from "./mcpExtensionSource.ts";
 
 // xhigh/max require per-model thinkingLevelMap opt-in; global advertising makes set_thinking_level fail.
 const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -64,20 +65,13 @@ function thinkingDescriptor(
   };
 }
 
-// Anthropic fast mode without a beta header; Pi's catalog advertises no tiers for these.
-const ANTHROPIC_FAST_MODE_MODELS = new Set([
-  "claude-fable-5-2",
-  "claude-mythos-5-2",
-  "claude-opus-5-5",
-]);
-
 // Pi has no service tier concept; provider extensions advertise `serviceTiers` on a model.
 // T3's injected extension sends the chosen id as `service_tier`, or Anthropic's Fast as `speed`.
 function serviceTierDescriptor(model: unknown): ProviderOptionDescriptor | undefined {
   const tiers =
     recordField(model, "serviceTiers") ??
     (recordField(model, "api") === "anthropic-messages" &&
-    ANTHROPIC_FAST_MODE_MODELS.has(String(recordField(model, "id")))
+    PI_ANTHROPIC_FAST_MODE_MODELS.some((id) => id === recordField(model, "id"))
       ? [{ id: "fast", name: "Fast" }]
       : undefined);
   if (!Array.isArray(tiers)) return undefined;
