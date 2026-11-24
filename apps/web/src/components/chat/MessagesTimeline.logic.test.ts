@@ -1084,8 +1084,8 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRows[1]?.showAssistantCopyButton).toBe(true);
   });
 
-  it("projects assistant diffs and rewinds the first visible run to thread start after a rewind", () => {
-    const assistantTurnDiffSummary = {
+  it("rewinds the first visible run to thread start after a rewind", () => {
+    const checkpoint = {
       runId: "turn-1" as never,
       completedAt: "2026-01-01T00:00:30Z",
       assistantMessageId: "assistant-1" as never,
@@ -1129,7 +1129,7 @@ describe("deriveMessagesTimelineRows", () => {
       ],
       isWorking: false,
       activeTurnStartedAt: null,
-      turnDiffSummaries: [assistantTurnDiffSummary],
+      turnDiffSummaries: [checkpoint],
       supportsConversationRollback: true,
       threadStartCheckpointAvailable: true,
     });
@@ -1138,13 +1138,7 @@ describe("deriveMessagesTimelineRows", () => {
       (row): row is Extract<(typeof rows)[number], { kind: "message" }> =>
         row.kind === "message" && row.message.role === "user",
     );
-    const assistantRow = rows.find(
-      (row): row is Extract<(typeof rows)[number], { kind: "message" }> =>
-        row.kind === "message" && row.message.role === "assistant",
-    );
-
     expect(userRow?.revertTurnCount).toBe(0);
-    expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
   it("folds the first assistant message and settled work before the terminal response", () => {
@@ -2373,13 +2367,20 @@ describe("deriveMessagesTimelineRows", () => {
       completedAt: at(ordinal),
       updatedAt: at(ordinal),
     });
-    const read = (id: string, ordinal: number, filePath: string) => ({
+    const read = (
+      id: string,
+      ordinal: number,
+      filePath: string,
+      status: "completed" | "failed" = "completed",
+    ) => ({
       ...base(id, ordinal),
+      status,
       type: "dynamic_tool" as const,
       toolName: "Read",
-      // The Claude adapter tags reads of image files.
+      // Claude and ACP adapters tag reads of image files even when the read fails.
       ...(filePath.endsWith(".png") ? { viewedImagePath: filePath } : {}),
       input: { file_path: filePath },
+      ...(status === "failed" ? { output: "Error: File does not exist." } : {}),
     });
     const items = (settled: boolean) =>
       [
@@ -2395,18 +2396,19 @@ describe("deriveMessagesTimelineRows", () => {
         },
         read("read-sidebar", 1, "/repo/docs/sidebar.png"),
         read("read-notes", 2, "/repo/docs/notes.md"),
-        read("read-sidebar-again", 3, "/repo/docs/sidebar.png"),
-        read("read-topbar", 4, "/repo/docs/topbar.png"),
+        read("read-missing", 3, "/repo/docs/missing.png", "failed"),
+        read("read-sidebar-again", 4, "/repo/docs/sidebar.png"),
+        read("read-topbar", 5, "/repo/docs/topbar.png"),
         settled
           ? {
-              ...base("answer", 5),
+              ...base("answer", 6),
               type: "assistant_message" as const,
               messageId: MessageId.make("answer"),
               text: "Here are both layouts",
               streaming: false,
             }
           : {
-              ...base("ask-again", 5),
+              ...base("ask-again", 6),
               status: "waiting" as const,
               completedAt: null,
               type: "user_input_request" as const,
@@ -5085,6 +5087,20 @@ describe("parent run waiting on foreground subagents", () => {
   it("names the running children while the open run has done nothing since launching them", () => {
     expect(liveRow([])).toEqual({ ...thinking, label: "Waiting on 2 subagents" });
     expect(liveRow([], "hideAll")).toEqual({ ...thinking, label: "Waiting on 2 subagents" });
+  });
+
+  // regression: #40551 a finished status after the children is the parent parking, not new work
+  it("names the running children when the parent's finished status message follows them", () => {
+    const status: OrchestrationV2TurnItem = {
+      ...base("status", 5),
+      status: "completed",
+      type: "assistant_message",
+      messageId: MessageId.make("status"),
+      text: "Subagents launched; waiting for them to report back.",
+      streaming: false,
+    };
+    expect(liveRow([status])).toEqual({ ...thinking, label: "Waiting on 2 subagents" });
+    expect(liveRow([{ ...status, runId: RunId.make("other-run") }])).toEqual(thinking);
   });
 
   it("keeps Thinking when a hidden newer parent command follows the children", () => {

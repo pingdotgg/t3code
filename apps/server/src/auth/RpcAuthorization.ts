@@ -11,6 +11,7 @@ import {
   requiredScopesForServerSettingsPatch,
   requiredScopesForProjectMutation,
   ProjectMutation,
+  SecretRequestAnswerInput,
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
@@ -129,6 +130,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverSignalProcess]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.scheduledTasksSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.workflowsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.workflowsCounts]: AuthOrchestrationReadScope,
+  [WS_METHODS.workflowsGet]: AuthOrchestrationReadScope,
+  [WS_METHODS.workflowsGetDefinition]: AuthFilesystemReadScope,
   [WS_METHODS.secretsAnswerRequest]: AuthOrchestrationOperateScope,
   [WS_METHODS.agentFeedbackAnswerRequest]: AuthOrchestrationOperateScope,
   // Delivery logs hold request bodies, so they need the same scope as the URL.
@@ -279,6 +284,7 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
+const decodeSecretRequestAnswer = Schema.decodeUnknownSync(SecretRequestAnswerInput);
 
 /**
  * A queued edit that omits `attachments` keeps the queued ones, which a payload cannot show;
@@ -333,6 +339,14 @@ const requiredScopesForRpcCall = (
     containsSecretReference(payload)
   ) {
     return [AuthSettingsWriteScope, AuthProvidersManageScope];
+  }
+  // A reference answer has the server read a secret the caller names, as a saved reference does.
+  // Typed values can use any field names, so the answer's type decides, not its shape.
+  if (
+    method === WS_METHODS.secretsAnswerRequest &&
+    decodeSecretRequestAnswer(payload).answer.type === "reference"
+  ) {
+    return [AuthOrchestrationOperateScope, AuthProvidersManageScope];
   }
   if (method === WS_METHODS.projectsMutate) {
     return requiredScopesForProjectMutation(decodeProjectMutation(payload));
