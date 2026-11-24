@@ -42,9 +42,11 @@ const macApplicationSupport = (
 const chromiumSource = (input: {
   readonly id: BrowserImportSourceId;
   readonly name: string;
-  readonly keychainService: string;
-  readonly keychainAccount: string;
-  readonly macSegments: ReadonlyArray<string>;
+  readonly mac?: {
+    readonly segments: ReadonlyArray<string>;
+    readonly keychainService: string;
+    readonly keychainAccount: string;
+  };
   readonly linuxSegments?: ReadonlyArray<string>;
   readonly linuxSecretApplication?: string;
   readonly windowsSegments?: ReadonlyArray<string>;
@@ -53,28 +55,33 @@ const chromiumSource = (input: {
   name: input.name,
   engine: "chromium",
   platforms: [
-    "darwin" as NodeJS.Platform,
+    ...(input.mac ? ["darwin" as NodeJS.Platform] : []),
     ...(input.linuxSegments ? ["linux" as NodeJS.Platform] : []),
     ...(input.windowsSegments ? ["win32" as NodeJS.Platform] : []),
   ],
-  keychainService: input.keychainService,
-  keychainAccount: input.keychainAccount,
+  ...(input.mac
+    ? { keychainService: input.mac.keychainService, keychainAccount: input.mac.keychainAccount }
+    : {}),
   ...(input.linuxSecretApplication === undefined
     ? {}
     : { linuxSecretApplication: input.linuxSecretApplication }),
   userDataDirectory: (context) => {
-    if (context.platform === "darwin") return macApplicationSupport(context, ...input.macSegments);
+    if (context.platform === "darwin") {
+      return input.mac ? macApplicationSupport(context, ...input.mac.segments) : undefined;
+    }
     if (context.platform === "win32") {
       return input.windowsSegments && context.localAppData
         ? context.path.join(context.localAppData, ...input.windowsSegments)
         : undefined;
     }
-    return input.linuxSegments
-      ? context.path.join(
-          input.id === "chrome" ? context.linuxChromeConfigHome : context.linuxConfigHome,
-          ...input.linuxSegments,
-        )
-      : undefined;
+    if (context.platform === "linux" && input.linuxSegments) {
+      const configHome =
+        input.id === "chrome" || input.id === "chromium"
+          ? context.linuxChromeConfigHome
+          : context.linuxConfigHome;
+      return context.path.join(configHome, ...input.linuxSegments);
+    }
+    return undefined;
   },
 });
 
@@ -83,47 +90,50 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
   chromiumSource({
     id: "chrome",
     name: "Chrome",
-    keychainService: "Chrome Safe Storage",
-    keychainAccount: "Chrome",
-    macSegments: ["Google", "Chrome"],
+    mac: {
+      segments: ["Google", "Chrome"],
+      keychainService: "Chrome Safe Storage",
+      keychainAccount: "Chrome",
+    },
     linuxSegments: ["google-chrome"],
     linuxSecretApplication: "chrome",
   }),
-  {
+  chromiumSource({
     id: "chromium",
     name: "Chromium",
-    engine: "chromium",
-    platforms: ["linux"],
+    linuxSegments: ["chromium"],
     linuxSecretApplication: "chromium",
-    userDataDirectory: (context) =>
-      context.platform === "linux"
-        ? context.path.join(context.home, ".config", "chromium")
-        : undefined,
-  },
+  }),
   chromiumSource({
     id: "edge",
     name: "Microsoft Edge",
-    keychainService: "Microsoft Edge Safe Storage",
-    keychainAccount: "Microsoft Edge",
-    macSegments: ["Microsoft Edge"],
+    mac: {
+      segments: ["Microsoft Edge"],
+      keychainService: "Microsoft Edge Safe Storage",
+      keychainAccount: "Microsoft Edge",
+    },
     linuxSegments: ["microsoft-edge"],
     linuxSecretApplication: "msedge",
   }),
   chromiumSource({
     id: "brave",
     name: "Brave",
-    keychainService: "Brave Safe Storage",
-    keychainAccount: "Brave",
-    macSegments: ["BraveSoftware", "Brave-Browser"],
+    mac: {
+      segments: ["BraveSoftware", "Brave-Browser"],
+      keychainService: "Brave Safe Storage",
+      keychainAccount: "Brave",
+    },
     linuxSegments: ["BraveSoftware", "Brave-Browser"],
     linuxSecretApplication: "brave",
   }),
   chromiumSource({
     id: "vivaldi",
     name: "Vivaldi",
-    keychainService: "Vivaldi Safe Storage",
-    keychainAccount: "Vivaldi",
-    macSegments: ["Vivaldi"],
+    mac: {
+      segments: ["Vivaldi"],
+      keychainService: "Vivaldi Safe Storage",
+      keychainAccount: "Vivaldi",
+    },
     linuxSegments: ["vivaldi"],
     // Vivaldi stores its Linux libsecret key under Chrome's application name.
     linuxSecretApplication: "chrome",
@@ -131,25 +141,31 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
   chromiumSource({
     id: "opera",
     name: "Opera",
-    keychainService: "Opera Safe Storage",
-    keychainAccount: "Opera",
-    macSegments: ["com.operasoftware.Opera"],
+    mac: {
+      segments: ["com.operasoftware.Opera"],
+      keychainService: "Opera Safe Storage",
+      keychainAccount: "Opera",
+    },
     linuxSegments: ["opera"],
     linuxSecretApplication: "opera",
   }),
   chromiumSource({
     id: "arc",
     name: "Arc",
-    keychainService: "Arc Safe Storage",
-    keychainAccount: "Arc",
-    macSegments: ["Arc", "User Data"],
+    mac: {
+      segments: ["Arc", "User Data"],
+      keychainService: "Arc Safe Storage",
+      keychainAccount: "Arc",
+    },
   }),
   chromiumSource({
     id: "helium",
     name: "Helium",
-    keychainService: "Helium Storage Key",
-    keychainAccount: "Helium",
-    macSegments: ["net.imput.helium"],
+    mac: {
+      segments: ["net.imput.helium"],
+      keychainService: "Helium Storage Key",
+      keychainAccount: "Helium",
+    },
     linuxSegments: ["net.imput.helium"],
     windowsSegments: ["imput", "Helium", "User Data"],
     // Helium retains Chromium's libsecret application name on Linux.

@@ -133,9 +133,11 @@ describe("BrowserImport.importCookies", () => {
                   isPartition: () => false,
                   getSession: () => Effect.succeed(session),
                   clearCookies: () => Effect.die("clearCookies must not be reached"),
+                  cookiesCleared: () => Effect.die("cookiesCleared must not be reached"),
                   clearCache: () => Effect.die("clearCache must not be reached"),
                 }),
               ),
+              Layer.provide(DesktopManagedPolicy.layerTest()),
               Layer.provide(Layer.succeed(HostProcess.Environment, { HOME: home })),
               Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
               Layer.provide(Layer.succeed(HostProcess.ExecutablePath, "/fixture/t3code")),
@@ -144,7 +146,7 @@ describe("BrowserImport.importCookies", () => {
           ),
         );
         const source = (yield* importer.listSources).find(
-          (candidate) => candidate.name === "Chromium",
+          (candidate) => candidate.id === "chromium",
         );
         assert.isDefined(source);
         assert.deepEqual(yield* decodeImportSource(source!), {
