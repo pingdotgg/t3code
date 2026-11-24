@@ -14,7 +14,8 @@ struct PendingApprovalCard: View {
     @State private var explanationOpen = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        // `gap-2.5 rounded-[20px] border p-4`; mobile's spacing unit is 3.5pt (`rem: 14`).
+        VStack(alignment: .leading, spacing: 8.75) {
             Text("APPROVAL NEEDED")
                 .font(.system(size: 12, weight: .bold))
                 .tracking(1.1)
@@ -70,7 +71,7 @@ struct PendingApprovalCard: View {
                     .lineSpacing(3)
                     .foregroundStyle(theme.warning)
             }
-            VStack(spacing: 8) {
+            VStack(spacing: 7) {
                 ForEach(approval.options, id: \.decision) { option in
                     ConnButton(
                         label: option.label,
@@ -83,7 +84,7 @@ struct PendingApprovalCard: View {
                 }
             }
         }
-        .padding(16)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(theme.card))
         .overlay(
@@ -123,8 +124,9 @@ struct ConnButton: View {
                     ProgressView().tint(labelColor)
                 }
             }
-            .padding(.horizontal, size == .compact ? 20 : 24)
-            .frame(maxWidth: size == .compact ? nil : .infinity, minHeight: size == .compact ? 40 : 48)
+            // `min-h-12 px-6` / compact `min-h-10 px-5`, at 3.5pt per unit.
+            .padding(.horizontal, size == .compact ? 17.5 : 21)
+            .frame(maxWidth: size == .compact ? nil : .infinity, minHeight: size == .compact ? 35 : 42)
             .background(Capsule().fill(fill))
             .contentShape(Capsule())
         }

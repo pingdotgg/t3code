@@ -3057,4 +3057,25 @@ fn a_replayed_deletion_evicts_the_cached_thread() {
     assert!(!state.deleted);
     assert!(!state.entries.is_empty());
     assert_eq!(state.latest_run_id(), Some("run-1"));
+
+    // Thread-level events carry the whole thread record; the state keeps the latest one.
+    let mut switched = fixture["item"].clone();
+    switched["sequence"] = json!(6);
+    switched["event"]["id"] = json!("event:6");
+    switched["event"]["type"] = json!("thread.model-selection-updated");
+    switched["event"]["payload"]["deletedAt"] = Value::Null;
+    switched["event"]["payload"]["modelSelection"] =
+        json!({ "instanceId": "codex", "model": "model-b" });
+    assert!(
+        !state.apply(decode_thread(switched)),
+        "the timeline does not change"
+    );
+    assert!(!state.deleted, "a model switch is not a delete");
+    assert_eq!(
+        state
+            .thread()
+            .and_then(|thread| thread.model_selection.model.as_str()),
+        Some("model-b"),
+        "the thread record follows thread.model-selection-updated"
+    );
 }

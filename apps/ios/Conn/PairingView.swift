@@ -76,11 +76,7 @@ struct PairingView: View {
                         .disabled(pairingURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .accessibilityIdentifier("pairing.connectButton")
 
-                        Button {
-                            if let pasted = UIPasteboard.general.string {
-                                pairingURL = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
-                            }
-                        } label: {
+                        Button(action: pasteFromClipboard) {
                             Label {
                                 Text("Paste from Clipboard")
                             } icon: {
@@ -101,8 +97,34 @@ struct PairingView: View {
         }
     }
 
+    private func pasteFromClipboard() {
+        let board = UIPasteboard.general
+        if let text = PairingPaste.text(url: board.url, string: board.string) {
+            pairingURL = text
+            store.lastError = nil
+        } else {
+            store.lastError = PairingPaste.emptyMessage
+        }
+    }
+
     private func connect() {
         fieldFocused = false
         store.connectWithPairingURL(pairingURL)
+    }
+}
+
+/// The clipboard as a pairing URL. "Copy Link" in Safari, Messages or Conn stores a URL item with
+/// no string, so the URL comes first; a denied paste leaves both empty.
+enum PairingPaste {
+    static let emptyMessage =
+        "The clipboard has no pairing URL. Copy the link again, or paste it into the field."
+
+    static func text(url: URL?, string: String?) -> String? {
+        for candidate in [url?.absoluteString, string] {
+            if let text = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                return text
+            }
+        }
+        return nil
     }
 }

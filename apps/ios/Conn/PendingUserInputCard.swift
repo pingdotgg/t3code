@@ -47,10 +47,11 @@ struct PendingUserInputCard: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
             }
         }
-        .padding(.top, 16)
-        .padding(.leading, 20)
-        .padding(.trailing, 8)
-        .padding(.bottom, 8)
+        // `pt-4 pl-5 pr-2 pb-2` at 3.5pt per unit.
+        .padding(.top, 14)
+        .padding(.leading, 17.5)
+        .padding(.trailing, 7)
+        .padding(.bottom, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: Self.sheetRadius, style: .continuous).fill(theme.card)

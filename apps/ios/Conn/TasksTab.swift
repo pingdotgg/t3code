@@ -166,6 +166,8 @@ struct TasksTabView: View {
             }
             .refreshable { await model.refresh() }
             .background(theme.background)
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .scrollEdgeEffectHidden(true, for: .bottom)
 
             TasksTopBar(
                 subtitle: model.isLoaded ? view.subtitle : nil,

@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 @MainActor
@@ -381,6 +382,287 @@ final class ConnSpikeUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.8))
             saveScreenshot(named: "new-chat\(suffix)", dir: screensDir)
         }
+    }
+
+    /// Fidelity capture: walks the same screens in this app (`CONN_FIDELITY_APP=swift`) or the Expo
+    /// app (`expo`). At each screen it asks the host for a `simctl io screenshot` through
+    /// `CONN_FIDELITY_DIR/req` and waits for the name in `CONN_FIDELITY_DIR/ack`.
+    func testFidelityCapture() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let which = env["CONN_FIDELITY_APP"], let dir = env["CONN_FIDELITY_DIR"],
+              let pairingURL = env["CONN_PAIRING_URL"]
+        else { throw XCTSkip("Set CONN_FIDELITY_APP, CONN_FIDELITY_DIR and CONN_PAIRING_URL") }
+        let expo = which == "expo"
+        switch env["CONN_APPEARANCE"] {
+        case "dark": XCUIDevice.shared.appearance = .dark
+        case "light": XCUIDevice.shared.appearance = .light
+        default: break
+        }
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        func settle(_ seconds: Double = 1.0) { RunLoop.current.run(until: Date().addingTimeInterval(seconds)) }
+        func capture(_ name: String) {
+            settle(1.2)
+            let req = URL(fileURLWithPath: dir).appendingPathComponent("req")
+            let ack = URL(fileURLWithPath: dir).appendingPathComponent("ack")
+            try? name.write(to: req, atomically: true, encoding: .utf8)
+            let deadline = Date().addingTimeInterval(20)
+            while Date() < deadline {
+                if (try? String(contentsOf: ack, encoding: .utf8)) == name { return }
+                settle(0.2)
+            }
+            XCTFail("host did not capture \(name)")
+        }
+        func first(_ app: XCUIApplication, _ keys: [String], timeout: Double = 6) -> XCUIElement? {
+            let any = app.descendants(matching: .any)
+            let deadline = Date().addingTimeInterval(timeout)
+            repeat {
+                for key in keys {
+                    let byId = any.matching(identifier: key).firstMatch
+                    if byId.exists && byId.isHittable { return byId }
+                    let byLabel = app.buttons[key].firstMatch
+                    if byLabel.exists && byLabel.isHittable { return byLabel }
+                }
+                settle(0.3)
+            } while Date() < deadline
+            return nil
+        }
+        func tap(_ app: XCUIApplication, _ keys: [String]) -> Bool {
+            guard let element = first(app, keys) else { return false }
+            element.tap()
+            return true
+        }
+        func row(_ app: XCUIApplication, _ title: String) -> XCUIElement {
+            app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label == %@ OR label BEGINSWITH %@", title, title)).firstMatch
+        }
+        // React Native's controlled fields drop keys and focus under load; a paste is one event.
+        func pasteInto(_ app: XCUIApplication, _ field: XCUIElement, _ text: String) {
+            UIPasteboard.general.string = text
+            field.tap()
+            settle(1)
+            field.press(forDuration: 1.2)
+            let paste = app.menuItems["Paste"].firstMatch
+            if paste.waitForExistence(timeout: 5) { paste.tap() }
+            let allow = springboard.buttons["Allow Paste"].firstMatch
+            if allow.waitForExistence(timeout: 2) { allow.tap() }
+            settle(1)
+        }
+        func back(_ app: XCUIApplication) {
+            if !tap(app, ["Back", "thread.backButton"]) {
+                let nav = app.navigationBars.buttons.element(boundBy: 0)
+                if nav.exists { nav.tap() } else { app.swipeRight() }
+            }
+            settle(0.8)
+        }
+
+        let app: XCUIApplication
+        if expo {
+            app = XCUIApplication(bundleIdentifier: env["CONN_EXPO_BUNDLE"] ?? "com.nckrtl.conn")
+            app.terminate()
+            app.launch()
+            settle(4)
+            // Already paired from an earlier run: the inbox lists the seeded thread.
+            let seeded = row(app, "Plan a greeting in main.rs")
+            if !(seeded.waitForExistence(timeout: 20) && seeded.isHittable) {
+                // Expo's own form (`ConnectionsNewRouteScreen.tsx`): Address and Code, then the
+                // header's checkmark, "Add environment". A production build ignores pairing links.
+                let parts = pairingURL.components(separatedBy: "/pair#token=")
+                XCTAssertEqual(parts.count, 2, "pairing URL should be <origin>/pair#token=<code>")
+                let addEnvironment = first(app, ["Add environment"], timeout: 45)
+                XCTAssertNotNil(addEnvironment, "Expo should offer Add environment")
+                addEnvironment?.tap()
+                settle(2)
+                let address = app.textFields.matching(
+                    NSPredicate(format: "placeholderValue == %@", "192.168.1.100:3773")).firstMatch
+                XCTAssertTrue(address.waitForExistence(timeout: 30), "the pairing form should open")
+                pasteInto(app, address, parts[0].replacingOccurrences(of: "http://", with: ""))
+                let code = app.textFields.matching(
+                    NSPredicate(format: "placeholderValue == %@", "Pairing code")).firstMatch
+                pasteInto(app, code, parts.count > 1 ? parts[1] : "")
+                let submit = app.navigationBars.buttons["Add environment"].firstMatch
+                if submit.waitForExistence(timeout: 5) { submit.tap() } else { code.typeText("\n") }
+                settle(4)
+                // Pairing ends on Settings › Environments; close the sheet to reach the inbox.
+                for _ in 0..<3 {
+                    guard let close = first(app, ["Close", "close"], timeout: 8) else { break }
+                    close.tap()
+                    settle(1.5)
+                }
+            }
+        } else {
+            app = XCUIApplication()
+            app.launchArguments = ["--reset-session"]
+            app.launch()
+            let urlField = app.textFields["pairing.urlField"]
+            XCTAssertTrue(urlField.waitForExistence(timeout: 10), "Pairing URL field should appear")
+            pasteInto(app, urlField, pairingURL)
+            app.buttons["pairing.connectButton"].tap()
+        }
+
+        let content = row(app, "Plan a greeting in main.rs")
+        XCTAssertTrue(content.waitForExistence(timeout: 60), "The inbox should list the seeded threads")
+        settle(2)
+        // Pairs the showcase simulator and leaves the app on the inbox.
+        if env["CONN_PAIR_ONLY"] == "1" { return }
+        capture("inbox")
+
+        content.tap()
+        settle(2)
+        capture("thread")
+        // Part-way up the feed: content runs under the floating composer and the top edge blur.
+        let feed = app.scrollViews.firstMatch.exists ? app.scrollViews.firstMatch : app.collectionViews.firstMatch
+        if feed.exists {
+            feed.swipeDown(velocity: .slow)
+            settle(1.5)
+            // The down-chevron above the composer shows here (`FloatingWorkingControl`).
+            capture("thread-scrolled")
+            let toEnd = app.buttons.matching(NSPredicate(format: "label == %@", "Scroll to end")).firstMatch
+            if toEnd.exists && toEnd.isHittable { toEnd.tap(); settle(1.2) }
+        }
+        // The `+` menu (Expo), or the pill without it (Swift: the core cannot send attachments).
+        if tap(app, ["Add attachment"]) {
+            settle(1)
+            capture("attachments")
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
+            settle(0.8)
+        } else {
+            capture("attachments")
+        }
+        // The model chip opens the thread settings sheet.
+        let modelChip = app.buttons.matching(NSPredicate(
+            format: "identifier == %@ OR label BEGINSWITH %@ OR label BEGINSWITH %@",
+            "composer.modelButton", "Model and reasoning settings", "Model, "
+        )).firstMatch
+        if modelChip.waitForExistence(timeout: 5) && modelChip.isHittable {
+            modelChip.tap()
+            settle(2)
+            capture("model-picker")
+            if !tap(app, ["Cancel thread settings", "Close"]) { app.swipeDown() }
+            settle(1.2)
+        } else {
+            capture("missing-model-picker")
+        }
+        let composer = app.textViews.firstMatch.exists ? app.textViews.firstMatch : app.textFields.firstMatch
+        if composer.waitForExistence(timeout: 5) {
+            composer.tap()
+            settle(1.5)
+            capture("keyboard")
+        }
+        back(app)
+        if app.keyboards.count > 0 { back(app) }
+
+        for (title, name) in [("Clean the build folder", "approval"), ("Pick the cache store", "question")] {
+            let target = row(app, title)
+            if target.waitForExistence(timeout: 10) {
+                target.tap()
+                settle(2)
+                capture(name)
+                back(app)
+            } else {
+                capture("missing-\(name)")
+            }
+        }
+
+        // SwiftUI hosts the switcher inside one UIToolbar item, where XCUITest cannot hit its
+        // buttons; the Swift app falls back to their place on the bar (402pt-wide phone).
+        func barTap(_ keys: [String], swiftX: CGFloat) -> Bool {
+            if tap(app, keys) { return true }
+            guard !expo else { return false }
+            app.coordinate(withNormalizedOffset: CGVector(dx: swiftX, dy: 0.936)).tap()
+            return true
+        }
+        if barTap(["workspace.tab.tasks", "Tasks"], swiftX: 0.43) { settle(3); capture("tasks") }
+        if barTap(["workspace.tab.pullRequests", "Pull requests"], swiftX: 0.57) {
+            settle(3)
+            capture("prs")
+            // PR search: the field and `+`, with no filter menu.
+            if barTap(["workspace.searchButton", "Search"], swiftX: 0.71) {
+                settle(1.5)
+                if let tip = first(app, ["Continue"], timeout: 2) { tip.tap() }
+                capture("prs-search")
+                if !tap(app, ["workspace.cancelSearchButton", "Cancel", "Close"]) { app.swipeDown() }
+                settle(1.5)
+            }
+        }
+        if barTap(["workspace.tab.threads", "Threads"], swiftX: 0.29) { settle(1) }
+        if barTap(["workspace.searchButton", "Search"], swiftX: 0.71) {
+            settle(1.5)
+            if let tip = first(app, ["Continue"], timeout: 2) { tip.tap() }
+            capture("search")
+            if !tap(app, ["workspace.cancelSearchButton", "Cancel", "Close"]) { app.swipeDown() }
+            settle(1.5)
+        }
+        if barTap(["workspace.settingsButton", "Open settings"], swiftX: 0.115) {
+            settle(2)
+            capture("settings")
+            if !tap(app, ["settings.closeButton", "Close", "Done"]) { app.swipeDown() }
+            settle(1.5)
+        }
+        if barTap(["inbox.newThreadButton", "New chat"], swiftX: 0.885) { settle(2); capture("new-chat") }
+    }
+
+    /// Pairing's "Paste from Clipboard" takes a URL item ("Copy Link"), a string item, and says so
+    /// when the clipboard is empty; a long-press paste into the field takes a URL item too.
+    func testPairingPasteTakesURLAndStringItems() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-session"]
+        app.launch()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let field = app.textFields["pairing.urlField"]
+        let paste = app.buttons["pairing.pasteButton"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10), "the pairing form shows")
+        func allowPaste() {
+            for alertApp in [springboard, app] {
+                let allow = alertApp.buttons["Allow Paste"].firstMatch
+                if allow.waitForExistence(timeout: 2) { allow.tap(); return }
+            }
+        }
+        func clearField() {
+            let clear = app.buttons["Clear URL"]
+            if clear.exists { clear.tap() }
+        }
+
+        let link = "http://127.0.0.1:3899/pair#token=url-item"
+        // "Copy Link" stores a `public.url` item. (UIKit may still offer it as a string here.)
+        UIPasteboard.general.setItems([["public.url": URL(string: link)!]])
+        paste.tap()
+        allowPaste()
+        XCTAssertEqual(field.value as? String, link, "a URL item fills the field")
+        clearField()
+
+        UIPasteboard.general.string = "  http://127.0.0.1:3899/pair#token=string-item \n"
+        paste.tap()
+        allowPaste()
+        XCTAssertEqual(field.value as? String, "http://127.0.0.1:3899/pair#token=string-item",
+                       "a string item fills the field, trimmed")
+        clearField()
+
+        UIPasteboard.general.items = []
+        paste.tap()
+        allowPaste()
+        let error = app.staticTexts["pairing.errorText"]
+        XCTAssertTrue(error.waitForExistence(timeout: 5), "an empty clipboard says why nothing pasted")
+        XCTAssertTrue(error.label.hasPrefix("The clipboard has no pairing URL"), "the empty-clipboard message")
+
+        UIPasteboard.general.setItems([["public.url": URL(string: link)!]])
+        field.tap()
+        field.press(forDuration: 1.2)
+        let menuPaste = app.menuItems["Paste"].firstMatch
+        XCTAssertTrue(menuPaste.waitForExistence(timeout: 5), "the field offers Paste")
+        menuPaste.tap()
+        allowPaste()
+        XCTAssertEqual(field.value as? String, link, "a long-press paste takes a URL item")
+    }
+
+    /// Writes the running app's accessibility tree to `CONN_DUMP_PATH` (layout debugging).
+    func testDumpHierarchy() throws {
+        guard let path = ProcessInfo.processInfo.environment["CONN_DUMP_PATH"] else {
+            throw XCTSkip("Set CONN_DUMP_PATH")
+        }
+        let app = XCUIApplication()
+        app.activate()
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+        try app.debugDescription.write(toFile: path, atomically: true, encoding: .utf8)
     }
 
     func testOfflineLinkedChildKeepsItsPromptAcrossReconnect() async throws {

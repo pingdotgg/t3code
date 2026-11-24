@@ -526,6 +526,10 @@ pub struct ThreadState {
     /// True while an on-demand earlier-history page request is in flight.
     pub loading_earlier: bool,
     active_provider_thread_id: Option<String>,
+    /// The thread's own record: from the projection, then each thread-level event's payload
+    /// (`thread.model-selection-updated`, `thread.metadata-updated`, `thread.provider-switched`,
+    /// ...), so its model, provider, project and worktree stay current.
+    thread: Option<Box<conn_contract::OrchestrationV2AppThread>>,
     provider_threads: HashMap<String, TrackedProviderThread>,
     provider_turns: Vec<TrackedProviderTurn>,
     compactions: Vec<TrackedCompaction>,
@@ -574,6 +578,13 @@ impl ThreadState {
     #[must_use]
     pub fn approval_details(&self, entry_id: &str) -> Option<&ApprovalDetails> {
         self.approval_details.get(entry_id)
+    }
+
+    /// The thread's record once a projection arrived. Only model, provider, project and worktree
+    /// are kept current by events; visit counts and pull-request links may be stale.
+    #[must_use]
+    pub fn thread(&self) -> Option<&conn_contract::OrchestrationV2AppThread> {
+        self.thread.as_deref()
     }
 
     /// What the agent wrote just before it asked question `entry_id`: the markdown of the last
@@ -842,6 +853,7 @@ impl ThreadState {
         sequence: Option<i64>,
     ) {
         self.revision = next_revision();
+        self.thread = Some(Box::new(projection.thread.clone()));
         self.thread_id = projection.thread.id;
         self.active_provider_thread_id = projection.thread.active_provider_thread_id;
         if let Some(seq) = sequence {
@@ -1435,9 +1447,14 @@ impl ThreadState {
             {
                 self.clear_deleted()
             }
+            // The thread's own record changed (model, provider, title, ...): keep it current. The
+            // timeline is unchanged.
+            DomainEvent::ThreadArchived(ev) => {
+                self.thread = Some(Box::new(ev.payload));
+                false
+            }
             // Projection metadata events that do not directly add or alter timeline entries.
             DomainEvent::ThreadCreated(_)
-            | DomainEvent::ThreadArchived(_)
             | DomainEvent::ThreadPullRequestLinkUpdated(_)
             | DomainEvent::ThreadVisitRecorded(_)
             | DomainEvent::RunBackgroundWorkCancelled(_)

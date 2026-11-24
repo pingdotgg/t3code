@@ -5,6 +5,15 @@ import UIKit
 /// in `connSymbolNames`, otherwise falls back to SF Symbols. Using `Image(name)` directly
 /// ensures SwiftUI resolves the custom symbolset on iOS 26+ (where `Image(systemName:)`
 /// bypasses `UIImage.systemImageNamed:` swizzling).
+/// The same icon as a plain `Image`, for toolbar items, which render only `Image`/`Label` labels.
+func connImage(_ name: String) -> Image {
+    // A bar item sizes its image from the UIImage; a SwiftUI asset `Image` comes out 2pt wide.
+    if connSymbolNames.contains(name), let image = UIImage(named: name) {
+        return Image(uiImage: image.withRenderingMode(.alwaysTemplate))
+    }
+    return Image(systemName: name)
+}
+
 struct ConnIcon: View {
     let name: String
 

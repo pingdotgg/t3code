@@ -10,6 +10,10 @@ struct ConnApp: App {
 
     init() {
         ConnSymbols.install()
+        // Mobile's `HEADER_TITLE_STYLE`: every native header title is 18pt, weight 500.
+        UINavigationBar.appearance().titleTextAttributes = [
+            .font: UIFont.systemFont(ofSize: 18, weight: .medium),
+        ]
         let store = CoreStore()
         _store = State(initialValue: store)
         // Push taps can arrive at launch, before the first view appears.

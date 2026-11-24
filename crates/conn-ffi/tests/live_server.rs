@@ -108,6 +108,10 @@ impl CoreListener for LiveListener {
     }
 
     fn on_error(&self, _message: String) {}
+
+    fn on_providers_changed(&self) {}
+
+    fn on_thread_deleted(&self, _thread_id: String) {}
 }
 
 fn parse_pairing_url(raw: &str) -> Result<(String, String), Box<dyn std::error::Error>> {

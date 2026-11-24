@@ -123,7 +123,8 @@ struct NewThreadDraftView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.background.ignoresSafeArea())
-        .kitComposerBar {
+        // Draft mode of the thread screen: the same floating glass pill, no band behind it.
+        .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 // Workspace & branch context row above composer ("Current checkout · main ›")
                 if selectedProjectId != nil {
@@ -152,35 +153,23 @@ struct NewThreadDraftView: View {
                     .padding(.horizontal, 4)
                 }
 
-                KitComposer(
-                    "Ask anything",
+                ConnComposerPill(
+                    placeholder: "Ask anything",
                     text: $prompt,
-                    maxLines: 6,
                     isBusy: isLaunching,
                     canSend: canLaunch,
                     onSend: launch,
                     onStop: {},
-                    leading: {
-                        ConnIcon("plus")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(theme.mutedForeground)
-                            .frame(width: 28, height: 28)
-                    },
-                    trailing: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "sparkle")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(Color(red: 0.85, green: 0.47, blue: 0.34))
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(theme.mutedForeground)
-                        }
-                        .padding(.trailing, 4)
-                    }
+                    // A new chat starts on the project's model; picking one needs a launch override.
+                    trailing: { EmptyView() }
                 )
                 .accessibilityIdentifier("newThread.promptField")
             }
+            .padding(.horizontal, 12)
+            .padding(.top, 6)
+            .padding(.bottom, 2)
         }
+        .scrollEdgeEffectStyle(.soft, for: .bottom)
         .navigationTitle("New thread")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

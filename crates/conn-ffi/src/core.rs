@@ -12,22 +12,32 @@ use conn_contract::{
     OrchestrationV2Command, OrchestrationV2ThreadLaunchResult, OrchestrationV2ThreadProjection,
     OrchestrationV2ThreadStreamItem,
 };
+use conn_state::providers::ServerConfigState;
 use conn_state::{ShellState, ThreadActivity, ThreadState};
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::warn;
 
 use crate::coalesce::SnapshotCoalescer;
+use crate::model_picker::{
+    FfiModelPicker, FfiModelSave, PickerInput, PickerThread, SaveDecision, build_model_picker,
+    model_to_save,
+};
 use crate::types::{
     FfiApprovalDecision, FfiConnectionStatus, FfiCredential, FfiError, FfiSendMode,
     FfiShellSnapshot, FfiThreadSnapshot, FfiUserInputSubmission, ThreadSnapshotMeta,
     build_shell_snapshot, build_thread_snapshot,
+};
+use conn_state::thread_models::{
+    WORKSPACE_SCAN_RETRY_COOLDOWN_MS, WorkspaceScanState, fail_workspace_scan, plan_workspace_scan,
+    workspace_scan_refreshed, workspace_snapshot, workspace_snapshot_pending,
 };
 
 const TAG_SUBSCRIBE_SHELL: &str = "orchestration.subscribeShell";
 const TAG_SUBSCRIBE_THREAD: &str = "orchestration.subscribeThread";
 const TAG_LAUNCH_THREAD: &str = "orchestration.launchThread";
 const TAG_ENSURE_SCRATCH: &str = "projects.ensureScratch";
+const TAG_REFRESH_PROVIDERS: &str = "server.refreshProviders";
 /// Maximum time `Drop` waits for worker threads to wind down when dropped off-runtime.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(250);
 
@@ -42,6 +52,10 @@ pub trait CoreListener: Send + Sync {
     fn on_shell(&self, snapshot: FfiShellSnapshot);
     fn on_thread(&self, snapshot: FfiThreadSnapshot);
     fn on_error(&self, message: String);
+    /// The server's providers or settings changed; re-read [`ConnCore::model_picker`].
+    fn on_providers_changed(&self);
+    /// The thread's stream reported `thread.deleted`; its composer draft can go.
+    fn on_thread_deleted(&self, thread_id: String);
 }
 
 #[derive(Clone, Debug, Default)]
@@ -54,6 +68,30 @@ struct LaunchDefaults {
     model_selection: serde_json::Value,
     runtime_mode: String,
     interaction_mode: String,
+}
+
+/// A workspace scan to send (`server.refreshProviders` for one provider and cwd).
+struct WorkspaceScanRequest {
+    instance_id: String,
+    cwd: String,
+    requested_at_ms: i64,
+    /// The provider as held when the scan was asked for.
+    before: Option<Box<conn_contract::ServerProvidersItemItem>>,
+}
+
+/// [`PumpState::plan_workspace_scan`]'s answer.
+struct WorkspaceScanStep {
+    request: Option<WorkspaceScanRequest>,
+    /// While the server still discovers, ask again at this time.
+    recheck_at_ms: Option<i64>,
+}
+
+fn now_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+        })
 }
 
 enum PumpControl {
@@ -69,6 +107,32 @@ enum PumpControl {
         projection: Box<Option<OrchestrationV2ThreadProjection>>,
         sequence: Option<i64>,
         reply: oneshot::Sender<()>,
+    },
+    ModelPicker {
+        thread_id: String,
+        query: String,
+        toggled: Vec<String>,
+        pending: Option<(String, String)>,
+        reply: oneshot::Sender<FfiModelPicker>,
+    },
+    ModelSave {
+        thread_id: String,
+        instance_id: String,
+        model: String,
+        reply: oneshot::Sender<SaveDecision>,
+    },
+    PlanWorkspaceScan {
+        thread_id: String,
+        now_ms: i64,
+        reply: oneshot::Sender<WorkspaceScanStep>,
+    },
+    FinishWorkspaceScan {
+        scan: WorkspaceScanRequest,
+        /// When to plan again while the server still discovers.
+        reply: oneshot::Sender<Option<i64>>,
+        /// The provider as the server's reply lists it; `None` when the scan failed.
+        after: Option<Box<conn_contract::ServerProvidersItemItem>>,
+        now_ms: i64,
     },
     Shutdown,
 }
@@ -259,6 +323,7 @@ impl ConnCore {
         };
         let (connection, events_rx) = Connection::start(config, &runtime_handle);
         connection.subscribe_shell_with_idle_subagents();
+        connection.subscribe_server_config();
 
         let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
         let thread_runs = Arc::new(RwLock::new(HashMap::new()));
@@ -436,6 +501,141 @@ impl ConnCore {
         self.call_json(SECRETS_ANSWER_REQUEST, payload)
             .await
             .map(|_| ())
+    }
+
+    /// The composer's model chip and the thread settings sheet's model list for `thread_id`.
+    /// `toggled` holds the sections the user folded or unfolded; `pending` is the row tapped but
+    /// not saved yet, as `(instance_id, model)`.
+    pub async fn model_picker(
+        &self,
+        thread_id: String,
+        query: String,
+        toggled: Vec<String>,
+        pending_instance_id: Option<String>,
+        pending_model: Option<String>,
+    ) -> FfiModelPicker {
+        let (reply, rx) = oneshot::channel();
+        let pending = pending_instance_id.zip(pending_model);
+        let sent = self.ctrl_tx.send(PumpControl::ModelPicker {
+            thread_id,
+            query,
+            toggled,
+            pending,
+            reply,
+        });
+        let empty = FfiModelPicker::loading();
+        if sent.is_err() {
+            return empty;
+        }
+        rx.await.unwrap_or(empty)
+    }
+
+    /// Save in the thread settings sheet: switches `thread_id` to `model` on provider
+    /// `instance_id` (`thread.model-selection.set`) only while the thread's catalog still offers
+    /// it (`commitPendingModel`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiError::Closed`] if disconnected, or the mapped transport/RPC [`FfiError`].
+    pub async fn save_thread_model(
+        &self,
+        thread_id: String,
+        instance_id: String,
+        model: String,
+    ) -> Result<FfiModelSave, FfiError> {
+        self.ensure_connected()?;
+        let (reply, rx) = oneshot::channel();
+        self.ctrl_tx
+            .send(PumpControl::ModelSave {
+                thread_id: thread_id.clone(),
+                instance_id,
+                model,
+                reply,
+            })
+            .map_err(|_| FfiError::Closed)?;
+        match rx.await.map_err(|_| FfiError::Closed)? {
+            SaveDecision::Unchanged => Ok(FfiModelSave::Unchanged),
+            SaveDecision::Unavailable => Ok(FfiModelSave::Unavailable),
+            SaveDecision::NotReady => Ok(FfiModelSave::NotReady),
+            SaveDecision::Send { instance_id, model } => {
+                let command = conn_client::commands::set_model_selection(
+                    &thread_id,
+                    &instance_id,
+                    &model,
+                    None,
+                )
+                .map_err(|err| map_build_error("thread.model-selection.set", err))?;
+                self.dispatch_command(command).await?;
+                Ok(FfiModelSave::Saved)
+            }
+        }
+    }
+
+    /// Keeps the thread's workspace catalog fresh while the model picker is open
+    /// (`ProviderWorkspaceSnapshotScan`): asks the server to scan the thread's provider in the
+    /// thread's cwd when that snapshot is missing, pending or expired, at most once per TTL, with a
+    /// cooldown and three attempts after failures. Waits for the provider list; call again when
+    /// it changes ([`CoreListener::on_providers_changed`]). Returns the milliseconds after which to
+    /// call again while the server still discovers, if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiError::Closed`] if disconnected.
+    pub async fn scan_thread_workspace_models(
+        &self,
+        thread_id: String,
+    ) -> Result<Option<u64>, FfiError> {
+        self.ensure_connected()?;
+        let now_ms = now_epoch_ms();
+        let (reply, rx) = oneshot::channel();
+        self.ctrl_tx
+            .send(PumpControl::PlanWorkspaceScan {
+                thread_id,
+                now_ms,
+                reply,
+            })
+            .map_err(|_| FfiError::Closed)?;
+        let step = rx.await.map_err(|_| FfiError::Closed)?;
+        let recheck = step
+            .recheck_at_ms
+            .map(|at| u64::try_from(at.saturating_sub(now_ms)).unwrap_or(0));
+        let Some(scan) = step.request else {
+            return Ok(recheck);
+        };
+        let payload = json!({
+            "instanceId": scan.instance_id,
+            "cwd": scan.cwd,
+            "workspaceSnapshotsOnDemand": true,
+        });
+        let after = self
+            .call_json(TAG_REFRESH_PROVIDERS, payload)
+            .await
+            .ok()
+            .and_then(|value| {
+                conn_contract::from_json::<conn_contract::ServerProviderUpdatedPayload>(value).ok()
+            })
+            .and_then(|reply| {
+                reply
+                    .providers
+                    .into_iter()
+                    .flatten()
+                    .find(|provider| provider.instance_id == scan.instance_id)
+            })
+            .map(Box::new);
+        let finished_at = now_epoch_ms();
+        let (reply, rx) = oneshot::channel();
+        self.ctrl_tx
+            .send(PumpControl::FinishWorkspaceScan {
+                scan,
+                reply,
+                after,
+                now_ms: finished_at,
+            })
+            .map_err(|_| FfiError::Closed)?;
+        // The deadline after the reply and its cooldown, so a scan that came back pending is
+        // asked again.
+        let recheck_at = rx.await.map_err(|_| FfiError::Closed)?;
+        Ok(recheck_at.map(|at| u64::try_from(at.saturating_sub(finished_at)).unwrap_or(0)))
     }
 
     /// Stops the running turn on `thread_id` (`thread.stop`).
@@ -634,8 +834,10 @@ struct PumpState {
     connection: Connection,
     listener: Arc<dyn CoreListener>,
     shell: ShellState,
+    server_config: ServerConfigState,
+    /// Workspace scan history by `(instance_id, cwd)`.
+    workspace_scans: HashMap<(String, String), WorkspaceScanState>,
     threads: HashMap<String, ThreadState>,
-    thread_projection_meta: HashMap<String, ThreadSnapshotMeta>,
     open_threads: HashSet<String>,
     ended_threads: HashSet<String>,
     shell_snapshot_required: bool,
@@ -650,7 +852,114 @@ impl PumpState {
         self.shell
             .find_thread(thread_id)
             .map(ThreadSnapshotMeta::from_shell)
-            .or_else(|| self.thread_projection_meta.get(thread_id).cloned())
+            .or_else(|| {
+                self.threads
+                    .get(thread_id)
+                    .and_then(ThreadState::thread)
+                    .map(ThreadSnapshotMeta::from_app_thread)
+            })
+    }
+
+    /// The thread a model picker serves: its shell row, else the live record of its opened
+    /// thread state (current through `thread.model-selection-updated` and the like). `None` while
+    /// neither is known: the scope is not ready, never empty.
+    fn picker_thread(&self, thread_id: &str) -> Option<PickerThread> {
+        let thread = self
+            .shell
+            .find_thread(thread_id)
+            .map(PickerThread::from_shell)
+            .or_else(|| {
+                let state = self.threads.get(thread_id)?;
+                let thread = state.thread()?;
+                Some(PickerThread::from_projection(
+                    thread,
+                    state.latest_run_id().is_some(),
+                ))
+            })?;
+        Some(thread.or_project_root(|project_id| {
+            self.shell
+                .project(project_id)
+                .map(|project| project.workspace_root.clone())
+        }))
+    }
+
+    /// The catalog of what the thread may pick (conn-state's `thread_catalog`).
+    fn catalog_for(&self, thread: &PickerThread) -> conn_state::providers::ModelCatalog {
+        self.server_config.thread_catalog(&thread.scope())
+    }
+
+    /// `planProviderWorkspaceSnapshotRefresh` for the thread's provider and cwd. Nothing is asked
+    /// before the provider list arrives.
+    fn plan_workspace_scan(&mut self, thread_id: &str, now_ms: i64) -> WorkspaceScanStep {
+        let idle = WorkspaceScanStep {
+            request: None,
+            recheck_at_ms: None,
+        };
+        if !self.server_config.is_loaded() {
+            return idle;
+        }
+        let Some(thread) = self.picker_thread(thread_id) else {
+            return idle;
+        };
+        let (Some(instance_id), Some(cwd)) = (thread.instance_id, thread.cwd) else {
+            return idle;
+        };
+        let provider = self.server_config.provider(&instance_id);
+        let key = (instance_id.clone(), cwd.clone());
+        let previous = self.workspace_scans.get(&key).copied().unwrap_or_default();
+        let plan = plan_workspace_scan(previous, provider, &cwd, now_ms);
+        let before = provider.cloned().map(Box::new);
+        self.workspace_scans.insert(key, plan.state);
+        WorkspaceScanStep {
+            request: plan.refresh.then_some(WorkspaceScanRequest {
+                instance_id,
+                cwd,
+                requested_at_ms: now_ms,
+                before,
+            }),
+            recheck_at_ms: plan.recheck_at_ms,
+        }
+    }
+
+    /// The scan's reply: a reply without a complete new snapshot cools down; a reply dropped
+    /// because the provider changed meanwhile lets the next plan scan at once.
+    fn finish_workspace_scan(
+        &mut self,
+        scan: &WorkspaceScanRequest,
+        after: Option<&conn_contract::ServerProvidersItemItem>,
+        now_ms: i64,
+    ) -> Option<i64> {
+        let key = (scan.instance_id.clone(), scan.cwd.clone());
+        let state = self.workspace_scans.get(&key).copied()?;
+        let refreshed = workspace_scan_refreshed(scan.before.as_deref(), after, &scan.cwd, now_ms);
+        let held = self.server_config.provider(&scan.instance_id);
+        let held_complete = held
+            .and_then(|provider| workspace_snapshot(provider, &scan.cwd))
+            .is_some_and(|snapshot| !workspace_snapshot_pending(snapshot));
+        let next = if !refreshed {
+            fail_workspace_scan(
+                state,
+                scan.requested_at_ms,
+                now_ms,
+                WORKSPACE_SCAN_RETRY_COOLDOWN_MS,
+            )
+        } else if !held_complete {
+            fail_workspace_scan(state, scan.requested_at_ms, now_ms, 0)
+        } else {
+            state
+        };
+        self.workspace_scans.insert(key, next);
+        // What the next plan would say: a scan the server still runs looks again after its
+        // cooldown (`recheckAt`).
+        let pending = after
+            .or(held)
+            .and_then(|provider| workspace_snapshot(provider, &scan.cwd))
+            .is_some_and(workspace_snapshot_pending);
+        if pending {
+            next.retry_not_before_ms
+        } else {
+            None
+        }
     }
 
     fn resolve_launch_defaults(&self, project_id: &str) -> LaunchDefaults {
@@ -786,20 +1095,21 @@ impl PumpState {
                 reply,
             } => {
                 if let Some(projection) = *projection {
-                    self.thread_projection_meta.insert(
-                        thread_id.clone(),
-                        ThreadSnapshotMeta::from_app_thread(&projection.thread),
-                    );
                     let mut state = ThreadState::new(thread_id.clone());
                     state.apply_projection(projection, sequence);
                     self.update_thread_run_meta(&thread_id, &state);
-                    let meta = self.resolve_thread_meta(&thread_id);
-                    let snapshot = build_thread_snapshot(&state, meta.as_ref());
                     self.threads.insert(thread_id.clone(), state);
+                    let meta = self.resolve_thread_meta(&thread_id);
+                    let snapshot = self
+                        .threads
+                        .get(&thread_id)
+                        .map(|state| build_thread_snapshot(state, meta.as_ref()));
                     self.open_threads.insert(thread_id.clone());
                     self.ended_threads.remove(&thread_id);
                     self.connection.subscribe_thread(&thread_id);
-                    self.emit_or_buffer_thread(snapshot);
+                    if let Some(snapshot) = snapshot {
+                        self.emit_or_buffer_thread(snapshot);
+                    }
                 } else {
                     self.threads
                         .entry(thread_id.clone())
@@ -809,6 +1119,66 @@ impl PumpState {
                     self.connection.subscribe_thread(&thread_id);
                 }
                 let _ = reply.send(());
+                true
+            }
+            PumpControl::ModelPicker {
+                thread_id,
+                query,
+                toggled,
+                pending,
+                reply,
+            } => {
+                let picker = match self.picker_thread(&thread_id) {
+                    Some(thread) => {
+                        let input = PickerInput {
+                            query: &query,
+                            toggled: &toggled,
+                            pending: pending.as_ref().map(|(i, m)| (i.as_str(), m.as_str())),
+                        };
+                        build_model_picker(
+                            &self.catalog_for(&thread),
+                            self.server_config.is_loaded(),
+                            &thread,
+                            &input,
+                        )
+                    }
+                    // No shell row and no detail yet: loading, never an empty scope.
+                    None => FfiModelPicker::loading(),
+                };
+                let _ = reply.send(picker);
+                true
+            }
+            PumpControl::ModelSave {
+                thread_id,
+                instance_id,
+                model,
+                reply,
+            } => {
+                let decision = match self.picker_thread(&thread_id) {
+                    Some(thread) => {
+                        model_to_save(&self.catalog_for(&thread), &thread, &instance_id, &model)
+                    }
+                    None => SaveDecision::NotReady,
+                };
+                let _ = reply.send(decision);
+                true
+            }
+            PumpControl::PlanWorkspaceScan {
+                thread_id,
+                now_ms,
+                reply,
+            } => {
+                let step = self.plan_workspace_scan(&thread_id, now_ms);
+                let _ = reply.send(step);
+                true
+            }
+            PumpControl::FinishWorkspaceScan {
+                scan,
+                reply,
+                after,
+                now_ms,
+            } => {
+                let _ = reply.send(self.finish_workspace_scan(&scan, after.as_deref(), now_ms));
                 true
             }
             PumpControl::Shutdown => false,
@@ -862,13 +1232,7 @@ impl PumpState {
                     OrchestrationV2ThreadStreamItem::Snapshot(_)
                         | OrchestrationV2ThreadStreamItem::Synchronized(_)
                 );
-                if let OrchestrationV2ThreadStreamItem::Snapshot(ref snap) = item {
-                    self.thread_projection_meta.insert(
-                        thread_id.clone(),
-                        ThreadSnapshotMeta::from_app_thread(&snap.projection.thread),
-                    );
-                }
-                let meta = self.resolve_thread_meta(&thread_id);
+                let meta_before = self.resolve_thread_meta(&thread_id);
                 let state = self
                     .threads
                     .entry(thread_id.clone())
@@ -877,21 +1241,27 @@ impl PumpState {
                     OrchestrationV2ThreadStreamItem::Snapshot(s) => Some(s.snapshot_sequence),
                     _ => None,
                 };
+                let was_deleted = state.deleted;
                 let changed = state.apply(item);
+                let deleted_now = state.deleted && !was_deleted;
                 if changed && let Some(sync) = &mut self.offline {
                     sync.thread(state, snapshot_sequence);
                 }
                 let working = state.working;
                 let active_run_id = state.active_run_id().map(str::to_owned);
-                let snapshot = if self.open_threads.contains(&thread_id) && (changed || force_emit)
-                {
-                    Some(build_thread_snapshot(state, meta.as_ref()))
+                // A thread-level event (model, title, ...) changes the header, not the timeline.
+                let meta = self.resolve_thread_meta(&thread_id);
+                let emit = changed || force_emit || meta != meta_before;
+                let snapshot = if self.open_threads.contains(&thread_id) && emit {
+                    self.threads
+                        .get(&thread_id)
+                        .map(|state| build_thread_snapshot(state, meta.as_ref()))
                 } else {
                     None
                 };
                 if let Ok(mut guard) = self.thread_runs.write() {
                     guard.insert(
-                        thread_id,
+                        thread_id.clone(),
                         ThreadRunMeta {
                             working,
                             active_run_id,
@@ -900,6 +1270,9 @@ impl PumpState {
                 }
                 if let Some(snapshot) = snapshot {
                     self.emit_or_buffer_thread(snapshot);
+                }
+                if deleted_now {
+                    self.listener.on_thread_deleted(thread_id);
                 }
             }
             ClientEvent::StreamEnded { tag, key, error } => {
@@ -919,10 +1292,14 @@ impl PumpState {
                     }
                 }
             }
-            // The iPhone app does not subscribe to the server config yet.
-            ClientEvent::PanelRequest(_)
-            | ClientEvent::Annotations { .. }
-            | ClientEvent::ServerConfig(_) => {}
+            ClientEvent::ServerConfig(event) => {
+                let change = self.server_config.apply(*event);
+                // Project-only enablement arrives as `settingsUpdated`; the open picker reloads too.
+                if change.providers_changed || change.settings_changed {
+                    self.listener.on_providers_changed();
+                }
+            }
+            ClientEvent::PanelRequest(_) | ClientEvent::Annotations { .. } => {}
         }
     }
 
@@ -980,8 +1357,9 @@ async fn run_pump(
         connection,
         listener,
         shell: ShellState::default(),
+        server_config: ServerConfigState::new(),
+        workspace_scans: HashMap::new(),
         threads: HashMap::new(),
-        thread_projection_meta: HashMap::new(),
         open_threads: HashSet::new(),
         ended_threads: HashSet::new(),
         shell_snapshot_required: false,
@@ -1056,6 +1434,8 @@ mod tests {
         shells: Vec<FfiShellSnapshot>,
         threads: Vec<FfiThreadSnapshot>,
         errors: Vec<String>,
+        providers_changed: u32,
+        deleted: Vec<String>,
     }
 
     #[derive(Default)]
@@ -1116,6 +1496,18 @@ mod tests {
         fn on_error(&self, message: String) {
             let mut guard = self.inner.lock().expect("listener mutex not poisoned");
             guard.errors.push(message);
+            self.notify.notify_all();
+        }
+
+        fn on_providers_changed(&self) {
+            let mut guard = self.inner.lock().expect("listener mutex not poisoned");
+            guard.providers_changed += 1;
+            self.notify.notify_all();
+        }
+
+        fn on_thread_deleted(&self, thread_id: String) {
+            let mut guard = self.inner.lock().expect("listener mutex not poisoned");
+            guard.deleted.push(thread_id);
             self.notify.notify_all();
         }
     }
@@ -1566,6 +1958,400 @@ mod tests {
 
         core.close_thread("thread-1".to_owned());
         core.close_thread(launched_id);
+        core.disconnect();
+        let _ = stop_tx.send(());
+        let _ = server_thread.join();
+        Ok(())
+    }
+    fn provider_json(id: &str, extra: serde_json::Value) -> serde_json::Value {
+        let mut value = json!({
+            "instanceId": id,
+            "driver": "codex",
+            "displayName": id,
+            "enabled": true,
+            "installed": true,
+            "status": "ready",
+            "auth": { "status": "authenticated" },
+            "checkedAt": "2026-11-24T00:00:00Z",
+            "models": [
+                { "slug": "model-a", "name": "Model A", "isCustom": false },
+                { "slug": "model-b", "name": "Model B", "isCustom": false },
+            ],
+        });
+        if let (Some(target), Some(extra)) = (value.as_object_mut(), extra.as_object()) {
+            for (key, field) in extra {
+                target.insert(key.clone(), field.clone());
+            }
+        }
+        value
+    }
+
+    /// Settings where project `p1` turns `codex_work` `on` or off; the machine enables both.
+    fn picker_settings(base: &serde_json::Value, codex_work_in_p1: bool) -> serde_json::Value {
+        let mut settings = base.clone();
+        settings["providerInstances"] = json!({
+            "codex": { "driver": "codex", "enabled": true },
+            "codex_work": { "driver": "codex", "enabled": true },
+        });
+        settings["projectSettingsOverrides"] = json!({
+            "p1": { "providerInstances": { "codex_work": { "enabled": codex_work_in_p1 } } },
+        });
+        settings
+    }
+
+    /// A thread opened by link (no shell row) keeps its project's provider switches; a scan that
+    /// comes back pending returns its cooldown deadline; a project-only enablement change and a
+    /// `thread.deleted` reach the listener.
+    #[test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "test uses assert! for diffs while propagating setup errors with ?"
+    )]
+    fn picker_follows_the_projection_scan_deadline_and_settings_changes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server_rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let mut config: serde_json::Value = serde_json::from_str(include_str!(
+            "../../conn-state/tests/fixtures/server-config-snapshot.json"
+        ))?;
+        let base_settings = config["config"]["settings"].clone();
+        config["config"]["providers"] = json!([
+            provider_json("codex", json!({})),
+            provider_json("codex_work", json!({}))
+        ]);
+        config["config"]["settings"] = picker_settings(&base_settings, false);
+        let settings_updated = json!({
+            "version": 1,
+            "type": "settingsUpdated",
+            "payload": { "settings": picker_settings(&base_settings, true) },
+        });
+        let mut thread_snapshot: serde_json::Value =
+            serde_json::from_str(&conn_state::testkit::synthetic_thread_snapshot_json(
+                conn_state::testkit::SyntheticThread {
+                    turns: 1,
+                    commands_per_turn: 1,
+                    command_output_bytes: 8,
+                    assistant_bytes: 8,
+                },
+            ))?;
+        thread_snapshot["projection"]["thread"]["projectId"] = json!("p1");
+        thread_snapshot["projection"]["thread"]["providerInstanceId"] = json!("codex");
+        thread_snapshot["projection"]["thread"]["modelSelection"] =
+            json!({ "instanceId": "codex", "model": "model-a" });
+        thread_snapshot["projection"]["thread"]["worktreePath"] = serde_json::Value::Null;
+        let mut deleted: serde_json::Value = serde_json::from_str(include_str!(
+            "../../conn-state/tests/fixtures/thread_deleted_replay.json"
+        ))?;
+        deleted["item"]["sequence"] = json!(1_000_000);
+        deleted["item"]["event"]["payload"]["id"] = json!("t-del");
+        let deleted_item = deleted["item"].clone();
+        // `thread.model-selection-updated` for t-link: model A becomes model B.
+        let mut switched = deleted["item"].clone();
+        switched["sequence"] = json!(2_000_000);
+        switched["event"]["id"] = json!("event:switch");
+        switched["event"]["type"] = json!("thread.model-selection-updated");
+        let mut switched_thread = thread_snapshot["projection"]["thread"].clone();
+        switched_thread["id"] = json!("t-link");
+        switched_thread["modelSelection"] = json!({ "instanceId": "codex", "model": "model-b" });
+        switched["event"]["payload"] = switched_thread;
+        switched["event"]["threadId"] = json!("t-link");
+        let pending_reply = json!({ "providers": [provider_json("codex", json!({
+            "workspaceSnapshots": [{
+                "cwd": "/tmp/demo",
+                "checkedAt": "2026-11-24T00:00:00Z",
+                "slashCommands": [],
+                "skills": [],
+                "modelsPending": true,
+            }],
+        }))] });
+
+        let (addr, calls_rx) = server_rt.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await?;
+            let addr = listener.local_addr()?;
+            let (calls_tx, calls_rx) = mpsc::unbounded_channel::<MockRpcCall>();
+            tokio::spawn(async move {
+                let Ok((tcp, _)) = listener.accept().await else {
+                    return;
+                };
+                let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
+                    return;
+                };
+                let mut config_request = None;
+                let mut link_request = None;
+                while let Some(Ok(Message::Text(text))) = ws.next().await {
+                    let Ok(frames) = conn_wire::decode_client_message(&text) else {
+                        continue;
+                    };
+                    for frame in frames {
+                        let FromClient::Request(req) = frame else {
+                            continue;
+                        };
+                        let mut send = Vec::new();
+                        match req.tag.as_str() {
+                            "orchestration.subscribeShell" => send.push(FromServer::Chunk {
+                                request_id: req.id,
+                                values: vec![
+                                    json!({ "kind": "snapshot", "snapshot": {
+                                        "schemaVersion": 1,
+                                        "snapshotSequence": 1,
+                                        "projects": [{
+                                            "id": "p1",
+                                            "title": "Demo",
+                                            "workspaceRoot": "/tmp/demo",
+                                            "scripts": [],
+                                            "createdAt": "2026-11-22T10:00:00Z",
+                                            "updatedAt": "2026-11-22T10:00:00Z",
+                                            "archivedAt": null
+                                        }],
+                                        "threads": [],
+                                        "archivedThreads": []
+                                    }}),
+                                    json!({ "kind": "synchronized" }),
+                                ],
+                            }),
+                            "subscribeServerConfig" => {
+                                config_request = Some(req.id.clone());
+                                send.push(FromServer::Chunk {
+                                    request_id: req.id,
+                                    values: vec![config.clone()],
+                                });
+                            }
+                            "orchestration.subscribeThread" => {
+                                let thread_id = req.payload["threadId"]
+                                    .as_str()
+                                    .unwrap_or_default()
+                                    .to_owned();
+                                let mut snap = thread_snapshot.clone();
+                                snap["projection"]["thread"]["id"] = json!(thread_id);
+                                let mut values = vec![snap, json!({ "kind": "synchronized" })];
+                                if thread_id == "t-link" {
+                                    link_request = Some(req.id.clone());
+                                }
+                                if thread_id == "t-del" {
+                                    if let Some(link_id) = link_request.clone() {
+                                        send.push(FromServer::Chunk {
+                                            request_id: link_id,
+                                            values: vec![switched.clone()],
+                                        });
+                                    }
+                                    values.push(deleted_item.clone());
+                                    // The project turns `codex_work` back on, and nothing else.
+                                    if let Some(config_id) = config_request.clone() {
+                                        send.push(FromServer::Chunk {
+                                            request_id: config_id,
+                                            values: vec![settings_updated.clone()],
+                                        });
+                                    }
+                                }
+                                send.insert(
+                                    0,
+                                    FromServer::Chunk {
+                                        request_id: req.id,
+                                        values,
+                                    },
+                                );
+                            }
+                            "server.refreshProviders" | "orchestration.dispatchCommand" => {
+                                let _ = calls_tx.send(MockRpcCall {
+                                    tag: req.tag.clone(),
+                                    payload: req.payload.clone(),
+                                });
+                                let value = if req.tag == "server.refreshProviders" {
+                                    pending_reply.clone()
+                                } else {
+                                    json!({ "ok": true })
+                                };
+                                send.push(FromServer::Exit {
+                                    request_id: req.id,
+                                    exit: Exit::success(value),
+                                });
+                            }
+                            _ => {}
+                        }
+                        for frame in send {
+                            let _ = ws
+                                .send(Message::Text(encode_server_frame(&frame).into()))
+                                .await;
+                        }
+                    }
+                }
+            });
+            Ok::<_, std::io::Error>((addr, calls_rx))
+        })?;
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let server_thread = std::thread::spawn(move || {
+            server_rt.block_on(async {
+                let _ = stop_rx.await;
+            });
+        });
+
+        let listener = Arc::new(RecordingListener::default());
+        let core = ConnCore::connect(
+            format!("http://{addr}"),
+            FfiCredential::Bearer {
+                token: "test-bearer".to_owned(),
+            },
+            listener.clone(),
+        )?;
+        assert!(
+            listener.wait_for(Duration::from_secs(5), |s| {
+                s.providers_changed >= 1 && s.shells.last().is_some_and(|sh| sh.synchronized)
+            }),
+            "the provider list and shell arrive"
+        );
+
+        // Before the thread's detail arrives its scope is unknown: loading, and Save sends nothing.
+        let early = futures::executor::block_on(core.model_picker(
+            "t-link".to_owned(),
+            String::new(),
+            vec!["codex_work".to_owned()],
+            None,
+            None,
+        ));
+        assert!(
+            !early.loaded && early.sections.is_empty(),
+            "an unknown scope is loading, offering nothing from other projects"
+        );
+        for instance in ["codex", "codex_work"] {
+            let early_save = futures::executor::block_on(core.save_thread_model(
+                "t-link".to_owned(),
+                instance.to_owned(),
+                "model-b".to_owned(),
+            ))?;
+            assert_eq!(
+                early_save,
+                FfiModelSave::NotReady,
+                "Save waits for the scope ({instance})"
+            );
+        }
+
+        core.open_thread("t-link".to_owned());
+        assert!(
+            listener.wait_for(Duration::from_secs(5), |s| {
+                s.threads.iter().any(|th| th.thread_id == "t-link")
+            }),
+            "the linked thread's projection arrives"
+        );
+        let offered = |core: &ConnCore| -> Vec<String> {
+            futures::executor::block_on(core.model_picker(
+                "t-link".to_owned(),
+                String::new(),
+                vec!["codex_work".to_owned()],
+                None,
+                None,
+            ))
+            .sections
+            .into_iter()
+            .map(|section| section.instance_id)
+            .collect()
+        };
+        assert_eq!(
+            offered(&core),
+            ["codex"],
+            "the project keeps codex_work out without a shell row"
+        );
+        let save = futures::executor::block_on(core.save_thread_model(
+            "t-link".to_owned(),
+            "codex_work".to_owned(),
+            "model-a".to_owned(),
+        ))?;
+        assert_eq!(
+            save,
+            FfiModelSave::Unavailable,
+            "Save refuses the project-disabled model"
+        );
+
+        let recheck =
+            futures::executor::block_on(core.scan_thread_workspace_models("t-link".to_owned()))?;
+        assert_eq!(
+            recheck,
+            Some(u64::try_from(WORKSPACE_SCAN_RETRY_COOLDOWN_MS)?),
+            "a scan that comes back pending returns its cooldown deadline"
+        );
+        let mut calls_rx = calls_rx;
+        let scan = calls_rx.try_recv().expect("the scan reached the server");
+        assert_eq!(
+            scan.tag, "server.refreshProviders",
+            "the scan asks for a refresh"
+        );
+        assert_eq!(
+            (
+                scan.payload["instanceId"].as_str(),
+                scan.payload["cwd"].as_str()
+            ),
+            (Some("codex"), Some("/tmp/demo")),
+            "for the thread's provider in its project's root"
+        );
+        assert!(
+            calls_rx.try_recv().is_err(),
+            "the refused Save sent nothing"
+        );
+
+        let before = listener
+            .inner
+            .lock()
+            .expect("listener lock")
+            .providers_changed;
+        core.open_thread("t-del".to_owned());
+        assert!(
+            listener.wait_for(Duration::from_secs(5), |s| {
+                s.providers_changed > before && s.deleted.iter().any(|id| id == "t-del")
+            }),
+            "a project-only settings change and a thread.deleted reach the listener"
+        );
+        assert_eq!(
+            offered(&core),
+            ["codex", "codex_work"],
+            "the reloaded picker follows the project"
+        );
+
+        // `thread.model-selection-updated` moved t-link from model A to model B.
+        assert!(
+            listener.wait_for(Duration::from_secs(5), |s| {
+                s.threads.iter().any(|th| {
+                    th.thread_id == "t-link" && th.model_label.as_deref() == Some("model-b")
+                })
+            }),
+            "the header follows the model event"
+        );
+        let picker = futures::executor::block_on(core.model_picker(
+            "t-link".to_owned(),
+            String::new(),
+            Vec::new(),
+            None,
+            None,
+        ));
+        assert_eq!(
+            picker.selected_label.as_deref(),
+            Some("Model B"),
+            "the chip shows model B"
+        );
+        let checked: Vec<_> = picker
+            .sections
+            .iter()
+            .flat_map(|section| section.models.iter())
+            .filter(|row| row.selected)
+            .map(|row| row.model.as_str())
+            .collect();
+        assert_eq!(checked, ["model-b"], "the sheet checks model B");
+        let back_to_a = futures::executor::block_on(core.save_thread_model(
+            "t-link".to_owned(),
+            "codex".to_owned(),
+            "model-a".to_owned(),
+        ))?;
+        assert_eq!(
+            back_to_a,
+            FfiModelSave::Saved,
+            "picking A again is a change, not Unchanged"
+        );
+        let dispatched = calls_rx.try_recv().expect("the switch reached the server");
+        assert_eq!(
+            dispatched.payload["modelSelection"]["model"].as_str(),
+            Some("model-a"),
+            "the switch back to A is sent"
+        );
+
         core.disconnect();
         let _ = stop_tx.send(());
         let _ = server_thread.join();

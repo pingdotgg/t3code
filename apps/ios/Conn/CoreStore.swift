@@ -20,6 +20,12 @@ final class CoreStore {
     private(set) var pendingLink: ThreadLink?
     /// The thread inbox is on screen (no thread pushed, no sheet), for push suppression.
     var isInboxVisible = false
+    /// Bumped whenever the server's provider list changes; model pickers re-read on it.
+    private(set) var providersRevision = 0
+    /// Each thread's unsent composer text, by thread id (mobile's composer drafts by thread key).
+    /// It lives here, not in the view, so a failed send restores into the thread's draft even
+    /// after the user left the thread.
+    var drafts: [String: String] = [:]
 
     @ObservationIgnored private var core: ConnCore?
     @ObservationIgnored private var activeGeneration: UInt64 = 0
@@ -89,6 +95,56 @@ final class CoreStore {
             lastError = error.localizedDescription
             return false
         }
+    }
+
+    /// The composer's model chip and the thread settings sheet's model list.
+    func modelPicker(
+        threadId: String,
+        query: String = "",
+        toggled: [String] = [],
+        pending: (instanceId: String, model: String)? = nil
+    ) async -> FfiModelPicker? {
+        guard let core else { return nil }
+        return await core.modelPicker(
+            threadId: threadId,
+            query: query,
+            toggled: toggled,
+            pendingInstanceId: pending?.instanceId,
+            pendingModel: pending?.model
+        )
+    }
+
+    /// Save in the thread settings sheet. `.unavailable` means the catalog dropped the pick and
+    /// nothing was sent; `nil` means the send failed (see `lastError`).
+    func saveThreadModel(threadId: String, instanceId: String, model: String) async -> FfiModelSave? {
+        guard let core else { return nil }
+        do {
+            return try await core.saveThreadModel(threadId: threadId, instanceId: instanceId, model: model)
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Asks the server once for the models of the thread's provider in the thread's cwd.
+    /// Keeps the thread's workspace models fresh while the picker is open; the core decides
+    /// whether to scan. Returns milliseconds until it wants to be asked again, if ever.
+    func scanThreadWorkspaceModels(threadId: String) async -> UInt64? {
+        guard let core else { return nil }
+        return (try? await core.scanThreadWorkspaceModels(threadId: threadId)) ?? nil
+    }
+
+    /// Sends the thread's draft. Like mobile, the draft clears as the message goes out; a failed
+    /// send merges the sent text back into that thread's draft, wherever the user is by then.
+    func sendDraft(threadId: String) async -> Bool {
+        let message = drafts[threadId] ?? ""
+        drafts[threadId] = nil
+        let sent = await sendMessage(threadId: threadId, text: message, mode: .auto)
+        if !sent {
+            let restored = composerRestoreDraft(current: drafts[threadId] ?? "", sent: message)
+            drafts[threadId] = restored.isEmpty ? nil : restored
+        }
+        return sent
     }
 
     func stopThread(threadId: String) async {
@@ -168,6 +224,8 @@ final class CoreStore {
         guard status == .connected, let core else { return }
         do {
             try await core.deleteThread(threadId: threadId)
+            // `useThreadListActions`: a deleted thread's draft goes with it.
+            drafts[threadId] = nil
         } catch {
             lastError = error.localizedDescription
         }
@@ -520,6 +578,14 @@ final class CoreStore {
         if snapshot.synchronized || shell == nil { shell = snapshot }
     }
 
+    /// The thread's stream reported `thread.deleted`. A thread missing from the shell is not
+    /// deleted (older settled threads are left out), so only this and a successful delete clear
+    /// a draft.
+    fileprivate func handleThreadDeleted(_ threadId: String, generation: UInt64) {
+        guard generation == activeGeneration else { return }
+        drafts[threadId] = nil
+    }
+
     fileprivate func handleThread(_ snapshot: FfiThreadSnapshot, generation: UInt64) {
         guard generation == activeGeneration else { return }
         if openThreadId == snapshot.threadId {
@@ -530,6 +596,11 @@ final class CoreStore {
     fileprivate func handleError(_ message: String, generation: UInt64) {
         guard generation == activeGeneration else { return }
         lastError = message
+    }
+
+    fileprivate func handleProvidersChanged(generation: UInt64) {
+        guard generation == activeGeneration else { return }
+        providersRevision &+= 1
     }
 }
 
@@ -574,6 +645,20 @@ private final class ListenerBridge: CoreListener, @unchecked Sendable {
         let generation = self.generation
         Task { @MainActor [weak store] in
             store?.handleError(message, generation: generation)
+        }
+    }
+
+    func onThreadDeleted(threadId: String) {
+        let generation = self.generation
+        Task { @MainActor [weak store] in
+            store?.handleThreadDeleted(threadId, generation: generation)
+        }
+    }
+
+    func onProvidersChanged() {
+        let generation = self.generation
+        Task { @MainActor [weak store] in
+            store?.handleProvidersChanged(generation: generation)
         }
     }
 }

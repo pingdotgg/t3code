@@ -142,6 +142,9 @@ struct InboxView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(theme.background)
+        // `HomeScreen` scroll edges: a soft top blur under the status bar, none at the bottom.
+        .scrollEdgeEffectStyle(.soft, for: .top)
+        .scrollEdgeEffectHidden(true, for: .bottom)
     }
 
     private func threadRow(_ thread: FfiThreadSummary, owner: CoreStore, project: FfiProject?, settled: Bool) -> some View {
@@ -155,7 +158,8 @@ struct InboxView: View {
             )
         }
         .buttonStyle(.plain)
-        .listRowInsets(EdgeInsets())
+        // 4pt between rows.
+        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
         .listRowSeparator(.hidden)
         .listRowBackground(theme.background)
         .accessibilityIdentifier(settled ? "inbox.settledThread.\(thread.id)" : "inbox.thread.\(thread.id)")
@@ -355,37 +359,39 @@ private struct ThreadListFiltersBar: View {
                         ConnIcon("xmark.circle.fill")
                             .font(.system(size: 18))
                             .foregroundStyle(theme.mutedForeground)
-                            .frame(width: 32, height: 32)
+                            .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Reset thread filters")
                 }
             }
+            // `ThreadListFilters`: px-12, pt-2, pb-10, gap 8.
             .padding(.horizontal, 12)
-            .padding(.top, 4)
+            .padding(.top, 2)
             .padding(.bottom, 10)
         }
     }
 
+    /// `Chip.tsx`: interactive glass, radius 14, min height 28, padding 10.5×5.25, a 14pt medium
+    /// muted label (max 180 wide) and an 11pt `chevron.down`; a selected chip is tinted primary.
     private func filterPill(label: String, active: Bool) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 5.25) {
             Text(label)
-                .font(.system(size: 14, weight: active ? .medium : .regular))
-                .foregroundStyle(active ? theme.foreground : theme.mutedForeground)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(active ? theme.primaryForeground : theme.mutedForeground)
                 .lineLimit(1)
+                .frame(maxWidth: 180, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
             ConnIcon("chevron.down")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(theme.mutedForeground)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(active ? theme.primaryForeground : theme.mutedForeground)
         }
-        .padding(.horizontal, 12)
-        .frame(height: 32)
-        .background(
-            Capsule()
-                .fill(theme.secondary.opacity(active ? 1.0 : 0.7))
-        )
-        .overlay(
-            Capsule()
-                .strokeBorder(theme.border.opacity(0.6), lineWidth: 0.5)
+        .padding(.horizontal, 10.5)
+        .padding(.vertical, 5.25)
+        .frame(minHeight: 28)
+        .glassEffect(
+            active ? .regular.tint(theme.primary).interactive() : .regular.interactive(),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
         )
     }
 }
@@ -399,25 +405,25 @@ private struct ThreadListV2RowView: View {
 
     @Environment(\.connTheme) private var theme
 
+    /// `thread-list-v2-row-appearance.ts`: a 20pt favicon, 12 to the title, line 2 indented 32.
     private let iconSize: CGFloat = 20
-    private let titleGap: CGFloat = 10
+    private let titleGap: CGFloat = 12
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 6) {
             // Line 1: project favicon with 6pt status dot on top-right + one-line title
             HStack(alignment: .center, spacing: titleGap) {
                 ProjectFaviconView(title: projectTitle, size: iconSize)
                     .opacity(settled ? 0.6 : 1)
                     .overlay(alignment: .topTrailing) {
+                        // `StatusBadgeDot`: a 6pt dot in a 2pt screen-colored ring, 4pt past the corner.
                         if let dotColor = statusDotColor {
                             Circle()
                                 .fill(dotColor)
                                 .frame(width: 6, height: 6)
-                                .overlay(
-                                    Circle()
-                                        .stroke(theme.background, lineWidth: 1.5)
-                                )
-                                .offset(x: 2, y: -2)
+                                .padding(2)
+                                .background(Circle().fill(theme.background))
+                                .offset(x: 4, y: -4)
                         }
                     }
 
@@ -438,7 +444,7 @@ private struct ThreadListV2RowView: View {
             // Line 2: indented provider/agent icon · project · branch · time
             HStack(spacing: 4) {
                 Image(systemName: "sparkle")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color(red: 0.85, green: 0.47, blue: 0.34))
                 Text("·")
                     .font(.system(size: 13))
@@ -463,8 +469,9 @@ private struct ThreadListV2RowView: View {
                     .accessibilityIdentifier("inbox.threadFailureMessage")
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        // Row: padding 12 top / 8 right / 12 bottom / 4 left, inset 8 from the screen edges.
+        .padding(EdgeInsets(top: 12, leading: 4, bottom: 12, trailing: 8))
+        .padding(.horizontal, 8)
         .contentShape(Rectangle())
     }
 

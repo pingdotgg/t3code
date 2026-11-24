@@ -12,7 +12,6 @@ struct ThreadView: View {
     let onOpenThread: (String) -> Void
 
     @Environment(\.connTheme) private var theme
-    @State private var draft = ""
     @State private var readingWindow: FfiThreadSnapshot?
     @State private var markers: [FfiPromptMarker] = []
     @State private var outlineQuery = ""
@@ -42,6 +41,19 @@ struct ThreadView: View {
     @State private var advancingStep: Int?
     @State private var advanceTask: Task<Void, Never>?
     @State private var viewHeight: CGFloat = 800
+
+    /// This thread's composer text, kept in the store by thread id.
+    private var draft: String {
+        get { store.drafts[threadId] ?? "" }
+        nonmutating set { store.drafts[threadId] = newValue.isEmpty ? nil : newValue }
+    }
+
+    private var draftBinding: Binding<String> {
+        Binding(get: { draft }, set: { draft = $0 })
+    }
+    /// The chip's provider and the sheet; `model_picker` in conn-ffi builds both.
+    @State private var modelPicker: FfiModelPicker?
+    @State private var showingModelPicker = false
 
     init(
         store: CoreStore,
@@ -210,6 +222,12 @@ struct ThreadView: View {
     }
 
     /// With a question open, text answers it and an empty composer runs the answer action.
+    private var overlayHasCards: Bool {
+        snapshot?.pendingApprovals.first != nil || questionPanelModel != nil
+            || (snapshot?.queuedCount ?? 0) > 0
+            || historyNotice != nil || readingWindow != nil || store.status != .connected
+    }
+
     private var composerCanSend: Bool {
         guard store.status == .connected, readingWindow == nil else { return false }
         guard let question = pendingQuestion, let panel = questionPanelModel else {
@@ -374,9 +392,9 @@ struct ThreadView: View {
 
                         if snapshot.working && store.status == .connected {
                             HStack(spacing: Kit.Space.m) {
-                                KitStatusIcon(.working, size: 14, label: "Working")
+                                // Mobile's `RunFoldWorking` is plain text, never a spinner.
                                 Text("Working…")
-                                    .font(.kitDetail)
+                                    .font(.system(size: 14, weight: .medium))
                                     .foregroundStyle(theme.mutedForeground)
                             }
                             .padding(.top, Kit.Space.xs)
@@ -397,9 +415,10 @@ struct ThreadView: View {
                         .id("timeline-bottom")
                 }
                 .scrollTargetLayout()
-                .padding(.horizontal, Kit.contentInset)
-                .padding(.top, Kit.Space.m)
-                .padding(.bottom, Kit.Space.l)
+                // `ThreadFeed`: full width, `paddingTop: 12`, 16 at the sides; the end inset is 12.
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 12)
             }
             .background(theme.background.ignoresSafeArea())
             .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -442,8 +461,12 @@ struct ThreadView: View {
                     scrollTarget = nil
                 }
             }
-            .kitComposerBar {
-                VStack(alignment: .leading, spacing: Kit.Space.xs) {
+            // Mobile's thread overlay (`ThreadDetailScreen.tsx` 1640-1660, 1805-1862): the cards and the
+            // composer float over the full-width feed. `safeAreaBar` insets the feed and gives the
+            // bottom scroll-edge blur its height (mobile's `EdgeBlur` behind the composer).
+            .safeAreaBar(edge: .bottom, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                  VStack(alignment: .leading, spacing: 10.5) {
                     if let historyNotice {
                         Text(historyNotice).font(.kitDetail)
                     }
@@ -464,7 +487,6 @@ struct ThreadView: View {
                             }
                         }
                         .id(approval.requestId)
-                        .padding(.bottom, 8)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
                     if let question = pendingQuestion, let panel = questionPanelModel {
@@ -485,19 +507,21 @@ struct ThreadView: View {
                             onDismiss: { dismissQuestion(question) }
                         )
                         .id(question.requestId)
-                        .padding(.bottom, 8)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
                     if let queued = snapshot?.queuedCount, queued > 0 {
                         KitBadge("\(queued) queued")
                             .accessibilityIdentifier("thread.queuedBadge")
                     }
+                  }
+                  // Cards: `px-[14px] pb-[7px] gap-2.5` (2pt more than the composer's 12).
+                  .padding(.horizontal, 2)
+                  .padding(.bottom, overlayHasCards ? 7 : 0)
 
-                    KitComposer(
-                        questionPanelModel?.composerPlaceholder
+                    ConnComposerPill(
+                        placeholder: questionPanelModel?.composerPlaceholder
                             ?? (isWorking ? "Queue a follow-up…" : "Ask anything"),
-                        text: $draft,
-                        maxLines: 6,
+                        text: draftBinding,
                         isBusy: isWorking && !hasDraft && questionPanelModel == nil,
                         canSend: composerCanSend,
                         onSend: {
@@ -516,18 +540,6 @@ struct ThreadView: View {
                                 await store.stopThread(threadId: threadId)
                             }
                         },
-                        leading: {
-                            Menu {
-                                Button("Attachments (coming soon)") {}
-                                    .disabled(true)
-                            } label: {
-                                ConnIcon("plus")
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundStyle(theme.mutedForeground)
-                                    .frame(width: 28, height: 28)
-                            }
-                            .accessibilityLabel("More composer actions")
-                        },
                         trailing: {
                             HStack(spacing: 4) {
                                 if isWorking && (hasDraft || questionPanelModel != nil) {
@@ -543,23 +555,60 @@ struct ThreadView: View {
                                     .buttonStyle(.plain)
                                     .accessibilityLabel("Stop")
                                 }
-                                HStack(spacing: 3) {
-                                    Image(systemName: "sparkle")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundStyle(Color(red: 0.85, green: 0.47, blue: 0.34))
-                                    Image(systemName: "chevron.down")
-                                        .font(.system(size: 9, weight: .semibold))
-                                        .foregroundStyle(theme.mutedForeground)
+                                ConnComposerModelChip(
+                                    driver: modelPicker?.selectedDriver,
+                                    modelLabel: modelPicker?.selectedLabel ?? snapshot?.modelLabel
+                                ) {
+                                    showingModelPicker = true
                                 }
-                                .padding(.trailing, 4)
                             }
                         }
                     )
                     .disabled(store.status != .connected || readingWindow != nil)
                     .accessibilityIdentifier("thread.composer")
+                    .padding(.top, 6)
                 }
+                // `FloatingWorkingControl`: a 38.5pt glass chevron, centred 40.5pt above the overlay
+                // (`CONTROL_OVERLAY_OFFSET`), while the reader is away from the end of the feed.
+                .overlay(alignment: .top) {
+                    if snapshot != nil && !stickToBottom {
+                        Button {
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            stickToBottom = true
+                            if readingWindow != nil {
+                                latest()
+                            } else {
+                                withAnimation(Kit.Motion.fast) {
+                                    proxy.scrollTo("timeline-bottom", anchor: .bottom)
+                                }
+                            }
+                        } label: {
+                            ConnIcon("chevron.down")
+                                .font(.system(size: 14))
+                                .foregroundStyle(theme.foreground)
+                                .frame(width: 38.5, height: 38.5)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .glassEffect(.regular.interactive(), in: Circle())
+                        .offset(y: -40.5)
+                        .transition(.opacity)
+                        .accessibilityLabel("Scroll to end")
+                        .accessibilityIdentifier("thread.scrollToEnd")
+                    }
+                }
+                .animation(.easeOut(duration: 0.18), value: stickToBottom)
+                // `ThreadComposer`: `px-[12px]`, and 2pt (`COMPOSER_BOTTOM_GUTTER`) above the safe area.
+                .padding(.horizontal, 12)
+                .padding(.bottom, 2)
             }
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .scrollEdgeEffectStyle(.soft, for: .bottom)
         }
+        // Mobile's `GLASS_HEADER_OPTIONS`: the native transparent bar with a centered title and
+        // subtitle. The root has no title, so the back button is the bare chevron.
+        .navigationTitle(displayTitle)
+        .navigationSubtitle(displaySubtitle ?? "")
         .navigationBarTitleDisplayMode(.inline)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewHeight = $0 }
         .animation(.easeOut(duration: 0.2), value: snapshot?.pendingApprovals.first?.requestId)
@@ -570,21 +619,6 @@ struct ThreadView: View {
             questionSteps = questionSteps.filter { $0.key == current }
         }
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                VStack(spacing: 1) {
-                    Text(displayTitle)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(theme.foreground)
-                        .lineLimit(1)
-                    if let subtitle = displaySubtitle {
-                        Text(subtitle)
-                            .font(.system(size: 11))
-                            .foregroundStyle(theme.mutedForeground)
-                            .lineLimit(1)
-                    }
-                }
-            }
-
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showsOutline = true
@@ -660,19 +694,24 @@ struct ThreadView: View {
         .task(id: threadId) {
             store.openThread(threadId)
         }
+        .task(id: "\(threadId)|\(store.providersRevision)|\(snapshot?.modelLabel ?? "")") {
+            modelPicker = await store.modelPicker(threadId: threadId)
+        }
+        .sheet(isPresented: $showingModelPicker) {
+            ModelPickerSheet(store: store, threadId: threadId)
+                .presentationDetents([.large])
+        }
         .onDisappear {
             historyRequest = UUID()
             store.closeThread(threadId)
         }
     }
 
+    /// `CoreStore.sendDraft` clears the thread's draft as it sends and restores it on failure.
     private func sendDraft(scrollProxy: ScrollViewProxy) {
-        let message = draft
         stickToBottom = true
         Task {
-            let sent = await store.sendMessage(threadId: threadId, text: message, mode: .auto)
-            if sent {
-                draft = ""
+            if await store.sendDraft(threadId: threadId) {
                 withAnimation(Kit.Motion.fast) {
                     scrollProxy.scrollTo("timeline-bottom", anchor: .bottom)
                 }

@@ -240,7 +240,9 @@ struct TimelineEntryRow: View {
         case let .approval(_, _, title, detail):
             // The pending approval itself sits above the composer (`PendingApprovalCard`); the
             // feed keeps a work row for it, like Conn mobile's "Approval requested".
-            ToolRow(kind: "approval", title: title, detail: detail, status: .running, durationMs: nil)
+            // Mobile draws this row with a static `lock` icon (`thread-work-log.tsx:159,411`);
+            // no spinner, so a waiting approval never repaints.
+            ApprovalWorkRow(title: title, detail: detail)
 
         case let .userInputRequest(_, _, _, _, _, pending, answers, _, _):
             QuestionRow(pending: pending, answers: answers)
@@ -348,6 +350,33 @@ struct ToolRow: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
+            }
+        }
+    }
+}
+
+/// "Approval requested" in the feed, with mobile's static lock icon.
+private struct ApprovalWorkRow: View {
+    let title: String
+    let detail: String?
+    @Environment(\.connTheme) private var theme
+
+    var body: some View {
+        KitCollapsibleCard(
+            title.isEmpty ? "Approval requested" : title,
+            expandable: !(detail?.isEmpty ?? true),
+            leading: {
+                ConnIcon("lock")
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.mutedForeground)
+            },
+            trailing: { EmptyView() }
+        ) {
+            if let detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.kitMono)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
         }
     }
