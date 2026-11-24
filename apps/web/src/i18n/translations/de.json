@@ -12145,7 +12145,8 @@
   "f938bb483eb3d189": "startet zuletzt neu",
   "9bca02be2b4d612a": "nicht verbunden",
   "2dcc418b6a13b83c": "erfordert manuelles Update",
-  "5c8ebc36f84dee7a": "erfordert eine neuere Desktop-App",
+  "f13e08bd3614112e": "T3 Code auf diesem Rechner aktualisieren",
+  "3c3348c36a2695af": "Update-Kanal auf diesem Rechner ändern",
   "fa8faa732a2688ef": "im Kanal {channel}",
   "9b961309baafa09d": "keine Berechtigung",
   "9bafb2622c22d145": "wird bereits aktualisiert",
@@ -12787,5 +12788,24 @@
   "99d51127f573296b": "Weiteres Konto",
   "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer.",
   "99963c0142e17f00": "Für das neue {tracker}-Konto.",
-  "6d8e4ebc889bace9": "Konto hinzufügen"
+  "6d8e4ebc889bace9": "Konto hinzufügen",
+  "8a883c4fbc127b68": "Auto-Merge für den Stack wird aktiviert...",
+  "5fb2a26ae31e8983": "Auto-Merge für den Stack konnte nicht aktiviert werden",
+  "986d0dcbf4dd0098": "Auto-Merge für den Stack aktiviert",
+  "f3ed1f63c8a3eef2": "{host} mergt den Stack bis #{number}, sobald die Anforderungen erfüllt sind.",
+  "bd536a0a1754f6cb": "Auto-Merge für den Stack konnte nicht abgebrochen werden",
+  "bb90ac3b2f3a72d5": "Der Host hat das Abbrechen des Auto-Merge abgelehnt. Aktualisiere und versuche es erneut.",
+  "9c28753c777c37b7": "{count, plural, one {Auto-Merge für {count} {term, select, mr {Merge Request} cr {Änderungsanfrage} other {Pull Request}}?} other {Auto-Merge für {count} {term, select, mr {Merge Requests} cr {Änderungsanfragen} other {Pull Requests}}?}}",
+  "a86b49982e18784d": "#{number} und die darunterliegenden nicht gemergten Ebenen per {method} in {base} mergen, sobald jede davon die Anforderungen auf {host} erfüllt. Das kann sofort passieren.",
+  "b1afda5c964deee4": [
+    "Auto-Merge für Stack (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ")"
+  ],
+  "33d18dda74f6d7b3": "Auto-Merge für Stack abbrechen",
+  "012c67c7f1a99e33": "Auto-Merge für Stack"
 }

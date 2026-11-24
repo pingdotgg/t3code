@@ -1,3 +1,5 @@
+import { it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -19,6 +21,7 @@ import {
   ServerMetrics,
   slope,
 } from "./server-metrics-report.ts";
+import { runAbRounds } from "./server-metrics.ts";
 
 const decodeMetrics = Schema.decodeSync(ServerMetrics);
 
@@ -101,6 +104,17 @@ describe("compareMetrics", () => {
     expect(compareMetrics(fixed, steady, 10, gatedRules).regressed).toContain("quiet.cpuPct");
     // The medians differ by 2.8 points, past the floor, but a resampled median can match.
     expect(compareMetrics(fixed, cpuRuns(2.2, 5, 9), 10, gatedRules).regressed).toEqual([]);
+  });
+
+  it("compares the unequal run counts an ab that stopped early leaves", () => {
+    const steady = cpuRuns(26.1, 27.4, 25.8);
+    const partial = compareMetrics(steady, cpuRuns(2.2, 2.5), 10, gatedRules);
+    expect(partial.improved).toContain("quiet.cpuPct");
+    expect(partial.table).toContain("(3 runs), after `abc` (2 runs)");
+    const single = compareMetrics(steady, cpuRuns(2.2), 10, gatedRules);
+    expect(single.improved).toContain("quiet.cpuPct");
+    expect(single.table).toContain("| quiet.cpuPct | 26.1 | 2.2 | -92% |  | better |");
+    expect(compareMetrics(steady, cpuRuns(), 10, gatedRules).compared).toBe(0);
   });
 
   it("reads a file written before loop delay and GC were recorded", () => {
@@ -600,4 +614,22 @@ describe("activityRenewalMissed", () => {
   ])("%s", (_name, sentAt, repliedAt, missed) => {
     expect(activityRenewalMissed(0, sentAt, repliedAt)).toBe(missed);
   });
+});
+
+describe("runAbRounds", () => {
+  effectIt.effect("keeps the runs that finished when a later run fails", () =>
+    Effect.gen(function* () {
+      const files: Record<0 | 1, ReadonlyArray<string>> = { 0: [], 1: [] };
+      const failure = yield* Effect.flip(
+        runAbRounds({
+          rounds: 3,
+          outDir: "out",
+          runSide: (side) => (side === 0 ? Effect.succeed("a1") : Effect.fail("b crashed")),
+          save: (side, runs) => Effect.sync(() => (files[side] = [...runs])),
+        }),
+      );
+      expect(failure).toBe("b crashed");
+      expect(files).toEqual({ 0: ["a1"], 1: [] });
+    }),
+  );
 });

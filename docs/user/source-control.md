@@ -426,9 +426,11 @@ reads its teams through the account you picked them under.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can
-comment, edit the title and description, change labels and assignees, react, and close or
-reopen (with a close reason where the tracker records one) when the tracker and your account
-allow it. An issue read through a project that does not own its repository is shown read-only.
+comment, edit the title and description, change labels and assignees, react, and move it to
+another state when the tracker and your account allow it. Where a GitHub repository has issue
+statuses (Backlog, Todo, In progress, and so on), those are the states you move between, as a
+Linear team's workflow states are; elsewhere you close or reopen, with a close reason where the
+tracker records one. An issue read through a project that does not own its repository is shown read-only.
 
 An issue can be kept with a thread the way a pull request can: open it beside the thread (issue
 links in the conversation open there) and use **Link to this thread** in its header; **Unlink**
