@@ -857,6 +857,7 @@ fn run_inner(command: Command) -> Result<(), String> {
                     scopes,
                     label: Some(label.clone()),
                     ttl_ms,
+                    session_ttl_ms: None,
                 })
                 .map_err(|e| e.to_string())?;
             let url = format!("{}/pair#token={}", runtime.origin, issued.code);
@@ -880,6 +881,7 @@ fn run_inner(command: Command) -> Result<(), String> {
                     scopes,
                     label,
                     ttl_ms,
+                    session_ttl_ms: None,
                 })
                 .map_err(|e| e.to_string())?;
             let pair_url = base_url

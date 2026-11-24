@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Builds the release tarball that Orbit puts in its agent folder:
+// Builds the release that Orbit puts in its agent folder, or the macOS release folder:
 //
 //   conn-server-<version>-linux-x64.tar.gz
 //   └── conn-server-<version>-linux-x64/
@@ -11,9 +11,14 @@
 // The server finds `sdk-host/index.mjs` beside its own binary (after it follows Orbit's link in
 // `bin/`) and runs it with `node` from PATH; Orbit's runtime folder gives Node 24.22.1.
 //
-// Usage: node tools/release-tarball.mjs [--out <dir>] [--binary <prebuilt conn-server>]
-// Linux x86_64 only (musl-gcc and GNU tar). Prints the tarball's path and sha256, and writes
-// `<tarball>.sha256` in `sha256sum` format. The version is the workspace version in Cargo.toml.
+// Usage: node tools/release-tarball.mjs [--platform linux-x64|macos-arm64] [--out <dir>]
+//          [--binary <prebuilt conn-server>]
+// linux-x64 (the default) builds on Linux x86_64 only (musl-gcc and GNU tar). It prints the
+// tarball's path and sha256, and writes `<tarball>.sha256` in `sha256sum` format.
+// macos-arm64 builds on an arm64 Mac (target aarch64-apple-darwin) and writes the same layout
+// as the folder `<out>/conn-server-<version>-macos-arm64/`, without a tarball: the input of
+// tools/macos-app.sh, which signs it into Conn Server.app. The version is the workspace version
+// in Cargo.toml. cargo's output goes to CARGO_TARGET_DIR when set, else `target/`.
 //
 // Sealed (AGENTS.md, Safety): cargo runs with `cargoBuildEnv` (a throwaway HOME, no global git
 // configuration), npm with `sealedNodeEnv` (a throwaway HOME, so no ~/.npmrc or token), no
@@ -26,8 +31,11 @@ import * as NodePath from "node:path";
 import { fileURLToPath } from "node:url";
 import { cargoBuildEnv, sealedNodeEnv } from "./sealed-env.mjs";
 
-const TARGET = "x86_64-unknown-linux-musl";
-const PLATFORM = "linux-x64";
+/** Per platform: the Rust target and the host that builds it (`process.platform`, `arch`). */
+const PLATFORMS = {
+  "linux-x64": { target: "x86_64-unknown-linux-musl", os: "linux", arch: "x64", tarball: true },
+  "macos-arm64": { target: "aarch64-apple-darwin", os: "darwin", arch: "arm64", tarball: false },
+};
 /** What the tarball takes from helpers/sdk-host; nothing else (no build tools, no docs). */
 const SDK_HOST_FILES = ["index.mjs", "drivers", "package.json", "package-lock.json", ".npmrc"];
 /** The only package the SDK host may ship (its one runtime dependency). */
@@ -63,16 +71,22 @@ function workspaceVersion(cargoToml) {
   return version;
 }
 
-if (process.platform !== "linux" || process.arch !== "x64") {
-  fail(`builds on Linux x86_64 only (here ${process.platform} ${process.arch}): the musl build needs musl-gcc`);
+const PLATFORM = option("--platform") ?? "linux-x64";
+const platform = PLATFORMS[PLATFORM];
+if (platform === undefined) fail(`--platform must be one of ${Object.keys(PLATFORMS).join(", ")}, not ${PLATFORM}`);
+const TARGET = platform.target;
+if (process.platform !== platform.os || process.arch !== platform.arch) {
+  fail(`${PLATFORM} builds on ${platform.os} ${platform.arch} only (here ${process.platform} ${process.arch})`);
 }
 const work = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-release-"));
 process.once("exit", () => NodeFS.rmSync(work, { recursive: true, force: true }));
 /** For tar, gzip and the smoke runs: no variable of the shell beyond what a process needs. */
 const plainEnv = sealedNodeEnv(NodePath.join(work, "plain"));
 
-const gnuTar = NodeChildProcess.spawnSync("tar", ["--version"], { encoding: "utf8", env: plainEnv });
-if (!/GNU tar/.test(gnuTar.stdout ?? "")) fail("needs GNU tar (for --sort, --owner and --mtime)");
+if (platform.tarball) {
+  const gnuTar = NodeChildProcess.spawnSync("tar", ["--version"], { encoding: "utf8", env: plainEnv });
+  if (!/GNU tar/.test(gnuTar.stdout ?? "")) fail("needs GNU tar (for --sort, --owner and --mtime)");
+}
 
 const version = workspaceVersion(NodeFS.readFileSync(NodePath.join(repo, "Cargo.toml"), "utf8"));
 const name = `conn-server-${version}-${PLATFORM}`;
@@ -82,9 +96,10 @@ const outDir = NodePath.resolve(option("--out") ?? NodePath.join(repo, "target/r
 let binary = option("--binary");
 if (binary === undefined) {
   const env = cargoBuildEnv(NodePath.join(work, "cargo"));
-  env.CC_x86_64_unknown_linux_musl ??= "musl-gcc";
+  if (TARGET.endsWith("-musl")) env.CC_x86_64_unknown_linux_musl ??= "musl-gcc";
   run("cargo", ["build", "--locked", "--release", "--target", TARGET, "-p", "conn-server"], { cwd: repo, env });
-  binary = NodePath.join(repo, "target", TARGET, "release", "conn-server");
+  const targetDir = process.env.CARGO_TARGET_DIR ? NodePath.resolve(repo, process.env.CARGO_TARGET_DIR) : NodePath.join(repo, "target");
+  binary = NodePath.join(targetDir, TARGET, "release", "conn-server");
 }
 binary = NodePath.resolve(binary);
 const reported = NodeChildProcess.spawnSync(binary, ["--version"], { encoding: "utf8", env: plainEnv });
@@ -139,6 +154,16 @@ const load = NodeChildProcess.spawnSync(
   { cwd: sdkHost, encoding: "utf8", env: plainEnv, timeout: 30_000 },
 );
 if (load.status !== 0) fail(`the Claude Agent SDK did not load: ${load.stderr}`);
+
+// ---- the macOS folder -----------------------------------------------------------------------
+if (!platform.tarball) {
+  const folder = NodePath.join(outDir, name);
+  NodeFS.rmSync(folder, { recursive: true, force: true });
+  NodeFS.mkdirSync(outDir, { recursive: true });
+  NodeFS.cpSync(top, folder, { recursive: true, verbatimSymlinks: true });
+  console.log(`folder  ${folder}`);
+  process.exit(0);
+}
 
 // ---- the tarball ----------------------------------------------------------------------------
 // Same input, same bytes: sorted names, root owner, one time, gzip without a name or time.

@@ -8,6 +8,16 @@ casts = 0
 acks = 0
 downloads = []
 
+def marked(name):
+    folder = os.getcwd()
+    while True:
+        if os.path.exists(os.path.join(folder, name)):
+            return folder
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            return None
+        folder = parent
+
 def send(message):
     w.write(json.dumps(message).encode() + b'\0')
 
@@ -25,6 +35,11 @@ while True:
     params = command.get('params', {})
     result = {}
     events = []
+    held = marked('hang-' + method)
+    if held:
+        # Never answers; `pending-<method>` tells the test the command arrived.
+        open(os.path.join(held, 'pending-' + method), 'w').close()
+        continue
     if method == 'Fixture.hang':
         send({'method':'Fixture.pending','params':{}})
         continue

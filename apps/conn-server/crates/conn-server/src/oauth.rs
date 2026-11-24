@@ -148,6 +148,7 @@ struct PendingCode {
     code_challenge: String,
     resource: String,
     access: String,
+    session_ttl_ms: u64,
     expires_at_ms: u64,
 }
 
@@ -443,7 +444,7 @@ impl McpOAuth {
                     return Decision::PageError(TOO_MANY_SIGN_INS.to_owned());
                 };
                 match auth.consume_mcp_code(code, access, authorization.client.peer_link) {
-                    Ok(level) => (level, slot),
+                    Ok(grant) => (grant, slot),
                     Err(McpCodeError::Storage) => {
                         return Decision::PageError(McpCodeError::Storage.message().to_owned());
                     }
@@ -457,7 +458,7 @@ impl McpOAuth {
                 );
             }
         };
-        let (access, slot) = access;
+        let (grant, slot) = access;
         let code = mint_code();
         let now = conn_support::time::now_ms();
         {
@@ -473,7 +474,8 @@ impl McpOAuth {
                     redirect_uri: authorization.redirect_uri.clone(),
                     code_challenge: authorization.code_challenge.clone(),
                     resource: authorization.resource.clone(),
-                    access,
+                    access: grant.access,
+                    session_ttl_ms: grant.session_ttl_ms,
                     expires_at_ms: now.saturating_add(AUTHORIZATION_CODE_TTL_MS),
                 },
             );
@@ -536,6 +538,7 @@ impl McpOAuth {
                 &pending.access,
                 pending.peer_link,
                 client,
+                pending.session_ttl_ms,
             )
             .map_err(|error| {
                 eprintln!("conn-server: could not issue an MCP client session: {error}");
@@ -739,12 +742,16 @@ mod tests {
                         code_challenge: challenge.clone(),
                         resource: "http://127.0.0.1:3773/mcp".into(),
                         access: "auto".into(),
+                        session_ttl_ms: auth::MCP_CLIENT_SESSION_TTL_MS,
                         expires_at_ms: later,
                     },
                 );
             }
         }
-        let code = auth.issue_peer_link_pairing("auto", None).unwrap().code;
+        let code = auth
+            .issue_peer_link_pairing("auto", None, None)
+            .unwrap()
+            .code;
         let decision = json!({"_tag": "pairing-code", "access": "auto", "code": code});
         let Decision::PageError(message) = oauth.decide(&auth, &urls(), &request, &decision) else {
             panic!("a full table refuses the sign-in");
@@ -758,6 +765,8 @@ mod tests {
         ));
     }
 
+    /// A peer-link code made with `sessionTtl: "until-revoked"`: `/oauth/mcp/token` grants
+    /// the long session, and its `expires_in` (which the holder stores) says so.
     #[test]
     fn links_a_peer_with_a_peer_link_code() {
         let oauth = oauth();
@@ -775,7 +784,10 @@ mod tests {
         assert!(client.peer_link, "the software id marks a peer link");
         let verifier = "v".repeat(43);
         let challenge = base64::url_encode(&conn_support::hmac::sha256(verifier.as_bytes()));
-        let code = auth.issue_peer_link_pairing("auto", None).unwrap().code;
+        let code = auth
+            .issue_peer_link_pairing("auto", None, Some(auth::MAX_TTL_MS))
+            .unwrap()
+            .code;
         let request = authorization(&client, &challenge);
         let Decision::Redirect(to) = oauth.decide(
             &auth,
@@ -807,6 +819,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(token["scope"], "orchestration:read orchestration:operate");
+        let expires_in = token["expires_in"].as_u64().unwrap();
+        assert!(
+            expires_in > (auth::MAX_TTL_MS / 1000).saturating_sub(60),
+            "{expires_in}"
+        );
         let session = auth
             .authenticate_mcp_client(token["access_token"].as_str().unwrap())
             .unwrap();
@@ -846,7 +863,7 @@ mod tests {
         assert_eq!(refused.description, PEER_LINKS_OFF_DESCRIPTION);
         let auth = AuthStore::in_memory();
         let code = auth
-            .issue_peer_link_pairing("read-only", None)
+            .issue_peer_link_pairing("read-only", None, None)
             .unwrap()
             .code;
         assert!(
@@ -858,7 +875,10 @@ mod tests {
             Err(McpCodeError::InsufficientScope),
             "a read-only code lacks a broader access's scopes, named first as in T3"
         );
-        let auto = auth.issue_peer_link_pairing("auto", None).unwrap().code;
+        let auto = auth
+            .issue_peer_link_pairing("auto", None, None)
+            .unwrap()
+            .code;
         assert_eq!(
             auth.consume_mcp_code(&auto, "approval-required", true),
             Err(McpCodeError::UnknownOrUsed),
@@ -870,7 +890,8 @@ mod tests {
             "a peer-link code is not an app sign-in code"
         );
         assert_eq!(
-            auth.consume_mcp_code(&code, "read-only", true),
+            auth.consume_mcp_code(&code, "read-only", true)
+                .map(|grant| grant.access),
             Ok("read-only".into())
         );
     }

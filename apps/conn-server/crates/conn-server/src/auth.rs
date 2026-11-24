@@ -97,6 +97,9 @@ pub const SESSION_TTL_MS: u64 = 30 * 24 * 60 * MINUTE_MS;
 pub const TICKET_TTL_MS: u64 = 5 * MINUTE_MS;
 /// The longest life a session or pairing link can get: ten years.
 pub const MAX_TTL_MS: u64 = 10 * 366 * 24 * 60 * MINUTE_MS;
+/// The session lifetime that ends only on revoke. Stored as [`MAX_TTL_MS`], so every reader
+/// still gets a real `expiresAt`.
+pub const UNTIL_REVOKED: &str = "until-revoked";
 
 /// Subjects as `EnvironmentAuth.ts` names them.
 pub const SUBJECT_ONE_TIME_TOKEN: &str = "one-time-token";
@@ -461,6 +464,20 @@ pub fn mcp_client_scopes(access: &str) -> Vec<String> {
     scopes.iter().map(|s| (*s).to_owned()).collect()
 }
 
+/// Why [`AuthStore::extend_session`] refused.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ExtendError {
+    NotFound,
+    CarriedFromT3,
+}
+
+/// What a spent MCP sign-in code grants.
+#[derive(Debug, PartialEq, Eq)]
+pub struct McpGrant {
+    pub access: String,
+    pub session_ttl_ms: u64,
+}
+
 /// A client may not revoke its own session (`current_session_revoke_not_allowed`).
 #[derive(Debug, PartialEq, Eq)]
 pub struct RevokeCurrentSession;
@@ -471,6 +488,8 @@ pub struct PairingRequest {
     pub scopes: Vec<String>,
     pub label: Option<String>,
     pub ttl_ms: u64,
+    /// The life of the session the code grants; `None` keeps [`SESSION_TTL_MS`].
+    pub session_ttl_ms: Option<u64>,
 }
 
 impl PairingRequest {
@@ -479,6 +498,7 @@ impl PairingRequest {
             scopes: STANDARD_SCOPES.iter().map(|s| s.to_string()).collect(),
             label,
             ttl_ms,
+            session_ttl_ms: None,
         }
     }
 }
@@ -515,6 +535,9 @@ struct StoredPairing {
     /// Carried over from a T3 server (`t3_carry.rs`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     t3: bool,
+    /// The life of the session this code grants (`sessionTtl`); none keeps the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_ttl_ms: Option<u64>,
 }
 
 impl StoredPairing {
@@ -739,6 +762,7 @@ impl AuthStore {
             created_at_ms: now,
             expires_at_ms: expires_at(now, request.ttl_ms),
             t3: false,
+            session_ttl_ms: request.session_ttl_ms,
         };
         let issued = IssuedPairingCode {
             id: link.id.clone(),
@@ -839,8 +863,8 @@ impl AuthStore {
             if client.label.is_none() {
                 client.label = grant.label.clone();
             }
-            let (token, session) =
-                new_session(grant.subject.clone(), scopes, client, SESSION_TTL_MS);
+            let ttl_ms = grant.session_ttl_ms.unwrap_or(SESSION_TTL_MS);
+            let (token, session) = new_session(grant.subject.clone(), scopes, client, ttl_ms);
             let issued = IssuedSession {
                 token: token.clone(),
                 principal: principal_of(&session),
@@ -960,6 +984,7 @@ impl AuthStore {
         &self,
         access: &str,
         label: Option<String>,
+        session_ttl_ms: Option<u64>,
     ) -> io::Result<IssuedPairingCode> {
         let code = pairing_code();
         let now = now_ms();
@@ -972,6 +997,7 @@ impl AuthStore {
             created_at_ms: now,
             expires_at_ms: expires_at(now, PAIRING_CODE_TTL_MS),
             t3: false,
+            session_ttl_ms,
         };
         let issued = IssuedPairingCode {
             id: link.id.clone(),
@@ -992,13 +1018,13 @@ impl AuthStore {
 
     /// Spends a pairing code for an MCP sign-in at `access` (`consumeMcpApprovalCode`). A plain
     /// one-time code works when it carries the access's scopes; a purpose-bound one only for
-    /// its own purpose (`peer_link`) and level. Returns the access the session gets.
+    /// its own purpose (`peer_link`) and level. Returns what the session gets.
     pub fn consume_mcp_code(
         &self,
         code: &str,
         access: &str,
         peer_link: bool,
-    ) -> Result<String, McpCodeError> {
+    ) -> Result<McpGrant, McpCodeError> {
         let key = hash(&code.trim().to_ascii_uppercase());
         let allowed = format!(
             "{}{access}",
@@ -1033,7 +1059,10 @@ impl AuthStore {
                 .strip_prefix(MCP_APPROVAL_SUBJECT_PREFIX)
                 .filter(|level| is_mcp_access(level))
                 .unwrap_or(access);
-            outcome = Ok(level.to_owned());
+            outcome = Ok(McpGrant {
+                access: level.to_owned(),
+                session_ttl_ms: grant.session_ttl_ms.unwrap_or(MCP_CLIENT_SESSION_TTL_MS),
+            });
             // `consumeAvailable`: a spent approval or peer-link code is not announced.
             if grant.purpose_bound() {
                 Vec::new()
@@ -1055,6 +1084,7 @@ impl AuthStore {
         access: &str,
         peer_link: bool,
         client: ClientInfo,
+        ttl_ms: u64,
     ) -> io::Result<IssuedSession> {
         let mut client = client;
         client.label = Some(label.to_owned());
@@ -1063,7 +1093,7 @@ impl AuthStore {
             SUBJECT_MCP_CLIENT.into(),
             mcp_client_scopes(access),
             client,
-            MCP_CLIENT_SESSION_TTL_MS,
+            ttl_ms,
         );
         session.runtime_mode_ceiling = (access != "read-only").then(|| access.to_owned());
         session.peer_link = peer_link;
@@ -1265,6 +1295,25 @@ impl AuthStore {
         if current == Some(id) {
             return Ok(Err(RevokeCurrentSession));
         }
+        self.end_session(id).map(Ok)
+    }
+
+    /// Ends the session behind `token`, native or MCP (`/api/auth/logout`). Returns its id, or
+    /// `None` when the token names no live session.
+    pub fn logout(&self, token: &str) -> io::Result<Option<String>> {
+        let mut ended = None;
+        self.write(|state| {
+            let Some((key, session)) = self.resolve(state, token, now_ms()) else {
+                return Vec::new();
+            };
+            state.sessions.remove(&key);
+            ended = Some(session.id.clone());
+            vec![AccessChange::ClientRemoved(session.id)]
+        })?;
+        Ok(ended)
+    }
+
+    fn end_session(&self, id: &str) -> io::Result<bool> {
         let mut revoked = false;
         self.write(|state| {
             let before = state.sessions.len();
@@ -1276,7 +1325,26 @@ impl AuthStore {
                 Vec::new()
             }
         })?;
-        Ok(Ok(revoked))
+        Ok(revoked)
+    }
+
+    /// Moves session `id`'s end out to `ttl_ms` from now. Never shortens it. A session carried
+    /// over from T3 is refused: the `exp` in its signed token bounds it. Returns the new end.
+    pub fn extend_session(&self, id: &str, ttl_ms: u64) -> io::Result<Result<u64, ExtendError>> {
+        let mut outcome = Err(ExtendError::NotFound);
+        self.write(|state| {
+            let Some(session) = state.sessions.values_mut().find(|s| s.id == id) else {
+                return Vec::new();
+            };
+            if session.t3_signed {
+                outcome = Err(ExtendError::CarriedFromT3);
+                return Vec::new();
+            }
+            session.expires_at_ms = session.expires_at_ms.max(expires_at(now_ms(), ttl_ms));
+            outcome = Ok(session.expires_at_ms);
+            vec![AccessChange::ClientUpserted(id.to_owned())]
+        })?;
+        Ok(outcome)
     }
 
     /// Revokes every session but `current`. Returns how many.
@@ -1759,6 +1827,7 @@ pub(crate) fn write_t3_import(
                 created_at_ms: l.created_at_ms,
                 expires_at_ms: l.expires_at_ms,
                 t3: true,
+                session_ttl_ms: None,
             })
             .collect(),
         spent_t3_pairing: spent,
@@ -1913,6 +1982,9 @@ fn decode_hex(text: &str) -> Option<Hash> {
 /// Parses a TTL as the TypeScript CLI takes it: `90s`, `5m`, `1h`, `30d`, `15 minutes`.
 pub fn parse_ttl_ms(text: &str) -> Option<u64> {
     let text = text.trim();
+    if text == UNTIL_REVOKED {
+        return Some(MAX_TTL_MS);
+    }
     let split = text
         .find(|c: char| !c.is_ascii_digit())
         .unwrap_or(text.len());
@@ -1927,6 +1999,11 @@ pub fn parse_ttl_ms(text: &str) -> Option<u64> {
         _ => return None,
     };
     number.checked_mul(unit_ms).filter(|ms| *ms > 0)
+}
+
+/// A request's `sessionTtl`: only [`UNTIL_REVOKED`] is taken.
+pub fn parse_session_ttl(text: &str) -> Option<u64> {
+    (text == UNTIL_REVOKED).then_some(MAX_TTL_MS)
 }
 
 /// Splits `a,b c` into scopes and checks each is a grant scope.
@@ -1965,7 +2042,13 @@ mod tests {
     fn mcp_client_sessions_are_refused_outside_mcp() {
         let store = AuthStore::in_memory();
         let issued = store
-            .issue_mcp_client_session("Conn · peer", "full-access", true, ClientInfo::default())
+            .issue_mcp_client_session(
+                "Conn · peer",
+                "full-access",
+                true,
+                ClientInfo::default(),
+                MCP_CLIENT_SESSION_TTL_MS,
+            )
             .unwrap();
         assert!(
             store.authenticate_mcp_client(&issued.token).is_some(),
@@ -2062,6 +2145,9 @@ mod tests {
         assert_eq!(parse_ttl_ms("90s"), Some(90_000));
         assert_eq!(parse_ttl_ms("soon"), None);
         assert_eq!(parse_ttl_ms("0m"), None);
+        assert_eq!(parse_ttl_ms("until-revoked"), Some(MAX_TTL_MS));
+        assert_eq!(parse_session_ttl("until-revoked"), Some(MAX_TTL_MS));
+        assert_eq!(parse_session_ttl("30d"), None);
         assert_eq!(
             parse_scopes("access:read,access:write access:read").unwrap(),
             vec!["access:read", "access:write"]
@@ -2081,7 +2167,7 @@ mod tests {
         let other = AuthStore::open(file).unwrap();
         let mut events = store.subscribe();
         let mut other_events = other.subscribe();
-        let issued = store.issue_peer_link_pairing("auto", None).unwrap();
+        let issued = store.issue_peer_link_pairing("auto", None, None).unwrap();
         assert!(events.try_recv().is_err(), "an upsert was announced");
         assert!(store.pairing_links().is_empty());
         assert!(store.pairing_link(&issued.id).is_none());
@@ -2105,6 +2191,7 @@ mod tests {
             store
                 .consume_mcp_code(&issued.code, "auto", true)
                 .ok()
+                .map(|grant| grant.access)
                 .as_deref(),
             Some("auto")
         );
@@ -2209,6 +2296,7 @@ mod tests {
                 scopes: scopes.clone(),
                 label: Some("node via Orbit".into()),
                 ttl_ms: PAIRING_CODE_TTL_MS,
+                session_ttl_ms: None,
             })
             .unwrap();
         let link = &store.pairing_links()[0];
@@ -2252,6 +2340,108 @@ mod tests {
         assert!(store.authenticate_ticket(&any, "media").is_some());
         // The bearer token itself is not a ticket.
         assert_eq!(store.authenticate_ticket(&session.token, "rpc"), None);
+    }
+
+    /// `sessionTtl: "until-revoked"` on a code: the session it grants lasts until revoked,
+    /// through a restart. Codes without it keep the 30-day default.
+    #[test]
+    fn a_code_with_a_session_ttl_grants_a_long_session() {
+        let dir = temp_dir("auth-session-ttl");
+        let file = dir.join("auth.json");
+        let store = AuthStore::open(file.clone()).unwrap();
+        let long = store
+            .issue_pairing(PairingRequest {
+                session_ttl_ms: Some(MAX_TTL_MS),
+                ..PairingRequest::standard(None, PAIRING_CODE_TTL_MS)
+            })
+            .unwrap();
+        assert!(long.expires_at_ms <= now_ms() + PAIRING_CODE_TTL_MS);
+        let peer = store
+            .issue_peer_link_pairing("auto", None, Some(MAX_TTL_MS))
+            .unwrap();
+        let plain = store.issue_peer_link_pairing("auto", None, None).unwrap();
+        let store = AuthStore::open(file).unwrap();
+        let before = now_ms();
+        let issued = store
+            .exchange(&long.code, None, ClientInfo::default())
+            .unwrap();
+        assert!(issued.principal.expires_at_ms >= before + MAX_TTL_MS);
+        assert_eq!(
+            store.consume_mcp_code(&peer.code, "auto", true).unwrap(),
+            McpGrant {
+                access: "auto".into(),
+                session_ttl_ms: MAX_TTL_MS
+            }
+        );
+        assert_eq!(
+            store
+                .consume_mcp_code(&plain.code, "auto", true)
+                .unwrap()
+                .session_ttl_ms,
+            MCP_CLIENT_SESSION_TTL_MS
+        );
+        let default = store
+            .exchange(
+                &store
+                    .issue_pairing_code(None, PAIRING_CODE_TTL_MS)
+                    .unwrap()
+                    .code,
+                None,
+                ClientInfo::default(),
+            )
+            .unwrap();
+        assert!(default.principal.expires_at_ms <= now_ms() + SESSION_TTL_MS);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `extend` moves a session's end out but never in, announces it, and a revoke still ends
+    /// an until-revoked session at once.
+    #[test]
+    fn extend_never_shortens_and_revoke_still_ends_the_session() {
+        let store = AuthStore::in_memory();
+        let me = store
+            .issue_session(SessionRequest {
+                scopes: vec!["access:write".into()],
+                label: None,
+                subject: None,
+                ttl_ms: SESSION_TTL_MS,
+            })
+            .unwrap();
+        let held = store
+            .issue_session(SessionRequest {
+                scopes: vec!["orchestration:read".into()],
+                label: None,
+                subject: None,
+                ttl_ms: SESSION_TTL_MS,
+            })
+            .unwrap();
+        let id = held.principal.session_id.clone();
+        let mut changes = store.subscribe();
+        let long = store.extend_session(&id, MAX_TTL_MS).unwrap().unwrap();
+        assert!(long >= held.principal.expires_at_ms + MAX_TTL_MS - SESSION_TTL_MS);
+        assert_eq!(
+            changes.try_recv().unwrap(),
+            AccessChange::ClientUpserted(id.clone())
+        );
+        assert_eq!(
+            store
+                .authenticate_bearer(&held.token)
+                .unwrap()
+                .expires_at_ms,
+            long
+        );
+        assert_eq!(store.extend_session(&id, MINUTE_MS).unwrap(), Ok(long));
+        assert_eq!(
+            store.extend_session("no-such-session", MAX_TTL_MS).unwrap(),
+            Err(ExtendError::NotFound)
+        );
+        assert_eq!(
+            store
+                .revoke_session(Some(&me.principal.session_id), &id)
+                .unwrap(),
+            Ok(true)
+        );
+        assert_eq!(store.authenticate_bearer(&held.token), None);
     }
 
     #[test]
@@ -2829,6 +3019,12 @@ mod tests {
             store
                 .exchange("ABCDEFGHJKMN", None, ClientInfo::default())
                 .is_ok()
+        );
+
+        // Its signed `exp` bounds it, so it cannot be extended.
+        assert_eq!(
+            store.extend_session("s-native", MAX_TTL_MS).unwrap(),
+            Err(ExtendError::CarriedFromT3)
         );
 
         // Revoking ends the carried session.
