@@ -2142,6 +2142,7 @@ effectIt.effect.each([
       worktreesDir,
       worktreePath,
       fileSystem,
+      path,
       failReadsAfterRunning: true,
       runSetup: () =>
         withWorkspaceLease(worktreePath, Deferred.succeed(setupStarted, undefined)).pipe(
@@ -2203,6 +2204,7 @@ effectIt.effect("runs setup for a worktree a send recreated before dispatch", ()
       worktreesDir,
       worktreePath,
       fileSystem,
+      path,
       failReadsAfterRunning: true,
       recreatedBeforeDispatch: true,
       runSetup,
