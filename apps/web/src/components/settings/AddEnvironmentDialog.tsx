@@ -551,6 +551,7 @@ export function AddEnvironmentDialog({
             disabled={isAddingSavedBackend}
             onClick={() => void addRelayRoute()}
           >
+            {pendingAction?.kind === "relay" ? <Spinner /> : null}
             <T>Add T3 Connect</T>
           </Button>
         </div>
