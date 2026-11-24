@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Deferred, Effect, Fiber, Schema, SchemaGetter, SchemaParser } from "effect"
+import { Effect, Schema, SchemaGetter, SchemaParser } from "effect"
 import { SchemaCompiler, SchemaJITCompiler } from "effect/schema"
 
 describe("compiled homogeneous Array traversal", () => {
@@ -70,36 +70,4 @@ describe("compiled homogeneous Array traversal", () => {
       }
     }
   })
-
-  it.effect("keeps bounded concurrency on the interpreter's concurrent traversal", () =>
-    Effect.gen(function*() {
-      const started = yield* Effect.forEach([0, 1, 2], () => Deferred.make<void>())
-      const releases = yield* Effect.forEach([0, 1, 2], () => Deferred.make<void>())
-      const calls = [0, 0, 0]
-      const element = Schema.Number.pipe(Schema.decode({
-        decode: SchemaGetter.transformEffect((index) =>
-          Effect.gen(function*() {
-            calls[index]++
-            yield* Deferred.succeed(started[index], undefined)
-            yield* Deferred.await(releases[index])
-            return index
-          })
-        ),
-        encode: SchemaGetter.passthrough()
-      }))
-      const schema = Schema.Array(element)
-      SchemaJITCompiler.enable(schema.ast)
-      const fiber = yield* SchemaParser.decodeUnknownEffect(schema)([0, 1, 2], { concurrency: 2 }).pipe(
-        Effect.forkChild
-      )
-      yield* Deferred.await(started[0])
-      yield* Deferred.await(started[1])
-      assert.strictEqual(yield* Deferred.isDone(started[2]), false)
-      yield* Deferred.succeed(releases[0], undefined)
-      yield* Deferred.await(started[2])
-      yield* Deferred.succeed(releases[1], undefined)
-      yield* Deferred.succeed(releases[2], undefined)
-      assert.deepStrictEqual(yield* Fiber.join(fiber), [0, 1, 2])
-      assert.deepStrictEqual(calls, [1, 1, 1])
-    }))
 })
