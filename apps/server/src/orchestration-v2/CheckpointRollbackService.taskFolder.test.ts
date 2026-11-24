@@ -65,6 +65,8 @@ interface Options {
 /** What the test supplies before the layer is built; the last commit's events land in `committed`. */
 interface State extends TaskFoldersTestState {
   readonly committed: Array<OrchestrationV2DomainEvent>;
+  /** Each provider conversation rewind the rollback asked for. */
+  readonly providerRollbacks: Array<unknown>;
 }
 
 const layerFor = (state: State, options: Options) => {
@@ -179,7 +181,10 @@ const layerFor = (state: State, options: Options) => {
             open: () =>
               Effect.succeed({
                 rollbackThread: (input: { readonly providerThread: unknown }) =>
-                  Effect.succeed({ providerThread: input.providerThread }),
+                  Effect.sync(() => {
+                    state.providerRollbacks.push(input);
+                    return { providerThread: input.providerThread };
+                  }),
               } as never),
           }),
           Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: () => Effect.succeed({} as never) }),
@@ -481,11 +486,18 @@ const withThread = <A, E>(
   options: Options,
   test: (
     thread: Effect.Success<ReturnType<typeof taskFolderThread>>,
+    state: State,
   ) => Effect.Effect<A, E, Layer.Success<ReturnType<typeof layerFor>>>,
 ) => {
-  const state: State = { workspaceRoot: "/unset", trackedFolders: [], thread: null, committed: [] };
+  const state: State = {
+    workspaceRoot: "/unset",
+    trackedFolders: [],
+    thread: null,
+    committed: [],
+    providerRollbacks: [],
+  };
   return taskFolderThread(state, options).pipe(
-    Effect.flatMap(test),
+    Effect.flatMap((thread) => test(thread, state)),
     Effect.provide(layerFor(state, options)),
     Effect.scoped,
   );
@@ -673,7 +685,7 @@ it.live("refuses a project folder whose own snapshot is missing, before any fold
 );
 
 it.live("puts restored folders back when a later folder's restore fails", () =>
-  withThread({ projectIsRepository: true }, (thread) =>
+  withThread({ projectIsRepository: true }, (thread, state) =>
     Effect.gen(function* () {
       const { path, folders, write, read, taskFolder } = thread;
       const edit = (contents: string) =>
@@ -695,6 +707,8 @@ it.live("puts restored folders back when a later folder's restore fails", () =>
       const failed = yield* thread.rewind(1).pipe(Effect.flip);
 
       assert.equal(failed.reason, "unexpected-failure");
+      // The agent's conversation stays whole, matching the files and the timeline.
+      assert.deepEqual(state.providerRollbacks, []);
       assert.deepEqual(
         yield* Effect.all([
           read(path.join(folders.shop, "a.txt")),
