@@ -22,7 +22,18 @@ import * as TestClock from "effect/testing/TestClock";
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 import { issues, pullRequests } from "./forgeApi.ts";
 import { cancel, runs, signalAll, start } from "./stepServices.ts";
-import { type InRun, invoke, skip, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
+import {
+  type InRun,
+  invoke,
+  skip,
+  sleep,
+  step,
+  stop,
+  text,
+  title,
+  wait,
+  workflow,
+} from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
@@ -2261,6 +2272,61 @@ it.effect("a workflow can take an agent's failure as an answer and go on", () =>
         const kept = yield* workflows.waitFor(unasked.runId, status("completed", "paused"));
         assert.match(kept.result as string, /could not be asked again: .* in thread-\d+$/);
       }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it("error text cuts at 2,000 units without leaving half an emoji", () => {
+  assert.equal(text(`${"a".repeat(1_999)}\u{1F680}tail`), "a".repeat(1_999));
+  assert.equal(text(new Error(`${"a".repeat(1_999)}\u{1F680}tail`)), "a".repeat(1_999));
+  assert.equal(
+    text(new Error("outer", { cause: `${"a".repeat(1_992)}\u{1F680}tail` })),
+    `outer: ${"a".repeat(1_992)}`,
+  );
+});
+
+it.effect("a long unreadable wait signal error is cut without leaving half an emoji", () =>
+  Effect.gen(function* () {
+    const detailed = yield* Deferred.make<void>();
+    const store = Layer.effect(
+      WorkflowStore.WorkflowStore,
+      Effect.map(WorkflowStore.make, (real) =>
+        WorkflowStore.WorkflowStore.of({
+          ...real,
+          stepDetail: (runId, name, detail) =>
+            Effect.tap(real.stepDetail(runId, name, detail), () =>
+              Deferred.succeed(detailed, undefined),
+            ),
+        }),
+      ),
+    );
+    const strict = workflow(
+      "strict-wait",
+      { version: 1, payload: Schema.Struct({}), returns: Schema.String },
+      () =>
+        Effect.map(
+          wait("input", {
+            returns: Schema.String.check(
+              Schema.makeFilter((value) => (value === "ok" ? true : value)),
+            ),
+          }),
+          Option.getOrElse(() => ""),
+        ),
+    );
+    const { boot } = yield* harness(store);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const { runId } = yield* workflows.start("strict-wait", {}, { idempotencyKey: "w1" });
+        yield* workflows.waitFor(runId, status("waiting"));
+        const prefix = "It was signalled with a value it cannot read, and waits again: ";
+        const bad = `${"a".repeat(1_999 - prefix.length)}\u{1F680}tail`;
+        yield* workflows.signal({ runId, wait: "input" }, bad, { id: "w-bad" });
+        yield* Deferred.await(detailed);
+        const { steps } = yield* workflows.get(runId);
+        assert.equal(steps[0]?.detail, `${prefix}${"a".repeat(1_999 - prefix.length)}`);
+      }),
+      [strict],
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
