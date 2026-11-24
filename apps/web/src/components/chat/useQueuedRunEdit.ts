@@ -82,6 +82,8 @@ interface EditingQueuedRun {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
+  readonly originalModelSelection?: ModelSelection;
+  readonly followsThreadSelection: boolean;
   readonly originalAttachments: ReadonlyArray<ChatAttachment>;
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext | undefined;
@@ -114,6 +116,7 @@ async function submitQueuedRunEdit(input: {
   readonly draftTarget: ComposerThreadTarget;
   readonly editing: EditingQueuedRun;
   readonly content: QueuedRunEditContent;
+  readonly modelSelection?: ModelSelection;
   readonly editQueuedRun: ReturnType<typeof useEditQueuedRunCommand>;
   readonly draftChanged: () => boolean;
 }): Promise<string | null> {
@@ -179,7 +182,7 @@ async function submitQueuedRunEdit(input: {
         threadId: editing.threadId,
         runId: editing.runId,
         text: restoreAttachmentOnlyBootstrapPrompt(editText, uploads.length > 0),
-        modelSelection: content.modelSelection,
+        ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
         edit: {
           messageId: editing.messageId,
           attachments: uploads,
@@ -288,9 +291,8 @@ export function useQueuedRunEdit(input: {
     if (editing !== null && editing.runId !== request.runId) clearEditDraft(editing.runId);
     const target = queuedRunEditDraftId(routeThreadRef, request.runId);
     const sentText = stripAttachmentOnlyBootstrapPrompt(request.text);
-    const context = serverProjection?.messages.find(
-      (message) => message.id === request.messageId,
-    )?.context;
+    const message = serverProjection?.messages.find((message) => message.id === request.messageId);
+    const context = message?.context;
     const referenced = new Set(collectInlineContextIds(sentText));
     const records = (context?.records ?? []).filter((record) => referenced.has(record.contextId));
     // A reply shows above the composer while its message is edited, not as a chip in the text.
@@ -299,9 +301,14 @@ export function useQueuedRunEdit(input: {
     const text = reply ? removeInlineContextReference(sentText, reply.contextId).prompt : sentText;
     const store = useComposerDraftStore.getState();
     store.clearComposerContent(target);
+    store.clearDraftThread(target);
     store.setPrompt(target, text);
     const run = serverProjection?.runs.find((run) => run.id === request.runId);
-    if (run)
+    const followsThreadSelection = message?.followsThreadSelection === true;
+    const originalModelSelection = followsThreadSelection
+      ? serverProjection?.thread.modelSelection
+      : run?.modelSelection;
+    if (run && !followsThreadSelection)
       store.setModelSelection(target, run.modelSelection, { explicit: true, replaceOptions: true });
     store.setThreadContexts(
       target,
@@ -320,6 +327,8 @@ export function useQueuedRunEdit(input: {
         runId: request.runId,
         messageId: request.messageId,
         originalText: text,
+        followsThreadSelection,
+        ...(originalModelSelection ? { originalModelSelection } : {}),
         originalAttachments: request.attachments,
         existingAttachments: request.attachments,
         context,
@@ -343,6 +352,9 @@ export function useQueuedRunEdit(input: {
             editTarget: queuedRunEditDraftId(routeThreadRef, edit.runId),
             threadTarget: threadDraftTarget,
             originalText: edit.originalText,
+            ...(edit.originalModelSelection
+              ? { originalModelSelection: edit.originalModelSelection }
+              : {}),
             originalReplyTo: reply ?? null,
             removedExistingAttachment:
               edit.existingAttachments.length < edit.originalAttachments.length,
@@ -491,6 +503,9 @@ export function useQueuedRunEdit(input: {
       draftTarget,
       editing,
       content,
+      ...(!editing.followsThreadSelection || draftBeforeSave?.modelSelectionExplicit
+        ? { modelSelection: content.modelSelection }
+        : {}),
       editQueuedRun: editQueuedRunCommand,
       draftChanged,
     });

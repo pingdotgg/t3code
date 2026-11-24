@@ -12601,14 +12601,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
-    if (command.modelSelection !== undefined) {
+    let updatedRun =
+      command.modelSelection === undefined
+        ? queuedRun
+        : { ...queuedRun, modelSelection, providerInstanceId: modelSelection.instanceId };
+    if (
+      updatedRun.steerWhenReadyRunId !== undefined &&
+      (isSlashCommand({
+        text: command.text,
+        attachments: command.attachments ?? queuedMessage.attachments,
+      }) ||
+        (yield* limitForbidsParkedSteer))
+    ) {
+      const { steerWhenReadyRunId: _, ...queued } = updatedRun;
+      updatedRun = queued;
+    }
+    if (updatedRun !== queuedRun) {
       yield* emitEvent({
         type: "run.updated",
         threadId: command.threadId,
         runId: queuedRun.id,
-        providerInstanceId: modelSelection.instanceId,
+        ...(queuedRun.rootNodeId === null ? {} : { nodeId: queuedRun.rootNodeId }),
+        providerInstanceId: updatedRun.providerInstanceId,
         occurredAt: now,
-        payload: { ...queuedRun, modelSelection, providerInstanceId: modelSelection.instanceId },
+        payload: updatedRun,
       });
     }
     const editedAttachments =
@@ -12644,26 +12660,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.context ? { context: command.context } : {}),
           updatedAt: now,
         }),
-      });
-    }
-    // A command cannot steer, so an edit into one keeps it queued where it is.
-    if (
-      queuedRun.steerWhenReadyRunId !== undefined &&
-      (isSlashCommand({
-        text: command.text,
-        attachments: command.attachments ?? queuedMessage.attachments,
-      }) ||
-        (yield* limitForbidsParkedSteer))
-    ) {
-      const { steerWhenReadyRunId: _, ...queued } = queuedRun;
-      yield* emitEvent({
-        type: "run.updated",
-        threadId: command.threadId,
-        runId: queuedRun.id,
-        ...(queuedRun.rootNodeId === null ? {} : { nodeId: queuedRun.rootNodeId }),
-        providerInstanceId: queuedRun.providerInstanceId,
-        occurredAt: now,
-        payload: queued,
       });
     }
     // Thread deletion only cleans files the thread still references.
