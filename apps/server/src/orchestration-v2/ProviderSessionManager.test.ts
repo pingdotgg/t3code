@@ -21,6 +21,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
+  ProviderThreadId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -533,7 +534,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
       readonly initialProviderItemIdentityVersion?: 2;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
-    readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+    readonly hasPendingBackgroundWorkForThread?: (
+      providerThread: OrchestrationV2ProviderThread,
+    ) => Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<
@@ -667,7 +670,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           ...(options.hasPendingBackgroundWorkForThread === undefined
             ? {}
             : {
-                hasPendingBackgroundWorkForThread: () => options.hasPendingBackgroundWorkForThread!,
+                hasPendingBackgroundWorkForThread: options.hasPendingBackgroundWorkForThread,
               }),
           ensureThread: () => unimplemented("ensureThread unused in test"),
           resumeThread: (threadInput) =>
@@ -740,7 +743,9 @@ function layerTest(input: {
     readonly paused: Deferred.Deferred<void>;
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
-  readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+  readonly hasPendingBackgroundWorkForThread?: (
+    providerThread: OrchestrationV2ProviderThread,
+  ) => Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<
@@ -4038,6 +4043,19 @@ it.effect.each([
           threadId,
           providerSessionId,
         } = yield* setupSession("bg-no-unload");
+        const providerThreadRecorded = (
+          recordedThreadId: ThreadId,
+          recorded: OrchestrationV2ProviderThread,
+        ) =>
+          idAllocator.allocate.event({ threadId: recordedThreadId }).pipe(
+            Effect.map((id) => ({
+              id,
+              type: "provider-thread.updated" as const,
+              threadId: recordedThreadId,
+              occurredAt: now,
+              payload: recorded,
+            })),
+          );
         const run1 = RunId.make("run-bg-1");
         const run2 = RunId.make("run-bg-2");
         const attempt1 = RunAttemptId.make("attempt-bg-1");
@@ -4061,6 +4079,7 @@ it.effect.each([
               providerThreadId: providerThread.id,
               now,
             }),
+            yield* providerThreadRecorded(threadId, providerThread),
           ],
         });
         const runtime = yield* openFor(manager, providerSessionId, threadId, {
@@ -4088,12 +4107,19 @@ it.effect.each([
               now,
             });
             yield* eventSink.write({
-              events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: nextThreadId, now })],
+              events: [
+                yield* makeThreadCreatedEvent({ idAllocator, threadId: nextThreadId, now }),
+                yield* providerThreadRecorded(nextThreadId, nextProviderThread),
+              ],
             });
             yield* openFor(manager, providerSessionId, nextThreadId);
             const loadedConfig = yield* mcpSessions.read(nextThreadId);
             const loadedToken = rawBearer(loadedConfig);
-            yield* resume(nextThreadId, nextProviderThread);
+            // Loaded as an object whose id is not the recorded one, as a new Codex thread is.
+            yield* resume(nextThreadId, {
+              ...nextProviderThread,
+              id: ProviderThreadId.make(`loaded-as:${name}`),
+            });
             return {
               threadId: nextThreadId,
               providerThread: nextProviderThread,
@@ -4343,7 +4369,11 @@ it.effect.each([
             idleTimeoutMs: 1_000,
             unloads,
             hasPendingBackgroundWork: Ref.get(sessionBackgroundWorkProbe).pipe(Effect.flatten),
-            hasPendingBackgroundWorkForThread: Ref.get(pendingBackgroundWork),
+            // The adapter tracks a thread's work under the id its turns started with.
+            hasPendingBackgroundWorkForThread: (probed) =>
+              probed.id.startsWith("loaded-as:")
+                ? Effect.succeed(false)
+                : Ref.get(pendingBackgroundWork),
             beforeUnload: Ref.get(failUnload).pipe(
               Effect.flatMap((fail) => (fail ? Effect.die("unload failed") : Effect.void)),
             ),

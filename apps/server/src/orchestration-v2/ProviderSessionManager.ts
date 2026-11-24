@@ -342,7 +342,6 @@ interface LiveSessionEntry {
     ThreadId,
     {
       readonly providerThread: string;
-      readonly thread: OrchestrationV2ProviderThread;
       readonly credential: McpProviderSession.McpProviderSessionConfig;
     }
   >;
@@ -2084,7 +2083,7 @@ export const layerWithOptions = (
       const markProviderThreadLoaded = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
-        readonly providerThread: OrchestrationV2ProviderThread;
+        readonly providerThread: Parameters<typeof providerThreadRuntimeKey>[0];
         readonly providerThreadKey: string;
         readonly linkedEnvironments: boolean | null | undefined;
         readonly mcpCredential?: McpProviderSession.McpProviderSessionConfig | undefined;
@@ -2102,7 +2101,6 @@ export const layerWithOptions = (
               ? entry.loadedMcpCredentialByThread
               : new Map(entry.loadedMcpCredentialByThread).set(input.threadId, {
                   providerThread: providerThreadRuntimeKey(input.providerThread),
-                  thread: input.providerThread,
                   credential: input.mcpCredential,
                 });
           const linkedEnvironmentsByThread = new Map(entry.linkedEnvironmentsByThread);
@@ -2356,24 +2354,34 @@ export const layerWithOptions = (
                 if (yield* retainCurrentMcpCredential(current, { unbindRun: false })) return;
                 continue;
               }
-              // A turn that cannot take a new credential now (the provider already started it, no way to
-              // deliver one, or a reload that would end background work) keeps it unbound; the agent
-              // then names its run in the call.
-              // A shared session reloads only this thread, so only this thread's own work blocks it.
-              const loadedThread = (yield* Ref.get(sessions))
+              const loadedKey = (yield* Ref.get(sessions))
                 .get(sessionKey(input.providerSessionId))
-                ?.loadedMcpCredentialByThread.get(input.threadId)?.thread;
+                ?.loadedMcpCredentialByThread.get(input.threadId)?.providerThread;
+              const probeThread = input.runtime.hasPendingBackgroundWorkForThread;
+              // A shared session reloads only this thread, so only this thread's own work blocks it.
+              // The probe takes the thread as recorded: the adapter tracks its turns under that id.
               const pendingWork =
                 input.runtime.providerSession.capabilities.sessions
                   .supportsMultipleProviderThreadsPerSession &&
                 input.runtime.unloadThread !== undefined
-                  ? loadedThread === undefined ||
-                    input.runtime.hasPendingBackgroundWorkForThread === undefined
+                  ? loadedKey === undefined || probeThread === undefined
                     ? Effect.succeed(false)
-                    : input.runtime.hasPendingBackgroundWorkForThread(loadedThread, {
-                        includeSubagents: true,
-                      })
+                    : projectionStore.getThreadRecords(input.threadId, ["providerThreads"]).pipe(
+                        Effect.flatMap(({ providerThreads }) => {
+                          const loaded = providerThreads.find(
+                            (candidate) => providerThreadRuntimeKey(candidate) === loadedKey,
+                          );
+                          return loaded === undefined
+                            ? Effect.succeed(false)
+                            : probeThread(loaded, { includeSubagents: true });
+                        }),
+                        // Like a failed probe, a failed read keeps the thread's credential.
+                        Effect.orElseSucceed(() => true),
+                      )
                   : (input.runtime.hasPendingBackgroundWork ?? Effect.succeed(false));
+              // A turn that cannot take a new credential now (the provider already started it, no way to
+              // deliver one, or a reload that would end background work) keeps it unbound; the agent
+              // then names its run in the call.
               const cannotRotate =
                 input.providerStartedTurn === true ||
                 input.runtime.mcpCredentialRotation === "none" ||
