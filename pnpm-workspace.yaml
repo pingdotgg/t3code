@@ -80,8 +80,8 @@ catalog:
   tailwindcss: 4.3.3
   tldts: 7.4.2
   undici: 8.12.4
-  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
-  vite-plus: 1.4.0
+  vite: npm:@voidzero-dev/vite-plus-core@8.3.8001
+  vite-plus: 1.8.0
   ws: 8.22.0
   yaml: ^2.9.0
   # Markdown pipeline: the server counts find matches with the same parser the
@@ -351,3 +351,13 @@ minimumReleaseAgeExclude:
   - "@effect/sql-sqlite-do@4.1.5"
   - "@effect/vitest@4.1.5"
   - effect@4.1.5
+  - "@voidzero-dev/vite-plus-core@8.3.8001"
+  - "@voidzero-dev/vite-plus-darwin-arm64@1.8.0"
+  - "@voidzero-dev/vite-plus-darwin-x64@1.8.0"
+  - "@voidzero-dev/vite-plus-linux-arm64-gnu@1.8.0"
+  - "@voidzero-dev/vite-plus-linux-arm64-musl@1.8.0"
+  - "@voidzero-dev/vite-plus-linux-x64-gnu@1.8.0"
+  - "@voidzero-dev/vite-plus-linux-x64-musl@1.8.0"
+  - "@voidzero-dev/vite-plus-win32-arm64-msvc@1.8.0"
+  - "@voidzero-dev/vite-plus-win32-x64-msvc@1.8.0"
+  - vite-plus@1.8.0

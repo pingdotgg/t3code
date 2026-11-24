@@ -103,7 +103,7 @@
     "@types/use-sync-external-store": "^0.0.6",
     "@vercel/config": "^0.3.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "@vitest/browser-playwright": "5.0.5",
+    "@vitest/browser-playwright": "5.1.1",
     "compression": "^1.8.2",
     "gt": "2.27.0",
     "oxc-transform-react": "~0.152.0",
