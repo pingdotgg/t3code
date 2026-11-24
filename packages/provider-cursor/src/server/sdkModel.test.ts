@@ -65,6 +65,39 @@ describe("cursorSdkModelSelection", () => {
     });
   });
 
+  it.each([
+    { context: undefined, maxMode: true },
+    { context: "1m", maxMode: true },
+    { context: "300k", maxMode: undefined },
+  ])("sets Max Mode from the catalog for context $context", ({ context, maxMode }) => {
+    const sdkModels = [
+      {
+        id: "gemini-4-neon",
+        displayName: "Gemini 4 Neon",
+        parameters: [{ id: "context", values: [{ value: "300k" }, { value: "1m" }] }],
+        variants: [
+          { displayName: "300K", params: [{ id: "context", value: "300k" }] },
+          {
+            displayName: "1M",
+            isDefault: true,
+            isMaxMode: true,
+            params: [{ id: "context", value: "1m" }],
+          },
+        ],
+      },
+    ];
+    const selection = cursorSdkModelSelection(
+      {
+        instanceId,
+        model: "gemini-4-neon",
+        ...(context === undefined ? {} : { options: [{ id: "contextWindow", value: context }] }),
+      },
+      buildCursorDiscoveredModelsFromSdk(sdkModels),
+      sdkModels,
+    );
+    expect(selection.maxMode).toBe(maxMode);
+  });
+
   it("sends no parameters for a model missing from the catalog", () => {
     expect(cursorSdkModelSelection({ instanceId, model: "auto" }, models)).toEqual({
       id: "default",

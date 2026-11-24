@@ -4,6 +4,7 @@ import { ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -166,6 +167,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
           serverSelfUpdateProgress: advertised,
         });
       }),
+  );
+  it.effect("names the environment and its machine from the overrides", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-override-test-",
+      });
+      const descriptor = yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getDescriptor;
+      }).pipe(
+        Effect.provide(
+          layerServerEnvironment(baseDir).pipe(
+            Layer.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: {
+                    T3CODE_ENVIRONMENT_LABEL: " MacBook ",
+                    T3CODE_ENVIRONMENT_MACHINE_KIND: "laptop",
+                  },
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(descriptor.label).toBe("MacBook");
+      expect(descriptor.platform.machine).toBe("laptop");
+    }),
   );
   it.effect.each([
     { platform: "darwin", architecture: "arm64", supported: true },

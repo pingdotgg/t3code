@@ -1,4 +1,6 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
+import { m } from "../../i18n/messages";
 import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
 import { EnvironmentId, PROVIDER_SEND_TURN_MAX_FILE_BYTES } from "@t3tools/contracts";
@@ -9,13 +11,14 @@ import {
   type ResolvedSharePayload,
   type SharePayload,
 } from "expo-sharing";
+import { msg } from "gt-react-native";
 import { useSyncExternalStore } from "react";
 import { Platform } from "react-native";
 import { CommonActions } from "@react-navigation/native";
 
 import {
   buildIncomingShareDraft,
-  isShareFileUriUnderOwnedRoots,
+  isOwnedShareFileUri,
   selectIncomingShareAttachmentsForServer,
   type IncomingShareDestination,
   type IncomingShareDraft,
@@ -95,19 +98,25 @@ async function readFileSize(uri: string): Promise<number | null> {
   return new File(uri).size ?? null;
 }
 
-async function removeOwnedFile(uri: string): Promise<void> {
+/** `persisted` marks a copy this app saved itself, which needs no ownership check. */
+async function removeOwnedFile(uri: string, persisted = false): Promise<void> {
   if (!uri.startsWith("file:")) {
     return;
   }
   try {
     const { File, Paths } = await import("expo-file-system");
     // Delete only app-owned files; iOS open-in-place shares can reference the sender's original.
-    const ownedRootUris = [
-      Paths.document.uri,
-      Paths.cache.uri,
-      ...Object.values(Paths.appleSharedContainers ?? {}).map((directory) => directory.uri),
-    ];
-    if (!isShareFileUriUnderOwnedRoots(uri, ownedRootUris)) {
+    const owned =
+      persisted ||
+      isOwnedShareFileUri(uri, {
+        platform: Platform.OS,
+        cacheUri: Paths.cache.uri,
+        otherRootUris: [
+          Paths.document.uri,
+          ...Object.values(Paths.appleSharedContainers ?? {}).map((directory) => directory.uri),
+        ],
+      });
+    if (!owned) {
       return;
     }
     const file = new File(uri);
@@ -139,7 +148,7 @@ async function removeReplayedPayloadFiles(payloads: ReadonlyArray<SharePayload>)
       uris.add(payload.contentUri);
     }
   }
-  await Promise.all([...uris].map(removeOwnedFile));
+  await Promise.all([...uris].map((uri) => removeOwnedFile(uri)));
 }
 
 // Share the queue across remounts so lifecycle notifications cannot ingest one handoff twice.
@@ -184,10 +193,12 @@ const incomingShareInbox = new IncomingShareInbox({
     return {
       draft,
       cleanup: async () => {
-        await Promise.all([...cleanupUris].map(removeOwnedFile));
+        await Promise.all(
+          [...cleanupUris].map((uri) => removeOwnedFile(uri, persistedUris.has(uri))),
+        );
       },
       rollback: async () => {
-        await Promise.all([...persistedUris].map(removeOwnedFile));
+        await Promise.all([...persistedUris].map((uri) => removeOwnedFile(uri, true)));
       },
     };
   },
@@ -234,10 +245,11 @@ function reportRefreshFailure(cause: unknown) {
     cause,
     cause instanceof Error ? cause.cause : null,
   );
-  const error = cause instanceof Error ? cause : new Error("Could not import shared content.");
-  Dialog.alert("Could not import shared content", error.message, [
-    { text: "Dismiss", style: "cancel" },
-    { text: "Retry", onPress: () => void refreshIncomingShares() },
+  const error =
+    cause instanceof Error ? cause : new Error(m(msg("Could not import shared content.")));
+  Dialog.alert(m(msg("Could not import shared content")), error.message, [
+    { text: m(msg("Dismiss")), style: "cancel" },
+    { text: m(msg("Retry")), onPress: () => void refreshIncomingShares() },
   ]);
 }
 
@@ -318,30 +330,34 @@ export const incomingShareImports = makeIncomingShareImports({
     }),
   releaseUnusedAttachments: scheduleUnusedComposerAttachmentCleanup,
   onWarnings: (warnings) => {
-    Dialog.alert("Some shared content was skipped", warnings.join("\n"));
+    Dialog.alert(m(msg("Some shared content was skipped")), warnings.join("\n"));
   },
   onImportFailure: (target, error) => {
     Dialog.alert(
-      "Could not import shared content",
-      error instanceof Error ? error.message : "The shared content could not be saved.",
+      m(msg("Could not import shared content")),
+      error instanceof Error
+        ? (errorDisplayMessage(error, m) ?? error.message)
+        : m(msg("The shared content could not be saved.")),
       [
         {
-          text: "Cancel import",
+          text: m(msg("Cancel import")),
           style: "cancel",
           onPress: () => void incomingShareImports.cancel(target),
         },
-        { text: "Retry", onPress: () => incomingShareImports.retry(target) },
+        { text: m(msg("Retry")), onPress: () => incomingShareImports.retry(target) },
       ],
       { cancelable: false },
     );
   },
   onCancelFailure: (target, error) => {
     Dialog.alert(
-      "Could not cancel import",
-      error instanceof Error ? error.message : "The shared content could not be restored safely.",
+      m(msg("Could not cancel import")),
+      error instanceof Error
+        ? (errorDisplayMessage(error, m) ?? error.message)
+        : m(msg("The shared content could not be restored safely.")),
       [
-        { text: "Retry import", onPress: () => incomingShareImports.retry(target) },
-        { text: "Retry cancel", onPress: () => void incomingShareImports.cancel(target) },
+        { text: m(msg("Retry import")), onPress: () => incomingShareImports.retry(target) },
+        { text: m(msg("Retry cancel")), onPress: () => void incomingShareImports.cancel(target) },
       ],
       { cancelable: false },
     );

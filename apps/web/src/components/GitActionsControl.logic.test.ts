@@ -4,12 +4,15 @@ import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildMenuItems,
+  type DefaultBranchConfirmableAction,
   hasUsableGitMenuContent,
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
   resolveDefaultBranchActionDialogCopy,
+  resolveFeatureBranchUnavailableReason,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
+  getMenuActionDisabledReason,
 } from "./GitActionsControl.logic";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
@@ -30,6 +33,12 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
     pr: null,
     ...overrides,
   };
+}
+
+function pushDisabledReason(gitStatus: VcsStatusResult): string | null {
+  const item = buildMenuItems(gitStatus, false).find((menuItem) => menuItem.id === "push");
+  assert.isDefined(item);
+  return getMenuActionDisabledReason({ item, gitStatus, isBusy: false, hasPrimaryRemote: true });
 }
 
 describe("when: ref is clean, ahead, and has an open PR", () => {
@@ -77,6 +86,7 @@ describe("when: ref is clean, up to date, and has no open PR", () => {
       buildMenuItems(dirtyFeature, false).find((item) => item.id === "pr")?.disabled,
       false,
     );
+    assert.equal(pushDisabledReason(dirtyFeature), "No local commits to push.");
   });
 
   it("offers the actions menu only when something in it is usable", () => {
@@ -117,6 +127,32 @@ describe("when: on default ref without open PR", () => {
       disabled: false,
     });
   });
+
+  it("resolveQuickAction pushes without committing when the tree is clean and ahead", () => {
+    const withUpstream = resolveQuickAction(
+      status({ refName: "main", aheadCount: 1 }),
+      false,
+      true,
+    );
+    assert.deepInclude(withUpstream, { kind: "run_action", action: "push", label: "Push" });
+
+    const withoutUpstream = resolveQuickAction(
+      status({ refName: "main", aheadCount: 1, hasUpstream: false }),
+      false,
+      true,
+    );
+    assert.deepInclude(withoutUpstream, { kind: "run_action", action: "push", label: "Push" });
+  });
+
+  it("offers a feature branch only to actions that commit the changes", () => {
+    const reason = (action: DefaultBranchConfirmableAction, hasWorkingTreeChanges: boolean) =>
+      resolveFeatureBranchUnavailableReason({ action, branchName: "main", hasWorkingTreeChanges });
+    assert.isNull(reason("commit_push", true));
+    assert.isNull(reason("commit_push_pr", true));
+    assert.isNotNull(reason("commit_push", false));
+    assert.isNotNull(reason("push", true));
+    assert.isNotNull(reason("create_pr", true));
+  });
 });
 
 describe("when: local changes are behind upstream", () => {
@@ -129,6 +165,10 @@ describe("when: local changes are behind upstream", () => {
       action: "commit",
     } as const;
     assert.deepEqual(resolveQuickAction(behind, false), commit);
+    assert.equal(
+      pushDisabledReason({ ...behind, aheadCount: 1 }),
+      "Branch is behind upstream. Pull/rebase before pushing.",
+    );
     assert.deepEqual(
       resolveQuickAction(
         {
@@ -281,13 +321,26 @@ describe("resolveChangesTotals", () => {
           hasWorkingTreeChanges: true,
           branchChanges: { baseRef: "main", insertions: 0, deletions: 0 },
           workingTree: {
-            files: [{ path: "a.ts", insertions: 5, deletions: 1 }],
+            files: [
+              { path: "a.ts", insertions: 4, deletions: 1 },
+              { path: "README.md", insertions: 1, deletions: 0 },
+            ],
             insertions: 5,
             deletions: 1,
           },
         }),
       ),
-      { insertions: 5, deletions: 1 },
+      {
+        insertions: 5,
+        deletions: 1,
+        breakdown: {
+          code: { additions: 4, deletions: 1 },
+          tests: { additions: 0, deletions: 0 },
+          mocks: { additions: 0, deletions: 0 },
+          generated: { additions: 0, deletions: 0 },
+          docs: { additions: 1, deletions: 0 },
+        },
+      },
     );
   });
 
@@ -303,7 +356,7 @@ describe("resolveChangesTotals", () => {
           },
         }),
       ),
-      { insertions: 20, deletions: 3, baseRef: "origin/master" },
+      { insertions: 20, deletions: 3, baseRef: "origin/master", breakdown: null },
     );
   });
 
@@ -326,15 +379,27 @@ describe("resolveChangesTotals", () => {
         ...source,
         files: [
           { path: "a.ts", previousPath: null, additions: 4, deletions: 1 },
-          { path: "b.ts", previousPath: null, additions: 2, deletions: 0 },
+          { path: "a.test.ts", previousPath: null, additions: 2, deletions: 0 },
         ],
       }),
-      { insertions: 6, deletions: 1, baseRef: "release" },
+      {
+        insertions: 6,
+        deletions: 1,
+        baseRef: "release",
+        breakdown: {
+          code: { additions: 4, deletions: 1 },
+          tests: { additions: 2, deletions: 0 },
+          mocks: { additions: 0, deletions: 0 },
+          generated: { additions: 0, deletions: 0 },
+          docs: { additions: 0, deletions: 0 },
+        },
+      },
     );
     assert.deepEqual(resolveChangesTotals(dirty, source), {
       insertions: 20,
       deletions: 3,
       baseRef: "main",
+      breakdown: null,
     });
   });
 

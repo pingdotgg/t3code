@@ -6,13 +6,16 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { readGtkPrimaryPasteEnabled } from "./DesktopPrimaryPaste.ts";
 
 const encoder = new TextEncoder();
 
-const spawnerWithStdout = (stdout: Stream.Stream<Uint8Array>) =>
-  ChildProcessSpawner.make(() =>
+const spawnerWithStdout = (
+  stdout: Stream.Stream<Uint8Array> | ((command: string) => Stream.Stream<Uint8Array>),
+) =>
+  ChildProcessSpawner.make((command) =>
     Effect.succeed(
       ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
@@ -21,7 +24,10 @@ const spawnerWithStdout = (stdout: Stream.Stream<Uint8Array>) =>
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
         stdin: Sink.drain,
-        stdout,
+        stdout:
+          typeof stdout === "function"
+            ? stdout(command._tag === "StandardCommand" ? command.command : "")
+            : stdout,
         stderr: Stream.empty,
         all: Stream.empty,
         getInputFd: () => Sink.drain,
@@ -30,9 +36,20 @@ const spawnerWithStdout = (stdout: Stream.Stream<Uint8Array>) =>
     ),
   );
 
-const read = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
+const notFound = PlatformError.systemError({
+  _tag: "NotFound",
+  module: "ChildProcess",
+  method: "spawn",
+  description: "not found",
+});
+
+const read = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  desktop = "ubuntu:GNOME",
+) =>
   readGtkPrimaryPasteEnabled.pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Effect.provideService(HostProcess.Environment, { XDG_CURRENT_DESKTOP: desktop }),
   );
 
 describe("readGtkPrimaryPasteEnabled", () => {
@@ -45,18 +62,32 @@ describe("readGtkPrimaryPasteEnabled", () => {
     }),
   );
 
+  it.effect("outside GNOME, honours only a value the user set", () =>
+    Effect.gen(function* () {
+      // gsettings reports the schema default, which only GNOME applies; dconf prints nothing when unset.
+      const unset = spawnerWithStdout((command) =>
+        command === "gsettings" ? Stream.make(encoder.encode("false\n")) : Stream.empty,
+      );
+      assert.isFalse(yield* read(unset, "ubuntu:GNOME"));
+      assert.isTrue(yield* read(unset, "XFCE"));
+      assert.isTrue(yield* read(unset, ""));
+      const userSet = spawnerWithStdout((command) =>
+        command === "dconf" ? Stream.make(encoder.encode("false\n")) : Stream.empty,
+      );
+      assert.isFalse(yield* read(userSet, "Hyprland"));
+      // Without dconf-cli, the effective value is the best evidence of an opt-out.
+      const noDconf = ChildProcessSpawner.make((command) =>
+        command._tag === "StandardCommand" && command.command === "dconf"
+          ? Effect.fail(notFound)
+          : spawnerWithStdout(Stream.make(encoder.encode("false\n"))).spawn(command),
+      );
+      assert.isFalse(yield* read(noDconf, "XFCE"));
+    }),
+  );
+
   it.effect("stays enabled when gsettings cannot run", () =>
     Effect.gen(function* () {
-      const missing = ChildProcessSpawner.make(() =>
-        Effect.fail(
-          PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-            description: "gsettings not found",
-          }),
-        ),
-      );
+      const missing = ChildProcessSpawner.make(() => Effect.fail(notFound));
       assert.isTrue(yield* read(missing));
     }),
   );
