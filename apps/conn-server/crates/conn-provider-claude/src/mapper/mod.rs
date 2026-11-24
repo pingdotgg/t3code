@@ -9,6 +9,8 @@ mod notices;
 mod presentation;
 mod roster;
 mod subagents;
+pub(crate) use subagents::transcript_answers;
+pub use subagents::{MemberAnswers, MemberTranscript, TranscriptCursor};
 mod wakes;
 mod workflows;
 
@@ -65,6 +67,9 @@ pub enum Out {
     StopTask {
         task_id: String,
     },
+    /// A workflow member settled: read its transcript off the runtime thread, then hand the
+    /// answer back with [`Mapper::member_transcript`].
+    ReadMemberTranscript(MemberTranscript),
 }
 
 const DEFAULT_CONTEXT_TOKENS: u64 = 200_000;

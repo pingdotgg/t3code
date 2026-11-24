@@ -8681,6 +8681,7 @@ async fn secret_cards_keep_their_position_and_final_status_and_cancel_on_restart
         let mut wrong = command.clone();
         wrong["commandId"] = json!("secret-wrong");
         wrong["nodeId"] = json!("wrong");
+        wrong["commandId"] = json!("secret-wrong");
         assert!(engine.record_secret_request(wrong).await.is_err());
         engine.record_secret_request(command.clone()).await.unwrap();
         let p = projection(&engine, "t1").await;
