@@ -342,6 +342,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       <CommandDialog
         open={state.open}
         onOpenChange={(open, eventDetails) => {
+          // Held Escape emits repeat keydowns; only a fresh press should step back or close.
+          if (!open && eventDetails.reason === "escape-key" && eventDetails.event.repeat) {
+            eventDetails.cancel();
+            return;
+          }
           if (!open && eventDetails.reason === "escape-key" && state.mode !== "command") {
             eventDetails.cancel();
             dispatchCommandPalette({ _tag: "BackToCommand" });
