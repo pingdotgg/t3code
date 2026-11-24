@@ -18,6 +18,7 @@ import { SshCommandError } from "@t3tools/ssh/errors";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -192,7 +193,14 @@ const fixture = Effect.fn("fixture")(function* (
   const listing = { hangs: false, requested: yield* Deferred.make<void>() };
   let booted = false;
   let shutDown = false;
-  const connection = { online: true, kind: "local" as "local" | "ssh", failShutdown: false };
+  const connection = {
+    online: true,
+    kind: "local" as "local" | "ssh",
+    failShutdown: false,
+    shutdownDelay: undefined as Duration.Input | undefined,
+    adbDevices: undefined as { code: number; stdout: string; stderr: string } | undefined,
+  };
+  const shutdownRequested = yield* Deferred.make<void>();
   const http = HttpClient.make((request) =>
     Effect.gen(function* () {
       requests.push(request.url);
@@ -230,6 +238,8 @@ const fixture = Effect.fn("fixture")(function* (
         return HttpClientResponse.fromWeb(request, new Response(yield* Ref.get(screenshotBody)));
       }
       if (request.url.endsWith("/shutdown")) {
+        yield* Deferred.succeed(shutdownRequested, undefined);
+        if (connection.shutdownDelay !== undefined) yield* Effect.sleep(connection.shutdownDelay);
         if (connection.failShutdown)
           return HttpClientResponse.fromWeb(request, Response.json({ ok: false }));
         shutDown = true;
@@ -283,10 +293,19 @@ const fixture = Effect.fn("fixture")(function* (
       );
     }),
   );
-  const run = (command: string) =>
+  const run = (command: string, args: ReadonlyArray<string>) =>
     command === "emulator"
       ? Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" })
-      : Ref.get(encoderResult);
+      : command === "adb" && args.join(" ") === "devices"
+        ? Effect.sync(
+            () =>
+              connection.adbDevices ?? {
+                code: 0,
+                stdout: `List of devices attached\n${booted ? "emulator-5554\tdevice\n" : ""}`,
+                stderr: "",
+              },
+          )
+        : Ref.get(encoderResult);
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
@@ -426,6 +445,7 @@ const fixture = Effect.fn("fixture")(function* (
     iosAvailable,
     listing,
     endDevice,
+    shutdownRequested,
   };
 });
 
@@ -1573,6 +1593,66 @@ it.effect.each([
       }
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
 );
+
+describe("Android close with shutdown", () => {
+  const openEmulator = Effect.fn("openEmulator")(function* () {
+    const harness = yield* fixture();
+    yield* harness.service.configure({ enabled: true });
+    const threadId = ThreadId.make("android-close");
+    const session = yield* harness.service.open({
+      threadId,
+      deviceId: "Pixel_API_35",
+      platform: "android",
+    });
+    expect(session.deviceId).toBe("emulator-5554");
+    return { ...harness, threadId };
+  });
+
+  it.effect("closes the session on a retry once the emulator has exited", () =>
+    Effect.gen(function* () {
+      const { service, connection, endDevice, threadId } = yield* openEmulator();
+      // The hub's `adb emu kill` fails once the serial is gone, so every attempt is rejected.
+      connection.failShutdown = true;
+      const first = yield* Effect.exit(service.close({ threadId, shutdown: true }));
+      expect(Exit.isFailure(first)).toBe(true);
+      expect((yield* service.state).sessions).toHaveLength(1);
+
+      endDevice();
+      yield* service.close({ threadId, shutdown: true });
+      expect((yield* service.state).sessions).toEqual([]);
+    }),
+  );
+
+  it.effect.each([
+    {
+      adb: "lists it offline",
+      result: { code: 0, stdout: "List of devices attached\nemulator-5554\toffline\n", stderr: "" },
+    },
+    { adb: "fails", result: { code: 1, stdout: "", stderr: "adb: no server" } },
+  ])("keeps the session after a rejected shutdown when adb $adb", ({ result }) =>
+    Effect.gen(function* () {
+      const { service, connection, threadId } = yield* openEmulator();
+      connection.failShutdown = true;
+      connection.adbDevices = result;
+      const exit = yield* Effect.exit(service.close({ threadId, shutdown: true }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect((yield* service.state).sessions).toHaveLength(1);
+    }),
+  );
+
+  it.effect("waits for an emulator the hub takes longer than 15 seconds to see exit", () =>
+    Effect.gen(function* () {
+      const { service, connection, shutdownRequested, threadId } = yield* openEmulator();
+      // The hub allows the emulator 30 seconds to leave adb after the kill.
+      connection.shutdownDelay = Duration.seconds(25);
+      const closing = yield* Effect.forkChild(service.close({ threadId, shutdown: true }));
+      yield* Deferred.await(shutdownRequested);
+      yield* TestClock.adjust(Duration.seconds(25));
+      expect(Exit.isSuccess(yield* Fiber.await(closing))).toBe(true);
+      expect((yield* service.state).sessions).toEqual([]);
+    }),
+  );
+});
 
 it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
   "retains hub inventory on %s when AVD enumeration fails and recovers on retry",

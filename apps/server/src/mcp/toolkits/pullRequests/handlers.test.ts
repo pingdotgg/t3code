@@ -1369,6 +1369,33 @@ describe("source control tools", () => {
     }),
   );
 
+  it.effect("pins a review to the head the caller read, and approves only with one", () =>
+    Effect.gen(function* () {
+      const reviews: Array<PullRequestSubmitReviewInput> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          submitReview: (input) => Effect.sync(() => void reviews.push(input)),
+        },
+      });
+      yield* harness.call("pull_request_review", {
+        verdict: "approve",
+        expectedHeadSha: "abc1234def5678",
+      });
+      expect(reviews).toMatchObject([{ verdict: "approve", expectedHeadSha: "abc1234def5678" }]);
+
+      const error = yield* harness
+        .call("pull_request_review", { verdict: "approve" })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("expectedHeadSha");
+      expect(reviews).toHaveLength(1);
+
+      yield* harness.call("pull_request_review", { verdict: "comment", body: "A question." });
+      expect(reviews).toHaveLength(2);
+      expect(reviews[1]).not.toHaveProperty("expectedHeadSha");
+    }),
+  );
+
   it.effect("updates labels, requests reviewers by login, and closes the PR", () =>
     Effect.gen(function* () {
       const calls: Array<unknown> = [];

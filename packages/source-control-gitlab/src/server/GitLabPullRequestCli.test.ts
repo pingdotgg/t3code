@@ -1804,6 +1804,29 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("approves at the head the caller reviewed", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const approval = {
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        verdict: "approve" as const,
+        body: "",
+        comments: [],
+      };
+
+      yield* cli.submitReview({ ...approval, expectedHeadSha: "0a1b2c3d4e5f" });
+      expect(argsOfCall(0)[1]).toContain("merge_requests/7/approve");
+      expect(JSON.parse(callAt(0).stdin ?? "{}")).toEqual({ sha: "0a1b2c3d4e5f" });
+
+      yield* cli.submitReview(approval);
+      expect(argsOfCall(1)[1]).toContain("merge_requests/7/approve");
+      expect(callAt(1).stdin).toBeUndefined();
+    }),
+  );
+
   it.effect("requests changes as a reviewer and reports what GitLab refused", () =>
     Effect.gen(function* () {
       mockedExecute
