@@ -162,26 +162,19 @@ async fn local_status_inner(cwd: &Path) -> VcsResult<VcsStatusLocalResult> {
     };
     let numstat = match numstat {
         Ok(out) => review::parse_numstat(&out.stdout_text()),
+        // No commit yet: one net diff against the empty tree, as T3 does. Staged and unstaged
+        // diffs summed would count a line replaced before the first commit twice.
         Err(ProcessError::Exit { stderr, .. }) if is_unborn_stderr(&stderr) => {
-            let staged = git(
+            let empty = repo::empty_tree(cwd).await?;
+            let net = git(
                 "GitVcsDriver.statusDetails.numstat",
                 cwd,
-                ["diff", "--cached", "--numstat", "-z"],
+                ["diff-index", "-M", "--numstat", "-z", empty.as_str(), "--"],
             )
             .max_stdout(METADATA_MAX_BYTES, OnLimit::Fail)
             .text()
             .await?;
-            let unstaged = git(
-                "GitVcsDriver.statusDetails.numstat",
-                cwd,
-                ["diff-files", "--numstat", "-z"],
-            )
-            .max_stdout(METADATA_MAX_BYTES, OnLimit::Fail)
-            .text()
-            .await?;
-            let mut files = review::parse_numstat(&staged);
-            files.extend(review::parse_numstat(&unstaged));
-            files
+            review::parse_numstat(&net)
         }
         Err(e) => return Err(e.into()),
     };

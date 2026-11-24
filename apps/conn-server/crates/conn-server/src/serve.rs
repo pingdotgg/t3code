@@ -273,6 +273,7 @@ pub async fn serve_with_instances(
         environment: environment.clone(),
         scheduled_tasks: OnceLock::new(),
         devices: OnceLock::new(),
+        settle_cleanups: Arc::default(),
     });
 
     // A state folder the T3 server used: its threads and projects, once (`t3_import.rs`).

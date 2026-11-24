@@ -14,6 +14,7 @@
 
 mod feed;
 mod history;
+mod processes;
 mod pty;
 mod sanitize;
 mod store;
@@ -169,10 +170,14 @@ struct Session {
     exit_signal: Option<i64>,
     /// The foreground process group and its command name, while one runs.
     job: Option<(i32, String)>,
+    /// The running shell's executable (`getShell`).
+    shell: Option<String>,
     history: History,
     filter: HistoryFilter,
     utf8: Utf8Stream,
     sequence: i64,
+    /// Writes to the shell (`inputCount`): with `sequence`, the terminal's activity mark.
+    input_count: u64,
     updated_at: String,
     touched: u64,
     cols: u16,
@@ -390,6 +395,9 @@ impl TerminalManager {
             if input.reply == Some(true) && !state.accepts_query_reply(&key, viewer) {
                 return Ok(());
             }
+            if let Some(session) = state.sessions.get_mut(&key) {
+                session.input_count += 1;
+            }
             found
         };
         let bytes = pty_input(&input.data, input.binary == Some(true));
@@ -498,8 +506,76 @@ impl TerminalManager {
         }
     }
 
+    /// `getShell`: the executable of a running terminal's shell.
+    pub fn shell(&self, thread_id: &str, terminal_id: &str) -> Option<String> {
+        let state = self.inner.lock();
+        let session = state
+            .sessions
+            .get(&(thread_id.to_owned(), terminal_id.to_owned()))?;
+        session.proc.as_ref()?;
+        session.shell.clone()
+    }
+
+    /// `closeIdle` (`Manager.ts:3880`): closes the thread's running terminals (or just
+    /// `terminal_id`) whose shell runs nothing, keeping their scrollback. One process table
+    /// read decides: a terminal is kept when its shell has a child (a foreground or background
+    /// job), was replaced by `exec`, or had input or output while it was checked. When the
+    /// table cannot be read, every terminal stays.
+    pub async fn close_idle(&self, thread_id: &str, terminal_id: Option<&str>) {
+        self.close_idle_with(thread_id, terminal_id, processes::process_table())
+            .await;
+    }
+
+    async fn close_idle_with(
+        &self,
+        thread_id: &str,
+        terminal_id: Option<&str>,
+        table: impl std::future::Future<Output = std::io::Result<processes::ProcessTable>>,
+    ) {
+        let marks: Vec<(Key, (u64, i64, u64))> = {
+            let state = self.inner.lock();
+            state
+                .sessions
+                .iter()
+                .filter(|((thread, terminal), s)| {
+                    thread == thread_id
+                        && terminal_id.is_none_or(|t| t == terminal)
+                        && s.proc.is_some()
+                })
+                .map(|(key, s)| (key.clone(), s.activity_mark()))
+                .collect()
+        };
+        if marks.is_empty() {
+            return;
+        }
+        let table = match table.await {
+            Ok(table) => table,
+            Err(error) => {
+                eprintln!("conn-terminal: failed to close idle terminals of {thread_id}: {error}");
+                return;
+            }
+        };
+        let mut state = self.inner.lock();
+        for (key, mark) in marks {
+            let idle = state.sessions.get(&key).is_some_and(|s| {
+                s.activity_mark() == mark
+                    && s.proc.as_ref().is_some_and(|p| {
+                        !table.has_running_subprocess(
+                            p.pid,
+                            s.shell.as_deref(),
+                            pty::foreground_group(&p.control),
+                        )
+                    })
+            });
+            if idle {
+                self.inner.close_locked(&mut state, &key, false);
+            }
+        }
+    }
+
     /// Closes the thread's terminals that were opened with `stopOnSettle`, keeping their
-    /// scrollback. For the engine, when a thread settles.
+    /// scrollback. For the engine, when a thread settles; T3's `closeOnSettle` then calls
+    /// [`Self::close_idle`] for the thread.
     pub fn close_on_settle(&self, thread_id: &str) {
         let mut state = self.inner.lock();
         let keys: Vec<Key> = state
@@ -587,10 +663,14 @@ impl Inner {
         grid: Option<(u16, u16)>,
     ) -> Result<(), TerminalOpenError> {
         check_cwd(&launch.cwd)?;
-        let (cols, rows) = grid.unwrap_or((
-            launch.cols.unwrap_or(DEFAULT_COLS),
-            launch.rows.unwrap_or(DEFAULT_ROWS),
-        ));
+        // A reused terminal keeps its grid where the launch leaves a dimension out.
+        let (cols, rows) = grid.unwrap_or_else(|| {
+            let (cols, rows) = state
+                .sessions
+                .get(key)
+                .map_or((DEFAULT_COLS, DEFAULT_ROWS), |s| (s.cols, s.rows));
+            (launch.cols.unwrap_or(cols), launch.rows.unwrap_or(rows))
+        });
         let env = launch.env.unwrap_or_default();
         let grace = self.config.kill_grace;
         if let Some(session) = state.sessions.get_mut(key) {
@@ -652,10 +732,12 @@ impl Inner {
                     exit_code: None,
                     exit_signal: None,
                     job: None,
+                    shell: None,
                     history,
                     filter: HistoryFilter::default(),
                     utf8: Utf8Stream::default(),
                     sequence: 0,
+                    input_count: 0,
                     updated_at: conn_support::time::now_iso(),
                     touched,
                     cols,
@@ -709,6 +791,7 @@ impl Inner {
                         }
                     },
                 ));
+                session.shell = Some(spawned.shell);
                 session.proc = Some(Proc {
                     writer: Arc::new(AsyncMutex::new(spawned.writer)),
                     control,
@@ -1063,6 +1146,11 @@ impl State {
 }
 
 impl Session {
+    /// `terminalActivityMark`: changes with each output, resize, write and restart.
+    fn activity_mark(&self) -> (u64, i64, u64) {
+        (self.generation, self.sequence, self.input_count)
+    }
+
     fn advance(&mut self) {
         self.sequence += 1;
         self.touched = tick();
