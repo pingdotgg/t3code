@@ -1,13 +1,11 @@
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 
 import type { CursorCredentialSource } from "./accountCache.ts";
-import { readCursorAccountUsage, type CursorAccountUsageReadResult } from "./accountUsage.ts";
-import * as CursorKeychain from "./CursorKeychain.ts";
+import { makeCursorAccountUsageReader, type CursorAccountUsageReadResult } from "./accountUsage.ts";
 
 export class CursorAccountReader extends Context.Service<
   CursorAccountReader,
@@ -23,18 +21,11 @@ export class CursorAccountReader extends Context.Service<
 export const layer = Layer.effect(
   CursorAccountReader,
   Effect.gen(function* () {
-    const keychain = yield* CursorKeychain.CursorKeychain;
-    const context = yield* Effect.context<
-      FileSystem.FileSystem | Crypto.Crypto | HttpClient.HttpClient
-    >();
+    const context = yield* Effect.context<Digest.Digest | HttpClient.HttpClient>();
+    const read = yield* makeCursorAccountUsageReader;
     return CursorAccountReader.of({
       read: Effect.fn("CursorAccountReader.read")(function (credentialSource, sinceMs, untilMs) {
-        return readCursorAccountUsage(
-          credentialSource,
-          sinceMs,
-          untilMs,
-          keychain.accessToken,
-        ).pipe(Effect.provideContext(context));
+        return read(credentialSource, sinceMs, untilMs).pipe(Effect.provideContext(context));
       }),
     });
   }),

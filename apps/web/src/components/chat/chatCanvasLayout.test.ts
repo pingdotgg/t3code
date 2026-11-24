@@ -23,6 +23,47 @@ const expectClear = (result: ReturnType<typeof resolve>) => {
 };
 
 describe("chat canvas layout", () => {
+  it("does not enlarge the preview when its right edge is dragged inward", () => {
+    for (const height of [300, 400, 600, 900]) {
+      for (const x of [12, 200, 500, 700]) {
+        const start = resolve(1000, { ...preview, position: { x, y: 500 } }, height).frame!;
+        const resized = resizePreviewMiniPlayer({
+          start,
+          direction: "east",
+          delta: { x: -30, y: 0 },
+          source: preview.source,
+          container: { width: 1000, height },
+        });
+        expect(resized.width, JSON.stringify({ height, x, start, resized })).toBeLessThanOrEqual(
+          start.width,
+        );
+        const rendered = resolve(
+          1000,
+          {
+            ...preview,
+            width: resized.width,
+            position: resized,
+            lastInteraction: "resize",
+          },
+          height,
+        ).frame!;
+        expect(
+          rendered.width,
+          JSON.stringify({ height, x, start, resized, rendered }),
+        ).toBeLessThanOrEqual(start.width);
+        expect(rendered.x).toBe(start.x);
+        expect(rendered.y, JSON.stringify({ height, x, start, resized, rendered })).toBe(start.y);
+        expect(
+          resolve(1000, {
+            ...preview,
+            width: resized.width,
+            position: resized,
+            lastInteraction: "resize",
+          }).frame!.width,
+        ).toBe(resized.width);
+      }
+    }
+  });
   it("lifts a growing preview above the composer without snapping at the chat boundary", () => {
     let previous: ReturnType<typeof resolve> | undefined;
     for (let width = 480; width <= 1100; width++) {
@@ -102,17 +143,16 @@ describe("chat canvas layout", () => {
     });
     expect(result.frame).toEqual({ x: 1260, y: 351, width: 240, height: 365 });
     expect(result.overlapsDetailsCard).toBe(false);
-    expect(result.chat).toEqual({ left: 330, width: 736, insetStart: 0, insetEnd: 188 });
+    expect(result.chat).toEqual({ left: 424, width: 736, insetStart: 0, insetEnd: 0 });
   });
-  it("centers the chat beside a details card it would crowd", () => {
+  it("moves the chat left only as far as a details card it would crowd requires", () => {
     const { chat } = resolveChatCanvasLayout({
       container: { width: 1344, height: 988 },
       maxChatWidth: 736,
       detailsCard: { left: 1052, right: 1332, bottom: 339 },
       preview: null,
     });
-    // Equal space on both sides of the chat.
-    expect(chat).toMatchObject({ left: (1052 - 736) / 2, width: 736 });
+    expect(chat).toMatchObject({ left: 1052 - 32 - 736, width: 736 });
   });
   it("keeps the chat canvas-centered when it clears the details card", () => {
     const result = resolveChatCanvasLayout({
@@ -255,7 +295,7 @@ describe("chat canvas layout", () => {
       const compact = layout(460);
       expect(compact.frame!.x + compact.frame!.width).toBe(1572);
       expect(compact.frame!.width).toBe(460);
-      expect(compact.chat.left).toBe(330);
+      expect(compact.chat.left).toBe(364);
       expect(compact.overlapsDetailsCard).toBe(true);
       expect(density(compact)).toBe("compact");
       expectClear(compact);
@@ -286,6 +326,53 @@ describe("chat canvas layout", () => {
   });
 });
 
+describe("html preview lane", () => {
+  const wide = (
+    width: number,
+    options: Partial<Parameters<typeof resolveChatCanvasLayout>[0]> = {},
+    maxHtmlPreviewWidth = 1152,
+  ) =>
+    resolveChatCanvasLayout({
+      container: { width, height: 900 },
+      preview: null,
+      maxChatWidth: 736,
+      maxHtmlPreviewWidth,
+      composerHeight: 180,
+      ...options,
+    });
+  it("matches the chat column unless the setting allows more", () => {
+    const result = wide(1600, {}, 736);
+    expect(result.htmlPreview).toEqual({ left: result.chat.left, width: result.chat.width });
+  });
+  it("widens around a chat column that stays where it was", () => {
+    const result = wide(1600);
+    expect(result.chat).toEqual(wide(1600, {}, 736).chat);
+    expect(result.htmlPreview).toEqual({ left: 224, width: 1152 });
+    expect(wide(1200).htmlPreview).toEqual({ left: 48, width: 1104 });
+    expect(wide(1600, {}, 1600).htmlPreview).toEqual({ left: 48, width: 1504 });
+  });
+  it("is never narrower than the chat column", () => {
+    const result = wide(1600, { maxChatWidth: 1600 }, 1152);
+    expect(result.htmlPreview).toEqual({ left: result.chat.left, width: result.chat.width });
+  });
+  it("stops short of the details card", () => {
+    const detailsCard = { left: 1308, right: 1588, bottom: 400 };
+    const result = wide(1600, { detailsCard });
+    expect(result.chat).toEqual(wide(1600, { detailsCard }, 736).chat);
+    expect(result.htmlPreview).toEqual({ left: 124, width: 1152 });
+    expect(wide(1600, { detailsCard }, 1600).htmlPreview).toEqual({ left: 48, width: 1228 });
+  });
+  it("stops short of a mini player beside the chat and matches chat under one over it", () => {
+    const beside = wide(1900, { preview: { ...preview, position: { x: 1500, y: 600 } } });
+    expect(beside.overlapsChat).toBe(false);
+    expect(beside.htmlPreview.left + beside.htmlPreview.width).toBe(beside.frame!.x - 12);
+    expect(beside.htmlPreview.width).toBeGreaterThan(beside.chat.width);
+    const over = wide(1000, { preview: { ...preview, position: { x: 12, y: 700 } } });
+    expect(over.overlapsChat).toBe(true);
+    expect(over.htmlPreview).toEqual({ left: over.chat.left, width: over.chat.width });
+  });
+});
+
 describe("workspace card beside chat", () => {
   const withCard = (width: number, player: ChatCanvasPreview | null = null, maxChatWidth = 736) =>
     resolveChatCanvasLayout({
@@ -295,6 +382,9 @@ describe("workspace card beside chat", () => {
       detailsCard: { left: width - 292, right: width - 12, bottom: 400 },
       preview: player,
     });
+  it("keeps chat centered while the card fits beside it", () => {
+    expect(withCard(1500).chat).toEqual({ left: 382, width: 736, insetStart: 0, insetEnd: 0 });
+  });
   it("narrows chat only after it reaches the left padding", () => {
     expect(withCard(1108).chat).toMatchObject({ left: 48, width: 736 });
     expect(withCard(1028).chat).toEqual({ left: 48, width: 656, insetStart: 0, insetEnd: 276 });
@@ -313,5 +403,19 @@ describe("workspace card beside chat", () => {
       expect(chat.width).toBeGreaterThanOrEqual(640);
       expect(card.x - chat.left - chat.width).toBeGreaterThanOrEqual(32);
     }
+  });
+  it("stays out of a panel animation that ends or starts too narrow for it", () => {
+    const place = (width: number, narrowestWidth: number) =>
+      resolveThreadDetailsCardLayout({
+        container: { width, height: 900 },
+        narrowestWidth,
+        lane: { padding: 48, minChatWidth: 640 },
+        frame: null,
+      });
+    expect(place(1344, 1344)).toMatchObject({ x: 1052 });
+    expect(place(1344, 804)).toBeNull();
+    expect(place(1344, 1124)).toMatchObject({ x: 1052 });
+    // A window resize mid-animation leaves the sampled ends wider than the canvas.
+    expect(place(900, 1344)).toBeNull();
   });
 });

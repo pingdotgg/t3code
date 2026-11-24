@@ -2,6 +2,7 @@ import { assert, describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   compileResolvedKeybindingsConfig,
+  mergeWithDefaultKeybindings,
   parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
 
@@ -9,10 +10,13 @@ import { resolveShortcutCommand } from "../../keybindings";
 
 import {
   buildKeybindingRows,
+  buildWhenVariableOptions,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
   shortcutToKeybindingInput,
+  shortcutToKeybindingParts,
+  unknownWhenVariables,
   whenAstToExpression,
 } from "./KeybindingsSettings.logic";
 
@@ -37,6 +41,35 @@ describe("KeybindingsSettings.logic", () => {
     );
   });
 
+  it("resets an edited shortcut to the built-in one its command no longer has", () => {
+    const rows = buildKeybindingRows(
+      mergeWithDefaultKeybindings(
+        compileResolvedKeybindingsConfig([
+          { command: "chat.new", key: "mod+n", when: "!terminalFocus" },
+          { command: "chat.new", key: "f8", when: "!terminalFocus" },
+        ]),
+      ),
+    );
+    expect(
+      rows
+        .filter((row) => row.command === "chat.new")
+        .map(({ key, defaultKey }) => ({ key, defaultKey })),
+    ).toEqual([
+      { key: "f8", defaultKey: "mod+shift+o" },
+      { key: "mod+n", defaultKey: "mod+n" },
+    ]);
+    const unassigned = buildKeybindingRows(
+      mergeWithDefaultKeybindings(
+        compileResolvedKeybindingsConfig([
+          { command: "chat.new", key: "mod+n", when: "!terminalFocus" },
+          { command: "chat.new", key: "mod+shift+o", when: "false" },
+          { command: "chat.new", key: "f8", when: "!terminalFocus" },
+        ]),
+      ),
+    );
+    expect(unassigned.find((row) => row.key === "f8")?.defaultKey).toBe("mod+n");
+  });
+
   it("shares a stable editor for resolved duplicates but separates commands, shortcuts, and conditions", () => {
     const bindings = compileResolvedKeybindingsConfig([
       { command: "terminal.toggle", key: "mod+esc", when: "terminalFocus" },
@@ -57,6 +90,62 @@ describe("KeybindingsSettings.logic", () => {
     expect(buildKeybindingRows(bindings.slice(1)).map((row) => row.id)).toEqual(
       rows.map((row) => row.id),
     );
+  });
+
+  it("marks only bindings shadowed by later unconditional or matching conditions", () => {
+    const bindings = compileResolvedKeybindingsConfig([
+      { command: "sidebar.toggle", key: "mod+b" },
+      { command: "terminal.toggle", key: "meta+b", when: "true" },
+      { command: "chat.new", key: "mod+n", when: "terminalFocus" },
+      { command: "terminal.new", key: "mod+n", when: "(terminalFocus)" },
+      { command: "chat.new", key: "mod+j" },
+      { command: "terminal.toggle", key: "mod+j", when: "terminalFocus" },
+      { command: "chat.new", key: "mod+k", when: "!terminalFocus" },
+      { command: "terminal.toggle", key: "mod+k", when: "terminalFocus" },
+      { command: "chat.new", key: "mod+l", when: "terminalFocus" },
+      { command: "terminal.toggle", key: "mod+l" },
+    ]);
+    const rows = buildKeybindingRows(bindings, "MacIntel");
+    expect(rows.filter((row) => row.previewLabels.length === 0).map((row) => row.binding)).toEqual([
+      bindings[8],
+      bindings[2],
+      bindings[0],
+    ]);
+    expect(rows.filter((row) => row.previewLabels.length > 0)).toHaveLength(7);
+    const sendBindings = compileResolvedKeybindingsConfig([
+      { command: "composer.sendAlternate", key: "mod+enter" },
+      { command: "chat.new", key: "mod+enter" },
+    ]);
+    for (const sendShortcut of ["enter", "mod-enter", "mod-enter-multiline"] as const) {
+      expect(
+        buildKeybindingRows(sendBindings, "MacIntel", sendShortcut).find(
+          (row) => row.command === "composer.sendAlternate",
+        )?.previewLabels.length === 0,
+      ).toBe(sendShortcut === "enter");
+    }
+    for (const command of ["composer.sendAlternate", "composer.sendBackground"] as const) {
+      const binding = compileResolvedKeybindingsConfig([{ command, key: "mod+enter" }]);
+      const labels = (mode: "enter" | "mod-enter" | "mod-enter-multiline") =>
+        buildKeybindingRows(binding, "Win32", mode)[0]?.previewLabels;
+      expect(labels("enter")).toEqual(["Ctrl+Enter"]);
+      expect(labels("mod-enter")).toEqual(["Ctrl+Shift+Enter"]);
+      expect(labels("mod-enter-multiline")).toEqual(["Ctrl+Enter", "Ctrl+Shift+Enter"]);
+    }
+    const shiftedBindings = compileResolvedKeybindingsConfig([
+      { command: "chat.new", key: "mod+shift+enter" },
+      { command: "composer.sendAlternate", key: "mod+enter" },
+    ]);
+    for (const sendShortcut of ["enter", "mod-enter", "mod-enter-multiline"] as const) {
+      expect(
+        buildKeybindingRows(shiftedBindings, "MacIntel", sendShortcut).find(
+          (row) => row.command === "chat.new",
+        )?.previewLabels.length === 0,
+      ).toBe(sendShortcut === "mod-enter");
+    }
+    expect(
+      buildKeybindingRows(bindings, "Win32").find((row) => row.command === "sidebar.toggle")
+        ?.previewLabels.length === 0,
+    ).toBe(false);
   });
 
   it("captures platform-specific mod shortcuts", () => {
@@ -128,6 +217,31 @@ describe("KeybindingsSettings.logic", () => {
         expected: "alt+1",
         defaultInput: "alt+1",
       },
+      {
+        key: "π",
+        code: "KeyP",
+        altKey: true,
+        shiftKey: false,
+        expected: "alt+p",
+        defaultInput: "alt+p",
+      },
+      // Dvorak Option+L and AZERTY Option+A: not the US glyph at its US key.
+      {
+        key: "¬",
+        code: "KeyP",
+        altKey: true,
+        shiftKey: false,
+        expected: "alt+¬",
+        defaultInput: "alt+¬",
+      },
+      {
+        key: "æ",
+        code: "KeyQ",
+        altKey: true,
+        shiftKey: false,
+        expected: "alt+æ",
+        defaultInput: "alt+æ",
+      },
     ]) {
       const pressed = {
         key,
@@ -165,6 +279,15 @@ describe("KeybindingsSettings.logic", () => {
         "MacIntel",
       ),
     ).toBe("mod+m");
+  });
+
+  it("keeps a literal plus key as its own part", () => {
+    expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod++")!)).toEqual(["mod", "+"]);
+    expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod+shift++")!)).toEqual([
+      "mod",
+      "shift",
+      "+",
+    ]);
   });
 
   it("serializes shortcuts and when expressions for upserts", () => {
@@ -205,6 +328,10 @@ describe("KeybindingsSettings.logic", () => {
         },
       },
     });
+    const previewOpenDraft = parseWhenExpressionDraft("previewOpen && !previewFocus");
+    assert(previewOpenDraft.ok);
+    expect(unknownWhenVariables(previewOpenDraft.value)).toEqual([]);
+    expect(buildWhenVariableOptions()).toContain("previewOpen");
     expect(parseWhenExpressionDraft("editorFocus &&")).toEqual({
       ok: false,
       message: "Use variables with !, &&, ||, and parentheses.",
@@ -258,6 +385,13 @@ describe("KeybindingsSettings.logic", () => {
     ] satisfies ResolvedKeybindingsConfig);
 
     expect(rows[0]?.conflicts).toEqual(["Chat: New Local"]);
+    const disabledRows = buildKeybindingRows([
+      rows[0]!.binding,
+      { ...rows[1]!.binding, whenAst: { type: "identifier", name: "false" } },
+    ]);
+    expect(disabledRows.find((row) => row.when === "false")?.previewLabels).toEqual([]);
+    expect(disabledRows.map((row) => row.conflicts)).toEqual([[], []]);
+
     expect(
       keybindingConflictLabels(rows, {
         rowId: rows[0]?.id ?? "",
@@ -265,5 +399,39 @@ describe("KeybindingsSettings.logic", () => {
         when: "",
       }),
     ).toEqual(["Chat: New Local"]);
+  });
+
+  it.each([
+    { platform: "Linux x86_64", ctrl: ["Chat: New"], meta: [] },
+    { platform: "Win32", ctrl: ["Chat: New"], meta: [] },
+    { platform: "MacIntel", ctrl: [], meta: ["Chat: New"] },
+  ])("resolves mod to the $platform modifier when reporting conflicts", (expected) => {
+    const rows = buildKeybindingRows(
+      compileResolvedKeybindingsConfig([
+        { command: "chat.new", key: "mod+k" },
+        { command: "chat.newLocal", key: "ctrl+k" },
+        { command: "thread.copyReference", key: "meta+k" },
+      ]),
+      expected.platform,
+    );
+    const conflictsFor = (key: string) => rows.find((row) => row.key === key)?.conflicts;
+
+    expect(conflictsFor("ctrl+k")).toEqual(expected.ctrl);
+    expect(conflictsFor("meta+k")).toEqual(expected.meta);
+    expect(
+      keybindingConflictLabels(rows, { rowId: "new", key: "ctrl+k", when: "" }, expected.platform),
+    ).toEqual(["Chat: New Local", ...expected.ctrl].toSorted());
+  });
+
+  it("keeps mod and ctrl shortcuts apart when their when contexts differ", () => {
+    const rows = buildKeybindingRows(
+      compileResolvedKeybindingsConfig([
+        { command: "chat.new", key: "mod+k", when: "!terminalFocus" },
+        { command: "chat.newLocal", key: "ctrl+k", when: "terminalFocus" },
+      ]),
+      "Linux x86_64",
+    );
+
+    expect(rows.map((row) => row.conflicts)).toEqual([[], []]);
   });
 });

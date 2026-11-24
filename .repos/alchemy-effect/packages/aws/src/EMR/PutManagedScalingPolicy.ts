@@ -1,0 +1,39 @@
+import type * as SVC from "@distilled.cloud/aws/emr";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { Cluster } from "./Cluster.ts";
+
+/**
+ * Runtime binding for `elasticmapreduce:PutManagedScalingPolicy` — attaches or replaces the bound cluster's managed scaling policy — EMR then resizes the cluster within the configured compute limits.
+ * ### Scaling the Cluster
+ * **Example:** Enable Managed Scaling
+ * ```typescript
+ * const putScalingPolicy = yield* AWS.EMR.PutManagedScalingPolicy(cluster);
+ *
+ * yield* putScalingPolicy({
+ *   ManagedScalingPolicy: {
+ *     ComputeLimits: {
+ *       UnitType: "Instances",
+ *       MinimumCapacityUnits: 1,
+ *       MaximumCapacityUnits: 10,
+ *     },
+ *   },
+ * });
+ * ```
+ *
+ * @binding
+ */
+export interface PutManagedScalingPolicy extends Binding.Service<
+  PutManagedScalingPolicy,
+  "AWS.EMR.PutManagedScalingPolicy",
+  <C extends Cluster>(
+    cluster: C,
+  ) => Effect.Effect<
+    (
+      request: Omit<SVC.PutManagedScalingPolicyInput, "ClusterId">,
+    ) => Effect.Effect<SVC.PutManagedScalingPolicyOutput, SVC.PutManagedScalingPolicyError>
+  >
+> {}
+export const PutManagedScalingPolicy = Binding.Service<PutManagedScalingPolicy>(
+  "AWS.EMR.PutManagedScalingPolicy",
+);

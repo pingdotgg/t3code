@@ -9,22 +9,24 @@ import {
   type GuestMessageId,
   type GuestShareView,
   type OrchestrationV2ProjectedTurnItem,
-  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2TurnItem,
   type ThreadGuestMessage,
 } from "@t3tools/contracts";
-import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
-import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
+import {
+  applyThreadHistoryPage,
+  applyThreadStreamItem,
+  initialThreadStreamState,
+  type ThreadStreamState,
+} from "@t3tools/client-runtime/state/thread-stream";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-export interface GuestStreamState {
+export interface GuestStreamState extends ThreadStreamState {
   readonly view: GuestShareView | null;
-  /** The thread as the owner's client holds it, built with the same reducer. */
-  readonly projection: OrchestrationV2ThreadProjection | null;
-  readonly sequence: number;
-  /** Set while the snapshot is a window of a longer history, as the owner's client tracks it. */
-  readonly partial: { readonly latestLocalTurnOrdinal: number | null } | null;
   readonly ended: boolean;
   /**
    * Messages this page saw waiting that have no transcript row yet. Survives reconnects, and a
@@ -34,10 +36,8 @@ export interface GuestStreamState {
 }
 
 export const initialGuestStreamState: GuestStreamState = {
+  ...initialThreadStreamState,
   view: null,
-  projection: null,
-  sequence: 0,
-  partial: null,
   ended: false,
   awaitingRowIds: new Set(),
 };
@@ -76,16 +76,34 @@ const decodeGuestStreamEvent = Schema.decodeUnknownOption(
 export const parseGuestStreamEvent = (data: string): GuestStreamEvent | null =>
   Option.getOrNull(decodeGuestStreamEvent(data));
 
+/** A page of older turns, fetched from `cursor`. */
+export type GuestHistoryPageLoaded = {
+  readonly type: "history-page";
+  readonly cursor: string;
+  readonly page: OrchestrationV2ThreadHistoryPage;
+};
+
 /**
- * Applies the owner's thread stream the way the owner's client does (see
- * EnvironmentThreadState in client-runtime): a snapshot replaces the thread, and later events
- * pass through the same projection reducer, once each.
+ * Applies the share's stream: its thread items go through the reducer every stream-only view of a
+ * thread shares, and the share's own state is tracked beside it.
  */
 export function applyGuestStreamEvent(
   state: GuestStreamState,
-  event: GuestStreamEvent,
+  event: GuestStreamEvent | GuestHistoryPageLoaded,
 ): GuestStreamState {
   switch (event.type) {
+    case "history-page": {
+      const next = applyThreadHistoryPage(state, event.cursor, event.page);
+      if (next === state) return state;
+      return {
+        ...state,
+        ...next,
+        awaitingRowIds: withoutPlaced(
+          state.awaitingRowIds,
+          event.page.items.map((row) => row.item),
+        ),
+      };
+    }
     case "view":
       // The page follows the share it names; a view of another one means the link changed.
       if (state.view !== null && state.view.shareId !== event.view.shareId) {
@@ -97,47 +115,18 @@ export function applyGuestStreamEvent(
         awaitingRowIds: withPendingFrom(state.awaitingRowIds, event.view),
       };
     case "thread": {
-      const item = event.item;
-      if (item.kind === "snapshot") {
-        const projection = boundedSnapshotProjection(item);
-        return {
-          ...state,
-          projection,
-          sequence: item.snapshotSequence,
-          partial:
-            item.hasMoreHistory === true || (item.historyCursor ?? null) !== null
-              ? { latestLocalTurnOrdinal: item.latestLocalTurnOrdinal ?? null }
-              : null,
-          awaitingRowIds: withoutPlaced(
-            state.awaitingRowIds,
-            projection.visibleTurnItems.map((row) => row.item),
-          ),
-        };
-      }
-      if (item.kind === "synchronized" || item.sequence <= state.sequence) return state;
-      if (item.kind === "unknown-event") return { ...state, sequence: item.sequence };
-      const projection =
-        applyOrchestrationV2ProjectionEvent(
-          state.projection,
-          item.event,
-          state.partial === null ? undefined : { partialTimeline: true, ...state.partial },
-        ) ?? state.projection;
-      const turnItem = item.event.type === "turn-item.updated" ? item.event.payload : null;
-      const watermark = state.partial?.latestLocalTurnOrdinal ?? null;
+      const next = applyThreadStreamItem(state, event.item);
+      if (next === state) return state;
+      const placed =
+        event.item.kind === "snapshot"
+          ? (next.projection?.visibleTurnItems.map((row) => row.item) ?? [])
+          : event.item.kind === "event" && event.item.event.type === "turn-item.updated"
+            ? [event.item.event.payload]
+            : [];
       return {
         ...state,
-        projection,
-        sequence: item.sequence,
-        partial:
-          state.partial !== null &&
-          turnItem !== null &&
-          (watermark === null || turnItem.ordinal > watermark)
-            ? { latestLocalTurnOrdinal: turnItem.ordinal }
-            : state.partial,
-        awaitingRowIds:
-          turnItem === null
-            ? state.awaitingRowIds
-            : withoutPlaced(state.awaitingRowIds, [turnItem]),
+        ...next,
+        awaitingRowIds: withoutPlaced(state.awaitingRowIds, placed),
       };
     }
     case "ended":
@@ -165,11 +154,18 @@ export function unplacedGuestMessages(
     .toSorted((a, b) => a.submittedAt.localeCompare(b.submittedAt));
 }
 
-/** "23h left" or "5m left", rounded down, for the guest page header. */
-export function formatGuestExpiry(expiresAt: string, nowMs: number): string {
-  const minutes = Math.floor((Date.parse(expiresAt) - nowMs) / 60_000);
-  if (minutes <= 0) return "Expired";
-  return minutes >= 60 ? `${Math.floor(minutes / 60)}h left` : `${minutes}m left`;
+/** "23h left" or "5m left", rounded down but never below "1m left" before expiry. */
+export function formatGuestExpiry(
+  expiresAt: string,
+  nowMs: number,
+  resolve: MessageResolver = m,
+): string {
+  const remainingMs = Date.parse(expiresAt) - nowMs;
+  if (remainingMs <= 0) return resolve(msg("Expired"));
+  const minutes = Math.max(1, Math.floor(remainingMs / 60_000));
+  return minutes >= 60
+    ? resolve(msg("{hours}h left", { hours: Math.floor(minutes / 60) }))
+    : resolve(msg("{minutes}m left", { minutes }));
 }
 
 /**
@@ -195,12 +191,15 @@ export const guestMediaUrl = (shareId: string, path: string) =>
  */
 export function guestFilesProblem(
   files: ReadonlyArray<Pick<File, "type" | "size">>,
+  resolve: MessageResolver = m,
 ): string | null {
   if (files.length > GUEST_MESSAGE_MAX_ATTACHMENTS) {
-    return `Attach up to ${GUEST_MESSAGE_MAX_ATTACHMENTS} files to a message.`;
+    return resolve(
+      msg("Attach up to {count} files to a message.", { count: GUEST_MESSAGE_MAX_ATTACHMENTS }),
+    );
   }
   if (files.reduce((total, file) => total + file.size, 0) > GUEST_MESSAGE_MAX_ATTACHMENT_BYTES) {
-    return "Attached files can total up to 10 MB per message.";
+    return resolve(msg("Attached files can total up to 10 MB per message."));
   }
   const unsupported = files.some(
     (file) =>
@@ -209,7 +208,7 @@ export function guestFilesProblem(
         !isProviderSendTurnSupportedImageMimeType(file.type)),
   );
   return unsupported
-    ? "This file cannot be attached. Images must be PNG, JPEG, GIF, or WebP."
+    ? resolve(msg("This file cannot be attached. Images must be PNG, JPEG, GIF, or WebP."))
     : null;
 }
 

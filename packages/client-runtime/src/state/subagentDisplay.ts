@@ -1,29 +1,55 @@
 import type {
+  ModelSelection,
   OrchestrationV2TurnItemStatus,
   OrchestrationV2ThreadShell,
   OrchestrationProjectShell,
   ServerProvider,
 } from "@t3tools/contracts";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
-import { fileBasename } from "@t3tools/shared/path";
+import { fileDisplayName } from "@t3tools/shared/path";
 import { resolveModelShortName } from "../providerClients.ts";
 import { isTerminalSubagentStatus } from "./subagentRuntime.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export function subagentGroupSummary(
   members: ReadonlyArray<{ readonly status: OrchestrationV2TurnItemStatus }>,
+  resolve: MFunctionType = mFallback,
 ) {
   const active = members.some(
     ({ status }) => status === "pending" || status === "running" || status === "waiting",
   );
   return {
-    label: `${active ? "Kicked off" : "Ran"} ${members.length} ${members.length === 1 ? "subagent" : "subagents"}`,
+    label: active
+      ? resolve(
+          msg(
+            "{count, plural, one {Kicked off {count} subagent} other {Kicked off {count} subagents}}",
+            {
+              count: members.length,
+            },
+          ),
+        )
+      : resolve(
+          msg("{count, plural, one {Ran {count} subagent} other {Ran {count} subagents}}", {
+            count: members.length,
+          }),
+        ),
     active,
     failed: members.some(({ status }) => status === "failed"),
   };
 }
 
+const SUBAGENT_STATUS_COUNTS = {
+  working: msg("{count} working"),
+  done: msg("{count} done"),
+  failed: msg("{count} failed"),
+  stopped: msg("{count} stopped"),
+  idle: msg("{count} idle"),
+};
+
 export function summarizeSubagentStatuses(
   statuses: ReadonlyArray<OrchestrationV2TurnItemStatus>,
+  resolve: MFunctionType = mFallback,
 ): string {
   const counts = { working: 0, done: 0, failed: 0, stopped: 0, idle: 0 };
   for (const status of statuses) {
@@ -35,7 +61,7 @@ export function summarizeSubagentStatuses(
   }
   return (Object.keys(counts) as Array<keyof typeof counts>)
     .filter((key) => counts[key] > 0)
-    .map((key) => `${counts[key]} ${key}`)
+    .map((key) => resolve(SUBAGENT_STATUS_COUNTS[key], { count: counts[key] }))
     .join(" · ");
 }
 
@@ -48,24 +74,28 @@ export function formatSubagentDisplayTitle(title: string): string {
   return name.replace(/(^|\s)\S/gu, (letter) => letter.toUpperCase()) || displayTitle;
 }
 
-export function resolveSubagentMetadata(input: {
-  readonly model: string | null;
-  readonly provider?: Pick<ServerProvider, "driver" | "models"> | null | undefined;
-  readonly parentThread?:
-    | Pick<OrchestrationV2ThreadShell, "projectId" | "worktreePath">
-    | null
-    | undefined;
-  readonly childThread?:
-    | Pick<OrchestrationV2ThreadShell, "branch" | "worktreePath">
-    | null
-    | undefined;
-  readonly parentProject?: Pick<OrchestrationProjectShell, "workspaceRoot"> | null | undefined;
-  readonly childProject?:
-    | Pick<OrchestrationProjectShell, "id" | "title" | "workspaceRoot">
-    | null
-    | undefined;
-}) {
-  const model = input.model?.trim();
+export function resolveSubagentMetadata(
+  input: {
+    readonly model: string | null;
+    readonly modelSelection?: Pick<ModelSelection, "model"> | undefined;
+    readonly provider?: Pick<ServerProvider, "driver" | "models"> | null | undefined;
+    readonly parentThread?:
+      | Pick<OrchestrationV2ThreadShell, "projectId" | "worktreePath">
+      | null
+      | undefined;
+    readonly childThread?:
+      | Pick<OrchestrationV2ThreadShell, "branch" | "worktreePath">
+      | null
+      | undefined;
+    readonly parentProject?: Pick<OrchestrationProjectShell, "workspaceRoot"> | null | undefined;
+    readonly childProject?:
+      | Pick<OrchestrationProjectShell, "id" | "title" | "workspaceRoot">
+      | null
+      | undefined;
+  },
+  resolve: MFunctionType = mFallback,
+) {
+  const model = input.model?.trim() || input.modelSelection?.model.trim();
   const slug = input.provider
     ? resolveSelectableModel(input.provider.driver, model, input.provider.models)
     : model;
@@ -74,7 +104,7 @@ export function resolveSubagentMetadata(input: {
     ? (resolveModelShortName(catalogModel, input.provider?.driver) ?? catalogModel.name)
     : model
       ? formatModelSlugName(model)
-      : "Not reported";
+      : resolve(msg("Not reported"));
   const qualifier = catalogModel?.subProvider?.trim();
   const modelLabel = qualifier
     ? reportedLabel
@@ -93,22 +123,27 @@ export function resolveSubagentMetadata(input: {
     ...(input.parentThread &&
     input.childProject &&
     input.childProject.id !== input.parentThread.projectId
-      ? [{ label: "Project", value: input.childProject.title }]
+      ? [
+          {
+            label: resolve(msg("Project", { $context: "field label" })),
+            value: input.childProject.title,
+          },
+        ]
       : []),
     ...(parentWorkspace && childWorkspace && parentWorkspace !== childWorkspace
       ? [
           {
             label: input.childThread?.branch
-              ? "Branch"
+              ? resolve(msg("Branch", { $context: "field label" }))
               : input.childThread?.worktreePath
-                ? "Worktree"
-                : "Workspace",
-            value: input.childThread?.branch ?? fileBasename(childWorkspace),
+                ? resolve(msg("Worktree", { $context: "field label" }))
+                : resolve(msg("Workspace", { $context: "field label" })),
+            value: input.childThread?.branch ?? fileDisplayName(childWorkspace),
           },
         ]
       : []),
   ];
-  return { modelLabel, workspace };
+  return { modelLabel, modelSlug: slug ?? model ?? null, workspace };
 }
 
 export function subagentDetailPreview(input: {
@@ -116,10 +151,43 @@ export function subagentDetailPreview(input: {
   readonly result?: string | null | undefined;
   readonly progress?: string | null | undefined;
 }): string | null {
-  const result = input.result?.trim();
-  const progress = input.progress?.trim();
-  const detail =
-    (isTerminalSubagentStatus(input.status) ? result || progress : progress || result) || "";
-  const compact = detail.replace(/\s+/gu, " ");
-  return compact.length > 280 ? `${compact.slice(0, 280).trimEnd()}…` : compact || null;
+  const terminal = isTerminalSubagentStatus(input.status);
+  const preferred = terminal ? input.result : input.progress;
+  const fallback = terminal ? input.progress : input.result;
+  const detail = preferred?.trimStart() || fallback?.trimStart() || "";
+  if (detail.length <= 280) return detail.trimEnd().replace(/\s+/gu, " ") || null;
+  const whitespace = /\s+/uy;
+  let compact = "";
+  for (let index = 0; index < detail.length; index += 1) {
+    whitespace.lastIndex = index;
+    const gap = whitespace.exec(detail);
+    if (gap) {
+      index += gap[0].length;
+      if (index === detail.length) break;
+      if (compact.length > 0) compact += " ";
+    }
+    compact += detail[index];
+    if (compact.length > 280) {
+      let end = 280;
+      const previous = compact.charCodeAt(end - 1);
+      const next = compact.charCodeAt(end);
+      if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+        end -= 1;
+      }
+      return `${compact.slice(0, end).trimEnd()}…`;
+    }
+  }
+  return compact || null;
+}
+
+export function subagentCardDetail(detail: string | null | undefined): string | null {
+  if (!detail || /^Child task ended with status\b/i.test(detail)) return null;
+  return (
+    detail
+      .replace(/!?\[([^\]]+)\]\((?:\\.|[^\\()]|\((?:\\.|[^\\()])*\))*\)/g, "$1")
+      .replace(/`/g, "")
+      .replace(/^[ \t]*[-*][ \t]+/gm, "")
+      .replace(/\s+/g, " ")
+      .trim() || null
+  );
 }

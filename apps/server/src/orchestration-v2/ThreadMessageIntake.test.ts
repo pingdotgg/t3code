@@ -10,6 +10,7 @@ import {
   EventId,
   GuestMessageId,
   MessageId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -33,7 +34,10 @@ import {
   OrchestratorDispatchError,
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { dispatchCommand } from "./ThreadMessageIntake.ts";
+import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
+
+const dispatchCommand = (command: OrchestrationV2Command, sender = { managesProviders: true }) =>
+  ThreadMessageIntake.dispatchCommand(command, sender);
 
 const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
@@ -54,9 +58,16 @@ const layerFailingDispatchHandler =
     );
   };
 
+const noPendingRuntimeRequests: ThreadManagementService.ThreadManagementServiceShape["getThreadRecords"] =
+  () =>
+    Effect.succeed({ runtimeRequests: [] } as unknown as Effect.Success<
+      ReturnType<ThreadManagementService.ThreadManagementServiceShape["getThreadRecords"]>
+    >);
+
 const layerFailingDispatch = (captured: OrchestrationV2ServerCommand[]) =>
   Layer.mock(ThreadManagementService.ThreadManagementService)({
     dispatch: layerFailingDispatchHandler(captured),
+    getThreadRecords: noPendingRuntimeRequests,
   });
 
 const NOW = DateTime.makeUnsafe("2026-09-13T00:00:00.000Z");
@@ -135,8 +146,62 @@ it.effect("claims question uploads and passes readable paths through the V2 requ
     expect(NodeFS.readFileSync(path!)).toEqual(Buffer.from([1, 2, 3]));
     expect(command.answers?.q).toEqual([
       "Selected option",
-      `Attached image "screen.png": "${path}"`,
+      `Attached image "screen.png": ${JSON.stringify(path)}`,
     ]);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("leaves an async answer's text alone so its files travel as message attachments", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const id = ChatAttachmentId.make(createPendingAttachmentId()!);
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${id}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    const threadId = ThreadId.make("thread-async-answer");
+    const requestId = RuntimeRequestId.make("request-async");
+    const captured: OrchestrationV2ServerCommand[] = [];
+    yield* dispatchCommand({
+      type: "runtime-request.respond",
+      commandId: CommandId.make("answer-async"),
+      threadId,
+      requestId,
+      answers: { q: "" },
+      attachmentsByQuestionId: {
+        q: [{ type: "image", id, name: "screen.png", mimeType: "image/png", sizeBytes: 3 }],
+      },
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          dispatch: layerFailingDispatchHandler(captured),
+          getThreadRecords: () =>
+            Effect.succeed({
+              runtimeRequests: [
+                {
+                  id: requestId,
+                  nodeId: null,
+                  providerTurnId: null,
+                  nativeRequestRef: null,
+                  kind: "user_input",
+                  status: "pending",
+                  responseCapability: { type: "message" },
+                  createdAt: NOW,
+                  resolvedAt: null,
+                },
+              ],
+            } as unknown as Effect.Success<
+              ReturnType<ThreadManagementService.ThreadManagementServiceShape["getThreadRecords"]>
+            >),
+        }),
+      ),
+      Effect.result,
+    );
+    expect(captured).toHaveLength(1);
+    const command = captured[0]!;
+    if (command.type !== "runtime-request.respond") throw new Error("expected a response");
+    expect(command.answers).toEqual({ q: "" });
+    expect(command.attachmentsByQuestionId?.q).toHaveLength(1);
   }).pipe(Effect.provide(layerIntakeTest)),
 );
 
@@ -205,6 +270,7 @@ it.effect("releases claimed copies when the command was already rejected", () =>
     }).pipe(
       Effect.provide(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: noPendingRuntimeRequests,
           dispatch: (command) =>
             Effect.fail(
               new OrchestratorCommandPreviouslyRejectedError({
@@ -272,6 +338,7 @@ it.effect("releases claimed copies when dispatch replays an earlier accepted res
     }).pipe(
       Effect.provide(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: noPendingRuntimeRequests,
           dispatch: () => Effect.succeed({ sequence: 1, storedEvents }),
         }),
       ),
@@ -342,6 +409,7 @@ it.effect("a retried response re-claims the preserved pending uploads", () =>
     const retry = yield* dispatchCommand(command).pipe(
       Effect.provide(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: noPendingRuntimeRequests,
           dispatch: (dispatched) => {
             captured.push(dispatched);
             return Effect.succeed({ sequence: 1, storedEvents: [] });
@@ -424,5 +492,120 @@ it.effect("sends a guest message with the guest's files, never ones the client n
     expect(command.attachments).toHaveLength(1);
     // The guest's file, which is already the thread's.
     expect(command.attachments).toEqual([guestFile]);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("refuses a queued edit that keeps a file another edit already deleted", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const storedFile = (name: string) => ({
+      type: "image" as const,
+      id: ChatAttachmentId.make(createAttachmentId("thread-queued-edit")!),
+      name,
+      mimeType: "image/png",
+      sizeBytes: 3,
+    });
+    const kept = storedFile("kept.png");
+    const deleted = storedFile("deleted.png");
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${kept.id}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const edit = (attachments: ReadonlyArray<typeof kept>) =>
+      dispatchCommand({
+        type: "queued-run.edit",
+        commandId: CommandId.make(`queued-edit-${attachments.length}`),
+        threadId: ThreadId.make("thread-queued-edit"),
+        runId: RunId.make("run-queued-edit"),
+        text: "Edited from a stale view.",
+        attachments,
+      }).pipe(
+        Effect.provide(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            dispatch: layerFailingDispatchHandler(captured),
+            hasReceipt: (commandId) =>
+              Effect.succeed(captured.some((command) => command.commandId === commandId)),
+          }),
+        ),
+        Effect.result,
+      );
+
+    yield* edit([kept]);
+    expect(captured).toHaveLength(1);
+    const result = yield* edit([kept, deleted]);
+    expect(result._tag).toBe("Failure");
+    expect(captured).toHaveLength(1);
+    // A retry of the accepted edit replays its receipt even after a later cleanup removed its file.
+    NodeFS.rmSync(NodePath.join(config.attachmentsDir, `${kept.id}.png`));
+    yield* edit([kept]);
+    expect(captured).toHaveLength(2);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("a queued /logout edit without provider management must keep an attachment", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread-sign-out-edit");
+    const image = {
+      type: "image" as const,
+      id: ChatAttachmentId.make(createAttachmentId(threadId)!),
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    };
+    const config = yield* ServerConfig.ServerConfig;
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${image.id}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    const captured: OrchestrationV2ServerCommand[] = [];
+    // The edit omits `attachments`, as an older client's does, so the queued ones stay.
+    const edit = (run: string, managesProviders: boolean) =>
+      dispatchCommand(
+        {
+          type: "queued-run.edit",
+          commandId: CommandId.make(`edit-${run}-${managesProviders}`),
+          threadId,
+          runId: RunId.make(run),
+          text: " /LOGOUT ",
+        },
+        { managesProviders },
+      ).pipe(
+        Effect.provide(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            dispatch: layerFailingDispatchHandler(captured),
+            hasReceipt: (commandId) => Effect.succeed(commandId === "edit-replayed-false"),
+            getThreadRecords: () =>
+              Effect.succeed({
+                runs: ["attached", "bare"].map((id) => ({
+                  id: RunId.make(id),
+                  status: "queued",
+                  userMessageId: MessageId.make(id),
+                })),
+              } as never),
+            getMessagesById: (_threadId, [id]) =>
+              Effect.succeed(
+                new Map([[id, { attachments: id === "attached" ? [image] : [] }]]) as never,
+              ),
+          }),
+        ),
+        Effect.flip,
+      );
+
+    expect((yield* edit("bare", false))._tag).toBe("EnvironmentAuthorizationError");
+    expect((yield* edit("started", false))._tag).toBe("EnvironmentAuthorizationError");
+    expect(captured).toEqual([]);
+    yield* edit("attached", false);
+    yield* edit("bare", true);
+    // A retry of an accepted edit reaches its receipt after its run left the queue.
+    yield* edit("replayed", false);
+    // The kept files are pinned, so an edit racing this one cannot strip them afterwards.
+    expect(captured).toMatchObject([
+      { runId: "attached", attachments: [image] },
+      { runId: "bare" },
+      { runId: "replayed" },
+    ]);
+    expect(captured[1]).not.toHaveProperty("attachments");
+    expect(captured[2]).not.toHaveProperty("attachments");
   }).pipe(Effect.provide(layerIntakeTest)),
 );

@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 
 /**
@@ -76,9 +76,4 @@ export const emailObjectFor = (eventId: string) => `emails/${eventId}.json`;
 
 /** Decode a pushed message's base64 JSON body. */
 export const decodeOrderEvent = (data: string | undefined) =>
-  Effect.try(
-    () =>
-      JSON.parse(
-        Buffer.from(data ?? "", "base64").toString("utf8"),
-      ) as OrderEvent,
-  );
+  Effect.try(() => JSON.parse(Buffer.from(data ?? "", "base64").toString("utf8")) as OrderEvent);

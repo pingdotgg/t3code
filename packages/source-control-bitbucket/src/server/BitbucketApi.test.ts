@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SecretProviderId, SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -9,7 +9,9 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -19,6 +21,7 @@ import type * as SourceControlHost from "@t3tools/source-control-core/server/Sou
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
+import { userFacingSourceControlDetail } from "@t3tools/source-control-core/server/SourceControlProvider";
 
 type HostGit = SourceControlHost.SourceControlHost["Service"]["git"];
 
@@ -62,6 +65,14 @@ const repositoryJson = {
   mainbranch: { name: "main" },
 };
 
+const gitOutput = (stdout: string) => ({
+  exitCode: ChildProcessSpawner.ExitCode(0),
+  stdout,
+  stderr: "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+});
+
 function makeLayer(input: {
   readonly response: (request: HttpClientRequest.HttpClientRequest) => Response;
   /** Holds the answer until it resolves, in place of answering at once. */
@@ -72,6 +83,7 @@ function makeLayer(input: {
   readonly stall?: boolean;
   readonly git?: Partial<HostGit>;
   readonly env?: Record<string, string>;
+  readonly remoteUrl?: string;
 }) {
   const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
     input.stall
@@ -83,6 +95,9 @@ function makeLayer(input: {
           ),
   );
   const gitMock = {
+    execute: vi.fn<HostGit["execute"]>(() =>
+      Effect.succeed(gitOutput("git@bitbucket.org:pingdotgg/t3code.git\n")),
+    ),
     readConfigValue: vi.fn<HostGit["readConfigValue"]>(() =>
       Effect.succeed<string | null>("git@bitbucket.org:pingdotgg/t3code.git"),
     ),
@@ -108,7 +123,7 @@ function makeLayer(input: {
       remotes: [
         {
           name: "origin",
-          url: "git@bitbucket.org:pingdotgg/t3code.git",
+          url: input.remoteUrl ?? "git@bitbucket.org:pingdotgg/t3code.git",
           pushUrl: Option.none(),
           isPrimary: true,
         },
@@ -182,6 +197,152 @@ it.effect("parses pull request responses from the Bitbucket REST API", () => {
     );
   }).pipe(Effect.provide(layer));
 });
+
+it.effect.each([false, true])("honors PR URL repositories, context=%s", (withContext) => {
+  const { execute, git, layer } = makeLayer({
+    response: (request) =>
+      Response.json(
+        request.url.endsWith("/pullrequests/42")
+          ? {
+              ...bitbucketPullRequest,
+              source: {
+                branch: { name: "feature/source-control" },
+                repository: { full_name: "another/app" },
+              },
+              destination: { branch: { name: "main" }, repository: { full_name: "another/app" } },
+            }
+          : {
+              ...repositoryJson,
+              full_name: "another/app",
+              links: { clone: [{ name: "ssh", href: "git@bitbucket.org:another/app.git" }] },
+            },
+      ),
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const input = {
+      cwd: "/repo",
+      reference: "https://bitbucket.org/another/app/pull-requests/42",
+      ...(withContext
+        ? {
+            context: {
+              provider: {
+                kind: SourceControlProviderKind.make("bitbucket"),
+                name: "Bitbucket",
+                baseUrl: "https://bitbucket.org",
+              },
+              remoteName: "origin",
+              remoteUrl: "git@bitbucket.org:pingdotgg/t3code.git",
+            },
+          }
+        : {}),
+    };
+    yield* bitbucket.getPullRequest(input);
+    yield* bitbucket.checkoutPullRequest(input);
+    assert.deepStrictEqual(
+      execute.mock.calls.slice(0, 2).map(([request]) => request.url),
+      [
+        "https://api.test.local/2.0/repositories/another/app/pullrequests/42",
+        "https://api.test.local/2.0/repositories/another/app/pullrequests/42",
+      ],
+    );
+    assert.deepStrictEqual(git.ensureRemote.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      preferredName: "another",
+      url: "git@bitbucket.org:another/app.git",
+    });
+    assert.deepStrictEqual(git.fetchRemoteBranch.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      remoteName: "octocat",
+      remoteBranch: "feature/source-control",
+      localBranch: "feature/source-control",
+    });
+    assert.deepStrictEqual(git.setBranchUpstream.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      branch: "feature/source-control",
+      remoteName: "octocat",
+      remoteBranch: "feature/source-control",
+    });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("adds a fork remote with the protocol of the URL origin fetches from", () => {
+  // `git remote -v` shows origin's SSH `insteadOf` rewrite; config holds HTTPS, then an SSH push URL.
+  const { git, layer } = makeLayer({
+    git: {
+      execute: () =>
+        Effect.succeed(
+          gitOutput(
+            "https://bitbucket.org/pingdotgg/t3code.git\ngit@bitbucket.org:pingdotgg/t3code.git\n",
+          ),
+        ),
+    },
+    response: (request) =>
+      Response.json(
+        request.url.endsWith("/pullrequests/42")
+          ? bitbucketPullRequest
+          : {
+              ...repositoryJson,
+              full_name: "octocat/t3code",
+              links: {
+                clone: [
+                  { name: "https", href: "https://bitbucket.org/octocat/t3code.git" },
+                  { name: "ssh", href: "git@bitbucket.org:octocat/t3code.git" },
+                ],
+              },
+            },
+      ),
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    yield* bitbucket.checkoutPullRequest({ cwd: "/repo", reference: "#42" });
+    assert.deepStrictEqual(git.ensureRemote.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      preferredName: "octocat",
+      url: "https://bitbucket.org/octocat/t3code.git",
+    });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect.each([false, true])(
+  "reuses matching checkout remotes for numeric references, context=%s",
+  (withContext) => {
+    const { git, layer } = makeLayer({
+      response: () =>
+        Response.json({
+          ...bitbucketPullRequest,
+          source: { ...bitbucketPullRequest.source, repository: { full_name: "pingdotgg/t3code" } },
+        }),
+    });
+    return Effect.gen(function* () {
+      const bitbucket = yield* BitbucketApi.BitbucketApi;
+      yield* bitbucket.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "#42",
+        ...(withContext
+          ? {
+              context: {
+                provider: {
+                  kind: SourceControlProviderKind.make("bitbucket"),
+                  name: "Bitbucket",
+                  baseUrl: "https://bitbucket.org",
+                },
+                remoteName: "upstream",
+                remoteUrl: "git@bitbucket.org:PingDotGG/T3Code.git",
+              },
+            }
+          : {}),
+      });
+      assert.strictEqual(git.ensureRemote.mock.calls.length, 0);
+      assert.deepStrictEqual(git.fetchRemoteBranch.mock.calls[0]?.[0], {
+        cwd: "/repo",
+        remoteName: withContext ? "upstream" : "origin",
+        remoteBranch: "feature/source-control",
+        localBranch: "feature/source-control",
+      });
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect("lists pull requests with Bitbucket state and source branch query params", () => {
   const { execute, layer } = makeLayer({
@@ -337,6 +498,78 @@ it.effect("prefers an explicit repository and uses context when the repository i
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("sends a self-hosted Bitbucket remote nowhere unless an API base url is configured", () =>
+  Effect.gen(function* () {
+    const remoteUrl = "https://bitbucket.example.com/scm/proj/repo.git";
+    const context = {
+      provider: {
+        kind: SourceControlProviderKind.make("bitbucket"),
+        name: "Bitbucket Self-Hosted",
+        baseUrl: "https://bitbucket.example.com",
+      },
+      remoteName: "origin",
+      remoteUrl,
+    };
+    const cloudEnv = {
+      T3CODE_BITBUCKET_EMAIL: "user@example.com",
+      T3CODE_BITBUCKET_API_TOKEN: "t",
+    };
+    const response = (request: HttpClientRequest.HttpClientRequest) =>
+      Response.json(request.url.endsWith("/branching-model") ? {} : repositoryJson);
+    const defaultBranch = (setup: ReturnType<typeof makeLayer>, withContext: boolean) =>
+      BitbucketApi.BitbucketApi.pipe(
+        Effect.flatMap((bitbucket) =>
+          bitbucket.getDefaultBranch({ cwd: "/repo", ...(withContext ? { context } : {}) }),
+        ),
+        Effect.provide(setup.layer),
+      );
+    const requestedUrls = (setup: ReturnType<typeof makeLayer>) =>
+      setup.execute.mock.calls.map(([request]) => request.url).toSorted();
+
+    // A self-hosted remote in the checkout, then a self-hosted context beside a Cloud remote.
+    for (const [setup, withContext] of [
+      [makeLayer({ response, env: cloudEnv, remoteUrl }), false],
+      [makeLayer({ response, env: cloudEnv }), true],
+    ] as const) {
+      const result = yield* defaultBranch(setup, withContext).pipe(Effect.result);
+      assert.deepStrictEqual(requestedUrls(setup), []);
+      assert.strictEqual(
+        Result.isFailure(result) && result.failure._tag,
+        "BitbucketRepositoryRemoteNotFoundError",
+      );
+    }
+
+    // An explicit repository does not let a self-hosted context reach the Cloud API.
+    const explicit = makeLayer({ response, env: cloudEnv });
+    const cloneUrls = yield* BitbucketApi.BitbucketApi.pipe(
+      Effect.flatMap((bitbucket) =>
+        bitbucket.getRepositoryCloneUrls({ cwd: "/repo", context, repository: "proj/repo" }),
+      ),
+      Effect.provide(explicit.layer),
+      Effect.result,
+    );
+    assert.deepStrictEqual(requestedUrls(explicit), []);
+    assert.strictEqual(
+      Result.isFailure(cloneUrls) && cloneUrls.failure._tag,
+      "BitbucketRepositoryRemoteNotFoundError",
+    );
+
+    const cloud = makeLayer({ response, env: cloudEnv });
+    yield* defaultBranch(cloud, false);
+    assert.deepStrictEqual(requestedUrls(cloud), [
+      "https://api.bitbucket.org/2.0/repositories/pingdotgg/t3code",
+      "https://api.bitbucket.org/2.0/repositories/pingdotgg/t3code/branching-model",
+    ]);
+
+    const configured = makeLayer({ response, remoteUrl });
+    yield* defaultBranch(configured, true);
+    assert.deepStrictEqual(requestedUrls(configured), [
+      "https://api.test.local/2.0/repositories/proj/repo",
+      "https://api.test.local/2.0/repositories/proj/repo/branching-model",
+    ]);
+  }),
+);
+
 it.effect(
   "prefers the Bitbucket branching model development branch as the default PR target",
   () => {
@@ -437,7 +670,7 @@ it.effect("creates pull requests using the official REST payload shape", () => {
         branch: { name: "main" },
       },
     });
-  }).pipe(Effect.provide(layer), Effect.scoped);
+  }).pipe(Effect.provide(layer));
 });
 
 it.effect("reports the account Bitbucket confirms for the configured credential", () => {
@@ -487,6 +720,24 @@ it.effect("prefers credentials saved in settings over the environment, without a
     });
     yield* bitbucket.probeAuth;
     assert.strictEqual(lastAuthorization(), basic("user@example.com", "token"));
+
+    // A reference left in place by getWithSecrets is one its secret provider could not read.
+    const requests = execute.mock.calls.length;
+    yield* settings.update({
+      sourceControlHosts: {
+        bitbucket: {
+          accessToken: { provider: SecretProviderId.make("vault"), reference: "bb#token" },
+        },
+      },
+    });
+    const auth = yield* bitbucket.probeAuth;
+    assert.strictEqual(auth.status, "unauthenticated");
+    assert.include(Option.getOrThrow(auth.detail), '"vault"');
+    const error = yield* Effect.flip(
+      bitbucket.listPullRequests({ cwd: "/repo", headSelector: "feature", state: "open" }),
+    );
+    assert.strictEqual(error._tag, "SettingsSecretUnresolvedError");
+    assert.strictEqual(execute.mock.calls.length, requests);
   }).pipe(Effect.provide(layer));
 });
 
@@ -513,7 +764,7 @@ it.effect("never puts a saved token that is unsafe for an HTTP header on the wir
 });
 
 it.effect("reports saved credentials as configured when Bitbucket cannot confirm them", () => {
-  const { layer } = makeLayer({
+  const { execute, layer } = makeLayer({
     response: () => new Response(null, { status: 401 }),
     env: { T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0" },
   });
@@ -523,6 +774,7 @@ it.effect("reports saved credentials as configured when Bitbucket cannot confirm
     const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
 
     assert.strictEqual((yield* bitbucket.probeAuth).status, "unauthenticated");
+    assert.strictEqual(execute.mock.calls.length, 0);
 
     yield* settings.update({
       sourceControlHosts: { bitbucket: { accessToken: "saved-access-token" } },
@@ -533,6 +785,26 @@ it.effect("reports saved credentials as configured when Bitbucket cannot confirm
       host: Option.some("bitbucket.org"),
       detail: Option.some("An access token is configured."),
     });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect.each([404, 403])("exposes repository lookup details only for HTTP 404 (%s)", (status) => {
+  const { layer } = makeLayer({
+    response: () => new Response("raw upstream response must not be shown", { status }),
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    for (const repository of ["team/project", "https://bitbucket.org/team/project.git"]) {
+      const error = yield* bitbucket
+        .getRepositoryCloneUrls({ cwd: "/repo", repository })
+        .pipe(Effect.flip);
+      assert.strictEqual(
+        userFacingSourceControlDetail(error),
+        status === 404
+          ? "Repository team/project was not found. Check the owner and name and try again."
+          : undefined,
+      );
+    }
   }).pipe(Effect.provide(layer));
 });
 

@@ -4,10 +4,40 @@ import {
   ProjectId,
   type PullRequestListEntry,
   type PullRequestListInput,
+  PullRequestUnavailableError,
+  PullRequestOperationError,
   type PullRequestListResult,
   type PullRequestSummary,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
+
+const listAnswers = vi.hoisted(() => new Map<string, unknown>());
+const registry = await vi.hoisted(async () =>
+  (await import("effect/reactivity")).AtomRegistry.make(),
+);
+
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
+  useAtomValue: (atom: Atom.Atom<unknown>) => registry.get(atom),
+}));
+vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: registry }));
+vi.mock("@t3tools/client-runtime/state/pull-requests", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@t3tools/client-runtime/state/pull-requests")>();
+  return {
+    ...actual,
+    createPullRequestEnvironmentAtoms: (
+      ...args: Parameters<typeof actual.createPullRequestEnvironmentAtoms>
+    ) => ({
+      ...actual.createPullRequestEnvironmentAtoms(...args),
+      list: ({ environmentId }: { readonly environmentId: string }) =>
+        listAnswers.get(environmentId),
+    }),
+  };
+});
 
 import {
   newestPullRequestObservation,
@@ -15,11 +45,43 @@ import {
   observePullRequestChecks,
   observePullRequestMetadata,
   newestPullRequestSummary,
+  newestDisplayedPullRequestSummary,
   rememberPullRequestListAnswer,
   restorePullRequestList,
   restoredPullRequestList,
   threadPullRequestLinkToSummary,
+  observeFailedPullRequestList,
+  usePullRequestList,
 } from "./pullRequests";
+
+it("observes both typed list failures without changing their status or replaying cached timestamps", () => {
+  const listResult: PullRequestListResult = {
+    viewers: {},
+    providers: [],
+    entries: [],
+    errors: [],
+    truncated: false,
+    nextCursors: {},
+  };
+  using clock = vi.spyOn(Date, "now").mockReturnValue(100);
+  for (const error of [
+    new PullRequestUnavailableError({ reason: "cli-unauthenticated", listResult }),
+    new PullRequestOperationError({ operation: "list", detail: "HTTP 403", listResult }),
+  ]) {
+    clock.mockReturnValue(100);
+    const failure = AsyncResult.failure<PullRequestListResult, unknown>(Cause.fail(error));
+    expect(observeFailedPullRequestList(failure)).toEqual({ value: listResult, observedAt: 100 });
+    clock.mockReturnValue(200);
+    expect(observeFailedPullRequestList(failure)?.observedAt).toBe(100);
+    expect(failure._tag).toBe("Failure");
+    expect(observeFailedPullRequestList({ ...failure, waiting: true })).toBeUndefined();
+  }
+  expect(
+    observeFailedPullRequestList(
+      AsyncResult.failure(Cause.fail(new PullRequestUnavailableError({ reason: "cli-missing" }))),
+    ),
+  ).toBeUndefined();
+});
 
 function summary(overrides: Partial<PullRequestSummary> = {}): PullRequestSummary {
   return {
@@ -94,6 +156,15 @@ describe("pull request summary cache", () => {
     const older = summary({ updatedAt: "2026-09-11T00:00:00Z", observedAt: 999 });
     expect(newestPullRequestSummary(older, reopened)).toBe(reopened);
     expect(newestPullRequestSummary(reopened, older)).toBe(reopened);
+    const edited = summary({ title: "Accepted title" });
+    expect(newestPullRequestSummary(summary(), edited)).toBe(edited);
+    const loaded = summary();
+    expect(newestDisplayedPullRequestSummary(loaded, false, edited, loaded, [])).toBe(loaded);
+    expect(newestDisplayedPullRequestSummary(summary(), true, edited, loaded, [])).toBe(edited);
+    const titleEdit = { reference: loaded, title: "Pending title" };
+    expect(newestDisplayedPullRequestSummary(loaded, true, null, loaded, [titleEdit])?.title).toBe(
+      "Pending title",
+    );
   });
 
   it("reuses saved thread state while detail is stale and lets newer detail replace it", () => {
@@ -368,7 +439,7 @@ describe("pull request list answers across a reload", () => {
       { environmentId: remote, input },
     ]);
     expect(restored?.entries.map((row) => [row.environmentId, row.updatedAt])).toEqual([
-      [remote, "2026-07-03T00:00:00Z"],
+      [local, "2026-07-01T00:00:00Z"],
     ]);
   });
 
@@ -453,6 +524,61 @@ describe("pull request list answers across a reload", () => {
         local,
         remote,
       ]);
+    }
+  });
+
+  it("names the environment whose list failed while the others' rows still show", () => {
+    listAnswers.set(local, Atom.make(AsyncResult.success(answer([listEntry(1)]))));
+    listAnswers.set(
+      remote,
+      Atom.make(
+        AsyncResult.failure(
+          Cause.fail(
+            new Error("Relay could not reach the environment endpoint (endpoint_request_failed)."),
+          ),
+        ),
+      ),
+    );
+
+    const view = usePullRequestList([
+      { environmentId: local, input },
+      { environmentId: remote, input },
+    ]);
+
+    expect(view.data?.entries.map((row) => [row.environmentId, row.number])).toEqual([[local, 1]]);
+    expect(view.error).toEqual({
+      environmentId: remote,
+      message: "Relay could not reach the environment endpoint (endpoint_request_failed).",
+    });
+  });
+
+  it("retries only the environment whose list failed, leaving one still loading to finish", () => {
+    const requests: string[] = [];
+    const read = (environmentId: string, answer: Effect.Effect<never, string>) =>
+      Atom.make(
+        Effect.suspend(() => {
+          requests.push(environmentId);
+          return answer;
+        }),
+      );
+    const slow = EnvironmentId.make("env-slow");
+    const failing = EnvironmentId.make("env-failing");
+    const reads = [read(slow, Effect.never), read(failing, Effect.fail("Unreachable"))];
+    listAnswers.set(slow, reads[0]);
+    listAnswers.set(failing, reads[1]);
+    const unmounts = reads.map((atom) => registry.mount(atom));
+    try {
+      const view = usePullRequestList([
+        { environmentId: slow, input },
+        { environmentId: failing, input },
+      ]);
+      expect(view).toMatchObject({ isPending: true, error: { environmentId: failing } });
+
+      view.retry();
+
+      expect(requests).toEqual([slow, failing, failing]);
+    } finally {
+      for (const unmount of unmounts) unmount();
     }
   });
 

@@ -10,25 +10,37 @@ import {
   markdownForNativeParsing,
   markdownWithInlineFileLinks,
   markdownWithTableBreaks,
+  markdownWithTextDirection,
 } from "../lib/markdownDocument";
-import { isValidElement, useMemo, useState, type ReactNode } from "react";
+import { useGT } from "gt-react-native";
+import { isValidElement, useMemo, useState, type ReactElement, type ReactNode } from "react";
 import { Platform, Share, StyleSheet, useWindowDimensions, View } from "react-native";
 import {
   EnrichedMarkdownText,
+  type AccessibilityLabels,
+  type MarkdownCodeBlock,
   type MarkdownImageBlock,
   type MarkdownLinkOccurrence,
   type MarkdownStyle,
+  type TextSelectionMenuConfig,
 } from "react-native-enriched-markdown";
+import { codeFenceRenderer } from "./codeBlockMarkdown";
+import { HighlightedCodeBlock } from "./HighlightedCodeBlock";
+import { MermaidCodeBlock } from "./MermaidCodeBlock";
 import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { Menu } from "../components/ui/Menu";
 import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
 import { useRetryingImageSource } from "./useRetryingImageSource";
+import * as Dialog from "../components/ui/Dialog";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import type { HighlightScheme } from "../lib/highlights";
 import {
   ENRICHED_INLINE_FILE_LINK_REGEX,
-  enrichedSkillLinkRegex,
+  enrichedTextLinkRegex,
+  enrichedModelDetails,
+  enrichedModelReference,
   enrichedLinkVariantPattern,
 } from "../lib/enrichedLinkPresentation";
 
@@ -38,6 +50,8 @@ function enrichedStyle(
   fontScale: number,
 ): MarkdownStyle {
   const monospace = Platform.OS === "ios" ? "Menlo" : "monospace";
+  // Android only bolds fallback glyphs when the bold family is asked for at a bold weight (app.config.ts).
+  const boldFontWeight = Platform.OS === "android" ? "bold" : undefined;
   // Keep the radius modest: iOS clips square table-cell borders without stroking the corner arcs.
   const block = {
     marginTop: 4,
@@ -60,6 +74,7 @@ function enrichedStyle(
       ...body,
       color: style.strongColor,
       fontFamily: style.headingFontFamily,
+      fontWeight: boldFontWeight,
       fontSize,
       lineHeight: fontSize * 1.35,
       marginTop: 8,
@@ -82,7 +97,11 @@ function enrichedStyle(
     h4: heading(4),
     h5: heading(5),
     h6: heading(6),
-    strong: { color: style.strongColor, fontFamily: style.boldFontFamily, fontWeight: "normal" },
+    strong: {
+      color: style.strongColor,
+      fontFamily: style.boldFontFamily,
+      fontWeight: boldFontWeight ?? "normal",
+    },
     link: { color: style.linkColor, underline: false },
     code: {
       fontFamily: monospace,
@@ -161,13 +180,101 @@ function enrichedStyle(
   };
 }
 
+/**
+ * Diagram and math fences, as web draws them, and code enriched-markdown cannot colour.
+ * Diagrams and math stay native until the library reports them complete; fallback code keeps one block throughout.
+ */
+function codeBlockElement(
+  block: MarkdownCodeBlock,
+  textStyle: SelectableMarkdownTextProps["textStyle"],
+  markdownStyle: MarkdownStyle,
+  mathRenderingEnabled: boolean,
+  scheme: HighlightScheme,
+  accessibilityLabels: AccessibilityLabels,
+  selectionMenuConfig: TextSelectionMenuConfig,
+): ReactElement | undefined {
+  const renderer = codeFenceRenderer(block.language, mathRenderingEnabled);
+  if (renderer.kind === "mermaid") {
+    return block.isComplete ? (
+      <MermaidCodeBlock code={block.code} textStyle={textStyle} />
+    ) : undefined;
+  }
+  if (renderer.kind === "math") {
+    return block.isComplete ? (
+      <EnrichedMarkdownText
+        // A blank line would end the paragraph, and so the math, early.
+        markdown={`$$\n${block.code.replace(/\n\s*\n/g, "\n").trim()}\n$$`}
+        markdownStyle={markdownStyle}
+        md4cFlags={{ latexMath: true }}
+        containerStyle={{ flexShrink: 1, minWidth: 0 }}
+        flavor="github"
+        selectable
+        selectionColor={textStyle.selectionColor}
+        selectionHandleColor={textStyle.selectionHandleColor}
+        accessibilityLabels={accessibilityLabels}
+        selectionMenuConfig={selectionMenuConfig}
+      />
+    ) : undefined;
+  }
+  if (renderer.kind === "highlight" && markdownStyle.codeBlock) {
+    return (
+      <HighlightedCodeBlock
+        code={block.code}
+        fence={block.language}
+        language={renderer.language}
+        complete={block.isComplete}
+        scheme={scheme}
+        textStyle={textStyle}
+        codeStyle={markdownStyle.codeBlock}
+      />
+    );
+  }
+  return undefined;
+}
+
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource, fileEmbedLabel } = props;
+  const gt = useGT();
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
+  // The library fills in {n}, {content} and {speech} itself when VoiceOver or TalkBack speaks.
+  const accessibilityLabels = useMemo<AccessibilityLabels>(
+    () => ({
+      list: {
+        bulletPoint: gt("Bullet point"),
+        nestedBulletPoint: gt("Nested bullet point"),
+        orderedItem: gt("List item {n}", { n: "{n}" }),
+        nestedOrderedItem: gt("Nested list item {n}", { n: "{n}" }),
+      },
+      blockquote: { quote: gt("Blockquote"), nestedQuote: gt("Nested blockquote") },
+      table: { row: gt("Row {n}: {content}", { n: "{n}", content: "{content}" }) },
+      math: { equation: gt("Math: {speech}", { speech: "{speech}" }) },
+      codeBlock: { wrap: gt("Wrap lines"), unwrap: gt("Disable line wrap") },
+      rotor: {
+        headings: gt("Headings", { $context: "screen reader rotor category" }),
+        links: gt("Links", { $context: "screen reader rotor category" }),
+        images: gt("Images", { $context: "screen reader rotor category" }),
+      },
+    }),
+    [gt],
+  );
+  // The library's built-in selection menu items default to English labels.
+  const selectionMenuConfig = useMemo<TextSelectionMenuConfig>(
+    () => ({
+      copy: { label: gt("Copy", { $context: "verb" }) },
+      copyAsMarkdown: { label: gt("Copy as Markdown") },
+      copyImageUrl: {
+        label: gt("Copy Image URL"),
+        pluralLabels: { other: gt("Copy {count} Image URLs", { count: "{count}" }) },
+      },
+    }),
+    [gt],
+  );
   const { markdown, fileHrefs } = useMemo(() => {
     if (!fileEmbedLabel) {
       return {
-        markdown: markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+        markdown: markdownWithTextDirection(
+          markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+        ),
         fileHrefs: new Set<string>(),
       };
     }
@@ -176,7 +283,10 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       ENRICHED_INLINE_FILE_LINK_REGEX,
     );
     const files = markdownWithFileEmbeds(content, fileEmbedLabel);
-    return { ...files, markdown: markdownWithTableBreaks(files.markdown) };
+    return {
+      ...files,
+      markdown: markdownWithTextDirection(markdownWithTableBreaks(files.markdown)),
+    };
   }, [props.markdown, fileEmbedLabel]);
   const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
   const onLinksChange = (links: MarkdownLinkOccurrence[]) => {
@@ -187,28 +297,49 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         : urls,
     );
   };
-  const skillRegex = useMemo(() => enrichedSkillLinkRegex(props.skills), [props.skills]);
-  // Skill links come from linkRecognition, which runs as the text is drawn, so
-  // onLinksChange never reports them. Joined so a streaming tick keeps the value.
-  const skillLinkKey = useMemo(
-    () =>
-      skillRegex
-        ? [...new Set(markdown.match(new RegExp(skillRegex.source, "gu")) ?? [])].join("\n")
-        : "",
-    [markdown, skillRegex],
+  const textLinkRegex = useMemo(
+    () => enrichedTextLinkRegex(props.skills, props.models),
+    [props.skills, props.models],
   );
-  const linkUrls = skillLinkKey
-    ? [...new Set([...parsedLinkUrls, ...skillLinkKey.split("\n")])]
+  // Recognized text links are added as the text is drawn, so
+  // onLinksChange never reports them. Joined so a streaming tick keeps the value.
+  const textLinkKey = useMemo(
+    () =>
+      textLinkRegex
+        ? [...new Set(markdown.match(new RegExp(textLinkRegex.source, "gu")) ?? [])].join("\n")
+        : "",
+    [markdown, textLinkRegex],
+  );
+  const linkUrls = textLinkKey
+    ? [...new Set([...parsedLinkUrls, ...textLinkKey.split("\n")])]
     : parsedLinkUrls;
   const { linkVariants, linkPillContent } = useEnrichedLinkVariants(linkUrls, props, fileHrefs);
-  const linkRecognition = useMemo(() => ({ text: skillRegex ?? undefined }), [skillRegex]);
+  const linkRecognition = useMemo(() => ({ text: textLinkRegex ?? undefined }), [textLinkRegex]);
   const [activeMenu, setActiveMenu] = useState<{
     url: string;
     menu: NonNullable<ReturnType<NonNullable<typeof props.fileContextMenu>>>;
   } | null>(null);
   const { fileContextMenu, onFileContextMenuAction } = props;
-  const onLinkPress = (url: string) =>
+  const onLinkPress = (url: string) => {
+    const model = enrichedModelReference(url, props.models);
+    if (model) {
+      Dialog.alert(model.label, enrichedModelDetails(model));
+      return;
+    }
     (fileHrefs.has(url) ? (props.onImagePress ?? props.onLinkPress) : props.onLinkPress)?.(url);
+  };
+  const modelContextMenu = (url: string) => {
+    const model = enrichedModelReference(url, props.models);
+    return model
+      ? {
+          title: model.label,
+          actions: [
+            { id: "enriched-copy-link", title: gt("Copy model reference") },
+            { id: "enriched-share-link", title: gt("Share model reference") },
+          ],
+        }
+      : undefined;
+  };
   const performMenuAction = (url: string, actionId: string) => {
     if (actionId === "enriched-open-link") onLinkPress(url);
     else if (actionId === "enriched-copy-link") copyTextWithHaptic(url);
@@ -219,14 +350,15 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     Platform.OS === "ios" && (fileContextMenu || props.onLinkPress || props.onImagePress)
       ? Object.fromEntries(
           linkUrls.map((url) => {
-            const menu = fileContextMenu?.(url) ?? {
-              title: url,
-              actions: [
-                { id: "enriched-open-link", title: "Open link" },
-                { id: "enriched-copy-link", title: "Copy link" },
-                { id: "enriched-share-link", title: "Share link" },
-              ],
-            };
+            const menu = modelContextMenu(url) ??
+              fileContextMenu?.(url) ?? {
+                title: url,
+                actions: [
+                  { id: "enriched-open-link", title: gt("Open link") },
+                  { id: "enriched-copy-link", title: gt("Copy link") },
+                  { id: "enriched-share-link", title: gt("Share link") },
+                ],
+              };
             return [
               enrichedLinkVariantPattern(url),
               menu.actions.map((action) => ({
@@ -264,37 +396,56 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     };
   }, [props.contextClipboardFragment, props.markdown]);
   const { fontScale } = useWindowDimensions();
+  const baseMarkdownStyle = useMemo(() => {
+    const style = enrichedStyle(props.textStyle, themeAppearance === "dark", fontScale);
+    return {
+      ...style,
+      paragraph: props.textAlign
+        ? { ...style.paragraph, textAlign: props.textAlign }
+        : style.paragraph,
+    };
+  }, [props.textStyle, props.textAlign, themeAppearance, fontScale]);
+  // Link variants change as a message streams. The code renderer reads only the base style, so
+  // it stays the same function and the library keeps its rendered blocks.
   const markdownStyle = useMemo(
-    () => ({
-      ...enrichedStyle(props.textStyle, themeAppearance === "dark", fontScale),
-      linkVariants,
-    }),
-    [props.textStyle, themeAppearance, fontScale, linkVariants],
+    () => ({ ...baseMarkdownStyle, linkVariants }),
+    [baseMarkdownStyle, linkVariants],
   );
-  const renderers = renderImage
-    ? {
-        image: (block: MarkdownImageBlock) => {
+  const renderers = {
+    image: renderImage
+      ? (block: MarkdownImageBlock) => {
           const element = renderImage({
             href: block.url,
             alt: block.altText || null,
             title: block.title || null,
           });
           return isValidElement(element) ? element : undefined;
-        },
-      }
-    : undefined;
+        }
+      : undefined,
+    code: (block: MarkdownCodeBlock) =>
+      codeBlockElement(
+        block,
+        props.textStyle,
+        baseMarkdownStyle,
+        mathRenderingEnabled,
+        themeAppearance,
+        accessibilityLabels,
+        selectionMenuConfig,
+      ),
+  };
   const resolveNativeImageSource = useRetryingImageSource(resolveImageSource);
   const renderMarkdown = (openAndroidMenu?: () => void) => {
     const onLinkLongPress =
       Platform.OS === "android" && props.fileContextMenu
         ? ({ url }: { url: string }) => {
-            const menu = props.fileContextMenu?.(url) ?? {
-              title: url,
-              actions: [
-                { id: "enriched-open-link", title: "Open link" },
-                { id: "enriched-copy-link", title: "Copy link" },
-              ],
-            };
+            const menu = modelContextMenu(url) ??
+              props.fileContextMenu?.(url) ?? {
+                title: url,
+                actions: [
+                  { id: "enriched-open-link", title: gt("Open link") },
+                  { id: "enriched-copy-link", title: gt("Copy link") },
+                ],
+              };
             setActiveMenu({ url, menu });
             openAndroidMenu?.();
           }
@@ -312,6 +463,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         <EnrichedMarkdownText
           markdown={markdown}
           markdownStyle={markdownStyle}
+          writingDirection={props.writingDirection}
           onLinksChange={onLinksChange}
           renderers={renderers}
           resolveImageSource={resolveNativeImageSource}
@@ -324,7 +476,19 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           containerStyle={{ flexShrink: 1, minWidth: 0 }}
           flavor="github"
           selectable
+          contextMenuItems={
+            props.onCiteText
+              ? [
+                  {
+                    text: gt("Cite", { $context: "verb, quote selected text" }),
+                    icon: "quote.bubble",
+                    onPress: ({ text }) => props.onCiteText?.(text),
+                  },
+                ]
+              : undefined
+          }
           selectionClipboard={selectionClipboard}
+          selectionMenuConfig={selectionMenuConfig}
           selectionColor={props.textStyle.selectionColor}
           selectionHandleColor={props.textStyle.selectionHandleColor}
           md4cFlags={{
@@ -333,7 +497,8 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             admonitions: true,
             preserveWindowsPaths: true,
           }}
-          enableTaskListItemToggle={false}
+          enableTaskListItemToggle={props.onTaskListItemPress !== undefined}
+          onTaskListItemPress={props.onTaskListItemPress}
           enableCodeBlockWrapToggle
           spoilerOverlay="solid"
           onLinkPress={
@@ -342,6 +507,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           onLinkLongPress={onLinkLongPress}
           linkContextMenuItems={linkContextMenuItems}
           linkPillContent={linkPillContent}
+          accessibilityLabels={accessibilityLabels}
         />
       </View>
     );

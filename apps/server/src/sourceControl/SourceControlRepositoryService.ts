@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -26,6 +27,8 @@ import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
+  gitLfsDownloadProgressLine,
+  isGitFilterProgressLine,
   parseGitCloneProgressLine,
   type GitCloneProgressLine,
 } from "../project/gitCloneProgress.ts";
@@ -79,8 +82,11 @@ const CLONE_ENV = {
   // Force piped progress immediately; refuse credential prompts that would hang without a tty.
   GIT_PROGRESS_DELAY: "0",
   GIT_TERMINAL_PROMPT: "0",
-  LC_ALL: "C",
+  // English progress without overriding LC_CTYPE, which a global post-checkout hook inherits.
+  LANGUAGE: "C",
 } satisfies NodeJS.ProcessEnv;
+// Well inside the tracker's stall window, at about the pace git itself reports.
+const LFS_DOWNLOAD_POLL_INTERVAL = Duration.seconds(2);
 
 function mapRepositoryError(operation: string, provider: SourceControlProviderKind) {
   return Effect.mapError((cause: unknown) =>
@@ -110,7 +116,7 @@ function toRepositoryInfo(
   };
 }
 
-// Redact credentials from client clone snapshots; git still receives the original URL.
+// Redact credentials from client clone snapshots; git still receives the credentials.
 function redactRemoteUrl(remoteUrl: string): string {
   try {
     const url = new URL(remoteUrl);
@@ -128,10 +134,16 @@ function redactRemoteUrl(remoteUrl: string): string {
 }
 
 // Userinfo can contain @; remove through the last one before the host boundary.
-const URL_WITH_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/]+@/gi;
+const URL_WITH_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]+@/gi;
+// Git leaves quotes inside query tokens unescaped; consume through the closing quote.
+const QUOTED_URL_QUERY = /(['"])([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?.*\1(?=[\s:]|$)/gi;
+const URL_QUERY = /\b([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?[^\s]*/gi;
 
 function redactUrlCredentials(text: string): string {
-  return text.replace(URL_WITH_USERINFO, "$1");
+  return text
+    .replace(QUOTED_URL_QUERY, "$1$2$1")
+    .replace(URL_QUERY, "$1")
+    .replace(URL_WITH_USERINFO, "$1");
 }
 
 // The remote already exists after push failure; advise fixing access and pushing.
@@ -320,6 +332,36 @@ export const make = Effect.gen(function* () {
     } satisfies SourceControlPreparedClone;
   });
 
+  // Git and git-lfs print nothing while one object downloads, so a healthy transfer reads as a
+  // stall. Its partial files growing are the only sign of life a plain clone gives.
+  const watchLfsDownload = (
+    destinationPath: string,
+    onChange: (partialBytes: number) => Effect.Effect<void>,
+  ) => {
+    const incomplete = path.join(destinationPath, ".git", "lfs", "incomplete");
+    const partialBytes = fileSystem.readDirectory(incomplete).pipe(
+      Effect.flatMap(
+        Effect.forEach((name) =>
+          fileSystem
+            .stat(path.join(incomplete, name))
+            .pipe(Effect.map((info) => Number(info.size))),
+        ),
+      ),
+      Effect.map((sizes) => sizes.reduce((total, size) => total + size, 0)),
+      // No directory means no LFS download; a part that landed mid-read counts on the next poll.
+      Effect.orElseSucceed(() => 0),
+    );
+    return Effect.gen(function* () {
+      let previous = 0;
+      while (true) {
+        yield* Effect.sleep(LFS_DOWNLOAD_POLL_INTERVAL);
+        const current = yield* partialBytes;
+        if (current > 0 && current !== previous) yield* onChange(current);
+        previous = current;
+      }
+    });
+  };
+
   const runClone = Effect.fn("SourceControlRepositoryService.runClone")(function* (
     input: SourceControlCloneRepositoryInput,
     destinationPath: string,
@@ -329,8 +371,10 @@ export const make = Effect.gen(function* () {
     const onProgress = options?.onProgress;
     // Git mixes progress and diagnostics on stderr; retain non-progress tail lines for failure details.
     const stderrTail: Array<string> = [];
+    let filterPercent: number | null = null;
     const onStderrLine = (line: string) => {
       const parsed = parseGitCloneProgressLine(line);
+      if (parsed && isGitFilterProgressLine(line)) filterPercent = parsed.percent;
       if (parsed) return onProgress ? onProgress(parsed) : Effect.void;
       return Effect.sync(() => {
         const trimmed = line.trim();
@@ -340,12 +384,17 @@ export const make = Effect.gen(function* () {
         if (stderrTail.length > 4) stderrTail.shift();
       });
     };
-    yield* git
+    // Git misreads @ in a pathless URL's query as userinfo and echoes its suffix as the host.
+    const normalizedCloneUrl = cloneUrl.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#]+)\?/i, "$1/?");
+    const provider = input.provider ?? SourceControlProviderKind.make("unknown");
+    const timeoutMs = options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs;
+    const clone = git
       .execute({
         operation: "SourceControlRepositoryService.cloneRepository",
         cwd: path.dirname(destinationPath),
-        args: ["clone", "--progress", "--", cloneUrl, path.basename(destinationPath)],
-        timeoutMs: options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs,
+        args: ["clone", "--progress", "--", normalizedCloneUrl, path.basename(destinationPath)],
+        // The deadline is applied below so a timeout is reported as one, not as git's last line.
+        timeoutMs: null,
         // Buffered output is unused and progress can be huge; cap it while retaining line callbacks.
         maxOutputBytes: 256 * 1024,
         appendTruncationMarker: true,
@@ -358,7 +407,7 @@ export const make = Effect.gen(function* () {
           (cause) =>
             new SourceControlRepositoryError({
               operation: "cloneRepository",
-              provider: input.provider ?? SourceControlProviderKind.make("unknown"),
+              provider,
               detail:
                 stderrTail.length > 0
                   ? stderrTail.join(" ")
@@ -367,6 +416,30 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+    const watchedClone = onProgress
+      ? clone.pipe(
+          Effect.raceFirst(
+            watchLfsDownload(destinationPath, (partialBytes) =>
+              onProgress(gitLfsDownloadProgressLine(partialBytes, filterPercent)),
+            ),
+          ),
+        )
+      : clone;
+    if (timeoutMs === null) return yield* watchedClone;
+    // Interrupting the clone closes the scope that owns git, which kills it.
+    return yield* watchedClone.pipe(
+      Effect.timeoutOrElse({
+        duration: timeoutMs,
+        orElse: () =>
+          Effect.fail(
+            new SourceControlRepositoryError({
+              operation: "cloneRepository",
+              provider,
+              detail: `The clone timed out after ${Duration.format(Duration.millis(timeoutMs))}.`,
+            }),
+          ),
+      }),
+    );
   });
 
   const cloneRepository = Effect.fn("SourceControlRepositoryService.cloneRepository")(function* (
@@ -401,6 +474,8 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+    // A ref list read while the clone ran saw an unborn HEAD and no refs.
+    yield* git.invalidateRefs(prepared.destinationPath);
     return {
       cwd: prepared.destinationPath,
       remoteUrl,
@@ -479,7 +554,7 @@ export const make = Effect.gen(function* () {
           args: ["rev-parse", "--verify", "HEAD"],
         })
         .pipe(
-          Effect.map(() => true),
+          Effect.as(true),
           Effect.orElseSucceed(() => false),
         );
       if (!hasCommits) {
@@ -493,28 +568,50 @@ export const make = Effect.gen(function* () {
         };
       }
 
-      const pushResult = yield* git.pushCurrentBranch(input.cwd, null, { remoteName }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new SourceControlRepositoryError({
-              operation: "publishRepository",
-              provider: providerKind,
-              detail: publishPushFailureDetail({
-                urls,
-                remoteName,
-                remoteUrl,
-                reason: cause.reason,
+      const push = (pushUrl: string) =>
+        git.pushCurrentBranch(input.cwd, null, { remoteName }).pipe(
+          Effect.map((result) => ({ branch: result.branch, remoteUrl: pushUrl })),
+          Effect.mapError(
+            (cause) =>
+              new SourceControlRepositoryError({
+                operation: "publishRepository",
+                provider: providerKind,
+                detail: publishPushFailureDetail({
+                  urls,
+                  remoteName,
+                  remoteUrl: pushUrl,
+                  reason: cause.reason,
+                }),
+                cause,
               }),
-              cause,
-            }),
+          ),
+        );
+
+      // Like clone, an auto-selected SSH remote switches to HTTPS when SSH is refused;
+      // otherwise the remote keeps failing every later fetch and push.
+      const canSwitchToHttps = input.protocol !== "ssh" && remoteUrl === urls.sshUrl;
+      const pushed = yield* push(remoteUrl).pipe(
+        Effect.catchIf(
+          (error) => canSwitchToHttps && isSshRejection(error),
+          (sshError) =>
+            git
+              .execute({
+                operation: "SourceControlRepositoryService.publishRepository.switchToHttps",
+                cwd: input.cwd,
+                args: ["remote", "set-url", remoteName, urls.url],
+              })
+              .pipe(
+                Effect.mapError(() => sshError),
+                Effect.andThen(push(urls.url)),
+              ),
         ),
       );
 
       return {
         repository: toRepositoryInfo(providerKind, urls),
         remoteName,
-        remoteUrl,
-        branch: pushResult.branch,
+        remoteUrl: pushed.remoteUrl,
+        branch: pushed.branch,
         status: "pushed" as const,
       };
     },

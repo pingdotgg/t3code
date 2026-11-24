@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as Github from "@distilled.cloud/github";
 import * as Actions from "@distilled.cloud/github/actions";
 import * as Apps from "@distilled.cloud/github/apps";
@@ -12,19 +13,16 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { Base64Url } from "effect/encoding";
+import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/http/HttpClient";
-import * as crypto from "node:crypto";
 import { COMMENT_MARKER, RegistryConfig } from "./Bindings.ts";
 import * as KVCache from "./KVCache.ts";
 
-export class CryptoError extends Data.TaggedError("CryptoError")<{
-  readonly message: string;
-}> {}
+export class CryptoError extends Data.TaggedError("CryptoError")<{ readonly message: string }> {}
 
 export class AppNotInstalled extends Data.TaggedError("AppNotInstalled")<{
   readonly repo: string;
@@ -39,25 +37,25 @@ export const importPrivateKey = (pem: string) =>
   Effect.try({
     try: () => crypto.createPrivateKey({ key: pem }),
     catch: (cause) =>
-      new CryptoError({ message: `invalid private key: ${cause}` }),
+      new CryptoError({
+        message: `invalid private key: ${cause instanceof Error ? cause.message : String(cause)}`,
+      }),
   });
 
 /** Sign a compact RS256 JWT, used to authenticate as the GitHub App. */
-export const signJwt = (
-  claims: Record<string, unknown>,
-  key: crypto.KeyObject,
-) =>
+export const signJwt = (claims: Record<string, unknown>, key: crypto.KeyObject) =>
   Effect.try({
     try: () => {
-      const header = Base64Url.encode(
-        JSON.stringify({ alg: "RS256", typ: "JWT" }),
-      );
+      const header = Base64Url.encode(JSON.stringify({ alg: "RS256", typ: "JWT" }));
       const payload = Base64Url.encode(JSON.stringify(claims));
       const input = `${header}.${payload}`;
       const signature = crypto.sign("sha256", Buffer.from(input), key);
       return `${input}.${Base64Url.encode(new Uint8Array(signature))}`;
     },
-    catch: (cause) => new CryptoError({ message: `signing failed: ${cause}` }),
+    catch: (cause) =>
+      new CryptoError({
+        message: `signing failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      }),
   });
 
 /**
@@ -69,21 +67,14 @@ export const renderInstalls = (
   packages: ReadonlyArray<{ name: string; group: string; url: string }>,
   groups: ReadonlyArray<{ name: string; collapsed: boolean }>,
 ) => {
-  const collapsed = new Set(
-    groups.filter((g) => g.collapsed).map((g) => g.name),
-  );
+  const collapsed = new Set(groups.filter((g) => g.collapsed).map((g) => g.name));
   // One code block per package so each command has its own copy button, in
   // the order the manifest lists them, which is the order they were given
   // to `pkg pack`. Blank lines around the markdown inside `<details>` are
   // what make GitHub render it.
   return Object.entries(Arr.groupBy(packages, (pkg) => pkg.group))
     .flatMap(([group, members]) => {
-      const installs = members.flatMap(({ url }) => [
-        "```sh",
-        `pnpm install ${url}`,
-        "```",
-        "",
-      ]);
+      const installs = members.flatMap(({ url }) => ["```sh", `pnpm install ${url}`, "```", ""]);
       return collapsed.has(group)
         ? [
             "<details>",
@@ -175,12 +166,9 @@ const make = Effect.gen(function* () {
   // two GitHub calls a mint makes, so nothing is kept between mints.
   const appJwt = Effect.gen(function* () {
     const pem = yield* config.github.privateKey;
-    const key = yield* importPrivateKey(Redacted.value(pem));
+    const key = yield* pem.pipe(Redacted.value, importPrivateKey);
     const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
-    return yield* signJwt(
-      { iat: now - 60, exp: now + 540, iss: yield* config.github.appId },
-      key,
-    );
+    return yield* signJwt({ iat: now - 60, exp: now + 540, iss: yield* config.github.appId }, key);
   });
 
   // Failures are not kept: the next call retries the mint.
@@ -190,17 +178,12 @@ const make = Effect.gen(function* () {
     (repo) =>
       Effect.gen(function* () {
         const jwt = yield* appJwt;
-        const installation = yield* as(
-          jwt,
-          Apps.getRepoInstallation(split(repo)),
-        ).pipe(
+        const installation = yield* as(jwt, Apps.getRepoInstallation(split(repo))).pipe(
           Effect.catchTag("NotFound", () => new AppNotInstalled({ repo })),
         );
         const access = yield* as(
           jwt,
-          Apps.createInstallationAccessToken({
-            installation_id: installation.id,
-          }),
+          Apps.createInstallationAccessToken({ installation_id: installation.id }),
         );
         const now = yield* Clock.currentTimeMillis;
         return {
@@ -214,17 +197,12 @@ const make = Effect.gen(function* () {
   );
 
   /** A GitHub operation run as the App's installation on `repo`. */
-  const asInstallation = <A, E, R>(
-    repo: string,
-    operation: Effect.Effect<A, E, R>,
-  ) => Effect.flatMap(tokens(repo), (token) => as(token, operation));
+  const asInstallation = <A, E, R>(repo: string, operation: Effect.Effect<A, E, R>) =>
+    Effect.flatMap(tokens(repo), (token) => as(token, operation));
 
   return {
     getRun: (repo: string, runId: number) =>
-      asInstallation(
-        repo,
-        Actions.getWorkflowRun({ ...split(repo), run_id: runId }),
-      ),
+      asInstallation(repo, Actions.getWorkflowRun({ ...split(repo), run_id: runId })),
 
     /**
      * Artifacts named `name` uploaded to a run so far, including by jobs
@@ -233,12 +211,7 @@ const make = Effect.gen(function* () {
     listRunArtifacts: (repo: string, runId: number, name: string) =>
       asInstallation(
         repo,
-        Actions.listWorkflowRunArtifacts({
-          ...split(repo),
-          run_id: runId,
-          name,
-          per_page: 100,
-        }),
+        Actions.listWorkflowRunArtifacts({ ...split(repo), run_id: runId, name, per_page: 100 }),
       ).pipe(Effect.map((page) => page.artifacts)),
 
     /**
@@ -246,12 +219,7 @@ const make = Effect.gen(function* () {
      * repository the commit was pushed to. Commit-associated PR lookups can
      * return no results for forks, so discover candidates by owner and branch.
      */
-    pullRequestsForCommit: (
-      repo: string,
-      headRepo: string,
-      headBranch: string,
-      sha: string,
-    ) =>
+    pullRequestsForCommit: (repo: string, headRepo: string, headBranch: string, sha: string) =>
       asInstallation(
         repo,
         Pulls.list({
@@ -309,28 +277,16 @@ const make = Effect.gen(function* () {
      * Create or update the comment on `issue` whose body starts with
      * `marker`, looking through the first five pages of comments.
      */
-    upsertComment: (
-      repo: string,
-      issue: number,
-      marker: string,
-      body: string,
-    ) =>
+    upsertComment: (repo: string, issue: number, marker: string, body: string) =>
       Effect.gen(function* () {
         const comments = Stream.paginate(1, (page) =>
           asInstallation(
             repo,
-            Issues.listComments({
-              ...split(repo),
-              issue_number: issue,
-              per_page: 100,
-              page,
-            }),
+            Issues.listComments({ ...split(repo), issue_number: issue, per_page: 100, page }),
           ).pipe(
             Effect.map((comments) => [
               comments,
-              comments.length < 100 || page >= 5
-                ? Option.none()
-                : Option.some(page + 1),
+              comments.length < 100 || page >= 5 ? Option.none() : Option.some(page + 1),
             ]),
           ),
         );
@@ -344,29 +300,20 @@ const make = Effect.gen(function* () {
           onNone: () =>
             asInstallation(
               repo,
-              Issues.createComment({
-                ...split(repo),
-                issue_number: issue,
-                body,
-              }),
+              Issues.createComment({ ...split(repo), issue_number: issue, body }),
             ),
           onSome: (comment) =>
             asInstallation(
               repo,
-              Issues.updateComment({
-                ...split(repo),
-                comment_id: comment.id,
-                body,
-              }),
+              Issues.updateComment({ ...split(repo), comment_id: comment.id, body }),
             ),
         });
       }),
   };
 });
 
-export class GitHubApp extends Context.Service<
-  GitHubApp,
-  Effect.Success<typeof make>
->()("@alchemy.run/pkg/GitHubApp") {}
+export class GitHubApp extends Context.Service<GitHubApp, Effect.Success<typeof make>>()(
+  "@alchemy.run/pkg/GitHubApp",
+) {}
 
 export const GitHubAppLive = Layer.effect(GitHubApp, make);

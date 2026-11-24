@@ -1,6 +1,32 @@
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import {
+  MAX_TOOL_OUTPUT_IMAGES,
+  readToolOutputImage,
+  SEND_TO_USER_TOOL_NAME,
+  sentMessageFromToolItem,
+  type ToolOutputImage,
+} from "@t3tools/shared/toolOutput";
+
+export function openCodeToolOutput(
+  output: string | undefined,
+  files: ReadonlyArray<{ readonly uri: string; readonly mime: string }> = [],
+) {
+  const images: Array<ToolOutputImage & { type: "image" }> = [];
+  for (const file of files) {
+    const match = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(file.uri);
+    if (match?.[1]?.toLowerCase() !== file.mime.toLowerCase()) continue;
+    const image = readToolOutputImage({ type: "image", mimeType: file.mime, data: match?.[2] });
+    if (image === null) continue;
+    images.push({ type: "image", ...image });
+    if (images.length === MAX_TOOL_OUTPUT_IMAGES) break;
+  }
+  return images.length === 0
+    ? output
+    : { content: [...(output ? [{ type: "text", text: output }] : []), ...images] };
+}
 
 // Search results stay on the timeline wire, so keep their text a preview.
 const SEARCH_PREVIEW_MAX_CHARS = 8_000;
@@ -13,7 +39,7 @@ type ToolItemBase = Omit<
 function openCodeToolProjectionKind(
   toolName: string,
 ): "command_execution" | "file_change" | "file_search" | "web_search" | "dynamic_tool" {
-  if (resolveT3McpToolId(toolName) !== null) return "dynamic_tool";
+  if (toolName.startsWith("mcp__") || resolveT3McpToolId(toolName) !== null) return "dynamic_tool";
   const normalized = toolName.toLowerCase();
   if (normalized === "todowrite") {
     return "dynamic_tool";
@@ -50,6 +76,14 @@ function recordString(input: unknown, ...keys: ReadonlyArray<string>): string | 
   return undefined;
 }
 
+function recordText(input: Record<string, unknown>, ...keys: ReadonlyArray<string>) {
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === "string") return value;
+  }
+  return undefined;
+}
+
 function recordNumber(input: unknown, ...keys: ReadonlyArray<string>): number | undefined {
   if (typeof input !== "object" || input === null) return undefined;
   for (const key of keys) {
@@ -81,6 +115,156 @@ function nativeReadOutput(output: string): string {
   return envelope === null ? output : envelope[1] + body.slice(envelope[0].length);
 }
 
+/** OpenCode's shell tool succeeds when the command exits non-zero. */
+export function openCodeCommandFailed(toolName: string, completedMetadata: unknown): boolean {
+  const exitCode = recordNumber(completedMetadata, "exit", "exitCode");
+  return (
+    openCodeToolProjectionKind(toolName) === "command_execution" &&
+    exitCode !== undefined &&
+    exitCode !== 0
+  );
+}
+
+function openCodeCodeModeToolCalls(
+  completedMetadata: unknown,
+  mcpServerName: string,
+  toolName: string,
+): ReadonlyArray<{ readonly index: number; readonly input: Record<string, unknown> }> {
+  if (typeof completedMetadata !== "object" || completedMetadata === null) return [];
+  const toolCalls = (completedMetadata as Record<string, unknown>)["toolCalls"];
+  if (!Array.isArray(toolCalls)) return [];
+  return toolCalls.flatMap((call: unknown, index) => {
+    if (typeof call !== "object" || call === null) return [];
+    const { tool, status, input } = call as Record<string, unknown>;
+    return tool === `${mcpServerName}.${toolName}` &&
+      status === "completed" &&
+      typeof input === "object" &&
+      input !== null
+      ? [{ index, input: input as Record<string, unknown> }]
+      : [];
+  });
+}
+
+/** Code Mode reports nested calls with their input but no result, so pages are found by input. */
+export function openCodeCodeModeHtmlRenders(
+  completedMetadata: unknown,
+  mcpServerName: string,
+): ReadonlyArray<{ readonly index: number; readonly input: Record<string, unknown> }> {
+  return openCodeCodeModeToolCalls(completedMetadata, mcpServerName, HTML_RENDER_TOOL_NAME);
+}
+
+/** Code Mode reports nested calls with their input but no result, so sent messages are found by input. */
+export function openCodeCodeModeSentMessages(
+  completedMetadata: unknown,
+  mcpServerName: string,
+): ReadonlyArray<{ readonly index: number; readonly input: Record<string, unknown> }> {
+  return openCodeCodeModeToolCalls(completedMetadata, mcpServerName, SEND_TO_USER_TOOL_NAME);
+}
+
+const MAX_JSON_STRING_UNWRAP_DEPTH = 4;
+
+function stripSentMessageFromJsonText(
+  text: string,
+  seen: ReadonlySet<string>,
+  depth = 0,
+): { readonly changed: false } | { readonly changed: true; readonly text: string | undefined } {
+  if (depth >= MAX_JSON_STRING_UNWRAP_DEPTH) return { changed: false };
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[") && !trimmed.startsWith('"')) {
+    return { changed: false };
+  }
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (typeof parsed === "string") {
+      const inner = stripSentMessageFromJsonText(parsed, seen, depth + 1);
+      if (!inner.changed) return { changed: false };
+      return {
+        changed: true,
+        text: inner.text === undefined ? undefined : JSON.stringify(inner.text),
+      };
+    }
+    const stripped = stripSentMessageFromValue(parsed, seen, depth + 1);
+    if (stripped === parsed) return { changed: false };
+    return {
+      changed: true,
+      text: stripped === undefined ? undefined : JSON.stringify(stripped),
+    };
+  } catch {
+    return { changed: false };
+  }
+}
+
+function stripSentMessageFromValue(value: unknown, seen: ReadonlySet<string>, depth = 0): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  if (Array.isArray(value)) {
+    const next = value
+      .map((entry) => stripSentMessageFromValue(entry, seen, depth))
+      .filter((entry) => entry !== undefined);
+    if (next.length === value.length && next.every((entry, index) => entry === value[index])) {
+      return value;
+    }
+    return next.length === 0 ? undefined : next;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.type === "text" && typeof record.text === "string") {
+    const strippedText = stripSentMessageFromJsonText(record.text, seen, depth);
+    if (strippedText.changed) {
+      if (strippedText.text !== undefined) {
+        return Object.fromEntries(
+          Object.entries(record).map(([key, entry]) => [
+            key,
+            key === "text" ? strippedText.text : entry,
+          ]),
+        );
+      }
+      const hasSiblings = Object.keys(record).some((key) => key !== "type" && key !== "text");
+      if (!hasSiblings) return undefined;
+      return Object.fromEntries(
+        Object.entries(record).map(([key, entry]) => [key, key === "text" ? "" : entry]),
+      );
+    }
+    return value;
+  }
+  let changed = false;
+  const entries: Array<readonly [string, unknown]> = [];
+  for (const [key, entry] of Object.entries(record)) {
+    if (key === "sentMessage" && typeof entry === "string" && seen.has(entry)) {
+      changed = true;
+      continue;
+    }
+    const isEnvelopeKey = key === "structuredContent" || key === "result" || key === "content";
+    // compactDynamicToolOutput decodes JSON strings under these keys, so suppression must too.
+    const strippedText =
+      isEnvelopeKey && typeof entry === "string"
+        ? stripSentMessageFromJsonText(entry, seen, depth + 1)
+        : undefined;
+    const stripped = strippedText?.changed
+      ? strippedText.text
+      : isEnvelopeKey
+        ? stripSentMessageFromValue(entry, seen, depth)
+        : entry;
+    if (stripped !== entry) changed = true;
+    if (stripped !== undefined) {
+      entries.push([key, stripped]);
+    }
+  }
+  if (!changed) return value;
+  return entries.length === 0 ? undefined : Object.fromEntries(entries);
+}
+
+/** Remove a duplicate returned sentMessage from Code Mode text output while preserving other fields/images. */
+export function stripOpenCodeReturnedSentMessage(
+  toolName: string,
+  output: string | undefined,
+  seenSentMessages: ReadonlySet<string>,
+): string | undefined {
+  if (output === undefined || seenSentMessages.size === 0) return output;
+  const returned = sentMessageFromToolItem({ toolName, output });
+  if (returned === undefined || !seenSentMessages.has(returned)) return output;
+  const stripped = stripSentMessageFromJsonText(output, seenSentMessages);
+  return stripped.changed ? stripped.text : output;
+}
+
 export function openCodeToolTurnItem(
   base: ToolItemBase,
   tool: {
@@ -88,6 +272,7 @@ export function openCodeToolTurnItem(
     readonly input: Record<string, unknown>;
     readonly output: string | undefined;
     readonly completedMetadata: unknown;
+    readonly files?: ReadonlyArray<{ readonly uri: string; readonly mime: string }> | undefined;
   },
 ): OrchestrationV2TurnItem {
   const { input, output } = tool;
@@ -103,8 +288,8 @@ export function openCodeToolTurnItem(
       };
     }
     case "file_change": {
-      const oldStr = recordString(input, "oldString", "oldText");
-      const newStr = recordString(input, "newString", "content", "newText");
+      const oldStr = recordText(input, "oldString", "oldText");
+      const newStr = recordText(input, "newString", "content", "newText");
       const diffStr =
         recordString(tool.completedMetadata, "diff", "patch") ??
         (base.status === "failed" && output?.trim() ? output : undefined);
@@ -168,7 +353,9 @@ export function openCodeToolTurnItem(
         type: "dynamic_tool",
         toolName: tool.name,
         input,
-        ...(cleanedOutput === undefined ? {} : { output: cleanedOutput }),
+        ...(cleanedOutput === undefined && !tool.files?.length
+          ? {}
+          : { output: openCodeToolOutput(cleanedOutput, tool.files) }),
       };
     }
   }

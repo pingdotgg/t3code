@@ -1,6 +1,8 @@
 import { AuthStandardClientScopes } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,6 +15,7 @@ import {
 } from "@t3tools/shared/desktopBootstrapToken";
 
 import * as ServerConfig from "../config.ts";
+import { MCP_APPROVAL_SUBJECT_PREFIX } from "../persistence/AuthPairingLinks.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 
@@ -44,12 +47,12 @@ const layerPairingGrantStore = (
     Layer.provide(layerServerConfig(overrides)),
   );
 
-it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
-  it.effect("issues one-time bootstrap tokens that can only be consumed once", () =>
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStore.layer", (it) => {
+  it.effect("accepts lowercase one-time tokens exactly once", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const issued = yield* bootstrapCredentials.issueOneTimeToken({ label: "Julius iPhone" });
-      const first = yield* bootstrapCredentials.consume(issued.credential);
+      const first = yield* bootstrapCredentials.consume(issued.credential.toLowerCase());
       const second = yield* Effect.flip(bootstrapCredentials.consume(issued.credential));
 
       expect(first.method).toBe("one-time-token");
@@ -59,6 +62,28 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       expect(issued.label).toBe("Julius iPhone");
       expect(second._tag).toBe("UnknownBootstrapCredentialError");
       expect(second.message).toContain("Unknown bootstrap credential");
+    }).pipe(
+      Effect.provide(layerPairingGrantStore()),
+      Effect.provideService(
+        SecureRandom.SecureRandom,
+        SecureRandom.make((size) => new Uint8Array(size).fill(8)),
+      ),
+    ),
+  );
+
+  it.effect("accepts a one-time token typed in hyphen- or space-separated groups", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const issued = yield* bootstrapCredentials.issueOneTimeToken();
+      const formatted = issued.credential.match(/.{1,4}/g)!.join("-");
+      const consumed = yield* bootstrapCredentials.consume(formatted.toLowerCase());
+      const second = yield* bootstrapCredentials.issueOneTimeToken();
+      const spaced = yield* bootstrapCredentials.consume(
+        second.credential.match(/.{1,4}/g)!.join(" "),
+      );
+
+      expect(consumed.method).toBe("one-time-token");
+      expect(spaced.method).toBe("one-time-token");
     }).pipe(Effect.provide(layerPairingGrantStore())),
   );
 
@@ -124,6 +149,23 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
     }).pipe(Effect.provide(layerPairingGrantStore())),
   );
 
+  it.effect("matches a seeded desktop bootstrap credential exactly", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const exact = yield* bootstrapCredentials.consume("abcdefghjkmn");
+      const otherCase = yield* Effect.flip(bootstrapCredentials.consume("ABCDEFGHJKMN"));
+
+      expect(exact.method).toBe("desktop-bootstrap");
+      expect(otherCase._tag).toBe("UnknownBootstrapCredentialError");
+    }).pipe(
+      Effect.provide(
+        layerPairingGrantStore({
+          desktopBootstrapToken: "abcdefghjkmn",
+        }),
+      ),
+    ),
+  );
+
   it.effect("reports seeded desktop bootstrap credentials as expired after their ttl", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -157,15 +199,17 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       yield* TestClock.adjust(Duration.days(5));
       const now = 5 * 24 * 60 * 60 * 1000;
       const current = yield* bootstrapCredentials.consume(
-        currentDesktopBootstrapToken("desktop-secret", now),
+        yield* currentDesktopBootstrapToken("desktop-secret", now).pipe(
+          Effect.provide(NodeCrypto.layerMac),
+        ),
       );
       expect(current.method).toBe("desktop-bootstrap");
 
-      const stale = yield* Effect.flip(
-        bootstrapCredentials.consume(
-          currentDesktopBootstrapToken("desktop-secret", now - 2 * window),
-        ),
-      );
+      const staleToken = yield* currentDesktopBootstrapToken(
+        "desktop-secret",
+        now - 2 * window,
+      ).pipe(Effect.provide(NodeCrypto.layerMac));
+      const stale = yield* Effect.flip(bootstrapCredentials.consume(staleToken));
       expect(stale._tag).toBe("UnknownBootstrapCredentialError");
 
       const launch = yield* Effect.flip(bootstrapCredentials.consume("desktop-bootstrap-token"));
@@ -191,6 +235,11 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
         Stream.runForEach((change) => Queue.offer(changes, change)),
         Effect.forkScoped({ startImmediately: true }),
       );
+      // An app approval code sends no update, issued or spent; the next belongs to a plain code.
+      const approval = yield* grants.issueOneTimeToken({ mcpApproval: "auto" });
+      yield* grants.consume(approval.credential, {
+        allowedSubject: `${MCP_APPROVAL_SUBJECT_PREFIX}auto`,
+      });
       for (const input of [{}, { label: "Synthetic phone" }]) {
         const issued = yield* grants.issueOneTimeToken(input);
         const change = yield* Queue.take(changes);

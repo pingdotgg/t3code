@@ -1,11 +1,15 @@
 import * as NodeUtil from "node:util";
 import {
+  VcsProcessExitError,
   VcsProcessSpawnError,
+  VcsProcessTimeoutError,
   type SourceControlProviderAuth,
   type SourceControlProviderDiscoveryItem,
   type SourceControlProviderInfo,
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -39,6 +43,13 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly executable: string;
   readonly versionArgs: ReadonlyArray<string>;
   readonly authArgs: ReadonlyArray<string>;
+  /** Asked in order while the answer is signed out; one counts only when it finds a sign-in. */
+  readonly authRetryArgs?: (environment: NodeJS.ProcessEnv) => ReadonlyArray<ReadonlyArray<string>>;
+  /** Environment overrides for one auth or remote probe. */
+  readonly probeEnv?: (
+    args: ReadonlyArray<string>,
+    environment: NodeJS.ProcessEnv,
+  ) => Record<string, string>;
   readonly remoteRefinementArgs?: (
     context: SourceControlProvider.SourceControlProviderContext,
   ) => ReadonlyArray<string>;
@@ -75,6 +86,8 @@ type SourceControlCliRemoteRefinementSpec = SourceControlCliDiscoverySpec & {
 };
 
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
+/** An API host that stalls must not hold the whole discovery answer behind it. */
+const API_PROBE_TIMEOUT = "3 seconds";
 
 function probeTimeoutMs(spec: SourceControlCliDiscoverySpec): number {
   return spec.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
@@ -184,6 +197,9 @@ function isCliRemoteRefinementSpec(
   return spec.type === "cli" && spec.refineUnknownRemote !== undefined;
 }
 
+const isVcsProcessTimeoutError = Schema.is(VcsProcessTimeoutError);
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
+
 function probeCli(input: {
   readonly spec: SourceControlCliDiscoverySpec;
   readonly process: SourceControlHost.SourceControlHost["Service"]["process"];
@@ -215,15 +231,17 @@ function probeCli(input: {
           }) satisfies DiscoveryProbeResult,
       ),
       Effect.catch((cause) =>
-        Effect.succeed({
-          kind: input.spec.kind,
-          label: input.spec.label,
-          executable: input.spec.executable,
-          status: "missing" as const,
-          version: Option.none<string>(),
-          installHint: input.spec.installHint,
-          detail: detailFromCause(cause),
-        } satisfies DiscoveryProbeResult),
+        Effect.gen(function* () {
+          return {
+            kind: input.spec.kind,
+            label: input.spec.label,
+            executable: input.spec.executable,
+            status: "missing" as const,
+            version: Option.none<string>(),
+            installHint: yield* failedProbeHint(input.spec, cause),
+            detail: detailFromCause(cause),
+          } satisfies DiscoveryProbeResult;
+        }),
       ),
     );
 }
@@ -236,6 +254,12 @@ export function probeSourceControlProvider(input: {
   if (input.spec.type === "managed-cli") return input.spec.probe(input.cwd);
   if (input.spec.type === "api") {
     return input.spec.probeAuth.pipe(
+      Effect.timeoutOption(API_PROBE_TIMEOUT),
+      Effect.map(
+        Option.getOrElse(() =>
+          unknownAuth("The hosting service did not answer in time. Refresh to try again."),
+        ),
+      ),
       Effect.map(
         (auth) =>
           ({
@@ -252,47 +276,55 @@ export function probeSourceControlProvider(input: {
   }
 
   const spec = input.spec;
+  const runAuth = (args: ReadonlyArray<string>, environment: NodeJS.ProcessEnv) =>
+    input.process
+      .run({
+        operation: "source-control.discovery.auth",
+        command: spec.executable,
+        args,
+        cwd: input.cwd,
+        ...(spec.probeEnv ? { env: spec.probeEnv(args, environment) } : {}),
+        allowNonZeroExit: true,
+        timeoutMs: probeTimeoutMs(spec),
+        maxOutputBytes: 8_000,
+        appendTruncationMarker: true,
+      })
+      .pipe(
+        Effect.map(spec.parseAuth),
+        Effect.catch((cause) =>
+          Effect.succeed(unknownAuth(Option.getOrUndefined(detailFromCause(cause)))),
+        ),
+      );
+  const auth = Effect.gen(function* () {
+    const environment = yield* HostProcess.Environment;
+    const first = yield* runAuth(spec.authArgs, environment);
+    if (first.status !== "unauthenticated") return first;
+    for (const retryArgs of spec.authRetryArgs?.(environment) ?? []) {
+      const retry = yield* runAuth(retryArgs, environment);
+      if (retry.status === "authenticated") return retry;
+    }
+    return first;
+  });
 
-  return probeCli({
-    spec,
-    process: input.process,
-    cwd: input.cwd,
-  }).pipe(
-    Effect.flatMap((item) => {
-      if (item.status !== "available") {
-        return Effect.succeed({
+  // The auth check does not depend on the version output, so both spawn at once.
+  return Effect.all(
+    [
+      probeCli({
+        spec,
+        process: input.process,
+        cwd: input.cwd,
+      }),
+      auth,
+    ],
+    { concurrency: "unbounded" },
+  ).pipe(
+    Effect.map(
+      ([item, auth]) =>
+        ({
           ...item,
-          auth: unknownAuth("Hosting integration command was not found on the server PATH."),
-        } satisfies SourceControlProviderDiscoveryItem);
-      }
-
-      return input.process
-        .run({
-          operation: "source-control.discovery.auth",
-          command: spec.executable,
-          args: spec.authArgs,
-          cwd: input.cwd,
-          allowNonZeroExit: true,
-          timeoutMs: probeTimeoutMs(spec),
-          maxOutputBytes: 8_000,
-          appendTruncationMarker: true,
-        })
-        .pipe(
-          Effect.map(
-            (result) =>
-              ({
-                ...item,
-                auth: spec.parseAuth(result),
-              }) satisfies SourceControlProviderDiscoveryItem,
-          ),
-          Effect.catch((cause) =>
-            Effect.succeed({
-              ...item,
-              auth: unknownAuth(Option.getOrUndefined(detailFromCause(cause))),
-            } satisfies SourceControlProviderDiscoveryItem),
-          ),
-        );
-    }),
+          auth: item.status === "available" ? auth : unknownAuth(item.installHint),
+        }) satisfies SourceControlProviderDiscoveryItem,
+    ),
   );
 }
 
@@ -307,6 +339,61 @@ export function isMissingExecutable(error: unknown): boolean {
     error.cause.reason.module === "ChildProcess"
   );
 }
+
+// macOS's EBADARCH, which Node has no name for: the binary is built for another CPU, such as an
+// Intel-only `gh` on Apple Silicon without Rosetta.
+const BAD_CPU_TYPE_ERRNO = -86;
+
+const unavailableInstallHint = Effect.fn("discovery.unavailableInstallHint")(function* (
+  executable: string,
+  installHint: string,
+  cause: unknown,
+) {
+  const platform = yield* HostProcess.Platform;
+  if (
+    platform !== "darwin" ||
+    !isVcsProcessSpawnError(cause) ||
+    !(cause.cause instanceof Error) ||
+    !("errno" in cause.cause) ||
+    cause.cause.errno !== BAD_CPU_TYPE_ERRNO
+  ) {
+    return installHint;
+  }
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const env = yield* HostProcess.Environment;
+  const path = yield* Effect.promise(async () => resolveExecutable(executable, platform, env));
+  const architecture = yield* HostProcess.Architecture;
+  return `\`${path ?? executable}\` is built for another CPU architecture, so this ${architecture} machine cannot run it. Remove or replace it. ${installHint}`;
+});
+
+/** An installed CLI whose version probe failed needs a repair, not install advice. */
+function probeFailureHint(
+  probe: { readonly executable: string; readonly versionArgs: ReadonlyArray<string> },
+  cause: unknown,
+): string {
+  const command = `\`${[probe.executable, ...probe.versionArgs].join(" ")}\``;
+  const outcome = isVcsProcessTimeoutError(cause)
+    ? `timed out after ${cause.timeoutMs}ms`
+    : isVcsProcessExitError(cause)
+      ? `exited with status ${cause.exitCode}`
+      : "failed";
+  return `${command} ${outcome}. Check the \`${probe.executable}\` that the server's PATH resolves.`;
+}
+
+export const failedProbeHint = Effect.fn("discovery.failedProbeHint")(function* (
+  probe: {
+    readonly executable: string;
+    readonly versionArgs: ReadonlyArray<string>;
+    readonly installHint: string;
+  },
+  cause: unknown,
+) {
+  const hint = yield* unavailableInstallHint(probe.executable, probe.installHint, cause);
+  // A wrong-CPU hint or an absent executable keeps its advice; other failures need repair.
+  return hint !== probe.installHint || isMissingExecutable(cause)
+    ? hint
+    : probeFailureHint(probe, cause);
+});
 
 class UnknownRemoteUnanswered extends Schema.TaggedError<UnknownRemoteUnanswered>()(
   "UnknownRemoteUnanswered",
@@ -329,27 +416,30 @@ function refineWithSpec(input: {
     return spec.refineUnknownRemote({ cwd: input.cwd, context });
   }
   if (!isCliRemoteRefinementSpec(spec)) return Effect.succeed(null);
-  return input.process
-    .run({
-      operation: "source-control.discovery.refine-unknown-remote",
-      command: spec.executable,
-      args: spec.remoteRefinementArgs?.(context) ?? spec.authArgs,
-      cwd: input.cwd,
-      allowNonZeroExit: true,
-      timeoutMs: probeTimeoutMs(spec),
-      maxOutputBytes: 8_000,
-      appendTruncationMarker: true,
-    })
-    .pipe(
-      Effect.catchIf(isMissingExecutable, () => Effect.void),
-      Effect.flatMap((auth) => {
-        const provider =
-          auth === undefined ? null : spec.refineUnknownRemote({ cwd: input.cwd, context, auth });
-        return provider === undefined
-          ? Effect.fail(new UnknownRemoteUnanswered())
-          : Effect.succeed(provider);
+  const args = spec.remoteRefinementArgs?.(context) ?? spec.authArgs;
+  return Effect.service(HostProcess.Environment).pipe(
+    Effect.flatMap((environment) =>
+      input.process.run({
+        operation: "source-control.discovery.refine-unknown-remote",
+        command: spec.executable,
+        args,
+        cwd: input.cwd,
+        ...(spec.probeEnv ? { env: spec.probeEnv(args, environment) } : {}),
+        allowNonZeroExit: true,
+        timeoutMs: probeTimeoutMs(spec),
+        maxOutputBytes: 8_000,
+        appendTruncationMarker: true,
       }),
-    );
+    ),
+    Effect.catchIf(isMissingExecutable, () => Effect.void),
+    Effect.flatMap((auth) => {
+      const provider =
+        auth === undefined ? null : spec.refineUnknownRemote({ cwd: input.cwd, context, auth });
+      return provider === undefined
+        ? Effect.fail(new UnknownRemoteUnanswered())
+        : Effect.succeed(provider);
+    }),
+  );
 }
 
 export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvider")(

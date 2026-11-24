@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import type { ResourceTelemetryProcess, ResourceTelemetrySnapshot } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -69,27 +70,20 @@ describe("groupProcesses", () => {
 });
 
 describe("ProcessGroupMetrics.layer", () => {
-  it.effect("logs the first failed sample and the recovery, not every repeat", () => {
+  const notRunning = new ResourceTelemetry.ResourceTelemetryRefreshFailed({
+    operation: "refresh",
+    cause: new Error("Resource monitor is unavailable: sidecar is not running"),
+  });
+  const logsAfter = (
+    refresh: ResourceTelemetry.ResourceTelemetry["Service"]["refresh"],
+    afterStart: Effect.Effect<void>,
+  ) => {
     const logs: Array<string> = [];
     const logger = Logger.make(({ logLevel, message }) => {
       logs.push(`${logLevel.toUpperCase()} ${String([message].flat()[0])}`);
     });
+    const telemetry = { refresh } as unknown as ResourceTelemetry.ResourceTelemetry["Service"];
     return Effect.gen(function* () {
-      const outcomes = yield* Ref.make<ReadonlyArray<"fail" | "ok">>(["fail", "fail", "ok"]);
-      const refresh = Ref.modify(outcomes, ([next = "ok", ...rest]) => [next, rest] as const).pipe(
-        Effect.flatMap((next) =>
-          next === "fail"
-            ? Effect.fail(
-                new ResourceTelemetry.ResourceTelemetryRefreshFailed({
-                  operation: "refresh",
-                  cause: new Error("Resource monitor binary was not found for darwin/arm64."),
-                }),
-              )
-            : Effect.succeed({ processes: [] } as unknown as ResourceTelemetrySnapshot),
-        ),
-      );
-      const telemetry = { refresh } as unknown as ResourceTelemetry.ResourceTelemetry["Service"];
-
       yield* Layer.build(
         ProcessGroupMetrics.layer.pipe(
           Layer.provide(Layer.succeed(ResourceTelemetry.ResourceTelemetry, telemetry)),
@@ -100,13 +94,8 @@ describe("ProcessGroupMetrics.layer", () => {
           ),
         ),
       );
-      yield* TestClock.adjust("3 minutes");
-
-      assert.deepStrictEqual(logs, [
-        "WARN process group metrics are not exported: sample failed",
-        "DEBUG process group metrics sample failed",
-        "INFO process group metrics sample recovered",
-      ]);
+      yield* afterStart;
+      return logs;
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -116,5 +105,36 @@ describe("ProcessGroupMetrics.layer", () => {
         ),
       ),
     );
-  });
+  };
+  const emptySnapshot = { processes: [] } as unknown as ResourceTelemetrySnapshot;
+
+  it.effect("logs the first failed sample and the recovery, not every repeat", () =>
+    Effect.gen(function* () {
+      const outcomes = yield* Ref.make<ReadonlyArray<"fail" | "ok">>(["fail", "fail", "ok"]);
+      const refresh = Ref.modify(outcomes, ([next = "ok", ...rest]) => [next, rest] as const).pipe(
+        Effect.flatMap((next) =>
+          next === "fail" ? Effect.fail(notRunning) : Effect.succeed(emptySnapshot),
+        ),
+      );
+      const logs = yield* logsAfter(refresh, TestClock.adjust("3 minutes"));
+      assert.deepStrictEqual(logs, [
+        "WARN process group metrics are not exported: sample failed",
+        "DEBUG process group metrics sample failed",
+        "INFO process group metrics sample recovered",
+      ]);
+    }),
+  );
+
+  it.effect("does not report the sidecar as failed while it is still starting", () =>
+    Effect.gen(function* () {
+      // The sidecar answers once its handshake completes, a few seconds after the server starts.
+      const refresh = Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) =>
+          now >= 5_000 ? Effect.succeed(emptySnapshot) : Effect.fail(notRunning),
+        ),
+      );
+      const logs = yield* logsAfter(refresh, TestClock.adjust("1 minute"));
+      assert.deepStrictEqual(logs, []);
+    }),
+  );
 });

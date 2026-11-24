@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -64,7 +64,9 @@ vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => monitor.retr
 
 import { ResourceTelemetryDiagnostics } from "../components/settings/ResourceTelemetryDiagnostics";
 
-class MonitorError extends Data.TaggedError("MonitorError")<{ readonly message: string }> {}
+class MonitorError extends Schema.TaggedError<MonitorError>()("MonitorError", {
+  message: Schema.String,
+}) {}
 
 const environmentId = EnvironmentId.make("remote");
 const startError = "The resource monitor is not available.";
@@ -171,6 +173,7 @@ function setup({ retryFails = false, holdRetry = false } = {}) {
   const registry = AtomRegistry.make();
   return {
     registry,
+    snapshot,
     historyQueries,
     historyReads,
     releaseRetry,
@@ -262,5 +265,49 @@ describe("resource monitor retry", () => {
     expect(monitor.retry).toHaveBeenCalledExactlyOnceWith({ environmentId, input: {} });
     await expect.element(screen.getByText(startError, { exact: true })).toBeVisible();
     await expect.element(screen.getByText(historyError, { exact: true })).toBeVisible();
+  });
+
+  it("stops showing refresh as pending after the first live snapshot arrives", async () => {
+    using fixture = setup();
+    const liveTelemetry = Atom.make<
+      AsyncResult.AsyncResult<ResourceTelemetrySnapshot, MonitorError>
+    >(AsyncResult.initial(true)).pipe(Atom.keepAlive);
+    monitor.telemetry.mockImplementation(() => liveTelemetry);
+
+    await using screen = await render(
+      <RegistryContext.Provider value={fixture.registry}>
+        <ResourceTelemetryDiagnostics environmentId={environmentId} />
+      </RegistryContext.Provider>,
+    );
+    const refreshButton = screen.getByRole("button", { name: "Refresh resource telemetry" });
+    await expect.element(refreshButton).toBeDisabled();
+
+    await act(() => {
+      fixture.registry.set(
+        liveTelemetry,
+        AsyncResult.waiting(AsyncResult.success(fixture.snapshot)),
+      );
+    });
+    await expect.element(refreshButton).toBeEnabled();
+  });
+
+  it("stops showing refresh as pending after a live subscription error", async () => {
+    using fixture = setup();
+    const liveTelemetry = Atom.make<
+      AsyncResult.AsyncResult<ResourceTelemetrySnapshot, MonitorError>
+    >(AsyncResult.waiting(AsyncResult.fail(new MonitorError({ message: startError })))).pipe(
+      Atom.keepAlive,
+    );
+    monitor.telemetry.mockImplementation(() => liveTelemetry);
+
+    await using screen = await render(
+      <RegistryContext.Provider value={fixture.registry}>
+        <ResourceTelemetryDiagnostics environmentId={environmentId} />
+      </RegistryContext.Provider>,
+    );
+    await expect.element(screen.getByText(startError, { exact: true })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Refresh resource telemetry" }))
+      .toBeEnabled();
   });
 });

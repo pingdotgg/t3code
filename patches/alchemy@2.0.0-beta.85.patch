@@ -1,0 +1,15 @@
+diff --git a/lib/Artifacts.js b/lib/Artifacts.js
+index 648209c089f984dc45bd5eba0788130c9813a1d6..c66b5433427498ced6c91ee7c371ad8295f6205a 100644
+--- a/lib/Artifacts.js
++++ b/lib/Artifacts.js
+@@ -81,8 +81,8 @@ export const cached = (id) => (eff) => Effect.gen(function* () {
+         return cached;
+     }
+     yield* artifacts.set(id, Deferred.await(deferred));
+-    const result = yield* eff;
+-    yield* Deferred.succeed(deferred, result);
++    // Settle waiters on failure too, or every later caller hangs.
++    const result = yield* eff.pipe(Effect.onExit((exit) => Deferred.done(deferred, exit)));
+     yield* artifacts.set(id, result);
+     return result;
+ });

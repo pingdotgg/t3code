@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import type { ReactNode } from "react";
+
+import { act, render } from "../../../test/render";
+import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { ThemeEditorPanel } from "./ThemeEditorPanel";
 
 function dragHeader(panel: HTMLElement, toX: number, toY: number) {
@@ -32,9 +35,22 @@ function dragResizeHandle(panel: HTMLElement, byX: number) {
   handle.dispatchEvent(new PointerEvent("pointerup", init));
 }
 
-async function renderPanel() {
+function pointerAt(target: HTMLElement, type: string, xFraction: number) {
+  const rect = target.getBoundingClientRect();
+  target.dispatchEvent(
+    new PointerEvent(type, {
+      bubbles: true,
+      button: 0,
+      pointerId: 3,
+      clientX: rect.left + rect.width * xFraction,
+      clientY: rect.top + rect.height / 2,
+    }),
+  );
+}
+
+async function renderPanel(appContent?: ReactNode) {
   await page.viewport(1280, 900);
-  const stack = new AsyncDisposableStack();
+  await using stack = new AsyncDisposableStack();
   // Synthetic pointer ids are not active pointers, so the browser would reject capture.
   stack.use(vi.spyOn(HTMLElement.prototype, "setPointerCapture").mockImplementation(() => {}));
   // Tailwind is not loaded here; give the panel its fixed, card-sized box.
@@ -43,22 +59,67 @@ async function renderPanel() {
   stack.defer(() => style.remove());
   const screen = stack.use(
     await render(
-      <ThemeEditorPanel
-        open
-        onOpenChange={() => {}}
-        onSaved={() => true}
-        editingTheme={null}
-        initialAppearance="dark"
-        restoreTheme={() => {}}
-      />,
+      <>
+        {appContent}
+        <ThemeEditorPanel
+          open
+          onOpenChange={() => {}}
+          onSaved={() => true}
+          editingTheme={null}
+          initialAppearance="dark"
+          restoreTheme={() => {}}
+        />
+      </>,
     ),
   );
   const panel = screen.getByRole("dialog", { name: "Create theme" });
   await expect.element(panel).toBeVisible();
+  const owned = stack.move();
   return {
     panel: panel.element() as HTMLElement,
-    [Symbol.asyncDispose]: () => stack.disposeAsync(),
+    [Symbol.asyncDispose]: () => owned.disposeAsync(),
   };
+}
+
+// The editor floats beside the Settings dialog, whose Esc handler sits on the document.
+async function renderBesideSettings() {
+  const onSettingsOpenChange = vi.fn();
+  const onEditorOpenChange = vi.fn();
+  await using stack = new AsyncDisposableStack();
+  stack.use(
+    await render(
+      <>
+        <Dialog onOpenChange={onSettingsOpenChange} open>
+          <DialogPopup>
+            <DialogTitle>Settings</DialogTitle>
+          </DialogPopup>
+        </Dialog>
+        <ThemeEditorPanel
+          open
+          onOpenChange={onEditorOpenChange}
+          onSaved={() => true}
+          editingTheme={null}
+          initialAppearance="light"
+          restoreTheme={() => {}}
+        />
+      </>,
+    ),
+  );
+  // Settings moves focus in on a later frame; landing after the test focuses the editor, it steals it.
+  await expect.element(page.getByRole("button", { name: "Close" })).toHaveFocus();
+  const screen = stack.move();
+  return {
+    onSettingsOpenChange,
+    onEditorOpenChange,
+    [Symbol.asyncDispose]: () => screen.disposeAsync(),
+  };
+}
+
+// The modal Settings dialog marks the editor inert, hiding it from role queries and pointer input.
+async function editorElement(selector: string) {
+  const query = () => document.querySelector<HTMLElement>(`[data-theme-editor-panel] ${selector}`);
+  await expect.poll(query).toBeTruthy();
+  return query()!;
 }
 
 describe("ThemeEditorPanel", () => {
@@ -109,5 +170,117 @@ describe("ThemeEditorPanel", () => {
 
     await page.viewport(1280, 900);
     await expect.poll(() => (panel.element() as HTMLElement).style.left).toBe("700px");
+  });
+
+  it("restores the colors from before the picker opened when Escape closes it", async () => {
+    await using _view = await renderPanel();
+    const hex = page.getByRole("textbox", { name: "Accent hex value" });
+    const original = (hex.element() as HTMLInputElement).value;
+    await userEvent.click(page.getByRole("button", { name: "Choose Accent color" }));
+    const hue = page.getByRole("slider", { name: "Accent hue" });
+    await expect.element(hue).toBeInTheDocument();
+    const hueSlider = hue.element() as HTMLElement;
+
+    await act(async () => {
+      pointerAt(hueSlider, "pointerdown", 0.5);
+      pointerAt(hueSlider, "pointerup", 0.5);
+    });
+    await expect.element(hex).not.toHaveValue(original);
+
+    await act(async () => {
+      pointerAt(hueSlider, "pointerdown", 0.25);
+      hueSlider.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+      // The drag keeps going while the picker animates out.
+      pointerAt(hueSlider, "pointermove", 0.75);
+      pointerAt(hueSlider, "pointerup", 0.75);
+    });
+    expect((hex.element() as HTMLInputElement).value).toBe(original);
+  });
+
+  it("keeps the typed text while backspacing the background hex past valid shorthand", async () => {
+    await using _view = await renderPanel();
+    const hex = page.getByRole("textbox", { name: "Background hex value" });
+    await userEvent.fill(hex, "#222222");
+    await expect.element(hex).toHaveValue("#222222");
+
+    // Four- and three-digit prefixes are valid shorthand; the guided palette must not rewrite them.
+    for (const expected of ["#22222", "#2222", "#222", "#22", "#2", "#", ""]) {
+      await userEvent.keyboard("{Backspace}");
+      await expect.element(hex).toHaveValue(expected);
+    }
+
+    await userEvent.keyboard("#3366cc");
+    await expect.element(hex).toHaveValue("#3366cc");
+    await act(async () => (hex.element() as HTMLInputElement).blur());
+    await expect.element(hex).toHaveValue("#3366cc");
+  });
+
+  it("commits a typed shorthand hex when inspecting an advanced color switches modes", async () => {
+    await using _view = await renderPanel(<div className="bg-sidebar" data-testid="app-sidebar" />);
+    await userEvent.click(page.getByRole("button", { name: "Inspect app colors" }));
+    await userEvent.fill(page.getByRole("textbox", { name: "Background hex value" }), "#abc");
+
+    // Inspect mode cancels the pointerdown, so the hex field keeps focus while it unmounts.
+    const sidebar = page.getByTestId("app-sidebar").element() as HTMLElement;
+    await act(async () => pointerAt(sidebar, "pointerdown", 0.5));
+
+    await expect
+      .element(page.getByRole("switch", { name: "Use advanced theme colors" }))
+      .toBeChecked();
+    await expect
+      .element(page.getByRole("textbox", { name: "Background hex value" }))
+      .toHaveValue("#aabbcc");
+  });
+
+  it("closes on Escape without closing Settings", async () => {
+    await using view = await renderBesideSettings();
+    (await editorElement("input")).focus();
+    await userEvent.keyboard("{Escape}");
+
+    expect(view.onEditorOpenChange).toHaveBeenCalledWith(false);
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("leaves inspection on Escape without closing the editor or Settings", async () => {
+    await using view = await renderBesideSettings();
+    (await editorElement('[aria-label="Inspect app colors"]')).click();
+    await editorElement('[aria-label="Cancel inspecting app colors"]');
+    await userEvent.keyboard("{Escape}");
+
+    await editorElement('[aria-label="Inspect app colors"]');
+    expect(view.onEditorOpenChange).not.toHaveBeenCalled();
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("closes on a second Escape from the Custom CSS editor without closing Settings", async () => {
+    await using view = await renderBesideSettings();
+    await editorElement("button[aria-expanded]");
+    const cssToggle = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        "[data-theme-editor-panel] button[aria-expanded]",
+      ),
+    ).find((button) => button.textContent?.includes("Custom CSS"));
+    expect(cssToggle).toBeDefined();
+    cssToggle!.click();
+
+    const editor = await editorElement('textarea[aria-label="Custom CSS"]');
+    editor.focus();
+    await userEvent.keyboard("{Escape}");
+    editor.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Escape",
+        repeat: true,
+      }),
+    );
+
+    expect(view.onEditorOpenChange).not.toHaveBeenCalled();
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(view.onEditorOpenChange).toHaveBeenCalledWith(false);
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
   });
 });

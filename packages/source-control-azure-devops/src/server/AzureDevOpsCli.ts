@@ -13,6 +13,9 @@ import {
 } from "@t3tools/contracts";
 
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { AzureCliInstallLocation } from "./azureCliLauncher.ts";
 import {
   decodeAzureDevOpsPullRequestJson,
   decodeAzureDevOpsPullRequestListJson,
@@ -218,6 +221,9 @@ export class AzureDevOpsCli extends Context.Service<
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
       readonly maxOutputBytes?: number;
+      /** The remote T3 selected; without one, the checkout's primary remote scopes the command. */
+      readonly remoteUrl?: string;
+      readonly stdin?: string;
     }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, AzureDevOpsCliError>;
 
     readonly listPullRequests: (input: {
@@ -226,16 +232,19 @@ export class AzureDevOpsCli extends Context.Service<
       readonly source?: SourceControlProvider.SourceControlRefSelector;
       readonly state: "open" | "closed" | "merged" | "all";
       readonly limit?: number;
+      readonly remoteUrl?: string;
     }) => Effect.Effect<ReadonlyArray<NormalizedAzureDevOpsPullRequestRecord>, AzureDevOpsCliError>;
 
     readonly getPullRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
+      readonly remoteUrl?: string;
     }) => Effect.Effect<NormalizedAzureDevOpsPullRequestRecord, AzureDevOpsCliError>;
 
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
       readonly repository: string;
+      readonly remoteUrl?: string;
     }) => Effect.Effect<AzureDevOpsRepositoryCloneUrls, AzureDevOpsCliError>;
 
     readonly createRepository: (input: {
@@ -252,17 +261,15 @@ export class AzureDevOpsCli extends Context.Service<
       readonly target?: SourceControlProvider.SourceControlRefSelector;
       readonly title: string;
       readonly bodyFile: string;
+      readonly draft?: boolean;
+      readonly remoteUrl?: string;
     }) => Effect.Effect<void, AzureDevOpsCliError>;
 
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
+      readonly repository: string;
+      readonly remoteUrl?: string;
     }) => Effect.Effect<string | null, AzureDevOpsCliError>;
-
-    readonly checkoutPullRequest: (input: {
-      readonly cwd: string;
-      readonly reference: string;
-      readonly remoteName?: string;
-    }) => Effect.Effect<void, AzureDevOpsCliError>;
   }
 >()("@t3tools/source-control-azure-devops/server/AzureDevOpsCli") {}
 
@@ -351,46 +358,235 @@ function decodeAzureDevOpsJson<S extends Schema.Top>(
   );
 }
 
+/** The remote that scopes `az` when T3 selected none, from `git remote -v` output. */
+export function primaryRemoteUrl(output: string) {
+  if (!output.endsWith("\n")) return null;
+  const remotes = new Map<string, string>();
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)$/u.exec(trimmed);
+    if (!match?.[1] || !match[2]) return null;
+    if (match[3] === "fetch" && !remotes.has(match[1])) remotes.set(match[1], match[2]);
+  }
+  // Match the provider context SourceControlProviderRegistry binds, and `az`'s own detection.
+  return (
+    remotes.get("origin") ??
+    [...remotes.values()].find((url) => scopeFromRemoteUrl(url) !== null) ??
+    null
+  );
+}
+
+function scopeFromRemoteUrl(remote: string) {
+  try {
+    const scp = /^(?:[^@/]+@)?([^/:]+):(.+)$/u.exec(remote);
+    const url = new URL(
+      remote.includes("://") ? remote : scp ? `ssh://${scp[1]}/${scp[2]}` : remote,
+    );
+    if (url.search || url.hash) return null;
+    const legacy = url.hostname.endsWith(".visualstudio.com");
+    const parts = url.pathname.slice(1).split("/").map(decodeURIComponent);
+    let organization: string | undefined;
+    if (
+      url.protocol === "ssh:" &&
+      (url.hostname === "ssh.dev.azure.com" || url.hostname === "vs-ssh.visualstudio.com")
+    ) {
+      if (parts.length !== 4 || parts.shift() !== "v3") return null;
+      organization = parts.shift();
+    } else if (url.protocol === "https:") {
+      if (url.hostname === "dev.azure.com") organization = parts.shift();
+      else {
+        organization = /^([^.]+)\.visualstudio\.com$/u.exec(url.hostname)?.[1];
+        if (!organization) return null;
+        if (parts[0]?.toLowerCase() === "defaultcollection") parts.shift();
+      }
+      if (parts.length !== 3 || parts[1] !== "_git") return null;
+      parts.splice(1, 1);
+    } else return null;
+    const [project, repository] = parts;
+    if (!organization || !project || !repository) return null;
+    // `az` replaces a value starting with `@` by the contents of that local file.
+    if ([organization, project, repository].some((part) => /^@|[\p{Cc}/\\]/u.test(part))) {
+      return null;
+    }
+    if (legacy && !/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/u.test(organization))
+      return null;
+    return {
+      // az keys organization-scoped credentials by the original host family.
+      organization: legacy
+        ? `https://${organization}.visualstudio.com`
+        : `https://dev.azure.com/${encodeURIComponent(organization)}`,
+      project,
+      repository,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const remoteOf = (input: { readonly remoteUrl?: string }) =>
+  input.remoteUrl === undefined ? {} : { remoteUrl: input.remoteUrl };
+
+const hasOption = (args: ReadonlyArray<string>, pattern: RegExp) =>
+  args.some((arg) => pattern.test(arg));
+
+/** Whether `az` would run `--detect true`, which inspects the checkout from wherever `az` runs. */
+const detectsScope = (args: ReadonlyArray<string>) => {
+  const detect = args.indexOf("--detect");
+  return (
+    args[0] !== "account" &&
+    detect !== -1 &&
+    args[detect + 1] === "true" &&
+    !hasOption(args, /^(?:--organization|--org)(?:=|$)/u)
+  );
+};
+
+/** Replaces `--detect true` with the scope of an Azure remote. */
+export function scopeAzureCliArgs(
+  args: ReadonlyArray<string>,
+  remoteUrl: string,
+): ReadonlyArray<string> {
+  const scope = detectsScope(args) ? scopeFromRemoteUrl(remoteUrl) : null;
+  if (!scope) return args;
+  const scoped = [...args, "--organization", scope.organization];
+  scoped[args.indexOf("--detect") + 1] = "false";
+  // PR-ID commands and devops invoke accept only organization scope.
+  const acceptsProject =
+    args[0] === "repos" &&
+    (args[1] === "show" ||
+      args[1] === "create" ||
+      (args[1] === "pr" && (args[2] === "list" || args[2] === "create")));
+  if (!acceptsProject) return scoped;
+  // Joined so a name starting with `-` stays the option's value.
+  if (!hasOption(args, /^(?:--project|-p)(?:=|$)/u)) scoped.push(`--project=${scope.project}`);
+  if (args[1] !== "create" && !hasOption(args, /^(?:--repository|-r)(?:=|$)/u)) {
+    scoped.push(`--repository=${scope.repository}`);
+  }
+  return scoped;
+}
+
 const classifyAzFailure = (stderr: string): VcsProcessExitFailureKind | null => {
   const normalized = stderr.toLowerCase();
   if (normalized.includes("az devops login") || /please run '?az login'?/.test(normalized)) {
     return "authentication";
   }
+  // Azure DevOps reports usage-limit throttling as TF400733, often without an HTTP status.
+  if (normalized.includes("tf400733")) return "rate-limited";
   return normalized.includes("pull request") &&
     (normalized.includes("not found") || normalized.includes("does not exist"))
     ? "not-found"
     : null;
 };
 
+export interface AzureCliInvocation {
+  readonly command: string;
+  /** Arguments `az` needs before the caller's, to run the CLI in UTF-8 mode. */
+  readonly args: ReadonlyArray<string>;
+  readonly env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * `-X utf8` is the only way in: the launcher's `-I` implies `-E`, so `PYTHONUTF8` and
+ * `PYTHONIOENCODING` are ignored, and the ANSI code page loses text `az` cannot encode.
+ * Resolved once when the service is built: installing `az` later needs a restart.
+ */
+export const azureCliInvocation = Effect.fn("AzureDevOpsCli.invocation")(function* () {
+  if ((yield* HostProcess.Platform) !== "win32") {
+    return { command: "az", args: [] } satisfies AzureCliInvocation;
+  }
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const env = yield* HostProcess.Environment;
+  const launcher = yield* Effect.promise(async () => resolveExecutable("az", "win32", env));
+  const installFor = yield* AzureCliInstallLocation;
+  const install = launcher === undefined ? undefined : installFor(launcher);
+  // Unrecognized installs (pipx's Scripts\az.exe) keep the launcher and today's decode.
+  return install === undefined
+    ? ({ command: "az", args: [] } satisfies AzureCliInvocation)
+    : ({
+        command: install.interpreter,
+        args: ["-X", "utf8", "-IBm", "azure.cli"],
+        // What the launcher sets before running this same interpreter.
+        env: { AZ_INSTALLER: install.installer },
+      } satisfies AzureCliInvocation);
+});
+
+/**
+ * `--option=value` for free text. az replaces a value starting with `@` by that file's
+ * contents; `@-` reads it from stdin instead, which reaches az wherever it runs (WSL included).
+ */
+export const textOption = (option: string, value: string) =>
+  value.startsWith("@")
+    ? { arg: `${option}=@-`, stdin: value }
+    : { arg: `${option}=${value}`, stdin: undefined };
+
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
+  const invocation = yield* azureCliInvocation();
 
-  const execute: AzureDevOpsCli["Service"]["execute"] = (input) =>
-    process
-      .run({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: input.args,
-        cwd: input.cwd,
-        classifyFailure: classifyAzFailure,
-        notFoundDetail: "Pull request not found.",
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      })
-      .pipe(
-        Effect.mapError((error) =>
-          AzureDevOpsCommandFailedError.fromVcsError(
-            {
-              operation: "execute",
-              command: "az",
+  const execute: AzureDevOpsCli["Service"]["execute"] = Effect.fn("AzureDevOpsCli.execute")(
+    function* (input) {
+      let args = input.args;
+      if (detectsScope(args)) {
+        // Windows az running in WSL cannot inspect the server's Linux checkout.
+        const remoteUrl =
+          input.remoteUrl ??
+          (yield* process
+            .run({
+              operation: "AzureDevOpsCli.resolveScope",
+              command: "git",
+              args: ["remote", "-v"],
               cwd: input.cwd,
-              argumentCount: input.args.length,
-            },
-            error,
+              env: {
+                GIT_DIR: undefined,
+                GIT_WORK_TREE: undefined,
+                GIT_COMMON_DIR: undefined,
+                GIT_INDEX_FILE: undefined,
+                GIT_OBJECT_DIRECTORY: undefined,
+                GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+              },
+              timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+              maxOutputBytes: 64 * 1024,
+              allowNonZeroExit: true,
+            })
+            .pipe(
+              Effect.map((remotes) =>
+                remotes.exitCode === 0 && !remotes.stdoutTruncated && !remotes.stdoutInvalidUtf8
+                  ? primaryRemoteUrl(remotes.stdout)
+                  : null,
+              ),
+              Effect.orElseSucceed(() => null),
+            ));
+        if (remoteUrl !== null) args = scopeAzureCliArgs(args, remoteUrl);
+      }
+      return yield* process
+        .run({
+          operation: "AzureDevOpsCli.execute",
+          command: invocation.command,
+          args: [...invocation.args, ...args],
+          cwd: input.cwd,
+          ...(invocation.env === undefined ? {} : { env: invocation.env }),
+          ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+          classifyFailure: classifyAzFailure,
+          notFoundDetail: "Pull request not found.",
+          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            AzureDevOpsCommandFailedError.fromVcsError(
+              {
+                operation: "execute",
+                command: "az",
+                cwd: input.cwd,
+                argumentCount: input.args.length,
+              },
+              error,
+            ),
           ),
-        ),
-      );
+        );
+    },
+  );
 
   const executeJson = (input: Parameters<AzureDevOpsCli["Service"]["execute"]>[0]) =>
     execute({
@@ -401,8 +597,14 @@ export const make = Effect.gen(function* () {
   return AzureDevOpsCli.of({
     execute,
     listPullRequests: Effect.fn("AzureDevOpsCli.listPullRequests")(function (input) {
+      const branch = SourceControlProvider.sourceBranch(input);
+      // az checks literal ref prefixes before constructing the request URL.
+      const refPrefix =
+        ["refs/heads/", "refs/pull/", "refs/tags/"].find((prefix) => branch.startsWith(prefix)) ??
+        "";
       return executeJson({
         cwd: input.cwd,
+        ...remoteOf(input),
         args: [
           "repos",
           "pr",
@@ -410,7 +612,8 @@ export const make = Effect.gen(function* () {
           "--detect",
           "true",
           "--source-branch",
-          SourceControlProvider.sourceBranch(input),
+          // az puts this in the query string unescaped; a `#` would cut the request.
+          refPrefix + encodeURIComponent(branch.slice(refPrefix.length)),
           "--status",
           toAzureStatus(input.state),
           "--top",
@@ -444,6 +647,7 @@ export const make = Effect.gen(function* () {
     getPullRequest: Effect.fn("AzureDevOpsCli.getPullRequest")(function (input) {
       return executeJson({
         cwd: input.cwd,
+        ...remoteOf(input),
         args: [
           "repos",
           "pr",
@@ -477,9 +681,19 @@ export const make = Effect.gen(function* () {
       );
     }),
     getRepositoryCloneUrls: Effect.fn("AzureDevOpsCli.getRepositoryCloneUrls")(function (input) {
+      const repository = parseRepositorySpecifier(input.repository);
       return executeJson({
         cwd: input.cwd,
-        args: ["repos", "show", "--detect", "true", "--repository", input.repository],
+        ...remoteOf(input),
+        args: [
+          "repos",
+          "show",
+          "--detect",
+          "true",
+          "--repository",
+          repository.name,
+          ...(repository.project ? ["--project", repository.project] : []),
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -516,8 +730,12 @@ export const make = Effect.gen(function* () {
       );
     }),
     createPullRequest: Effect.fn("AzureDevOpsCli.createPullRequest")(function (input) {
+      // A full ref keeps a branch named `@...` from reading as a file; az accepts either form.
+      const branch = (name: string) => (name.startsWith("@") ? `refs/heads/${name}` : name);
+      const title = textOption("--title", input.title);
       return execute({
         cwd: input.cwd,
+        ...remoteOf(input),
         args: [
           "repos",
           "pr",
@@ -525,21 +743,30 @@ export const make = Effect.gen(function* () {
           "--only-show-errors",
           "--detect",
           "true",
-          "--target-branch",
-          input.target?.refName ?? input.baseBranch,
-          "--source-branch",
-          SourceControlProvider.sourceBranch(input),
-          "--title",
-          input.title,
-          "--description",
-          `@${input.bodyFile}`,
+          `--target-branch=${branch(input.target?.refName ?? input.baseBranch)}`,
+          `--source-branch=${branch(SourceControlProvider.sourceBranch(input))}`,
+          title.arg,
+          // Joined: az expands a separate `@file` value again, so a body of `@path` read that file.
+          `--description=@${input.bodyFile}`,
+          ...(input.draft === true ? ["--draft", "true"] : []),
         ],
+        ...(title.stdin === undefined ? {} : { stdin: title.stdin }),
       }).pipe(Effect.asVoid);
     }),
     getDefaultBranch: Effect.fn("AzureDevOpsCli.getDefaultBranch")(function (input) {
+      const repository = parseRepositorySpecifier(input.repository);
       return executeJson({
         cwd: input.cwd,
-        args: ["repos", "show", "--detect", "true"],
+        ...remoteOf(input),
+        args: [
+          "repos",
+          "show",
+          "--detect",
+          "true",
+          // Joined so a name starting with `-` stays the option's value.
+          `--repository=${repository.name}`,
+          ...(repository.project ? ["--project", repository.project] : []),
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -547,23 +774,6 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map((repo) => normalizeDefaultBranch(repo.defaultBranch)),
       );
-    }),
-    checkoutPullRequest: Effect.fn("AzureDevOpsCli.checkoutPullRequest")(function (input) {
-      return execute({
-        cwd: input.cwd,
-        args: [
-          "repos",
-          "pr",
-          "checkout",
-          "--only-show-errors",
-          "--detect",
-          "true",
-          "--id",
-          normalizeChangeRequestId(input.reference),
-          "--remote-name",
-          input.remoteName ?? "origin",
-        ],
-      }).pipe(Effect.asVoid);
     }),
   });
 });

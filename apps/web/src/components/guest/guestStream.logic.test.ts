@@ -112,6 +112,45 @@ describe("applyGuestStreamEvent", () => {
     expect(apply([itemEvent(2, reply("a1", "Changed"))], once)).toBe(once);
   });
 
+  it("merges older pages in front, only for the cursor the thread is at", () => {
+    const windowed: GuestStreamEvent = {
+      type: "thread",
+      item: {
+        kind: "snapshot",
+        snapshotSequence: 1,
+        projection,
+        historyCursor: "cursor-1",
+        hasMoreHistory: true,
+      },
+    };
+    const page = (id: string, nextCursor: string | null) => ({
+      snapshotSequence: 1,
+      items: [
+        {
+          position: 0,
+          visibility: "local" as const,
+          sourceThreadId: projection.thread.id,
+          sourceItemId: TurnItemId.make(id),
+          item: reply(id, "Earlier"),
+        },
+      ],
+      nextCursor,
+      hasMoreHistory: nextCursor !== null,
+    });
+    const live = apply([windowed, itemEvent(2, reply("a1", "Hi"))]);
+    expect(live.historyCursor).toBe("cursor-1");
+    // A page fetched before a reconnect moved the cursor changes nothing.
+    const stale = { type: "history-page" as const, cursor: "cursor-0", page: page("old", null) };
+    expect(applyGuestStreamEvent(live, stale)).toBe(live);
+    const merged = applyGuestStreamEvent(live, {
+      type: "history-page",
+      cursor: "cursor-1",
+      page: page("o1", null),
+    });
+    expect(itemIds(merged)).toEqual(["o1", "a1"]);
+    expect(merged.historyCursor).toBeNull();
+  });
+
   it("replaces the thread on a new snapshot, as after a reconnect", () => {
     const before = apply([snapshot(1), itemEvent(2, reply("a1", "Hi")), { type: "ended" }]);
     const after = apply([snapshot(1)], { ...before, ended: false });
@@ -145,6 +184,53 @@ describe("applyGuestStreamEvent", () => {
     // Once placed, a later snapshot whose window no longer holds the row must not resurrect it.
     const placed = apply([itemEvent(2, guestMessageRow("u1", waiting.id)), snapshot(3)], queued);
     expect(placed.awaitingRowIds.size).toBe(0);
+
+    const windowed = apply(
+      [
+        {
+          type: "thread",
+          item: {
+            kind: "snapshot",
+            snapshotSequence: 3,
+            projection,
+            historyCursor: "cursor-1",
+            hasMoreHistory: true,
+          },
+        },
+      ],
+      queued,
+    );
+    const historyPlaced = applyGuestStreamEvent(windowed, {
+      type: "history-page",
+      cursor: "cursor-1",
+      page: {
+        snapshotSequence: 3,
+        items: [
+          {
+            position: 0,
+            visibility: "local",
+            sourceThreadId: projection.thread.id,
+            sourceItemId: TurnItemId.make("u1"),
+            item: guestMessageRow("u1", waiting.id),
+          },
+        ],
+        nextCursor: null,
+        hasMoreHistory: false,
+      },
+    });
+    expect(historyPlaced.awaitingRowIds.size).toBe(0);
+    // The row is outside the reconnect's window again; the Sent bubble must not come back.
+    const reconnected = apply(
+      [{ type: "view", view: { ...view, messages: [sent] } }, snapshot(4)],
+      historyPlaced,
+    );
+    expect(
+      unplacedGuestMessages(
+        reconnected.view!.messages,
+        reconnected.projection!.visibleTurnItems,
+        reconnected.awaitingRowIds,
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -197,6 +283,7 @@ describe("formatGuestExpiry", () => {
   it("shows whole hours, then minutes, then expired", () => {
     expect(formatGuestExpiry("2026-10-23T23:59:00.000Z", now)).toBe("23h left");
     expect(formatGuestExpiry("2026-10-23T00:45:30.000Z", now)).toBe("45m left");
+    expect(formatGuestExpiry("2026-10-23T00:00:30.000Z", now)).toBe("1m left");
     expect(formatGuestExpiry("2026-10-23T00:00:00.000Z", now)).toBe("Expired");
   });
 });

@@ -8,14 +8,18 @@ import type {
 } from "@t3tools/provider-core/server/usage";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import { resolveAntigravityInstanceDirectories } from "../antigravityAuthSupport.ts";
-import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
+import {
+  antigravityRateModel,
+  makeAntigravityUsageCache,
+  readAntigravityUsage,
+} from "./antigravityUsageReader.ts";
 
 export class AntigravityUsage extends Context.Service<
   AntigravityUsage,
@@ -28,7 +32,7 @@ export class AntigravityUsage extends Context.Service<
 >()("t3/provider/Drivers/AntigravityUsage") {}
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const host = yield* ProviderHost.ProviderHost;
@@ -64,12 +68,12 @@ const make = Effect.gen(function* () {
   }) {
     const roots: Array<string> = [];
     for (const instance of instances) roots.push(...(yield* dataRoots(instance.environment)));
-    for (const { instanceId } of instances.filter((instance) => instance.configured)) {
+    for (const { instanceId } of instances) {
       const directories = yield* resolveAntigravityInstanceDirectories(
         host.paths.stateDir,
         instanceId,
       ).pipe(
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(Digest.Digest, digest),
         Effect.provideService(Path.Path, path),
         Effect.mapError(
           (cause) =>
@@ -123,6 +127,7 @@ export const layer = Layer.effect(AntigravityUsage, make);
 export const antigravityUsageReader: ProviderUsageReader<AntigravitySettings, AntigravityUsage> = {
   kind: "scan",
   provider: "antigravity",
+  rateModel: antigravityRateModel,
   scan: ({ instances, windowStartMs }) =>
     AntigravityUsage.pipe(Effect.flatMap((usage) => usage.scan({ instances, windowStartMs }))),
 };
