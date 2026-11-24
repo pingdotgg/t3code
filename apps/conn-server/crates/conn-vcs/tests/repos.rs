@@ -273,6 +273,108 @@ async fn list_refs_orders_filters_and_pages() {
     assert!(!none.is_repo);
 }
 
+/// T3's split-directory regression: Git lists a `--separate-git-dir` repository's metadata
+/// folder as the main checkout. It is no worktree to reuse: the current branch gets the real
+/// checkout, a linked checkout sees no reusable path for `main`, and an ordinary linked
+/// worktree keeps its path.
+#[tokio::test]
+async fn list_refs_never_offers_the_git_metadata_folder_as_a_worktree() {
+    let root = TempDir::new("refs-split");
+    let checkout = root.path().join("checkout");
+    let metadata = root.path().join("git-metadata");
+    std::fs::create_dir_all(&checkout).unwrap();
+    git(
+        &checkout,
+        &[
+            "init",
+            "-qb",
+            "main",
+            &format!("--separate-git-dir={}", metadata.display()),
+        ],
+    );
+    commit_all_empty(&checkout, "seed");
+    let current = |list: &conn_contract::VcsListRefsResult| {
+        list.refs
+            .iter()
+            .find(|r| r.current)
+            .and_then(|r| r.worktree_path.clone())
+            .map(|p| std::fs::canonicalize(p).unwrap())
+    };
+    let from_main = refs::list_refs(list_input(&checkout.to_string_lossy()))
+        .await
+        .unwrap();
+    assert_eq!(
+        current(&from_main),
+        Some(std::fs::canonicalize(&checkout).unwrap())
+    );
+
+    let linked = root.path().join("linked");
+    git(
+        &checkout,
+        &["worktree", "add", "-qb", "topic", &linked.to_string_lossy()],
+    );
+    let mut input = list_input(&linked.to_string_lossy());
+    input.refresh = Some(true);
+    input.query = Some("main".into());
+    input.ref_kind = Some(VcsListRefsInputRefKind::Local);
+    let from_linked = refs::list_refs(input).await.unwrap();
+    assert_eq!(from_linked.is_at_repository_root, Some(true));
+    let main = from_linked.refs.iter().find(|r| r.name == "main").unwrap();
+    assert!(!main.current);
+    assert_eq!(
+        main.worktree_path, None,
+        "the metadata folder is no checkout"
+    );
+
+    // Git keeps a trailing space in the folder name; only its final newline is output framing.
+    let spaced = TempDir::new("refs-split-space");
+    let checkout = spaced.path().join("checkout");
+    let metadata = spaced.path().join("git-metadata ");
+    std::fs::create_dir_all(&checkout).unwrap();
+    git(
+        &checkout,
+        &[
+            "init",
+            "-qb",
+            "main",
+            &format!("--separate-git-dir={}", metadata.display()),
+        ],
+    );
+    commit_all_empty(&checkout, "seed");
+    let linked = spaced.path().join("linked");
+    git(
+        &checkout,
+        &["worktree", "add", "-qb", "topic", &linked.to_string_lossy()],
+    );
+    let mut input = list_input(&linked.to_string_lossy());
+    input.refresh = Some(true);
+    input.query = Some("main".into());
+    input.ref_kind = Some(VcsListRefsInputRefKind::Local);
+    let from_linked = refs::list_refs(input).await.unwrap();
+    let main = from_linked.refs.iter().find(|r| r.name == "main").unwrap();
+    assert_eq!(
+        main.worktree_path, None,
+        "a metadata folder named with a trailing space is no checkout"
+    );
+
+    // The conventional layout: a linked worktree's path is offered.
+    let fx = Fixture::new("refs-linked");
+    let other = fx.root.path().join("other-worktree");
+    git(
+        &fx.work,
+        &["worktree", "add", "-qb", "other", &other.to_string_lossy()],
+    );
+    let listed = refs::list_refs(list_input(&fx.cwd())).await.unwrap();
+    let other_ref = listed.refs.iter().find(|r| r.name == "other").unwrap();
+    assert_eq!(
+        other_ref
+            .worktree_path
+            .as_deref()
+            .map(|p| std::fs::canonicalize(p).unwrap()),
+        Some(std::fs::canonicalize(&other).unwrap())
+    );
+}
+
 fn commit_all_empty(dir: &std::path::Path, message: &str) {
     git(dir, &["commit", "-q", "--allow-empty", "-m", message]);
 }
@@ -1028,6 +1130,46 @@ async fn diff_preview_shows_working_tree_branch_range_and_commit() {
     assert!(empty.sources.is_empty());
 }
 
+/// T3's `keeps the review working beside a nested repository`: `git init` inside the checkout
+/// leaves the working-tree review whole. The new repository joins it as a gitlink once it has
+/// its first commit, and the real index stays clean.
+#[tokio::test]
+async fn the_review_survives_an_unborn_nested_repository() {
+    let fx = Fixture::new("review-nested");
+    write(&fx.work, "README.md", "# repo\nafter\n");
+    write(&fx.work, "notes.txt", "new notes\n");
+    let mut input = preview_input(&fx.cwd());
+    input.source_kind = Some(InputKind::WorkingTree);
+    let working = || async {
+        let preview = review::diff_preview(input.clone()).await.unwrap();
+        preview
+            .sources
+            .into_iter()
+            .find(|s| s.kind == Kind::WorkingTree)
+            .unwrap()
+            .diff
+    };
+    let baseline = working().await;
+    assert!(baseline.contains("+after") && baseline.contains("+new notes"));
+
+    git(&fx.work, &["init", "-q", "scaffold"]);
+    let beside_unborn = working().await;
+    assert!(
+        beside_unborn.contains("+after") && beside_unborn.contains("+new notes"),
+        "{beside_unborn}"
+    );
+    assert!(!beside_unborn.contains("scaffold"), "{beside_unborn}");
+
+    git(
+        &fx.work.join("scaffold"),
+        &["commit", "-qm", "initial", "--allow-empty"],
+    );
+    let beside_born = working().await;
+    assert!(beside_born.contains("+new notes"), "{beside_born}");
+    assert!(beside_born.contains("scaffold"), "{beside_born}");
+    assert_eq!(git(&fx.work, &["diff", "--cached", "--name-only"]), "");
+}
+
 #[tokio::test]
 async fn diff_preview_truncates_large_patches() {
     let fx = Fixture::new("big");
@@ -1040,6 +1182,125 @@ async fn diff_preview_truncates_large_patches() {
     assert!(source.truncated);
     assert_eq!(source.diff.len(), review::PATCH_MAX_BYTES);
     assert_eq!(source.files.as_ref().unwrap()[0].additions.0, 20_000.0);
+}
+
+/// T3's `loads working-tree contents as Git diffs them under the ident attribute`: Git expands
+/// `$Id$` in the checkout of a file marked `ident`, and the full-file request returns the
+/// keyword collapsed on both sides, so only the edited line differs and the desktop loader
+/// expands the hidden context. An unmarked file's literal `$Id: literal $` stays.
+#[tokio::test]
+async fn working_contents_collapse_a_git_ident_keyword_like_the_diff() {
+    let dir = TempDir::new("ident");
+    let repo = dir.path();
+    git(repo, &["init", "-qb", "main"]);
+    write(repo, ".gitattributes", "record.txt ident\n");
+    let trailing: String = (1..=24).map(|i| format!("unchanged line {i}\n")).collect();
+    let canonical = format!("$Id$\nfirst\n{trailing}");
+    write(repo, "record.txt", &canonical);
+    write(repo, "plain.txt", "first\n");
+    commit_all(repo, "ident");
+    std::fs::remove_file(repo.join("record.txt")).unwrap();
+    git(repo, &["checkout-index", "-f", "record.txt"]);
+    let expanded = std::fs::read_to_string(repo.join("record.txt")).unwrap();
+    assert!(
+        expanded.starts_with("$Id: ") && !expanded.starts_with("$Id$"),
+        "{expanded}"
+    );
+    write(repo, "record.txt", &expanded.replacen("first", "edited", 1));
+    write(repo, "plain.txt", "$Id: literal $\n");
+    let contents = |file: &str| ReviewDiffFileContentsInput {
+        cwd: repo.to_string_lossy().into_owned(),
+        source_kind: Kind::WorkingTree,
+        change_type: ChangeType::Change,
+        base_ref: Some("HEAD".into()),
+        head_ref: None,
+        old_path: file.into(),
+        new_path: file.into(),
+    };
+    let record = review::diff_file_contents(contents("record.txt"), |_| false)
+        .await
+        .unwrap();
+    assert_eq!(record.old_contents, canonical);
+    assert_eq!(
+        record.new_contents,
+        canonical.replacen("first", "edited", 1)
+    );
+    let plain = review::diff_file_contents(contents("plain.txt"), |_| false)
+        .await
+        .unwrap();
+    assert_eq!(plain.new_contents, "$Id: literal $\n");
+}
+
+/// T3 collapses `$Id: … $` in a file marked `ident` only after the `filter.unspecified.*`
+/// lookup exits 1 with nothing found; a lookup that exits otherwise keeps the text read. The
+/// same file shows both: a healthy lookup collapses the keyword, and a malformed `GIT_CONFIG`
+/// (read only by `git config`, so `check-attr` and `hash-object` still work) keeps it. The
+/// variable is process-wide, so that case runs in a copy of this test binary.
+#[tokio::test]
+async fn working_ident_text_collapses_only_after_a_clean_filter_lookup() {
+    let (_dir, input) = literal_ident_file("ident-healthy");
+    let healthy = review::diff_file_contents(input, |_| false).await.unwrap();
+    assert_eq!(healthy.new_contents, "$Id$\nedited\n");
+
+    let dir = TempDir::new("ident-bad-config");
+    let config = dir.path().join("malformed-config");
+    std::fs::write(&config, "[filter\n").unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "literal_ident_text_under_a_failing_filter_lookup",
+            "--ignored",
+        ])
+        .env("GIT_CONFIG", &config)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+#[ignore = "run by working_ident_text_collapses_only_after_a_clean_filter_lookup"]
+async fn literal_ident_text_under_a_failing_filter_lookup() {
+    let (dir, input) = literal_ident_file("ident-literal");
+    let lookup = std::process::Command::new("git")
+        .args(["config", "--get-regexp", "^filter\\."])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        !matches!(lookup.status.code(), Some(0 | 1)),
+        "Git read a healthy configuration: {lookup:?}"
+    );
+    let contents = review::diff_file_contents(input, |_| false).await.unwrap();
+    assert_eq!(contents.new_contents, LITERAL_IDENT_TEXT);
+}
+
+const LITERAL_IDENT_TEXT: &str = "$Id: literal $\nedited\n";
+
+/// A repository whose `record.txt`, marked with a boolean `ident`, holds
+/// [`LITERAL_IDENT_TEXT`] in the working tree.
+fn literal_ident_file(label: &str) -> (TempDir, ReviewDiffFileContentsInput) {
+    let dir = TempDir::new(label);
+    let repo = dir.path();
+    git(repo, &["init", "-qb", "main"]);
+    write(repo, ".gitattributes", "record.txt ident\n");
+    write(repo, "record.txt", "first\n");
+    commit_all(repo, "seed");
+    write(repo, "record.txt", LITERAL_IDENT_TEXT);
+    let input = ReviewDiffFileContentsInput {
+        cwd: repo.to_string_lossy().into_owned(),
+        source_kind: Kind::WorkingTree,
+        change_type: ChangeType::Change,
+        base_ref: Some("HEAD".into()),
+        head_ref: None,
+        old_path: "record.txt".into(),
+        new_path: "record.txt".into(),
+    };
+    (dir, input)
 }
 
 #[tokio::test]

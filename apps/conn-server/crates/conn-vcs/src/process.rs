@@ -209,6 +209,11 @@ impl ProcessError {
             _ => "",
         }
     }
+
+    /// Whether the child ran to its end and exited with a code; a signal leaves it without one.
+    pub fn is_completed_exit(&self) -> bool {
+        matches!(self, ProcessError::Exit { code, .. } if *code != SIGNALLED)
+    }
 }
 
 /// Kills a process group with `SIGKILL` when dropped, unless disarmed.
@@ -235,6 +240,10 @@ impl Drop for GroupKill {
         }
     }
 }
+
+/// The code in [`ProcessError::Exit`] for a child that a signal ended (`ExitStatus::code` is
+/// `None`). T3 fails such a command before a caller sees an exit code.
+pub const SIGNALLED: i32 = -1;
 
 async fn run(command: GitCommand, scan: Option<Scanner<'_>>) -> Result<GitOutput, ProcessError> {
     let context = ProcessContext {
@@ -366,7 +375,7 @@ async fn run(command: GitCommand, scan: Option<Scanner<'_>>) -> Result<GitOutput
         };
     }
 
-    let code = status.code().unwrap_or(-1);
+    let code = status.code().unwrap_or(SIGNALLED);
     if code != 0 && !command.allow_exit.contains(&code) {
         return Err(ProcessError::Exit {
             context,

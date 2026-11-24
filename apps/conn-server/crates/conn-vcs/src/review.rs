@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     error::{VcsError, VcsResult},
-    process::{GitCommand, OnLimit, ProcessError},
+    process::{GitCommand, GitOutput, OnLimit, ProcessError},
     repo::{self, PROBE_TIMEOUT, git},
 };
 
@@ -207,6 +207,29 @@ impl Untracked {
 /// Status totals stop counting untracked files above this many bytes in all.
 pub const UNTRACKED_TOTALS_MAX_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Whether a nested repository's HEAD names a commit. Only "no such commit" (exit 1) says no,
+/// as in T3: another exit leaves the folder to Git, and a probe that does not finish (a timeout
+/// or a signal) fails the review.
+async fn nested_repository_has_head(dir: &Path) -> VcsResult<bool> {
+    let probe = git(
+        "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.nestedRepositoryHead",
+        dir,
+        ["rev-parse", "--verify", "--quiet", "HEAD"],
+    )
+    .allow_exit(&[1])
+    .run()
+    .await;
+    head_probe_has_commit(probe)
+}
+
+fn head_probe_has_commit(probe: Result<GitOutput, ProcessError>) -> VcsResult<bool> {
+    match probe {
+        Ok(out) => Ok(out.code != 1),
+        Err(error) if error.is_completed_exit() => Ok(true),
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub(crate) async fn prepare_untracked(
     cwd: &Path,
     paths: &[String],
@@ -266,6 +289,16 @@ pub(crate) async fn prepare_untracked(
     .stdout_text();
     let deleted: Vec<&str> = deleted.split('\0').filter(|p| !p.is_empty()).collect();
     untracked.retain(|p| !deleted.contains(&p.as_str()));
+    // A nested repository (listed with a trailing slash) with no commit cannot be indexed:
+    // Git before 2.53 fails the add, and later versions take it and fail every diff.
+    let mut indexable = Vec::with_capacity(untracked.len());
+    for path in untracked {
+        if path.ends_with('/') && !nested_repository_has_head(&cwd.join(&path)).await? {
+            continue;
+        }
+        indexable.push(path);
+    }
+    let untracked = indexable;
     if untracked.is_empty() {
         return Ok(Untracked::None);
     }
@@ -890,7 +923,14 @@ pub async fn diff_file_contents(
         (ChangeType::Deleted, _) => String::new(),
         (_, Some(revision)) => show_file(&cwd, &revision, &input.new_path).await?,
         (_, None) => {
-            read_working_file(&input.cwd, root, input.new_path.clone(), is_internal).await?
+            let text = read_working_file(
+                &input.cwd,
+                root.clone(),
+                input.new_path.clone(),
+                is_internal,
+            )
+            .await?;
+            working_text_as_git_diffs_it(&root, &input.new_path, text).await?
         }
     };
     Ok(ReviewDiffFileContentsResult {
@@ -920,6 +960,98 @@ async fn show_file(cwd: &Path, revision: &str, path: &str) -> VcsResult<String> 
         ));
     }
     Ok(out.stdout_text())
+}
+
+/// The working copy as Git compares it: a file Git expands `$Id$` in (the `ident` attribute)
+/// shows the keyword collapsed, as the base does, when Git's own conversion of the path
+/// confirms it (T3's `readWorkingTreeReviewFile`). Literal text and other filters stay as read.
+async fn working_text_as_git_diffs_it(root: &Path, path: &str, text: String) -> VcsResult<String> {
+    if !text.contains("$Id:") {
+        return Ok(text);
+    }
+    let collapsed = collapse_ident_keywords(&text);
+    if collapsed == text {
+        return Ok(text);
+    }
+    const OP: &str = "GitVcsDriver.getReviewDiffFileContents.workingTree.ident";
+    // check-attr reports both boolean ident and literal ident=set as "set".
+    let attributes = git(
+        OP,
+        root,
+        ["check-attr", "-z", "ident", "filter", "--", path],
+    )
+    .text()
+    .await?;
+    let attributes: Vec<&str> = attributes.split('\0').collect();
+    if attributes.get(2) != Some(&"set") || attributes.get(5) != Some(&"unspecified") {
+        return Ok(text);
+    }
+    // A literal `filter=unspecified` reads like no filter in check-attr.
+    let filters = git(
+        OP,
+        root,
+        [
+            "config",
+            "--name-only",
+            "--get-regexp",
+            "^filter\\.unspecified\\.",
+        ],
+    )
+    .allow_exit(&[1])
+    .run()
+    .await;
+    if !no_unspecified_filter(filters)? {
+        return Ok(text);
+    }
+    // Git's conversion of a keyword that cannot overlap shows whether it collapses this path.
+    let path_arg = format!("--path={path}");
+    let hash = |input: &'static str| {
+        git(OP, root, ["hash-object", "--stdin", path_arg.as_str()])
+            .stdin(input.as_bytes().to_vec())
+            .text()
+    };
+    let (canonical, collapsed_hash) = tokio::join!(hash("$Id: probe $"), hash("$Id$"));
+    Ok(if canonical? == collapsed_hash? {
+        collapsed
+    } else {
+        text
+    })
+}
+
+/// Whether the `filter.unspecified.*` lookup found no such filter: exit 1 with nothing listed.
+/// As T3, another completed exit (a malformed `GIT_CONFIG`) keeps the text read, and a lookup
+/// that does not finish (a timeout or a signal) fails the request.
+fn no_unspecified_filter(lookup: Result<GitOutput, ProcessError>) -> VcsResult<bool> {
+    match lookup {
+        Ok(out) => Ok(out.code == 1 && out.stdout.is_empty()),
+        Err(error) if error.is_completed_exit() => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Git's ident clean step (`ident_to_git` in convert.c): `$Id:` up to the next `$` on the
+/// same line becomes `$Id$`.
+fn collapse_ident_keywords(text: &str) -> String {
+    const KEYWORD: &str = "$Id:";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(KEYWORD) {
+        let (before, from_keyword) = rest.split_at(at);
+        out.push_str(before);
+        let tail = from_keyword.get(KEYWORD.len()..).unwrap_or_default();
+        match tail.find(['$', '\n']) {
+            Some(end) if tail.get(end..).is_some_and(|t| t.starts_with('$')) => {
+                out.push_str("$Id$");
+                rest = tail.get(end + 1..).unwrap_or_default();
+            }
+            _ => {
+                out.push_str(KEYWORD);
+                rest = tail;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 async fn read_working_file(
@@ -1101,6 +1233,122 @@ pub async fn branch_commits(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `GIT_IDENT_KEYWORD`: only a closed keyword on one line collapses.
+    #[test]
+    fn ident_keywords_collapse_as_git_cleans_them() {
+        for (text, expected) in [
+            ("$Id: 1b93 $\nfirst\n", "$Id$\nfirst\n"),
+            ("a $Id: x $ b $Id: y $\n", "a $Id$ b $Id$\n"),
+            ("$Id: open\n$ later\n", "$Id: open\n$ later\n"),
+            ("$Id:$ and $Id$\n", "$Id$ and $Id$\n"),
+            ("trailing $Id:", "trailing $Id:"),
+            ("é $Id: ü $ é", "é $Id$ é"),
+        ] {
+            assert_eq!(collapse_ident_keywords(text), expected, "{text:?}");
+        }
+    }
+
+    /// T3's `allowNonZeroExit` lookup: a completed exit other than 1 keeps the text read, and
+    /// a lookup that a signal ends propagates the interruption.
+    #[tokio::test]
+    async fn filter_lookup_keeps_text_only_after_a_completed_exit() {
+        let exited = |code| {
+            Ok(GitOutput {
+                code,
+                ..GitOutput::default()
+            })
+        };
+        assert_eq!(no_unspecified_filter(exited(1)), Ok(true));
+        assert_eq!(no_unspecified_filter(exited(0)), Ok(false));
+        let malformed = ProcessError::Exit {
+            context: crate::process::ProcessContext {
+                operation: "GitVcsDriver.getReviewDiffFileContents.workingTree.ident",
+                command: "git config".into(),
+                cwd: "/repo".into(),
+                argument_count: 4,
+            },
+            code: 128,
+            stderr: "fatal: bad config line 1 in file malformed-config\n".into(),
+            stderr_truncated: false,
+        };
+        assert_eq!(no_unspecified_filter(Err(malformed)), Ok(false));
+        #[cfg(unix)]
+        {
+            let signalled = GitCommand::host_cli(
+                "test.signalled",
+                "sh",
+                Path::new("/"),
+                ["-c", "kill -TERM $$"],
+            )
+            .allow_exit(&[1])
+            .run()
+            .await;
+            let Err(error) = signalled.clone() else {
+                panic!("sh ended by SIGTERM succeeded: {signalled:?}");
+            };
+            assert_eq!(
+                no_unspecified_filter(signalled),
+                Err(VcsError::Process(error))
+            );
+        }
+    }
+
+    #[test]
+    fn nested_head_probe_skips_only_exit_1_and_propagates_execution_errors() {
+        let exited = |code| {
+            Ok(GitOutput {
+                code,
+                ..GitOutput::default()
+            })
+        };
+        assert_eq!(head_probe_has_commit(exited(0)), Ok(true));
+        assert_eq!(head_probe_has_commit(exited(1)), Ok(false));
+        let context = crate::process::ProcessContext {
+            operation: "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.nestedRepositoryHead",
+            command: "git rev-parse".into(),
+            cwd: "/repo/nested".into(),
+            argument_count: 4,
+        };
+        let exit = ProcessError::Exit {
+            context: context.clone(),
+            code: 128,
+            stderr: String::new(),
+            stderr_truncated: false,
+        };
+        assert_eq!(head_probe_has_commit(Err(exit)), Ok(true));
+        let timeout = ProcessError::Timeout {
+            context,
+            timeout_ms: 30_000,
+        };
+        assert_eq!(
+            head_probe_has_commit(Err(timeout.clone())),
+            Err(VcsError::Process(timeout))
+        );
+    }
+
+    /// A probe that a signal ends never finished: T3 fails the command before any exit code
+    /// reaches the caller.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn nested_head_probe_propagates_a_signal() {
+        let signalled = GitCommand::host_cli(
+            "test.signalled",
+            "sh",
+            Path::new("/"),
+            ["-c", "kill -TERM $$"],
+        )
+        .allow_exit(&[1])
+        .run()
+        .await;
+        let Err(error) = signalled.clone() else {
+            panic!("sh ended by SIGTERM succeeded: {signalled:?}");
+        };
+        assert_eq!(
+            head_probe_has_commit(signalled),
+            Err(VcsError::Process(error))
+        );
+    }
 
     #[test]
     fn numstat_parses_renames_and_binaries() {

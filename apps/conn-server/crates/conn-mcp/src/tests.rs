@@ -5870,3 +5870,371 @@ async fn delegate_task_fits_the_runtime_mode_to_the_target_provider() {
     let child = projection_of(&f, task["childThreadId"].as_str().unwrap()).await;
     assert_eq!(child["thread"]["runtimeMode"], "auto-accept-edits");
 }
+
+/// T3 `sendToThread` refuses an archived thread (`ThreadManagementService.ts:872`), so a
+/// bound schedule records the failure and sends nothing, from Run now and from the timer.
+#[tokio::test(flavor = "current_thread")]
+async fn a_bound_schedule_never_sends_to_an_archived_thread() {
+    use conn_contract::ScheduledTaskRunStatus;
+    use conn_features::{
+        clock::TestClock,
+        scheduled::{Config, EngineRunner, ScheduledTasks},
+    };
+    let fake = FakeProvider::new("claudeAgent");
+    let sessions = fake.sessions.clone();
+    let f = fixture_with_provider("schedule-archived", None, Arc::new(fake), None);
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut operator, "Destination", "baseline", "auto", "default").await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "timeoutMs": 5000}),
+        )
+        .await;
+    let clock = TestClock::new(1_800_000_000_000);
+    let service = ScheduledTasks::start(Config {
+        state_dir: f.dir.clone(),
+        clock: Arc::new(clock.clone()),
+        zone: jiff::tz::TimeZone::UTC,
+        runner: Arc::new(EngineRunner::new(f.service.config.engine.clone())),
+        secret_requests: None,
+        start_timer: true,
+    })
+    .await;
+    // Only `timed` comes due on the timer; `manual` runs by hand.
+    let task = |id: &str, thread: Option<&str>| {
+        let every = if id == "timed" { 60_000 } else { 86_400_000 };
+        serde_json::from_value(json!({
+            "id": id, "title": id, "prompt": id, "enabled": true,
+            "schedule": {"type": "interval", "everyMs": every}, "projectId": project_id(),
+            "threadId": thread, "workspaceStrategy": {"type": "root"},
+            "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+            "runtimeMode": "auto", "interactionMode": "default",
+        }))
+        .unwrap()
+    };
+    for id in ["manual", "timed"] {
+        service.upsert(task(id, Some(&thread))).await.unwrap();
+    }
+    dispatch(
+        &f,
+        json!({"type": "thread.archive", "commandId": "archive-destination", "threadId": thread}),
+    )
+    .await;
+    let refusal = format!("Thread {thread} is archived and cannot receive messages.");
+    let started = sessions.load(std::sync::atomic::Ordering::SeqCst);
+    let runs = |p: &Value| p["runs"].as_array().map_or(0, Vec::len);
+    let runs_before = runs(&projection_of(&f, &thread).await);
+    // The agent's own send asks the same guard (`threadManagementFailure`).
+    let (code, message) = operator
+        .failure(
+            "conn_thread_send",
+            json!({"threadId": thread, "message": "late", "mode": "queue"}),
+        )
+        .await;
+    assert_eq!(
+        (code.as_str(), message.as_str()),
+        ("thread_not_sendable", refusal.as_str())
+    );
+
+    let manual = service.run_now("manual").await.unwrap();
+    assert_eq!(manual.thread_id, None);
+    assert_eq!(manual.task.last_run_status, ScheduledTaskRunStatus::Failed);
+    assert_eq!(
+        manual.task.last_run_error.as_deref(),
+        Some(refusal.as_str())
+    );
+
+    // The timer: the task is due, and a change wakes the timer's pass.
+    let mut updates = service.subscribe();
+    clock.set(1_800_000_061_000);
+    service.upsert(task("wake", None)).await.unwrap();
+    let timed = loop {
+        let list = updates.recv().await.unwrap();
+        if let Some(timed) = list
+            .tasks
+            .into_iter()
+            .flatten()
+            .find(|t| t.id == "timed" && t.last_run_status == ScheduledTaskRunStatus::Failed)
+        {
+            break timed;
+        }
+    };
+    assert_eq!(timed.last_run_error.as_deref(), Some(refusal.as_str()));
+    let projection = projection_of(&f, &thread).await;
+    let sent: Vec<&Value> = projection["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["scheduledTaskId"].is_string())
+        .collect();
+    assert!(sent.is_empty(), "{sent:?}");
+    assert_eq!(runs(&projection), runs_before, "no new turn");
+    assert_eq!(
+        sessions.load(std::sync::atomic::Ordering::SeqCst),
+        started,
+        "no provider start"
+    );
+
+    // Restored, the destination takes the next occurrence.
+    dispatch(
+        &f,
+        json!({"type": "thread.unarchive", "commandId": "unarchive-destination", "threadId": thread}),
+    )
+    .await;
+    let manual = service.run_now("manual").await.unwrap();
+    assert_eq!(
+        manual.task.last_run_status,
+        ScheduledTaskRunStatus::Succeeded
+    );
+    assert_eq!(manual.thread_id.as_deref(), Some(thread.as_str()));
+    let done = operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "timeoutMs": 5000}),
+        )
+        .await;
+    assert_eq!(done["status"], "completed");
+    let projection = projection_of(&f, &thread).await;
+    assert!(
+        projection["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["text"] == "echo: manual")
+    );
+}
+
+/// Archives `thread` just before a `message.dispatch` reaches the engine: the archive lands
+/// after the caller's read and before its dispatch.
+struct ArchiveBeforeDispatch {
+    inner: Arc<dyn conn_engine::Engine>,
+    thread: String,
+}
+
+impl conn_engine::Engine for ArchiveBeforeDispatch {
+    fn dispatch(
+        &self,
+        command: conn_contract::Command,
+    ) -> conn_engine::BoxFuture<
+        '_,
+        Result<
+            conn_contract::DispatchCommandResult,
+            conn_engine::EngineError<conn_contract::DispatchCommandError>,
+        >,
+    > {
+        Box::pin(async move {
+            if conn_contract::to_json(&command)["type"] == "message.dispatch" {
+                let archive = json!({"type": "thread.archive", "commandId": "archive-in-between",
+                                     "threadId": self.thread});
+                self.inner
+                    .dispatch(conn_contract::from_json(archive).unwrap())
+                    .await
+                    .unwrap();
+            }
+            self.inner.dispatch(command).await
+        })
+    }
+
+    fn get_thread_projection(
+        &self,
+        thread_id: conn_contract::ThreadId,
+    ) -> conn_engine::BoxFuture<
+        '_,
+        Result<Value, conn_engine::EngineError<conn_contract::GetThreadProjectionError>>,
+    > {
+        self.inner.get_thread_projection(thread_id)
+    }
+
+    fn subscribe_shell(
+        &self,
+        input: conn_contract::SubscribeShellInput,
+    ) -> conn_engine::BoxFuture<
+        '_,
+        Result<
+            conn_engine::Subscription<
+                conn_contract::ShellStreamItem,
+                conn_contract::GetShellSnapshotError,
+            >,
+            conn_engine::EngineError<conn_contract::GetShellSnapshotError>,
+        >,
+    > {
+        self.inner.subscribe_shell(input)
+    }
+
+    fn subscribe_thread(
+        &self,
+        input: conn_contract::SubscribeThreadInput,
+    ) -> conn_engine::BoxFuture<
+        '_,
+        Result<
+            conn_engine::Subscription<
+                conn_contract::ThreadStreamItem,
+                conn_contract::GetThreadProjectionError,
+            >,
+            conn_engine::EngineError<conn_contract::GetThreadProjectionError>,
+        >,
+    > {
+        self.inner.subscribe_thread(input)
+    }
+}
+
+/// The archive guard holds inside the engine's admission: an archive that lands between the
+/// timer's read of the destination and its dispatch still sends nothing. T3 checks only
+/// before dispatch (`ThreadManagementService.ts:872`), so this is stronger than T3.
+#[tokio::test(flavor = "current_thread")]
+async fn an_archive_between_the_timers_read_and_dispatch_still_sends_nothing() {
+    use conn_contract::ScheduledTaskRunStatus;
+    use conn_features::{
+        clock::TestClock,
+        scheduled::{Config, EngineRunner, ScheduledTasks},
+    };
+    let fake = FakeProvider::new("claudeAgent");
+    let sessions = fake.sessions.clone();
+    let f = fixture_with_provider("schedule-archive-race", None, Arc::new(fake), None);
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut operator, "Destination", "baseline", "auto", "default").await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "timeoutMs": 5000}),
+        )
+        .await;
+    let racing = Arc::new(ArchiveBeforeDispatch {
+        inner: f.service.config.engine.clone(),
+        thread: thread.clone(),
+    });
+    let clock = TestClock::new(1_800_000_000_000);
+    let service = ScheduledTasks::start(Config {
+        state_dir: f.dir.clone(),
+        clock: Arc::new(clock.clone()),
+        zone: jiff::tz::TimeZone::UTC,
+        runner: Arc::new(EngineRunner::new(racing)),
+        secret_requests: None,
+        start_timer: true,
+    })
+    .await;
+    let task = |id: &str, thread: Option<&str>| {
+        serde_json::from_value(json!({
+            "id": id, "title": id, "prompt": id, "enabled": true,
+            "schedule": {"type": "interval", "everyMs": if thread.is_some() { 60_000 } else { 86_400_000 }},
+            "projectId": project_id(), "threadId": thread, "workspaceStrategy": {"type": "root"},
+            "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+            "runtimeMode": "auto", "interactionMode": "default",
+        }))
+        .unwrap()
+    };
+    service.upsert(task("timed", Some(&thread))).await.unwrap();
+    let before = projection_of(&f, &thread).await;
+    let started = sessions.load(std::sync::atomic::Ordering::SeqCst);
+    let mut updates = service.subscribe();
+    clock.set(1_800_000_061_000);
+    service.upsert(task("wake", None)).await.unwrap();
+    let timed = loop {
+        let list = updates.recv().await.unwrap();
+        if let Some(timed) = list
+            .tasks
+            .into_iter()
+            .flatten()
+            .find(|t| t.id == "timed" && t.last_run_status == ScheduledTaskRunStatus::Failed)
+        {
+            break timed;
+        }
+    };
+    let error = timed.last_run_error.unwrap_or_default();
+    assert!(
+        error.contains("is archived and cannot receive messages"),
+        "{error}"
+    );
+    let after = projection_of(&f, &thread).await;
+    assert!(
+        !after["thread"]["archivedAt"].is_null(),
+        "the archive landed"
+    );
+    let count = |p: &Value, kind: &str| p[kind].as_array().map_or(0, Vec::len);
+    assert_eq!(
+        count(&after, "messages"),
+        count(&before, "messages"),
+        "no message"
+    );
+    assert_eq!(count(&after, "runs"), count(&before, "runs"), "no run");
+    assert_eq!(
+        sessions.load(std::sync::atomic::Ordering::SeqCst),
+        started,
+        "no session"
+    );
+}
+
+/// `conn_thread_send` answers `thread_not_sendable` (T3 `ThreadManagementThreadArchivedError`,
+/// `OrchestratorMcpService.ts:256`) both when its own read finds the thread archived and when
+/// the archive lands between that read and the dispatch, which the engine refuses.
+#[tokio::test(flavor = "current_thread")]
+async fn thread_send_refuses_an_archive_between_its_read_and_dispatch() {
+    let fake = FakeProvider::new("claudeAgent");
+    let sessions = fake.sessions.clone();
+    let f = fixture_with_provider("send-archive-race", None, Arc::new(fake), None);
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut operator, "Destination", "baseline", "auto", "default").await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "timeoutMs": 5000}),
+        )
+        .await;
+    let config = &f.service.config;
+    let racing = McpService::new(McpConfig {
+        listen_address: "0.0.0.0:4711".parse().unwrap(),
+        preview: None,
+        devices: None,
+        refresh_provider: None,
+        files: None,
+        worktrees: None,
+        panels: None,
+        peers: None,
+        settings: None,
+        pull_requests: None,
+        clone_repository: None,
+        secrets: None,
+        test_logins: None,
+        engine: Arc::new(ArchiveBeforeDispatch {
+            inner: config.engine.clone(),
+            thread: thread.clone(),
+        }),
+        environment_id: config.environment_id.clone(),
+        label: config.label.clone(),
+        server_version: config.server_version.clone(),
+        platform: config.platform.clone(),
+        providers: config.providers.clone(),
+        hosted_app_url: config.hosted_app_url.clone(),
+        scheduled_tasks: None,
+        annotations: None,
+    });
+    let before = projection_of(&f, &thread).await;
+    let started = sessions.load(std::sync::atomic::Ordering::SeqCst);
+    let refusal = (
+        "thread_not_sendable".to_owned(),
+        format!("Thread {thread} is archived and cannot receive messages."),
+    );
+    let mut sender = Client::open(&racing, client(true)).await;
+    let send = json!({"threadId": thread, "message": "late", "clientRequestId": "late"});
+    assert_eq!(
+        sender.failure("conn_thread_send", send.clone()).await,
+        refusal,
+        "archived between read and dispatch"
+    );
+    let after = projection_of(&f, &thread).await;
+    assert!(
+        !after["thread"]["archivedAt"].is_null(),
+        "the archive landed"
+    );
+    let count = |p: &Value, kind: &str| p[kind].as_array().map_or(0, Vec::len);
+    assert_eq!(count(&after, "messages"), count(&before, "messages"));
+    assert_eq!(count(&after, "runs"), count(&before, "runs"));
+    assert_eq!(sessions.load(std::sync::atomic::Ordering::SeqCst), started);
+    // Archived before the read: the same answer, from the read.
+    assert_eq!(
+        operator.failure("conn_thread_send", send).await,
+        refusal,
+        "archived before the read"
+    );
+}
