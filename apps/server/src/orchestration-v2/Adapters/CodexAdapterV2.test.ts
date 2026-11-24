@@ -8998,6 +8998,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       explained: true,
     },
     {
+      name: "a retried uncredentialed 401 that completes as other with details only",
+      retry: true,
+      completion: {
+        message: "Stream disconnected before completion.",
+        codexErrorInfo: "other",
+        additionalDetails: uncredentialedStream,
+      },
+      explained: true,
+    },
+    {
       name: "a retried uncredentialed 401 that completes without an error",
       retry: true,
       explained: true,
@@ -9152,6 +9162,158 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           else assert.notEqual(code, explainedCode);
         }
         if ("retry" in scenario) assert.isNotEmpty(errorItemCodes);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect(
+    "reads the current managed token refusal after model output confirms recovery within a turn",
+    () =>
+      Effect.gen(function* () {
+        const nativeThreadId = "native-token-refusal-recovered-turn";
+        const nativeTurnId = "turn-token-refusal-recovered-turn";
+        const refreshRefusal = {
+          kind: "refresh",
+          message: "Your ChatGPT connection expired. Sign in again.",
+        };
+        const timeoutRefusal = {
+          kind: "timeout",
+          message: "Timed out waiting for the managed ChatGPT connection. Try again.",
+        };
+        const refusals = [refreshRefusal, timeoutRefusal] as const;
+        let lookups = 0;
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-token-refusal-recovered-turn",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+            {
+              type: "emit_inbound",
+              label: "error/retry-first",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: tokenRefusalRetry,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "item/started/recovered",
+              frame: {
+                method: "item/started",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  startedAtMs: 1782622440500,
+                  item: {
+                    type: "agentMessage",
+                    id: "msg-recovered",
+                    text: "",
+                    phase: "commentary",
+                    memoryCitation: null,
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "item/agentMessage/delta/recovered",
+              frame: {
+                method: "item/agentMessage/delta",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  itemId: "msg-recovered",
+                  delta: "Working on it.",
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "error/retry-second",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: tokenRefusalRetry,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: {
+                    ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                    error: tokenRefusalFinal,
+                  },
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          Effect.succeed({
+            config: DEFAULT_CODEX_SETTINGS,
+            environment: {},
+            revision: "managed-profile",
+            recentTokenRefusal: Effect.sync(
+              () => refusals[Math.min(lookups++, refusals.length - 1)],
+            ),
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            text: "Continue.",
+            attemptId: RunAttemptId.make("attempt-token-refusal-recovered-turn"),
+          }),
+        );
+        yield* harness.firstTerminal;
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "managed_token_timeout");
+        assert.include(terminal.failure.message, timeoutRefusal.message);
+        assert.notInclude(terminal.failure.message, refreshRefusal.message);
+        const errorItems = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "error"
+            ? [{ status: event.turnItem.status, code: event.turnItem.failure.code }]
+            : [],
+        );
+        assert.deepEqual(errorItems, [
+          { status: "running", code: "managed_token_refresh" },
+          { status: "completed", code: "managed_token_refresh" },
+          { status: "running", code: "managed_token_timeout" },
+        ]);
+        assert.equal(lookups, 2);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

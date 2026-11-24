@@ -63,14 +63,29 @@ export const readFrame = (socket: NodeNet.Socket, maxBytes: number, timeoutMs: n
 
 export const writeFrame = (socket: NodeNet.Socket, frame: string, maxBytes: number) =>
   Effect.callback<void, ProtocolError>((resume) => {
-    if (socket.destroyed || Buffer.byteLength(frame) + 1 > maxBytes) {
+    if (
+      socket.destroyed ||
+      socket.writableEnded ||
+      !socket.writable ||
+      Buffer.byteLength(frame) + 1 > maxBytes
+    ) {
       resume(Effect.fail(new ProtocolError()));
       return;
     }
+    let writeFailed = false;
     const fail = () => resume(Effect.fail(new ProtocolError()));
     socket.once("error", fail);
     socket.once("close", fail);
-    socket.end(`${frame}\n`, () => resume(Effect.void));
+    socket.write(`${frame}\n`, (error) => {
+      if (error != null || socket.errored != null) {
+        writeFailed = true;
+        fail();
+      }
+    });
+    socket.end(() => {
+      if (writeFailed || socket.errored != null) fail();
+      else resume(Effect.void);
+    });
     return Effect.sync(() => {
       socket.off("error", fail);
       socket.off("close", fail);

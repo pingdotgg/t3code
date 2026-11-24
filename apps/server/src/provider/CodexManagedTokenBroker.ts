@@ -253,12 +253,13 @@ const acquireListener = Effect.gen(function* () {
             }
             const result = answer.value;
             if (Exit.isSuccess(result)) {
-              refusals.delete(refusalKey(request));
-              return yield* Protocol.writeFrame(
+              yield* Protocol.writeFrame(
                 socket,
                 encodeResponse({ token: result.value.accessToken }),
                 Protocol.RESPONSE_BYTES,
               );
+              refusals.delete(refusalKey(request));
+              return;
             }
             if (!Cause.hasInterruptsOnly(result.cause))
               yield* refuse(socket, request, refusalFromCause(result.cause));
