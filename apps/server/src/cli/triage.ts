@@ -98,7 +98,7 @@ const pickAgent = (agents: ReadonlyArray<TriageAgent>) =>
         .join("\n");
       for (;;) {
         const answer = (await readline.question(`Run triage with:\n${menu}\n> `)).trim();
-        const byNumber = agents[Number.parseInt(answer, 10) - 1];
+        const byNumber = agents.find((_, index) => String(index + 1) === answer);
         if (byNumber !== undefined) {
           return byNumber;
         }

@@ -4,6 +4,8 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeReadlinePromises from "node:readline/promises";
+import * as NodeStream from "node:stream";
 import * as NodeURL from "node:url";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -106,6 +108,67 @@ it.live.each([
         await NodeFSP.readFile(NodePath.join(launch.cwd, "triage-playbook.md"), "utf8"),
       ).toContain("context.md");
     }),
+);
+
+it.live.each([
+  { answers: ["1.5", "1x", "2"], command: "codex" },
+  { answers: ["2x", "CLAUDE"], command: "claude" },
+])("the picker starts $command only once an answer names it ($answers)", ({ answers, command }) =>
+  Effect.gen(function* () {
+    const setup = yield* Effect.acquireDisposable(
+      Effect.promise(() => fixture(["claude", "codex"])),
+    );
+    const input = Object.assign(new NodeStream.PassThrough(), { isTTY: true });
+    const output = Object.assign(new NodeStream.PassThrough(), { isTTY: true });
+    let asked = 0;
+    const question = NodeReadlinePromises.Interface.prototype.question;
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        // Answer each question as it is asked; Ctrl+C rejects a question past the last answer.
+        const spy = vi
+          .spyOn(NodeReadlinePromises.Interface.prototype, "question")
+          .mockImplementation(function (this: NodeReadlinePromises.Interface, ...args) {
+            const answer = question.apply(this, args);
+            input.write(asked < answers.length ? `${answers[asked]}\n` : "\x03");
+            asked++;
+            return answer;
+          });
+        vi.stubEnv("PATH", NodePath.join(setup.root, "bin"));
+        vi.stubEnv("TRIAGE_TEST_RECORD", setup.record);
+        const exitCode = process.exitCode;
+        const streams = (["stdin", "stdout"] as const).map((name) => {
+          const descriptor = Object.getOwnPropertyDescriptor(process, name);
+          const stream = name === "stdin" ? input : output;
+          Object.defineProperty(process, name, { configurable: true, value: stream });
+          return { name, descriptor };
+        });
+        return { spy, exitCode, streams };
+      }),
+      ({ spy, exitCode, streams }) =>
+        Effect.sync(() => {
+          spy.mockRestore();
+          vi.unstubAllEnvs();
+          process.exitCode = exitCode;
+          for (const { name, descriptor } of streams) {
+            if (descriptor !== undefined) Object.defineProperty(process, name, descriptor);
+          }
+        }),
+    );
+
+    yield* Command.runWith(cli, { version: "0.0.0" })([
+      "triage",
+      "--base-dir",
+      NodePath.join(setup.root, "home"),
+    ]);
+
+    expect(asked).toBe(answers.length);
+    const record = yield* Effect.promise(() => NodeFSP.readFile(setup.record, "utf8"));
+    expect((JSON.parse(record) as { command: string }).command).toBe(command);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),
+    ),
+  ),
 );
 
 it.live(
