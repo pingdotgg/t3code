@@ -259,6 +259,19 @@ describe("toEquivalence", () => {
       assertFalse(equivalence({ a: 1 }, { a: 2 }))
     })
 
+    it("Record with a transformed key should select keys by the decoded key", () => {
+      const UpperCase = Schema.String.check(Schema.isPattern(/^[a-z]+$/)).pipe(
+        Schema.decodeTo(Schema.String.check(Schema.isPattern(/^[A-Z]+$/)), {
+          decode: SchemaGetter.transform((s: string) => s.toUpperCase()),
+          encode: SchemaGetter.transform((s: string) => s.toLowerCase())
+        })
+      )
+      const equivalence = Schema.toEquivalence(Schema.Record(UpperCase, Schema.Number))
+      assertTrue(equivalence({ A: 1 }, { A: 1 }))
+      assertFalse(equivalence({ A: 1 }, { A: 2 }))
+      assertFalse(equivalence({ A: 1 }, {}))
+    })
+
     it("Record(Symbol, Number)", () => {
       const a = Symbol.for("a")
       const b = Symbol.for("b")

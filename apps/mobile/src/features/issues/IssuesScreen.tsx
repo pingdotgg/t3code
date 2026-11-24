@@ -9,6 +9,7 @@ import {
   type EnvironmentIssueEntry,
   type HeldIssuePage,
 } from "@t3tools/client-runtime/issue-list";
+import { issueTrackerDetailText } from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
@@ -18,6 +19,7 @@ import type {
   IssueListState,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { msg, useGT, useMessages } from "gt-react-native";
 import { use, useRef, useState, type ReactNode } from "react";
 import { Keyboard, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -31,6 +33,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { usePaneRole } from "../../components/ui/Pane";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import { useContentTopInset } from "../../components/ui/useBarInset";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
@@ -54,19 +57,19 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 
 const DEFAULT_ISSUE_LIST_INPUT = { state: "open", involvement: "all", limit: 50 } as const;
 const STATES = {
-  open: "Open",
-  closed: "Closed",
-  all: "All states",
+  open: msg("Open", { $context: "issue state" }),
+  closed: msg("Closed", { $context: "issue state" }),
+  all: msg("All states"),
 } as const satisfies Record<IssueListState, string>;
 const INVOLVEMENT = {
-  all: "Everyone",
-  assigned: "Assigned to you",
-  authored: "Opened by you",
-  mentioned: "Mentioning you",
+  all: msg("Everyone", { $context: "issue filter" }),
+  assigned: msg("Assigned to you"),
+  authored: msg("Opened by you"),
+  mentioned: msg("Mentioning you"),
 } as const satisfies Record<IssueInvolvement, string>;
 const SORTS = {
-  updated: "Recently updated",
-  created: "Newest",
+  updated: msg("Recently updated"),
+  created: msg("Newest", { $context: "sort order" }),
 } as const satisfies Record<IssueListSort, string>;
 // A 12dp inset keeps 16dp chips concentric with Android's 28dp ScreenContent corner.
 const FILTER_ROW_STYLE =
@@ -77,12 +80,13 @@ const FILTER_ROW_STYLE =
 function choices<Value extends string>(
   options: Readonly<Record<Value, string>>,
   selected: Value,
+  resolve: MessageResolver,
   /** Prefixes the ids, for a menu that holds more than one set of choices. */
   field?: string,
 ) {
   return (Object.entries(options) as Array<[Value, string]>).map(([id, title]) => ({
     id: field ? `${field}:${id}` : id,
-    title,
+    title: resolve(title),
     state: id === selected ? ("on" as const) : ("off" as const),
   }));
 }
@@ -104,6 +108,8 @@ export function IssuesScreen(
     readonly renderFrame?: (filters: PullRequestFilterMenu | null, list: ReactNode) => ReactNode;
   } = {},
 ) {
+  const gt = useGT();
+  const messages = useMessages();
   const primaryColumn = use(NativePrimaryColumnContext);
   const workspace = useWorkspaceTabs()!;
   const { environments } = useWorkspaceState();
@@ -174,7 +180,10 @@ export function IssuesScreen(
           continueIssuePage(
             page,
             AsyncResult.isFailure(result)
-              ? { failure: failure instanceof Error ? failure.message : "The next page failed." }
+              ? {
+                  failure:
+                    failure instanceof Error ? failure.message : m(msg("The next page failed.")),
+                }
               : result.value,
           ),
         ] as const;
@@ -194,7 +203,9 @@ export function IssuesScreen(
     ...groups.flatMap((group) => [
       ...(group.tracker.configured
         ? []
-        : [`${group.tracker.host}: ${group.tracker.detail ?? "This tracker cannot be read."}`]),
+        : [
+            `${group.tracker.host}: ${group.tracker.detail === null ? gt("This tracker cannot be read.") : issueTrackerDetailText(group.tracker.detail, messages)}`,
+          ]),
       ...group.errors.map((error) => `${error.projectTitle}: ${error.message}`),
     ]),
   ];
@@ -232,23 +243,40 @@ export function IssuesScreen(
     Platform.OS === "android"
       ? {
           actions: [
-            { id: "state", title: "State", subactions: choices(STATES, state, "state") },
+            {
+              id: "state",
+              title: gt("State", { $context: "issue state filter" }),
+              subactions: choices(STATES, state, messages, "state"),
+            },
             {
               id: "involvement",
-              title: "Involvement",
-              subactions: choices(INVOLVEMENT, involvement, "involvement"),
+              title: gt("Involvement"),
+              subactions: choices(INVOLVEMENT, involvement, messages, "involvement"),
             },
             {
               id: "labels",
-              title: labels.length === 0 ? "Labels…" : `Labels (${labels.length})…`,
+              title:
+                labels.length === 0
+                  ? gt("Labels…")
+                  : gt("Labels ({count})…", { count: labels.length }),
             },
             {
               id: "assignee",
               title:
-                assignee === null ? "Assignee…" : `Assignee: ${assignee.name ?? assignee.login}…`,
+                assignee === null
+                  ? gt("Assignee…")
+                  : gt("Assignee: {name}…", { name: assignee.name ?? assignee.login }),
             },
-            { id: "sort", title: "Sort", subactions: choices(SORTS, sort, "sort") },
-            { id: "reset", title: "Reset filters", attributes: { disabled: !customized } },
+            {
+              id: "sort",
+              title: gt("Sort", { $context: "noun, sort order menu" }),
+              subactions: choices(SORTS, sort, messages, "sort"),
+            },
+            {
+              id: "reset",
+              title: gt("Reset filters"),
+              attributes: { disabled: !customized },
+            },
           ],
           onSelect: (id) => {
             const [field, value] = id.split(":");
@@ -332,9 +360,8 @@ export function IssuesScreen(
               <SavedViewsMenu
                 read={(preferences) => preferences.issueSavedViews}
                 write={(issueSavedViews) => ({ issueSavedViews })}
-                noun="issue"
-                shortNoun="issue"
-                suggestedName={involvement === "assigned" ? "Issues Assigned to Me" : ""}
+                list="issue"
+                suggestedName={involvement === "assigned" ? gt("Issues Assigned to Me") : ""}
                 matches={issueViewMatches}
                 scope={{
                   query: tab.searchMode === "resting" ? "" : tab.query,
@@ -360,20 +387,20 @@ export function IssuesScreen(
                 }}
               />
               <ListFilterMenu
-                label={STATES[state]}
+                label={messages(STATES[state])}
                 active={state !== "open"}
-                accessibilityLabel="Filter by state"
-                actions={choices(STATES, state)}
+                accessibilityLabel={gt("Filter by state")}
+                actions={choices(STATES, state, messages)}
                 onSelect={(id) => {
                   setState(id as IssueListState);
                   scrollToTop();
                 }}
               />
               <ListFilterMenu
-                label={INVOLVEMENT[involvement]}
+                label={messages(INVOLVEMENT[involvement])}
                 active={involvement !== "all"}
-                accessibilityLabel="Filter by involvement"
-                actions={choices(INVOLVEMENT, involvement)}
+                accessibilityLabel={gt("Filter by involvement")}
+                actions={choices(INVOLVEMENT, involvement, messages)}
                 onSelect={(id) => {
                   setInvolvement(id as IssueInvolvement);
                   scrollToTop();
@@ -382,27 +409,27 @@ export function IssuesScreen(
               <Chip
                 label={
                   labels.length === 0
-                    ? "Labels"
+                    ? gt("Labels")
                     : labels.length === 1
                       ? labels[0]!
-                      : `Labels ${labels.length}`
+                      : gt("Labels {count}", { count: labels.length })
                 }
                 selected={labels.length > 0}
                 trailingIcon="chevron.down"
                 glass
                 colorScheme={themeAppearance}
-                accessibilityLabel="Filter by label"
+                accessibilityLabel={gt("Filter by label")}
                 onPress={() =>
                   navigation.navigate("IssueFilterSearch", { kind: "labels", scopes: filterScopes })
                 }
               />
               <Chip
-                label={assignee === null ? "Assignee" : (assignee.name ?? assignee.login)}
+                label={assignee === null ? gt("Assignee") : (assignee.name ?? assignee.login)}
                 selected={assignee !== null}
                 trailingIcon="chevron.down"
                 glass
                 colorScheme={themeAppearance}
-                accessibilityLabel="Filter by assignee"
+                accessibilityLabel={gt("Filter by assignee")}
                 onPress={() =>
                   navigation.navigate("IssueFilterSearch", {
                     kind: "assignee",
@@ -411,10 +438,10 @@ export function IssuesScreen(
                 }
               />
               <ListFilterMenu
-                label={SORTS[sort]}
+                label={messages(SORTS[sort])}
                 active={sort !== "updated"}
-                accessibilityLabel="Sort issues"
-                actions={choices(SORTS, sort)}
+                accessibilityLabel={gt("Sort issues")}
+                actions={choices(SORTS, sort, messages)}
                 onSelect={(id) => {
                   setSort(id as IssueListSort);
                   scrollToTop();
@@ -433,15 +460,15 @@ export function IssuesScreen(
             <View className="items-center py-5">
               <AppActivityIndicator
                 colorClassName="accent-icon"
-                accessibilityLabel="Loading more issues"
+                accessibilityLabel={gt("Loading more issues")}
               />
             </View>
           ) : moreFailure ? (
             <View className="items-center gap-2 px-8 py-4">
               <Text className="text-xs text-foreground-muted">{moreFailure}</Text>
               <Button
-                label="Try again"
-                accessibilityLabel="Retry loading more issues"
+                label={gt("Try again")}
+                accessibilityLabel={gt("Retry loading more issues")}
                 onPress={() => void loadMore(true)}
               />
             </View>
@@ -449,8 +476,8 @@ export function IssuesScreen(
             // A filtered page can be too short to scroll, which leaves nothing to reach the end of.
             <View className="items-center py-4">
               <Button
-                label="Load more"
-                accessibilityLabel="Load more issues"
+                label={gt("Load more")}
+                accessibilityLabel={gt("Load more issues")}
                 onPress={() => void loadMore()}
               />
             </View>
@@ -466,26 +493,26 @@ export function IssuesScreen(
               <EmptyState
                 title={
                   list.error
-                    ? "Couldn't load issues"
+                    ? gt("Couldn't load issues")
                     : connected.length > 0
                       ? query
-                        ? "No results"
-                        : "No matching issues"
+                        ? gt("No results")
+                        : gt("No matching issues")
                       : capable.length > 0
-                        ? "Environment offline"
+                        ? gt("Environment offline")
                         : environments.length > 0
-                          ? "Issues unavailable"
-                          : "Connect an environment"
+                          ? gt("Issues unavailable")
+                          : gt("Connect an environment")
                 }
                 detail={
                   list.error ??
                   (connected.length > 0
-                    ? "Issues from your environments' projects appear here."
+                    ? gt("Issues from your environments' projects appear here.")
                     : capable.length > 0
-                      ? "Reconnect to load issues."
+                      ? gt("Reconnect to load issues.")
                       : environments.length > 0
-                        ? "Update the environment's T3 Code server to browse issues."
-                        : "Add an environment in Settings to browse its issues.")
+                        ? gt("Update the environment's T3 Code server to browse issues.")
+                        : gt("Add an environment in Settings to browse its issues."))
                 }
                 variant="plain"
               />
