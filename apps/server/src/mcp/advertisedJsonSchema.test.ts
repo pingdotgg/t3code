@@ -59,3 +59,17 @@ it("advertises only string enum values, which Gemini requires", () => {
 
   expect(enumValues.filter((value) => typeof value !== "string")).toEqual([]);
 });
+
+it("advertises the theme cell size tuple with an items schema for Gemini", () => {
+  expect(advertisedJsonSchema(ThemeToolkit.tools.t3_theme_set)).toHaveProperty(
+    "properties.theme.properties.backdrop.properties.cellSize",
+    {
+      type: "array",
+      minItems: 2,
+      maxItems: 2,
+      items: {
+        anyOf: [{ type: "number" }, { type: "string", enum: ["Infinity", "-Infinity", "NaN"] }],
+      },
+    },
+  );
+});
