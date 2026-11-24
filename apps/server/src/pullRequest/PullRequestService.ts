@@ -944,6 +944,10 @@ export const make = Effect.gen(function* () {
       );
     });
 
+  const hasRootRepository = (project: OrchestrationProjectShell) =>
+    project.repositoryIdentity != null &&
+    sourceControlDefinitions.repositorySelector(project.repositoryIdentity) !== null;
+
   const readWorkspaceProjects = (
     filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
   ): Effect.Effect<WorkspaceProjects, PullRequestError> =>
@@ -979,12 +983,7 @@ export const make = Effect.gen(function* () {
         Effect.forEach(
           projects,
           (project): Effect.Effect<ReadonlyArray<OrchestrationProjectShell>> => {
-            if (
-              project.repositoryIdentity != null &&
-              sourceControlDefinitions.repositorySelector(project.repositoryIdentity) !== null
-            ) {
-              return Effect.succeed([project]);
-            }
+            if (hasRootRepository(project)) return Effect.succeed([project]);
             const trackedFolders = project.trackedFolders ?? [];
             if (trackedFolders.length === 0) return Effect.succeed([]);
             return Effect.forEach(
@@ -1005,9 +1004,14 @@ export const make = Effect.gen(function* () {
           },
           { concurrency: REPOSITORY_CONCURRENCY },
         ).pipe(
+          // Roots first: the host+repository dedupe below is first-wins, and a parent folder
+          // tracking a checkout must not take that repository from the project rooted in it.
           Effect.map((candidates) => ({
             projects,
-            candidates: candidates.flat(),
+            candidates: [
+              ...candidates.filter((_, index) => hasRootRepository(projects[index]!)).flat(),
+              ...candidates.filter((_, index) => !hasRootRepository(projects[index]!)).flat(),
+            ],
           })),
         ),
       ),

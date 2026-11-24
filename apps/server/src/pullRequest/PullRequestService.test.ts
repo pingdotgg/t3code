@@ -3524,6 +3524,62 @@ it.effect("believes a search's silence about a repository it vouches for", () =>
     );
   }),
 );
+it.effect("keeps a repository with the project rooted in it over a parent tracking it", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "parent",
+          title: "parent",
+          workspaceRoot: "/parent",
+          trackedFolders: [{ path: "/parent/web", name: "web", discovered: true }],
+        }),
+        project({ id: "own", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [changeRequest(7, "2026-07-05T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            }),
+          listChangeRequestStats: () =>
+            Effect.succeed([{ repository: "acme/web", number: 7, additions: 1, deletions: 2 }]),
+        }),
+      ],
+      resolveRepositoryIdentity: (cwd) =>
+        Effect.succeed(
+          cwd === "/parent/web"
+            ? {
+                canonicalKey: "github.com/acme/web",
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "https://github.com/acme/web.git",
+                },
+                provider: SourceControlProviderKind.make("github"),
+                displayName: "acme/web",
+              }
+            : null,
+        ),
+    });
+
+    const list = yield* service.list({ state: "all" });
+    const stats = yield* service.listStats({
+      refs: [{ projectId: "own" as ProjectId, repository: "acme/web", number: 7 }],
+    });
+
+    assert.deepStrictEqual(
+      list.entries.map((entry) => `${entry.projectId}:${entry.number}`),
+      ["own:7"],
+    );
+    assert.deepStrictEqual(
+      stats.stats.map((stat) => stat.projectId),
+      ["own" as ProjectId],
+    );
+  }),
+);
 it.effect("fills in the line counts for the rows it is given", () =>
   Effect.gen(function* () {
     const asked: Array<unknown> = [];
