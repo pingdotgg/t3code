@@ -28,7 +28,8 @@ import {
   type Transaction,
 } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
-import type { NodeType, ResolvedPos } from "@tiptap/pm/model";
+import { Fragment, type NodeType, type ResolvedPos, Slice } from "@tiptap/pm/model";
+import { dropPoint } from "@tiptap/pm/transform";
 import type {
   AssistantCitation,
   ComposerContextClipboardFragment,
@@ -1160,11 +1161,17 @@ function ComposerPromptEditorTiptapInner(
     "aria-placeholder": placeholder,
   };
 
-  const insertClipboardText = (view: EditorView, clipboardData: DataTransfer): boolean => {
+  /** `newLineAt` inserts on a fresh line created at that block boundary, in the same undo step. */
+  const insertClipboardText = (
+    view: EditorView,
+    clipboardData: DataTransfer,
+    newLineAt?: number,
+  ): boolean => {
     const pastedText = readPastedPlainText(clipboardData);
     if (!pastedText) return false;
+    const onNewLine = newLineAt !== undefined;
     // Paste verbatim inside fences; markdown parsing would split blocks and create unsupported chips.
-    if (isInCodeBlock(view)) {
+    if (!onNewLine && isInCodeBlock(view)) {
       const { from, to } = view.state.selection;
       view.dispatch(
         markAsClipboardEdit(
@@ -1178,6 +1185,7 @@ function ComposerPromptEditorTiptapInner(
     const sourceType = view.state.schema.marks[MARKDOWN_SOURCE_MARK];
     const { from: pasteFrom, to: pasteTo, $from: $pasteFrom } = view.state.selection;
     if (
+      !onNewLine &&
       sourceType?.isInSet($pasteFrom.marks()) &&
       !pastedText.includes("\n") &&
       collectComposerPromptInlineTokens(`${pastedText}\n`).length === 0
@@ -1204,19 +1212,21 @@ function ComposerPromptEditorTiptapInner(
     if (isChip(lastToken) && lastToken?.end === text.length) {
       text += " ";
     }
-    if (isChip(tokens[0]) && tokens[0]?.start === 0) {
+    if (!onNewLine && isChip(tokens[0]) && tokens[0]?.start === 0) {
       const map = serializeEditorDoc(view.state.doc);
       const offset = flatToMarkdown(map, pmToFlat(map, view.state.selection.from));
       if (offset > 0 && !/\s/.test(map.value[offset - 1]!)) text = ` ${text}`;
     }
     const { $from } = view.state.selection;
-    const lineBefore = $from.parent.textBetween(0, $from.parentOffset, undefined, "\uFFFC");
+    const lineBefore = onNewLine
+      ? ""
+      : $from.parent.textBetween(0, $from.parentOffset, undefined, "\uFFFC");
     const literalLength = literalText
       ? 0
       : pastedPathQueryLength(lineBefore, text, readCallbacks().isPathQueryActive?.());
     const editorInstance = (view.dom as TiptapEditorHTMLElement).editor;
     if (editorInstance) {
-      const $paste = view.state.selection.$from;
+      const $paste = onNewLine ? view.state.doc.resolve(newLineAt) : view.state.selection.$from;
       const nested = ["listItem", "taskItem", "blockquote"].some((name) =>
         hasAncestor($paste, name),
       );
@@ -1229,6 +1239,10 @@ function ComposerPromptEditorTiptapInner(
             .chain()
             .command(({ tr }) => {
               markAsClipboardEdit(tr, "paste");
+              if (onNewLine) {
+                tr.insert(newLineAt, tr.doc.type.schema.nodes.paragraph!.create());
+                tr.setSelection(TextSelection.create(tr.doc, newLineAt + 1));
+              }
               return true;
             })
             // Pasted chips and lines would split shown Markdown, so parse it first.
@@ -1566,13 +1580,19 @@ function ComposerPromptEditorTiptapInner(
           let pos = target.pos;
           const $target = view.state.doc.resolve(pos);
           if (!$target.parent.inlineContent) {
-            // Between blocks, fill an adjacent empty paragraph (the padding of an empty composer); otherwise
-            // ProseMirror's drop inserts a new block, where a nearby selection would replace or join one.
+            // Between blocks, fill an adjacent empty paragraph (the padding of an empty composer) or start
+            // a new line; a nearby selection would replace or join a block.
             const isEmptyParagraph = (node: typeof $target.nodeAfter) =>
               node?.type.name === "paragraph" && node.content.size === 0;
             if (isEmptyParagraph($target.nodeAfter)) pos += 1;
             else if (isEmptyParagraph($target.nodeBefore)) pos -= 1;
-            else return false;
+            else {
+              const line = view.state.schema.nodes.paragraph!.create();
+              const at = dropPoint(view.state.doc, pos, new Slice(Fragment.from(line), 0, 0));
+              if (at === null) return false;
+              view.focus();
+              return insertClipboardText(view, data, at);
+            }
           }
           view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos)));
           // Handling the drop skips ProseMirror's own focus call.

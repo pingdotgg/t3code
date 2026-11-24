@@ -615,6 +615,33 @@ it("parses markdown dropped below the first line of an empty composer", async ()
   expect(editor.state.doc.textContent).toBe("a bold word");
 });
 
+it("drops plain text on a new line below the last line", async () => {
+  await using screen = await mountEditor("before");
+  const { editor } = screen;
+  const box = editor.view.dom.getBoundingClientRect();
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "Docs https://example.com/document\n\nsecond");
+    dataTransfer.setData("text/html", '<a href="https://example.com/document">Docs</a>');
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: box.left + 4,
+        clientY: box.bottom - 1,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(
+    "before\nDocs https://example.com/document\n\nsecond",
+  );
+  await act(async () => {
+    editor.commands.undo();
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("before");
+});
+
 it("drops text on a rule's edge without replacing the rule", async () => {
   await using screen = await mountEditor("before\n\n---\n\nafter");
   const { editor } = screen;
