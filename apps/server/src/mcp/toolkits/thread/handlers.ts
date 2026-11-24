@@ -8,8 +8,10 @@ import {
   type OrchestrationV2Command,
   isRuntimeModeAbove,
   type ThreadMoveError,
+  ThreadMoveSnapshot,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
@@ -36,6 +38,10 @@ import { rejectionText } from "../../../orchestration-v2/runOutput.ts";
 import * as ThreadMoveService from "../../../orchestration-v2/ThreadMoveService.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import { ThreadImportTool, ThreadToolkit } from "./tools.ts";
+
+const ThreadMoveSnapshotJson = Schema.fromJsonString(ThreadMoveSnapshot);
+const encodeSnapshotJson = Schema.encodeEffect(ThreadMoveSnapshotJson);
+const decodeSnapshotJson = Schema.decodeUnknownEffect(ThreadMoveSnapshotJson);
 
 const moveFailure = (error: ThreadMoveError) =>
   new OrchestratorMcpFailure({
@@ -213,7 +219,11 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           scope,
           ThreadImportTool,
           input.targetEnvironmentId,
-          { commandId: yield* newCommandId(), projectId: input.projectId, snapshot },
+          {
+            commandId: yield* newCommandId(),
+            projectId: input.projectId,
+            snapshotJson: yield* encodeSnapshotJson(snapshot).pipe(Effect.mapError(unavailable)),
+          },
         );
         const label = yield* forwarding.value.links(scope).pipe(
           Effect.map(
@@ -244,18 +254,28 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     (input, modes) =>
       Effect.gen(function* () {
         const moves = yield* ThreadMoveService.ThreadMoveService;
+        const snapshot = yield* decodeSnapshotJson(input.snapshotJson).pipe(
+          Effect.mapError(
+            () =>
+              new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: "The moved thread's snapshot is not valid.",
+              }),
+          ),
+        );
         return yield* moves
           .importThread(
             {
-              ...input,
+              commandId: input.commandId,
+              projectId: input.projectId,
               snapshot: {
-                ...input.snapshot,
+                ...snapshot,
                 // The link's modes cap the moved thread, as they cap anything it starts.
-                runtimeMode: isRuntimeModeAbove(input.snapshot.runtimeMode, modes.runtimeMode)
+                runtimeMode: isRuntimeModeAbove(snapshot.runtimeMode, modes.runtimeMode)
                   ? modes.runtimeMode
-                  : input.snapshot.runtimeMode,
+                  : snapshot.runtimeMode,
                 interactionMode:
-                  modes.interactionMode === "plan" ? "plan" : input.snapshot.interactionMode,
+                  modes.interactionMode === "plan" ? "plan" : snapshot.interactionMode,
               },
             },
             {

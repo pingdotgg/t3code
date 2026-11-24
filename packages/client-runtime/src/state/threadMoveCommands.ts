@@ -4,7 +4,6 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ThreadId,
-  type ThreadMoveSnapshot,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -22,7 +21,6 @@ export interface ThreadMoveRequest {
     readonly projectId: ProjectId;
     readonly label: string;
   };
-  readonly snapshot: ThreadMoveSnapshot;
   readonly creationSource: "web" | "mobile";
 }
 
@@ -49,35 +47,44 @@ export function createThreadMoveCommands<R, ER>(
     tag: WS_METHODS.threadMoveComplete,
   });
 
-  /** Creates the thread on the target, then archives the original. */
+  /**
+   * Exports again, so the thread moves as it is now rather than as the dialog first showed it,
+   * then creates it on the target and archives the original.
+   */
   const move = {
     label: "environment-data:thread-move:move",
-    run: (registry: Parameters<typeof importThread.run>[0], request: ThreadMoveRequest) =>
-      Effect.gen(function* () {
-        const imported = yield* importThread.run(registry, {
-          environmentId: request.target.environmentId,
+    run: Effect.fn("ThreadMoveCommands.move")(function* (
+      registry: Parameters<typeof importThread.run>[0],
+      request: ThreadMoveRequest,
+    ) {
+      const snapshot = yield* exportThread.run(registry, {
+        environmentId: request.source.environmentId,
+        input: { threadId: request.source.threadId },
+      });
+      const imported = yield* importThread.run(registry, {
+        environmentId: request.target.environmentId,
+        input: {
+          commandId: request.commandId,
+          projectId: request.target.projectId,
+          snapshot,
+          creationSource: request.creationSource,
+        },
+      });
+      const completed = yield* Effect.exit(
+        completeMove.run(registry, {
+          environmentId: request.source.environmentId,
           input: {
-            commandId: request.commandId,
-            projectId: request.target.projectId,
-            snapshot: request.snapshot,
-            creationSource: request.creationSource,
+            threadId: request.source.threadId,
+            targetEnvironmentLabel: request.target.label,
           },
-        });
-        const completed = yield* Effect.exit(
-          completeMove.run(registry, {
-            environmentId: request.source.environmentId,
-            input: {
-              threadId: request.source.threadId,
-              targetEnvironmentLabel: request.target.label,
-            },
-          }),
-        );
-        return {
-          threadId: imported.threadId,
-          carriedBranch: imported.carriedBranch,
-          sourceArchived: Exit.isSuccess(completed),
-        } satisfies ThreadMoveOutcome;
-      }),
+        }),
+      );
+      return {
+        threadId: imported.threadId,
+        carriedBranch: imported.carriedBranch,
+        sourceArchived: Exit.isSuccess(completed),
+      } satisfies ThreadMoveOutcome;
+    }),
   };
 
   return {

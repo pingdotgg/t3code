@@ -179,8 +179,12 @@ const layerTools = Layer.mergeAll(
   Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
   Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
   Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
-  Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-  Layer.provide(Layer.mock(ThreadMoveService.ThreadMoveService)({})),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ThreadSearch.ThreadSearch)({}),
+      Layer.mock(ThreadMoveService.ThreadMoveService)({}),
+    ),
+  ),
   Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
   Layer.provide(
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),

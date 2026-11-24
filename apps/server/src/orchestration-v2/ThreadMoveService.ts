@@ -19,6 +19,8 @@ import {
   type ThreadMoveImportResult,
   type ThreadMoveMessage,
   type ThreadMoveSnapshot,
+  type ModelSelection,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
@@ -32,6 +34,8 @@ import * as Option from "effect/Option";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as EventSink from "./EventSink.ts";
@@ -197,6 +201,34 @@ export function moveArrivalNotice(input: {
   return parts.join(" ");
 }
 
+/**
+ * The moved thread's model when this environment cannot run the source's instance and its
+ * project names no default: the same model under another instance, else any ready provider.
+ */
+export function fallbackMoveModel(
+  wanted: ModelSelection,
+  providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "enabled" | "installed" | "status" | "models">
+  >,
+): ModelSelection | null {
+  const usable = providers.filter(
+    (provider) =>
+      provider.enabled &&
+      provider.installed &&
+      provider.status !== "error" &&
+      provider.status !== "disabled" &&
+      provider.models.length > 0,
+  );
+  const sameModel = usable.find((provider) =>
+    provider.models.some((model) => model.slug === wanted.model),
+  );
+  if (sameModel !== undefined) return { instanceId: sameModel.instanceId, model: wanted.model };
+  const first = usable[0];
+  return first === undefined
+    ? null
+    : { instanceId: first.instanceId, model: first.models[0]!.slug };
+}
+
 const moveError = (reason: ThreadMoveError["reason"], detail: string) =>
   new ThreadMoveError({ reason, detail });
 
@@ -225,6 +257,8 @@ const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const ids = yield* IdAllocator.IdAllocatorV2;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+  const projectFiles = yield* T3ProjectFileLoader.T3ProjectFileLoader;
 
   const requireThread = Effect.fn("ThreadMoveService.requireThread")(function* (
     threadId: ThreadId,
@@ -357,18 +391,26 @@ const make = Effect.gen(function* () {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.mapError(failed("Read settings")),
     );
-    const projectSettings = resolveProjectSettings(settings, project.id, project).settings;
+    const projectFile = Option.getOrNull(yield* projectFiles.load(project.workspaceRoot));
+    // With the project file, unset settings resolve to its values and then the built-in defaults.
+    const projectSettings = resolveProjectSettings(
+      settings,
+      project.id,
+      project,
+      projectFile,
+    ).settings;
 
     const modelSelection = (yield* threads.isProviderInstanceEnabledForProject({
       projectId: project.id,
       instanceId: snapshot.modelSelection.instanceId,
     }))
       ? snapshot.modelSelection
-      : projectSettings.defaultModelSelection;
+      : (projectSettings.defaultModelSelection ??
+        fallbackMoveModel(snapshot.modelSelection, yield* providerRegistry.getProviders));
     if (modelSelection === null) {
       return yield* moveError(
         "failed",
-        `${project.title} has no default model, and this environment cannot run the thread's own.`,
+        `No provider here can run the moved thread. Set one up in Settings, then move it again.`,
       );
     }
     const runtimeMode = [
@@ -588,7 +630,7 @@ const make = Effect.gen(function* () {
               completedAt: now,
               updatedAt: now,
               type: "system_notice",
-              message: `Moved to ${input.targetEnvironmentLabel}. Continue in the moved thread there; this one stays archived here with its full history.`,
+              message: `Moved to ${input.targetEnvironmentLabel}. The conversation continued there; this thread keeps its full history.`,
             },
           },
         ],

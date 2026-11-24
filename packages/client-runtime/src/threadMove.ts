@@ -8,23 +8,33 @@ import {
 
 interface MoveProject {
   readonly id: ProjectId;
+  readonly title?: string | undefined;
   readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
 }
 
-/** The target's project for the same repository, when exactly one matches. */
+/**
+ * The target's project for the same repository, when exactly one matches. Without a repository
+ * match (a local remote has no identity), a single project with the same title.
+ */
 export function findMoveTargetProject<P extends MoveProject>(
   source: MoveProject | null | undefined,
   targetProjects: ReadonlyArray<P>,
 ): P | null {
-  const identity = source?.repositoryIdentity;
-  if (identity == null) return null;
-  const key = repositoryGroupingKeyOf(identity).toLowerCase();
-  const matches = targetProjects.filter(
-    (project) =>
-      project.repositoryIdentity != null &&
-      repositoryGroupingKeyOf(project.repositoryIdentity).toLowerCase() === key,
-  );
-  return matches.length === 1 ? matches[0]! : null;
+  if (source == null) return null;
+  const only = (matches: ReadonlyArray<P>) => (matches.length === 1 ? matches[0]! : null);
+  const identity = source.repositoryIdentity;
+  if (identity != null) {
+    const key = repositoryGroupingKeyOf(identity).toLowerCase();
+    const sameRepository = targetProjects.filter(
+      (project) =>
+        project.repositoryIdentity != null &&
+        repositoryGroupingKeyOf(project.repositoryIdentity).toLowerCase() === key,
+    );
+    if (sameRepository.length > 0) return only(sameRepository);
+  }
+  const title = source.title?.trim().toLowerCase();
+  if (!title) return null;
+  return only(targetProjects.filter((project) => project.title?.trim().toLowerCase() === title));
 }
 
 /** What happens to the thread's code, for the move dialog to describe. */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { ThreadMoveGit, ThreadMoveMessage } from "@t3tools/contracts";
+import { ProviderInstanceId, type ThreadMoveGit, type ThreadMoveMessage } from "@t3tools/contracts";
 
-import { planMoveWorkspace, selectMoveHistory } from "./ThreadMoveService.ts";
+import { fallbackMoveModel, planMoveWorkspace, selectMoveHistory } from "./ThreadMoveService.ts";
 
 const message = (role: "user" | "assistant", text: string): ThreadMoveMessage => ({
   role,
@@ -119,5 +119,40 @@ describe("planMoveWorkspace", () => {
     expect(
       planMoveWorkspace({ git: pushed, workspaceRoot, targetBranch: { type: "unchecked" } }),
     ).toMatchObject({ type: "carry", addWorktree: true, reusedCheckout: true });
+  });
+});
+
+describe("fallbackMoveModel", () => {
+  const provider = (
+    instanceId: string,
+    models: ReadonlyArray<string>,
+    state: { enabled?: boolean; status?: "ready" | "error" } = {},
+  ) => ({
+    instanceId: ProviderInstanceId.make(instanceId),
+    enabled: state.enabled ?? true,
+    installed: true,
+    status: state.status ?? ("ready" as const),
+    models: models.map((slug) => ({ slug, name: slug })),
+  });
+  const wanted = { instanceId: ProviderInstanceId.make("claude-home"), model: "claude-opus-5-5" };
+
+  it("keeps the model under another instance that offers it", () => {
+    expect(
+      fallbackMoveModel(wanted, [
+        provider("codex", ["gpt-6.2-sol"]),
+        provider("claude-work", ["claude-sonnet-5-5", "claude-opus-5-5"]),
+      ]),
+    ).toEqual({ instanceId: "claude-work", model: "claude-opus-5-5" });
+  });
+
+  it("falls back to the first usable provider, and to nothing without one", () => {
+    expect(
+      fallbackMoveModel(wanted, [
+        provider("broken", ["claude-opus-5-5"], { status: "error" }),
+        provider("off", ["claude-opus-5-5"], { enabled: false }),
+        provider("codex", ["gpt-6.2-sol"]),
+      ]),
+    ).toEqual({ instanceId: "codex", model: "gpt-6.2-sol" });
+    expect(fallbackMoveModel(wanted, [provider("off", ["x"], { enabled: false })])).toBeNull();
   });
 });

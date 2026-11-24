@@ -1,5 +1,5 @@
 import { ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { findMoveTargetProject } from "./threadMove.ts";
 
@@ -8,8 +8,9 @@ const repo = (canonicalKey: string): RepositoryIdentity => ({
   locator: { source: "git-remote", remoteName: "origin", remoteUrl: `https://${canonicalKey}` },
 });
 
-const project = (id: string, key: string | null) => ({
+const project = (id: string, key: string | null, title = "app") => ({
   id: ProjectId.make(id),
+  title,
   repositoryIdentity: key === null ? null : repo(key),
 });
 
@@ -31,6 +32,21 @@ describe("findMoveTargetProject", () => {
         project("b", "github.com/acme/app"),
       ]),
     ).toBeNull();
-    expect(findMoveTargetProject(project("here", null), [project("a", null)])).toBeNull();
+    expect(
+      findMoveTargetProject(project("here", null, "app"), [
+        project("a", null, "app"),
+        project("b", null, "app"),
+      ]),
+    ).toBeNull();
+  });
+
+  it("falls back to the one project with the same title when no repository decides", () => {
+    const target = project("there", null, "acme-app");
+    expect(
+      findMoveTargetProject(project("here", null, "Acme-App"), [
+        project("x", null, "other"),
+        target,
+      ]),
+    ).toBe(target);
   });
 });

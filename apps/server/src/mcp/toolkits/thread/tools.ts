@@ -23,7 +23,6 @@ import {
   CommandId,
   EnvironmentId,
   ThreadMoveImportResult,
-  ThreadMoveSnapshot,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
@@ -228,7 +227,8 @@ export const ThreadImportTool = Tool.make("t3_thread_import", {
   parameters: Schema.Struct({
     commandId: CommandId,
     projectId: ProjectId,
-    snapshot: ThreadMoveSnapshot,
+    // JSON text, decoded there, so the snapshot's schema does not join every agent's tool list.
+    snapshotJson: Schema.String,
   }),
   success: ThreadMoveImportResult,
   dependencies: [...commandTool.dependencies, ThreadMoveService.ThreadMoveService],

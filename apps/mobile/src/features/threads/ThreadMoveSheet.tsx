@@ -142,7 +142,6 @@ export function ThreadMoveSheet({ route }: StaticScreenProps<ThreadMoveParams>) 
         projectId: project.id,
         label: target.environmentLabel,
       },
-      snapshot: snapshotState.snapshot,
       creationSource: "mobile",
     });
     setMoving(false);

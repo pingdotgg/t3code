@@ -247,8 +247,12 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
       Layer.provide(NodeCrypto.layer),
       Layer.provide(boxThreads(seen, linkSession)),
-      Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-      Layer.provide(Layer.mock(ThreadMoveService.ThreadMoveService)({})),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadSearch.ThreadSearch)({}),
+          Layer.mock(ThreadMoveService.ThreadMoveService)({}),
+        ),
+      ),
       Layer.provide(boxLaunches(seen)),
       Layer.provide(
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
@@ -302,8 +306,12 @@ const makeLaptop = Effect.gen(function* () {
   ).pipe(
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
     Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-    Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-    Layer.provide(Layer.mock(ThreadMoveService.ThreadMoveService)({})),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadSearch.ThreadSearch)({}),
+        Layer.mock(ThreadMoveService.ThreadMoveService)({}),
+      ),
+    ),
     Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
     Layer.provide(
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),

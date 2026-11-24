@@ -14,7 +14,9 @@ export function resolveVisibleWorktreeSetup(input: {
   if (snapshot.phase === "running") return snapshot;
   if (input.followUpSent) return null;
   if (snapshot.phase !== "done") return snapshot;
-  if (!input.runs.some((run) => run.startedAt !== null)) return snapshot;
+  // A setup with no agent stage hands off to no run, so it waits on nothing once done.
+  const waitsForAgent = snapshot.stages.some((stage) => stage.id === "agent");
+  if (waitsForAgent && !input.runs.some((run) => run.startedAt !== null)) return snapshot;
   return snapshot.stages.some((stage) => stage.status === "failed") ? snapshot : null;
 }
 

@@ -164,7 +164,6 @@ function MoveThreadDialog({
         projectId: targetProject.id,
         label: target.label,
       },
-      snapshot,
       creationSource: "web",
     });
     if (result._tag === "Failure") {
