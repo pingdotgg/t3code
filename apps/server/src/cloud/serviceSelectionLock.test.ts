@@ -37,14 +37,9 @@ it.layer(NodeServices.layer)("service selection lock", (it) => {
       const lock = `${selectionPath}.selection-lock`;
 
       const releaseFirst = yield* Effect.promise(() => acquireServiceSelectionLock(selectionPath));
-      let secondAcquired = false;
-      const second = acquireServiceSelectionLock(selectionPath).then((release) => {
-        secondAcquired = true;
-        return release;
-      });
+      const second = acquireServiceSelectionLock(selectionPath);
       releaseFirst();
       const releaseSecond = yield* Effect.promise(() => second);
-      assert.isTrue(secondAcquired);
       releaseSecond();
       assert.isFalse(yield* fs.exists(lock));
     }),

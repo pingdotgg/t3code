@@ -55,8 +55,9 @@ export async function acquireServiceSelectionLock(selectionPath: string): Promis
       try {
         owners = NodeFS.readdirSync(lock);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw error;
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        // A Windows rename can fail with EPERM while no lock exists; keep the deadline and delay.
+        owners = [];
       }
       if (owners.length === 1) {
         const previous = owners[0]!;
