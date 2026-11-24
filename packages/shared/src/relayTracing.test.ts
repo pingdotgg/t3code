@@ -94,7 +94,7 @@ describe("nonInterferingTracer", () => {
     }),
   );
 
-  it.effect("keeps a frame's function, file and position in every engine's format", () =>
+  it.effect("rebuilds each frame from its function, file and position, and drops the rest", () =>
     Effect.gen(function* () {
       const exits: Array<Exit.Exit<unknown, unknown>> = [];
       const delegate = Tracer.make({
@@ -110,12 +110,19 @@ describe("nonInterferingTracer", () => {
       });
       const failure = new Error("failed");
       failure.stack = [
-        // Set before the message changed, so it is not recognised as the header.
+        // Set before the message changed, so none of this is recognised as the header.
         "Error: studio-mac refused the connection",
+        "    at studio-mac refused the connection",
+        "alice@studio-mac.local:12",
         "    at connect (C:\\Users\\John Smith\\T3 Code (x86)\\index.js:12:34)",
         "    at /Users/John Smith/t3/server.mjs:5:6",
         "    at async Promise.all (index 0)",
-        "connect@http://studio-mac:3773/assets/index.js?next=/private/value:12:34",
+        "connect@http://studio-mac:3773/assets/index.js?next=/private/value.txt:12:34",
+        "global code@http://studio-mac.local/assets/app.js:1:2",
+        "open@http://studio-mac.local:12:34",
+        "read@http://studio-mac/app?file=/private/secret.txt:12:34",
+        "    at eval (eval at run (http://studio-mac/a.js?x:1:2), <anonymous>:5:6)",
+        "    at send (address at index.android.bundle:1:2345)",
       ].join("\n");
 
       yield* Effect.fail(failure).pipe(
@@ -129,8 +136,9 @@ describe("nonInterferingTracer", () => {
       expect(Cause.prettyErrors(exit.cause)[0]?.stack?.split("\n").slice(1)).toEqual([
         "    at connect (index.js:12:34)",
         "    at server.mjs:5:6",
-        "    at async Promise.all (index 0)",
-        "connect@index.js:12:34",
+        "    at connect (index.js:12:34)",
+        "    at app.js:1:2",
+        "    at send (index.android.bundle:1:2345)",
       ]);
     }),
   );

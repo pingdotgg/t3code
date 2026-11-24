@@ -66,15 +66,15 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
 let desktopRelayTelemetry: boolean | null = null;
 let serverRelayTelemetry: boolean | null = null;
 
-/** What the server this page was opened from says about its own opt-out. */
-export function setServerRelayTelemetry(allowed: boolean): void {
+/** What the server this page was opened from says about its own opt-out; null while unknown. */
+export function setServerRelayTelemetry(allowed: boolean | null): void {
   serverRelayTelemetry = allowed;
 }
 
 /**
  * Whether relay spans may be exported now. Null until the host answers: the desktop host reads
- * the login shell after startup, and a browser waits for its server's config. The hosted app
- * has no server of its own to ask.
+ * the login shell after startup, and a browser waits for the server it is connected to. The
+ * hosted app has no server of its own to ask.
  */
 export function relayTelemetryEnabled(): boolean | null {
   if (typeof window === "undefined") return true;

@@ -257,14 +257,9 @@ function startThreadOverlayRetention(router: AppRouter): void {
 
 /** A browser follows the relay tracing opt-out of the server it was opened from. */
 function startRelayTelemetrySync(): void {
-  appAtomRegistry.subscribe(
-    primaryRelayTracingAllowedAtom,
-    (allowed) => {
-      // A dropped connection keeps the last answer, so an opt-out outlives it.
-      if (allowed !== null) setServerRelayTelemetry(allowed);
-    },
-    { immediate: true },
-  );
+  appAtomRegistry.subscribe(primaryRelayTracingAllowedAtom, setServerRelayTelemetry, {
+    immediate: true,
+  });
 }
 
 /**

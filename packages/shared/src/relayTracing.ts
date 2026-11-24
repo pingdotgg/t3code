@@ -70,16 +70,22 @@ export const withLocalTracing = <A, E, R>(effect: Effect.Effect<A, E, R>): Effec
   );
 
 // A frame's location is a path under the user's home directory, or in a browser the address
-// of the machine that served the page, so a frame keeps its function, file name and position.
-// Directories can hold spaces and parentheses, so the location runs to the trailing position.
-const FRAME =
-  /^(\s*at (?:(?:async |new )?[\w$.<>]+(?: \[as [\w$]+\])? \()?|[\w$.<>/*]*@)?(.*?)((?::\d+){1,2})?\)?\s*$/;
+// of the machine that served the page, and a line that is not a frame is message text. So a
+// frame is rebuilt from the three parts that can be recognised, and any other line is dropped.
+const FRAME_FILE =
+  /(?:[^:/\\\s][\\/]|address at )([\w$~-]+(?:\.[\w$~-]+)+)(?:[?#][^\s)]*?)?((?::\d+){1,2})\)?\s*$/;
+const FRAME_FUNCTION = /^\s*at (?:async |new )?([\w$.<>]+) \(|^([\w$.<>]+)@/;
+// Frames are short; a longer line is message text, and costly to scan.
+const FRAME_MAX_LENGTH = 1000;
 
-function frameWithoutDirectory(frame: string): string {
-  const [, prefix = "", location = "", position = ""] = FRAME.exec(frame) ?? [];
-  const path = location.includes("://") ? location.replace(/[?#].*$/, "") : location;
-  const file = path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
-  return `${prefix}${file}${position}${prefix.endsWith("(") ? ")" : ""}`;
+function scrubbedFrame(line: string): Array<string> {
+  const file = line.length > FRAME_MAX_LENGTH ? null : FRAME_FILE.exec(line);
+  // A file name found after `?` or `#` belongs to a URL's query, not to the frame.
+  if (file === null || /[?#]\S*$/.test(line.slice(0, file.index))) return [];
+  const called = FRAME_FUNCTION.exec(line);
+  const name = called?.[1] ?? called?.[2];
+  const location = `${file[1]}${file[2]}`;
+  return [`    at ${name === undefined ? location : `${name} (${location})`}`];
 }
 
 // Error messages can carry machine names (environment labels) and paths, so
@@ -93,10 +99,7 @@ function traceFrames(error: Error): Array<string> {
   const effectFrameIndex = frames.findIndex((line) =>
     /(?:Generator\.next|~effect\/Effect)/.test(line),
   );
-  // A header that no longer matches the message is still message text, so only frames pass.
-  return (effectFrameIndex < 0 ? frames : frames.slice(0, effectFrameIndex))
-    .filter((line) => /^\s*at |^[\w$.<>/*]*@(?:\[native code\]|.*:\d+)$/.test(line))
-    .map(frameWithoutDirectory);
+  return (effectFrameIndex < 0 ? frames : frames.slice(0, effectFrameIndex)).flatMap(scrubbedFrame);
 }
 
 function traceSafeError(value: unknown, seen = new WeakSet<object>()): Error {

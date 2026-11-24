@@ -85,10 +85,11 @@ the hosted web app or mobile clients.
 The desktop app reads `T3CODE_TELEMETRY_ENABLED` from your shell profile (for example `~/.zshrc`) on macOS and
 Linux, so export it there and restart the app. On Windows, set it as a user environment variable.
 
-A browser opened from a T3 Code server, including one the `t3` CLI opens, follows that server: once
-the server has opted out, by environment variable or managed policy, the browser sends no
-connection traces. The hosted web app is not opened from one of your servers, so it sends its own
-connection traces when its build has relay tracing configured, and has no relay tracing toggle.
+A browser opened from a T3 Code server, including one the `t3` CLI opens, follows that server: it
+sends connection traces only while it is connected to the server and the server has not opted out,
+by environment variable or managed policy. The hosted web app is not opened from one of your
+servers, so it sends its own connection traces when its build has relay tracing configured, and
+has no relay tracing toggle.
 
 ## Mobile app diagnostics
 

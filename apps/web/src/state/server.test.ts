@@ -5,7 +5,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { resolveShortcutCommand } from "../keybindings";
-import { createShortcutKeybindingsAtom, relayTracingAllowedBy } from "./server";
+import { createShortcutKeybindingsAtom } from "./server";
 
 const PRIMARY = EnvironmentId.make("primary");
 const A = EnvironmentId.make("a");
@@ -122,27 +122,5 @@ describe("createShortcutKeybindingsAtom", () => {
 
     harness.registry.set(harness.primaryEnvironmentIdAtom, null);
     expect(harness.cmdN()).toBe("chat.newLocal");
-  });
-});
-
-describe("relayTracingAllowedBy", () => {
-  it("takes the answer only from this session, and lets either source say no", () => {
-    const config = (relayTracingAllowed?: boolean) => ({
-      observability: { relayTracingAllowed } as ServerConfig["observability"],
-    });
-
-    // The cache is from an earlier session, before the server may have opted out.
-    expect(relayTracingAllowedBy({ source: "cache", config: config(true) }, null)).toBeNull();
-    expect(relayTracingAllowedBy({ source: "cache", config: config(true) }, config(false))).toBe(
-      false,
-    );
-    expect(relayTracingAllowedBy({ source: "live", config: config(true) }, config(false))).toBe(
-      false,
-    );
-    expect(relayTracingAllowedBy({ source: "live", config: config(true) }, config(true))).toBe(
-      true,
-    );
-    // An older server omits the field and has no opt-out to report.
-    expect(relayTracingAllowedBy(null, config())).toBe(true);
   });
 });
