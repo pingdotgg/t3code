@@ -1,3 +1,4 @@
+import type { ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -6,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import type * as SqlError from "effect/sql/SqlError";
 
 import {
   EVENT_LOG_PRUNE_MARK,
@@ -22,15 +24,26 @@ export class ProjectionMaintenanceError extends Schema.TaggedError<ProjectionMai
 ) {}
 
 export interface ProjectionMaintenanceV2Shape {
-  /** Deletes events the projections already cover once they are older than the retained history. */
+  /**
+   * Deletes events the projections already cover once they are older than the retained history,
+   * then purges any deleted thread that still holds conversation content.
+   */
   readonly pruneEventStore: (betweenPages?: Effect.Effect<void>) => Effect.Effect<
     {
       readonly deletedEventCount: number;
       readonly deletedReceiptCount: number;
+      readonly purgedRowCount: number;
       readonly reclaimableBytes: number;
     },
     ProjectionMaintenanceError
   >;
+  /**
+   * Removes a deleted thread's conversation, and that of deleted run-fork sources it alone kept.
+   * Returns the number of rows removed.
+   */
+  readonly purgeDeletedThread: (
+    threadId: ThreadId,
+  ) => Effect.Effect<number, ProjectionMaintenanceError>;
 }
 
 export class ProjectionMaintenanceV2 extends Context.Service<
@@ -43,6 +56,28 @@ const RETAINED_EVENT_HISTORY = Duration.days(1);
 // Small pages bound work on the reader worker and synchronous fallback.
 const PAGE_SIZE = 50;
 const REFERENCE_SCAN_WINDOW = 1000;
+// Bounds one purge statement, trigger work included.
+const PURGE_BATCH_SIZE = 500;
+// Titles default to the first message, so a tombstone cannot keep the real one.
+export const DELETED_THREAD_TITLE = "Deleted thread";
+
+// Every thread_id table that holds conversation text. The thread row stays as the tombstone, and
+// the metadata that storage cleanup and usage history still read (checkpoints, provider sessions,
+// provider turns, run attempts, context transfers) stays with it.
+export const DELETED_THREAD_CONTENT_TABLES = [
+  "orchestration_v2_turn_item_positions",
+  "orchestration_v2_projection_turn_items",
+  "orchestration_v2_projection_messages",
+  "orchestration_v2_projection_nodes",
+  "orchestration_v2_projection_runs",
+  "orchestration_v2_projection_subagents",
+  "orchestration_v2_projection_context_handoffs",
+  "orchestration_v2_projection_runtime_requests",
+  "orchestration_v2_projection_plans",
+  "mcp_app_model_context",
+  // A legacy thread's transcript source; deleting it means the importer has nothing to restore.
+  "projection_thread_messages",
+] as const;
 
 type MetadataRow = {
   readonly projection_name: string;
@@ -252,6 +287,150 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
       return { deletedEventCount, deletedReceiptCount };
     });
 
+    // A run fork shows its source's history without copying it, through any chain of forks, and a
+    // pending merge-back still reads its source. Such a deleted thread keeps its content until
+    // every live thread that shows it is deleted too.
+    const purgeableThreads = (deletedThreadId: ThreadId | undefined) =>
+      sql<{
+        readonly thread_id: string;
+      }>`
+      WITH RECURSIVE shown(thread_id) AS (
+        SELECT thread_id FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
+        UNION
+        SELECT transfer.source_thread_id
+        FROM orchestration_v2_projection_context_transfers AS transfer
+        JOIN orchestration_v2_projection_threads AS target
+          ON target.thread_id = transfer.target_thread_id
+        WHERE transfer.type = 'merge_back' AND transfer.status = 'pending'
+          AND target.deleted_at IS NULL
+        UNION
+        SELECT json_extract(fork.payload_json, '$.forkedFrom.threadId')
+        FROM shown
+        JOIN orchestration_v2_projection_threads AS fork ON fork.thread_id = shown.thread_id
+        WHERE json_extract(fork.payload_json, '$.forkedFrom.type') = 'run'
+      ),
+      candidate(thread_id) AS (${
+        deletedThreadId === undefined
+          ? sql`SELECT thread_id FROM orchestration_v2_projection_threads WHERE deleted_at IS NOT NULL`
+          : // Deleting a fork can release the deleted sources it was the last to show.
+            sql`
+              SELECT ${deletedThreadId}
+              UNION
+              SELECT json_extract(fork.payload_json, '$.forkedFrom.threadId')
+              FROM candidate
+              JOIN orchestration_v2_projection_threads AS fork
+                ON fork.thread_id = candidate.thread_id
+              WHERE json_extract(fork.payload_json, '$.forkedFrom.type') = 'run'
+            `
+      })
+      SELECT thread.thread_id
+      FROM candidate
+      JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = candidate.thread_id
+      WHERE thread.deleted_at IS NOT NULL
+        AND thread.thread_id NOT IN (SELECT thread_id FROM shown WHERE thread_id IS NOT NULL)
+        AND (${sql.or([
+          sql`thread.title <> ${DELETED_THREAD_TITLE}`,
+          ...DELETED_THREAD_CONTENT_TABLES.map(
+            (table) => sql`EXISTS (SELECT 1 FROM ${sql(table)} WHERE thread_id = thread.thread_id)`,
+          ),
+        ])})
+    `.pipe(NodeSqliteClient.readOnly);
+
+    const purgeThreads = Effect.fnUntraced(function* (
+      deletedThreadId: ThreadId | undefined,
+      betweenPages: Effect.Effect<void>,
+    ) {
+      const threads = yield* purgeableThreads(deletedThreadId);
+      const now = DateTime.formatIso(yield* DateTime.now);
+      let purged = 0;
+      // Each statement commits on its own, so a huge thread never holds the writer for long.
+      const drain = Effect.fnUntraced(function* (
+        deleteBatch: Effect.Effect<ReadonlyArray<unknown>, SqlError.SqlError>,
+      ) {
+        for (;;) {
+          const rows = yield* deleteBatch;
+          purged += rows.length;
+          yield* Effect.yieldNow;
+          yield* betweenPages;
+          if (rows.length < PURGE_BATCH_SIZE) return;
+        }
+      });
+      for (const { thread_id: threadId } of threads) {
+        for (const table of DELETED_THREAD_CONTENT_TABLES) {
+          yield* drain(sql`
+            DELETE FROM ${sql(table)}
+            WHERE rowid IN (
+              SELECT rowid FROM ${sql(table)} WHERE thread_id = ${threadId} LIMIT ${PURGE_BATCH_SIZE}
+            )
+            RETURNING 1 AS purged
+          `);
+        }
+        // Keep only what the pruner keeps for any stream: replay still delivers the deletion.
+        yield* drain(sql`
+          DELETE FROM orchestration_events
+          WHERE sequence IN (
+            SELECT sequence FROM orchestration_events
+              INDEXED BY idx_orchestration_events_agent_stream_sequence
+            WHERE application_event_version = 2
+              AND aggregate_kind = 'thread'
+              AND stream_id = ${threadId}
+              AND event_type NOT IN ('thread.created', 'thread.deleted')
+              AND NOT (
+                event_type = 'run.updated' AND json_extract(payload_json, '$.status') = 'running'
+              )
+              AND sequence < (
+                SELECT MAX(sequence) FROM orchestration_events
+                WHERE application_event_version = 2
+                  AND aggregate_kind = 'thread'
+                  AND stream_id = ${threadId}
+              )
+            LIMIT ${PURGE_BATCH_SIZE}
+          )
+          RETURNING 1 AS purged
+        `);
+        // The deletion's own cohort disposal can leave a subagent update as the stream head.
+        yield* sql`
+          UPDATE orchestration_events
+          SET payload_json = CASE event_type
+            WHEN 'subagent.updated' THEN json_remove(
+              json_set(payload_json, '$.prompt', '', '$.title', json('null'), '$.result', json('null')),
+              '$.progress',
+              '$.promptSequence'
+            )
+            ELSE json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE})
+          END
+          WHERE application_event_version = 2
+            AND aggregate_kind = 'thread'
+            AND stream_id = ${threadId}
+            AND event_type IN ('thread.created', 'thread.deleted', 'subagent.updated')
+        `;
+        yield* sql`
+          UPDATE orchestration_v2_projection_threads
+          SET title = ${DELETED_THREAD_TITLE},
+            payload_json = json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE})
+          WHERE thread_id = ${threadId}
+        `;
+        yield* sql`
+          UPDATE projection_threads SET title = ${DELETED_THREAD_TITLE} WHERE thread_id = ${threadId}
+        `;
+        // Its v1 events then go with the imported-history prune, and no import refills it.
+        yield* sql`
+          UPDATE orchestration_v2_legacy_imports
+          SET transcript_imported_at = ${now}
+          WHERE thread_id = ${threadId} AND transcript_imported_at IS NULL
+        `;
+      }
+      return purged;
+    });
+
+    const purgeDeletedThread: ProjectionMaintenanceV2Shape["purgeDeletedThread"] = (threadId) =>
+      purgeThreads(threadId, Effect.void).pipe(
+        Effect.withSpan("ProjectionMaintenance.purgeDeletedThread"),
+        Effect.mapError(
+          (cause) => new ProjectionMaintenanceError({ operation: "purge deleted thread", cause }),
+        ),
+      );
+
     // A pass prunes through the mark the previous pass left once that mark is a day old, so
     // at least RETAINED_EVENT_HISTORY of events always remains. Receipts stay for idempotency.
     const pruneEventStore = Effect.fn("ProjectionMaintenance.pruneEventStore")(
@@ -298,6 +477,9 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         );
         deletedEventCount += legacy.deletedEventCount;
 
+        // Catches threads deleted before purging existed, and any purge a crash interrupted.
+        const purgedRowCount = yield* purgeThreads(undefined, betweenPages);
+
         const freelistRows = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
         const pageSizeRows = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;
         const reclaimableBytes =
@@ -306,6 +488,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         return {
           deletedEventCount,
           deletedReceiptCount: legacy.deletedReceiptCount,
+          purgedRowCount,
           reclaimableBytes,
         };
       },
@@ -314,6 +497,6 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
       ),
     );
 
-    return ProjectionMaintenanceV2.of({ pruneEventStore });
+    return ProjectionMaintenanceV2.of({ pruneEventStore, purgeDeletedThread });
   }),
 );
