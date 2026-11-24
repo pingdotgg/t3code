@@ -8,6 +8,9 @@
 //! Not built: T3's file-link labels, citation cards, composer context chips, skill labels,
 //! Codex directives, artifact templates and `★ Insight` blocks. Find skips their text.
 
+use std::borrow::Cow;
+use std::ops::Range;
+
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use serde_json::Value;
 
@@ -78,12 +81,14 @@ fn strip_displayed_plan(markdown: &str) -> String {
     lines.get(start..).unwrap_or_default().join("\n")
 }
 
+const OPTIONS: Options = Options::ENABLE_TABLES
+    .union(Options::ENABLE_STRIKETHROUGH)
+    .union(Options::ENABLE_FOOTNOTES)
+    .union(Options::ENABLE_TASKLISTS);
+
 /// `markdownThreadFindText`: the text a CommonMark and GFM render shows, in segments.
 fn markdown_segments(markdown: &str, role: Role) -> Vec<String> {
-    let options = Options::ENABLE_TABLES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_TASKLISTS;
+    let markdown = &*escape_literal_autolinks(markdown);
     let mut out = Segments {
         role,
         text: String::new(),
@@ -96,7 +101,7 @@ fn markdown_segments(markdown: &str, role: Role) -> Vec<String> {
     let mut in_code_block = false;
     let mut html = Html::default();
     let mut notes = Footnotes::default();
-    for (event, range) in Parser::new_ext(markdown, options).into_offset_iter() {
+    for (event, range) in Parser::new_ext(markdown, OPTIONS).into_offset_iter() {
         match event {
             Event::Start(Tag::Image { .. }) => in_image += 1,
             Event::End(TagEnd::Image) => in_image = in_image.saturating_sub(1),
@@ -167,6 +172,288 @@ fn is_block_end(tag: TagEnd) -> bool {
         tag,
         TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link | TagEnd::Image
     )
+}
+
+/// GFM's literal autolinks (`http(s)://`, `www.`, email) show their text as typed, but
+/// pulldown-cmark has none, so a URL's `__init__` would show as bold. This escapes every
+/// ASCII punctuation mark inside each one, so the render shows the URL as remark does. It
+/// follows `micromark-extension-gfm-autolink-literal`: the same start, domain, path and
+/// trailing-punctuation rules, and no autolink after a `[` still open.
+fn escape_literal_autolinks(markdown: &str) -> Cow<'_, str> {
+    let www = |bytes: &[u8]| bytes.eq_ignore_ascii_case(b"www.");
+    if !(markdown.contains('@')
+        || markdown.contains("://")
+        || markdown.as_bytes().windows(4).any(www))
+    {
+        return Cow::Borrowed(markdown);
+    }
+    // Inline text runs: paragraphs, headings and table cells, without code spans, HTML,
+    // links, images and footnote references.
+    let mut containers: Vec<(Range<usize>, bool)> = Vec::new();
+    let mut skipped: Vec<Range<usize>> = Vec::new();
+    for (event, range) in Parser::new_ext(markdown, OPTIONS).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Paragraph | Tag::Heading { .. }) => containers.push((range, false)),
+            Event::Start(Tag::TableCell) => containers.push((range, true)),
+            Event::Start(Tag::Link { .. } | Tag::Image { .. })
+            | Event::Code(_)
+            | Event::InlineHtml(_)
+            | Event::FootnoteReference(_) => skipped.push(range),
+            _ => {}
+        }
+    }
+    let mut spans: Vec<Range<usize>> = Vec::new();
+    for (container, in_cell) in containers {
+        let mut open_brackets = 0_usize;
+        let text = markdown.get(container.clone()).unwrap_or_default();
+        // A cell's text never holds its `|`.
+        let mut at = container.start;
+        for (n, piece) in text.split(|c| in_cell && c == '|').enumerate() {
+            let prev = (n > 0).then_some('|');
+            let run = Run {
+                text: piece,
+                offset: at,
+                skipped: &skipped,
+            };
+            run.scan(prev, &mut open_brackets, &mut spans);
+            at += piece.len() + 1;
+        }
+    }
+    if spans.is_empty() {
+        return Cow::Borrowed(markdown);
+    }
+    let mut escaped = String::with_capacity(markdown.len() + 16);
+    let mut spans = spans.into_iter().peekable();
+    for (at, c) in markdown.char_indices() {
+        while spans.next_if(|span| span.end <= at).is_some() {}
+        if c.is_ascii_punctuation() && spans.peek().is_some_and(|span| span.contains(&at)) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    Cow::Owned(escaped)
+}
+
+/// One run of inline text, at byte `offset` of the message.
+struct Run<'a> {
+    text: &'a str,
+    offset: usize,
+    /// Code spans, HTML, links, images and footnote references, as byte ranges of the
+    /// message. An autolink never starts in one, but runs on through one that starts inside
+    /// it, as micromark reads the URL first.
+    skipped: &'a [Range<usize>],
+}
+
+impl Run<'_> {
+    /// Adds the byte range of each literal autolink in the run to `spans`.
+    fn scan(
+        &self,
+        mut prev: Option<char>,
+        open_brackets: &mut usize,
+        spans: &mut Vec<Range<usize>>,
+    ) {
+        let chars: Vec<(usize, char)> = self.text.char_indices().collect();
+        let at = |k: usize| chars.get(k).map(|&(_, c)| c);
+        let byte = |k: usize| self.offset + chars.get(k).map_or(self.text.len(), |&(at, _)| at);
+        let mut i = 0;
+        while let Some(c) = at(i) {
+            // The ranges come in source order, so their starts are sorted.
+            let first = self.skipped.partition_point(|skip| skip.start < byte(i));
+            let skip_end = self
+                .skipped
+                .get(first)
+                .filter(|skip| skip.start == byte(i))
+                .map(|skip| skip.end);
+            if let Some(end) = skip_end {
+                while at(i).is_some() && byte(i) < end {
+                    prev = at(i);
+                    i += 1;
+                }
+                continue;
+            }
+            // An escape is one token, so no autolink starts at its mark.
+            if c == '\\' && at(i + 1).is_some_and(|next| next.is_ascii_punctuation()) {
+                prev = at(i + 1);
+                i += 2;
+                continue;
+            }
+            if *open_brackets == 0
+                && let Some(end) = autolink(&at, i, prev)
+            {
+                spans.push(byte(i)..byte(end));
+                prev = end.checked_sub(1).and_then(at);
+                i = end;
+                continue;
+            }
+            match c {
+                '[' => *open_brackets += 1,
+                ']' => *open_brackets = open_brackets.saturating_sub(1),
+                _ => {}
+            }
+            prev = Some(c);
+            i += 1;
+        }
+    }
+}
+
+/// The end of the literal autolink that starts at `i`, if one does. `at(k)` is the character
+/// at `k`, `None` past the end.
+fn autolink(at: &impl Fn(usize) -> Option<char>, i: usize, prev: Option<char>) -> Option<usize> {
+    let c = at(i)?;
+    let alpha = |k: usize| at(k).is_some_and(|c| c.is_ascii_alphabetic());
+    if is_atext(c)
+        && !prev.is_some_and(|p| p == '/' || is_atext(p))
+        && let Some(end) = email(at, i)
+    {
+        return Some(end);
+    }
+    if matches!(c, 'h' | 'H') && !prev.is_some_and(|p| p.is_ascii_alphabetic()) {
+        let mut k = i;
+        while k - i < 5 && alpha(k) {
+            k += 1;
+        }
+        let scheme: String = (i..k).filter_map(at).collect();
+        let scheme = scheme.to_ascii_lowercase();
+        if (scheme == "http" || scheme == "https")
+            && at(k) == Some(':')
+            && at(k + 1) == Some('/')
+            && at(k + 2) == Some('/')
+            && at(k + 3).is_some_and(|c| !c.is_control() && !c.is_whitespace() && !is_punct(c))
+        {
+            return domain(at, k + 3).map(|end| path(at, end));
+        }
+    }
+    let www =
+        prev.is_none_or(|p| p.is_whitespace() || matches!(p, '(' | '*' | '_' | '[' | ']' | '~'));
+    if www
+        && (i..i + 3).all(|k| matches!(at(k), Some('w' | 'W')))
+        && at(i + 3) == Some('.')
+        && at(i + 4).is_some()
+    {
+        return domain(at, i).map(|end| path(at, end));
+    }
+    None
+}
+
+fn is_atext(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.' | '_')
+}
+
+/// Unicode punctuation or symbol, `\p{P}|\p{S}`, as micromark reads it per UTF-16 unit. Std
+/// has no category table: past ASCII this takes any visible character that is not a letter
+/// or digit, so a combining mark counts too.
+fn is_punct(c: char) -> bool {
+    if c.is_ascii() {
+        c.is_ascii_punctuation()
+    } else {
+        u32::from(c) <= 0xFFFF && !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control()
+    }
+}
+
+/// `atext+ @ domain`, where the domain holds a dot and ends in a letter.
+fn email(at: &impl Fn(usize) -> Option<char>, i: usize) -> Option<usize> {
+    let mut k = i;
+    while at(k).is_some_and(is_atext) {
+        k += 1;
+    }
+    if at(k) != Some('@') {
+        return None;
+    }
+    k += 1;
+    let (mut data, mut dot) = (false, false);
+    loop {
+        match at(k) {
+            Some('.') if at(k + 1).is_some_and(|c| c.is_ascii_alphanumeric()) => dot = true,
+            Some(c) if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') => data = true,
+            _ => break,
+        }
+        k += 1;
+    }
+    let ends_in_letter = k
+        .checked_sub(1)
+        .and_then(at)
+        .is_some_and(|c| c.is_ascii_alphabetic());
+    (data && dot && ends_in_letter).then_some(k)
+}
+
+/// A domain up to punctuation, space or a trail; its last two parts hold no `_`.
+fn domain(at: &impl Fn(usize) -> Option<char>, mut k: usize) -> Option<usize> {
+    let (mut underscore_last, mut underscore_last_last, mut seen) = (false, false, false);
+    loop {
+        match at(k) {
+            Some(c @ ('.' | '_')) => {
+                if trail(at, k) {
+                    break;
+                }
+                if c == '_' {
+                    underscore_last = true;
+                } else {
+                    underscore_last_last = underscore_last;
+                    underscore_last = false;
+                }
+            }
+            None => break,
+            Some(c) if c.is_whitespace() || (c != '-' && is_punct(c)) => break,
+            Some(_) => seen = true,
+        }
+        k += 1;
+    }
+    (seen && !underscore_last && !underscore_last_last).then_some(k)
+}
+
+/// The path up to space, with balanced parentheses kept and trailing punctuation left out.
+fn path(at: &impl Fn(usize) -> Option<char>, mut k: usize) -> usize {
+    let (mut opened, mut closed) = (0_usize, 0_usize);
+    loop {
+        match at(k) {
+            None => return k,
+            Some(c) if c.is_whitespace() => return k,
+            Some('(') => opened += 1,
+            Some(')') if closed < opened => closed += 1,
+            Some(c) if "!\"&')*,.:;<?]_~".contains(c) => {
+                if trail(at, k) {
+                    return k;
+                }
+                if c == ')' {
+                    closed += 1;
+                }
+            }
+            Some(_) => {}
+        }
+        k += 1;
+    }
+}
+
+/// Whether only trailing punctuation follows `k` before space, `<` or the end.
+fn trail(at: &impl Fn(usize) -> Option<char>, mut k: usize) -> bool {
+    loop {
+        match at(k) {
+            None | Some('<') => return true,
+            Some(c) if c.is_whitespace() => return true,
+            Some('!' | '"' | '\'' | ')' | '*' | ',' | '.' | ':' | ';' | '?' | '_' | '~') => k += 1,
+            // A character reference, `&name;`.
+            Some('&') => {
+                k += 1;
+                if !at(k).is_some_and(|c| c.is_ascii_alphabetic()) {
+                    return false;
+                }
+                while at(k).is_some_and(|c| c.is_ascii_alphabetic()) {
+                    k += 1;
+                }
+                if at(k) != Some(';') {
+                    return false;
+                }
+                k += 1;
+            }
+            Some(']') => {
+                k += 1;
+                if at(k).is_none_or(|c| c.is_whitespace() || matches!(c, '(' | '[')) {
+                    return true;
+                }
+            }
+            Some(_) => return false,
+        }
+    }
 }
 
 /// The tags that end a segment, T3's `THREAD_FIND_BLOCK_TAGS`.
@@ -585,6 +872,51 @@ mod tests {
                 "Mail me@example.com or see www.x.org/a?b=1, <https://example.com/x>."
             ),
             ["Mail me@example.com or see www.x.org/a?b=1, https://example.com/x."]
+        );
+    }
+
+    /// No emphasis applies inside a GFM literal autolink, so its `_`, `*` and `~` show.
+    #[test]
+    fn a_bare_url_keeps_its_emphasis_marks() {
+        let both = |text: &str, expected: &[&str]| {
+            assert_eq!(shown("user_message", text), expected, "user: {text}");
+            assert_eq!(
+                shown("assistant_message", text),
+                expected,
+                "assistant: {text}"
+            );
+        };
+        let same = |text: &str| both(text, &[text]);
+        same("See https://github.com/org/repo/blob/main/pkg/__init__.py now");
+        same("a https://x.com/a*b*c and https://x.com/~d~ ok");
+        same("go www.example.com/__x__ now");
+        // Trailing punctuation ends the URL; the text still shows as typed.
+        same("Read https://x.com/a_b_. Then (https://x.com/c_d_), and https://x.com/e?");
+        both("*see https://x.com/a*.", &["see https://x.com/a."]);
+        both("*see https://x.com/a*b*.", &["see https://x.com/a*b."]);
+        both("~~see www.x.com/a~~!", &["see www.x.com/a!"]);
+        same("https://x.com/a\\_b_ and https://x.com/&amp;__q__");
+        same("https://x.com/[a](b) end");
+        same("foo/https://x.com/__a__ and [x] https://y.com/__b__");
+        // A code span stays a code span.
+        both(
+            "Code `https://x.com/__init__.py` here",
+            &["Code https://x.com/__init__.py here"],
+        );
+        // Emphasis around the URL still applies; a letter before `http` stops it.
+        both("**https://x.com/__a__**", &["https://x.com/__a__"]);
+        both("_www.x.com/__a___ end", &["www.x.com/__a__ end"]);
+        both("xhttps://y.com/__b__", &["xhttps://y.com/b"]);
+        both(
+            "mail __a@b.com__ and _foo@bar.com_ ok",
+            &["mail a@b.com and foo@bar.com ok"],
+        );
+        // No autolink in a link's label or after a `[` still open.
+        both("[label https://x.com/__a__](u)", &["label https://x.com/a"]);
+        both("[see https://x.com/__a__", &["[see https://x.com/a"]);
+        both(
+            "| https://x.com/__a__ | b |\n|--|--|\n| c | d |",
+            &["https://x.com/__a__", "b", "c", "d"],
         );
     }
 
