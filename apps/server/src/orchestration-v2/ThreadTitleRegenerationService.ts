@@ -70,11 +70,9 @@ function failureMessage(cause: Cause.Cause<unknown>): string {
   const detail = lines.at(-1);
   if (detail === undefined) return "Title generation failed.";
   if (detail.length <= MAX_FAILURE_MESSAGE_LENGTH) return detail;
-  const last = detail.charCodeAt(MAX_FAILURE_MESSAGE_LENGTH - 2);
-  const end =
-    last >= 0xd800 && last <= 0xdbff
-      ? MAX_FAILURE_MESSAGE_LENGTH - 2
-      : MAX_FAILURE_MESSAGE_LENGTH - 1;
+  const keep = MAX_FAILURE_MESSAGE_LENGTH - 1;
+  const last = detail.charCodeAt(keep - 1);
+  const end = keep - (last >= 0xd800 && last <= 0xdbff ? 1 : 0);
   return `${detail.slice(0, end)}…`;
 }
 
