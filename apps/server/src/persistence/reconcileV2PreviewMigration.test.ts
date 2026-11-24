@@ -89,6 +89,8 @@ describe("V2 preview upgrade", () => {
         [107, "DeferredSlashCommandIndex"],
         [108, "AgentFeedback"],
         [109, "IssueTrackerAccounts"],
+        [110, "Workflows"],
+        [111, "SupersededRunAttemptIndex"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -221,6 +223,8 @@ describe("V2 preview upgrade", () => {
         [107, "DeferredSlashCommandIndex"],
         [108, "AgentFeedback"],
         [109, "IssueTrackerAccounts"],
+        [110, "Workflows"],
+        [111, "SupersededRunAttemptIndex"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
