@@ -3647,6 +3647,103 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect.each(["commit", "push", "create_pr", "commit_push", "commit_push_pr"] as const)(
+    "a failed source-control preflight blocks %s before changing the checkout",
+    (action) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-preflight-");
+        yield* initRepo(repoDir);
+        const hooksDir = NodePath.join(repoDir, ".git", "hooks");
+        NodeFS.mkdirSync(hooksDir, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(hooksDir, "pre-t3-source-control"),
+          '#!/bin/sh\nprintf "%s" "$1" > preflight-action\necho "split this layer before publishing" >&2\nexit 1\n',
+          { mode: 0o755 },
+        );
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "pending change\n");
+        const headBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout;
+        const { manager } = yield* makeManager();
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action,
+        }).pipe(Effect.flip);
+
+        expect(result.message).toContain("split this layer before publishing");
+        expect(NodeFS.readFileSync(NodePath.join(repoDir, "preflight-action"), "utf8")).toBe(
+          action,
+        );
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(headBefore);
+        expect((yield* runGit(repoDir, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe(
+          "",
+        );
+      }),
+  );
+
+  it.effect("runs the source-control preflight again for each commit using core.hooksPath", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-preflight-");
+      yield* initRepo(repoDir);
+      const hooksDir = NodePath.join(repoDir, "custom-hooks");
+      NodeFS.mkdirSync(hooksDir);
+      NodeFS.writeFileSync(
+        NodePath.join(hooksDir, "pre-t3-source-control"),
+        '#!/bin/sh\nprintf "%s\\n" "$1" >> .git/preflight-actions\n',
+        { mode: 0o755 },
+      );
+      yield* runGit(repoDir, ["config", "core.hooksPath", hooksDir]);
+      const { manager } = yield* makeManager();
+      for (const content of ["first\n", "second\n"]) {
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), content);
+        yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit",
+          commitMessage: "Update readme",
+          filePaths: ["README.md"],
+        });
+      }
+      expect(NodeFS.readFileSync(NodePath.join(repoDir, ".git/preflight-actions"), "utf8")).toBe(
+        "commit\ncommit\n",
+      );
+    }),
+  );
+
+  it.effect("a failed preflight leaves an already published stack branch unchanged", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-preflight-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "stack/parent"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "HEAD"]);
+      yield* runGit(repoDir, ["checkout", "-b", "stack/child"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "HEAD"]);
+      const publishedHead = (yield* runGit(remoteDir, [
+        "--git-dir=.",
+        "rev-parse",
+        "refs/heads/stack/child",
+      ])).stdout;
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "new layer changes\n");
+      yield* runGit(repoDir, ["commit", "-am", "Update layer"]);
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".git/hooks"), { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".git/hooks/pre-t3-source-control"),
+        '#!/bin/sh\necho "split this layer before publishing" >&2\nexit 1\n',
+        { mode: 0o755 },
+      );
+      const { manager } = yield* makeManager();
+
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "push" }).pipe(
+        Effect.result,
+      );
+
+      expect(Result.isFailure(result)).toBe(true);
+      expect(
+        (yield* runGit(remoteDir, ["--git-dir=.", "rev-parse", "refs/heads/stack/child"])).stdout,
+      ).toBe(publishedHead);
+    }),
+  );
+
   it.effect("stages the worktree once for a typed commit message", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

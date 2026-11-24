@@ -226,6 +226,40 @@ Choose how commit messages and pull request titles and descriptions are written 
 project's instructions and recent commit subjects. **Custom instructions** applies your own
 instructions to commits and pull requests.
 
+### Run checks before Git actions
+
+Install an executable `pre-t3-source-control` Git hook on the machine running
+the T3 server to check changes before using Commit, Push, or Create pull request.
+Git finds it in the repository's hooks directory or your configured `core.hooksPath`.
+Without the hook, Git actions behave as before.
+
+T3 runs the hook once at the start of every action, including pushes to existing
+pull requests and stack layers. Its first argument is `commit`, `push`, `create_pr`,
+`commit_push`, or `commit_push_pr`. A nonzero exit, execution failure, or the
+15-minute timeout stops the action before T3 stages, commits, pushes, or opens a PR.
+Hook error output appears in the action's failure message. Normal `pre-commit`
+and `pre-push` hooks still run as usual.
+
+For example, an executable hook can delegate to your own check script:
+
+```sh
+#!/bin/sh
+exec /absolute/path/to/check-before-publishing "$1"
+```
+
+That script can run an agent with your review skill. It must return a nonzero
+exit status when a gate fails; a successful agent process alone does not establish
+that the review passed. Keep the check read-only and do not have it publish changes
+or call T3 Git actions recursively. T3 waits for it to finish. The hook checks the
+whole checkout; selecting files in the commit dialog does not hide other files from it.
+
+For stack-aware size checks, resolve the existing PR's actual parent branch and
+check the resulting complete layer, including intended local changes, rather than
+only counting commits since the last push. If the change is too large or broad,
+fail the check and return to the thread to agree on a split or additional layers.
+Run the check again after those changes. T3 does not enforce a particular line
+limit or treat an earlier successful check as an exemption.
+
 ## Review and merge
 
 Open **Pull requests** to review changes and comments, request reviewers, check out a branch,

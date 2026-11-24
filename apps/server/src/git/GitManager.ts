@@ -4102,6 +4102,22 @@ export const make = Effect.gen(function* () {
         GitRunStackedActionResult,
         GitManagerServiceError
       > {
+        const preflight = yield* gitCore.execute({
+          operation: "GitManager.sourceControlPreflight",
+          cwd: input.cwd,
+          args: ["hook", "run", "--ignore-missing", "pre-t3-source-control", "--", input.action],
+          timeoutMs: 15 * 60_000,
+          allowNonZeroExit: true,
+          maxOutputBytes: 16_000,
+        });
+        if (preflight.exitCode !== 0) {
+          const output = sanitizeProgressText(preflight.stderr || preflight.stdout);
+          return yield* new GitManagerError({
+            operation: "runStackedAction",
+            cwd: input.cwd,
+            detail: `Source-control preflight failed (exit ${preflight.exitCode}).${output ? ` ${output}` : ""}`,
+          });
+        }
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
         const wantsCommit = isCommitAction(input.action);
         const wantsPush =
