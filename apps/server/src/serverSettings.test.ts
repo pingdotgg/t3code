@@ -1065,6 +1065,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("falls back to the defaults when only a legacy field is rejected", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const raw = '{"agentFeedback":{"mode":"auto"},"providers":1}';
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, raw);
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.equal(settings.agentFeedback.mode, "off");
+      assert.isFalse(settings.continueThreadsAfterServerUpdate);
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("keeps a default-off provider's new instance disabled and sparse on disk", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
@@ -2409,6 +2425,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.isFalse(settings.projectSettingsFolded);
       assert.isFalse(settings.continueThreadsAfterServerUpdate);
       assert.equal(settings.usageHistoryRetentionDays, "unlimited");
+      assert.isTrue(settings.requireConnectDeviceApproval);
+      assert.isFalse(settings.enablePreviewTunnel);
+      assert.isFalse(settings.enableAgentBrowserAccess);
+      assert.equal(settings.defaultRuntimeMode, "approval-required");
       assert.deepEqual(settings.projectSettingsOverrides, {});
 
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), broken);

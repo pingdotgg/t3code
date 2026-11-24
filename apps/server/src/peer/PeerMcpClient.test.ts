@@ -13,6 +13,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -70,6 +71,7 @@ const probeThrough = Effect.fn(function* (http: HttpClient.HttpClient) {
                 },
                 url: "https://peer.example",
                 token: "fixture",
+                capabilities: box.capabilities,
               }),
             recordOutcome: () => Effect.void,
           }),
@@ -242,11 +244,65 @@ it.effect("keeps a link healthy when the peer refuses a call", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("keeps the expiry the peer answers with, so a used link outlives its first 30 days", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const handlers = McpToolAccess.toLayer(toolkit, {
+        probe: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
+        hold: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
+        refuse: McpToolAccess.reads(() => Effect.fail(refusal)),
+      });
+      const box = descriptorOf("environment-box", "Box");
+      const b = yield* servePeer(box, McpHttpServer.toolkitRegistration(toolkit, handlers));
+      const context = yield* Layer.build(
+        layerLinkingEnvironment(descriptorOf("environment-a", "A")),
+      );
+      const links = Context.get(context, PeerLinks.PeerLinks);
+      const client = Context.get(context, PeerMcpClient.PeerMcpClient);
+      const linked = yield* linkTo(links, b);
+      const day = 24 * 60 * 60 * 1000;
+      const call = client.call({
+        environmentId: box.environmentId,
+        tool: "probe",
+        arguments: {},
+        limits: { runtimeMode: "full-access", interactionMode: "default" },
+        success: Result,
+      });
+      const storedExpiry = links
+        .get(box.environmentId)
+        .pipe(
+          Effect.map((link) => (Option.isSome(link) ? link.value.expiresAt.epochMilliseconds : 0)),
+        );
+      const expiryThere = b.linkedSessions.pipe(
+        Effect.map((sessions) => sessions[0]?.expiresAt.epochMilliseconds),
+      );
+      const linkedAt = linked.linkedAt.epochMilliseconds;
+      expect(yield* storedExpiry).toBe(linkedAt + 30 * day);
+
+      yield* TestClock.adjust("20 days");
+      yield* call;
+      expect(yield* expiryThere).toBe(linkedAt + 50 * day);
+      expect(yield* storedExpiry).toBe(linkedAt + 50 * day);
+
+      yield* TestClock.adjust("20 days");
+      expect(yield* call).toEqual({ modes: "" });
+      expect(yield* storedExpiry).toBe(linkedAt + 70 * day);
+
+      // Idle for the whole window, the link expires on both sides.
+      yield* TestClock.adjust("30 days");
+      expect((yield* call.pipe(Effect.flip)).code).toBe("capability_denied");
+      expect((yield* links.list)[0]?.status).toBe("expired");
+      expect(yield* b.linkedSessions).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("renews a missing peer session once and reuses its replacement", () =>
   Effect.gen(function* () {
     const sessionHeaders: Array<string | undefined> = [];
     const statuses = [200, 202, 404, 200, 202, 200, 200, 200];
     const outcomes: Array<string | null> = [];
+    const expiries: Array<string> = [];
     const http = HttpClient.make((request) =>
       Effect.sync(() => {
         const index = sessionHeaders.length;
@@ -269,7 +325,10 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
               status,
               headers:
                 index === 0
-                  ? { "mcp-session-id": "old" }
+                  ? {
+                      "mcp-session-id": "old",
+                      [McpInvocationContext.LINK_EXPIRES_AT_HEADER]: "1970-01-02T00:00:00.000Z",
+                    }
                   : index === 3
                     ? { "mcp-session-id": "renewed" }
                     : {},
@@ -299,8 +358,11 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
                   },
                   url: "https://peer.example",
                   token: "fixture",
+                  capabilities: box.capabilities,
                 }),
               recordOutcome: (_, outcome) => Effect.sync(() => outcomes.push(outcome.error)),
+              recordExpiry: (_, expiresAt) =>
+                Effect.sync(() => expiries.push(DateTime.formatIso(expiresAt))),
             }),
           ),
         ),
@@ -329,6 +391,8 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
       })
       .pipe(Effect.flip);
     expect(outcomes).toEqual([null, null, empty.message]);
+    // Only the handshake answered with an expiry, and it is kept.
+    expect(expiries).toEqual(["1970-01-02T00:00:00.000Z"]);
     expect(sessionHeaders).toEqual([
       undefined,
       "old",

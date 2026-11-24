@@ -19,8 +19,10 @@ if [ "$1" = "install" ] && [ "$2" = "--global" ]; then
   executable="$prefix/bin/example-agent"
   mkdir -p "$package_root" "$prefix/bin"
   printf '%s' "$FAKE_NPM_MANIFEST" > "$package_root/package.json"
-  printf '#!/bin/sh\n' > "$executable"
-  chmod 755 "$executable"
+  if [ "$npm_config_bin_links" != "false" ]; then
+    printf '#!/bin/sh\n' > "$executable"
+    chmod 755 "$executable"
+  fi
   exit 0
 fi
 exit 64

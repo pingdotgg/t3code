@@ -1,0 +1,739 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+import {
+  repositoryRewindCheckpoint,
+  TASK_FOLDER_DEFAULT_REPOSITORIES_MAX,
+  type TaskFolder,
+} from "@t3tools/contracts";
+import type {
+  CheckpointScopeId,
+  OrchestrationV2Checkpoint,
+  OrchestrationV2CheckpointFileTotals,
+  OrchestrationV2CheckpointScope,
+  OrchestrationV2ThreadProjection,
+  RunId,
+  ThreadTurnRepositoryDiff,
+  VcsStatusResult,
+  WorkspaceFolder,
+} from "@t3tools/contracts";
+import { isAbsolutePath } from "@t3tools/shared/path";
+
+type ChangedFiles = OrchestrationV2Checkpoint["files"];
+
+/** One tracked Git repository a thread reaches. */
+export interface ThreadRepositoryScope {
+  readonly scopeId: CheckpointScopeId;
+  /** Display name. */
+  readonly name: string;
+  /** Stable identity; matches `ThreadTurnDiff.repositories[].repositoryPath`. */
+  readonly repositoryPath: string;
+  /** The repository folder on the environment's disk; file paths resolve against it. */
+  readonly cwd: string;
+  /**
+   * The repository folder from the thread's folder, `/`-separated; starts with `../` outside it.
+   * Absent when the two folders share no root.
+   */
+  readonly relativePath?: string;
+}
+
+/** What one turn changed in one repository. `files` paths are relative to the repository. */
+export interface TurnRepositoryChanges extends ThreadRepositoryScope {
+  /** May be a prefix of the changed files when `filesTotal` is set. */
+  readonly files: ChangedFiles;
+  readonly filesTotal?: OrchestrationV2CheckpointFileTotals;
+  /** The turn changed this repository, but nothing was recorded before it to compare with. */
+  readonly baselineMissing: boolean;
+}
+
+interface ChangedFileList {
+  readonly files: ChangedFiles;
+  readonly filesTotal?: OrchestrationV2CheckpointFileTotals | undefined;
+}
+
+/** A turn's own files plus its repositories; `ThreadCheckpointSummary` has this shape. */
+export interface TurnChangesSource extends ChangedFileList {
+  readonly repositories?: ReadonlyArray<TurnRepositoryChanges> | undefined;
+}
+
+export interface TurnChanges {
+  /** Files changed in the thread's own folder, relative to it. */
+  readonly rootFiles: ChangedFiles;
+  readonly repositories: ReadonlyArray<TurnRepositoryChanges>;
+  /** Across the thread's folder and every repository. */
+  readonly totals: OrchestrationV2CheckpointFileTotals;
+}
+
+/** One patch of a turn diff. Its file paths are relative to `relativePath`. */
+export interface TurnDiffSection {
+  readonly key: string;
+  readonly name: string;
+  /** Null for the thread's own folder. */
+  readonly repositoryPath: string | null;
+  /** Empty for the thread's own folder. */
+  readonly relativePath: string;
+  readonly diff: string;
+}
+
+const ROOT_SECTION_KEY = ".";
+const NO_REPOSITORY_CHANGES: ReadonlyArray<TurnRepositoryChanges> = Object.freeze([]);
+const NO_TURN_REPOSITORY_CHANGES: ReadonlyMap<
+  RunId,
+  ReadonlyArray<TurnRepositoryChanges>
+> = new Map();
+
+export function isRepositoryCheckpointScope(
+  scope: Pick<OrchestrationV2CheckpointScope, "repositoryPath">,
+): boolean {
+  return typeof scope.repositoryPath === "string";
+}
+
+/** Scopes whose checkpoints belong to a repository, never to the thread's own timeline. */
+export function repositoryCheckpointScopeIds(
+  scopes: ReadonlyArray<Pick<OrchestrationV2CheckpointScope, "id" | "repositoryPath">>,
+): ReadonlySet<CheckpointScopeId> {
+  return new Set(scopes.flatMap((scope) => (isRepositoryCheckpointScope(scope) ? [scope.id] : [])));
+}
+
+/**
+ * What a rewind to `checkpoint`, the thread's own rewind target, can restore on disk: every file,
+ * only the repositories of a task folder whose project folder has no snapshot, or nothing.
+ * The server refuses a file rewind this does not offer.
+ */
+export function rewindFileRestore(input: {
+  readonly projection: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "checkpointScopes">;
+  readonly checkpoint: Pick<OrchestrationV2Checkpoint, "status" | "appRunOrdinal"> | undefined;
+  readonly taskFolder: Pick<TaskFolder, "projectIsWorktree"> | null | undefined;
+}): "files" | "repositories" | null {
+  const { checkpoint, projection } = input;
+  if (checkpoint === undefined) return null;
+  if (checkpoint.status === "ready") return "files";
+  if (checkpoint.status !== "missing" || input.taskFolder?.projectIsWorktree !== false) return null;
+  const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
+  return projection.checkpointScopes.some(
+    (scope) =>
+      isRepositoryCheckpointScope(scope) &&
+      repositoryRewindCheckpoint(
+        projection.checkpoints.filter((candidate) => candidate.scopeId === scope.id),
+        targetOrdinal,
+      ) !== null,
+  )
+    ? "repositories"
+    : null;
+}
+
+function pathSegments(path: string): { root: string; segments: string[] } | undefined {
+  const normalized = path.replaceAll("\\", "/");
+  const segments = normalized.split("/").filter((segment) => segment.length > 0);
+  if (normalized.startsWith("/")) return { root: "/", segments };
+  const drive = segments[0];
+  if (drive === undefined || !/^[a-zA-Z]:$/.test(drive)) return undefined;
+  return { root: drive.toLowerCase(), segments: segments.slice(1) };
+}
+
+function relativeFolderPath(from: string, to: string): string | undefined {
+  const source = pathSegments(from);
+  const target = pathSegments(to);
+  if (source === undefined || target === undefined || source.root !== target.root) {
+    return undefined;
+  }
+  const same = (left: string, right: string) =>
+    source.root === "/" ? left === right : left.toLowerCase() === right.toLowerCase();
+  let shared = 0;
+  while (
+    shared < source.segments.length &&
+    shared < target.segments.length &&
+    same(source.segments[shared]!, target.segments[shared]!)
+  ) {
+    shared += 1;
+  }
+  return [...source.segments.slice(shared).map(() => ".."), ...target.segments.slice(shared)].join(
+    "/",
+  );
+}
+
+/** Whether a `/`-separated path from a folder stays inside that folder. */
+export function isRelativePathInsideFolder(relativePath: string): boolean {
+  return relativePath !== ".." && !relativePath.startsWith("../") && !isAbsolutePath(relativePath);
+}
+
+function repositoryScope(
+  scope: OrchestrationV2CheckpointScope,
+  repositoryPath: string,
+  threadCwd: string | undefined,
+): ThreadRepositoryScope {
+  const relativePath =
+    threadCwd === undefined ? undefined : relativeFolderPath(threadCwd, scope.cwd);
+  return {
+    scopeId: scope.id,
+    name: scope.label ?? scope.cwd.replaceAll("\\", "/").split("/").findLast(Boolean) ?? scope.cwd,
+    repositoryPath,
+    cwd: scope.cwd,
+    ...(relativePath === undefined ? {} : { relativePath }),
+  };
+}
+
+function byNameThenPath(left: ThreadRepositoryScope, right: ThreadRepositoryScope): number {
+  return (
+    left.name.localeCompare(right.name) || left.repositoryPath.localeCompare(right.repositoryPath)
+  );
+}
+
+/** The repositories a thread reaches, by name and then path. */
+export function threadRepositoryScopes(
+  projection: Pick<OrchestrationV2ThreadProjection, "checkpointScopes">,
+): ReadonlyArray<ThreadRepositoryScope> {
+  const scopes = projection.checkpointScopes;
+  return scopes
+    .flatMap((scope) =>
+      scope.repositoryPath === undefined
+        ? []
+        : [
+            repositoryScope(
+              scope,
+              scope.repositoryPath,
+              scopes.find((candidate) => candidate.id === scope.parentScopeId)?.cwd,
+            ),
+          ],
+    )
+    .sort(byNameThenPath);
+}
+
+// Rows compare a turn's repositories by identity, so an unchanged turn keeps the same objects
+// while later turns append checkpoints.
+const changesByCheckpoint = new WeakMap<
+  OrchestrationV2Checkpoint,
+  {
+    readonly scope: OrchestrationV2CheckpointScope;
+    readonly threadCwd: string | undefined;
+    readonly changes: TurnRepositoryChanges;
+  }
+>();
+const turnChangesByFirst = new WeakMap<
+  TurnRepositoryChanges,
+  ReadonlyArray<TurnRepositoryChanges>
+>();
+
+/**
+ * Per run, the repositories it changed, by name and then path. A run that changed none has no
+ * entry. Unchanged runs keep their array across calls.
+ */
+export function deriveTurnRepositoryChanges(
+  projection: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "checkpointScopes">,
+): ReadonlyMap<RunId, ReadonlyArray<TurnRepositoryChanges>> {
+  const scopes = projection.checkpointScopes;
+  if (!scopes.some(isRepositoryCheckpointScope)) return NO_TURN_REPOSITORY_CHANGES;
+  const scopeById = new Map(scopes.map((scope) => [scope.id, scope]));
+  const withoutBaseline = new Set<string>();
+  for (const checkpoint of projection.checkpoints) {
+    if (checkpoint.status === "missing") {
+      withoutBaseline.add(`${checkpoint.scopeId}\u0000${checkpoint.ordinalWithinScope + 1}`);
+    }
+  }
+  const byRun = new Map<RunId, TurnRepositoryChanges[]>();
+  for (const checkpoint of projection.checkpoints) {
+    if (checkpoint.runId === null || checkpoint.status !== "ready") continue;
+    const scope = scopeById.get(checkpoint.scopeId);
+    if (scope?.repositoryPath === undefined) continue;
+    const baselineMissing =
+      checkpoint.files.length === 0 &&
+      withoutBaseline.has(`${checkpoint.scopeId}\u0000${checkpoint.ordinalWithinScope}`);
+    if (checkpoint.files.length === 0 && !baselineMissing) continue;
+    const threadCwd =
+      scope.parentScopeId === null ? undefined : scopeById.get(scope.parentScopeId)?.cwd;
+    const cached = changesByCheckpoint.get(checkpoint);
+    let changes = cached?.changes;
+    if (
+      cached === undefined ||
+      changes === undefined ||
+      cached.scope !== scope ||
+      cached.threadCwd !== threadCwd ||
+      changes.baselineMissing !== baselineMissing
+    ) {
+      changes = {
+        ...repositoryScope(scope, scope.repositoryPath, threadCwd),
+        files: checkpoint.files,
+        ...(checkpoint.filesTotal === undefined ? {} : { filesTotal: checkpoint.filesTotal }),
+        baselineMissing,
+      };
+      changesByCheckpoint.set(checkpoint, { scope, threadCwd, changes });
+    }
+    const forRun = byRun.get(checkpoint.runId);
+    if (forRun === undefined) byRun.set(checkpoint.runId, [changes]);
+    else forRun.push(changes);
+  }
+  const stable = new Map<RunId, ReadonlyArray<TurnRepositoryChanges>>();
+  for (const [runId, repositories] of byRun) {
+    repositories.sort(byNameThenPath);
+    const first = repositories[0]!;
+    const previous = turnChangesByFirst.get(first);
+    if (
+      previous !== undefined &&
+      previous.length === repositories.length &&
+      previous.every((entry, index) => entry === repositories[index])
+    ) {
+      stable.set(runId, previous);
+    } else {
+      turnChangesByFirst.set(first, repositories);
+      stable.set(runId, repositories);
+    }
+  }
+  return stable;
+}
+
+/** Totals for a file list that may be a prefix of what changed. */
+function changedFileTotals(list: ChangedFileList): OrchestrationV2CheckpointFileTotals {
+  if (list.filesTotal !== undefined) return list.filesTotal;
+  let additions = 0;
+  let deletions = 0;
+  for (const file of list.files) {
+    additions += file.additions;
+    deletions += file.deletions;
+  }
+  return { count: list.files.length, additions, deletions };
+}
+
+/** A turn's changed files: the thread folder's own, then each repository's, with totals. */
+export function turnChanges(turn: TurnChangesSource): TurnChanges {
+  const repositories = turn.repositories ?? NO_REPOSITORY_CHANGES;
+  const totals = { ...changedFileTotals(turn) };
+  for (const repository of repositories) {
+    const repositoryTotals = changedFileTotals(repository);
+    totals.count += repositoryTotals.count;
+    totals.additions += repositoryTotals.additions;
+    totals.deletions += repositoryTotals.deletions;
+  }
+  return { rootFiles: turn.files, repositories, totals };
+}
+
+/**
+ * Whether a turn has changes to show. The thread folder's own checkpoint need not be ready: a
+ * plain folder holding repositories never has one, and its turns still change those repositories.
+ */
+export function turnHasChanges(turn: TurnChangesSource): boolean {
+  return turn.files.length > 0 || (turn.repositories?.length ?? 0) > 0;
+}
+
+/** A repository file's path from the thread's folder, as the turn diff sections name it. */
+export function repositoryFilePath(relativePath: string, filePath: string): string {
+  return relativePath === "" || relativePath === "." ? filePath : `${relativePath}/${filePath}`;
+}
+
+/**
+ * The patches of a turn diff, the thread folder's own first. Empty patches are left out, so a
+ * diff without repositories gives its one patch or nothing.
+ */
+export function turnDiffSections(
+  diff: {
+    readonly diff: string;
+    readonly repositories?: ReadonlyArray<ThreadTurnRepositoryDiff> | undefined;
+  },
+  rootName: string,
+): ReadonlyArray<TurnDiffSection> {
+  const root: ReadonlyArray<TurnDiffSection> =
+    diff.diff.trim() === ""
+      ? []
+      : [
+          {
+            key: ROOT_SECTION_KEY,
+            name: rootName,
+            repositoryPath: null,
+            relativePath: "",
+            diff: diff.diff,
+          },
+        ];
+  return [
+    ...root,
+    ...(diff.repositories ?? []).flatMap((repository) =>
+      repository.diff.trim() === ""
+        ? []
+        : [
+            {
+              key: repository.repositoryPath,
+              name: repository.name,
+              repositoryPath: repository.repositoryPath,
+              relativePath: repository.relativePath,
+              diff: repository.diff,
+            },
+          ],
+    ),
+  ];
+}
+
+/**
+ * The repository section a thread-relative path belongs to, and the path inside that repository.
+ * Null for a file of the thread's own folder.
+ */
+export function repositorySectionForPath(
+  sections: ReadonlyArray<TurnDiffSection>,
+  filePath: string,
+): { readonly section: TurnDiffSection; readonly path: string } | null {
+  let match: { readonly section: TurnDiffSection; readonly path: string } | null = null;
+  for (const section of sections) {
+    if (section.repositoryPath === null || section.relativePath === "") continue;
+    const prefix = `${section.relativePath}/`;
+    if (!filePath.startsWith(prefix)) continue;
+    if (match === null || section.relativePath.length > match.section.relativePath.length) {
+      match = { section, path: filePath.slice(prefix.length) };
+    }
+  }
+  return match;
+}
+
+/** How many repository sections a thread shows before the rest fold behind "Show N more". */
+export const THREAD_REPOSITORY_SECTIONS_VISIBLE = 4;
+
+/** A tracked repository the user asked to see in a thread, besides those the thread changed. */
+export interface PinnedThreadRepository {
+  /** The tracked folder's path; matches `ThreadRepositoryScope.repositoryPath`. */
+  readonly repositoryPath: string;
+  readonly name: string;
+}
+
+/** One repository a thread shows Git state and actions for. */
+export interface ThreadRepositorySection {
+  /** Stable across renders and reorders; the repository's path. */
+  readonly key: string;
+  readonly name: string;
+  /** The folder Git commands run in. */
+  readonly cwd: string;
+  /**
+   * Pinned sections can be removed; changed ones stay for as long as the thread has them. A
+   * `worktree` section is the thread's own worktree of that repository.
+   */
+  readonly origin: "pinned" | "changed" | "worktree";
+}
+
+export interface ThreadRepositorySections {
+  readonly visible: ReadonlyArray<ThreadRepositorySection>;
+  /** Folded away until the user asks for them. Clients render and subscribe for none of these. */
+  readonly hidden: ReadonlyArray<ThreadRepositorySection>;
+}
+
+const NO_SECTIONS: ThreadRepositorySections = Object.freeze({
+  visible: Object.freeze([]),
+  hidden: Object.freeze([]),
+});
+
+/**
+ * The repositories a thread changed, most recently changed first. A repository no turn has a
+ * checkpoint for yet sorts last, by name.
+ */
+export function threadChangedRepositories(
+  projection: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "checkpointScopes">,
+): ReadonlyArray<ThreadRepositoryScope> {
+  const scopes = threadRepositoryScopes(projection);
+  if (scopes.length < 2) return scopes;
+  const lastChange = new Map<CheckpointScopeId, number>();
+  // A repository scope's ordinal is the run's; a loaded snapshot is not in capture order.
+  for (const checkpoint of projection.checkpoints) {
+    if (checkpoint.runId === null) continue;
+    const latest = lastChange.get(checkpoint.scopeId) ?? -1;
+    if (checkpoint.ordinalWithinScope > latest) {
+      lastChange.set(checkpoint.scopeId, checkpoint.ordinalWithinScope);
+    }
+  }
+  // `scopes` is by name already, and the sort is stable.
+  return [...scopes].sort(
+    (left, right) => (lastChange.get(right.scopeId) ?? -1) - (lastChange.get(left.scopeId) ?? -1),
+  );
+}
+
+/** A repository whose uncommitted and branch changes a thread can show. */
+export type ThreadGitRepository = Pick<ThreadRepositoryScope, "repositoryPath" | "name" | "cwd">;
+
+/**
+ * Every repository a thread can read Git changes of: the ones it changed first, then the rest of
+ * its task folder's worktrees, or of the project's tracked repositories when it runs in place.
+ */
+export function threadGitRepositories(input: {
+  readonly changed: ReadonlyArray<ThreadGitRepository>;
+  readonly taskFolder: Pick<TaskFolder, "repositories"> | null;
+  /** The project's folders, for a thread in the project folder itself; null otherwise. */
+  readonly folders: ReadonlyArray<Pick<WorkspaceFolder, "path" | "name" | "state">> | null;
+  readonly threadCwd: string | null;
+}): ReadonlyArray<ThreadGitRepository> {
+  const reached: ReadonlyArray<ThreadGitRepository> =
+    input.taskFolder !== null
+      ? input.taskFolder.repositories.map((repository) => ({
+          repositoryPath: repository.repositoryPath,
+          name: repository.name,
+          cwd: repository.worktreePath,
+        }))
+      : (input.folders ?? []).flatMap((folder) =>
+          folder.state === "git" && folder.path !== input.threadCwd
+            ? [{ repositoryPath: folder.path, name: folder.name, cwd: folder.path }]
+            : [],
+        );
+  if (reached.length === 0) return input.changed;
+  // A checkpoint scope keeps the folder it was captured in, which a moved thread has left.
+  const reachedByPath = new Map(
+    reached.map((repository) => [repository.repositoryPath, repository]),
+  );
+  const listed = new Set(input.changed.map((repository) => repository.repositoryPath));
+  return [
+    ...input.changed.map(
+      (repository) => reachedByPath.get(repository.repositoryPath) ?? repository,
+    ),
+    ...reached.filter((repository) => !listed.has(repository.repositoryPath)),
+  ];
+}
+
+/**
+ * A task folder's repositories, each bound to its worktree: changed ones first, then the rest.
+ * A changed repository inside one of those worktrees, such as a submodule, follows them.
+ */
+function taskFolderSections(
+  taskFolder: Pick<TaskFolder, "repositories" | "root">,
+  changed: ReadonlyArray<ThreadRepositoryScope>,
+): ThreadRepositorySection[] {
+  const byPath = new Map(
+    taskFolder.repositories.map((repository) => [repository.repositoryPath, repository]),
+  );
+  const ordered = new Set<string>();
+  for (const scope of changed) {
+    if (byPath.has(scope.repositoryPath)) ordered.add(scope.repositoryPath);
+  }
+  for (const repository of taskFolder.repositories) ordered.add(repository.repositoryPath);
+  const worktrees = [...ordered].map((repositoryPath) => {
+    const repository = byPath.get(repositoryPath)!;
+    return {
+      key: repositoryPath,
+      name: repository.name,
+      cwd: repository.worktreePath,
+      origin: "worktree" as const,
+    };
+  });
+  const inside = changed.flatMap((scope) => {
+    const relative = relativeFolderPath(taskFolder.root, scope.cwd);
+    return byPath.has(scope.repositoryPath) ||
+      relative === undefined ||
+      !isRelativePathInsideFolder(relative)
+      ? []
+      : [
+          {
+            key: scope.repositoryPath,
+            name: scope.name,
+            cwd: scope.cwd,
+            origin: "changed" as const,
+          },
+        ];
+  });
+  return [...worktrees, ...inside];
+}
+
+/**
+ * The repository sections of a thread: pinned ones in the order they were pinned, then the ones
+ * the thread changed. `threadCwd` is the thread's own folder, which has its own Git controls.
+ *
+ * A thread with a `taskFolder` lists that folder's repositories instead, changed or not, and
+ * never a pin or a changed repository outside it: those would be someone else's checkout.
+ */
+export function threadRepositorySections(input: {
+  readonly changed: ReadonlyArray<ThreadRepositoryScope>;
+  readonly pinned: ReadonlyArray<PinnedThreadRepository>;
+  readonly threadCwd: string | null;
+  readonly showAll: boolean;
+  readonly taskFolder?: Pick<TaskFolder, "repositories" | "root"> | null | undefined;
+  /**
+   * False for a thread that reaches no tracked repository: a project that tracks none, or a
+   * single worktree. It lists what it changed, such as a submodule, and no pin.
+   */
+  readonly reachesTracked?: boolean | undefined;
+}): ThreadRepositorySections {
+  const sections: ThreadRepositorySection[] = [];
+  if (input.taskFolder != null) {
+    sections.push(...taskFolderSections(input.taskFolder, input.changed));
+  } else {
+    const seen = new Set<string>(input.threadCwd === null ? [] : [input.threadCwd]);
+    const add = (section: ThreadRepositorySection) => {
+      if (seen.has(section.key)) return;
+      seen.add(section.key);
+      sections.push(section);
+    };
+    for (const pin of input.reachesTracked === false ? [] : input.pinned) {
+      add({ key: pin.repositoryPath, name: pin.name, cwd: pin.repositoryPath, origin: "pinned" });
+    }
+    for (const scope of input.changed) {
+      add({ key: scope.repositoryPath, name: scope.name, cwd: scope.cwd, origin: "changed" });
+    }
+  }
+  if (sections.length === 0) return NO_SECTIONS;
+  if (input.showAll || sections.length <= THREAD_REPOSITORY_SECTIONS_VISIBLE) {
+    return { visible: sections, hidden: NO_SECTIONS.hidden };
+  }
+  return {
+    visible: sections.slice(0, THREAD_REPOSITORY_SECTIONS_VISIBLE),
+    hidden: sections.slice(THREAD_REPOSITORY_SECTIONS_VISIBLE),
+  };
+}
+
+/** Adds a pin at the end; pinning a repository twice keeps its place. */
+export function pinThreadRepository(
+  pinned: ReadonlyArray<PinnedThreadRepository>,
+  repository: PinnedThreadRepository,
+): ReadonlyArray<PinnedThreadRepository> {
+  return pinned.some((entry) => entry.repositoryPath === repository.repositoryPath)
+    ? pinned
+    : [...pinned, repository];
+}
+
+export function unpinThreadRepository(
+  pinned: ReadonlyArray<PinnedThreadRepository>,
+  repositoryPath: string,
+): ReadonlyArray<PinnedThreadRepository> {
+  const next = pinned.filter((entry) => entry.repositoryPath !== repositoryPath);
+  return next.length === pinned.length ? pinned : next;
+}
+
+/** The tracked Git repositories a thread can still add: not its own folder, not shown yet. */
+export function pinnableThreadRepositories(input: {
+  readonly folders: ReadonlyArray<Pick<WorkspaceFolder, "path" | "name" | "state">>;
+  readonly sections: ThreadRepositorySections;
+  readonly threadCwd: string | null;
+}): ReadonlyArray<PinnedThreadRepository> {
+  const shown = new Set(
+    [...input.sections.visible, ...input.sections.hidden].map((section) => section.key),
+  );
+  return input.folders.flatMap((folder) =>
+    folder.state !== "git" || folder.path === input.threadCwd || shown.has(folder.path)
+      ? []
+      : [{ repositoryPath: folder.path, name: folder.name }],
+  );
+}
+
+/** The tracked Git repositories a task folder has no worktree for yet. */
+export function addableTaskFolderRepositories(input: {
+  readonly folders: ReadonlyArray<Pick<WorkspaceFolder, "path" | "name" | "state">>;
+  readonly taskFolder: Pick<TaskFolder, "projectRoot" | "repositories">;
+}): ReadonlyArray<PinnedThreadRepository> {
+  const present = new Set(
+    input.taskFolder.repositories.map((repository) => repository.repositoryPath),
+  );
+  return input.folders.flatMap((folder) =>
+    folder.state !== "git" ||
+    folder.path === input.taskFolder.projectRoot ||
+    present.has(folder.path)
+      ? []
+      : [{ repositoryPath: folder.path, name: folder.name }],
+  );
+}
+
+/** A tracked Git repository a new worktree thread can get a worktree of. */
+export interface WorktreeRepositoryChoice {
+  /** The tracked folder's path; what `workspaceStrategy.repositories[].path` takes. */
+  readonly repositoryPath: string;
+  readonly name: string;
+  /** The folder from the project folder, `/`-separated, when it sits inside it. */
+  readonly relativePath?: string;
+}
+
+/** A project's tracked Git folders, in the project's order. */
+export function worktreeRepositoryChoices(input: {
+  readonly folders: ReadonlyArray<Pick<WorkspaceFolder, "path" | "name" | "state">>;
+  readonly projectRoot: string;
+}): ReadonlyArray<WorktreeRepositoryChoice> {
+  return input.folders.flatMap((folder) => {
+    if (folder.state !== "git") return [];
+    const relativePath = relativeFolderPath(input.projectRoot, folder.path);
+    return [
+      {
+        repositoryPath: folder.path,
+        name: folder.name,
+        ...(relativePath === undefined ||
+        relativePath === "" ||
+        !isRelativePathInsideFolder(relativePath)
+          ? {}
+          : { relativePath }),
+      },
+    ];
+  });
+}
+
+export interface WorktreeRepositorySelection {
+  /** Chosen tracked paths, in the choices' order. */
+  readonly selected: ReadonlyArray<string>;
+  /** Short text for the control that opens the checklist. */
+  readonly label: string;
+  /** Nothing is selected only because the project tracks too many to take them all by default. */
+  readonly needsChoice: boolean;
+  /**
+   * What the launch sends as `workspaceStrategy.repositories`. Undefined until the user chooses,
+   * so the server applies its own default.
+   */
+  readonly strategyRepositories: ReadonlyArray<{ readonly path: string }> | undefined;
+}
+
+/**
+ * Which repositories a new worktree thread takes. Without a choice it mirrors the server: all of
+ * them up to `TASK_FOLDER_DEFAULT_REPOSITORIES_MAX`, none above. Chosen paths the project no
+ * longer tracks are dropped once its folders are known.
+ */
+export function resolveWorktreeRepositorySelection(
+  input: {
+    /** Null while the project's tracked folders are still loading. */
+    readonly choices: ReadonlyArray<WorktreeRepositoryChoice> | null;
+    readonly chosen: ReadonlyArray<string> | undefined;
+  },
+  resolve: MFunctionType = mFallback,
+): WorktreeRepositorySelection {
+  const { choices, chosen } = input;
+  if (choices === null) {
+    const selected = chosen ?? [];
+    return {
+      selected,
+      label: resolve(msg("Repositories")),
+      needsChoice: false,
+      strategyRepositories: chosen?.map((path) => ({ path })),
+    };
+  }
+  const takesAllByDefault = choices.length <= TASK_FOLDER_DEFAULT_REPOSITORIES_MAX;
+  const wanted = chosen === undefined ? null : new Set(chosen);
+  const selected = choices.flatMap((choice) =>
+    (wanted === null ? takesAllByDefault : wanted.has(choice.repositoryPath))
+      ? [choice.repositoryPath]
+      : [],
+  );
+  const needsChoice = chosen === undefined && !takesAllByDefault;
+  return {
+    selected,
+    label: needsChoice
+      ? resolve(msg("Choose repositories"))
+      : selected.length === 0
+        ? resolve(msg("No repositories"))
+        : selected.length !== 1 && selected.length === choices.length
+          ? resolve(msg("All repositories"))
+          : resolve(
+              msg("{count, plural, one {{count} repository} other {{count} repositories}}", {
+                count: selected.length,
+              }),
+            ),
+    needsChoice,
+    strategyRepositories: chosen === undefined ? undefined : selected.map((path) => ({ path })),
+  };
+}
+
+/** What a collapsed repository section shows; null until the first status arrives. */
+export interface RepositorySectionSummary {
+  /** Null on a detached HEAD. */
+  readonly branch: string | null;
+  readonly isRepository: boolean;
+  readonly changedFiles: number;
+  readonly insertions: number;
+  readonly deletions: number;
+  /** The branch's pull request, from the last remote read anyone made of this folder. */
+  readonly pullRequest: NonNullable<VcsStatusResult["pr"]> | null;
+}
+
+export function repositorySectionSummary(
+  status: VcsStatusResult | null | undefined,
+): RepositorySectionSummary | null {
+  if (status == null) return null;
+  return {
+    branch: status.refName,
+    isRepository: status.isRepo,
+    changedFiles: status.workingTree.files.length,
+    insertions: status.workingTree.insertions,
+    deletions: status.workingTree.deletions,
+    pullRequest: status.pr,
+  };
+}
