@@ -493,6 +493,51 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* Eliminating backdrop-filter entirely when opaque or reduced-transparency is enabled
+   prevents Chromium/Metal from allocating a framebuffer readback pass over scrolling
+   or streaming timelines on macOS Retina displays. */
+:root[data-glass-opaque="true"] {
+  --glass-blur: 0px;
+  --glass-saturation: 1;
+}
+
+:root[data-glass-opaque="true"] .surface-glass,
+:root[data-glass-opaque="true"] .alert-glass,
+:root[data-glass-opaque="true"] .dialog-glass,
+:root[data-glass-opaque="true"] .dropdown-glass,
+:root[data-glass-opaque="true"] [class*="backdrop-blur"] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+:root[data-glass-opaque="true"] [class*="before:backdrop-blur"]::before {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-opacity: 100%;
+    --glass-blur: 0px;
+    --glass-saturation: 1;
+  }
+
+  .surface-glass,
+  .alert-glass,
+  .dialog-glass,
+  .dropdown-glass,
+  .dialog-backdrop,
+  [class*="backdrop-blur"] {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  [class*="before:backdrop-blur"]::before {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+
 @utility topbar-scroll-fade {
   -webkit-mask-image:
     linear-gradient(

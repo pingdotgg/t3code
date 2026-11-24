@@ -99,9 +99,11 @@ function startClientAppearance(): void {
     }
     if (previous?.glassOpacity !== settings.glassOpacity) {
       root.style.setProperty("--glass-opacity", `${settings.glassOpacity}%`);
-      if (settings.glassOpacity === 100) {
+      if (settings.glassOpacity >= 100) {
+        root.dataset.glassOpaque = "true";
         root.style.setProperty("--glass-blur", "0px");
       } else {
+        delete root.dataset.glassOpaque;
         root.style.removeProperty("--glass-blur");
       }
     }
