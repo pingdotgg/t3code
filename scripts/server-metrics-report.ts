@@ -321,6 +321,37 @@ export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
   { pattern: /./, floor: 300, gate: true },
 ];
 
+// Estimated from one quick A/A run (3 rounds) on a 4-vCPU Azure Windows Server 2025 VM on
+// 2026-11-23, rounded up. Consulted before NOISE_RULES on that OS. macOS has no A/A run yet and
+// takes the defaults.
+const NOISE_RULE_OVERRIDES: Partial<Record<string, ReadonlyArray<NoiseRule>>> = {
+  win32: [
+    informational(/^working\.active\.20\.toRequestMs\.p90$/),
+    { pattern: /^working\.rssMBPerThread$/, floor: 0.6, gate: true },
+    { pattern: /^scaling\.rssMBPerThread$/, floor: 0.5, gate: true },
+    { pattern: /^working\.active\.\d+\.rssMB$/, floor: 10, gate: true },
+    { pattern: /^working\.active\.\d+\.loopDelayP99Ms$/, floor: 6, gate: true },
+    { pattern: /^pipeline\.loopDelayP99Ms$/, floor: 8, gate: true },
+    { pattern: /^streaming\.heapAfterGcMB$/, floor: 1.5, gate: true },
+  ],
+};
+
+/**
+ * The rules for the platform (`meta.platform`, e.g. `win32-x64`) every file recorded. Files from
+ * different platforms get the defaults and a warning.
+ */
+export function noiseRulesFor(files: ReadonlyArray<ServerMetrics>) {
+  const platforms = [...new Set(files.map(({ meta }) => String(meta.platform ?? "")))];
+  if (platforms.length !== 1) {
+    return {
+      rules: NOISE_RULES,
+      warning: `the files come from ${platforms.join(" and ")}, so the default noise floors apply`,
+    };
+  }
+  const overrides = NOISE_RULE_OVERRIDES[platforms[0]!.split("-")[0]!] ?? [];
+  return { rules: [...overrides, ...NOISE_RULES], warning: undefined };
+}
+
 export function noiseRule(metric: string, rules: ReadonlyArray<NoiseRule> = NOISE_RULES) {
   return rules.find((rule) => rule.pattern.test(metric)) ?? { floor: 0, gate: true };
 }
@@ -500,7 +531,7 @@ export interface NoiseRow {
  */
 export function noiseReport(
   pairs: ReadonlyArray<readonly [ServerMetrics, ServerMetrics]>,
-  rules: ReadonlyArray<NoiseRule> = NOISE_RULES,
+  rules: ReadonlyArray<NoiseRule> = noiseRulesFor(pairs.flat()).rules,
 ) {
   const found = new Map<string, { medians: number[]; halfWidth: number; aaDifference: number }>();
   for (const [before, after] of pairs) {
@@ -546,8 +577,10 @@ export function compareMetrics(
   before: ServerMetrics,
   after: ServerMetrics,
   threshold = 10,
-  rules: ReadonlyArray<NoiseRule> = NOISE_RULES,
+  rules?: ReadonlyArray<NoiseRule>,
 ) {
+  const forPlatform = noiseRulesFor([before, after]);
+  const gating = rules ?? forPlatform.rules;
   const a = collect(before);
   const b = collect(after);
   const lines = [
@@ -581,7 +614,7 @@ export function compareMetrics(
     const mx = median(x);
     const my = median(y);
     // A change counts only past both the relative threshold and the absolute noise floor.
-    const rule = noiseRule(metric, rules);
+    const rule = noiseRule(metric, gating);
     const limit = Math.max(rule.floor, (Math.abs(mx) * threshold) / 100);
     const repeated = x.length > 1 && y.length > 1;
     const [low, high] = repeated ? bootstrapMedianDifference(x, y) : [my - mx, my - mx];
@@ -600,7 +633,11 @@ export function compareMetrics(
       `| ${metric} | ${round(mx, 2)} | ${round(my, 2)} | ${shown} | ${interval} | ${verdict} |`,
     );
   }
-  const warnings = [...loadWarnings("before", before), ...loadWarnings("after", after)];
+  const warnings = [
+    ...(rules || !forPlatform.warning ? [] : [forPlatform.warning]),
+    ...loadWarnings("before", before),
+    ...loadWarnings("after", after),
+  ];
   return { table: lines.join("\n"), regressed, improved, informational, compared, warnings };
 }
 

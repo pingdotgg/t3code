@@ -173,6 +173,55 @@ describe("compareMetrics with noise rules", () => {
   });
 });
 
+describe("compareMetrics on each platform's noise floors", () => {
+  // The default floor for working.rssMBPerThread is 0.2 MB; Windows A/A runs needed 0.6.
+  const onPlatform = (platform: string, rssMBPerThread: number) => {
+    const working = {
+      active: {},
+      heapMBPerThread: 0.2,
+      rssMBPerThread,
+      cpuPctPerThread: 0,
+      loopDelayP99MsPerThread: 0,
+    };
+    return {
+      meta: { ...meta, platform },
+      runs: [{ working }, { working }],
+    } satisfies ServerMetrics;
+  };
+  const regressed = (before: ServerMetrics, after: ServerMetrics) =>
+    compareMetrics(before, after, 10).regressed;
+
+  it("gates Linux files on the default floor", () => {
+    expect(regressed(onPlatform("linux-x64", 1), onPlatform("linux-x64", 1.4))).toEqual([
+      "working.rssMBPerThread",
+    ]);
+  });
+
+  it("gates Windows files on the Windows floor", () => {
+    expect(regressed(onPlatform("win32-x64", 1), onPlatform("win32-x64", 1.4))).toEqual([]);
+    expect(regressed(onPlatform("win32-x64", 1), onPlatform("win32-x64", 1.8))).toEqual([
+      "working.rssMBPerThread",
+    ]);
+  });
+
+  it("falls back to the default floor with a warning when the platforms differ", () => {
+    const result = compareMetrics(onPlatform("linux-x64", 1), onPlatform("win32-x64", 1.4));
+    expect(result.regressed).toEqual(["working.rssMBPerThread"]);
+    expect(result.warnings).toEqual([
+      "the files come from linux-x64 and win32-x64, so the default noise floors apply",
+    ]);
+  });
+
+  it("marks the noise report against the platform's floor", () => {
+    const pair = (platform: string) => [onPlatform(platform, 1), onPlatform(platform, 1)] as const;
+    const floor = (platform: string) =>
+      noiseReport([pair(platform)]).rows.find(({ metric }) => metric === "working.rssMBPerThread")
+        ?.floor;
+    expect(floor("linux-x64")).toBe(0.2);
+    expect(floor("win32-x64")).toBe(0.6);
+  });
+});
+
 describe("noisePairProblem", () => {
   const at = (commit: string | null): ServerMetrics => ({ meta: { ...meta, commit }, runs: [] });
   it.each([
