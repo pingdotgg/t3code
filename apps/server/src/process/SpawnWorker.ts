@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - worker threads and Node streams implement the platform spawner boundary.
 import * as NodeEvents from "node:events";
-import type * as NodeChildProcess from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeStream from "node:stream";
 import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChildProcessSpawner";
@@ -225,6 +225,10 @@ class WorkerChild
       this.worker.post({ type: "write", id: this.id, fd, data }, [data.buffer]);
     };
     const final = (callback: (error?: Error | null) => void) => {
+      if (this.worker.closed) {
+        callback(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+        return;
+      }
       this.#finals.set(fd, callback);
       this.worker.post({ type: "end", id: this.id, fd });
     };
@@ -298,6 +302,18 @@ class WorkerChild
 
   /** The worker is gone: end output so readers finish, and let the exit report the kill. */
   abandon(): void {
+    const pipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    for (const stream of this.stdio) {
+      if (stream && !("push" in stream) && stream.listenerCount("error") === 0) {
+        stream.on("error", () => {});
+      }
+    }
+    for (const callbacks of this.#writes.values()) {
+      for (const callback of callbacks) callback(pipeError);
+    }
+    this.#writes.clear();
+    for (const callback of this.#finals.values()) callback(pipeError);
+    this.#finals.clear();
     // Not destroy(error): Effect leaves an unread stderr's pipe without an error listener.
     for (const stream of this.stdio) {
       if (stream && "push" in stream && !stream.readableEnded) stream.push(null);
@@ -424,9 +440,7 @@ class SpawnWorker {
     this.pool.release(this);
   }
 
-  fail(error: Error): void {
-    if (this.closed) return;
-    this.close();
+  #cleanupChildren(error: Error): void {
     for (const child of this.children.values()) {
       if (child.exited) {
         child.abandon();
@@ -435,6 +449,7 @@ class SpawnWorker {
       if (!child.spawned) {
         child.exited = true;
         child.emit("error", error);
+        child.abandon();
         continue;
       }
       // The worker owned the only handle, so try to end the whole tree before reporting the exit.
@@ -448,8 +463,19 @@ class SpawnWorker {
     this.children.clear();
   }
 
+  fail(error: Error): void {
+    if (this.closed) return;
+    this.#terminate();
+    this.#cleanupChildren(error);
+  }
+
   close(): void {
     if (this.closed) return;
+    this.#terminate();
+    this.#cleanupChildren(new Error("The process launcher closed."));
+  }
+
+  #terminate(): void {
     this.closed = true;
     this.pool.workers.delete(this);
     void this.worker.terminate().then(() => {
@@ -465,6 +491,7 @@ class SpawnWorkerPool {
   readonly workers = new Set<SpawnWorker>();
   readonly platform: NodeJS.Platform;
   #nextId = 0;
+  #closing = false;
 
   constructor(platform: NodeJS.Platform) {
     this.platform = platform;
@@ -506,14 +533,18 @@ class SpawnWorkerPool {
       if (!killed) killPid();
       done();
     };
-    this.spawn(
-      windowsSystem32Path(process.env, "taskkill.exe"),
-      ["/pid", String(pid), "/T", "/F"],
-      {
-        stdio: "ignore",
-        windowsHide: true,
-      },
-    )
+    const taskkill = windowsSystem32Path(process.env, "taskkill.exe");
+    const taskkillArgs = ["/pid", String(pid), "/T", "/F"];
+    if (this.#closing) {
+      NodeChildProcess.execFile(taskkill, taskkillArgs, { windowsHide: true }, (error) =>
+        finish(error === null),
+      );
+      return;
+    }
+    this.spawn(taskkill, taskkillArgs, {
+      stdio: "ignore",
+      windowsHide: true,
+    })
       .on("error", () => finish(false))
       .on("exit", (code) => finish(code === 0));
   }
@@ -533,6 +564,7 @@ class SpawnWorkerPool {
   }
 
   close(): void {
+    this.#closing = true;
     for (const worker of this.workers) worker.close();
   }
 }
