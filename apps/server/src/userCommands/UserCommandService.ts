@@ -53,7 +53,8 @@ export class UserCommandService extends Context.Service<
       projectId: ProjectId,
     ) => Effect.Effect<UserCommandsListResult, UserCommandError>;
     /**
-     * Runs a command in the thread's folder and records its output as a thread item. Returns
+     * Runs a command in the thread's folder, or the project's once a removed worktree has taken
+     * the thread's away, and records its output as a thread item. Returns
      * once the item is written; the run is not tied to the caller, so it finishes if they leave.
      */
     readonly run: (
@@ -243,8 +244,13 @@ export const make = Effect.gen(function* () {
           message: `There is no /${input.name} command in this project.`,
         });
       }
+      const worktree =
+        shell.worktreePath !== null &&
+        (yield* fileSystem.exists(shell.worktreePath).pipe(Effect.orElseSucceed(() => false)))
+          ? shell.worktreePath
+          : undefined;
       const cwd =
-        shell.worktreePath ??
+        worktree ??
         (yield* projects
           .getById(shell.projectId)
           .pipe(Effect.mapError(unavailable("Could not read the project.")))).pipe(

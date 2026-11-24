@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as NodeOS from "node:os";
 
 import * as ServerConfig from "../config.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
@@ -206,19 +207,34 @@ it.effect("runs in the worktree of the thread and publishes html output", () =>
   withHarness(
     {
       projectCommands: [command({ name: "page", output: "html" })],
-      worktreePath: "/worktree",
+      worktreePath: NodeOS.tmpdir(),
       runnerOutput: { stdout: "<!doctype html><p>hi</p>" },
     },
     ({ service, runs, writes, published }) =>
       Effect.gen(function* () {
         yield* service.run({ threadId, name: "page", args: "" });
-        assert.equal((yield* Ref.get(runs))[0]?.cwd, "/worktree");
+        assert.equal((yield* Ref.get(runs))[0]?.cwd, NodeOS.tmpdir());
         assert.deepStrictEqual(yield* Ref.get(published), ["<!doctype html><p>hi</p>"]);
         const item = writtenItem(yield* Ref.get(writes));
         if (item.type !== "user_command") return assert.fail("expected a user command item");
         assert.equal(item.status, "completed");
         assert.equal(item.htmlRender?.attachmentId, "attachment-1");
         assert.equal(item.markdown, undefined);
+      }),
+  ),
+);
+
+it.effect("runs in the project root once the thread's worktree is gone", () =>
+  withHarness(
+    {
+      projectCommands: [command({ name: "page" })],
+      worktreePath: "/removed-worktree",
+      runnerOutput: {},
+    },
+    ({ service, runs }) =>
+      Effect.gen(function* () {
+        yield* service.run({ threadId, name: "page", args: "" });
+        assert.equal((yield* Ref.get(runs))[0]?.cwd, "/project");
       }),
   ),
 );
