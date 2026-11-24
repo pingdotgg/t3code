@@ -1930,7 +1930,7 @@ export function PullRequestDetailPanel({
         </div>
 
         {unseenHeadSha !== undefined && shownHeadSha !== undefined ? (
-          <div className="px-4 pb-2">
+          <div className="col-span-2 px-4 pb-2">
             <Alert variant="warning">
               <TriangleAlertIcon />
               <AlertDescription>

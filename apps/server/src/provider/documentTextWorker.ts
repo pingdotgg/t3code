@@ -5,6 +5,7 @@ import * as NodeUtil from "node:util";
 import { characterEntities } from "character-entities";
 import { SaxesParser } from "saxes";
 import * as Yauzl from "yauzl";
+import { terminalOutputCollapseRedraws } from "@t3tools/shared/terminalOutput";
 
 const MAX_INPUT = 16 * 1024 * 1024;
 const MAX_EXPANDED = 32 * 1024 * 1024;
@@ -185,10 +186,14 @@ function hasInlineTab(node: XmlNode, names: readonly string[]): boolean {
     (names.includes(node.name) || children(node).some((child) => hasInlineTab(child, names)))
   );
 }
-function* all(node: XmlNode, name: string | readonly string[]): Generator<XmlNode, void> {
+function* all(
+  node: XmlNode,
+  name: string | readonly string[],
+  skip: readonly string[] = [],
+): Generator<XmlNode, void> {
   for (const child of children(node)) {
     if (typeof name === "string" ? child.name === name : name.includes(child.name)) yield child;
-    else yield* all(child, name);
+    else if (!skip.includes(child.name)) yield* all(child, name, skip);
   }
 }
 function* text(node: XmlNode): Generator<TextPart, void> {
@@ -231,7 +236,8 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
     else if (["br", "line-break", "cr"].includes(child.name)) yield "\n";
     else if (["tbl", "table"].includes(child.name)) yield* table(child);
     else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
-      const style = all(child, "pStyle").next().value?.attrs.val ?? "";
+      const style =
+        all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value?.attrs.val ?? "";
       const level =
         child.name === "h"
           ? Number(child.attrs["outline-level"]) || 1
@@ -422,9 +428,10 @@ function* notebook(source: string): Generator<string, void> {
         if (typeof line === "string") yield line;
       }
   }
-  function outputText(value: unknown): string {
-    // Notebook fragments can split a terminal escape sequence.
-    return NodeUtil.stripVTControlCharacters([...lines(value)].join(""));
+  function outputText(value: unknown, stream = false): string {
+    // Notebook fragments can split a terminal escape sequence or a CRLF pair.
+    const plain = NodeUtil.stripVTControlCharacters([...lines(value)].join(""));
+    return stream ? terminalOutputCollapseRedraws(plain) : plain;
   }
   for (const [index, cell] of book.cells.entries()) {
     if (index >= 10_000) throw new Truncation("Notebook cell limit");
@@ -437,7 +444,8 @@ function* notebook(source: string): Generator<string, void> {
       yield "\nOutput:\n";
       for (const output of cell.outputs) {
         if (!output || typeof output !== "object") continue;
-        if ("text" in output) yield outputText(output.text);
+        if ("text" in output)
+          yield outputText(output.text, "output_type" in output && output.output_type === "stream");
         else if (
           "data" in output &&
           output.data &&
@@ -465,10 +473,13 @@ function* notebook(source: string): Generator<string, void> {
   }
 }
 
-// Per-byte decoding only supports the single-byte \fcharset values.
 const FONT_CODE_PAGES = new Map([
   [0, "windows-1252"],
   [77, "macintosh"],
+  [128, "shift_jis"],
+  [129, "euc-kr"],
+  [134, "gbk"],
+  [136, "big5"],
   [161, "windows-1253"],
   [162, "windows-1254"],
   [163, "windows-1258"],
@@ -478,19 +489,23 @@ const FONT_CODE_PAGES = new Map([
   [204, "windows-1251"],
   [222, "windows-874"],
   [238, "windows-1250"],
+  [255, "ibm866"],
 ]);
 
-// Per-byte decoding only supports single-byte code pages.
-const singleByteCodePage = (value: number) =>
-  value === 0
-    ? "windows-1252"
-    : value === 866
-      ? "ibm866"
-      : value === 10000
-        ? "macintosh"
-        : value === 874 || (value >= 1250 && value <= 1258)
-          ? `windows-${value}`
-          : undefined;
+const RTF_CODE_PAGES = new Map([
+  [0, "windows-1252"],
+  [866, "ibm866"],
+  [874, "windows-874"],
+  [932, "shift_jis"],
+  [936, "gbk"],
+  [949, "euc-kr"],
+  [950, "big5"],
+  [10000, "macintosh"],
+  [65001, "utf-8"],
+]);
+
+const rtfCodePage = (value: number) =>
+  RTF_CODE_PAGES.get(value) ?? (value >= 1250 && value <= 1258 ? `windows-${value}` : undefined);
 
 function* rtf(source: string): Generator<string, void> {
   if (!source.startsWith("{\\rtf")) throw new Error("Invalid RTF document");
@@ -511,6 +526,25 @@ function* rtf(source: string): Generator<string, void> {
   let defaultFont = 0;
   const decoder = () => fonts.get(state.font) ?? state.decoder;
   const hidden = () => state.skip || state.deleted || state.hiddenText;
+  let encoded: Uint8Array | undefined;
+  let encodedLength = 0;
+  function* flushBytes(): Generator<string, void> {
+    if (!encodedLength) return;
+    const chunk = encoded!.subarray(0, encodedLength);
+    encodedLength = 0;
+    yield decoder().decode(chunk);
+  }
+  function* emitByte(byte: number): Generator<string, void> {
+    // No supported multibyte code page uses bytes below 0x30 as trail bytes.
+    if ((!encodedLength && byte < 128) || (encodedLength && byte < 0x30)) {
+      yield* flushBytes();
+      yield String.fromCharCode(byte);
+      return;
+    }
+    encoded ??= new Uint8Array(Math.min(source.length, MAX_OUTPUT * 3 + 4));
+    if (encodedLength === encoded.length) yield* flushBytes();
+    encoded[encodedLength++] = byte;
+  }
   const symbols = new Map([
     ["endash", "–"],
     ["emdash", characterEntities.mdash],
@@ -533,7 +567,10 @@ function* rtf(source: string): Generator<string, void> {
   let fallback = 0;
   for (let i = 0; i < source.length; i++) {
     const char = source[i]!;
-    if (char === "{" || char === "}") fallback = 0;
+    if (char === "{" || char === "}") {
+      yield* flushBytes();
+      fallback = 0;
+    }
     if (char === "{") {
       stack.push({ ...state });
       if (stack.length > 128) throw new Truncation("RTF depth limit");
@@ -544,7 +581,7 @@ function* rtf(source: string): Generator<string, void> {
       const word = /^([a-z]+)(-?\d+)? ?/i.exec(rest);
       if (hex) {
         if (fallback) fallback--;
-        else if (!hidden()) yield decoder().decode(Uint8Array.of(Number.parseInt(hex[1]!, 16)));
+        else if (!hidden()) yield* emitByte(Number.parseInt(hex[1]!, 16));
         i += 3;
       } else if (word) {
         i += word[0].length;
@@ -559,6 +596,7 @@ function* rtf(source: string): Generator<string, void> {
           fallback--;
           continue;
         }
+        yield* flushBytes();
         if (
           [
             "fonttbl",
@@ -587,9 +625,10 @@ function* rtf(source: string): Generator<string, void> {
           if (state.fontTable) fonts.delete(value);
         } else if (control === "fcharset" && state.fontTable) {
           const codePage = FONT_CODE_PAGES.get(value);
-          if (codePage) fonts.set(state.font, new TextDecoder(codePage));
+          if (value === 1) fonts.delete(state.font);
+          else if (codePage) fonts.set(state.font, new TextDecoder(codePage));
         } else if (control === "cpg" && state.fontTable && !state.fontFile) {
-          const codePage = singleByteCodePage(value);
+          const codePage = rtfCodePage(value);
           if (codePage) fonts.set(state.font, new TextDecoder(codePage));
         }
         if (control === "deleted") state.deleted = value !== 0;
@@ -599,12 +638,11 @@ function* rtf(source: string): Generator<string, void> {
           state.hiddenText = false;
           state.font = defaultFont;
         }
-        if (control === "mac" || (control === "ansicpg" && value === 10000))
-          state.decoder = new TextDecoder("macintosh");
+        if (control === "mac") state.decoder = new TextDecoder("macintosh");
         else if (control === "ansicpg") {
-          const label = singleByteCodePage(value);
+          const label = rtfCodePage(value);
           if (!label) throw new Error("Unsupported RTF code page");
-          state.decoder = new TextDecoder(label, { fatal: true });
+          state.decoder = new TextDecoder(label);
         } else if (control === "uc") {
           if (!Number.isSafeInteger(value) || value < 0)
             throw new Error("Invalid RTF fallback count");
@@ -622,18 +660,22 @@ function* rtf(source: string): Generator<string, void> {
       } else {
         i++;
         if (fallback) fallback--;
-        else if (rest[0] === "*") state.skip = true;
-        // A backslash before a line break is \par; TextEdit ends paragraphs this way.
-        else if (!hidden() && (rest[0] === "\n" || rest[0] === "\r")) yield "\n";
-        else if (!hidden() && ["\\", "{", "}"].includes(rest[0]!)) yield rest[0]!;
-        else if (!hidden() && symbols.has(rest[0]!)) yield symbols.get(rest[0]!)!;
+        else if (!hidden() && ["\\", "{", "}"].includes(rest[0]!))
+          yield* emitByte(rest[0]!.charCodeAt(0));
+        else {
+          yield* flushBytes();
+          if (rest[0] === "*") state.skip = true;
+          // A backslash before a line break is \par; TextEdit ends paragraphs this way.
+          else if (!hidden() && (rest[0] === "\n" || rest[0] === "\r")) yield "\n";
+          else if (!hidden() && symbols.has(rest[0]!)) yield symbols.get(rest[0]!)!;
+        }
       }
     } else if (char !== "\n" && char !== "\r") {
       if (fallback) fallback--;
-      else if (!hidden())
-        yield char.charCodeAt(0) < 128 ? char : decoder().decode(Uint8Array.of(char.charCodeAt(0)));
+      else if (!hidden()) yield* emitByte(char.charCodeAt(0));
     }
   }
+  yield* flushBytes();
 }
 
 async function* document(path: string, extension: string): AsyncGenerator<TextPart, void> {
