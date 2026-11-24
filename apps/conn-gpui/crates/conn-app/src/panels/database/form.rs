@@ -1,6 +1,7 @@
 //! Add/Edit connection form (`ConnectionForm` in Conn's `DatabasePanel.tsx`) and Conn's
 //! `outline` / `ghost` `size="sm"` buttons shared with the Database empty state.
 
+use crate::a11y::ConnA11yExt as _;
 use conn_desktop::database::DatabaseDriver;
 use conn_desktop::database::api::PanelConnection;
 use conn_theme::{Appearance, Tokens};
@@ -179,6 +180,14 @@ impl ConnectionFormState {
                         "db-driver-{}",
                         candidate.label()
                     )))
+                    .a11y_tab(
+                        format!(
+                            "panel.database.driver.{}",
+                            candidate.label().to_ascii_lowercase().replace(' ', "-")
+                        ),
+                        candidate.label(),
+                        active,
+                    )
                     .h(px(24.0))
                     .px(px(7.0))
                     .items_center()
@@ -203,6 +212,7 @@ impl ConnectionFormState {
 
         let mut form = v_flex()
             .id("db-connection-form")
+            .a11y_group("panel.database.connection-form", "Connection form")
             .flex_1()
             .min_h_0()
             .w_full()
@@ -398,6 +408,23 @@ fn soft_text_input(state: &Entity<InputState>, tokens: &Tokens) -> impl IntoElem
         )
 }
 
+/// The AX id of a Database control from its element id: `panel.database.<slug>`.
+fn ax_id_for(id: &ElementId) -> SharedString {
+    let raw = match id {
+        ElementId::Name(name) => name.to_string(),
+        other => format!("{other:?}"),
+    };
+    let mut slug = String::with_capacity(raw.len());
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    SharedString::from(format!("panel.database.{}", slug.trim_matches('-')))
+}
+
 /// Conn's `Button variant="ghost" size="sm"`.
 pub(crate) fn ghost_sm_button(
     id: impl Into<ElementId>,
@@ -405,9 +432,13 @@ pub(crate) fn ghost_sm_button(
     tokens: &Tokens,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let label: SharedString = label.into();
+    let ax_id = ax_id_for(&id);
     let hover = to_hsla(tokens.shell_highlight);
     h_flex()
         .id(id)
+        .a11y_button(ax_id, label.clone())
         .flex_shrink_0()
         .h(px(SM_BUTTON_HEIGHT_PX))
         .px(px(SM_BUTTON_PAD_X_PX))
@@ -422,7 +453,7 @@ pub(crate) fn ghost_sm_button(
         .text_color(to_hsla(tokens.foreground))
         .hover(move |s| s.bg(hover))
         .on_click(on_click)
-        .child(label.into())
+        .child(label)
 }
 
 /// Conn's `Button variant="outline" size="sm"` (used by `+ Add connection` and `Save connection`).
@@ -434,6 +465,9 @@ pub(crate) fn outline_sm_button(
     disabled: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let label: SharedString = label.into();
+    let ax_id = ax_id_for(&id);
     let (bg, hover_bg) = match tokens.appearance {
         Appearance::Light => (
             to_hsla(tokens.popover),
@@ -457,6 +491,7 @@ pub(crate) fn outline_sm_button(
 
     let mut button = h_flex()
         .id(id)
+        .a11y_button(ax_id, label.clone())
         .flex_shrink_0()
         .h(px(SM_BUTTON_HEIGHT_PX))
         .px(px(SM_BUTTON_PAD_X_PX))
@@ -480,7 +515,7 @@ pub(crate) fn outline_sm_button(
     if let Some(path) = icon_path {
         button = button.child(superhero_icon(path, 16.0, to_hsla(tokens.muted_foreground)));
     }
-    button = button.child(label.into());
+    button = button.child(label);
 
     if disabled {
         button.opacity(0.64)

@@ -367,6 +367,7 @@ describe("ConnectionCatalogDocument", () => {
       {
         connectionId: provisionalRegistration.target.connectionId,
         credential: new BearerConnectionCredential({ token: "refreshed" }),
+        promotedPairingId: reservationId,
       },
     ]);
     expect(settleProvisionalPairingInCatalog(promoted, reservationId, false)).toBe(promoted);
@@ -380,8 +381,27 @@ describe("ConnectionCatalogDocument", () => {
         reservationId,
       ).credentials,
     ).toEqual([
-      { connectionId: provisionalRegistration.target.connectionId, credential: BEARER_CREDENTIAL },
+      {
+        connectionId: provisionalRegistration.target.connectionId,
+        credential: BEARER_CREDENTIAL,
+        promotedPairingId: reservationId,
+      },
     ]);
+    // A credential saved over the promoted one, as by another window, is no late renewal's.
+    const replacement = new BearerConnectionCredential({ token: "replacement" });
+    const replaced = putConnectionCredentialInCatalog(
+      promoted,
+      provisionalRegistration.target.connectionId,
+      replacement,
+    );
+    expect(
+      putConnectionCredentialInCatalog(
+        replaced,
+        provisionalRegistration.target.connectionId,
+        BEARER_CREDENTIAL,
+        reservationId,
+      ),
+    ).toBe(replaced);
 
     const discarded = settleProvisionalPairingInCatalog(refreshed, reservationId, false);
     expect(

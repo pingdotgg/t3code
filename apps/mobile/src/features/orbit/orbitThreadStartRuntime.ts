@@ -4,7 +4,8 @@ import {
 } from "@t3tools/client-runtime/orbit-gateway";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
-import type { Atom } from "effect/reactivity";
+import * as Option from "effect/Option";
+import { AsyncResult, type Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../../connection/catalog";
 import { connectPairingUrl } from "../../connection/onboarding";
@@ -119,6 +120,11 @@ const ports: MobileOrbitThreadStartPorts = {
         modelSelection: scheduledTaskDefaultModel(config, project),
       };
     },
+    waitForConnection: (environmentId) =>
+      waitFor(
+        environmentCatalog.stateAtom(EnvironmentId.make(environmentId)),
+        (result) => Option.getOrNull(AsyncResult.value(result))?.phase === "connected",
+      ),
     startTurn: async (environmentId, input) => {
       const result = await runAtomCommand(
         appAtomRegistry,

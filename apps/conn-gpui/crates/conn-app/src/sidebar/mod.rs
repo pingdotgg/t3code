@@ -1,10 +1,13 @@
 //! Workspace rail, thread sidebar views, and shared project favicon/monogram helpers.
 
+pub(crate) mod drafts;
 pub(crate) mod hover_card;
 pub(crate) mod hover_card_state;
 pub(crate) mod rail;
 pub(crate) mod thread_list;
 pub(crate) mod thread_menu;
+pub(crate) mod tree;
+pub(crate) mod workspace_order;
 
 use conn_contract::{ProjectIconColor, ProjectProjectIcon};
 use conn_state::ProjectShell;
@@ -162,7 +165,7 @@ pub(crate) fn render_project_monogram_badge(text: &str, accent: Rgba, size_px: f
         .rounded(px(radius_px))
         .bg(hsla_alpha(accent, 0.14))
         .text_color(hsla(accent))
-        .font_family("SF Mono")
+        .font_family(crate::theme::MONO_FONT)
         .text_size(px(font_size_px))
         .line_height(px(size_px))
         .font_weight(gpui_kit::FontWeight::BOLD)

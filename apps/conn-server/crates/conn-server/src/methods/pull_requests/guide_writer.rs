@@ -794,7 +794,7 @@ impl Panel {
             environment.state_dir.join("statev2.sqlite"),
         ];
         let (detail, stored) = tokio::join!(
-            client.detail(&lookup),
+            self.fresh_detail(&project, &client, &lookup),
             guides::load(
                 paths,
                 key.host.clone(),
@@ -802,7 +802,7 @@ impl Panel {
                 u32::try_from(key.number).unwrap_or(0)
             )
         );
-        let detail = detail.map_err(|error| super::host_error(&error, "detail"))?;
+        let detail = detail?;
         let stored = stored?;
         let Some(head) = detail
             .get("headSha")
@@ -820,10 +820,7 @@ impl Panel {
         // newer head's run.
         let (run_id, claimed, started) = {
             let _owner = self.guide_runs.ownership.lock().await;
-            let latest = client
-                .detail(&lookup)
-                .await
-                .map_err(|error| super::host_error(&error, "detail"))?;
+            let latest = self.fresh_detail(&project, &client, &lookup).await?;
             if latest.get("headSha").and_then(Value::as_str) != Some(head.as_str()) {
                 return Err(operation_error(
                     "generateReviewGuide",

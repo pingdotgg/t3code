@@ -17,6 +17,55 @@ fn new_id(kind: &str) -> String {
     format!("gpui-{kind}-{millis}-{n}")
 }
 
+/// What a `server.refreshProviders` call asks for. The config stream carries the result, so
+/// every call asks for no providers back (`omitProviders`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ProviderRefresh<'a> {
+    /// The model picker opened (`modelCatalogOnly`): refetch a model manifest older than a few
+    /// minutes and probe providers only when it changed. Only for a server whose
+    /// `modelCatalogRefresh` capability is set; an older one probes every provider.
+    #[default]
+    ModelCatalog,
+    /// The refresh button of a provider's banner or setup page: probe `instance_id` and bypass
+    /// its model caches (`refreshModels`).
+    Instance(&'a str),
+    /// The Providers settings refresh: probe every provider, bypass model caches and read
+    /// secret references again (`refreshModels`, `reloadSecrets`).
+    All,
+}
+
+/// The `server.refreshProviders` payload for `refresh`.
+#[must_use]
+pub fn refresh_providers_payload(
+    refresh: ProviderRefresh<'_>,
+) -> conn_contract::ServerRefreshProvidersPayload {
+    let mut payload = conn_contract::ServerRefreshProvidersPayload {
+        instance_id: None,
+        cwd: None,
+        fresh: None,
+        refresh_models: None,
+        model_catalog_only: None,
+        reload_secrets: None,
+        workspace_snapshots_on_demand: Some(true),
+        usage_limits_command: None,
+        provider_catalogs_on_demand: None,
+        omit_providers: Some(true),
+        machine_catalog: None,
+    };
+    match refresh {
+        ProviderRefresh::ModelCatalog => payload.model_catalog_only = Some(true),
+        ProviderRefresh::Instance(id) => {
+            payload.instance_id = Some(id.to_owned());
+            payload.refresh_models = Some(true);
+        }
+        ProviderRefresh::All => {
+            payload.refresh_models = Some(true);
+            payload.reload_secrets = Some(true);
+        }
+    }
+    payload
+}
+
 /// `message.dispatch`: send `text` and `attachments` to `thread_id`. While a turn runs, the
 /// message steers it when `steer_target_run_id` is set, else queues after it.
 ///
@@ -183,6 +232,28 @@ pub fn respond_approval(
     }))
 }
 
+/// `runtime-request.respond`: decline an approval and pass `feedback` to the agent, for a request
+/// whose `responseCapability.supportsFeedback` is set (Conn's `sendApprovalFeedback`).
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn decline_approval_with_feedback(
+    thread_id: &str,
+    request_id: &str,
+    feedback: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "runtime-request.respond",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "requestId": request_id,
+        "decision": "decline",
+        "feedback": feedback,
+    }))
+}
+
 /// `runtime-request.respond`: answer a `user_input_request` with `answers` keyed by question id
 /// (each a string or a string array), as Conn's `ComposerPendingUserInputPanel` submits them.
 ///
@@ -293,9 +364,14 @@ pub fn set_model_selection(
     if let Some(opts) = options
         && !opts.is_empty()
     {
+        // The canonical wire form is `[{ id, value }]` (`ProviderOptionSelections`).
         selection.insert(
             "options".to_owned(),
-            serde_json::Value::Object(opts.clone()),
+            serde_json::Value::Array(
+                opts.iter()
+                    .map(|(id, value)| json!({ "id": id, "value": value }))
+                    .collect(),
+            ),
         );
     }
     conn_contract::from_json(json!({
@@ -467,6 +543,105 @@ pub fn settle_thread(
     }
 }
 
+/// `thread.unsettle` for the undo of a settle: `restore_unsettled_at` puts the Active anchor the
+/// settle cleared back instead of moving the thread to the top (`None` leaves it to the server,
+/// `Some(None)` clears it).
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn unsettle_thread_restoring(
+    thread_id: &str,
+    restore_unsettled_at: Option<Option<&str>>,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    let mut command = json!({
+        "type": "thread.unsettle",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "reason": "user",
+    });
+    if let Some(restore) = restore_unsettled_at {
+        command["restoreUnsettledAt"] = json!(restore);
+    }
+    conn_contract::from_json(command)
+}
+
+/// `thread.pin` in a given place among the pinned threads (`orderKey`), for the undo of a settle.
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn pin_thread_at(
+    thread_id: &str,
+    order_key: Option<&str>,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    let mut command = json!({
+        "type": "thread.pin",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+    });
+    if let Some(order_key) = order_key {
+        command["orderKey"] = json!(order_key);
+    }
+    conn_contract::from_json(command)
+}
+
+/// `thread.active.reorder`: put an active thread in a manual place (`orderKey`).
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn reorder_active_thread(
+    thread_id: &str,
+    order_key: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.active.reorder",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "orderKey": order_key,
+    }))
+}
+
+/// `thread.pin.reorder`: put a pinned thread in a manual place (`orderKey`).
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn reorder_pinned_thread(
+    thread_id: &str,
+    order_key: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.pin.reorder",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "orderKey": order_key,
+    }))
+}
+
+/// `thread.snooze`: hide a thread until `snoozed_until` (an ISO-8601 time in the future).
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn snooze_thread(
+    thread_id: &str,
+    snoozed_until: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.snooze",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "snoozedUntil": snoozed_until,
+    }))
+}
+
 /// `thread.metadata.update`: rename `thread_id` to `title`.
 ///
 /// # Errors
@@ -636,6 +811,14 @@ mod tests {
             respond_approval("t1", "r1", "accept").is_ok(),
             "runtime-request.respond decodes"
         );
+        assert!(
+            decline_approval_with_feedback("t1", "r1", "use the staging bucket").is_ok_and(
+                |command| serde_json::to_value(command)
+                    .is_ok_and(|value| value["feedback"] == "use the staging bucket"
+                        && value["decision"] == "decline")
+            ),
+            "runtime-request.respond with decline feedback decodes"
+        );
         let mut answers = serde_json::Map::new();
         answers.insert("q1".to_owned(), json!("golang"));
         answers.insert("q2".to_owned(), json!(["fmt", "clippy"]));
@@ -687,6 +870,28 @@ mod tests {
             "thread.runtime-mode.set (approval-required) decodes"
         );
         assert!(settle_thread("t1", true).is_ok(), "thread.settle decodes");
+        assert!(
+            unsettle_thread_restoring("t1", None).is_ok()
+                && unsettle_thread_restoring("t1", Some(None)).is_ok()
+                && unsettle_thread_restoring("t1", Some(Some("2026-01-02T00:00:00Z"))).is_ok(),
+            "thread.unsettle with restoreUnsettledAt decodes"
+        );
+        assert!(
+            pin_thread_at("t1", None).is_ok() && pin_thread_at("t1", Some("a0")).is_ok(),
+            "thread.pin with an order key decodes"
+        );
+        assert!(
+            reorder_active_thread("t1", "m1").is_ok(),
+            "thread.active.reorder decodes"
+        );
+        assert!(
+            reorder_pinned_thread("t1", "m1").is_ok(),
+            "thread.pin.reorder decodes"
+        );
+        assert!(
+            snooze_thread("t1", "2026-01-03T00:00:00Z").is_ok(),
+            "thread.snooze decodes"
+        );
         assert!(
             settle_thread("t1", false).is_ok(),
             "thread.unsettle decodes"
@@ -751,6 +956,31 @@ mod tests {
         assert_eq!(
             format_client_error(&err),
             "Provider instance \"codex\" is disabled."
+        );
+    }
+
+    #[test]
+    fn provider_refreshes_ask_for_what_conn_asks_for() {
+        let picker = refresh_providers_payload(ProviderRefresh::ModelCatalog);
+        assert_eq!(picker.model_catalog_only, Some(true));
+        assert_eq!(picker.instance_id, None);
+        assert_eq!(
+            picker.refresh_models, None,
+            "opening a picker never opens sessions"
+        );
+        let banner = refresh_providers_payload(ProviderRefresh::Instance("antigravity"));
+        assert_eq!(banner.instance_id.as_deref(), Some("antigravity"));
+        assert_eq!(banner.refresh_models, Some(true));
+        assert_eq!(
+            banner.reload_secrets, None,
+            "only explicit settings refreshes unlock vaults"
+        );
+        let settings = refresh_providers_payload(ProviderRefresh::All);
+        assert_eq!(settings.instance_id, None);
+        assert_eq!(settings.reload_secrets, Some(true));
+        assert!(
+            serde_json::to_value(&settings).is_ok_and(|v| v["omitProviders"] == true),
+            "the config stream carries the result"
         );
     }
 

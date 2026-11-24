@@ -36,6 +36,14 @@ const TEST_WINDOW_HEIGHT: f32 = 900.0;
 /// Mounts a full `ConnApp` window in `TestAppContext` (`1440×900`, Dark Ocean) with keybindings,
 /// theme tokens, and assets initialized.
 fn mount_app(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ConnApp>) {
+    mount_app_with_server(cx, None)
+}
+
+/// [`mount_app`] that connects at launch to `server`, as the live app does to a saved server.
+fn mount_app_with_server(
+    cx: &mut TestAppContext,
+    server: Option<crate::live::StartupServer>,
+) -> (AnyWindowHandle, Entity<ConnApp>) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         let Some(theme) = conn_theme::theme_by_id("dark-ocean") else {
@@ -55,7 +63,7 @@ fn mount_app(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ConnApp>) {
         };
         let Ok(opened) = gpui_kit::open_window(options, cx, move |window, cx| {
             window.activate_window();
-            cx.new(|cx| ConnApp::new(theme.id, tokens, None, window, cx))
+            cx.new(|cx| ConnApp::new(theme.id, tokens, server, window, cx))
         }) else {
             panic!("failed to open headless test window");
         };
@@ -246,13 +254,7 @@ fn kitchen_sink_shell() -> ShellState {
         }),
     ];
 
-    ShellState {
-        projects: vec![project],
-        threads,
-        archived_threads: Vec::new(),
-        sequence: Some(100),
-        synchronized: true,
-    }
+    ShellState::from_parts(vec![project], threads, Vec::new(), Some(100))
 }
 
 fn kitchen_sink_thread() -> ThreadState {
@@ -327,11 +329,13 @@ fn kitchen_sink_thread() -> ThreadState {
                         value: Some("vmpal".to_owned()),
                         label: "VMPal".to_owned(),
                         description: "Run inside nick-vm".to_owned(),
+                        preview: Some("Slow, but the pixels are real.".to_owned()),
                     },
                     UserInputOption {
                         value: Some("headless".to_owned()),
                         label: "Headless".to_owned(),
                         description: "Fast local GPUI test".to_owned(),
+                        preview: None,
                     },
                 ],
                 multi_select: false,
@@ -676,6 +680,66 @@ fn composer_popups_model_picker_and_plan_mode_render_cleanly(cx: &mut TestAppCon
     });
 }
 
+/// The launch connection asks for the provider catalog, or the composer's picker stays empty
+/// until the user switches servers.
+#[gpui_kit::test]
+fn launch_connection_subscribes_to_server_config(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (tags_tx, tags_rx) = std::sync::mpsc::channel::<String>();
+    let addr = RT.block_on(async {
+        let listener = match TcpListener::bind("127.0.0.1:0").await {
+            Ok(l) => l,
+            Err(err) => panic!("failed to bind loopback listener: {err}"),
+        };
+        let addr = match listener.local_addr() {
+            Ok(a) => a,
+            Err(err) => panic!("failed to read listener addr: {err}"),
+        };
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                let tags_tx = tags_tx.clone();
+                tokio::spawn(async move {
+                    let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
+                        return;
+                    };
+                    while let Some(Ok(Message::Text(text))) = ws.next().await {
+                        for frame in conn_wire::decode_client_message(&text).unwrap_or_default() {
+                            if let conn_wire::FromClient::Request(req) = frame {
+                                let _ = tags_tx.send(req.tag);
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        addr
+    });
+    let http_base_url = match url::Url::parse(&format!("http://{addr}")) {
+        Ok(url) => url,
+        Err(err) => panic!("invalid loopback URL: {err}"),
+    };
+    let (_window, _app) = mount_app_with_server(
+        cx,
+        Some(crate::live::StartupServer {
+            config: ServerConfig {
+                http_base_url,
+                credential: Credential::Bearer("test-token".to_owned()),
+            },
+            label: None,
+            orbit_server_id: None,
+        }),
+    );
+
+    let mut tags = Vec::new();
+    while let Ok(tag) = tags_rx.recv_timeout(Duration::from_secs(5)) {
+        if tag == "subscribeServerConfig" {
+            return;
+        }
+        tags.push(tag);
+    }
+    panic!("launch connection never sent subscribeServerConfig; it sent {tags:?}");
+}
+
 #[gpui_kit::test]
 fn composer_attach_file_uploads_via_background_tokio_runtime(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
@@ -857,7 +921,7 @@ fn composer_keeps_bottom_breathing_room_and_context_strip_layout(cx: &mut TestAp
     });
 
     // 1. Active thread with default `persistComposerContextStrip = false`: the composer card must
-    // sit above Conn's 20px (`h-[1.25rem]`, `ChatView.tsx:4067`) bottom spacer + ~4.5px shell
+    // sit above the 16px bottom spacer (the sidebar's last line bottom) + ~4.5px shell
     // inset/border (never slammed flush against the bottom of the window).
     const SHELL_BOTTOM_CHROME_PX: f32 = 4.5;
     let _ = cx.update_window(window, |_, window, cx| {
@@ -865,8 +929,8 @@ fn composer_keeps_bottom_breathing_room_and_context_strip_layout(cx: &mut TestAp
         let card = window.find_by_label("Message input card");
         let bottom_gap = TEST_WINDOW_HEIGHT - f32::from(card.bounds().bottom());
         assert!(
-            (23.5..=26.0).contains(&bottom_gap),
-            "composer card must keep 20px bottom breathing room + ~4.5px shell inset (got {bottom_gap:.1}px)"
+            (19.5..=22.0).contains(&bottom_gap),
+            "composer card must keep 16px bottom breathing room + ~4.5px shell inset (got {bottom_gap:.1}px)"
         );
         assert!(
             window.try_find_by_label("Thread context").is_none(),
@@ -1144,4 +1208,3232 @@ fn thread_hover_card_top_is_level_with_the_hovered_row(cx: &mut TestAppContext) 
         "estimated {estimated} vs laid-out {:?} with {lines} lines",
         card.size.height
     );
+}
+
+#[gpui_kit::test]
+fn pending_question_banner_sits_on_the_composer_and_digits_pick_its_options(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let chat = cx.read(|cx| app.read(cx).chat_for_test());
+    let selected = |window: &mut Window, cx: &mut gpui_kit::App, label: &str| {
+        window.render_frame(cx);
+        window.find_by_label(label).selected()
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        // The banner is a drawer over the composer card: inset, and tucked under its top edge.
+        let banner = window.find_by_label("Mode").bounds();
+        let card = window.find_by_label("Message input card").bounds();
+        assert!(
+            banner.top() < card.top() && banner.bottom() > card.top(),
+            "banner {banner:?} must tuck under the composer card {card:?}"
+        );
+        assert!(
+            banner.left() > card.left() && banner.right() < card.right(),
+            "banner {banner:?} must sit inside the card's width {card:?}"
+        );
+        assert_eq!(selected(window, cx, "VMPal"), Some(false));
+        assert_eq!(selected(window, cx, "Headless"), Some(false));
+
+        // With the keyboard in the composer's editor, digits are text, not shortcuts.
+        chat.update(cx, |chat, cx| chat.focus_composer(window, cx));
+        window.render_frame(cx);
+        window.press("2", cx);
+        assert_eq!(
+            selected(window, cx, "Headless"),
+            Some(false),
+            "a digit typed in the editor must not pick an option"
+        );
+        // The typed digit is the answer now, so no option shows as picked until it is removed.
+        window.press("backspace", cx);
+
+        // With it on the panel, they pick: the number is the option, and a modified digit,
+        // a number past the last option and a shifted digit do nothing.
+        let vmpal = window.find_by_label("VMPal").bounds().center();
+        window.pointer_move(vmpal, None, cx);
+        window.pointer_down(vmpal, MouseButton::Left, cx);
+        window.pointer_up(vmpal, MouseButton::Left, cx);
+        assert_eq!(selected(window, cx, "VMPal"), Some(true));
+        // `⌘3` is the open thread's own jump (the third row), so it opens nothing else.
+        window.press("cmd-3", cx);
+        window.press("3", cx);
+        window.press("shift-2", cx);
+        assert_eq!(selected(window, cx, "VMPal"), Some(true));
+        assert_eq!(selected(window, cx, "Headless"), Some(false));
+        window.press("2", cx);
+        assert_eq!(selected(window, cx, "Headless"), Some(true));
+        assert_eq!(selected(window, cx, "VMPal"), Some(false));
+        window.press("1", cx);
+        assert_eq!(selected(window, cx, "VMPal"), Some(true));
+        assert_eq!(selected(window, cx, "Headless"), Some(false));
+    });
+}
+
+fn two_project_shell() -> ShellState {
+    let mut shell = kitchen_sink_shell();
+    let other: ProjectShell = match from_json(json!({
+        "id": "proj-other",
+        "title": "orbit",
+        "workspaceRoot": "/tmp/orbit-parity",
+        "defaultModelSelection": null,
+        "scripts": [],
+        "createdAt": "2026-11-20T09:00:00.000Z",
+        "updatedAt": "2026-11-22T15:00:00.000Z",
+    })) {
+        Ok(project) => project,
+        Err(err) => panic!("second ProjectShell failed: {err}"),
+    };
+    shell.projects.push(other);
+    shell
+}
+
+/// Types `text` into the composer and renders, so the draft shows and parks like a user's.
+fn type_into_composer(
+    cx: &mut TestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<ConnApp>,
+    text: &str,
+) {
+    let chat = cx.read(|cx| app.read(cx).chat_for_test());
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        chat.update(cx, |chat, cx| {
+            chat.set_draft_text(text.to_owned(), window, cx)
+        });
+        window.render_frame(cx);
+    });
+}
+
+#[gpui_kit::test]
+fn a_draft_moved_onto_a_project_with_a_draft_leaves_that_draft_in_the_sidebar(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(two_project_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+
+    // orbit gets a draft with text; conn-gpui gets another.
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+        });
+    });
+    type_into_composer(cx, window, &app, "orbit idea");
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-parity".to_owned()), Some(window), cx);
+        });
+    });
+    type_into_composer(cx, window, &app, "conn idea");
+    let (moved_id, _) = cx
+        .read(|cx| app.read(cx).open_draft_for_test())
+        .expect("a draft is open");
+
+    // The hero's picker moves the open draft onto orbit, which already has one.
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_draft_project("proj-other".to_owned(), cx)
+        });
+    });
+    assert_eq!(
+        cx.read(|cx| app.read(cx).open_draft_for_test()),
+        Some((moved_id.clone(), "proj-other".to_owned())),
+        "the draft with content moves to the picked project"
+    );
+    let _ = cx.update_window(window, |_, window, cx| window.render_frame(cx));
+
+    // Orbit's own draft stays: an unmapped row, with its text and project.
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find_by_label("orbit idea, Unsent draft, orbit")
+                .is_some(),
+            "the displaced draft keeps a sidebar row"
+        );
+    });
+
+    // Leaving the moved draft lists it too, newest first.
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_thread("thread-selected".to_owned(), cx)
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find_by_label("conn idea, Unsent draft, orbit")
+                .is_some()
+        );
+        assert!(
+            window
+                .try_find_by_label("orbit idea, Unsent draft, orbit")
+                .is_some()
+        );
+    });
+
+    // `New thread` in orbit opens the draft the project points at: the moved one.
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+        });
+    });
+    assert_eq!(
+        cx.read(|cx| app.read(cx).open_draft_for_test())
+            .map(|d| d.0),
+        Some(moved_id.clone()),
+    );
+
+    // The unmapped draft reopens from its row, with its text back in the composer.
+    let row = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "orbit idea, Unsent draft, orbit")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate the draft row: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(row, None, cx);
+        window.pointer_down(row, MouseButton::Left, cx);
+        window.pointer_up(row, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+    let reopened = cx.read(|cx| app.read(cx).open_draft_for_test());
+    assert!(
+        reopened.is_some_and(|(id, project)| id != moved_id && project == "proj-other"),
+        "the unmapped draft is the one open now"
+    );
+    let chat = cx.read(|cx| app.read(cx).chat_for_test());
+    let _ = cx.update_window(window, |_, _, cx| {
+        assert!(
+            chat.read(cx).draft_has_content(cx),
+            "the reopened draft shows its text"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn discarding_a_draft_row_removes_it_and_undo_brings_it_back(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(two_project_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+        });
+    });
+    type_into_composer(cx, window, &app, "half a thought");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_thread("thread-selected".to_owned(), cx)
+        });
+    });
+    let row_label = "half a thought, Unsent draft, orbit";
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(window.try_find_by_label(row_label).is_some());
+        assert!(window.try_find_by_label("Discard draft").is_some());
+    });
+
+    // The row's `x` discards the draft and offers `Undo`.
+    let discard = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "Discard draft")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate the discard button: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(discard, None, cx);
+        window.pointer_down(discard, MouseButton::Left, cx);
+        window.pointer_up(discard, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find_by_label(row_label).is_none(),
+            "the row is gone"
+        );
+        assert!(window.try_find_by_label("Undo discard").is_some());
+    });
+
+    let undo = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "Undo discard")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate Undo: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(undo, None, cx);
+        window.pointer_down(undo, MouseButton::Left, cx);
+        window.pointer_up(undo, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find_by_label(row_label).is_some(),
+            "undo brings the draft row back with its text"
+        );
+        assert!(window.try_find_by_label("Undo discard").is_none());
+    });
+}
+
+#[gpui_kit::test]
+fn draft_row_menu_offers_copy_project_settings_and_discard(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(two_project_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+        });
+    });
+    type_into_composer(cx, window, &app, "menu draft");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_thread("thread-selected".to_owned(), cx)
+        });
+    });
+    let row = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "menu draft, Unsent draft, orbit")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate the draft row: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(row, None, cx);
+        window.pointer_down(row, MouseButton::Right, cx);
+        window.pointer_up(row, MouseButton::Right, cx);
+        window.render_frame(cx);
+        for label in ["Copy", "Project settings"] {
+            assert!(
+                window.try_find_by_label(label).is_some(),
+                "{label} is listed"
+            );
+        }
+        // The row's own `x` and the menu's destructive item.
+        assert_eq!(window.find_all_by_label("Discard draft").len(), 2);
+    });
+    let copy = match cx.update_window(window, |_, window, cx| center_by_label(window, cx, "Copy")) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate Copy: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(copy, None, cx);
+        window.render_frame(cx);
+    });
+    let path = match cx.update_window(window, |_, window, cx| center_by_label(window, cx, "Path")) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate Path: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(path, None, cx);
+        window.pointer_down(path, MouseButton::Left, cx);
+        window.pointer_up(path, MouseButton::Left, cx);
+        window.render_frame(cx);
+    });
+    assert_eq!(
+        cx.read(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref(),
+        Some("/tmp/orbit-parity"),
+        "Copy > Path gives the draft's project folder"
+    );
+}
+
+#[gpui_kit::test]
+fn drafts_are_saved_to_disk_and_come_back_on_the_next_start(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    let dir =
+        std::env::temp_dir().join(format!("conn-drafts-ui-{}", crate::drafts::new_draft_id()));
+    let path = dir.join("drafts.json");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_drafts_path_for_test(path.clone());
+            app.set_shell(two_project_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+        });
+    });
+    type_into_composer(cx, window, &app, "survives a restart");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_thread("thread-selected".to_owned(), cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+    cx.update(|cx| app.update(cx, |app, cx| app.settle_drafts_for_test(cx)));
+    let saved = std::fs::read_to_string(&path).expect("the drafts file is written");
+    assert!(saved.contains("survives a restart"));
+
+    // Discarding wipes the draft and its file entry; the saved copy is what a restart reads.
+    let _ = cx.update_window(window, |_, window, cx| {
+        let discard = center_by_label(window, cx, "Discard draft");
+        window.pointer_move(discard, None, cx);
+        window.pointer_down(discard, MouseButton::Left, cx);
+        window.pointer_up(discard, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find_by_label("survives a restart, Unsent draft, orbit")
+                .is_none()
+        );
+    });
+    std::fs::write(&path, saved).expect("puts the saved file back");
+    cx.update(|cx| app.update(cx, |app, cx| app.restore_saved_drafts_for_test(cx)));
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find_by_label("survives a restart, Unsent draft, orbit")
+                .is_some(),
+            "the saved draft is listed again, with its text"
+        );
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[gpui_kit::test]
+fn picking_an_option_sets_the_typed_answer_aside_in_the_thread_draft(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let chat = cx.read(|cx| app.read(cx).chat_for_test());
+    let composer = cx.read(|cx| chat.read(cx).composer_for_test());
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        // Picking an option with nothing typed sets nothing aside.
+        let vmpal = window.find_by_label("VMPal").bounds().center();
+        window.pointer_move(vmpal, None, cx);
+        window.pointer_down(vmpal, MouseButton::Left, cx);
+        window.pointer_up(vmpal, MouseButton::Left, cx);
+        window.render_frame(cx);
+        assert_eq!(chat.read(cx).error_for_test(), None);
+
+        chat.update(cx, |chat, cx| chat.focus_composer(window, cx));
+        window.render_frame(cx);
+        window.input("first try", cx);
+        window.render_frame(cx);
+        assert_eq!(composer.read(cx).draft_text_for_test(cx), "first try");
+        let headless = window.find_by_label("Headless").bounds().center();
+        window.pointer_move(headless, None, cx);
+        window.pointer_down(headless, MouseButton::Left, cx);
+        window.pointer_up(headless, MouseButton::Left, cx);
+        window.render_frame(cx);
+
+        let thread_draft = "thread:thread-selected";
+        assert_eq!(composer.read(cx).draft_text_for_test(cx), "");
+        assert_eq!(
+            composer.read(cx).parked_text_for_test(thread_draft).as_deref(),
+            Some("first try")
+        );
+        assert_eq!(
+            chat.read(cx).error_for_test().as_deref(),
+            Some(
+                "Your typed text was set aside. It will be back in the composer once the question is answered."
+            )
+        );
+        assert_eq!(window.find_by_label("Headless").selected(), Some(true));
+
+        // A second answer goes after the first, with a blank line between.
+        chat.update(cx, |chat, cx| chat.focus_composer(window, cx));
+        window.render_frame(cx);
+        window.input("second", cx);
+        window.render_frame(cx);
+        let vmpal = window.find_by_label("VMPal").bounds().center();
+        window.pointer_move(vmpal, None, cx);
+        window.pointer_down(vmpal, MouseButton::Left, cx);
+        window.pointer_up(vmpal, MouseButton::Left, cx);
+        window.render_frame(cx);
+        assert_eq!(
+            composer.read(cx).parked_text_for_test(thread_draft).as_deref(),
+            Some("first try\n\nsecond")
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn draft_rows_open_and_menu_from_the_keyboard(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(two_project_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+        });
+    });
+    type_into_composer(cx, window, &app, "keyboard draft");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_thread("thread-selected".to_owned(), cx);
+        });
+    });
+    let label = "keyboard draft, Unsent draft, orbit";
+    let row = match cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        center_by_label(window, cx, label)
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate the draft row: {err}"),
+    };
+
+    // A pressed row has the focus; the menu key opens its menu below the row.
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(row, None, cx);
+        window.pointer_down(row, MouseButton::Left, cx);
+        window.key_down("shift-f10", false, cx);
+        window.render_frame(cx);
+    });
+    assert!(
+        cx.read(|cx| app.read(cx).thread_menu_open_for_test()),
+        "Shift+F10 opens the focused draft row's menu"
+    );
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.dismiss_shell_popovers_for_test(cx);
+        });
+    });
+
+    // `Enter` reopens the draft.
+    assert!(cx.read(|cx| app.read(cx).open_draft_for_test()).is_none());
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.key_down("enter", false, cx);
+        window.render_frame(cx);
+    });
+    assert_eq!(
+        cx.read(|cx| app.read(cx).open_draft_for_test())
+            .map(|d| d.1),
+        Some("proj-other".to_owned()),
+        "Enter on the focused draft row opens the draft"
+    );
+}
+
+#[gpui_kit::test]
+fn a_thread_with_unsent_input_shows_the_pen_and_discards_with_undo(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test(
+                "thread-pinned".to_owned(),
+                ThreadState::new("thread-pinned"),
+                cx,
+            );
+        });
+    });
+    let pinned_mark = "Unsent draft";
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.try_find_by_label(pinned_mark).is_none(),
+            "no thread has unsent input yet"
+        );
+    });
+    type_into_composer(cx, window, &app, "reply I have not sent");
+    // The open thread's composer is on screen, so its row carries no mark.
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find_by_label(pinned_mark).is_none());
+    });
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_thread_for_test(
+                "thread-selected".to_owned(),
+                ThreadState::new("thread-selected"),
+                cx,
+            );
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find_by_label(pinned_mark).is_some(),
+            "the thread left with unsent input gets the pen mark"
+        );
+    });
+
+    // The row's `x` clears the input and offers `Undo`.
+    let discard = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "Discard draft")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate the discard button: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(discard, None, cx);
+        window.pointer_down(discard, MouseButton::Left, cx);
+        window.pointer_up(discard, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(window.try_find_by_label(pinned_mark).is_none());
+        assert!(window.try_find_by_label("Undo discard").is_some());
+    });
+    let undo = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "Undo discard")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate Undo: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(undo, None, cx);
+        window.pointer_down(undo, MouseButton::Left, cx);
+        window.pointer_up(undo, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find_by_label(pinned_mark).is_some(),
+            "undo brings the unsent input back"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_threads_unsent_input_is_saved_and_comes_back_on_the_next_start(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    let dir =
+        std::env::temp_dir().join(format!("conn-threads-ui-{}", crate::drafts::new_draft_id()));
+    let path = dir.join("drafts.json");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_drafts_path_for_test(path.clone());
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test(
+                "thread-pinned".to_owned(),
+                ThreadState::new("thread-pinned"),
+                cx,
+            );
+        });
+    });
+    type_into_composer(cx, window, &app, "unsent across a restart");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_thread_for_test(
+                "thread-selected".to_owned(),
+                ThreadState::new("thread-selected"),
+                cx,
+            );
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+    cx.update(|cx| app.update(cx, |app, cx| app.settle_drafts_for_test(cx)));
+    let saved = std::fs::read_to_string(&path).expect("the drafts file is written");
+    assert!(saved.contains("unsent across a restart"));
+
+    let _ = cx.update_window(window, |_, window, cx| {
+        let discard = center_by_label(window, cx, "Discard draft");
+        window.pointer_move(discard, None, cx);
+        window.pointer_down(discard, MouseButton::Left, cx);
+        window.pointer_up(discard, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(window.try_find_by_label("Unsent draft").is_none());
+    });
+    std::fs::write(&path, saved).expect("puts the saved file back");
+    cx.update(|cx| app.update(cx, |app, cx| app.restore_saved_drafts_for_test(cx)));
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find_by_label("Unsent draft").is_some(),
+            "the thread's unsent input is back"
+        );
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Presses `keys` (`"down"`, `"shift-f10"`) on the window and renders.
+fn press(cx: &mut TestAppContext, window: AnyWindowHandle, keys: &str) {
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.key_down(keys, false, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+}
+
+fn sidebar_rows(cx: &mut TestAppContext, app: &Entity<ConnApp>) -> Vec<String> {
+    cx.read(|cx| app.read(cx).sidebar_row_keys_for_test())
+}
+
+fn focused_sidebar_row(
+    cx: &mut TestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<ConnApp>,
+) -> Option<String> {
+    cx.update_window(window, |_, window, cx| {
+        app.read(cx).sidebar_focused_row_for_test(window)
+    })
+    .ok()
+    .flatten()
+}
+
+fn focus_sidebar_row(
+    cx: &mut TestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<ConnApp>,
+    key: &str,
+) {
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.focus_sidebar_row_for_test(key, window, cx)
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+}
+
+fn mount_kitchen_sink(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ConnApp>) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+    (window, app)
+}
+
+#[gpui_kit::test]
+fn arrow_keys_walk_the_sidebar_rows_without_opening_them(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let rows = sidebar_rows(cx, &app);
+    assert!(
+        rows.len() >= 5 && rows.first().map(String::as_str) == Some("thread-pinned"),
+        "the pinned thread leads the rows, then the active ones (rows: {rows:?})"
+    );
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("shelf:settled"),
+        "the settled shelf's header closes a collapsed list"
+    );
+    let selected = cx.read(|cx| app.read(cx).selected_thread_for_test().map(str::to_owned));
+
+    focus_sidebar_row(cx, window, &app, &rows[0]);
+    assert_eq!(
+        focused_sidebar_row(cx, window, &app).as_deref(),
+        Some(rows[0].as_str())
+    );
+    press(cx, window, "down");
+    assert_eq!(
+        focused_sidebar_row(cx, window, &app).as_deref(),
+        Some(rows[1].as_str()),
+        "ArrowDown moves to the next row"
+    );
+    press(cx, window, "up");
+    press(cx, window, "up");
+    assert_eq!(
+        focused_sidebar_row(cx, window, &app).as_deref(),
+        Some(rows[0].as_str()),
+        "ArrowUp stops at the first row"
+    );
+    press(cx, window, "end");
+    assert_eq!(
+        focused_sidebar_row(cx, window, &app).as_deref(),
+        rows.last().map(String::as_str),
+        "End goes to the last row"
+    );
+    press(cx, window, "down");
+    assert_eq!(
+        focused_sidebar_row(cx, window, &app).as_deref(),
+        rows.last().map(String::as_str),
+        "ArrowDown stops at the last row"
+    );
+    press(cx, window, "home");
+    assert_eq!(
+        focused_sidebar_row(cx, window, &app).as_deref(),
+        Some(rows[0].as_str()),
+        "Home goes to the first row"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).selected_thread_for_test().map(str::to_owned)),
+        selected,
+        "moving the keyboard opens nothing"
+    );
+}
+
+#[gpui_kit::test]
+fn the_settled_shelf_expands_before_its_rows_take_the_keyboard(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    focus_sidebar_row(cx, window, &app, "shelf:settled");
+    assert!(!cx.read(|cx| app.read(cx).settled_shelf_open_for_test()));
+    assert!(!sidebar_rows(cx, &app).contains(&"thread-settled-1".to_owned()));
+
+    press(cx, window, "left");
+    assert!(
+        !cx.read(|cx| app.read(cx).settled_shelf_open_for_test()),
+        "ArrowLeft on a collapsed shelf has nowhere to go"
+    );
+    press(cx, window, "right");
+    assert!(
+        cx.read(|cx| app.read(cx).settled_shelf_open_for_test()),
+        "ArrowRight expands a collapsed shelf"
+    );
+    assert_eq!(
+        focused_sidebar_row(cx, window, &app).as_deref(),
+        Some("shelf:settled")
+    );
+    press(cx, window, "right");
+    assert_eq!(
+        focused_sidebar_row(cx, window, &app).as_deref(),
+        Some("thread-settled-1"),
+        "ArrowRight on an expanded shelf enters its first row"
+    );
+    press(cx, window, "left");
+    assert_eq!(
+        focused_sidebar_row(cx, window, &app).as_deref(),
+        Some("shelf:settled"),
+        "ArrowLeft goes back to the shelf"
+    );
+    press(cx, window, "left");
+    assert!(
+        !cx.read(|cx| app.read(cx).settled_shelf_open_for_test()),
+        "ArrowLeft collapses an expanded shelf"
+    );
+    press(cx, window, "enter");
+    assert!(
+        cx.read(|cx| app.read(cx).settled_shelf_open_for_test()),
+        "Enter toggles the shelf"
+    );
+
+    // The row that has the keyboard hides with the shelf; the shelf takes the keyboard.
+    focus_sidebar_row(cx, window, &app, "thread-settled-1");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.toggle_settled_shelf(cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+    assert_eq!(
+        focused_sidebar_row(cx, window, &app).as_deref(),
+        Some("shelf:settled"),
+        "a row that went away hands the keyboard to its parent"
+    );
+}
+
+#[gpui_kit::test]
+fn enter_opens_the_focused_thread_and_f2_renames_it(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    focus_sidebar_row(cx, window, &app, "thread-waiting");
+    press(cx, window, "f2");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).renaming_thread_for_test().map(str::to_owned))
+            .as_deref(),
+        Some("thread-waiting"),
+        "F2 renames the focused thread"
+    );
+    cx.update(|cx| app.update(cx, |app, cx| app.cancel_thread_rename(cx)));
+
+    focus_sidebar_row(cx, window, &app, "thread-failed");
+    press(cx, window, "enter");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).selected_thread_for_test().map(str::to_owned))
+            .as_deref(),
+        Some("thread-failed"),
+        "Enter opens the focused thread"
+    );
+}
+
+#[gpui_kit::test]
+fn the_thread_menu_takes_the_arrow_keys(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let highlight =
+        |cx: &mut TestAppContext| cx.read(|cx| app.read(cx).thread_menu_highlight_for_test());
+    focus_sidebar_row(cx, window, &app, "thread-selected");
+    press(cx, window, "shift-f10");
+    assert!(
+        cx.read(|cx| app.read(cx).thread_menu_open_for_test()),
+        "Shift+F10 opens the menu below the row"
+    );
+    assert_eq!(
+        highlight(cx).as_deref(),
+        Some("Pin thread"),
+        "a menu opened from the keyboard starts on its first action"
+    );
+
+    press(cx, window, "down");
+    assert_eq!(highlight(cx).as_deref(), Some("Settle thread"));
+    press(cx, window, "up");
+    press(cx, window, "up");
+    assert_eq!(
+        highlight(cx).as_deref(),
+        Some("Delete"),
+        "ArrowUp wraps from the first action to the last"
+    );
+    press(cx, window, "home");
+    assert_eq!(highlight(cx).as_deref(), Some("Pin thread"));
+
+    // Down to `Copy`, then into its submenu and back out.
+    for _ in 0..12 {
+        if highlight(cx).as_deref() == Some("Copy") {
+            break;
+        }
+        press(cx, window, "down");
+    }
+    assert_eq!(highlight(cx).as_deref(), Some("Copy"));
+    press(cx, window, "right");
+    assert!(
+        cx.read(|cx| app.read(cx).thread_menu_copy_open_for_test()),
+        "ArrowRight opens the submenu"
+    );
+    assert_eq!(highlight(cx).as_deref(), Some("Path"));
+    press(cx, window, "down");
+    assert_eq!(highlight(cx).as_deref(), Some("Branch"));
+    press(cx, window, "left");
+    assert!(!cx.read(|cx| app.read(cx).thread_menu_copy_open_for_test()));
+    assert_eq!(
+        highlight(cx).as_deref(),
+        Some("Copy"),
+        "ArrowLeft closes the submenu and goes back to its row"
+    );
+    press(cx, window, "right");
+    press(cx, window, "escape");
+    assert!(
+        cx.read(|cx| app.read(cx).thread_menu_open_for_test()),
+        "Escape closes the submenu first"
+    );
+    assert!(!cx.read(|cx| app.read(cx).thread_menu_copy_open_for_test()));
+
+    // `Enter` on the submenu's `Path` copies it and closes the menu.
+    press(cx, window, "right");
+    press(cx, window, "enter");
+    assert!(
+        !cx.read(|cx| app.read(cx).thread_menu_open_for_test()),
+        "Enter runs the highlighted action and closes the menu"
+    );
+    assert_eq!(
+        cx.read(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref(),
+        Some("/tmp/conn-gpui-parity")
+    );
+    assert_eq!(
+        focused_sidebar_row(cx, window, &app).as_deref(),
+        Some("thread-selected"),
+        "the keyboard goes back to the row that opened the menu"
+    );
+
+    press(cx, window, "shift-f10");
+    press(cx, window, "escape");
+    assert!(
+        !cx.read(|cx| app.read(cx).thread_menu_open_for_test()),
+        "Escape closes the menu"
+    );
+    assert_eq!(
+        focused_sidebar_row(cx, window, &app).as_deref(),
+        Some("thread-selected")
+    );
+}
+
+#[gpui_kit::test]
+fn the_draft_menu_takes_the_arrow_keys(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(two_project_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+        });
+    });
+    type_into_composer(cx, window, &app, "menu draft");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_thread("thread-selected".to_owned(), cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+    let draft = sidebar_rows(cx, &app)
+        .into_iter()
+        .find(|key| key.starts_with("draft:"))
+        .expect("the typed draft has a row");
+    focus_sidebar_row(cx, window, &app, &draft);
+    press(cx, window, "shift-f10");
+    let highlight = cx.read(|cx| app.read(cx).thread_menu_highlight_for_test());
+    assert_eq!(highlight.as_deref(), Some("Copy"));
+    press(cx, window, "down");
+    press(cx, window, "down");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).thread_menu_highlight_for_test())
+            .as_deref(),
+        Some("Discard draft")
+    );
+    press(cx, window, "enter");
+    assert!(
+        !cx.read(|cx| app.read(cx).thread_menu_open_for_test()),
+        "Enter on Discard draft closes the menu"
+    );
+    let _ = cx.update_window(window, |_, window, cx| {
+        assert!(
+            !has_label(window, cx, "menu draft, Unsent draft, orbit"),
+            "the draft is discarded"
+        );
+        assert!(has_label(window, cx, "Undo discard"), "and can be undone");
+    });
+    assert!(
+        focused_sidebar_row(cx, window, &app).is_none()
+            || sidebar_rows(cx, &app)
+                .contains(&focused_sidebar_row(cx, window, &app).unwrap_or_default()),
+        "the keyboard is on a row that is still there"
+    );
+}
+
+#[gpui_kit::test]
+fn command_z_undoes_a_discard_until_another_key_is_pressed(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test(
+                "thread-pinned".to_owned(),
+                ThreadState::new("thread-pinned"),
+                cx,
+            );
+        });
+    });
+    type_into_composer(cx, window, &app, "reply I have not sent");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_thread_for_test(
+                "thread-selected".to_owned(),
+                ThreadState::new("thread-selected"),
+                cx,
+            );
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+    let discard = |cx: &mut TestAppContext| {
+        let at = match cx.update_window(window, |_, window, cx| {
+            center_by_label(window, cx, "Discard draft")
+        }) {
+            Ok(pt) => pt,
+            Err(err) => panic!("failed to locate the discard button: {err}"),
+        };
+        let _ = cx.update_window(window, |_, window, cx| {
+            window.pointer_move(at, None, cx);
+            window.pointer_down(at, MouseButton::Left, cx);
+            window.pointer_up(at, MouseButton::Left, cx);
+            window.render_frame(cx);
+            window.render_frame(cx);
+        });
+    };
+    let pen = |cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            has_label(window, cx, "Unsent draft")
+        })
+        .unwrap_or(false)
+    };
+    let notice = |cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            has_label(window, cx, "Undo discard")
+        })
+        .unwrap_or(false)
+    };
+
+    // The keyboard is on the page body: `⌘Z` undoes the discard.
+    assert!(pen(cx));
+    discard(cx);
+    assert!(!pen(cx) && notice(cx), "the discard shows its notice");
+    press(cx, window, "cmd-z");
+    assert!(pen(cx), "⌘Z brings the input back");
+    assert!(!notice(cx), "and the notice goes");
+
+    // Inside the composer a new notice owns `⌘Z` ...
+    let chat = cx.read(|cx| app.read(cx).chat_for_test());
+    let focus_composer = |cx: &mut TestAppContext| {
+        let _ = cx.update_window(window, |_, window, cx| {
+            chat.update(cx, |chat, cx| chat.focus_composer(window, cx));
+            window.render_frame(cx);
+        });
+    };
+    discard(cx);
+    focus_composer(cx);
+    press(cx, window, "cmd-z");
+    assert!(pen(cx), "a new notice owns ⌘Z even in the composer");
+
+    // ... until another key is pressed; then the composer keeps its own undo.
+    discard(cx);
+    focus_composer(cx);
+    press(cx, window, "a");
+    press(cx, window, "cmd-z");
+    assert!(
+        !pen(cx) && notice(cx),
+        "after another key ⌘Z belongs to the text field"
+    );
+}
+
+#[gpui_kit::test]
+fn a_deleted_threads_unsent_input_is_forgotten(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    let dir =
+        std::env::temp_dir().join(format!("conn-forget-ui-{}", crate::drafts::new_draft_id()));
+    let path = dir.join("drafts.json");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_drafts_path_for_test(path.clone());
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test(
+                "thread-pinned".to_owned(),
+                ThreadState::new("thread-pinned"),
+                cx,
+            );
+        });
+    });
+    type_into_composer(cx, window, &app, "typed in a thread that is deleted");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_thread_for_test(
+                "thread-selected".to_owned(),
+                ThreadState::new("thread-selected"),
+                cx,
+            );
+            app.settle_drafts_for_test(cx);
+        });
+    });
+    let saved = std::fs::read_to_string(&path).expect("the drafts file is written");
+    assert!(saved.contains("typed in a thread that is deleted"));
+
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.forget_thread_draft_for_test("thread-pinned", cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            !has_label(window, cx, "Unsent draft"),
+            "the deleted thread's pen mark is gone"
+        );
+    });
+    let saved = std::fs::read_to_string(&path).expect("the drafts file is rewritten");
+    assert!(
+        !saved.contains("typed in a thread that is deleted"),
+        "the deleted thread's input leaves drafts.json"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[gpui_kit::test]
+fn tab_closes_the_thread_menu_and_goes_on_from_its_row(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let rows = sidebar_rows(cx, &app);
+    focus_sidebar_row(cx, window, &app, &rows[0]);
+    press(cx, window, "shift-f10");
+    assert!(cx.read(|cx| app.read(cx).thread_menu_open_for_test()));
+    press(cx, window, "tab");
+    assert!(
+        !cx.read(|cx| app.read(cx).thread_menu_open_for_test()),
+        "Tab closes the menu"
+    );
+    assert_eq!(
+        focused_sidebar_row(cx, window, &app).as_deref(),
+        Some(rows[1].as_str()),
+        "and moves on to the row after the one that opened it"
+    );
+}
+
+fn render_twice(cx: &mut TestAppContext, window: AnyWindowHandle) {
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+}
+
+fn search_for(
+    cx: &mut TestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<ConnApp>,
+    query: &str,
+) {
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.search_for_test(query, window, cx));
+    });
+    render_twice(cx, window);
+}
+
+fn search_highlight(cx: &mut TestAppContext, app: &Entity<ConnApp>) -> Option<String> {
+    cx.read(|cx| app.read(cx).search_highlight_for_test(cx))
+}
+
+#[gpui_kit::test]
+fn the_search_box_works_its_results_with_the_arrow_keys(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    search_for(cx, window, &app, "thread");
+    let results = cx.read(|cx| app.read(cx).search_results_for_test(cx));
+    assert_eq!(
+        results.first().map(String::as_str),
+        Some("thread-pinned"),
+        "pinned results lead (results: {results:?})"
+    );
+    assert_eq!(
+        results.last().map(String::as_str),
+        Some("thread-settled-1"),
+        "settled threads are results too, with the shelf collapsed (results: {results:?})"
+    );
+    assert_eq!(
+        search_highlight(cx, &app).as_deref(),
+        Some("thread-pinned"),
+        "the first result starts highlighted"
+    );
+
+    press(cx, window, "down");
+    assert_eq!(
+        search_highlight(cx, &app).as_deref(),
+        Some(results[1].as_str()),
+        "ArrowDown highlights the next result"
+    );
+    press(cx, window, "up");
+    press(cx, window, "up");
+    assert_eq!(
+        search_highlight(cx, &app).as_deref(),
+        results.last().map(String::as_str),
+        "ArrowUp wraps from the first result to the last"
+    );
+    press(cx, window, "down");
+    assert_eq!(
+        search_highlight(cx, &app).as_deref(),
+        Some("thread-pinned"),
+        "ArrowDown wraps from the last result to the first"
+    );
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            has_label(window, cx, "Thread search results")
+        })
+        .unwrap_or(false),
+        "the results are a listbox for VoiceOver"
+    );
+
+    // `Enter` opens the highlighted result and ends the search.
+    press(cx, window, "down");
+    let highlighted = search_highlight(cx, &app);
+    press(cx, window, "enter");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).selected_thread_for_test().map(str::to_owned)),
+        highlighted,
+        "Enter opens the highlighted result"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).search_text_for_test(cx)),
+        "",
+        "and the search ends"
+    );
+}
+
+#[gpui_kit::test]
+fn escape_clears_the_search_and_a_search_with_no_results_has_nothing_to_walk(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_kitchen_sink(cx);
+    search_for(cx, window, &app, "no thread has this");
+    assert_eq!(search_highlight(cx, &app), None);
+    let selected = cx.read(|cx| app.read(cx).selected_thread_for_test().map(str::to_owned));
+    press(cx, window, "down");
+    press(cx, window, "enter");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).selected_thread_for_test().map(str::to_owned)),
+        selected,
+        "Enter opens nothing without results"
+    );
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            has_label(window, cx, "Clear thread search")
+        })
+        .unwrap_or(false),
+        "the clear button has a name"
+    );
+    press(cx, window, "escape");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).search_text_for_test(cx)),
+        "",
+        "Escape clears a search that has no results"
+    );
+}
+
+#[gpui_kit::test]
+fn command_shift_brackets_open_the_thread_above_or_below_and_stop_at_the_ends(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let order = cx.read(|cx| app.read(cx).traversal_ids_for_test());
+    assert_eq!(
+        order.first().map(String::as_str),
+        Some("thread-pinned"),
+        "pinned first (order: {order:?})"
+    );
+    assert!(
+        !order.iter().any(|id| id == "thread-settled-1"),
+        "a collapsed shelf is not walked (order: {order:?})"
+    );
+    let open = |cx: &mut TestAppContext| {
+        cx.read(|cx| app.read(cx).selected_thread_for_test().map(str::to_owned))
+    };
+    assert_eq!(open(cx).as_deref(), Some("thread-selected"));
+    let at = order
+        .iter()
+        .position(|id| id == "thread-selected")
+        .unwrap_or(0);
+
+    // Nothing has the keyboard yet.
+    press(cx, window, "cmd-shift-]");
+    assert_eq!(
+        open(cx).as_deref(),
+        order.get(at + 1).map(String::as_str),
+        "⌘⇧] opens the next thread"
+    );
+    // Then the root has it, as it does once a click or a closed menu hands it back.
+    let _ = cx.update_window(window, |_, window, cx| {
+        let root = app.read(cx).root_focus_for_test();
+        window.focus(&root, cx);
+    });
+    press(cx, window, "cmd-shift-[");
+    assert_eq!(
+        open(cx).as_deref(),
+        Some("thread-selected"),
+        "⌘⇧[ goes back"
+    );
+
+    for _ in 0..order.len() {
+        press(cx, window, "cmd-shift-[");
+    }
+    assert_eq!(
+        open(cx).as_deref(),
+        Some("thread-pinned"),
+        "⌘⇧[ stops at the first thread, with no wrap"
+    );
+    for _ in 0..=order.len() {
+        press(cx, window, "cmd-shift-]");
+    }
+    assert_eq!(
+        open(cx).as_deref(),
+        order.last().map(String::as_str),
+        "⌘⇧] stops at the last thread, with no wrap"
+    );
+}
+
+#[gpui_kit::test]
+fn a_settled_thread_shows_its_notice_and_command_z_takes_it_back_until_something_else_changes_it(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let notice = |cx: &mut TestAppContext, label: &str| {
+        cx.update_window(window, |_, window, cx| has_label(window, cx, label))
+            .unwrap_or(false)
+    };
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.offer_settle_undo_for_test("thread-failed", cx);
+            app.offer_settle_undo_for_test("thread-waiting", cx);
+        });
+    });
+    render_twice(cx, window);
+    assert!(
+        notice(cx, "Settled 2 threads, ⌘Z to undo"),
+        "settles stack in one notice"
+    );
+    assert!(notice(cx, "Undo settle"), "its button names what it undoes");
+
+    // Pinning a thread ends the claim on its settle (`sendPin`).
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.pin_thread("thread-waiting".to_owned(), true, cx)
+        });
+    });
+    render_twice(cx, window);
+    assert!(
+        notice(cx, "Settled 1 thread, ⌘Z to undo"),
+        "the pinned thread left the notice"
+    );
+
+    // With no server to take the commands, the undo says so.
+    press(cx, window, "cmd-z");
+    assert!(
+        notice(cx, "Failed to undo settle."),
+        "⌘Z undoes the settle, and a refused one says why"
+    );
+    assert!(!notice(cx, "Undo settle"), "the notice is gone");
+}
+
+fn open_thread(cx: &mut TestAppContext, app: &Entity<ConnApp>) -> Option<String> {
+    cx.read(|cx| app.read(cx).selected_thread_for_test().map(str::to_owned))
+}
+
+fn labelled(cx: &mut TestAppContext, window: AnyWindowHandle, label: &str) -> bool {
+    cx.update_window(window, |_, window, cx| has_label(window, cx, label))
+        .unwrap_or(false)
+}
+
+fn click_row(cx: &mut TestAppContext, window: AnyWindowHandle, title: &str, button: MouseButton) {
+    let at = match cx.update_window(window, |_, window, cx| center_by_label(window, cx, title)) {
+        Ok(at) => at,
+        Err(err) => panic!("failed to locate the row `{title}`: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(at, None, cx);
+        window.pointer_down(at, button, cx);
+        window.pointer_up(at, button, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+}
+
+fn hold(cx: &mut TestAppContext, window: AnyWindowHandle, modifiers: gpui_kit::Modifiers) {
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.change_modifiers(modifiers, cx);
+    });
+}
+
+fn command() -> gpui_kit::Modifiers {
+    gpui_kit::Modifiers {
+        platform: true,
+        ..gpui_kit::Modifiers::default()
+    }
+}
+
+#[gpui_kit::test]
+fn command_digits_open_the_thread_at_that_place_of_the_walk(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let order = cx.read(|cx| app.read(cx).traversal_ids_for_test());
+    assert!(
+        order.len() >= 5,
+        "five threads to jump to (order: {order:?})"
+    );
+
+    press(cx, window, "cmd-1");
+    assert_eq!(open_thread(cx, &app).as_deref(), Some(order[0].as_str()));
+    press(cx, window, "cmd-3");
+    assert_eq!(open_thread(cx, &app).as_deref(), Some(order[2].as_str()));
+    press(cx, window, "cmd-9");
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some(order[2].as_str()),
+        "a place with no thread does nothing"
+    );
+    press(cx, window, "cmd-shift-1");
+    press(cx, window, "1");
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some(order[2].as_str()),
+        "only ⌘ and a digit jump"
+    );
+
+    // The keys work from the search box too, and jump in the order the walk has, not the
+    // order of the results.
+    search_for(cx, window, &app, "thread");
+    press(cx, window, "cmd-2");
+    assert_eq!(open_thread(cx, &app).as_deref(), Some(order[1].as_str()));
+}
+
+#[gpui_kit::test]
+fn holding_command_numbers_the_rows_after_a_beat(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let order = cx.read(|cx| app.read(cx).traversal_ids_for_test());
+    // GPUI sends a modifier change to the focused element's handlers, so something has the
+    // keyboard, as it does after any click. The window has to be active too: activating one
+    // resets the modifiers it knows.
+    let _ = cx.update_window(window, |_, window, cx| {
+        let root = app.read(cx).root_focus_for_test();
+        window.focus(&root, cx);
+    });
+    cx.run_until_parked();
+    render_twice(cx, window);
+    assert!(!labelled(cx, window, "⌘1"), "no numbers before ⌘ is held");
+
+    hold(cx, window, command());
+    cx.executor().advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+    render_twice(cx, window);
+    assert!(
+        !labelled(cx, window, "⌘1"),
+        "a quick ⌘ shortcut never flashes the numbers"
+    );
+
+    cx.executor().advance_clock(Duration::from_millis(100));
+    cx.run_until_parked();
+    render_twice(cx, window);
+    for number in 1..=order.len().min(5) {
+        assert!(
+            labelled(cx, window, &format!("⌘{number}")),
+            "row {number} wears its number once ⌘ has been held 200ms"
+        );
+    }
+    assert!(!labelled(cx, window, "⌘6"), "only rows that exist have one");
+
+    // Another modifier is another shortcut, and releasing hides the numbers at once.
+    hold(
+        cx,
+        window,
+        gpui_kit::Modifiers {
+            shift: true,
+            ..command()
+        },
+    );
+    render_twice(cx, window);
+    assert!(!labelled(cx, window, "⌘1"), "⌘⇧ is not the jump shortcut");
+    hold(cx, window, command());
+    cx.executor().advance_clock(Duration::from_millis(250));
+    cx.run_until_parked();
+    render_twice(cx, window);
+    assert!(labelled(cx, window, "⌘1"));
+    hold(cx, window, gpui_kit::Modifiers::default());
+    render_twice(cx, window);
+    assert!(!labelled(cx, window, "⌘1"), "released");
+}
+
+#[gpui_kit::test]
+fn the_unpin_and_settle_notices_stack_by_kind_and_undo_names_what_failed(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    for thread in ["thread-failed", "thread-waiting"] {
+        cx.update(|cx| {
+            app.update(cx, |app, cx| app.offer_unpin_undo_for_test(thread, cx));
+        });
+        render_twice(cx, window);
+    }
+    assert!(
+        labelled(cx, window, "Unpinned 2 threads, ⌘Z to undo"),
+        "unpins stack in one notice"
+    );
+    assert!(labelled(cx, window, "Undo unpin"));
+
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.offer_settle_undo_for_test("thread-waiting", cx)
+        });
+    });
+    render_twice(cx, window);
+    assert!(
+        labelled(cx, window, "Settled 1 thread, ⌘Z to undo"),
+        "a different kind starts its own notice"
+    );
+
+    // With no server to take the commands, each undo says what failed.
+    press(cx, window, "cmd-z");
+    assert!(labelled(cx, window, "Failed to undo settle."));
+    for _ in 0..4 {
+        cx.executor().advance_clock(Duration::from_secs(6));
+        cx.run_until_parked();
+    }
+    render_twice(cx, window);
+    assert!(!labelled(cx, window, "Failed to undo settle."));
+}
+
+#[gpui_kit::test]
+fn command_click_picks_threads_and_the_menu_acts_on_all_of_them(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let picked = |cx: &mut TestAppContext| cx.read(|cx| app.read(cx).thread_selection_for_test());
+
+    hold(cx, window, command());
+    click_row(cx, window, "Failed thread card", MouseButton::Left);
+    click_row(cx, window, "Thread awaiting approval", MouseButton::Left);
+    hold(cx, window, gpui_kit::Modifiers::default());
+    assert_eq!(
+        picked(cx),
+        ["thread-failed", "thread-waiting"],
+        "⌘-click picks, in the order picked"
+    );
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some("thread-selected"),
+        "and opens nothing"
+    );
+
+    // A right-click on a picked row opens the bulk menu.
+    click_row(cx, window, "Failed thread card", MouseButton::Right);
+    for label in [
+        "Settle (2)",
+        "Regenerate titles (2)",
+        "Mark unread (2)",
+        "Delete (2)",
+    ] {
+        assert!(labelled(cx, window, label), "the bulk menu has `{label}`");
+    }
+    assert!(
+        !labelled(cx, window, "Rename thread"),
+        "and none of the single-thread rows"
+    );
+    press(cx, window, "escape");
+    assert!(!cx.read(|cx| app.read(cx).thread_menu_open_for_test()));
+
+    // Shift-click picks from the last thread picked to this one.
+    hold(
+        cx,
+        window,
+        gpui_kit::Modifiers {
+            shift: true,
+            ..gpui_kit::Modifiers::default()
+        },
+    );
+    click_row(
+        cx,
+        window,
+        "Unselected background working thread",
+        MouseButton::Left,
+    );
+    hold(cx, window, gpui_kit::Modifiers::default());
+    assert_eq!(
+        picked(cx),
+        ["thread-failed", "thread-waiting", "thread-working-bg"],
+        "the range from the anchor joins"
+    );
+    click_row(cx, window, "Failed thread card", MouseButton::Right);
+    assert!(labelled(cx, window, "Settle (3)"));
+    press(cx, window, "escape");
+
+    // The menu of a thread that is not picked is its own, and a plain click ends the selection.
+    click_row(cx, window, "Pinned active thread", MouseButton::Right);
+    assert!(labelled(cx, window, "Rename thread"));
+    press(cx, window, "escape");
+    click_row(cx, window, "Pinned active thread", MouseButton::Left);
+    assert!(picked(cx).is_empty(), "opening a thread ends the selection");
+    assert_eq!(open_thread(cx, &app).as_deref(), Some("thread-pinned"));
+}
+
+#[gpui_kit::test]
+fn search_results_are_slim_options_that_take_no_tab_stop(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    assert!(!sidebar_rows(cx, &app).is_empty());
+    search_for(cx, window, &app, "thread");
+    assert!(
+        sidebar_rows(cx, &app).is_empty(),
+        "no result is a row the keyboard can reach (tabIndex -1)"
+    );
+    assert!(
+        labelled(cx, window, "Failed thread card, conn-gpui"),
+        "a result is named by its title and project"
+    );
+    let results = cx.read(|cx| app.read(cx).search_results_for_test(cx));
+    assert!(
+        results.contains(&"thread-settled-1".to_owned()),
+        "settled threads are results"
+    );
+    assert!(
+        !labelled(cx, window, "Settle thread"),
+        "a result has no hover controls, the card's settle button among them"
+    );
+    // Clicking a result opens it, and the keyboard stays in the box.
+    click_row(
+        cx,
+        window,
+        "Failed thread card, conn-gpui",
+        MouseButton::Left,
+    );
+    assert_eq!(open_thread(cx, &app).as_deref(), Some("thread-failed"));
+    assert_eq!(cx.read(|cx| app.read(cx).search_text_for_test(cx)), "");
+}
+
+#[gpui_kit::test]
+fn keys_typed_while_an_input_method_composes_belong_to_it(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    search_for(cx, window, &app, "thr");
+    let before = search_highlight(cx, &app);
+    assert!(before.is_some(), "the search has results");
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.compose_in_search_for_test("e", window, cx)
+        });
+    });
+    render_twice(cx, window);
+
+    press(cx, window, "down");
+    assert_eq!(
+        search_highlight(cx, &app),
+        before,
+        "ArrowDown picks a candidate, it does not move the highlight"
+    );
+    press(cx, window, "enter");
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some("thread-selected"),
+        "Enter commits the composition, it does not open a result"
+    );
+    press(cx, window, "escape");
+    assert!(
+        !cx.read(|cx| app.read(cx).search_text_for_test(cx))
+            .is_empty(),
+        "Escape cancels the composition, it does not clear the search"
+    );
+}
+
+#[gpui_kit::test]
+fn opening_a_thread_the_project_filter_hides_widens_the_filter(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(two_project_shell(), cx);
+            app.select_workspace(Some("proj-other".to_owned()), cx);
+        });
+    });
+    render_twice(cx, window);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        Some("proj-other".to_owned())
+    );
+    cx.update(|cx| {
+        app.update(cx, |app, cx| app.select_thread("thread-failed", cx));
+    });
+    render_twice(cx, window);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        None,
+        "the thread's project is not in the filter, so the filter shows every project"
+    );
+    assert!(
+        labelled(cx, window, "Failed thread card"),
+        "and the thread's row is there"
+    );
+}
+
+#[gpui_kit::test]
+fn files_dropped_on_a_thread_row_open_that_thread(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let file = std::env::temp_dir().join(format!("conn-row-drop-{}.png", std::process::id()));
+    if let Err(err) = std::fs::write(&file, [0x89_u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        panic!("failed to write the dropped file: {err}");
+    }
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.thread_files_dropped("thread-failed", vec![file.clone()], window, cx);
+        });
+    });
+    render_twice(cx, window);
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some("thread-failed"),
+        "the drop opens the thread it landed on (the composer takes the files once it has a server)"
+    );
+    let _ = std::fs::remove_file(file);
+}
+
+#[gpui_kit::test]
+fn an_open_subagent_keeps_its_parents_row_current_for_the_walk(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let mut shell = kitchen_sink_shell();
+    let mut subagent = make_thread_shell(ThreadSeedSpec {
+        id: "thread-subagent",
+        project_id: "proj-parity",
+        title: "Delegated subagent",
+        status: "running",
+        activity_run_status: Some("running"),
+        pinned_at: None,
+        settled_at: None,
+        pending_kind: None,
+    });
+    subagent.lineage.parent_thread_id = Some("thread-waiting".to_owned());
+    subagent.lineage.relationship_to_parent =
+        Some(conn_contract::OrchestrationV2AppThreadLineageRelationshipToParent::Subagent);
+    shell.threads.push(subagent);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(shell, cx);
+            app.select_thread("thread-subagent", cx);
+        });
+    });
+    render_twice(cx, window);
+    let order = cx.read(|cx| app.read(cx).traversal_ids_for_test());
+    assert!(
+        !order.iter().any(|id| id == "thread-subagent"),
+        "a subagent has no row of its own"
+    );
+    let parent = order
+        .iter()
+        .position(|id| id == "thread-waiting")
+        .unwrap_or(0);
+
+    press(cx, window, "cmd-shift-]");
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        order.get(parent + 1).map(String::as_str),
+        "⌘⇧] walks on from the parent's row"
+    );
+}
+
+/// The kitchen sink with `count` older settled threads, newest first (`Older settled 00`...).
+fn kitchen_sink_with_older_settled(count: usize) -> ShellState {
+    let base = kitchen_sink_shell();
+    let older: Vec<(String, String, String)> = (0..count)
+        .map(|n| {
+            (
+                format!("old-{n:02}"),
+                format!("Older settled {n:02}"),
+                format!("2026-11-10T00:{:02}:00.000Z", 59 - n),
+            )
+        })
+        .collect();
+    let mut threads = base.threads.clone();
+    for (id, title, at) in &older {
+        threads.push(make_thread_shell(ThreadSeedSpec {
+            id,
+            project_id: "proj-parity",
+            title,
+            status: "completed",
+            activity_run_status: None,
+            pinned_at: None,
+            settled_at: Some(at),
+            pending_kind: None,
+        }));
+    }
+    ShellState::from_parts(base.projects, threads, Vec::new(), Some(100))
+}
+
+#[gpui_kit::test]
+fn the_settled_shelf_shows_ten_rows_and_its_footer_adds_a_page(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_with_older_settled(12), cx);
+            app.toggle_settled_shelf(cx);
+        });
+    });
+    render_twice(cx, window);
+    let rows = sidebar_rows(cx, &app);
+    assert!(rows.contains(&"old-08".to_owned()), "ten rows show");
+    assert!(!rows.contains(&"old-09".to_owned()));
+    assert!(
+        rows.contains(&"shelf:settled:more".to_owned()),
+        "the footer is a row the keyboard reaches"
+    );
+    // The list scrolls; what is below the fold is not on screen to be found.
+    reveal_row(cx, window, &app, "shelf:settled:more");
+    assert!(
+        labelled(cx, window, "Settled (13)"),
+        "the header counts every settled thread"
+    );
+    assert!(
+        labelled(cx, window, "Show 3 more"),
+        "the footer offers the rest"
+    );
+
+    click_row(cx, window, "Show 3 more", MouseButton::Left);
+    let rows = sidebar_rows(cx, &app);
+    assert!(rows.contains(&"old-11".to_owned()), "a page more shows");
+    assert!(
+        !rows.contains(&"shelf:settled:more".to_owned()),
+        "and the footer is gone"
+    );
+
+    // Closing the shelf keeps the choice, and drops the rows and the footer.
+    reveal_row(cx, window, &app, "shelf:settled");
+    click_row(cx, window, "Settled (13)", MouseButton::Left);
+    assert!(!sidebar_rows(cx, &app).contains(&"old-00".to_owned()));
+}
+
+fn reveal_row(cx: &mut TestAppContext, window: AnyWindowHandle, app: &Entity<ConnApp>, key: &str) {
+    cx.update(|cx| app.update(cx, |app, _| app.reveal_sidebar_row_for_test(key)));
+    render_twice(cx, window);
+}
+
+#[gpui_kit::test]
+fn enter_on_the_shelf_footer_shows_more_and_does_not_close_the_shelf(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_with_older_settled(12), cx);
+            app.toggle_settled_shelf(cx);
+        });
+    });
+    render_twice(cx, window);
+    focus_sidebar_row(cx, window, &app, "shelf:settled:more");
+    press(cx, window, "enter");
+    assert!(
+        sidebar_rows(cx, &app).contains(&"old-11".to_owned()),
+        "a page more shows"
+    );
+    assert!(cx.read(|cx| app.read(cx).settled_shelf_open_for_test()));
+}
+
+fn drag_row(
+    cx: &mut TestAppContext,
+    window: AnyWindowHandle,
+    from: Point<Pixels>,
+    to: Point<Pixels>,
+) {
+    let held = Some(MouseButton::Left);
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(from, None, cx);
+        window.pointer_down(from, MouseButton::Left, cx);
+        // Less than the drag distance is still a press.
+        window.pointer_move(
+            Point {
+                x: from.x,
+                y: from.y + px(3.0),
+            },
+            held,
+            cx,
+        );
+        window.pointer_move(
+            Point {
+                x: from.x,
+                y: from.y + px(12.0),
+            },
+            held,
+            cx,
+        );
+        window.pointer_move(to, held, cx);
+        window.render_frame(cx);
+    });
+}
+
+fn release(cx: &mut TestAppContext, window: AnyWindowHandle, at: Point<Pixels>) {
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_up(at, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+}
+
+fn row_center(cx: &mut TestAppContext, window: AnyWindowHandle, label: &str) -> Point<Pixels> {
+    match cx.update_window(window, |_, window, cx| center_by_label(window, cx, label)) {
+        Ok(at) => at,
+        Err(err) => panic!("failed to locate `{label}`: {err}"),
+    }
+}
+
+#[gpui_kit::test]
+fn dragging_a_row_over_pinned_pins_it_and_over_another_active_row_reorders(
+    cx: &mut TestAppContext,
+) {
+    use conn_state::sidebar_drag::{DropPlan, Section};
+    let (window, app) = mount_kitchen_sink(cx);
+    cx.update(|cx| app.update(cx, |app, _| app.allow_gestures_offline_for_test()));
+    let failed = row_center(cx, window, "Failed thread card");
+    let pinned = row_center(cx, window, "Pinned active thread");
+
+    drag_row(cx, window, failed, pinned);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).held_row_for_test()),
+        Some(("thread-failed".to_owned(), Some(Section::Pinned))),
+        "held over the pinned row it would land in Pinned"
+    );
+    assert!(
+        labelled(cx, window, "Pinned") && labelled(cx, window, "Active"),
+        "both sections show their labels while a row is held"
+    );
+    assert!(labelled(cx, window, "Pin"), "the held row wears the verb");
+    release(cx, window, pinned);
+    assert!(
+        matches!(
+            cx.read(|cx| app.read(cx).last_drop_for_test()),
+            Some(DropPlan::Pin { .. })
+        ),
+        "the drop pins"
+    );
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some("thread-selected"),
+        "the click that ends a drag opens nothing"
+    );
+    assert!(cx.read(|cx| app.read(cx).held_row_for_test()).is_none());
+
+    // Dropped on another active row, it takes that row's place among the active rows.
+    let order = cx.read(|cx| app.read(cx).traversal_ids_for_test());
+    let active: Vec<&String> = order
+        .iter()
+        .filter(|id| id.as_str() != "thread-pinned" && id.as_str() != "thread-settled-1")
+        .collect();
+    assert!(active.len() >= 3);
+    let title = |id: &str| match id {
+        "thread-failed" => "Failed thread card",
+        "thread-selected" => "Selected kitchen-sink thread",
+        "thread-waiting" => "Thread awaiting approval",
+        _ => "Unselected background working thread",
+    };
+    let first = row_center(cx, window, title(active[0]));
+    let last = row_center(cx, window, title(active[active.len() - 1]));
+    drag_row(cx, window, first, last);
+    release(cx, window, last);
+    assert!(
+        matches!(
+            cx.read(|cx| app.read(cx).last_drop_for_test()),
+            Some(DropPlan::MoveActive {
+                unpin: false,
+                unsettle: false,
+                ..
+            })
+        ),
+        "the drop reorders the active rows"
+    );
+}
+
+#[gpui_kit::test]
+fn dragging_an_active_row_to_the_settled_header_settles_it_and_escape_cancels(
+    cx: &mut TestAppContext,
+) {
+    use conn_state::sidebar_drag::{DropPlan, Section};
+    let (window, app) = mount_kitchen_sink(cx);
+    cx.update(|cx| app.update(cx, |app, _| app.allow_gestures_offline_for_test()));
+    let failed = row_center(cx, window, "Failed thread card");
+    let header = row_center(cx, window, "Settled (1)");
+
+    drag_row(cx, window, failed, header);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).held_row_for_test()),
+        Some(("thread-failed".to_owned(), Some(Section::Settled)))
+    );
+    assert!(
+        labelled(cx, window, "Settle"),
+        "the held row says what it would do"
+    );
+    press(cx, window, "escape");
+    assert!(
+        cx.read(|cx| app.read(cx).held_row_for_test()).is_none(),
+        "Escape lets go"
+    );
+    release(cx, window, header);
+    assert!(
+        cx.read(|cx| app.read(cx).last_drop_for_test()).is_none(),
+        "and nothing dropped"
+    );
+
+    drag_row(cx, window, failed, header);
+    release(cx, window, header);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).last_drop_for_test()),
+        Some(DropPlan::Settle)
+    );
+}
+
+#[gpui_kit::test]
+fn a_press_that_does_not_move_far_is_a_click_and_a_search_holds_rows_still(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_kitchen_sink(cx);
+    cx.update(|cx| app.update(cx, |app, _| app.allow_gestures_offline_for_test()));
+    let failed = row_center(cx, window, "Failed thread card");
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(failed, None, cx);
+        window.pointer_down(failed, MouseButton::Left, cx);
+        window.pointer_move(
+            Point {
+                x: failed.x,
+                y: failed.y + px(3.0),
+            },
+            Some(MouseButton::Left),
+            cx,
+        );
+        window.pointer_up(failed, MouseButton::Left, cx);
+        window.render_frame(cx);
+    });
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some("thread-failed"),
+        "a press that stayed within the drag distance opens the thread"
+    );
+}
+
+#[gpui_kit::test]
+fn the_settle_button_sweeps_the_rows_between_and_applies_them_on_release(cx: &mut TestAppContext) {
+    use crate::app::PressMode;
+    use conn_state::sidebar_drag::SweepAction;
+    let (window, app) = mount_kitchen_sink(cx);
+    cx.update(|cx| app.update(cx, |app, _| app.allow_gestures_offline_for_test()));
+    let order = cx.read(|cx| app.read(cx).traversal_ids_for_test());
+    let active: Vec<String> = order
+        .iter()
+        .filter(|id| id.as_str() != "thread-pinned" && id.as_str() != "thread-settled-1")
+        .cloned()
+        .collect();
+    let title = |id: &str| match id {
+        "thread-failed" => "Failed thread card",
+        "thread-selected" => "Selected kitchen-sink thread",
+        "thread-waiting" => "Thread awaiting approval",
+        _ => "Unselected background working thread",
+    };
+    let top = row_center(cx, window, title(&active[0]));
+    let third = row_center(cx, window, title(&active[2]));
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(top, None, cx);
+        app.update(cx, |app, cx| {
+            app.row_pressed(
+                &active[0],
+                top,
+                PressMode::Sweep(SweepAction::Settle),
+                true,
+                cx,
+            );
+        });
+        window.pointer_move(
+            Point {
+                x: top.x,
+                y: top.y + px(12.0),
+            },
+            Some(MouseButton::Left),
+            cx,
+        );
+        window.pointer_move(third, Some(MouseButton::Left), cx);
+        window.render_frame(cx);
+    });
+    assert_eq!(
+        cx.read(|cx| app.read(cx).swept_rows_for_test()),
+        active[..3].to_vec(),
+        "the rows from the button's row to the one under the pointer"
+    );
+    release(cx, window, third);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).last_sweep_for_test()),
+        Some(active[..3].to_vec()),
+        "release applies the sweep"
+    );
+}
+
+fn message_hit(thread_id: &str, snippet: &str) -> conn_contract::OrchestrationThreadSearchMatch {
+    match from_json(json!({
+        "threadId": thread_id,
+        "projectId": "proj-parity",
+        "source": "assistant",
+        "snippet": snippet,
+        "messageCreatedAt": "2026-11-22T10:00:00.000Z",
+    })) {
+        Ok(found) => found,
+        Err(err) => panic!("search match failed to decode: {err}"),
+    }
+}
+
+#[gpui_kit::test]
+fn a_thread_a_message_matches_is_listed_after_the_title_matches_with_the_message(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_kitchen_sink(cx);
+    search_for(cx, window, &app, "zebrafish");
+    assert!(
+        cx.read(|cx| app.read(cx).search_results_for_test(cx))
+            .is_empty(),
+        "no title says it"
+    );
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.message_matches_for_test(
+                "zebrafish",
+                vec![message_hit(
+                    "thread-failed",
+                    "…the zebrafish migration finished…",
+                )],
+                cx,
+            );
+        });
+    });
+    render_twice(cx, window);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).search_results_for_test(cx)),
+        ["thread-failed"],
+        "the thread is listed for its message"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).excerpt_for_test("thread-failed"))
+            .as_deref(),
+        Some("…the zebrafish migration finished…")
+    );
+    assert!(labelled(cx, window, "Failed thread card, conn-gpui"));
+}
+
+/// The launcher renders in the open, tab-less right panel, then gives way to a picked surface and
+/// does not return when a panel with tabs reopens. The "no tabs shows the launcher" rule itself
+/// is `LayoutState::shows_surface_launcher`; this drives its wiring through real frames, where
+/// debug assertions catch duplicate AX ids and hover styles.
+#[gpui_kit::test]
+fn the_right_panel_renders_the_launcher_then_a_picked_surface_without_panic(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let frames = |cx: &mut TestAppContext| {
+        for _ in 0..3 {
+            let _ = cx.update_window(window, |_, w, cx| w.render_frame(cx));
+            cx.run_until_parked();
+        }
+    };
+    let open = |cx: &mut TestAppContext| cx.update(|cx| app.read(cx).layout().right_panel_open);
+
+    cx.update(|cx| app.update(cx, |app, cx| app.toggle_right_panel(cx)));
+    frames(cx);
+    assert!(open(cx), "toggling opens the right panel on the launcher");
+
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_right_panel_tab(conn_state::RightPanelTab::Browser, cx);
+        });
+    });
+    frames(cx);
+
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.toggle_right_panel(cx);
+            app.toggle_right_panel(cx);
+        });
+    });
+    frames(cx);
+    assert!(open(cx), "reopening restores the panel with its tab");
+}
+
+// ---- the workspace rail: drag to reorder, right-click menu, remove ----
+
+fn rail_workspace(id: &str, name: &str) -> conn_desktop::orbit::OrbitWorkspace {
+    conn_desktop::orbit::OrbitWorkspace {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        color: "#3b82f6".to_owned(),
+        icon: None,
+        image: None,
+        project_refs: Vec::new(),
+        project_keys: Vec::new(),
+    }
+}
+
+fn mount_rail(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ConnApp>) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_rail_workspaces_for_test(
+                vec![
+                    rail_workspace("ws-a", "Alpha"),
+                    rail_workspace("ws-b", "Beta"),
+                    rail_workspace("ws-c", "Gamma"),
+                ],
+                cx,
+            );
+        });
+    });
+    render_twice(cx, window);
+    (window, app)
+}
+
+fn rail_ids(cx: &mut TestAppContext, app: &Entity<ConnApp>) -> Vec<String> {
+    cx.read(|cx| app.read(cx).rail_workspace_ids_for_test())
+}
+
+#[gpui_kit::test]
+fn dragging_a_workspace_tile_makes_room_and_a_drop_reorders_the_rail(cx: &mut TestAppContext) {
+    let (window, app) = mount_rail(cx);
+    let alpha = row_center(cx, window, "Workspace Alpha");
+    let gamma = row_center(cx, window, "Workspace Gamma");
+
+    drag_row(cx, window, alpha, gamma);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).rail_held_for_test()),
+        Some(("ws-a".to_owned(), "ws-c".to_owned())),
+        "held over Gamma's place"
+    );
+    assert!(
+        !labelled(cx, window, "Workspace Alpha"),
+        "the held tile has left its place for the pointer to carry"
+    );
+    assert_eq!(
+        rail_ids(cx, &app),
+        ["ws-a", "ws-b", "ws-c"],
+        "nothing is saved yet"
+    );
+
+    release(cx, window, gamma);
+    assert_eq!(rail_ids(cx, &app), ["ws-b", "ws-c", "ws-a"]);
+    assert!(cx.read(|cx| app.read(cx).rail_held_for_test()).is_none());
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        None,
+        "the click that ends a drag selects nothing"
+    );
+    let first = row_center(cx, window, "Workspace Beta");
+    let last = row_center(cx, window, "Workspace Alpha");
+    assert!(first.y < last.y, "the rail draws the new order");
+}
+
+#[gpui_kit::test]
+fn a_press_that_moves_less_than_six_pixels_selects_the_workspace(cx: &mut TestAppContext) {
+    let (window, app) = mount_rail(cx);
+    let beta = row_center(cx, window, "Workspace Beta");
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(beta, None, cx);
+        window.pointer_down(beta, MouseButton::Left, cx);
+        window.pointer_move(
+            Point {
+                x: beta.x,
+                y: beta.y + px(4.0),
+            },
+            Some(MouseButton::Left),
+            cx,
+        );
+        window.pointer_up(beta, MouseButton::Left, cx);
+        window.render_frame(cx);
+    });
+    assert!(cx.read(|cx| app.read(cx).rail_held_for_test()).is_none());
+    assert_eq!(rail_ids(cx, &app), ["ws-a", "ws-b", "ws-c"]);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        Some("ws-b".to_owned()),
+        "a click still selects"
+    );
+}
+
+#[gpui_kit::test]
+fn escape_lets_go_of_a_held_workspace_tile_without_a_drop(cx: &mut TestAppContext) {
+    let (window, app) = mount_rail(cx);
+    let alpha = row_center(cx, window, "Workspace Alpha");
+    let gamma = row_center(cx, window, "Workspace Gamma");
+    drag_row(cx, window, alpha, gamma);
+    assert!(cx.read(|cx| app.read(cx).rail_held_for_test()).is_some());
+    press(cx, window, "escape");
+    assert!(cx.read(|cx| app.read(cx).rail_held_for_test()).is_none());
+    release(cx, window, gamma);
+    assert_eq!(
+        rail_ids(cx, &app),
+        ["ws-a", "ws-b", "ws-c"],
+        "nothing moved"
+    );
+    assert!(labelled(cx, window, "Workspace Alpha"), "the tile is back");
+}
+
+#[gpui_kit::test]
+fn a_lone_workspace_has_nothing_to_reorder(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_rail_workspaces_for_test(vec![rail_workspace("ws-a", "Alpha")], cx);
+        });
+    });
+    render_twice(cx, window);
+    let alpha = row_center(cx, window, "Workspace Alpha");
+    drag_row(
+        cx,
+        window,
+        alpha,
+        Point {
+            x: alpha.x,
+            y: alpha.y + px(120.0),
+        },
+    );
+    assert!(cx.read(|cx| app.read(cx).rail_held_for_test()).is_none());
+    release(cx, window, alpha);
+}
+
+#[gpui_kit::test]
+fn right_clicking_a_workspace_tile_offers_remove_workspace(cx: &mut TestAppContext) {
+    let (window, app) = mount_rail(cx);
+    click_row(cx, window, "Workspace Beta", MouseButton::Right);
+    assert!(cx.read(|cx| app.read(cx).rail_menu_open_for_test()));
+    assert!(labelled(cx, window, "Remove workspace"));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        None,
+        "a right-click selects nothing"
+    );
+    press(cx, window, "escape");
+    assert!(
+        !cx.read(|cx| app.read(cx).rail_menu_open_for_test()),
+        "Escape closes the menu"
+    );
+}
+
+#[gpui_kit::test]
+fn removing_a_workspace_drops_it_and_the_active_one_falls_back_to_all_projects(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_rail(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_workspace(Some("ws-b".to_owned()), cx);
+            app.remove_workspace_for_test("ws-c", cx);
+        });
+    });
+    render_twice(cx, window);
+    assert_eq!(rail_ids(cx, &app), ["ws-a", "ws-b"]);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        Some("ws-b".to_owned()),
+        "removing another workspace keeps the one in scope"
+    );
+    cx.update(|cx| app.update(cx, |app, cx| app.remove_workspace_for_test("ws-b", cx)));
+    render_twice(cx, window);
+    assert_eq!(rail_ids(cx, &app), ["ws-a"]);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        None,
+        "the removed workspace was in scope"
+    );
+    assert!(!labelled(cx, window, "Workspace Beta"));
+}
+
+// ---- the panel seams: drag to resize, double-click to reset ----
+
+fn seam_x(cx: &mut TestAppContext, window: AnyWindowHandle, label: &str) -> Point<Pixels> {
+    row_center(cx, window, label)
+}
+
+fn drag_seam(
+    cx: &mut TestAppContext,
+    window: AnyWindowHandle,
+    from: Point<Pixels>,
+    dx: f32,
+) -> Point<Pixels> {
+    let to = Point {
+        x: from.x + px(dx),
+        y: from.y,
+    };
+    let held = Some(MouseButton::Left);
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(from, None, cx);
+        window.pointer_down(from, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.pointer_move(to, held, cx);
+        window.render_frame(cx);
+    });
+    to
+}
+
+fn layout_widths(cx: &mut TestAppContext, app: &Entity<ConnApp>) -> (f32, f32) {
+    cx.read(|cx| {
+        let layout = app.read(cx).layout();
+        (layout.sidebar_width, layout.right_panel_width)
+    })
+}
+
+fn mount_with_right_panel(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ConnApp>) {
+    let (window, app) = mount_app(cx);
+    if !cx.read(|cx| app.read(cx).layout().right_panel_open) {
+        cx.update(|cx| app.update(cx, |app, cx| app.toggle_right_panel(cx)));
+    }
+    render_twice(cx, window);
+    (window, app)
+}
+
+#[gpui_kit::test]
+fn dragging_the_sidebar_seam_widens_the_sidebar_beside_an_open_right_panel(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_with_right_panel(cx);
+    let (before, panel) = layout_widths(cx, &app);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, 60.0);
+    let (during, _) = layout_widths(cx, &app);
+    release(cx, window, to);
+    let (after, panel_after) = layout_widths(cx, &app);
+    assert!(
+        (after - (before + 60.0)).abs() < 1.5,
+        "the sidebar follows the pointer: {before} -> {after}"
+    );
+    assert_eq!(during, after, "and keeps that width on release");
+    assert!(
+        panel_after >= conn_state::RIGHT_PANEL_MIN_WIDTH && panel_after <= panel,
+        "the right panel gives way only as far as it must: {panel} -> {panel_after}"
+    );
+}
+
+#[gpui_kit::test]
+fn dragging_the_sidebar_seam_stops_at_the_minimum_and_the_maximum(cx: &mut TestAppContext) {
+    let (window, app) = mount_with_right_panel(cx);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, -600.0);
+    release(cx, window, to);
+    assert_eq!(layout_widths(cx, &app).0, conn_state::SIDEBAR_MIN_WIDTH);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, 1000.0);
+    release(cx, window, to);
+    let (sidebar, _) = layout_widths(cx, &app);
+    assert!(
+        sidebar <= conn_state::SIDEBAR_MAX_WIDTH && sidebar > conn_state::SIDEBAR_MIN_WIDTH,
+        "it grows to the cap and no further: {sidebar}"
+    );
+}
+
+#[gpui_kit::test]
+fn double_clicking_a_seam_resets_its_width(cx: &mut TestAppContext) {
+    let (window, app) = mount_with_right_panel(cx);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, 80.0);
+    release(cx, window, to);
+    assert_ne!(layout_widths(cx, &app).0, conn_state::SIDEBAR_DEFAULT_WIDTH);
+    render_twice(cx, window);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(seam, None, cx);
+        // The test pointer always reports one click; the second press of a double click says two.
+        window.pointer_down(seam, MouseButton::Left, cx);
+        window.pointer_up(seam, MouseButton::Left, cx);
+        window.dispatch_event(
+            gpui_kit::InputEvent::to_platform_input(gpui_kit::MouseDownEvent {
+                button: MouseButton::Left,
+                position: seam,
+                modifiers: window.modifiers(),
+                click_count: 2,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.pointer_up(seam, MouseButton::Left, cx);
+        window.render_frame(cx);
+    });
+    assert_eq!(layout_widths(cx, &app).0, conn_state::SIDEBAR_DEFAULT_WIDTH);
+}
+
+#[gpui_kit::test]
+fn dragging_the_right_panel_seam_resizes_the_panel(cx: &mut TestAppContext) {
+    let (window, app) = mount_with_right_panel(cx);
+    let (_, before) = layout_widths(cx, &app);
+    let seam = seam_x(cx, window, "Resize panel");
+    let to = drag_seam(cx, window, seam, -80.0);
+    release(cx, window, to);
+    let (_, after) = layout_widths(cx, &app);
+    assert!(
+        (after - (before + 80.0)).abs() < 1.5,
+        "dragging left widens the panel: {before} -> {after}"
+    );
+}
+
+#[gpui_kit::test]
+fn a_seam_drag_keeps_the_width_for_the_next_launch_and_a_reset_forgets_it(cx: &mut TestAppContext) {
+    let (window, app) = mount_with_right_panel(cx);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).saved_panel_widths_for_test()),
+        (None, None)
+    );
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, 50.0);
+    release(cx, window, to);
+    let (sidebar, _) = layout_widths(cx, &app);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).saved_panel_widths_for_test()),
+        (Some(sidebar), None),
+        "the width it ended on is kept"
+    );
+    // A press that goes nowhere keeps nothing new.
+    render_twice(cx, window);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, 0.0);
+    release(cx, window, to);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).saved_panel_widths_for_test()).0,
+        Some(sidebar)
+    );
+}
+
+#[gpui_kit::test]
+fn a_wide_sidebar_squeezes_the_right_panel_as_drawn_and_keeps_its_width(cx: &mut TestAppContext) {
+    let (window, app) = mount_with_right_panel(cx);
+    let (_, panel) = layout_widths(cx, &app);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, 400.0);
+    release(cx, window, to);
+    let (sidebar, panel_after) = layout_widths(cx, &app);
+    assert_eq!(sidebar, conn_state::SIDEBAR_MAX_WIDTH);
+    assert_eq!(
+        panel_after, panel,
+        "the width kept for the panel is not touched"
+    );
+    let drawn = cx.read(|cx| {
+        app.read(cx)
+            .right_panel_effective_width_for_test(TEST_WINDOW_WIDTH)
+    });
+    // The chat keeps 360: 1440 - 54 - 480 - 360 = 546.
+    assert_eq!(drawn, 546.0);
+}
+
+#[gpui_kit::test]
+fn threads_of_a_linked_environment_are_listed_and_name_their_environment_in_the_hover_card(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            let project: ProjectShell = match from_json(json!({
+                "id": "proj-mini",
+                "title": "orbit",
+                "workspaceRoot": "/Users/mini/orbit",
+                "defaultModelSelection": null,
+                "scripts": [],
+                "createdAt": "2026-11-20T09:00:00.000Z",
+                "updatedAt": "2026-11-22T15:00:00.000Z",
+            })) {
+                Ok(project) => project,
+                Err(err) => panic!("linked ProjectShell failed: {err}"),
+            };
+            let thread = make_thread_shell(ThreadSeedSpec {
+                id: "thread-mini",
+                project_id: "proj-mini",
+                title: "Map Stalled Orbit Threads and PRs",
+                status: "completed",
+                activity_run_status: None,
+                pinned_at: None,
+                settled_at: None,
+                pending_kind: None,
+            });
+            app.add_linked_shell_for_test(
+                "mini",
+                "mini",
+                ShellState::from_parts(vec![project], vec![thread], Vec::new(), Some(1)),
+                cx,
+            );
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        // The merged list shows the other environment's thread beside the primary one's, and
+        // its row carries no machine icon: the hover card names the environment.
+        let _ = window.find_by_label("Map Stalled Orbit Threads and PRs");
+        let _ = window.find_by_label("Failed thread card");
+        assert!(
+            window.try_find_by_label("Environment mini").is_none(),
+            "a row shows no environment icon"
+        );
+    });
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.open_thread_hover_for_test("thread-mini", cx)
+        });
+    });
+    for _ in 0..3 {
+        let _ = cx.update_window(window, |_, w, cx| w.render_frame(cx));
+        cx.run_until_parked();
+    }
+    assert!(
+        cx.update_window(window, |_, w, cx| has_label(w, cx, "Environment mini"))
+            .unwrap_or(false),
+        "the hover card names the environment"
+    );
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert_eq!(
+            app.thread_environment_for_test("thread-mini").as_deref(),
+            Some("mini")
+        );
+        assert_eq!(app.thread_environment_for_test("thread-failed"), None);
+    });
+}
+
+fn linked_mini_shell(project_root: &str, thread_title: &str) -> ShellState {
+    let project: ProjectShell = match from_json(json!({
+        "id": "proj-mini",
+        "title": "No project",
+        "workspaceRoot": project_root,
+        "defaultModelSelection": null,
+        "scripts": [],
+        "createdAt": "2026-11-20T09:00:00.000Z",
+        "updatedAt": "2026-11-22T15:00:00.000Z",
+    })) {
+        Ok(project) => project,
+        Err(err) => panic!("linked ProjectShell failed: {err}"),
+    };
+    let mut thread = make_thread_shell(ThreadSeedSpec {
+        id: "thread-mini",
+        project_id: "proj-mini",
+        title: thread_title,
+        status: "completed",
+        activity_run_status: None,
+        pinned_at: None,
+        settled_at: None,
+        pending_kind: None,
+    });
+    // A scratch thread has no branch.
+    thread.branch = None;
+    ShellState::from_parts(vec![project], vec![thread], Vec::new(), Some(1))
+}
+
+#[gpui_kit::test]
+fn a_saved_environment_lists_its_threads_while_it_is_offline_and_its_switch_takes_them_out_and_back(
+    cx: &mut TestAppContext,
+) {
+    let (_window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            // Restored from its last snapshot: no connection, as when it is asleep.
+            app.add_linked_shell_for_test(
+                "studio",
+                "superheroicons / studio",
+                linked_mini_shell("/work/studio", "Icon audit"),
+                cx,
+            );
+        });
+    });
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.merged_thread_ids_for_test()
+                .contains(&"thread-mini".to_owned())
+        );
+        let rows = app.linked_settings_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "superheroicons / studio");
+        assert!(rows[0].enabled);
+        assert_eq!(
+            rows[0].state,
+            crate::orbit_sync::LinkedEnvironmentState::Offline
+        );
+        assert_eq!(rows[0].thread_count, 1);
+    });
+
+    // Conn's switch: off takes the environment's threads out of the list and keeps it saved.
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_linked_environment_enabled("studio", false, cx);
+        });
+    });
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            !app.merged_thread_ids_for_test()
+                .contains(&"thread-mini".to_owned())
+        );
+        let rows = app.linked_settings_rows();
+        assert_eq!(
+            rows.len(),
+            1,
+            "it stays listed in Settings, to switch back on"
+        );
+        assert!(!rows[0].enabled);
+        assert_eq!(
+            rows[0].state,
+            crate::orbit_sync::LinkedEnvironmentState::Off
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_scratch_thread_on_another_machine_names_its_machine_on_the_meta_line(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.add_linked_shell_for_test(
+                "mini",
+                "mini",
+                linked_mini_shell("/Users/mini/.conn/scratch", "Quick question"),
+                cx,
+            );
+            app.set_linked_scratch_root_for_test("mini", "/Users/mini/.conn/scratch");
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        // Conn's `scratchMachineLabel`: the scratch project's thread has no branch, so the
+        // meta line says which machine it is on instead.
+        let machine = window.find_by_label("Machine mini");
+        let row = window.find_by_label("Quick question");
+        assert!(row.bounds().contains(&machine.bounds().center()));
+        // It names the machine once: the title line carries no second icon.
+        assert!(
+            window.try_find_by_label("Environment mini").is_none(),
+            "a scratch row shows the machine label, not the icon"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn the_shelf_counts_older_settled_threads_of_every_environment(cx: &mut TestAppContext) {
+    let (_window, app) = mount_app(cx);
+    let item = |before: &str, project: &str, count: i64| {
+        from_json(json!({
+            "kind": "snapshot",
+            "snapshot": {
+                "schemaVersion": 1,
+                "snapshotSequence": 5,
+                "projects": [{
+                    "id": project, "title": project, "workspaceRoot": format!("/w/{project}"),
+                    "defaultModelSelection": null, "scripts": [],
+                    "createdAt": "2026-11-20T09:00:00.000Z", "updatedAt": "2026-11-22T15:00:00.000Z"
+                }],
+                "threads": [],
+                "archivedThreads": [],
+                "olderSettled": { "before": before, "asOfSequence": 5,
+                    "counts": [{ "projectId": project, "count": count }] }
+            }
+        }))
+        .expect("snapshot decodes")
+    };
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            let mut primary = ShellState::default();
+            primary.apply(item("2026-11-10T00:00:00.000Z", "proj-primary", 3));
+            app.set_shell(primary, cx);
+            let mut mini = ShellState::default();
+            mini.apply(item("2026-11-12T00:00:00.000Z", "proj-mini", 5));
+            app.add_linked_shell_for_test("mini", "mini", mini, cx);
+        });
+    });
+    cx.read(|cx| {
+        // 3 on this environment and 5 on mini: both count toward "Show more".
+        assert_eq!(app.read(cx).unloaded_older_settled_for_test(), 8);
+    });
+}
+
+#[gpui_kit::test]
+fn the_composer_reads_the_catalog_of_the_open_threads_environment(cx: &mut TestAppContext) {
+    let (_window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.add_linked_shell_for_test(
+                "mini",
+                "mini",
+                linked_mini_shell("/Users/mini/work", "Mini thread"),
+                cx,
+            );
+            app.set_linked_config_for_test(
+                "mini",
+                std::sync::Arc::new(conn_state::providers::ServerConfigState::new()),
+            );
+            // A thread of this environment: its own catalog.
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+            assert!(app.active_server_config_is_primary_for_test());
+            // A thread of mini: mini's catalog.
+            app.set_thread_for_test(
+                "thread-mini".to_owned(),
+                ThreadState::new("thread-mini"),
+                cx,
+            );
+            assert!(!app.active_server_config_is_primary_for_test());
+            // And back.
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+            assert!(app.active_server_config_is_primary_for_test());
+        });
+    });
+}
+
+/// The context meter's popover opens when the pointer rests on the meter and closes when it
+/// leaves the meter and the popover, with web's 150ms delays; a click pins it open.
+#[gpui_kit::test]
+fn the_context_meter_popover_closes_when_the_pointer_leaves(cx: &mut TestAppContext) {
+    use std::time::Duration;
+
+    let (_window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let composer = cx.update(|cx| app.read(cx).chat_for_test().read(cx).composer_for_test());
+    let open =
+        |cx: &mut TestAppContext| cx.update(|cx| composer.read(cx).context_meter_open_for_test());
+    let settle = |cx: &mut TestAppContext| {
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+    };
+    let delay = Duration::from_millis(150);
+
+    cx.update(|cx| {
+        composer.update(cx, |composer, cx| {
+            composer.set_context_window(Some(Default::default()), cx);
+            composer.meter_trigger_hover(true, delay, cx);
+        });
+    });
+    assert!(!open(cx), "hover alone waits out the open delay");
+    settle(cx);
+    assert!(open(cx), "resting on the meter opens the popover");
+
+    cx.update(|cx| composer.update(cx, |c, cx| c.meter_trigger_hover(false, delay, cx)));
+    settle(cx);
+    assert!(!open(cx), "leaving the meter closes the popover");
+
+    // A click pins it; the pointer leaving then does not close it.
+    cx.update(|cx| {
+        composer.update(cx, |c, cx| {
+            c.meter_trigger_hover(true, delay, cx);
+            c.meter_click(cx);
+            c.meter_trigger_hover(false, delay, cx);
+        });
+    });
+    settle(cx);
+    assert!(open(cx), "a clicked popover stays open");
+}
+
+/// Every right-panel surface exposes its controls to Nick's annotator through the AX tree: each
+/// interactive element has a label, and no two elements share one path (a duplicate id).
+#[gpui_kit::test]
+fn every_right_panel_surface_has_labelled_unique_ax_controls(cx: &mut TestAppContext) {
+    use conn_state::RightPanelTab;
+    let (window, app) = mount_with_right_panel(cx);
+    let interactive = |role: &str| {
+        [
+            "Button",
+            "Tab",
+            "MenuItem",
+            "Switch",
+            "CheckBox",
+            "RadioButton",
+            "Link",
+            "ComboBox",
+        ]
+        .contains(&role)
+    };
+    let mut problems: Vec<String> = Vec::new();
+    for tab in RightPanelTab::MENU_ORDER {
+        cx.update(|cx| app.update(cx, |app, cx| app.select_right_panel_tab(tab, cx)));
+        render_twice(cx, window);
+        let elements = cx
+            .update_window(window, |_, window, _| window.elements())
+            .unwrap_or_default();
+        let mut seen = std::collections::HashSet::new();
+        for element in &elements {
+            let path = format!("{:?}", element.path());
+            if !seen.insert(path.clone()) {
+                problems.push(format!("{tab:?}: duplicate AX path {path}"));
+            }
+            let role = element.role().map(|r| format!("{r:?}")).unwrap_or_default();
+            let unlabelled = element.label().is_none_or(|l| l.trim().is_empty());
+            if interactive(&role) && unlabelled && element.visible() {
+                problems.push(format!("{tab:?}: {role} without a label at {path}"));
+            }
+        }
+        eprintln!("AX audit {tab:?}: {} elements", elements.len());
+    }
+    assert!(problems.is_empty(), "AX problems:\n{}", problems.join("\n"));
+}
+
+#[gpui_kit::test]
+fn a_threads_linked_issues_are_in_the_hover_card_and_not_on_the_row(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    let mut shell = kitchen_sink_shell();
+    let issue = |key: &str| {
+        json!({
+            "tracker": "github", "host": "github.com", "scope": "nckrtl/conn", "key": key,
+            "projectId": "p", "url": "https://github.com/nckrtl/conn/issues/1", "source": "agent",
+            "linkedAt": "2026-11-23T10:00:00.000Z", "displayKey": format!("#{key}"), "title": "t"
+        })
+    };
+    for thread in &mut shell.threads {
+        if thread.id == "thread-pinned" {
+            let mut value = serde_json::to_value(&*thread).expect("a thread serializes");
+            value["issues"] = json!([issue("1"), issue("2"), issue("3")]);
+            *thread = from_json(value).expect("a thread with issues decodes");
+        }
+    }
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(shell, cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    assert!(
+        !cx.update_window(window, |_, w, cx| has_label(w, cx, "3 linked issues"))
+            .unwrap_or(true),
+        "the row no longer shows the linked issues"
+    );
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.open_thread_hover_for_test("thread-pinned", cx)
+        });
+    });
+    for _ in 0..3 {
+        let _ = cx.update_window(window, |_, w, cx| w.render_frame(cx));
+        cx.run_until_parked();
+    }
+    assert!(
+        cx.update_window(window, |_, w, cx| has_label(w, cx, "3 linked issues"))
+            .unwrap_or(false),
+        "the hover card lists them"
+    );
+}
+
+#[gpui_kit::test]
+fn hovering_the_settle_button_highlights_only_its_icon(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    // The icon takes its colour from the button's group on hover; a debug build trips on a
+    // second hover style on the same element, so moving the pointer over it must not panic.
+    let _ = cx.update_window(window, |_, window, cx| {
+        let row = center_by_label(window, cx, "Failed thread card");
+        window.pointer_move(row, None, cx);
+        window.render_frame(cx);
+        // The settle icon sits at the right end of the title line; move across the row's width.
+        for dx in [60.0, 120.0, 160.0] {
+            let over = Point {
+                x: px(f32::from(row.x) + dx),
+                y: px(f32::from(row.y) - 8.0),
+            };
+            window.pointer_move(over, None, cx);
+            window.render_frame(cx);
+        }
+    });
+}
+
+fn mount_with_two_environments(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ConnApp>) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            // The rail starts with no workspace, not the ones saved on this machine.
+            app.set_rail_workspaces_for_test(Vec::new(), cx);
+            app.add_linked_shell_for_test(
+                "mini",
+                "mini",
+                linked_mini_shell("/Users/mini/work", "Mini thread"),
+                cx,
+            );
+        });
+    });
+    (window, app)
+}
+
+#[gpui_kit::test]
+fn the_rail_plus_opens_the_workspace_editor_and_a_created_workspace_scopes_the_sidebar(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_with_two_environments(cx);
+    // The `+` is a workspace editor, not the folder picker.
+    let plus = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "New workspace")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("no rail + button: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_down(plus, MouseButton::Left, cx);
+        window.pointer_up(plus, MouseButton::Left, cx);
+        window.render_frame(cx);
+    });
+    let editor = cx
+        .read(|cx| app.read(cx).workspace_editor_for_test())
+        .expect("the + opens the workspace editor");
+
+    // The picker lists the projects of every connected environment, under their machines.
+    let listed = cx.read(|cx| editor.read(cx).listed_for_test());
+    assert!(
+        listed.contains(&"primary:proj-parity".to_owned()),
+        "{listed:?}"
+    );
+    assert!(listed.contains(&"mini:proj-mini".to_owned()), "{listed:?}");
+
+    let _ = cx.update_window(window, |_, window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_name_for_test("  Orbit   work ", window, cx);
+            editor.style_for_test("violet", Some("rocket"), cx);
+            editor.toggle_for_test("mini:proj-mini", true, cx);
+            editor.save_for_test(cx);
+        });
+    });
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let saved = app.workspaces_for_test();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(
+            saved[0].name, "Orbit work",
+            "the name is trimmed and collapsed"
+        );
+        assert_eq!(saved[0].color, "violet");
+        assert_eq!(saved[0].icon.as_deref(), Some("rocket"));
+        assert_eq!(saved[0].project_refs, ["mini:proj-mini"]);
+        assert_eq!(
+            app.active_workspace_for_test(),
+            Some(saved[0].id.as_str()),
+            "a created workspace is selected"
+        );
+        assert!(
+            app.workspace_editor_for_test().is_none(),
+            "the editor closes"
+        );
+    });
+    // The sidebar now shows only the threads of its projects.
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        let _ = window.find_by_label("Mini thread");
+        assert!(
+            window.try_find_by_label("Failed thread card").is_none(),
+            "a thread of another project is out of the workspace"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn the_workspace_editor_refuses_a_taken_name_edits_and_deletes(cx: &mut TestAppContext) {
+    let (window, app) = mount_with_two_environments(cx);
+    let create = |cx: &mut TestAppContext, name: &str| {
+        let _ = cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| app.open_workspace_editor(None, window, cx));
+        });
+        let editor = cx
+            .read(|cx| app.read(cx).workspace_editor_for_test())
+            .expect("an editor");
+        let _ = cx.update_window(window, |_, window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_name_for_test(name, window, cx);
+                editor.save_for_test(cx);
+            });
+        });
+        editor
+    };
+    let first = create(cx, "Orbit");
+    cx.read(|cx| {
+        assert!(
+            app.read(cx).workspace_editor_for_test().is_none(),
+            "{:?}",
+            first.read(cx).error_for_test()
+        )
+    });
+
+    // The same name in another case is taken: the editor stays open and says why.
+    let second = create(cx, "orbit");
+    cx.read(|cx| {
+        assert!(app.read(cx).workspace_editor_for_test().is_some());
+        assert_eq!(
+            second.read(cx).error_for_test().as_deref(),
+            Some("A workspace named \"orbit\" already exists.")
+        );
+        assert_eq!(app.read(cx).workspaces_for_test().len(), 1);
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        second.update(cx, |editor, cx| {
+            editor.set_name_for_test("", window, cx);
+            editor.save_for_test(cx);
+        });
+    });
+    cx.read(|cx| {
+        assert_eq!(
+            second.read(cx).error_for_test().as_deref(),
+            Some("Give the workspace a name.")
+        );
+    });
+
+    // Edit… opens the workspace with its own values, and a save renames it in place.
+    let id = cx.read(|cx| app.read(cx).workspaces_for_test()[0].id.clone());
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.workspace_editor_for_test_close(window, cx);
+            app.open_workspace_editor(Some(id.clone()), window, cx);
+        });
+    });
+    let editing = cx
+        .read(|cx| app.read(cx).workspace_editor_for_test())
+        .expect("the Edit… editor");
+    let _ = cx.update_window(window, |_, window, cx| {
+        editing.update(cx, |editor, cx| {
+            editor.set_name_for_test("Orbit core", window, cx);
+            editor.save_for_test(cx);
+        });
+    });
+    cx.read(|cx| {
+        let saved = app.read(cx).workspaces_for_test();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].id, id);
+        assert_eq!(saved[0].name, "Orbit core");
+    });
+
+    // Delete removes it, and the sidebar shows every project again.
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.open_workspace_editor(Some(id.clone()), window, cx)
+        });
+    });
+    let deleting = cx
+        .read(|cx| app.read(cx).workspace_editor_for_test())
+        .expect("an editor");
+    cx.update(|cx| deleting.update(cx, |editor, cx| editor.delete_for_test(cx)));
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.workspaces_for_test().is_empty());
+        assert_eq!(app.active_workspace_for_test(), None);
+    });
+}
+
+#[gpui_kit::test]
+fn a_letter_an_icon_and_an_image_workspace_tile_have_the_same_size_and_shape(
+    cx: &mut TestAppContext,
+) {
+    let picture = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        120,
+        80,
+        image::Rgba([250, 250, 250, 255]),
+    ));
+    let url = crate::workspace_image::data_url_from_image(&picture).expect("a data url");
+    let workspace = |id: &str, name: &str, icon: Option<&str>, image: Option<&str>| {
+        conn_desktop::orbit::OrbitWorkspace {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            color: "blue".to_owned(),
+            icon: icon.map(str::to_owned),
+            image: image.map(str::to_owned),
+            project_refs: Vec::new(),
+            project_keys: Vec::new(),
+        }
+    };
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_rail_workspaces_for_test(
+                vec![
+                    workspace("w-letter", "Letter", None, None),
+                    workspace("w-icon", "Icon", Some("rocket"), None),
+                    workspace("w-image", "Image", None, Some(&url)),
+                ],
+                cx,
+            );
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        let sizes: Vec<(f32, f32)> = ["Badge Letter", "Badge Icon", "Badge Image"]
+            .iter()
+            .map(|label| {
+                let bounds = window.find_by_label(label).bounds();
+                (f32::from(bounds.size.width), f32::from(bounds.size.height))
+            })
+            .collect();
+        // `size-7`: every kind is the same 28px square inside the 38px button.
+        assert_eq!(sizes, vec![(28.0, 28.0); 3], "{sizes:?}");
+        let button = window.find_by_label("Workspace Image").bounds();
+        assert_eq!(
+            (f32::from(button.size.width), f32::from(button.size.height)),
+            (38.0, 38.0)
+        );
+    });
 }

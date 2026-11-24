@@ -46,10 +46,11 @@ export function followOrbitOperationNotices(input: {
   let waiter: { after: number | null; wake: () => void } | null = null;
 
   const notify = (sequence: number | null) => {
+    // A resubscribe asks for a read whatever the caller has read: no sequence may replace it.
     pending =
-      pending === null || sequence === null || pending.sequence === null
-        ? { sequence }
-        : { sequence: Math.max(pending.sequence, sequence) };
+      pending?.sequence === null || sequence === null
+        ? { sequence: null }
+        : { sequence: pending === null ? sequence : Math.max(pending.sequence, sequence) };
     if (waiter !== null && isNewer(pending.sequence, waiter.after)) {
       pending = null;
       const { wake } = waiter;
@@ -64,9 +65,11 @@ export function followOrbitOperationNotices(input: {
     root: true,
     channel: `private-operation.${input.operationId}`,
     onStatus: (status) => {
+      const wasLive = live;
       live = status === "live";
-      // Notices sent before the subscribe went nowhere: read once now, as on a reconnect.
-      if (live) notify(null);
+      // Notices sent before the subscribe went nowhere: read once now, as on a reconnect. A lost
+      // socket also ends the wait, so the next one reads and subscribes again without delay.
+      if (live || wasLive) notify(null);
     },
     onEvent: (event, data) => {
       if (event === "operation.updated") notify(noticeSequence(data));
@@ -104,7 +107,7 @@ export function followOrbitOperationNotices(input: {
 
 /**
  * The wait before the next read of an Operation. With notices: the next one, or the slow
- * fallback read (15 s live, 10 s while the socket is down, which also resubscribes). Without:
+ * fallback read (15 s live, 10 s while the socket is down; such a wait first resubscribes). Without:
  * the caller's poll wait. Never longer than `maxMs`.
  */
 export async function waitForOperationRead(input: {
@@ -118,6 +121,7 @@ export async function waitForOperationRead(input: {
   const notices = input.notices;
   if (notices === null) return input.sleep(Math.min(input.pollMs, maxMs));
   const live = notices.live();
+  if (!live) notices.reconnect();
   const fallback = live ? OPERATION_LIVE_REREAD_MS : OPERATION_OFFLINE_POLL_MS;
   let noticed = false;
   await Promise.race([
@@ -128,7 +132,6 @@ export async function waitForOperationRead(input: {
       // A sleep that ends after a notice belongs to a wait that is over.
       if (noticed) return;
       notices.abandonWait();
-      if (!live) notices.reconnect();
     }),
   ]);
 }

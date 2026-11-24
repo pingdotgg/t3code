@@ -19,6 +19,7 @@ conn-contract.workspace = true
 conn-state.workspace = true
 conn-theme.workspace = true
 conn-web.workspace = true
+fancy-regex = "0.16"
 gpui-kit.workspace = true
 # Optional direct dependency solely to activate `gpui-pre`'s built-in Subsecond hot-reload feature
 # (which `gpui-kit` does not forward). Debug-only inside `gpui-pre/build.rs`.
@@ -38,6 +39,11 @@ tokio.workspace = true
 url.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Font weight axes and the weights a family has, read from CoreText (`fonts/axes.rs`). Already in
+# the build via GPUI's text system.
+core-foundation = "0.10"
+core-graphics = "0.24"
+core-text = "21.0"
 # Tag each window's CAMetalLayer as sRGB (`colour_space.rs`), matching
 # `.refs/threadbear/desktop/gpui/Cargo.toml`. Already in the build via GPUI.
 objc2 = "0.6"
@@ -57,8 +63,6 @@ tokio-tungstenite.workspace = true
 # Scripted UI automation and screenshot capture hook for visual verification in nick-vm
 # (modeled on .refs/threadbear/desktop/gpui/src/automation.rs). Never enabled in release builds.
 automation = ["gpui-kit/test-support"]
-# Embedded Chromium (CEF-on-demand) browser panel support via conn-web.
-cef = ["conn-web/cef"]
 # In-process Rust hot-patching via GPUI's built-in Subsecond integration (`dx serve --hot-patch`).
 hot-reload = ["dep:gpui-pre"]
 

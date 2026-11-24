@@ -132,13 +132,22 @@ pub(crate) fn delegated_task_request(tx: &mut Tx<'_>, c: Value) -> Outcome {
         child["worktreePath"] = json!(path);
         child["branch"] = c["branch"].clone();
     }
-    tx.append(Draft::new(&child_id, "thread.created", child).command(Some(&command_id)))?;
+    // T3 names the child's model instance on every event of the request.
+    let instance = c["modelSelection"]["instanceId"]
+        .as_str()
+        .map(str::to_owned);
+    tx.append(
+        Draft::new(&child_id, "thread.created", child)
+            .command(Some(&command_id))
+            .provider_instance(instance.as_deref()),
+    )?;
 
     let draft = |event_type, payload| {
         Draft::new(&parent_id, event_type, payload)
             .run(Some(&parent_run_id))
             .node(Some(&node_id))
             .command(Some(&command_id))
+            .provider_instance(instance.as_deref())
     };
     tx.append(draft(
         "node.updated",
@@ -245,7 +254,18 @@ pub(crate) fn on_run_end(
         let status = run["status"].as_str().unwrap_or("failed").to_owned();
         if TERMINAL.contains(&status.as_str()) {
             let now = tx.now().to_owned();
-            let result = run_result(tx, thread_id, run_id)?;
+            let result = match run_result(tx, thread_id, run_id)? {
+                None if status == "completed" => {
+                    let notice = tx.entity(
+                        thread_id,
+                        "turnItems",
+                        &commands::provider_stop_reason_id(run_id),
+                    )?;
+                    let reason = notice.as_ref().and_then(|n| n["message"].as_str());
+                    Some(commands::completed_without_result(reason))
+                }
+                result => result,
+            };
             let cancelled = row["cancelledRunId"] == run_id;
             row["status"] = json!(if cancelled && status == "completed" {
                 "interrupted"
@@ -265,7 +285,7 @@ pub(crate) fn on_run_end(
                     .run(parent_run.as_deref())
                     .node(Some(&node_id))
             };
-            tx.append(draft("subagent.updated", row.clone()))?;
+            tx.append(draft("subagent.updated", row.clone()).payload_instance())?;
             if let Some(mut node) = tx.entity(&parent_id, "nodes", &node_id)? {
                 node["status"] = row["status"].clone();
                 node["completedAt"] = json!(now);
@@ -336,7 +356,11 @@ fn deliver(tx: &mut Tx<'_>, thread_id: &str, settled: bool) -> StoreResult<Vec<E
     for mut row in due {
         row["completionDelivery"] = json!({"state": "delivered", "observedByRunId": null});
         let run = row["runId"].as_str().map(str::to_owned);
-        tx.append(Draft::new(thread_id, "subagent.updated", row).run(run.as_deref()))?;
+        tx.append(
+            Draft::new(thread_id, "subagent.updated", row)
+                .run(run.as_deref())
+                .payload_instance(),
+        )?;
     }
     let dispatch = commands::handler("message.dispatch").expect("message.dispatch");
     // One id per delivery: the ordinal of the run this wake creates is new in the thread, so a
@@ -393,7 +417,11 @@ pub(crate) fn stop_children(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<Vec
             let run_id = run["id"].as_str().unwrap_or_default().to_owned();
             row["cancelledRunId"] = json!(run_id);
             let parent_run = row["runId"].as_str().map(str::to_owned);
-            tx.append(Draft::new(thread_id, "subagent.updated", row).run(parent_run.as_deref()))?;
+            tx.append(
+                Draft::new(thread_id, "subagent.updated", row)
+                    .run(parent_run.as_deref())
+                    .without_instance(),
+            )?;
             effects.extend(stop_children(tx, &child)?);
             effects.extend(commands::stop_run(tx, &child, &run, None, false)?);
         }
@@ -417,7 +445,11 @@ pub(crate) fn wake_policy(tx: &mut Tx<'_>, c: Value) -> Outcome {
     }
     row["completionWake"] = c["completionWake"].clone();
     let run = row["runId"].as_str().map(str::to_owned);
-    tx.append(Draft::new(&parent, "subagent.updated", row).run(run.as_deref()))?;
+    tx.append(
+        Draft::new(&parent, "subagent.updated", row)
+            .run(run.as_deref())
+            .payload_instance(),
+    )?;
     Ok(deliver(tx, &parent, false)?)
 }
 
@@ -438,7 +470,11 @@ pub(crate) fn completion_delivery(tx: &mut Tx<'_>, c: Value) -> Outcome {
     }
     row["completionDelivery"] = json!({"state": state, "observedByRunId": c["observedByRunId"]});
     let run = row["runId"].as_str().map(str::to_owned);
-    tx.append(Draft::new(&parent, "subagent.updated", row).run(run.as_deref()))?;
+    tx.append(
+        Draft::new(&parent, "subagent.updated", row)
+            .run(run.as_deref())
+            .payload_instance(),
+    )?;
     Ok(vec![])
 }
 
@@ -504,11 +540,13 @@ pub(crate) fn remote_request(tx: &mut Tx<'_>, c: Value) -> Outcome {
     let model = commands::normalize_model_selection(&c["modelSelection"]);
     let title = c["title"].as_str().map(str::to_owned);
     let driver = c["driver"].clone();
+    let instance = model["instanceId"].as_str().map(str::to_owned);
     let draft = |event_type, payload| {
         Draft::new(&parent_id, event_type, payload)
             .run(Some(&parent_run_id))
             .node(Some(&node_id))
             .command(Some(&command_id))
+            .provider_instance(instance.as_deref())
     };
     tx.append(draft(
         "node.updated",
@@ -571,7 +609,11 @@ fn owe_remote_stop(tx: &mut Tx<'_>, parent: &str, mut row: Value) -> StoreResult
     row["remoteChild"]["stopCount"] = json!(count + 1);
     row["updatedAt"] = json!(tx.now());
     let run = row["runId"].as_str().map(str::to_owned);
-    tx.append(Draft::new(parent, "subagent.updated", row).run(run.as_deref()))?;
+    tx.append(
+        Draft::new(parent, "subagent.updated", row)
+            .run(run.as_deref())
+            .without_instance(),
+    )?;
     Ok(Effect::RemoteTaskChanged {
         thread_id: parent.to_owned(),
         task_id,
@@ -596,10 +638,12 @@ fn finish_remote(
     row["completionDelivery"] = json!({"state": delivery, "observedByRunId": null});
     let node_id = row["id"].as_str().unwrap_or_default().to_owned();
     let parent_run = row["runId"].as_str().map(str::to_owned);
+    // T3's `dispatchRemoteDelegatedTaskComplete` names no instance.
     let draft = |event_type, payload| {
         Draft::new(parent, event_type, payload)
             .run(parent_run.as_deref())
             .node(Some(&node_id))
+            .without_instance()
     };
     tx.append(draft("subagent.updated", row))?;
     if let Some(mut node) = tx.entity(parent, "nodes", &node_id)? {
@@ -648,7 +692,11 @@ pub(crate) fn remote_complete(tx: &mut Tx<'_>, c: Value) -> Outcome {
         row["remoteChild"]["stoppedThere"] = json!(true);
         row["updatedAt"] = json!(tx.now());
         let run = row["runId"].as_str().map(str::to_owned);
-        tx.append(Draft::new(&parent, "subagent.updated", row).run(run.as_deref()))?;
+        tx.append(
+            Draft::new(&parent, "subagent.updated", row)
+                .run(run.as_deref())
+                .without_instance(),
+        )?;
         return Ok(vec![]);
     }
     let status = match c["status"].as_str() {

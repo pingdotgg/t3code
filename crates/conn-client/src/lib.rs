@@ -18,6 +18,7 @@ mod auth;
 pub mod commands;
 pub mod device_hub;
 mod driver;
+pub mod environments;
 pub mod history;
 pub mod perf;
 mod wire;
@@ -115,6 +116,9 @@ pub enum ClientEvent {
     /// The bearer token after a pairing-code exchange, so the app can persist it.
     BearerIssued(String),
     Shell(conn_contract::OrchestrationV2ShellStreamItem),
+    /// One `subscribeServerConfig` event: the config snapshot, then provider, settings and
+    /// keybinding changes. Auto-resubscribed on WebSocket reconnect, which sends a new snapshot.
+    ServerConfig(Box<conn_contract::ServerConfigStreamEvent>),
     Thread {
         thread_id: String,
         item: conn_contract::OrchestrationV2ThreadStreamItem,
@@ -366,12 +370,144 @@ impl Connection {
         }
     }
 
+    /// Downloads a stored chat attachment (`assets.createUrl` for an `attachment` resource,
+    /// then `GET` of the signed URL), as the web client does for message thumbnails.
+    ///
+    /// # Errors
+    /// Returns [`ClientError`] if the RPC, URL resolution or the download fails.
+    pub async fn fetch_attachment_bytes(
+        &self,
+        attachment_id: &str,
+    ) -> Result<Vec<u8>, ClientError> {
+        let payload = conn_contract::AssetCreateUrlInput {
+            resource: conn_contract::AssetResource::Attachment(
+                conn_contract::AssetResourceAttachment {
+                    tag: lit::Attachment,
+                    attachment_id: attachment_id.to_owned(),
+                    file_name: None,
+                    mime_type: None,
+                    disposition: None,
+                    render_intent: None,
+                },
+            ),
+        };
+        let created = self
+            .call::<conn_contract::rpc::assets::create_url::Payload, conn_contract::rpc::assets::create_url::Success>(
+                "assets.createUrl",
+                &payload,
+            )
+            .await?;
+        let url = self.http_base_url.join(&created.relative_url)?;
+        let http = self.http.clone();
+        let bearer = self.bearer.read().ok().and_then(|g| g.clone());
+        self.run_on_tokio(
+            async move {
+                let mut req = http.get(url);
+                if let Some(token) = bearer {
+                    req = req.bearer_auth(token);
+                }
+                let resp = req
+                    .send()
+                    .await
+                    .map_err(|err| ClientError::Connection(err.to_string()))?;
+                if !resp.status().is_success() {
+                    return Err(ClientError::Connection(format!(
+                        "attachment download failed ({})",
+                        resp.status()
+                    )));
+                }
+                resp.bytes()
+                    .await
+                    .map(|bytes| bytes.to_vec())
+                    .map_err(|err| ClientError::Connection(err.to_string()))
+            },
+            "attachment download",
+        )
+        .await
+    }
+
+    /// Asks the server for a signed URL to the workspace file `path` of thread `thread_id`
+    /// (`assets.createUrl`, `workspace-file`), as web Conn's file previews do.
+    ///
+    /// # Errors
+    /// Returns [`ClientError`] if the RPC or URL resolution fails.
+    pub async fn workspace_file_url(
+        &self,
+        thread_id: &str,
+        path: &str,
+    ) -> Result<url::Url, ClientError> {
+        let payload = conn_contract::AssetCreateUrlInput {
+            resource: conn_contract::AssetResource::WorkspaceFile(
+                conn_contract::AssetResourceWorkspaceFile {
+                    tag: lit::WorkspaceFile,
+                    thread_id: thread_id.to_owned(),
+                    path: path.to_owned(),
+                },
+            ),
+        };
+        let created = self
+            .call::<conn_contract::rpc::assets::create_url::Payload, conn_contract::rpc::assets::create_url::Success>(
+                "assets.createUrl",
+                &payload,
+            )
+            .await?;
+        Ok(self.http_base_url.join(&created.relative_url)?)
+    }
+
+    /// Downloads the workspace file `path` of thread `thread_id` as bytes (an image, say), through
+    /// a signed asset URL.
+    ///
+    /// # Errors
+    /// Returns [`ClientError`] if the RPC, URL resolution or the download fails.
+    pub async fn fetch_workspace_file_bytes(
+        &self,
+        thread_id: &str,
+        path: &str,
+    ) -> Result<Vec<u8>, ClientError> {
+        let url = self.workspace_file_url(thread_id, path).await?;
+        let http = self.http.clone();
+        let bearer = self.bearer.read().ok().and_then(|g| g.clone());
+        self.run_on_tokio(
+            async move {
+                let mut req = http.get(url);
+                if let Some(token) = bearer {
+                    req = req.bearer_auth(token);
+                }
+                let resp = req
+                    .send()
+                    .await
+                    .map_err(|err| ClientError::Connection(err.to_string()))?;
+                if !resp.status().is_success() {
+                    return Err(ClientError::Connection(format!(
+                        "file download failed ({})",
+                        resp.status()
+                    )));
+                }
+                resp.bytes()
+                    .await
+                    .map(|bytes| bytes.to_vec())
+                    .map_err(|err| ClientError::Connection(err.to_string()))
+            },
+            "workspace file download",
+        )
+        .await
+    }
+
     /// Subscribes to `orchestration.subscribeShell`.
     ///
     /// Items arrive as [`ClientEvent::Shell`]. Automatically resubscribes after reconnect using
     /// the last observed sequence as `afterSequence`.
     pub fn subscribe_shell(&self) {
         let _ = self.cmd_tx.send(Command::SubscribeShell);
+    }
+
+    /// Subscribes to `subscribeServerConfig`, which sends the server config and then every
+    /// provider status change.
+    ///
+    /// Items arrive as [`ClientEvent::ServerConfig`]. Automatically resubscribes after reconnect;
+    /// the server then sends a fresh snapshot.
+    pub fn subscribe_server_config(&self) {
+        let _ = self.cmd_tx.send(Command::SubscribeServerConfig);
     }
 
     /// Subscribes to `orchestration.subscribeThread` for `thread_id`.

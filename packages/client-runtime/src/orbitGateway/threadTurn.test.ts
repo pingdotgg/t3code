@@ -28,6 +28,7 @@ function ports(results: Array<{ ok: true } | { ok: false; error: unknown }>) {
   const launches: Array<ReturnType<typeof orbitFirstTurnInput>> = [];
   const value: OrbitFirstMessagePorts = {
     waitForClone: async () => ({ projectId, modelSelection }),
+    waitForConnection: async () => true,
     startTurn: async (_environmentId, input) => {
       launches.push(input);
       return results.shift() ?? { ok: true };
@@ -117,6 +118,35 @@ describe("sendOrbitFirstMessage", () => {
     await expect(sendOrbitFirstMessage(start, { ...run, stopped: () => true })).rejects.toThrow(
       "stopped",
     );
+    expect(launches).toEqual([]);
+  });
+
+  it("sends only once the clone's connection is connected", async () => {
+    // The clone shows as ready from cache while its session still reconnects.
+    const { launches, ports: run } = ports([]);
+    const connection = Promise.withResolvers<boolean>();
+    const waiting = Promise.withResolvers<void>();
+    const reconnecting = {
+      ...run,
+      waitForConnection: () => {
+        waiting.resolve();
+        return connection.promise;
+      },
+    };
+
+    const sent = sendOrbitFirstMessage(start, reconnecting);
+    await waiting.promise;
+    expect(launches).toEqual([]);
+    connection.resolve(true);
+    await expect(sent).resolves.toBe(projectId);
+    expect(launches).toHaveLength(1);
+  });
+
+  it("sends nothing when the clone's connection does not come up in time", async () => {
+    const { launches, ports: run } = ports([]);
+    const offline = { ...run, waitForConnection: async () => false };
+
+    await expect(sendOrbitFirstMessage(start, offline)).rejects.toThrow("did not connect");
     expect(launches).toEqual([]);
   });
 

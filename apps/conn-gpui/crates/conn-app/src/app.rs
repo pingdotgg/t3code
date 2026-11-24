@@ -11,26 +11,41 @@ use gpui_kit::{
 };
 
 use crate::a11y::ConnA11yExt as _;
+use crate::drafts::{DraftBook, DraftContent, DraftThreadState, new_draft_id, now_ms};
 use crate::fixture::demo_shell_state;
 use crate::header::details_card::{
-    DetailsCardProps, DetailsCopyTarget, EditorTarget, ThreadDetailsState,
-    render_thread_details_card, thread_cwd,
+    DetailsCardProps, DetailsCopyTarget, EditorTarget, THREAD_DETAILS_CARD_GAP_PX,
+    ThreadDetailsState, render_thread_details_card, thread_cwd,
 };
 use crate::header::{ChatHeaderProps, render_chat_header};
 use crate::shell::{CardJoin, inset_card, two_tone_divider};
+use crate::sidebar::drafts::{DraftRowView, DraftSidebar, UndoNotice};
 use crate::sidebar::hover_card_state::ThreadHoverState;
 use crate::sidebar::rail::render_workspace_rail;
-use crate::sidebar::thread_list::{ThreadHoverView, render_thread_sidebar};
+use crate::sidebar::thread_list::{SidebarMarks, ThreadHoverView, render_thread_sidebar};
 use crate::sidebar::thread_menu::{
-    ThreadMenuAction, ThreadMenuAnchor, ThreadMenuState, build_thread_action_menu_items,
+    DraftMenuState, MenuCursor, ThreadMenuAction, ThreadMenuAnchor, ThreadMenuState,
+    build_bulk_menu_items, build_draft_action_menu_items, build_thread_action_menu_items,
     render_thread_action_menu,
 };
+use crate::sidebar::tree::SidebarTree;
 use crate::theme::{apply_kit_theme, hsla};
 use gpui_kit::prelude::FluentBuilder as _;
 
-actions!(conn_app, [ToggleSidebar, ToggleRightPanel, NewThread]);
+mod child_approvals;
+mod linked;
+mod rail_workspaces;
+mod sidebar_keys;
+mod sidebar_more;
 
-/// Registers global shell keyboard shortcuts (`Cmd+B` and `Cmd+Alt+B`).
+pub(crate) use self::sidebar_more::PressMode;
+
+actions!(
+    conn_app,
+    [ToggleSidebar, ToggleRightPanel, NewThread, ToggleTerminal]
+);
+
+/// Registers global shell keyboard shortcuts (`Cmd+B`, `Cmd+Alt+B` and `Cmd+J`).
 pub(crate) fn register_keybindings(cx: &mut App) {
     crate::palette::register_keybindings(cx);
     crate::settings::register_keybindings(cx);
@@ -38,33 +53,109 @@ pub(crate) fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-b", ToggleSidebar, None),
         KeyBinding::new("cmd-alt-b", ToggleRightPanel, None),
         KeyBinding::new("cmd-n", NewThread, None),
+        // `terminal.toggle` is `mod+j` in Conn's default keybindings.
+        KeyBinding::new("cmd-j", ToggleTerminal, None),
     ]);
+}
+
+/// The terminal drawer's default height (`DEFAULT_THREAD_TERMINAL_HEIGHT`).
+const TERMINAL_DRAWER_DEFAULT_PX: f32 = 280.0;
+/// `MIN_DRAWER_HEIGHT` in `ThreadTerminalDrawer.tsx`.
+const TERMINAL_DRAWER_MIN_PX: f32 = 180.0;
+/// `MAX_DRAWER_HEIGHT_RATIO` in `ThreadTerminalDrawer.tsx`.
+const TERMINAL_DRAWER_MAX_RATIO: f32 = 0.75;
+
+/// The terminal drawer's height kept within Conn's bounds for a window `viewport_h` tall.
+fn clamp_terminal_drawer_height(height: f32, viewport_h: f32) -> f32 {
+    let max = (viewport_h * TERMINAL_DRAWER_MAX_RATIO).max(TERMINAL_DRAWER_MIN_PX);
+    height.clamp(TERMINAL_DRAWER_MIN_PX, max)
 }
 
 /// A panel seam being dragged: which side, where the drag started, and the width then.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum SeamDrag {
-    Sidebar { from_x: f32, start: f32 },
-    RightPanel { from_x: f32, start: f32 },
+    Sidebar {
+        from_x: f32,
+        start: f32,
+    },
+    RightPanel {
+        from_x: f32,
+        start: f32,
+    },
+    /// The terminal drawer's top edge: where the drag started, and the height then.
+    TerminalDrawer {
+        from_y: f32,
+        start: f32,
+    },
 }
 
-/// State of a brand-new thread draft being composed before `orchestration.launchThread`.
-#[derive(Clone, Debug)]
-struct DraftThreadState {
-    project_id: String,
-    model_instance_id: Option<String>,
-    model_slug: Option<String>,
-    model_options: Option<serde_json::Map<String, serde_json::Value>>,
-    runtime_mode: String,
-    interaction_mode: String,
-    use_worktree: bool,
-    /// Base ref for a new worktree, or the branch the local checkout was switched to.
-    branch: Option<String>,
-    /// Reuse this existing worktree (`Previous worktree`, or a ref checked out in one).
-    worktree_path: Option<String>,
-    /// `Start from remote` for a new worktree's base.
-    start_from_origin: bool,
-    launching: bool,
+/// A discarded draft, kept for `Undo`.
+enum DiscardedDraft {
+    /// A new-thread draft.
+    New {
+        session: DraftThreadState,
+        content: Option<DraftContent>,
+        /// The project key that opened it, to take its slot back when that is still free.
+        project_key: Option<String>,
+    },
+    /// A started thread's unsent input.
+    Thread {
+        thread_id: String,
+        content: DraftContent,
+    },
+}
+
+/// What a thread was before a settle, for the undo.
+fn settle_facts(thread: &conn_state::ThreadShell) -> conn_state::SettledThreadFacts<'_> {
+    fn text(value: &Option<Option<String>>) -> Option<&str> {
+        value.as_ref().and_then(Option::as_deref)
+    }
+    conn_state::SettledThreadFacts {
+        pinned: text(&thread.pinned_at).is_some(),
+        pin_order_key: text(&thread.pin_order_key),
+        active_order_key: text(&thread.active_order_key),
+        unsettled_at: text(&thread.unsettled_at),
+        snoozed_until: text(&thread.snoozed_until),
+    }
+}
+
+/// What a thread's undo puts back, and what else ends it (`ThreadUndo` claim kinds): a newer
+/// action of the same kind on the thread replaces its entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ThreadUndoKind {
+    Settle,
+    /// An unpin.
+    Pin,
+}
+
+impl ThreadUndoKind {
+    /// What the notice says of it.
+    fn action(self) -> conn_state::UndoAction {
+        match self {
+            Self::Settle => conn_state::UndoAction::Settled,
+            Self::Pin => conn_state::UndoAction::Unpinned,
+        }
+    }
+}
+
+/// Where the open thread goes when it leaves the active list (`planForwardNavigation`).
+enum ForwardNavigation {
+    /// The next thread.
+    Thread(String),
+    /// A new thread in this project, when no thread is left.
+    NewThread(Option<String>),
+}
+
+/// What `Undo` and `⌘Z` bring back.
+enum UndoEntry {
+    /// A discarded draft or thread input.
+    Draft(DiscardedDraft),
+    /// A settled or unpinned thread, and the commands that put it back as it was.
+    Thread {
+        thread_id: String,
+        kind: ThreadUndoKind,
+        plan: Vec<conn_state::SettleUndoStep>,
+    },
 }
 
 /// `orchestration.launchThread` `workspaceStrategy` for a draft.
@@ -92,7 +183,9 @@ pub(crate) struct ConnApp {
     shell: ShellState,
     layout: LayoutState,
     active_workspace: Option<String>,
-    collapsed_projects: HashSet<String>,
+    /// What the thread sidebar remembers and does besides its lists: the Settled shelf, the message
+    /// search, dragging rows and sweeping runs of them.
+    sidebar: sidebar_more::SidebarState,
     focus_handle: FocusHandle,
     theme_id: String,
     connection: Option<Connection>,
@@ -113,18 +206,62 @@ pub(crate) struct ConnApp {
     scratch_workspace_root: Option<String>,
     /// Project id returned by `projects.ensureScratch`, before the shell lists it.
     scratch_project_id: Option<String>,
-    /// Each project's new-thread draft left behind, by project id; its text and attachments wait
-    /// in the composer's draft store. The next new thread in that project restores it.
-    parked_drafts: HashMap<String, DraftThreadState>,
+    /// The new-thread drafts behind the open one, and which draft each project opens. Their text
+    /// and attachments wait in the composer's draft store, under the draft's id.
+    drafts: DraftBook,
+    /// The discards and settles `Undo` and `⌘Z` bring back, until their notice expires.
+    discards: conn_state::DiscardUndo<UndoEntry>,
+    /// The search result the arrow keys highlighted, by thread id (`searchHighlightKey`); the
+    /// first result while none, or when its thread left the results.
+    sidebar_search_highlight: Option<String>,
+    /// `⌘` has been held long enough for the rows to show their jump numbers
+    /// (`useThreadJumpHintsVisible`).
+    jump_hints: bool,
+    /// Counts the `⌘` presses, so a timer that outlived its press does nothing.
+    jump_hint_generation: u64,
+    /// The threads picked with `⌘`-click and `Shift`-click for a bulk action.
+    thread_selection: conn_state::ThreadSelection,
+    /// A thread opened, so its row scrolls into view once the list has drawn it.
+    reveal_open_row: bool,
+    /// Why the last undo could not put the input back, until its notice expires.
+    discard_failure: Option<&'static str>,
+    discard_failure_generation: u64,
+    /// The notice's `Undo` button.
+    undo_focus: FocusHandle,
+    /// The thread sidebar's rows the keyboard can reach.
+    sidebar_tree: SidebarTree,
+    /// The open thread or draft menu takes the keyboard while it is open.
+    thread_menu_focus: FocusHandle,
+    thread_menu_focus_pending: bool,
+    /// What had the keyboard when the menu opened; it gets it back when the menu closes.
+    thread_menu_return_focus: Option<FocusHandle>,
+    /// The closed menu has handed the keyboard back, and it has not landed yet.
+    thread_menu_returning: bool,
+    /// Sees keystrokes before key bindings do (`intercept_keystroke`).
+    _keystroke_interceptor: gpui_kit::Subscription,
+    /// The interceptor used the keystroke being dispatched; the root's key handler skips it.
+    keystroke_consumed: bool,
+    /// Where drafts are kept across restarts; `None` keeps them in memory only.
+    drafts_path: Option<std::path::PathBuf>,
+    /// The drafts file as last written, so an unchanged state is not written again.
+    saved_drafts_json: Option<String>,
+    /// Approval requests with a `runtime-request.respond` in flight (`respondingRequestIds`).
+    responding_approvals: HashSet<String>,
     /// Right panel tabs the user has open, in order (Conn's `RightPanelTabs`).
     right_panel_open_tabs: Vec<PanelSurface>,
     /// The open file while `layout.right_panel_tab` is [`RightPanelTab::File`].
     right_panel_file: Option<String>,
     right_panel_add_menu_open: bool,
     right_panel_maximized: bool,
+    /// The terminal drawer under the chat is open, and its height.
+    terminal_drawer_open: bool,
+    terminal_drawer_height: f32,
     seam_drag: Option<SeamDrag>,
     command_palette: Option<Entity<crate::palette::CommandPalette>>,
     settings_modal: Option<Entity<crate::settings::SettingsModal>>,
+    /// The live `subscribeServerConfig` projection: the provider catalog the composer, the model
+    /// picker, the status banner and the Providers settings page read.
+    server_config: std::sync::Arc<conn_state::providers::ServerConfigState>,
     overlay_subscriptions: Vec<gpui_kit::Subscription>,
     /// What had the keyboard before the palette or Settings opened; it gets it back on close.
     focus_before_overlay: Option<FocusHandle>,
@@ -139,6 +276,16 @@ pub(crate) struct ConnApp {
     rename_in_header: bool,
     /// Open Thread Actions menu (sidebar right-click or header title).
     thread_menu: Option<ThreadMenuAnchor>,
+    /// Open workspace menu (right-click on a rail tile).
+    rail_menu: Option<crate::sidebar::rail::RailMenuAnchor>,
+    /// The workspace editor (`WorkspaceDialog`), open from the rail's `+` or a tile's `Edit…`.
+    workspace_editor: Option<Entity<crate::workspace_editor::WorkspaceEditor>>,
+    /// The workspace the editor edits; none while it creates one.
+    workspace_editor_target: Option<String>,
+    /// Each workspace's badge image, decoded once from its data URL.
+    workspace_images: HashMap<String, (String, Option<std::sync::Arc<gpui_kit::Image>>)>,
+    /// A workspace tile held in the rail, and where the tiles were painted.
+    rail_gesture: crate::sidebar::rail::RailGesture,
     /// Bumped to cancel a pending `Copy` submenu hover-intent close.
     thread_menu_copy_close_gen: u64,
     /// Bumped to cancel a pending header-title menu open (double-click renames instead).
@@ -162,6 +309,10 @@ pub(crate) struct ConnApp {
     orbit: crate::orbit_sync::OrbitSyncState,
     /// Thread id requested via `conn://thread/...` or control socket while switching servers.
     pending_open_thread: Option<String>,
+    /// Orbit environments listed beside the primary one (`app/linked.rs`).
+    linked: linked::LinkedEnvironments,
+    /// Child threads subscribed for their approvals (`app/child_approvals.rs`).
+    child_approvals: child_approvals::ChildApprovals,
     /// Live control socket server handle (dropped on app exit).
     _control_server: Option<conn_desktop::control::ControlServerHandle>,
     /// Background task draining `conn://` URLs and Unix control socket requests.
@@ -205,6 +356,15 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let mut layout = LayoutState::default();
+        // The widths the user dragged the panels to last time (`useResizableWidth`).
+        let sidebar_state = sidebar_more::SidebarState::load();
+        let (saved_sidebar_width, saved_panel_width) = sidebar_state.saved_widths();
+        if let Some(width) = saved_sidebar_width {
+            layout.set_sidebar_width(width);
+        }
+        if let Some(width) = saved_panel_width {
+            layout.set_right_panel_width(width);
+        }
         let env_pinned_server = crate::live::server_config_from_env().is_some();
         let server_url = server.as_ref().map(|s| s.config.http_base_url.to_string());
         let server_label = server.as_ref().and_then(|s| s.label.clone());
@@ -213,9 +373,7 @@ impl ConnApp {
         let (shell, connection) = match server {
             Some(startup) => {
                 let (connection, events) =
-                    Connection::start(startup.config, crate::live::RT.handle());
-                connection.subscribe_shell();
-                connection.subscribe_panel_requests(Some(default_device_name()));
+                    Self::start_connection(startup.config, default_device_name());
                 Self::pump_events(1, startup.orbit_server_id, events, cx);
                 (ShellState::default(), Some(connection))
             }
@@ -239,12 +397,28 @@ impl ConnApp {
                     text,
                     attachments,
                     dispatch,
+                    held_draft: None,
                 } => {
                     app.send_prompt_with_attachments(
                         text.clone(),
                         attachments.clone(),
                         *dispatch,
                         Some(window),
+                        cx,
+                    );
+                }
+                crate::chat::ChatEvent::Send {
+                    text,
+                    attachments,
+                    dispatch,
+                    held_draft: Some(held),
+                } => {
+                    app.send_over_approvals(
+                        text.clone(),
+                        attachments.clone(),
+                        *dispatch,
+                        held.clone(),
+                        window,
                         cx,
                     );
                 }
@@ -269,6 +443,13 @@ impl ConnApp {
                 crate::chat::ChatEvent::Approval { entry_id, decision } => {
                     app.respond_approval(entry_id, decision, cx);
                 }
+                crate::chat::ChatEvent::ChildApproval {
+                    thread_id,
+                    request_id,
+                    decision,
+                } => {
+                    app.respond_child_approval(thread_id, request_id, decision, cx);
+                }
                 crate::chat::ChatEvent::ModelSelected {
                     instance_id,
                     model,
@@ -292,7 +473,13 @@ impl ConnApp {
                     app.fork_selected_from_run(run_id, cx);
                 }
                 crate::chat::ChatEvent::OpenFile(path) => {
-                    app.select_right_panel_surface(PanelSurface::File(path.clone()), cx);
+                    // A chat link may end in `:line`; the file opens at that line.
+                    let (file, line) = crate::panels::file_path::split_line_suffix(path);
+                    app.select_right_panel_surface(PanelSurface::File(file.to_owned()), cx);
+                    if let Some(line) = line {
+                        app.right_panel
+                            .update(cx, |panel, cx| panel.reveal_line(line, cx));
+                    }
                 }
                 crate::chat::ChatEvent::RuntimeModeSelected(mode) => {
                     app.set_runtime_mode(mode, cx);
@@ -308,11 +495,8 @@ impl ConnApp {
                 }
                 crate::chat::ChatEvent::DraftStartScratch => app.start_draft_scratch(cx),
                 crate::chat::ChatEvent::DraftAddProject => app.add_project_via_picker(window, cx),
-                crate::chat::ChatEvent::ScratchWorkspaceRoot(root) => {
-                    if app.scratch_workspace_root != *root {
-                        app.scratch_workspace_root = root.clone();
-                        app.sync_chat(cx);
-                    }
+                crate::chat::ChatEvent::OpenProviderSetup(instance_id) => {
+                    app.open_provider_setup(instance_id, window, cx);
                 }
                 crate::chat::ChatEvent::StartNewThread => {
                     app.start_new_thread(None, Some(window), cx);
@@ -355,14 +539,19 @@ impl ConnApp {
             panel.set_embedded(true, cx);
             panel
         });
-        cx.subscribe(
+        cx.subscribe_in(
             &right_panel,
-            |app, _, event: &crate::panels::RightPanelEvent, cx| match event {
+            window,
+            |app, _, event: &crate::panels::RightPanelEvent, window, cx| match event {
                 crate::panels::RightPanelEvent::OpenFile(path) => {
                     app.select_right_panel_surface(PanelSurface::File(path.clone()), cx);
                 }
                 crate::panels::RightPanelEvent::OpenTab(tab) => {
                     app.select_right_panel_tab(*tab, cx);
+                }
+                crate::panels::RightPanelEvent::InsertMention(mention) => {
+                    app.chat
+                        .update(cx, |chat, cx| chat.insert_mention(mention, window, cx));
                 }
                 crate::panels::RightPanelEvent::SendPrompt(prompt) => {
                     app.send_prompt(prompt.clone(), cx);
@@ -379,8 +568,11 @@ impl ConnApp {
         });
         let sidebar_search_sub = cx.subscribe(
             &sidebar_search_input,
-            |_app, _, event: &gpui_kit::component::input::InputEvent, cx| {
+            |app, _, event: &gpui_kit::component::input::InputEvent, cx| {
                 if matches!(event, gpui_kit::component::input::InputEvent::Change) {
+                    // A new query starts at the top (`onSearchQueryChange`).
+                    app.sidebar_search_highlight = None;
+                    app.sidebar_search_changed(cx);
                     cx.notify();
                 }
             },
@@ -405,13 +597,17 @@ impl ConnApp {
             active_server_id: initial_orbit_server_id,
             ..Default::default()
         };
+        let this = cx.entity().downgrade();
+        let keystroke_interceptor = cx.intercept_keystrokes(move |event, window, cx| {
+            let _ = this.update(cx, |app, cx| app.intercept_keystroke(event, window, cx));
+        });
         let mut app = Self {
             tokens,
             geometry: ShellGeometry::default(),
             shell,
             layout,
-            active_workspace: None,
-            collapsed_projects: HashSet::new(),
+            active_workspace: rail_workspaces::saved_active_workspace(&orbit.workspaces),
+            sidebar: sidebar_state,
             focus_handle: cx.focus_handle(),
             theme_id,
             connection,
@@ -424,14 +620,37 @@ impl ConnApp {
             draft: None,
             scratch_workspace_root: None,
             scratch_project_id: None,
-            parked_drafts: HashMap::new(),
-            right_panel_open_tabs: vec![PanelSurface::Kind(RightPanelTab::Files)],
+            drafts: DraftBook::default(),
+            discards: conn_state::DiscardUndo::default(),
+            sidebar_search_highlight: None,
+            jump_hints: false,
+            jump_hint_generation: 0,
+            thread_selection: conn_state::ThreadSelection::default(),
+            reveal_open_row: false,
+            discard_failure: None,
+            discard_failure_generation: 0,
+            undo_focus: cx.focus_handle().tab_index(0).tab_stop(true),
+            sidebar_tree: SidebarTree::new(),
+            thread_menu_focus: cx.focus_handle(),
+            thread_menu_focus_pending: false,
+            thread_menu_return_focus: None,
+            thread_menu_returning: false,
+            _keystroke_interceptor: keystroke_interceptor,
+            keystroke_consumed: false,
+            drafts_path: crate::drafts::drafts_file_path(),
+            saved_drafts_json: None,
+            responding_approvals: HashSet::new(),
+            // No tab until one is picked: opening the panel shows the surface launcher.
+            right_panel_open_tabs: Vec::new(),
             right_panel_file: None,
             right_panel_add_menu_open: false,
             right_panel_maximized: false,
+            terminal_drawer_open: false,
+            terminal_drawer_height: TERMINAL_DRAWER_DEFAULT_PX,
             seam_drag: None,
             command_palette: None,
             settings_modal: None,
+            server_config: std::sync::Arc::default(),
             overlay_subscriptions: Vec::new(),
             focus_before_overlay: None,
             sidebar_search_input,
@@ -441,6 +660,11 @@ impl ConnApp {
             _rename_sub: rename_sub,
             rename_in_header: false,
             thread_menu: None,
+            rail_menu: None,
+            workspace_editor: None,
+            workspace_editor_target: None,
+            workspace_images: HashMap::new(),
+            rail_gesture: crate::sidebar::rail::RailGesture::default(),
             thread_menu_copy_close_gen: 0,
             header_menu_generation: 0,
             thread_details: ThreadDetailsState::default(),
@@ -453,6 +677,8 @@ impl ConnApp {
             connection_gen: 1,
             orbit,
             pending_open_thread: None,
+            linked: linked::LinkedEnvironments::load(),
+            child_approvals: child_approvals::ChildApprovals::default(),
             _control_server: None,
             _activation_task: None,
             subscribed_thread_id: None,
@@ -464,6 +690,7 @@ impl ConnApp {
             annotation_watching_threads: HashSet::new(),
             annotation_last_sent: HashMap::new(),
         };
+        app.restore_saved_drafts(cx);
         app.sync_chat(cx);
         app.start_sidebar_clock(cx);
         if crate::orbit_sync::orbit_sync_enabled_by_env() {
@@ -659,6 +886,15 @@ impl ConnApp {
                 } => {
                     app.wake_orbit_instance(*instance_id, server_id.clone(), cx);
                 }
+                SettingsEvent::LinkedEnvironmentEnabled {
+                    environment_id,
+                    enabled,
+                } => {
+                    app.set_linked_environment_enabled(environment_id, *enabled, cx);
+                }
+                SettingsEvent::LinkInstance { server_id, linked } => {
+                    app.set_linked_instance(server_id, *linked, cx);
+                }
                 SettingsEvent::OrbitToggleSyncWorkspaces(enabled) => {
                     app.orbit.snapshot.prefs.sync_workspaces = *enabled;
                     app.orbit.persist_snapshot();
@@ -696,16 +932,25 @@ impl ConnApp {
         );
         self.overlay_subscriptions.push(sub);
         self.settings_modal = Some(modal);
+        self.push_server_config(cx);
         self.sync_browser_visibility(cx);
         cx.notify();
     }
 
     /// A full-height seam with a `16px` (`w-4`) drag handle over it (Conn's `SidebarRail`):
     /// a `1px` stripe lights on hover, dragging resizes, and double-click resets the width.
-    fn render_seam(&self, right_panel: bool, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render_seam(
+        &self,
+        right_panel: bool,
+        viewport_w: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
         use crate::panels::chrome::ConnTooltipExt as _;
-        use gpui_kit::{CursorStyle, MouseButton, MouseDownEvent};
+        use gpui_kit::{CursorStyle, MouseButton, MouseDownEvent, TestSupportExt as _};
         let stripe = hsla(self.tokens.sidebar_border);
+        // The panel as drawn, which may be narrower than the width kept for it: the drag starts
+        // from what the user sees.
+        let panel_width_now = self.right_panel_effective_width(viewport_w);
         let dragging = matches!(
             (self.seam_drag, right_panel),
             (Some(SeamDrag::RightPanel { .. }), true) | (Some(SeamDrag::Sidebar { .. }), false)
@@ -716,6 +961,19 @@ impl ConnApp {
             } else {
                 "seam-sidebar"
             })
+            .test_support()
+            .a11y_button(
+                if right_panel {
+                    "shell.seam.right-panel"
+                } else {
+                    "shell.seam.sidebar"
+                },
+                if right_panel {
+                    "Resize panel"
+                } else {
+                    "Resize sidebar"
+                },
+            )
             .absolute()
             .top_0()
             .bottom_0()
@@ -746,18 +1004,22 @@ impl ConnApp {
                     cx.stop_propagation();
                     let x = f32::from(event.position.x);
                     if event.click_count >= 2 {
+                        // `resetSidebarWidth`: back to the default, which is then not kept.
+                        let (kept_sidebar, kept_panel) = app.sidebar.saved_widths();
                         if right_panel {
                             app.layout
                                 .set_right_panel_width(conn_state::RIGHT_PANEL_DEFAULT_WIDTH);
+                            app.sidebar.remember_widths(kept_sidebar, None);
                         } else {
                             app.layout
                                 .set_sidebar_width(conn_state::SIDEBAR_DEFAULT_WIDTH);
+                            app.sidebar.remember_widths(None, kept_panel);
                         }
                         app.seam_drag = None;
                     } else if right_panel {
                         app.seam_drag = Some(SeamDrag::RightPanel {
                             from_x: x,
-                            start: app.layout.right_panel_width,
+                            start: panel_width_now,
                         });
                     } else {
                         app.seam_drag = Some(SeamDrag::Sidebar {
@@ -783,6 +1045,7 @@ impl ConnApp {
         self.layout.right_panel_open
             && self.command_palette.is_none()
             && self.settings_modal.is_none()
+            && self.workspace_editor.is_none()
     }
 
     fn sync_browser_visibility(&self, cx: &mut Context<'_, Self>) {
@@ -793,6 +1056,8 @@ impl ConnApp {
 
     /// Pushes the selected thread's timeline (or active draft state) into the chat view and right panel.
     fn sync_chat(&mut self, cx: &mut Context<'_, Self>) {
+        self.sync_chat_environment(cx);
+        let child_approvals = self.sync_child_approvals();
         let selected = self.layout.selected_thread_id.as_deref();
         let shell_thread = selected.and_then(|id| self.shell.find_thread(id));
         let draft_view = self.draft.as_ref().map(|draft| {
@@ -811,12 +1076,7 @@ impl ConnApp {
                 })
                 .collect();
             crate::chat::DraftViewInfo {
-                environment_id: self
-                    .orbit
-                    .active_server_id
-                    .clone()
-                    .or_else(|| self.server_url.clone())
-                    .unwrap_or_default(),
+                draft_id: draft.draft_id.clone(),
                 project_id: draft.project_id.clone(),
                 project_title: project
                     .map(|p| p.title.clone())
@@ -827,7 +1087,7 @@ impl ConnApp {
                     &draft.project_id,
                     project.map(|p| p.workspace_root.as_str()),
                 ),
-                scratch_available: self.scratch_workspace_root.is_some(),
+                scratch_available: self.scratch_root_for_project(&draft.project_id).is_some(),
             }
         });
         let title = if self.draft.is_some() {
@@ -859,7 +1119,9 @@ impl ConnApp {
         let surface = self.right_panel_surface();
         let surface_visible = self.right_panel_surface_visible();
         let panel_root = root.clone();
+        let environment_id = self.environment_id();
         self.right_panel.update(cx, |panel, cx| {
+            panel.set_environment(environment_id, cx);
             panel.set_context(project_id.clone(), panel_root, thread_id, shell_thread, cx);
             panel.set_surface(&surface, cx);
             panel.set_surface_visible(surface_visible, cx);
@@ -888,10 +1150,11 @@ impl ConnApp {
             let model_instance = shell_thread.map(|t| t.provider_instance_id.clone());
             let model_options = shell_thread
                 .map(|t| conn_contract::to_json(&t.model_selection))
+                // `options` is `[{ id, value }]` on the wire; reading it as an object found nothing
+                // and the picker showed the catalog default effort (Nick, #333).
                 .and_then(|v| {
                     v.get("options")
-                        .and_then(serde_json::Value::as_object)
-                        .cloned()
+                        .and_then(conn_state::providers::model_options_from_json)
                 });
             let branch = shell_thread.and_then(|t| t.branch.clone());
             let worktree_active = shell_thread.is_some_and(|t| t.worktree_path.is_some());
@@ -928,8 +1191,10 @@ impl ConnApp {
             }
             chat.set_shell_availability(has_projects, connected, cx);
             chat.set_draft(draft_view, cx);
+            chat.set_project_id(project_id.clone(), cx);
             chat.set_workspace_root(root, cx);
             chat.set_thread(thread, title, cx);
+            chat.set_child_approvals(child_approvals, cx);
             chat.set_branch_context(branch_context, cx);
             chat.set_thread_context(branch, worktree_active, runtime_mode, interaction_mode, cx);
             if let Some(model) = model {
@@ -1002,7 +1267,6 @@ impl ConnApp {
                 }
                 if matches!(status, ConnectionStatus::Connected) {
                     self.orbit.connecting_server_id = None;
-                    self.chat.update(cx, |chat, cx| chat.refresh_providers(cx));
                 }
                 self.status = Some(status);
             }
@@ -1027,6 +1291,11 @@ impl ConnApp {
             }
             ClientEvent::Shell(item) => {
                 let change = self.shell.apply(item);
+                self.remerge_linked_shells();
+                self.release_settled_drop();
+                if change.snapshot_required || !change.threads_changed.is_empty() {
+                    self.drive_older_pages(cx);
+                }
                 if !change.threads_changed.is_empty() {
                     self.resubscribe_ended_threads();
                 }
@@ -1076,6 +1345,7 @@ impl ConnApp {
                     );
                 }
             }
+            ClientEvent::ServerConfig(event) => self.apply_server_config_event(*event, cx),
             ClientEvent::PanelRequest(request) => {
                 self.dispatch_agent_panel_request(request, cx);
             }
@@ -1088,6 +1358,15 @@ impl ConnApp {
                 }
             }
             ClientEvent::StreamEnded { tag, key, error } => {
+                if tag == "subscribeServerConfig" {
+                    // A stream that ends cleanly is asked for again. One that fails stays down:
+                    // a server without the method would fail again at once.
+                    match (&error, &self.connection) {
+                        (None, Some(connection)) => connection.subscribe_server_config(),
+                        (Some(error), _) => eprintln!("server config stream ended: {error}"),
+                        (None, None) => {}
+                    }
+                }
                 if tag == "orchestration.subscribeThread" && self.threads.contains_key(&key) {
                     if let Some(error) = error {
                         eprintln!("thread stream {key} ended: {error}");
@@ -1099,11 +1378,73 @@ impl ConnApp {
         }
     }
 
+    /// Applies one `subscribeServerConfig` event and hands the new catalog to every reader.
+    fn apply_server_config_event(
+        &mut self,
+        event: conn_contract::ServerConfigStreamEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.record_primary_machine(&event);
+        let change = std::sync::Arc::make_mut(&mut self.server_config).apply(event);
+        if change.config_changed {
+            let root = self
+                .server_config
+                .scratch_workspace_root()
+                .map(str::to_owned);
+            if self.scratch_workspace_root != root {
+                self.scratch_workspace_root = root;
+                self.sync_chat(cx);
+            }
+        }
+        if change.any() {
+            self.push_server_config(cx);
+        }
+    }
+
+    /// Gives the chat and an open Settings window the current server config.
+    fn push_server_config(&mut self, cx: &mut Context<'_, Self>) {
+        // The composer and the right panel offer the catalog of the open thread's environment;
+        // Settings stays on the connected one.
+        let config = self.active_server_config();
+        self.chat.update(cx, |chat, cx| {
+            chat.set_server_config(std::sync::Arc::clone(&config), cx)
+        });
+        self.right_panel.update(cx, |panel, cx| {
+            panel.set_server_config(std::sync::Arc::clone(&config), cx)
+        });
+        let primary_config = std::sync::Arc::clone(&self.server_config);
+        if let Some(modal) = &self.settings_modal {
+            let shells = self
+                .shell
+                .projects
+                .iter()
+                .filter(|p| p.archived_at.is_none())
+                .cloned()
+                .collect();
+            modal.update(cx, |modal, cx| {
+                modal.set_project_shells(shells, cx);
+                modal.set_server_config(primary_config, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    /// `Open provider setup`: Settings on the Providers page, on `instance_id`.
+    pub(crate) fn open_provider_setup(
+        &mut self,
+        instance_id: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.open_settings_page(Some(crate::settings::SettingsPage::Providers), window, cx);
+        if let Some(modal) = &self.settings_modal {
+            let instance_id = instance_id.to_owned();
+            modal.update(cx, |modal, cx| modal.focus_provider(instance_id, cx));
+        }
+    }
+
     /// Resubscribes ended thread streams whose thread the shell now lists.
     fn resubscribe_ended_threads(&mut self) {
-        let Some(connection) = &self.connection else {
-            return;
-        };
         let ready: Vec<String> = self
             .ended_threads
             .iter()
@@ -1111,6 +1452,9 @@ impl ConnApp {
             .cloned()
             .collect();
         for id in ready {
+            let Some(connection) = self.connection_for_thread(&id) else {
+                continue;
+            };
             self.ended_threads.remove(&id);
             connection.subscribe_thread(&id);
         }
@@ -1118,11 +1462,7 @@ impl ConnApp {
 
     /// Selects `thread_id` and subscribes to its timeline once.
     fn open_thread(&mut self, thread_id: String) {
-        if let Some(draft) = self.draft.take()
-            && !draft.launching
-        {
-            self.parked_drafts.insert(draft.project_id.clone(), draft);
-        }
+        self.park_active_draft();
         if conn_client::perf::enabled()
             && self.layout.selected_thread_id.as_deref() != Some(thread_id.as_str())
         {
@@ -1131,17 +1471,10 @@ impl ConnApp {
             self.perf_open = Some((thread_id.clone(), std::time::Instant::now()));
             self.perf_open_pending_chat = true;
         }
-        if let Some(connection) = &self.connection
+        if self.connection.is_some()
             && self.subscribed_thread_id.as_deref() != Some(thread_id.as_str())
         {
-            if let Some(prev) = self.subscribed_thread_id.take() {
-                connection.unsubscribe_thread(&prev);
-            }
-            self.threads
-                .entry(thread_id.clone())
-                .or_insert_with(|| ThreadState::new(thread_id.clone()));
-            connection.subscribe_thread(&thread_id);
-            self.subscribed_thread_id = Some(thread_id.clone());
+            self.subscribe_open_thread(&thread_id);
         }
         self.layout.selected_thread_id = Some(thread_id);
     }
@@ -1149,7 +1482,7 @@ impl ConnApp {
     /// Fetches the next older history page for the currently selected bounded thread and prepends
     /// its entries into [`ThreadState`] without losing the user's scroll position.
     fn load_earlier_history(&mut self, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.context_connection() else {
             self.sync_chat(cx);
             return;
         };
@@ -1320,8 +1653,7 @@ impl ConnApp {
                 .map(str::to_owned);
             let opts = val
                 .get("options")
-                .and_then(serde_json::Value::as_object)
-                .cloned();
+                .and_then(conn_state::providers::model_options_from_json);
             (instance, slug, opts)
         } else if let Some((inst, slug, opts)) = self.chat.read(cx).current_model_selection(cx) {
             (Some(inst), Some(slug), opts)
@@ -1337,72 +1669,282 @@ impl ConnApp {
             .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_else(|| "default".to_owned());
 
-        if let Some(connection) = &self.connection
-            && let Some(prev) = self.subscribed_thread_id.take()
-        {
-            connection.unsubscribe_thread(&prev);
-        }
-        self.layout.selected_project_id = Some(project_id.clone());
-        self.layout.selected_thread_id = None;
-        // Each project keeps its own draft: coming back restores its model, modes and workspace
+        // Each project opens its own draft: coming back restores its model, modes and workspace
         // choice (the composer's draft store restores the text).
-        if let Some(current) = self.draft.take()
-            && !current.launching
-        {
-            self.parked_drafts
-                .insert(current.project_id.clone(), current);
-        }
-        self.draft = Some(match self.parked_drafts.remove(&project_id) {
-            Some(parked) => parked,
-            None => DraftThreadState {
-                project_id,
-                model_instance_id,
-                model_slug,
-                model_options,
-                runtime_mode,
-                interaction_mode,
-                use_worktree: false,
-                branch: None,
-                worktree_path: None,
-                start_from_origin: false,
-                launching: false,
-            },
-        });
+        let project_key = self.project_draft_key(&project_id);
+        self.park_active_draft();
+        let session = self
+            .drafts
+            .take_for_project(&project_key)
+            .unwrap_or_else(|| {
+                let session = DraftThreadState {
+                    draft_id: new_draft_id(),
+                    environment_id: self.environment_id(),
+                    project_id,
+                    created_at_ms: now_ms(),
+                    model_instance_id,
+                    model_slug,
+                    model_options,
+                    runtime_mode,
+                    interaction_mode,
+                    use_worktree: false,
+                    branch: None,
+                    worktree_path: None,
+                    start_from_origin: false,
+                    launching: false,
+                };
+                self.drafts.map(&project_key, &session.draft_id);
+                session
+            });
+        self.activate_draft(session, window, cx);
+    }
+
+    /// Shows `session` as the open draft: the chat card switches to it and the sidebar row of
+    /// the draft it replaced comes back from the parked set.
+    fn activate_draft(
+        &mut self,
+        session: DraftThreadState,
+        window: Option<&mut Window>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.unsubscribe_open_thread();
+        self.layout.selected_project_id = Some(session.project_id.clone());
+        self.layout.selected_thread_id = None;
+        let frozen = self.sidebar_row_of_opening_draft(&session, cx);
+        self.drafts.set_frozen_active(frozen);
+        self.draft = Some(session);
         self.chat.update(cx, |chat, cx| chat.set_error(None, cx));
         self.sync_chat(cx);
         if let Some(window) = window {
             self.chat
                 .update(cx, |chat, cx| chat.focus_composer(window, cx));
         }
+        self.settle_drafts(cx);
         cx.notify();
     }
 
-    /// Discards the active new-thread draft and falls back to the most recent active thread.
-    pub(crate) fn cancel_new_thread(&mut self, cx: &mut Context<'_, Self>) {
-        if self.draft.is_none() {
+    /// Opens a draft from its sidebar row, after parking the open one. Opening an unmapped draft
+    /// does not remap its project: `New thread` there still opens the project's own draft.
+    pub(crate) fn open_draft(
+        &mut self,
+        draft_id: &str,
+        window: Option<&mut Window>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.draft.as_ref().is_some_and(|d| d.draft_id == draft_id) {
+            if let Some(window) = window {
+                self.chat
+                    .update(cx, |chat, cx| chat.focus_composer(window, cx));
+            }
             return;
         }
-        self.chat.update(cx, |chat, cx| chat.discard_draft(cx));
-        self.draft = None;
-        self.chat.update(cx, |chat, cx| chat.set_error(None, cx));
-        let initial = self
-            .shell
-            .top_level_active_threads()
-            .next()
-            .or_else(|| self.shell.threads.first())
-            .map(|first| (first.project_id.clone(), first.id.clone()));
-        if let Some((project_id, thread_id)) = initial {
-            self.layout.selected_project_id = Some(project_id);
-            self.open_thread(thread_id);
+        if !self.drafts.get(draft_id).is_some_and(|d| !d.launching) {
+            return;
+        }
+        self.park_active_draft();
+        if let Some(session) = self.drafts.take(draft_id) {
+            self.activate_draft(session, window, cx);
+        }
+    }
+
+    /// Discards a draft (`discardComposerDraft`): its text, attachments and project slot go, and
+    /// `Undo` brings them back for a while. Discarding the open draft falls back to the most
+    /// recent active thread.
+    pub(crate) fn discard_draft_row(
+        &mut self,
+        draft_id: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        // The keyboard may be on the row or its `x`, both about to go; the sidebar hands it to
+        // the row that takes the place.
+        self.sidebar_tree
+            .take_focus(&conn_state::draft_tree_key(draft_id), window, cx);
+        let was_open = self.draft.as_ref().is_some_and(|d| d.draft_id == draft_id);
+        let session = if was_open {
+            self.draft.take()
+        } else {
+            self.drafts.take(draft_id)
+        };
+        let Some(session) = session else {
+            return;
+        };
+        if session.launching {
+            // The thread is being created from it; discarding now would strand the send.
+            if was_open {
+                self.draft = Some(session);
+            } else {
+                self.drafts.park(session);
+            }
+            return;
+        }
+        let project_key = self.drafts.project_key_of(draft_id);
+        self.drafts.forget(draft_id);
+        self.drafts.set_frozen_active(None);
+        let content = self
+            .chat
+            .update(cx, |chat, cx| chat.discard_draft(draft_id, cx));
+        self.offer_draft_undo(
+            DiscardedDraft::New {
+                session,
+                content,
+                project_key,
+            },
+            cx,
+        );
+        if was_open {
+            self.chat.update(cx, |chat, cx| chat.set_error(None, cx));
+            let initial = self
+                .shell
+                .top_level_active_threads()
+                .next()
+                .or_else(|| self.shell.threads.first())
+                .map(|first| (first.project_id.clone(), first.id.clone()));
+            if let Some((project_id, thread_id)) = initial {
+                self.layout.selected_project_id = Some(project_id);
+                self.open_thread(thread_id);
+            }
         }
         self.sync_chat(cx);
+        self.settle_drafts(cx);
         cx.notify();
     }
 
-    /// Changes the target project of the active new-thread draft, as Conn's picker does
+    /// The `X` on a started thread's row: clears the unsent input in its composer and offers
+    /// `Undo` (`discardComposerDraft` on a thread target).
+    pub(crate) fn discard_thread_draft_row(
+        &mut self,
+        thread_id: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.layout.selected_thread_id.as_deref() == Some(thread_id) && self.draft.is_none() {
+            return;
+        }
+        // The `x` leaves with the pen mark; the keyboard goes to the row.
+        self.sidebar_tree.take_focus(thread_id, window, cx);
+        let content = self
+            .chat
+            .update(cx, |chat, cx| chat.discard_thread_draft(thread_id, cx));
+        if let Some(content) = content {
+            self.offer_draft_undo(
+                DiscardedDraft::Thread {
+                    thread_id: thread_id.to_owned(),
+                    content,
+                },
+                cx,
+            );
+        }
+        self.settle_drafts(cx);
+        cx.notify();
+    }
+
+    /// The draft `draft_id` names: the open one, or a parked one.
+    fn draft_session(&self, draft_id: &str) -> Option<&DraftThreadState> {
+        self.draft
+            .as_ref()
+            .filter(|d| d.draft_id == draft_id)
+            .or_else(|| self.drafts.get(draft_id))
+    }
+
+    /// Items of the open sidebar menu: a draft row's, or a thread's.
+    fn thread_menu_items(
+        &self,
+        anchor: &ThreadMenuAnchor,
+    ) -> Option<Vec<crate::sidebar::thread_menu::ThreadMenuItem>> {
+        if anchor.draft {
+            let draft = self.draft_session(&anchor.thread_id)?;
+            return Some(build_draft_action_menu_items(DraftMenuState {
+                has_path: self.draft_workspace_path(draft).is_some(),
+                has_branch: draft.branch.as_deref().is_some_and(|b| !b.is_empty()),
+                has_project: self.shell.project(&draft.project_id).is_some(),
+            }));
+        }
+        if anchor.bulk {
+            let ids = self.bulk_targets();
+            return (!ids.is_empty()).then(|| build_bulk_menu_items(self.bulk_facts(&ids)));
+        }
+        let thread = self.shell.find_thread(&anchor.thread_id)?;
+        let state =
+            ThreadMenuState::for_thread(&self.shell, thread, self.active_workspace.as_deref());
+        Some(build_thread_action_menu_items(&state))
+    }
+
+    /// Opens the menu of a draft row at `position` (window coordinates).
+    pub(crate) fn open_draft_menu(
+        &mut self,
+        draft_id: String,
+        position: gpui_kit::Point<gpui_kit::Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.draft_session(&draft_id).is_none_or(|d| d.launching) {
+            return;
+        }
+        self.thread_details.copy_menu = None;
+        self.thread_hover.dismiss();
+        self.thread_menu_copy_close_gen = self.thread_menu_copy_close_gen.wrapping_add(1);
+        self.thread_menu_focus_pending = true;
+        self.thread_menu = Some(ThreadMenuAnchor {
+            thread_id: draft_id,
+            draft: true,
+            bulk: false,
+            position,
+            copy_open: false,
+            cursor: MenuCursor::default(),
+        });
+        cx.notify();
+    }
+
+    /// The path `Copy > Path` gives for a draft: its worktree, else its project's folder.
+    fn draft_workspace_path(&self, draft: &DraftThreadState) -> Option<String> {
+        draft.worktree_path.clone().or_else(|| {
+            self.shell
+                .project(&draft.project_id)
+                .map(|p| p.workspace_root.clone())
+        })
+    }
+
+    /// Runs one item of a draft row's menu (`handleDraftContextMenu`).
+    pub(crate) fn run_draft_menu_action(
+        &mut self,
+        draft_id: String,
+        action: ThreadMenuAction,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.thread_menu = None;
+        cx.notify();
+        let Some(draft) = self.draft_session(&draft_id).cloned() else {
+            return;
+        };
+        match action {
+            ThreadMenuAction::CopyPath => {
+                if let Some(path) = self.draft_workspace_path(&draft) {
+                    self.copy_to_clipboard(path, cx);
+                }
+            }
+            ThreadMenuAction::CopyBranch => {
+                if let Some(branch) = draft.branch.filter(|b| !b.is_empty()) {
+                    self.copy_to_clipboard(branch, cx);
+                }
+            }
+            ThreadMenuAction::ProjectSettings => {
+                if self.settings_modal.is_none() {
+                    self.open_settings(window, cx);
+                }
+            }
+            // The menu may outlive the send: a launching draft is not discarded.
+            ThreadMenuAction::DiscardDraft if !draft.launching => {
+                self.discard_draft_row(&draft_id, window, cx);
+            }
+            _ => {}
+        }
+    }
+
+    /// Changes the target project of the open draft, as Conn's picker does
     /// (`DraftHeroHeadline` `selectProject`). A draft with text or attachments moves to the
-    /// project and replaces that project's own draft. An empty draft stays where it was, and the
-    /// project's own draft shows.
+    /// project, and the project's own draft becomes an unmapped draft in the sidebar. An empty
+    /// draft stays behind its own project, and the project's own draft opens.
     pub(crate) fn set_draft_project(&mut self, project_id: String, cx: &mut Context<'_, Self>) {
         let Some(draft) = &self.draft else {
             return;
@@ -1410,27 +1952,183 @@ impl ConnApp {
         if draft.launching || draft.project_id == project_id {
             return;
         }
-        let moved = self
-            .chat
-            .update(cx, |chat, cx| chat.retarget_draft_project(&project_id, cx));
-        let Some(draft) = &mut self.draft else {
+        let has_content = self.chat.read(cx).draft_has_content(cx);
+        let target_key = self.project_draft_key(&project_id);
+        let draft_id = draft.draft_id.clone();
+        match self.drafts.retarget(&draft_id, &target_key, has_content) {
+            conn_state::Retarget::OpenProjectDraft => {
+                self.start_new_thread(Some(project_id), None, cx);
+            }
+            conn_state::Retarget::Move { .. } => {
+                if let Some(draft) = &mut self.draft {
+                    draft.project_id.clone_from(&project_id);
+                    draft.branch = None;
+                    draft.worktree_path = None;
+                }
+                self.drafts.set_frozen_project(&project_id);
+                self.layout.selected_project_id = Some(project_id);
+                self.sync_chat(cx);
+                self.settle_drafts(cx);
+                cx.notify();
+            }
+        }
+    }
+
+    /// Parks the open draft, a launching one included so its launch can finish.
+    fn park_active_draft(&mut self) {
+        if let Some(draft) = self.draft.take() {
+            self.drafts.park(draft);
+        }
+        self.drafts.set_frozen_active(None);
+    }
+
+    /// The connected environment drafts belong to.
+    fn environment_id(&self) -> String {
+        self.orbit
+            .active_server_id
+            .clone()
+            .or_else(|| self.server_url.clone())
+            .unwrap_or_default()
+    }
+
+    fn project_draft_key(&self, project_id: &str) -> String {
+        conn_state::project_draft_key(&self.environment_id(), project_id)
+    }
+
+    /// The sidebar row `session` gets while it is open: fixed when it opens, so the list does not
+    /// move while the user types, and none when the draft was empty.
+    fn sidebar_row_of_opening_draft(
+        &self,
+        session: &DraftThreadState,
+        cx: &App,
+    ) -> Option<conn_state::SidebarDraftRow> {
+        let mut row = None;
+        self.chat.read(cx).visit_drafts(cx, |id, text, count| {
+            if id == session.draft_id {
+                row = conn_state::freeze_active_draft_row(&conn_state::SidebarDraft {
+                    draft_id: id,
+                    project_id: &session.project_id,
+                    created_at_ms: session.created_at_ms,
+                    launching: session.launching,
+                    prompt: text,
+                    attachment_count: count,
+                });
+            }
+        });
+        row
+    }
+
+    /// The draft rows of the thread sidebar: the parked drafts that hold content, and the open
+    /// draft's frozen row, newest first, limited to the sidebar's project scope.
+    fn sidebar_draft_rows(&self, cx: &App) -> Vec<conn_state::SidebarDraftRow> {
+        let environment = self.environment_id();
+        let open_id = self.draft.as_ref().map(|d| d.draft_id.as_str());
+        let mut rows: Vec<conn_state::SidebarDraftRow> =
+            self.drafts.frozen_active().cloned().into_iter().collect();
+        self.chat.read(cx).visit_drafts(cx, |id, text, count| {
+            if Some(id) == open_id {
+                return;
+            }
+            let Some(session) = self
+                .drafts
+                .get(id)
+                .filter(|session| session.environment_id == environment)
+            else {
+                return;
+            };
+            rows.extend(conn_state::sidebar_draft_row(&conn_state::SidebarDraft {
+                draft_id: id,
+                project_id: &session.project_id,
+                created_at_ms: session.created_at_ms,
+                launching: session.launching,
+                prompt: text,
+                attachment_count: count,
+            }));
+        });
+        conn_state::sidebar_draft_rows(rows, |project_id| {
+            self.shell.project(project_id).is_some()
+                && crate::sidebar::thread_list::project_in_scope(
+                    &self.shell,
+                    &self.orbit.workspaces,
+                    self.active_workspace.as_deref(),
+                    project_id,
+                )
+        })
+    }
+
+    /// Started threads whose composer holds unsent input: their rows carry the pen mark. The
+    /// open thread is left out, its composer is on screen.
+    fn sidebar_unsent_threads(&self, cx: &App) -> HashSet<String> {
+        let open_thread = self
+            .layout
+            .selected_thread_id
+            .as_deref()
+            .filter(|_| self.draft.is_none());
+        let mut unsent = HashSet::new();
+        self.chat
+            .read(cx)
+            .visit_thread_drafts(cx, |thread_id, text, count| {
+                unsent.extend(conn_state::threads_with_unsent_input(
+                    [(thread_id, text, count)],
+                    open_thread,
+                ));
+            });
+        unsent
+    }
+
+    /// Parks the drafts saved by the last run, with their text and attachments.
+    fn restore_saved_drafts(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(mut saved) = self
+            .drafts_path
+            .as_deref()
+            .and_then(crate::drafts::load_saved_drafts)
+        else {
             return;
         };
-        let own = self.parked_drafts.remove(&project_id).filter(|_| !moved);
-        let next = own.unwrap_or_else(|| DraftThreadState {
-            project_id: project_id.clone(),
-            branch: None,
-            worktree_path: None,
-            ..draft.clone()
-        });
-        let previous = std::mem::replace(draft, next);
-        if !moved {
-            self.parked_drafts
-                .insert(previous.project_id.clone(), previous);
+        for (thread_id, content) in saved.take_threads() {
+            self.chat.update(cx, |chat, cx| {
+                chat.restore_thread_draft(&thread_id, content, cx)
+            });
         }
-        self.layout.selected_project_id = Some(project_id);
-        self.sync_chat(cx);
-        cx.notify();
+        for (draft_id, content) in self.drafts.restore(saved) {
+            self.chat
+                .update(cx, |chat, cx| chat.restore_draft(&draft_id, content, cx));
+        }
+    }
+
+    /// Drops parked drafts nothing opens and that hold nothing, then saves the drafts file when
+    /// it changed. Runs after every change to the drafts and once a second.
+    fn settle_drafts(&mut self, cx: &mut Context<'_, Self>) {
+        let contents: HashMap<String, DraftContent> =
+            self.chat.read(cx).saved_drafts(cx).into_iter().collect();
+        let mut with_content = HashSet::new();
+        self.chat.read(cx).visit_drafts(cx, |id, text, count| {
+            if conn_state::draft_has_content(text, count) {
+                with_content.insert(id.to_owned());
+            }
+        });
+        self.drafts.drop_unreachable(|id| with_content.contains(id));
+        let Some(path) = &self.drafts_path else {
+            return;
+        };
+        let Some(json) = self
+            .drafts
+            .capture(
+                self.draft.as_ref(),
+                &contents,
+                self.chat.read(cx).saved_thread_drafts(cx),
+            )
+            .to_json()
+        else {
+            return;
+        };
+        if self.saved_drafts_json.as_deref() == Some(json.as_str()) {
+            return;
+        }
+        match crate::drafts::write_drafts_file(path, &json) {
+            Ok(()) => self.saved_drafts_json = Some(json),
+            Err(err) => eprintln!("drafts: could not save {}: {err}", path.display()),
+        }
     }
 
     /// Workspace facts for the composer's context strip.
@@ -1562,7 +2260,7 @@ impl ConnApp {
             self.apply_thread_branch(Some(entry.name), target.next_worktree_path, cx);
             return;
         }
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.context_connection() else {
             return;
         };
         let fallback = if entry.is_remote {
@@ -1597,7 +2295,7 @@ impl ConnApp {
 
     fn create_branch_ref(&mut self, name: String, cx: &mut Context<'_, Self>) {
         let (Some(connection), Some((project_cwd, worktree_path, _))) =
-            (self.connection.clone(), self.branch_cwds())
+            (self.context_connection(), self.branch_cwds())
         else {
             return;
         };
@@ -1640,7 +2338,7 @@ impl ConnApp {
             return;
         }
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -1670,8 +2368,8 @@ impl ConnApp {
             return true;
         }
         let trim = |path: &str| path.trim_end_matches('/').to_owned();
-        match (self.scratch_workspace_root.as_deref(), workspace_root) {
-            (Some(scratch), Some(root)) => trim(scratch) == trim(root),
+        match (self.scratch_root_for_project(project_id), workspace_root) {
+            (Some(scratch), Some(root)) => trim(&scratch) == trim(root),
             _ => false,
         }
     }
@@ -1729,7 +2427,7 @@ impl ConnApp {
         window: Option<&mut Window>,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.context_connection() else {
             self.chat.update(cx, |chat, cx| {
                 chat.set_error(
                     Some(
@@ -1752,6 +2450,7 @@ impl ConnApp {
             return;
         }
         let project_id = draft.project_id.clone();
+        let draft_id = draft.draft_id.clone();
 
         // Resolve model selection: explicit draft selection -> live composer catalog -> project
         // default -> latest thread in project -> any thread on server.
@@ -1767,7 +2466,7 @@ impl ConnApp {
             {
                 obj.insert(
                     "options".to_owned(),
-                    serde_json::Value::Object(opts.clone()),
+                    conn_state::providers::model_options_to_json(opts),
                 );
             }
             Some(serde_json::Value::Object(obj))
@@ -1778,7 +2477,10 @@ impl ConnApp {
             if let Some(opts) = opts
                 && !opts.is_empty()
             {
-                obj.insert("options".to_owned(), serde_json::Value::Object(opts));
+                obj.insert(
+                    "options".to_owned(),
+                    conn_state::providers::model_options_to_json(&opts),
+                );
             }
             Some(serde_json::Value::Object(obj))
         } else {
@@ -1868,33 +2570,61 @@ impl ConnApp {
                             state.apply_projection(res.projection, res.sequence);
                             app.threads.insert(final_thread_id.clone(), state);
                         }
-                        app.chat.update(cx, |chat, cx| chat.discard_draft(cx));
-                        app.draft = None;
-                        app.layout.selected_project_id = Some(project_id.clone());
-                        app.layout.selected_thread_id = Some(final_thread_id.clone());
+                        // The thread replaces the draft (`finalizePromotedDraftThread`). Someone who
+                        // moved on to another thread meanwhile stays there.
+                        let was_open = app.draft.as_ref().is_some_and(|d| d.draft_id == draft_id);
+                        app.chat.update(cx, |chat, cx| {
+                            chat.discard_draft(&draft_id, cx);
+                        });
+                        if was_open {
+                            app.draft = None;
+                            app.drafts.set_frozen_active(None);
+                        }
+                        app.drafts.forget(&draft_id);
+                        if was_open {
+                            app.layout.selected_project_id = Some(project_id.clone());
+                            app.layout.selected_thread_id = Some(final_thread_id.clone());
+                        }
                         app.ended_threads.remove(&final_thread_id);
                         connection.subscribe_thread(&final_thread_id);
                         app.chat.update(cx, |chat, cx| chat.set_error(None, cx));
                         app.sync_chat(cx);
+                        app.settle_drafts(cx);
                         cx.notify();
                     }
                     Err(err) => {
                         let msg = crate::commands::format_client_error(&err);
                         eprintln!("new thread: launchThread failed: {msg}");
-                        if let Some(active_draft) = &mut app.draft {
+                        let was_open = app.draft.as_ref().is_some_and(|d| d.draft_id == draft_id);
+                        if let Some(active_draft) = app.draft.as_mut().filter(|_| was_open) {
                             active_draft.launching = false;
+                        } else if let Some(parked) = app.drafts.get_mut(&draft_id) {
+                            parked.launching = false;
                         }
                         app.chat.update(cx, |chat, cx| {
                             chat.set_error(Some(format!("Could not create thread: {msg}")), cx);
                         });
-                        if let Some(win) = launch_window {
+                        if was_open && let Some(win) = launch_window {
                             let chat = app.chat.clone();
                             let restore = fallback_text.clone();
                             let _ = win.update(cx, |_, window, cx| {
                                 chat.update(cx, |c, cx| c.set_draft_text(restore, window, cx));
                             });
+                        } else if !was_open {
+                            // The user moved on; the text goes back to the draft they left.
+                            app.chat.update(cx, |chat, cx| {
+                                chat.restore_draft(
+                                    &draft_id,
+                                    DraftContent {
+                                        text: fallback_text.clone(),
+                                        attachments: Vec::new(),
+                                    },
+                                    cx,
+                                );
+                            });
                         }
                         app.sync_chat(cx);
+                        app.settle_drafts(cx);
                         cx.notify();
                     }
                 }
@@ -1929,37 +2659,40 @@ impl ConnApp {
             return;
         }
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
         };
+        let send_window = window.map(|w| w.window_handle());
+        self.dispatch_message(
+            connection,
+            thread_id,
+            text,
+            attachments,
+            dispatch,
+            send_window,
+            cx,
+        );
+    }
+
+    /// `message.dispatch` to `thread_id`: steers or queues behind a running turn. A failed send
+    /// puts `text` back in the composer.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one send's parts, passed straight through"
+    )]
+    fn dispatch_message(
+        &mut self,
+        connection: Connection,
+        thread_id: String,
+        text: String,
+        attachments: Vec<conn_contract::ChatAttachment>,
+        dispatch: crate::chat::SendDispatch,
+        send_window: Option<gpui_kit::AnyWindowHandle>,
+        cx: &mut Context<'_, Self>,
+    ) {
         let thread = self.threads.get(&thread_id);
-        // A message sent over pending approvals declines them first to redirect the agent
-        // (`declinePendingApprovals`).
-        let approvals: Vec<String> = thread
-            .map(|t| {
-                t.entries
-                    .iter()
-                    .filter_map(|entry| match entry {
-                        conn_state::TimelineEntry::Approval { id, .. } => {
-                            t.approval_requests.get(id).cloned()
-                        }
-                        _ => None,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let mut declines = Vec::with_capacity(approvals.len());
-        for request_id in &approvals {
-            match crate::commands::respond_approval(&thread_id, request_id, "decline") {
-                Ok(command) => declines.push(command),
-                Err(e) => {
-                    eprintln!("send: could not build runtime-request.respond: {e}");
-                    return;
-                }
-            }
-        }
         let working = thread.is_some_and(|t| t.working);
         // Steer the running turn when asked (`steer_active`); otherwise queue after it.
         let steer_target = if working && dispatch == crate::chat::SendDispatch::Steer {
@@ -1985,27 +2718,14 @@ impl ConnApp {
         };
         self.chat.update(cx, |chat, cx| chat.set_error(None, cx));
         let generation = self.connection_gen;
-        let send_window = window.map(|w| w.window_handle());
         let fallback_text = text;
         cx.spawn(async move |this, cx| {
-            let mut result = Ok(());
-            for decline in declines {
-                if let Err(err) = connection.dispatch_command(decline).await {
-                    result = Err(format!(
-                        "Could not decline the approval: {}",
-                        crate::commands::format_client_error(&err)
-                    ));
-                    break;
-                }
-            }
-            if result.is_ok()
-                && let Err(err) = connection.dispatch_command(command).await
-            {
-                result = Err(format!(
+            let result = connection.dispatch_command(command).await.map_err(|err| {
+                format!(
                     "Send failed: {}",
                     crate::commands::format_client_error(&err)
-                ));
-            }
+                )
+            });
             if let Err(msg) = result {
                 eprintln!("send: dispatchCommand failed: {msg}");
                 let _ = this.update(cx, |app, cx| {
@@ -2029,6 +2749,223 @@ impl ConnApp {
         .detach();
     }
 
+    /// A composer send over pending approvals (`useComposerSend`). With feedback support it
+    /// declines the first approval with the text as feedback. Otherwise it declines every
+    /// answerable approval, then steers with the message. The composer keeps `held` until
+    /// then, and the message stays unsent when the draft changed, an approval is already
+    /// being answered, a new approval arrived, or the thread changed.
+    pub(crate) fn send_over_approvals(
+        &mut self,
+        text: String,
+        attachments: Vec<conn_contract::ChatAttachment>,
+        dispatch: crate::chat::SendDispatch,
+        held: crate::chat::HeldDraft,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let send_window = Some(window.window_handle());
+        let (Some(connection), Some(thread_id), None) = (
+            self.context_connection(),
+            self.layout.selected_thread_id.clone(),
+            self.draft.as_ref(),
+        ) else {
+            self.chat.update(cx, |chat, cx| {
+                chat.settle_held_draft(Some(&held), window, cx)
+            });
+            self.send_prompt_with_attachments(text, attachments, dispatch, Some(window), cx);
+            return;
+        };
+        let pending = self
+            .threads
+            .get(&thread_id)
+            .map(conn_state::ThreadState::pending_approvals)
+            .unwrap_or_default();
+        // Approvals the typing guard holds stay unseen and pending (`shownPendingApprovalIds`).
+        let pending_before: Vec<String> = pending.iter().map(|a| a.request_id.clone()).collect();
+        let approvals: Vec<_> = {
+            let held = self.chat.read(cx).held_request_ids();
+            pending
+                .into_iter()
+                .filter(|approval| !held.contains(&approval.request_id))
+                .collect()
+        };
+        let plan = crate::chat::plan_approval_send(&approvals, &text, !attachments.is_empty());
+        let feedback_send = matches!(plan, crate::chat::ApprovalSendPlan::Feedback { .. });
+        let (shown, declines) = match plan {
+            crate::chat::ApprovalSendPlan::Message => {
+                self.chat.update(cx, |chat, cx| {
+                    chat.settle_held_draft(Some(&held), window, cx)
+                });
+                self.dispatch_message(
+                    connection,
+                    thread_id,
+                    text,
+                    attachments,
+                    dispatch,
+                    send_window,
+                    cx,
+                );
+                return;
+            }
+            crate::chat::ApprovalSendPlan::FeedbackNeedsPlainText => {
+                self.chat
+                    .update(cx, |chat, cx| chat.settle_held_draft(None, window, cx));
+                self.chat.update(cx, |chat, cx| {
+                    chat.set_error(
+                        Some(crate::chat::APPROVAL_FEEDBACK_PLAIN_TEXT.to_owned()),
+                        cx,
+                    );
+                });
+                return;
+            }
+            crate::chat::ApprovalSendPlan::Feedback {
+                request_id,
+                feedback,
+            } => {
+                let command = crate::commands::decline_approval_with_feedback(
+                    &thread_id,
+                    &request_id,
+                    &feedback,
+                );
+                (vec![request_id], command.map(|c| vec![c]))
+            }
+            crate::chat::ApprovalSendPlan::Redirect { shown, decline } => {
+                let commands = decline
+                    .iter()
+                    .map(|id| crate::commands::respond_approval(&thread_id, id, "decline"))
+                    .collect::<Result<Vec<_>, _>>();
+                (shown, commands)
+            }
+        };
+        let declines = match declines {
+            Ok(declines) => declines,
+            Err(e) => {
+                eprintln!("send: could not build runtime-request.respond: {e}");
+                self.chat
+                    .update(cx, |chat, cx| chat.settle_held_draft(None, window, cx));
+                return;
+            }
+        };
+        if shown
+            .iter()
+            .any(|id| self.responding_approvals.contains(id))
+        {
+            self.chat
+                .update(cx, |chat, cx| chat.settle_held_draft(None, window, cx));
+            // Conn's feedback send stops silently here; a redirect explains why.
+            if !feedback_send
+                && let Some(notice) =
+                    crate::chat::approval_redirect_notice(false, false, true, false)
+            {
+                self.show_redirect_notice(notice, cx);
+            }
+            return;
+        }
+        self.responding_approvals.extend(shown.iter().cloned());
+        self.chat.update(cx, |chat, cx| chat.set_error(None, cx));
+        let generation = self.connection_gen;
+        cx.spawn(async move |this, cx| {
+            let mut declined = Ok(());
+            for decline in declines {
+                if let Err(err) = connection.dispatch_command(decline).await {
+                    declined = Err(format!(
+                        "Could not decline the approval: {}",
+                        crate::commands::format_client_error(&err)
+                    ));
+                    break;
+                }
+            }
+            let _ = this.update(cx, |app, cx| {
+                for id in &shown {
+                    app.responding_approvals.remove(id);
+                }
+                if app.connection_gen != generation
+                    || app.layout.selected_thread_id.as_deref() != Some(thread_id.as_str())
+                {
+                    app.settle_held_draft(None, send_window, cx);
+                    return;
+                }
+                let draft_changed = app.chat.read(cx).held_draft(cx) != held;
+                if feedback_send {
+                    // Feedback is the whole answer: clear the draft unless it changed.
+                    match declined {
+                        Ok(()) => {
+                            app.settle_held_draft(Some(&held), send_window, cx);
+                        }
+                        Err(msg) => {
+                            app.settle_held_draft(None, send_window, cx);
+                            app.chat
+                                .update(cx, |chat, cx| chat.set_error(Some(msg), cx));
+                        }
+                    }
+                    cx.notify();
+                    return;
+                }
+                let arrived = crate::chat::approval_arrived(
+                    &pending_before,
+                    &app.threads
+                        .get(&thread_id)
+                        .map(conn_state::ThreadState::pending_approvals)
+                        .unwrap_or_default(),
+                );
+                if declined.is_err() || draft_changed || arrived {
+                    app.settle_held_draft(None, send_window, cx);
+                    let notice = crate::chat::approval_redirect_notice(
+                        draft_changed,
+                        declined.is_ok(),
+                        false,
+                        arrived,
+                    );
+                    match (notice, declined) {
+                        (Some(notice), _) => app.show_redirect_notice(notice, cx),
+                        (None, Err(msg)) => {
+                            app.chat
+                                .update(cx, |chat, cx| chat.set_error(Some(msg), cx));
+                        }
+                        (None, Ok(())) => {}
+                    }
+                    cx.notify();
+                    return;
+                }
+                app.settle_held_draft(Some(&held), send_window, cx);
+                app.dispatch_message(
+                    connection,
+                    thread_id,
+                    text,
+                    attachments,
+                    dispatch,
+                    send_window,
+                    cx,
+                );
+            });
+        })
+        .detach();
+    }
+
+    /// Ends an approval send in the composer; `clear` empties it when its draft is unchanged.
+    fn settle_held_draft(
+        &self,
+        clear: Option<&crate::chat::HeldDraft>,
+        window: Option<gpui_kit::AnyWindowHandle>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(window) = window else {
+            return;
+        };
+        let chat = self.chat.clone();
+        let _ = window.update(cx, |_, window, cx| {
+            chat.update(cx, |chat, cx| chat.settle_held_draft(clear, window, cx))
+        });
+    }
+
+    /// Shows why a redirect kept the draft. Conn uses an info toast; this client has no toasts,
+    /// so the composer's dismissible banner carries it.
+    fn show_redirect_notice(&self, notice: &str, cx: &mut Context<'_, Self>) {
+        let message = format!("{notice} {}", crate::chat::APPROVAL_REDIRECT_RETRY);
+        self.chat
+            .update(cx, |chat, cx| chat.set_error(Some(message), cx));
+    }
+
     /// Answers the approval timeline entry `entry_id` of the selected thread.
     pub(crate) fn respond_approval(
         &mut self,
@@ -2037,7 +2974,7 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -2058,10 +2995,15 @@ impl ConnApp {
                 return;
             }
         };
-        cx.spawn(async move |_, _| {
+        // A composer send meanwhile must not decline this request too (`respondingRequestIds`).
+        if !self.responding_approvals.insert(request_id.clone()) {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
             if let Err(e) = connection.dispatch_command(command).await {
                 eprintln!("approval: dispatchCommand failed: {e}");
             }
+            let _ = this.update(cx, |app, _| app.responding_approvals.remove(&request_id));
         })
         .detach();
     }
@@ -2070,7 +3012,7 @@ impl ConnApp {
     /// (Conn `onForkFromRun` -> `forkThreadFromRun`).
     pub(crate) fn fork_selected_from_run(&mut self, run_id: &str, cx: &mut Context<'_, Self>) {
         let (Some(connection), Some(source_thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -2119,7 +3061,7 @@ impl ConnApp {
             return;
         }
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -2143,7 +3085,7 @@ impl ConnApp {
     /// Stops the selected thread's running turn.
     pub(crate) fn stop_selected(&mut self, cx: &mut Context<'_, Self>) {
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -2162,7 +3104,7 @@ impl ConnApp {
     /// Promotes a queued message to steer the active turn, or starts it immediately when stopped.
     pub(crate) fn promote_queued_message(&mut self, run_id: &str, cx: &mut Context<'_, Self>) {
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -2208,7 +3150,7 @@ impl ConnApp {
     /// Removes a queued message from the selected thread's queue (`queued-run.cancel`).
     pub(crate) fn cancel_queued_message(&mut self, run_id: &str, cx: &mut Context<'_, Self>) {
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -2247,7 +3189,7 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -2301,7 +3243,7 @@ impl ConnApp {
         self.right_panel.read(cx).browser_title(cx)
     }
 
-    #[cfg(all(feature = "cef", feature = "automation"))]
+    #[cfg(feature = "automation")]
     pub(crate) fn browser_preview_eval(
         &mut self,
         expression: &str,
@@ -2311,7 +3253,7 @@ impl ConnApp {
             .update(cx, |panel, cx| panel.browser_preview_eval(expression, cx))
     }
 
-    #[cfg(all(feature = "cef", feature = "automation"))]
+    #[cfg(feature = "automation")]
     pub(crate) fn browser_preview_call(
         &mut self,
         op: &str,
@@ -2322,7 +3264,7 @@ impl ConnApp {
             .update(cx, |panel, cx| panel.browser_preview_call(op, params, cx))
     }
 
-    #[cfg(all(feature = "cef", feature = "automation"))]
+    #[cfg(feature = "automation")]
     pub(crate) fn browser_screenshot(
         &self,
         path: &std::path::Path,
@@ -2517,7 +3459,7 @@ impl ConnApp {
         let entry_count = state.entries.len();
         self.threads.insert(thread_id.clone(), state);
         self.layout.selected_thread_id = Some(thread_id.clone());
-        self.draft = None;
+        self.park_active_draft();
 
         let t0 = std::time::Instant::now();
         self.sync_chat(cx);
@@ -2606,6 +3548,24 @@ impl ConnApp {
             .shell
             .find_thread(&thread_id)
             .map(|t| t.project_id.clone());
+        // Opening a thread ends a selection, and anchors the next `Shift`-click (`navigateToThread`).
+        self.thread_selection.clear();
+        self.thread_selection.set_anchor(&thread_id);
+        // A thread the project filter hides widens the filter to every project, and its row
+        // scrolls into view (`routeReveal`).
+        if let Some(project_id) = &project_id
+            && self.active_workspace.is_some()
+            && !crate::sidebar::thread_list::project_in_scope(
+                &self.shell,
+                &self.orbit.workspaces,
+                self.active_workspace.as_deref(),
+                project_id,
+            )
+        {
+            self.active_workspace = None;
+            rail_workspaces::save_active_workspace(None);
+        }
+        self.reveal_open_row = true;
         // Always reveal the chat column when selecting a thread in the sidebar.
         self.right_panel_maximized = false;
         self.open_thread(thread_id);
@@ -2631,6 +3591,49 @@ impl ConnApp {
         self.layout.right_panel_open = !self.layout.right_panel_open;
         self.sync_browser_visibility(cx);
         cx.notify();
+    }
+
+    /// Opens or closes the terminal drawer under the chat (`terminal.toggle`, `Cmd+J`). Opening
+    /// starts the shell on first use and focuses it; closing returns focus to the shell root.
+    pub(crate) fn toggle_terminal_drawer(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.terminal_drawer_open = !self.terminal_drawer_open;
+        let terminal = self.right_panel.read(cx).terminal_entity();
+        if self.terminal_drawer_open {
+            terminal.update(cx, |terminal, cx| {
+                terminal.ensure_started(cx);
+                terminal.focus(window, cx);
+            });
+        } else {
+            self.seam_drag = None;
+            window.focus(&self.focus_handle, cx);
+        }
+        cx.notify();
+    }
+
+    /// Starts dragging the terminal drawer's top edge from pointer height `y`.
+    pub(crate) fn begin_terminal_drawer_drag(&mut self, y: f32, cx: &mut Context<'_, Self>) {
+        self.seam_drag = Some(SeamDrag::TerminalDrawer {
+            from_y: y,
+            start: self.terminal_drawer_height,
+        });
+        cx.notify();
+    }
+
+    /// Resets the terminal drawer to its default height (double-click on its handle).
+    pub(crate) fn reset_terminal_drawer_height(&mut self, cx: &mut Context<'_, Self>) {
+        self.terminal_drawer_height = TERMINAL_DRAWER_DEFAULT_PX;
+        self.seam_drag = None;
+        cx.notify();
+    }
+
+    /// The open right panel has no tab, so it lists the surfaces to open.
+    fn right_panel_shows_launcher(&self) -> bool {
+        self.layout
+            .shows_surface_launcher(self.right_panel_open_tabs.len())
     }
 
     /// The active right-panel surface.
@@ -2758,6 +3761,50 @@ impl ConnApp {
         self.chat.clone()
     }
 
+    /// Keeps drafts in `path` for this test, as a run with a config directory does.
+    #[cfg(test)]
+    pub(crate) fn set_drafts_path_for_test(&mut self, path: std::path::PathBuf) {
+        self.drafts_path = Some(path);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn settle_drafts_for_test(&mut self, cx: &mut Context<'_, Self>) {
+        self.settle_drafts(cx);
+    }
+
+    /// Reads the drafts file back in, as a start does.
+    #[cfg(test)]
+    pub(crate) fn restore_saved_drafts_for_test(&mut self, cx: &mut Context<'_, Self>) {
+        self.restore_saved_drafts(cx);
+        cx.notify();
+    }
+
+    /// The widths kept for the next launch: the thread sidebar's and the right panel's.
+    #[cfg(test)]
+    pub(crate) fn saved_panel_widths_for_test(&self) -> (Option<f32>, Option<f32>) {
+        self.sidebar.saved_widths()
+    }
+
+    /// The right panel's width as drawn in a window `viewport_w` wide.
+    #[cfg(test)]
+    pub(crate) fn right_panel_effective_width_for_test(&self, viewport_w: f32) -> f32 {
+        self.right_panel_effective_width(viewport_w)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dismiss_shell_popovers_for_test(&mut self, cx: &mut Context<'_, Self>) {
+        self.dismiss_shell_popovers(cx);
+    }
+
+    /// The open new-thread draft's id and project.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn open_draft_for_test(&self) -> Option<(String, String)> {
+        self.draft
+            .as_ref()
+            .map(|d| (d.draft_id.clone(), d.project_id.clone()))
+    }
+
     #[cfg(test)]
     #[must_use]
     pub(crate) fn thread_menu_copy_open_for_test(&self) -> bool {
@@ -2784,7 +3831,12 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         self.active_workspace = workspace_id;
+        rail_workspaces::save_active_workspace(self.active_workspace.as_deref());
+        // A selection made under one scope can hold threads the next scope hides.
+        self.thread_selection.clear();
         self.sidebar_filter_menu_open = false;
+        // The shelf pages for the projects now in scope.
+        self.drive_older_pages(cx);
         cx.notify();
     }
 
@@ -2867,7 +3919,7 @@ impl ConnApp {
     /// open or a title is being renamed.
     #[must_use]
     pub(crate) fn thread_hover_suppressed(&self) -> bool {
-        self.thread_menu.is_some() || self.renaming_thread_id.is_some()
+        self.thread_menu.is_some() || self.renaming_thread_id.is_some() || self.pointer_captured()
     }
 
     #[cfg(test)]
@@ -3070,55 +4122,104 @@ impl ConnApp {
         settled: bool,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(connection) = self.connection.clone() else {
+        self.settle_thread_along(thread_id, settled, &HashSet::new(), cx);
+    }
+
+    /// [`Self::settle_thread`] for a thread settled together with others (`settleThreads`): the
+    /// open thread moves on to one that is not being settled with it.
+    fn settle_thread_along(
+        &mut self,
+        thread_id: String,
+        settled: bool,
+        co_settling: &HashSet<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.settle_thread_reporting(thread_id, settled, co_settling, cx, |_, _, _| {});
+    }
+
+    /// [`Self::settle_thread_along`] that says whether the server took the command, for a drop
+    /// that holds the settle on screen until it does.
+    fn settle_thread_reporting(
+        &mut self,
+        thread_id: String,
+        settled: bool,
+        co_settling: &HashSet<String>,
+        cx: &mut Context<'_, Self>,
+        done: impl FnOnce(&mut Self, bool, &mut Context<'_, Self>) + 'static,
+    ) {
+        let Some(connection) = self.connection_for_thread(&thread_id) else {
+            done(self, false, cx);
             return;
         };
         let Ok(cmd) = crate::commands::settle_thread(&thread_id, settled) else {
+            done(self, false, cx);
             return;
         };
-        // `planForwardNavigation`: settling the open thread moves on to the next active one.
-        let advance = settled
+        // The undo restores the thread as it is now (`planThreadUndo("settle", thread)`); a
+        // settled thread that is un-settled by hand has nothing left to undo.
+        let undo_plan = settled.then(|| {
+            conn_state::plan_settle_undo(self.shell.find_thread(&thread_id).map(settle_facts))
+        });
+        if settled {
+            // Settling supersedes an older unpin undo, which the server would read as a promotion
+            // that un-settles.
+            self.forget_thread_undo(&thread_id, &[ThreadUndoKind::Pin]);
+        } else {
+            self.forget_thread_undo(&thread_id, &[ThreadUndoKind::Settle]);
+        }
+        // `planForwardNavigation`: settling the open thread moves on, planned before the shell
+        // changes under it.
+        let forward = (settled
             && self.layout.selected_thread_id.as_deref() == Some(thread_id.as_str())
-            && self.draft.is_none();
+            && self.draft.is_none())
+        .then(|| self.plan_forward_navigation(&thread_id, co_settling));
         cx.spawn(
             async move |this, cx| match connection.dispatch_command(cmd).await {
                 Ok(_) => {
-                    if advance {
-                        let _ = this.update(cx, |app, cx| {
-                            if app.layout.selected_thread_id.as_deref() == Some(thread_id.as_str())
-                            {
-                                app.navigate_forward_from(&thread_id, cx);
-                            }
-                        });
-                    }
+                    let _ = this.update(cx, |app, cx| {
+                        if let Some(forward) = forward
+                            && app.layout.selected_thread_id.as_deref() == Some(thread_id.as_str())
+                        {
+                            app.go_forward(forward, cx);
+                        }
+                        // Only a settle the server took shows the notice (`showThreadUndoNotice`).
+                        if let Some(plan) = undo_plan {
+                            app.offer_thread_undo(thread_id, ThreadUndoKind::Settle, plan, cx);
+                        }
+                        done(app, true, cx);
+                    });
                 }
-                Err(e) => eprintln!("settle: dispatchCommand failed: {e}"),
+                Err(e) => {
+                    eprintln!("settle: dispatchCommand failed: {e}");
+                    let _ = this.update(cx, |app, cx| done(app, false, cx));
+                }
             },
         )
         .detach();
     }
 
-    /// `planForwardNavigation`: open the next active thread after `thread_id` in sidebar
-    /// order (wrapping), else start a new thread in its project.
-    fn navigate_forward_from(&mut self, thread_id: &str, cx: &mut Context<'_, Self>) {
+    /// `planForwardNavigation`: the next active thread after `thread_id` in sidebar order
+    /// (wrapping) that is not in `parked`, else a new thread in its project.
+    fn plan_forward_navigation(
+        &self,
+        thread_id: &str,
+        parked: &HashSet<String>,
+    ) -> ForwardNavigation {
         let ordered = crate::sidebar::thread_list::ordered_active_thread_ids(&self.shell);
-        let next = ordered
-            .iter()
-            .position(|id| id == thread_id)
-            .and_then(|idx| {
-                ordered[idx + 1..]
-                    .iter()
-                    .chain(ordered[..idx].iter())
-                    .find(|id| id.as_str() != thread_id)
-                    .cloned()
-            });
-        match next {
-            Some(next) => self.select_thread(next, cx),
-            None => {
-                let project_id = self
-                    .shell
+        match conn_state::next_after_settle(&ordered, thread_id, |id| parked.contains(id)) {
+            Some(next) => ForwardNavigation::Thread(next.to_owned()),
+            None => ForwardNavigation::NewThread(
+                self.shell
                     .find_thread(thread_id)
-                    .map(|t| t.project_id.clone());
+                    .map(|t| t.project_id.clone()),
+            ),
+        }
+    }
+
+    fn go_forward(&mut self, forward: ForwardNavigation, cx: &mut Context<'_, Self>) {
+        match forward {
+            ForwardNavigation::Thread(next) => self.select_thread(next, cx),
+            ForwardNavigation::NewThread(project_id) => {
                 self.start_new_thread(project_id, None, cx);
             }
         }
@@ -3131,9 +4232,17 @@ impl ConnApp {
         cmd: Result<conn_contract::OrchestrationV2Command, serde_json::Error>,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(connection) = self.connection.clone() else {
-            return;
-        };
+        self.dispatch_thread_command_then(what, cmd, cx, |_, _| {});
+    }
+
+    /// Like [`Self::dispatch_thread_command`], and runs `done` once the server took the command.
+    fn dispatch_thread_command_then(
+        &self,
+        what: &'static str,
+        cmd: Result<conn_contract::OrchestrationV2Command, serde_json::Error>,
+        cx: &mut Context<'_, Self>,
+        done: impl FnOnce(&mut Self, &mut Context<'_, Self>) + 'static,
+    ) {
         let cmd = match cmd {
             Ok(cmd) => cmd,
             Err(e) => {
@@ -3141,11 +4250,17 @@ impl ConnApp {
                 return;
             }
         };
-        cx.spawn(async move |_, _| {
-            if let Err(e) = connection.dispatch_command(cmd).await {
-                eprintln!("{what}: dispatchCommand failed: {e}");
-            }
-        })
+        let Some(connection) = self.connection_for_command(&cmd) else {
+            return;
+        };
+        cx.spawn(
+            async move |this, cx| match connection.dispatch_command(cmd).await {
+                Ok(_) => {
+                    let _ = this.update(cx, done);
+                }
+                Err(e) => eprintln!("{what}: dispatchCommand failed: {e}"),
+            },
+        )
         .detach();
     }
 
@@ -3156,7 +4271,24 @@ impl ConnApp {
         pinned: bool,
         cx: &mut Context<'_, Self>,
     ) {
-        self.dispatch_thread_command("pin", crate::commands::pin_thread(&thread_id, pinned), cx);
+        if pinned {
+            // Pinning un-settles, so an older unpin or settle undo would fight this pin
+            // (`sendPin` invalidates them).
+            self.forget_thread_undo(&thread_id, &[ThreadUndoKind::Pin, ThreadUndoKind::Settle]);
+            self.dispatch_thread_command("pin", crate::commands::pin_thread(&thread_id, true), cx);
+            return;
+        }
+        // The undo pins the thread again in the place it had (`planThreadUndo("unpin", thread)`),
+        // and the notice shows once the server took the unpin (`unpinThread`).
+        let plan =
+            conn_state::plan_unpin_undo(self.shell.find_thread(&thread_id).map(settle_facts));
+        let undo_id = thread_id.clone();
+        self.dispatch_thread_command_then(
+            "unpin",
+            crate::commands::pin_thread(&thread_id, false),
+            cx,
+            move |app, cx| app.offer_thread_undo(undo_id, ThreadUndoKind::Pin, plan, cx),
+        );
     }
 
     /// Opens the Thread Actions menu for `thread_id` at `position` (window coordinates).
@@ -3166,13 +4298,39 @@ impl ConnApp {
         position: gpui_kit::Point<gpui_kit::Pixels>,
         cx: &mut Context<'_, Self>,
     ) {
+        self.open_thread_menu_as(thread_id, false, position, cx);
+    }
+
+    /// Opens the menu of a sidebar row: on a picked row it acts on every picked thread
+    /// (`handleThreadContextMenu`).
+    pub(crate) fn open_row_menu(
+        &mut self,
+        thread_id: String,
+        position: gpui_kit::Point<gpui_kit::Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let bulk = self.thread_selection.contains(&thread_id);
+        self.open_thread_menu_as(thread_id, bulk, position, cx);
+    }
+
+    fn open_thread_menu_as(
+        &mut self,
+        thread_id: String,
+        bulk: bool,
+        position: gpui_kit::Point<gpui_kit::Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.thread_details.copy_menu = None;
         self.thread_hover.dismiss();
         self.thread_menu_copy_close_gen = self.thread_menu_copy_close_gen.wrapping_add(1);
+        self.thread_menu_focus_pending = true;
         self.thread_menu = Some(ThreadMenuAnchor {
             thread_id,
+            draft: false,
+            bulk,
             position,
             copy_open: false,
+            cursor: MenuCursor::default(),
         });
         cx.notify();
     }
@@ -3244,6 +4402,7 @@ impl ConnApp {
     /// Returns whether anything closed.
     fn dismiss_shell_popovers(&mut self, cx: &mut Context<'_, Self>) -> bool {
         let mut changed = self.thread_menu.take().is_some();
+        changed |= self.rail_menu.take().is_some();
         if changed {
             self.thread_menu_copy_close_gen = self.thread_menu_copy_close_gen.wrapping_add(1);
         }
@@ -3277,8 +4436,13 @@ impl ConnApp {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        let bulk = self.thread_menu.as_ref().is_some_and(|menu| menu.bulk);
         self.thread_menu = None;
         cx.notify();
+        if bulk {
+            self.run_bulk_action(action, window, cx);
+            return;
+        }
         let Some(thread) = self.shell.find_thread(&thread_id).cloned() else {
             return;
         };
@@ -3335,6 +4499,8 @@ impl ConnApp {
             ThreadMenuAction::Delete => {
                 self.confirm_delete_thread(thread_id, thread.title, window, cx)
             }
+            // Only a draft row's menu offers it; `run_draft_menu_action` handles that.
+            ThreadMenuAction::DiscardDraft => {}
         }
     }
 
@@ -3358,17 +4524,69 @@ impl ConnApp {
                 return;
             }
             let _ = this.update(cx, |app, cx| {
-                if app.layout.selected_thread_id.as_deref() == Some(thread_id.as_str()) {
-                    app.navigate_forward_from(&thread_id, cx);
-                }
-                app.dispatch_thread_command(
-                    "delete thread",
-                    crate::commands::delete_thread(&thread_id),
-                    cx,
-                );
+                app.delete_thread_now(&thread_id, &HashSet::new(), cx);
             });
         })
         .detach();
+    }
+
+    /// `Delete N threads?` for the threads picked for a bulk action, then `thread.delete` for
+    /// each (`handleMultiSelectContextMenu` `delete`).
+    fn confirm_delete_threads(
+        &mut self,
+        thread_ids: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let count = thread_ids.len();
+        let answer = window.prompt(
+            gpui_kit::PromptLevel::Critical,
+            &format!(
+                "Delete {count} {}?",
+                if count == 1 { "thread" } else { "threads" }
+            ),
+            Some("This permanently clears conversation history for these threads."),
+            &["Delete", "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            if answer.await != Ok(0) {
+                return;
+            }
+            let _ = this.update(cx, |app, cx| {
+                let deleting: HashSet<String> = thread_ids.iter().cloned().collect();
+                for thread_id in &thread_ids {
+                    app.delete_thread_now(thread_id, &deleting, cx);
+                }
+                app.thread_selection.remove(&thread_ids);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Sends `thread.delete`. The open thread moves on to one that is not deleted with it, the
+    /// undos that restore its place end, and its unsent input goes with it.
+    fn delete_thread_now(
+        &mut self,
+        thread_id: &str,
+        deleting: &HashSet<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.layout.selected_thread_id.as_deref() == Some(thread_id) {
+            let forward = self.plan_forward_navigation(thread_id, deleting);
+            self.go_forward(forward, cx);
+        }
+        // Deleting ends every undo that restores the thread's place (`expireThreadUndos`).
+        self.forget_thread_undo(thread_id, &[ThreadUndoKind::Settle, ThreadUndoKind::Pin]);
+        // The thread's unsent input goes with it (`clearComposerDraftForThread`).
+        let deleted = thread_id.to_owned();
+        self.dispatch_thread_command_then(
+            "delete thread",
+            crate::commands::delete_thread(thread_id),
+            cx,
+            move |app, cx| app.forget_thread_draft(&deleted, cx),
+        );
     }
 
     /// Ticks the sidebar each second while a visible row shows a live elapsed label, else each
@@ -3393,6 +4611,10 @@ impl ConnApp {
                                 )
                             })
                         });
+                    if app.drafts_path.is_some() {
+                        // The open draft's text changes without telling the app.
+                        app.settle_drafts(cx);
+                    }
                     let minute = now / 60;
                     if live || app.thread_details.open || minute != last_minute {
                         last_minute = minute;
@@ -3407,35 +4629,55 @@ impl ConnApp {
         self._sidebar_clock = Some(task);
     }
 
-    /// Applies one pointer move of a seam drag, keeping the chat column at least `640px`
-    /// (`THREAD_MAIN_CONTENT_MIN_WIDTH`).
-    fn apply_seam_drag(&mut self, drag: SeamDrag, x: f32, viewport_w: f32) {
-        const CHAT_MIN_WIDTH_PX: f32 = 640.0;
+    /// Applies one pointer move of a seam drag: the width follows the pointer between its
+    /// minimum and what the window leaves (`LayoutState::drag_sidebar_width`).
+    fn apply_seam_drag(&mut self, drag: SeamDrag, x: f32, y: f32, viewport: (f32, f32)) {
+        let (viewport_w, viewport_h) = viewport;
         let rail = crate::shell::WORKSPACE_RAIL_WIDTH_PX;
         match drag {
+            SeamDrag::TerminalDrawer { from_y, start } => {
+                self.terminal_drawer_height =
+                    clamp_terminal_drawer_height(start + (from_y - y), viewport_h);
+            }
             SeamDrag::Sidebar { from_x, start } => {
-                let right = if self.layout.right_panel_open {
-                    self.layout.right_panel_width
-                } else {
-                    0.0
-                };
-                let max = (viewport_w - rail - right - CHAT_MIN_WIDTH_PX)
-                    .max(conn_state::SIDEBAR_MIN_WIDTH);
                 self.layout
-                    .set_sidebar_width((start + (x - from_x)).min(max));
+                    .drag_sidebar_width(start + (x - from_x), viewport_w, rail);
             }
             SeamDrag::RightPanel { from_x, start } => {
-                let left = if self.layout.sidebar_open {
-                    rail + self.layout.sidebar_width
-                } else {
-                    0.0
-                };
-                let max =
-                    (viewport_w - left - CHAT_MIN_WIDTH_PX).max(conn_state::RIGHT_PANEL_MIN_WIDTH);
                 self.layout
-                    .set_right_panel_width((start - (x - from_x)).min(max));
+                    .drag_right_panel_width(start - (x - from_x), viewport_w, rail);
             }
         }
+    }
+
+    /// The right panel's width as drawn: the width kept for it, held to what the window and the
+    /// sidebar leave (`getPreviewPanelMaxWidth`).
+    fn right_panel_effective_width(&self, viewport_w: f32) -> f32 {
+        let left = if self.layout.sidebar_open {
+            crate::shell::WORKSPACE_RAIL_WIDTH_PX + self.layout.sidebar_width
+        } else {
+            0.0
+        };
+        self.layout
+            .right_panel_width
+            .min(conn_state::right_panel_max_width(viewport_w, left))
+            .max(conn_state::RIGHT_PANEL_MIN_WIDTH)
+    }
+
+    /// Keeps the width a finished seam drag ended on, when it moved (`finish` in
+    /// `useResizableWidth`).
+    fn remember_seam_width(&mut self, drag: SeamDrag) {
+        let (mut sidebar, mut panel) = self.sidebar.saved_widths();
+        match drag {
+            SeamDrag::Sidebar { start, .. } if self.layout.sidebar_width != start => {
+                sidebar = Some(self.layout.sidebar_width);
+            }
+            SeamDrag::RightPanel { start, .. } if self.layout.right_panel_width != start => {
+                panel = Some(self.layout.right_panel_width);
+            }
+            _ => return,
+        }
+        self.sidebar.remember_widths(sidebar, panel);
     }
 
     /// Toggles the top-right Thread Details card and loads its data when it opens.
@@ -3473,7 +4715,7 @@ impl ConnApp {
             self.thread_details.previous_agents_expanded = false;
         }
         self.thread_details.loaded_for = Some(thread_id.clone());
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.context_connection() else {
             return;
         };
         if let Some(cwd) = cwd {
@@ -3611,7 +4853,7 @@ impl ConnApp {
         else {
             return;
         };
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.context_connection() else {
             return;
         };
         self.thread_details.git_init_pending = true;
@@ -3761,7 +5003,7 @@ impl ConnApp {
             cx.notify();
             return;
         }
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connection_for_thread(&thread_id) else {
             cx.notify();
             return;
         };
@@ -3836,22 +5078,10 @@ impl ConnApp {
         .detach();
     }
 
-    /// Toggles a project group's collapsed state in the thread sidebar.
-    pub(crate) fn toggle_project_collapsed(
-        &mut self,
-        project_id: &str,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if !self.collapsed_projects.remove(project_id) {
-            self.collapsed_projects.insert(project_id.to_owned());
-        }
-        cx.notify();
-    }
-
     /// Current layout state.
     #[cfg_attr(
-        not(feature = "automation"),
-        expect(dead_code, reason = "read by the automation hook")
+        all(not(feature = "automation"), not(test)),
+        expect(dead_code, reason = "read by the automation hook and UI tests")
     )]
     #[must_use]
     pub(crate) fn layout(&self) -> &LayoutState {
@@ -3885,6 +5115,7 @@ impl ConnApp {
                 layout: &self.layout,
                 draft_project_id: self.draft.as_ref().map(|d| d.project_id.as_str()),
                 details_open: self.thread_details.open,
+                terminal_open: self.terminal_drawer_open,
                 header_rename: (self.rename_in_header && self.renaming_thread_id.is_some())
                     .then_some(&self.rename_input),
                 tokens: &self.tokens,
@@ -3901,9 +5132,34 @@ impl ConnApp {
         // Matches real Conn (`ChatView.tsx`): the chat card re-roots `--background` to opaque
         // `--shell-card` (`bg-background`), keeping the chat surface deeper than the glossy outer
         // shell and slightly deeper than the translucent sidebar card.
-        let chat_card = inset_card(&self.tokens, &self.geometry, join)
-            .bg(hsla(self.tokens.shell_card))
-            .child(self.chat.clone());
+        let chat_card =
+            inset_card(&self.tokens, &self.geometry, join).bg(hsla(self.tokens.shell_card));
+        // Conn hosts the terminal as a bottom sheet in the chat card (`ThreadTerminalDrawer`).
+        // The right panel's Terminal tab shows the same view, so the drawer yields to it.
+        let drawer_visible = self.terminal_drawer_open
+            && !(self.layout.right_panel_open
+                && self.layout.right_panel_tab == RightPanelTab::Terminal);
+        let chat_card = if drawer_visible {
+            let terminal = self.right_panel.read(cx).terminal_entity();
+            chat_card
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h_0()
+                        .min_w_0()
+                        .child(self.chat.clone()),
+                )
+                .child(crate::panels::terminal_drawer::render_terminal_drawer(
+                    &terminal,
+                    clamp_terminal_drawer_height(self.terminal_drawer_height, viewport_h),
+                    &self.tokens,
+                    cx,
+                ))
+        } else {
+            chat_card.child(self.chat.clone())
+        };
 
         let mut column = div()
             .id("conn-chat-column")
@@ -3928,8 +5184,7 @@ impl ConnApp {
                 .and_then(|id| self.shell.find_thread(id))
         {
             let environment_label = self
-                .server_label
-                .clone()
+                .hover_environment_label(self.layout.selected_thread_id.as_deref())
                 .unwrap_or_else(|| "Local".to_owned());
             let card = render_thread_details_card(
                 &DetailsCardProps {
@@ -3937,17 +5192,31 @@ impl ConnApp {
                     thread,
                     state: &self.thread_details,
                     environment_label: &environment_label,
-                    max_height: (viewport_h - 104.0).max(160.0),
+                    max_height: (viewport_h
+                        - self.geometry.header_height_px
+                        - self.geometry.shell_inset_px
+                        - 2.0 * THREAD_DETAILS_CARD_GAP_PX)
+                        .max(160.0),
                     tokens: &self.tokens,
                 },
                 cx,
             );
+            // Sits inside the chat card with Conn's `THREAD_DETAILS_CARD_GAP` (12px) from its
+            // top and right edges (`threadDetailsCardLayout.ts`); the card has no right margin
+            // when the right panel is joined to it.
+            let card_right_margin = if self.layout.right_panel_open {
+                0.0
+            } else {
+                self.geometry.shell_inset_px
+            };
             column = column.child(
                 gpui_kit::deferred(
                     div()
                         .absolute()
-                        .top(px(self.geometry.header_height_px))
-                        .right(px(self.geometry.workspace_controls_right_px))
+                        .top(px(
+                            self.geometry.header_height_px + THREAD_DETAILS_CARD_GAP_PX
+                        ))
+                        .right(px(card_right_margin + THREAD_DETAILS_CARD_GAP_PX))
                         .child(card),
                 )
                 .with_priority(4),
@@ -3968,6 +5237,58 @@ impl ConnApp {
                 _ => thread,
             })
             .collect()
+    }
+
+    /// A `1`-`9` key with no control focused picks the pending question's option, as a key
+    /// pressed on a page's body does in Conn. The chat must be showing.
+    fn pick_question_option_from_idle_focus(
+        &mut self,
+        event: &gpui_kit::KeyDownEvent,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        let chat_hidden = self.layout.right_panel_open && self.right_panel_maximized;
+        // A sidebar row focused by the pointer is as idle as the page body; one focused by keys
+        // keeps its keys (`[data-sidebar-row]:focus-visible`).
+        let idle = window.focused(cx).is_none_or(|focused| {
+            focused == self.focus_handle
+                || (!window.last_input_was_keyboard() && self.sidebar_tree.owns(&focused))
+        });
+        if chat_hidden || !idle {
+            return false;
+        }
+        self.chat
+            .update(cx, |chat, cx| chat.on_question_key(event, window, cx, true))
+    }
+
+    /// Handles a surface's letter while the launcher shows and nothing has the keyboard, as
+    /// Conn's launcher does. Returns whether the key was used.
+    fn handle_launcher_key(
+        &mut self,
+        event: &gpui_kit::KeyDownEvent,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        if !self.right_panel_shows_launcher() {
+            return false;
+        }
+        let modifiers = event.keystroke.modifiers;
+        if modifiers.control || modifiers.platform || modifiers.alt || modifiers.shift {
+            return false;
+        }
+        if window
+            .focused(cx)
+            .is_some_and(|focused| focused != self.focus_handle)
+        {
+            return false;
+        }
+        match RightPanelTab::from_menu_shortcut(&event.keystroke.key) {
+            Some(tab) if self.available_right_panel_tabs().contains(&tab) => {
+                self.select_right_panel_tab(tab, cx);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Handles a key while the add-surface menu is open: a surface's letter opens it, Escape
@@ -4000,7 +5321,11 @@ impl ConnApp {
         false
     }
 
-    fn render_right_panel_column(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render_right_panel_column(
+        &self,
+        viewport_w: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
         use crate::panels::header::{PanelHeaderCallbacks, PanelHeaderProps, render_panel_header};
         use std::rc::Rc;
         let app = cx.entity();
@@ -4085,8 +5410,21 @@ impl ConnApp {
                 right: false,
             },
         )
-        .bg(hsla(self.tokens.shell_card))
-        .child(self.right_panel.clone());
+        .bg(hsla(self.tokens.shell_card));
+        let card = if self.right_panel_shows_launcher() {
+            card.child(crate::panels::header::render_panel_launcher(
+                &self.tokens,
+                &available_tabs,
+                Rc::new({
+                    let app = cx.entity();
+                    move |tab, _, cx| {
+                        app.update(cx, |this, cx| this.select_right_panel_tab(tab, cx));
+                    }
+                }),
+            ))
+        } else {
+            card.child(self.right_panel.clone())
+        };
 
         let column = div()
             .id("conn-right-panel-column")
@@ -4101,7 +5439,9 @@ impl ConnApp {
         let column = if self.right_panel_maximized {
             column.flex_1().min_w_0()
         } else {
-            column.w(px(self.layout.right_panel_width)).flex_shrink_0()
+            column
+                .w(px(self.right_panel_effective_width(viewport_w)))
+                .flex_shrink_0()
         };
         column.child(header).child(card)
     }
@@ -4598,6 +5938,7 @@ impl ConnApp {
             if let Ok(Ok(fleet)) = task.await {
                 let _ = this.update(cx, |app, cx| {
                     app.orbit.fleet = fleet;
+                    app.sync_linked_environments(cx);
                     app.refresh_settings_orbit_info(cx);
                     cx.notify();
                 });
@@ -4660,6 +6001,7 @@ impl ConnApp {
                 let effects =
                     self.orbit
                         .apply_fetch(result, self.tokens.appearance, allow_theme_adopt);
+                self.sync_linked_environments(cx);
                 if let Some(reduce) = effects.reduce_transparency {
                     self.apply_reduce_transparency_choice(reduce, false, cx);
                 }
@@ -4790,6 +6132,19 @@ impl ConnApp {
         .detach();
     }
 
+    /// Opens a connection with every app-wide stream: the shell, the server config (the provider
+    /// catalog) and panel requests. The launch and a server switch both connect through here.
+    fn start_connection(
+        config: ServerConfig,
+        device_name: String,
+    ) -> (Connection, tokio::sync::mpsc::Receiver<ClientEvent>) {
+        let (connection, events) = Connection::start(config, crate::live::RT.handle());
+        connection.subscribe_shell();
+        connection.subscribe_server_config();
+        connection.subscribe_panel_requests(Some(device_name));
+        (connection, events)
+    }
+
     /// Switches the active live `conn-server` connection to a new [`ServerConfig`] (e.g. an Orbit
     /// Node or Instance), cleanly resetting shell/thread state and updating chat & right panels.
     fn connect_to_server_config(
@@ -4808,30 +6163,37 @@ impl ConnApp {
         self.orbit.connecting_server_id = orbit_server_id.clone();
         self.orbit.notice = None;
 
+        self.reset_linked_environments();
         self.shell = ShellState::default();
+        self.server_config = std::sync::Arc::default();
         self.threads.clear();
         self.ended_threads.clear();
         self.subscribed_thread_id = None;
+        self.reset_child_approvals();
         self.subscribed_annotation_project = None;
         self.annotations.clear();
         self.annotation_last_sent.clear();
         self.layout.selected_thread_id = None;
         self.layout.selected_project_id = None;
-        self.draft = None;
+        // Drafts belong to their environment; this connection ends any launch in flight.
+        self.park_active_draft();
+        self.drafts.clear_launching();
 
-        let (connection, events) = Connection::start(config, crate::live::RT.handle());
-        connection.subscribe_shell();
-        connection.subscribe_panel_requests(Some(self.device_name()));
+        let (connection, events) = Self::start_connection(config, self.device_name());
         Self::pump_events(generation, orbit_server_id, events, cx);
 
         self.connection = Some(connection.clone());
+        let environment_key = self.server_url.clone();
         self.chat.update(cx, |chat, cx| {
             chat.set_error(None, cx);
+            chat.set_environment_key(environment_key);
             chat.set_connection(Some(connection.clone()), cx);
         });
+        self.push_server_config(cx);
         self.right_panel
             .update(cx, |panel, cx| panel.set_connection(Some(connection), cx));
         self.sync_chat(cx);
+        self.sync_linked_environments(cx);
         self.refresh_settings_orbit_info(cx);
         cx.notify();
     }
@@ -5193,7 +6555,9 @@ impl ConnApp {
             };
             let live_connection = self.connection.clone();
             let projects = self.scheduled_task_projects();
-            let info = self.orbit.settings_info(self.server_url.as_deref());
+            let mut info = self.orbit.settings_info(self.server_url.as_deref());
+            info.linked_environments = self.linked_settings_rows();
+            info.linked_instance_ids = self.linked_instance_ids();
             let custom = self.orbit.custom_themes.clone();
             modal.update(cx, |m, cx| {
                 m.set_orbit_state(connection, live_connection, projects, info, &custom, cx);
@@ -5360,6 +6724,9 @@ impl ConnApp {
         if let Some(palette) = &self.command_palette {
             palette.update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
         }
+        if let Some(editor) = &self.workspace_editor {
+            editor.update(cx, |e, cx| e.set_tokens(tokens.clone(), cx));
+        }
         self.tokens = tokens;
         cx.notify();
     }
@@ -5397,7 +6764,10 @@ pub(crate) fn start_frame_log(cx: &mut App) {
 
 impl Render for ConnApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        self.refresh_workspace_images();
         RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.sync_thread_menu_focus(window, cx);
+        self.sync_undo_notice_focus(window, cx);
         let viewport = window.viewport_size();
         let viewport_w = f32::from(viewport.width);
         let viewport_h = f32::from(viewport.height);
@@ -5406,22 +6776,41 @@ impl Render for ConnApp {
             .a11y_group("shell.root", "Conn workspace")
             .track_focus(&self.focus_handle)
             .capture_key_down(
-                cx.listener(|app, event: &gpui_kit::KeyDownEvent, _window, cx| {
+                cx.listener(|app, event: &gpui_kit::KeyDownEvent, window, cx| {
+                    if std::mem::take(&mut app.keystroke_consumed) {
+                        return;
+                    }
                     if std::env::var_os("CONN_GPUI_FRAME_LOG").is_some() {
                         eprintln!(
                             "key: {:?} {:?}",
                             event.keystroke.modifiers, event.keystroke.key
                         );
                     }
+                    if app.thread_traversal_key_down(event, cx) {
+                        cx.stop_propagation();
+                        return;
+                    }
                     if app.handle_add_menu_key(event, cx) {
                         cx.stop_propagation();
                         return;
                     }
-                    if event.keystroke.key == "escape" && app.dismiss_shell_popovers(cx) {
+                    if app.handle_launcher_key(event, window, cx) {
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if app.pick_question_option_from_idle_focus(event, window, cx) {
+                        return;
+                    }
+                    if event.keystroke.key == "escape" && app.escape_shell_popovers(cx) {
                         cx.stop_propagation();
                     }
                 }),
             )
+            .on_modifiers_changed(cx.listener(
+                |app, event: &gpui_kit::ModifiersChangedEvent, window, cx| {
+                    app.modifiers_changed(&event.modifiers, window, cx);
+                },
+            ))
             .on_mouse_down(
                 gpui_kit::MouseButton::Left,
                 cx.listener(|app, _, _window, cx| {
@@ -5454,6 +6843,9 @@ impl Render for ConnApp {
             .on_action(cx.listener(|app, _: &ToggleRightPanel, _window, cx| {
                 app.toggle_right_panel(cx);
             }))
+            .on_action(cx.listener(|app, _: &ToggleTerminal, window, cx| {
+                app.toggle_terminal_drawer(window, cx);
+            }))
             .on_action(cx.listener(|app, _: &NewThread, window, cx| {
                 app.start_new_thread(None, Some(window), cx);
             }))
@@ -5481,14 +6873,86 @@ impl Render for ConnApp {
             .line_height(px(self.geometry.ui_line_height_px))
             .text_color(hsla(self.tokens.foreground));
 
+        // What the sidebar draws that changes the app: a drop the server has shown through ends,
+        // the search ranks what it found, and the shelf starts its scope.
+        self.release_settled_drop();
+        let search_text = self.sidebar_search_query(cx);
+        if !search_text.trim().is_empty() {
+            self.refresh_message_matches(&search_text);
+        }
+        let shelf_scope = self.settled_scope_key();
+        let shelf_visible = self.sidebar.visible_count(&shelf_scope);
+        let shelf_more = self.older_more_state();
+        // A held row shows the lists as they would be with it dropped where it is.
+        let drag_view = self.sidebar.drag.as_ref().map(|drag| {
+            let projection = match &drag.target {
+                Some(target) => conn_state::sidebar_drag::project(
+                    &drag.id,
+                    target,
+                    &drag.pinned,
+                    &drag.active,
+                    &drag.settled,
+                    // The held row shows in the shelf where it would settle, closed or not.
+                    true,
+                ),
+                None => conn_state::sidebar_drag::Projection {
+                    pinned: drag.pinned.clone(),
+                    active: drag.active.clone(),
+                    settled: drag.settled.clone(),
+                },
+            };
+            (
+                drag.id.clone(),
+                drag.from,
+                drag.target.as_ref().map(|t| t.section),
+                projection,
+            )
+        });
+        let draft_rows = self.sidebar_draft_rows(cx);
+        let draft_sidebar = DraftSidebar {
+            rows: draft_rows
+                .iter()
+                .map(|row| DraftRowView {
+                    row,
+                    project: self.shell.project(&row.project_id),
+                })
+                .collect(),
+            undo: self
+                .discard_failure
+                .map(UndoNotice::Failed)
+                .or_else(|| self.discards.notice().map(UndoNotice::Undoable)),
+            undo_focus: &self.undo_focus,
+            unsent_threads: self.sidebar_unsent_threads(cx),
+        };
+        if std::mem::take(&mut self.reveal_open_row)
+            && let Some(open) = self.layout.selected_thread_id.clone()
+        {
+            // The row is drawn by the end of this frame, which is when its place is known.
+            let app = cx.entity().downgrade();
+            window.on_next_frame(move |_, cx| {
+                let _ = app.update(cx, |app, cx| {
+                    app.sidebar_tree.reveal_row(&open);
+                    cx.notify();
+                });
+            });
+        }
+        let jump_order = self.jump_hint_order(window, cx);
+        let hover_open_for = self
+            .thread_hover
+            .open_for()
+            .filter(|_| !self.thread_hover_suppressed());
+        let hover_environment_label = self.hover_environment_label(hover_open_for);
+        let machine_icons = self.linked.machine_icons();
+        let scratch_projects = self.scratch_project_ids();
         if self.layout.sidebar_open {
             root = root
                 .child(render_workspace_rail(
-                    &self.shell,
                     &self.orbit.workspaces,
+                    &self.workspace_images,
                     self.active_workspace.as_deref(),
                     &self.tokens,
                     &self.geometry,
+                    &self.rail_gesture,
                     cx,
                 ))
                 .child(render_thread_sidebar(
@@ -5496,27 +6960,67 @@ impl Render for ConnApp {
                     &self.layout,
                     &self.orbit.workspaces,
                     self.active_workspace.as_deref(),
-                    self.draft.as_ref().map(|d| d.project_id.as_str()),
-                    &self.collapsed_projects,
+                    &draft_sidebar,
+                    &SidebarMarks {
+                        jump_order: &jump_order,
+                        selection: &self.thread_selection,
+                        shelf: crate::sidebar::thread_list::ShelfMarks {
+                            expanded: self.sidebar.settled_expanded,
+                            visible_count: shelf_visible,
+                            more: shelf_more,
+                        },
+                        search: crate::sidebar::thread_list::SearchMarks {
+                            order: &self.sidebar.search.order,
+                            excerpts: &self.sidebar.search.excerpts,
+                            matched_query: &self.sidebar.search.matched_query,
+                            pending: self.sidebar.search.pending(),
+                            failed: self.sidebar.search.failed(),
+                        },
+                        pending_drop: self
+                            .sidebar
+                            .pending_drop
+                            .as_ref()
+                            .map(|p| (&p.drop, &p.thread)),
+                        drag: drag_view.as_ref().map(|(held, from, target, projection)| {
+                            crate::sidebar::thread_list::DragMarks {
+                                held,
+                                from: *from,
+                                target: *target,
+                                pinned: &projection.pinned,
+                                active: &projection.active,
+                                settled: &projection.settled,
+                            }
+                        }),
+                        sweep: self.sidebar.sweep.as_ref().map(|sweep| {
+                            crate::sidebar::thread_list::SweepMarks {
+                                keys: &sweep.keys,
+                                action: sweep.action,
+                            }
+                        }),
+                    },
                     &self.sidebar_search_input,
+                    self.sidebar_search_highlight.as_deref(),
                     self.renaming_thread_id
                         .as_deref()
                         .filter(|_| !self.rename_in_header),
                     &self.rename_input,
                     self.sidebar_filter_menu_open,
                     &ThreadHoverView {
-                        open_for: self
-                            .thread_hover
-                            .open_for()
-                            .filter(|_| !self.thread_hover_suppressed()),
-                        environment_label: self.server_label.as_deref(),
+                        open_for: hover_open_for,
+                        environment_label: hover_environment_label.as_deref(),
+                        origins: Some(self.linked.origins()),
+                        machine_icons: &machine_icons,
+                        scratch_projects: &scratch_projects,
+                        primary_machine_icon: self.primary_machine_icon(),
                         rect: self.thread_hover.row_rect(),
                     },
+                    &mut self.sidebar_tree,
                     &self.tokens,
                     &self.geometry,
+                    window,
                     cx,
                 ))
-                .child(self.render_seam(false, cx));
+                .child(self.render_seam(false, viewport_w, cx));
         }
 
         let maximized = self.layout.right_panel_open && self.right_panel_maximized;
@@ -5526,9 +7030,51 @@ impl Render for ConnApp {
 
         if self.layout.right_panel_open {
             if !maximized {
-                root = root.child(self.render_seam(true, cx));
+                root = root.child(self.render_seam(true, viewport_w, cx));
             }
-            root = root.child(self.render_right_panel_column(cx));
+            root = root.child(self.render_right_panel_column(viewport_w, cx));
+        }
+
+        // A row held or swept (`SidebarPointerSensor`): window-level capture listeners follow the
+        // pointer over any surface, end the gesture on release, and `Escape` cancels it.
+        if self.pointer_captured() {
+            let entity = cx.entity().downgrade();
+            root = root.child(
+                gpui_kit::canvas(
+                    |_, _, _| {},
+                    move |_, (), window, _| {
+                        let move_entity = entity.clone();
+                        window.on_mouse_event(
+                            move |event: &gpui_kit::MouseMoveEvent, phase, _window, cx| {
+                                if phase != gpui_kit::DispatchPhase::Capture {
+                                    return;
+                                }
+                                let _ = move_entity.update(cx, |app, cx| {
+                                    if event.pressed_button == Some(gpui_kit::MouseButton::Left) {
+                                        app.sidebar_pointer_moved(event.position, cx);
+                                    } else {
+                                        // The button went up where nothing saw it.
+                                        app.cancel_pointer_gesture(cx);
+                                    }
+                                });
+                            },
+                        );
+                        let up_entity = entity;
+                        window.on_mouse_event(
+                            move |_: &gpui_kit::MouseUpEvent, phase, _window, cx| {
+                                if phase != gpui_kit::DispatchPhase::Capture {
+                                    return;
+                                }
+                                let _ = up_entity.update(cx, |app, cx| {
+                                    app.sidebar_pointer_released(false, cx);
+                                });
+                            },
+                        );
+                    },
+                )
+                .absolute()
+                .size_full(),
+            );
         }
 
         // Seam drag-resize (`SidebarRail`): window-level capture listeners follow the pointer
@@ -5553,7 +7099,8 @@ impl Render for ConnApp {
                                         app.apply_seam_drag(
                                             drag,
                                             f32::from(event.position.x),
-                                            viewport_w,
+                                            f32::from(event.position.y),
+                                            (viewport_w, viewport_h),
                                         );
                                     } else {
                                         app.seam_drag = None;
@@ -5569,7 +7116,8 @@ impl Render for ConnApp {
                                     return;
                                 }
                                 let _ = up_entity.update(cx, |app, cx| {
-                                    if app.seam_drag.take().is_some() {
+                                    if let Some(drag) = app.seam_drag.take() {
+                                        app.remember_seam_width(drag);
                                         cx.notify();
                                     }
                                 });
@@ -5583,16 +7131,23 @@ impl Render for ConnApp {
         }
 
         if let Some(anchor) = &self.thread_menu
-            && let Some(thread) = self.shell.find_thread(&anchor.thread_id)
+            && let Some(items) = self.thread_menu_items(anchor)
         {
-            let state =
-                ThreadMenuState::for_thread(&self.shell, thread, self.active_workspace.as_deref());
-            let items = build_thread_action_menu_items(&state);
             let anchor = anchor.clone();
             root = root.child(render_thread_action_menu(
                 &items,
                 &anchor,
                 viewport,
+                &self.thread_menu_focus,
+                &self.tokens,
+                cx,
+            ));
+        }
+
+        if let Some(anchor) = &self.rail_menu {
+            let anchor = anchor.clone();
+            root = root.child(crate::sidebar::rail::render_rail_menu(
+                &anchor,
                 &self.tokens,
                 cx,
             ));
@@ -5600,6 +7155,9 @@ impl Render for ConnApp {
 
         if let Some(modal) = &self.settings_modal {
             root = root.child(crate::settings::render_overlay(modal));
+        }
+        if let Some(editor) = &self.workspace_editor {
+            root = root.child(editor.clone());
         }
         if let Some(palette) = &self.command_palette {
             root = root.child(crate::palette::render_overlay(palette));

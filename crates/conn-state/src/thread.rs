@@ -11,9 +11,13 @@ use conn_contract::{
     OrchestrationV2ProviderThreadContextUsage as ProviderThreadContextUsage,
     OrchestrationV2ProviderTurn as ProviderTurn,
     OrchestrationV2ProviderTurnTokenUsage as ProviderTurnTokenUsage, OrchestrationV2Run as Run,
+    OrchestrationV2RuntimeRequest as RuntimeRequest,
+    OrchestrationV2RuntimeRequestResponseCapability as ResponseCapability,
+    OrchestrationV2RuntimeRequestStatus as RuntimeRequestStatus,
     OrchestrationV2ThreadProjectionTurnItemsItem as ProjectionTurnItem,
     OrchestrationV2ThreadStreamItem as ThreadStreamItem, OrchestrationV2TurnItem as TurnItem,
     OrchestrationV2TurnItemApprovalRequest as ApprovalRequestItem,
+    OrchestrationV2TurnItemApprovalRequestFullAccessOverride as FullAccessOverride,
     OrchestrationV2TurnItemAssistantMessage as AssistantMessageItem,
     OrchestrationV2TurnItemCommandExecution as CommandExecutionItem,
     OrchestrationV2TurnItemCompaction as CompactionItem,
@@ -35,7 +39,8 @@ use conn_contract::{
     OrchestrationV2TurnItemUserInputRequest as UserInputRequestItem,
     OrchestrationV2TurnItemUserMessage as UserMessageItem,
     OrchestrationV2TurnItemWebSearch as WebSearchItem,
-    OrchestrationV2UserMessageInputIntent as UserMessageIntent, ProviderRequestKind,
+    OrchestrationV2UserMessageInputIntent as UserMessageIntent, ProviderApprovalOption,
+    ProviderRequestKind,
 };
 
 pub use conn_contract::{
@@ -46,7 +51,7 @@ pub use conn_contract::{
 
 use crate::timeline::{
     TurnCheckpointFile, UserInputAnswer, UserInputOption, UserInputQuestion,
-    format_subagent_display_title, proposed_plan_title, subagent_detail,
+    format_subagent_display_title, proposed_plan_title, subagent_detail_markdown,
 };
 
 const WORKSPACE_PREPARATION_INPUT: &str = "Preparing workspace";
@@ -296,6 +301,190 @@ struct TrackedMessage {
     is_automatic: bool,
 }
 
+/// How the provider can take the answer to one pending runtime request (its
+/// `responseCapability`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PendingRequest {
+    /// The provider session still waits for this answer (`responseCapability.type == "live"`).
+    /// A `not_resumable` request stays pending, but answering it reaches nobody.
+    pub answerable: bool,
+    /// A decline can carry the user's typed feedback (`responseCapability.supportsFeedback`).
+    pub supports_feedback: bool,
+}
+
+impl PendingRequest {
+    /// The request's response capability while it is `pending`; `None` once it is resolved,
+    /// expired or cancelled.
+    fn from_runtime_request(request: &RuntimeRequest) -> Option<Self> {
+        if request.status != RuntimeRequestStatus::Pending {
+            return None;
+        }
+        Some(match &request.response_capability {
+            ResponseCapability::Live(live) => Self {
+                answerable: true,
+                supports_feedback: live.supports_feedback == Some(true),
+            },
+            _ => Self::default(),
+        })
+    }
+}
+
+/// A pending approval shown in the timeline, joined with its runtime request
+/// (Conn's `ThreadPendingApproval`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingApproval {
+    /// The [`TimelineEntry::Approval`] id.
+    pub entry_id: String,
+    /// Server request id for `runtime-request.respond`.
+    pub request_id: String,
+    /// See [`PendingRequest::answerable`].
+    pub answerable: bool,
+    /// See [`PendingRequest::supports_feedback`].
+    pub supports_feedback: bool,
+}
+
+/// What an approval asks beyond its timeline title: the approval item's request kind, prompt,
+/// reason, app, options and full-access override (Conn's `ThreadPendingApproval`, which the
+/// approval panel above the composer shows).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApprovalDetails {
+    pub request_kind: ProviderRequestKind,
+    pub prompt: Option<String>,
+    pub reason: Option<String>,
+    /// Set when the run has full access but the agent still asks.
+    pub full_access_override: Option<FullAccessOverride>,
+    pub app_name: Option<String>,
+    /// The provider's own choices; `None` means Conn's default three (allow once, allow for the
+    /// session, decline).
+    pub options: Option<Vec<ProviderApprovalOption>>,
+}
+
+impl ApprovalDetails {
+    fn from_item(item: &ApprovalRequestItem) -> Self {
+        Self {
+            request_kind: item.request_kind,
+            prompt: non_empty(item.prompt.clone()),
+            reason: non_empty(item.reason.clone()),
+            full_access_override: item.full_access_override,
+            app_name: non_empty(item.app_name.clone()),
+            options: item.options.clone(),
+        }
+    }
+}
+
+/// A pending approval of a child thread, as its parent's chat shows it (`ChildThreadApproval`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChildApproval {
+    /// The child thread; `runtime-request.respond` goes to it.
+    pub thread_id: String,
+    pub title: String,
+    pub request_id: String,
+    /// What the card shows as the command: the prompt, else the request kind
+    /// (`approval.detail || approval.requestKind`).
+    pub detail: String,
+    pub details: ApprovalDetails,
+    /// See [`PendingRequest::answerable`].
+    pub answerable: bool,
+}
+
+/// The pending approvals of `children`, from each child's own thread state, in child order
+/// (`childThreadApprovalsAtom`). A child whose thread has not synchronized yet adds none.
+#[must_use]
+pub fn child_approvals(
+    children: &[crate::shell::ChildApprovalThread],
+    threads: &HashMap<String, ThreadState>,
+) -> Vec<ChildApproval> {
+    let mut approvals = Vec::new();
+    for child in children {
+        let Some(thread) = threads.get(&child.id) else {
+            continue;
+        };
+        for approval in thread.pending_approvals() {
+            let Some(details) = thread.approval_details(&approval.entry_id) else {
+                continue;
+            };
+            let detail = details
+                .prompt
+                .clone()
+                .unwrap_or_else(|| request_kind_label(details.request_kind).to_owned());
+            approvals.push(ChildApproval {
+                thread_id: child.id.clone(),
+                title: child.title.clone(),
+                request_id: approval.request_id,
+                detail,
+                details: details.clone(),
+                answerable: approval.answerable,
+            });
+        }
+    }
+    approvals
+}
+
+/// Where an assistant message or a question sits in its run (`assistantMessageIdsBeforeQuestion`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ItemPlace {
+    run_id: Option<String>,
+    provider_turn_id: Option<String>,
+    ordinal: i64,
+}
+
+/// The model a subagent runs on, from the projection's `subagents` and `subagent.updated`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SubagentModel {
+    /// Model slug (`model`, else the selection's model).
+    pub model: Option<String>,
+    /// Provider instance that runs the subagent.
+    pub instance_id: Option<String>,
+    /// Model options (`reasoningEffort`, ...) by option id, as strings.
+    pub options: HashMap<String, String>,
+}
+
+impl SubagentModel {
+    fn from_subagent(subagent: &conn_contract::OrchestrationV2Subagent) -> Self {
+        let selection = subagent.model_selection.as_ref();
+        let model = non_empty(subagent.model.clone()).or_else(|| {
+            selection
+                .and_then(|s| s.model.as_str())
+                .map(str::to_owned)
+                .and_then(|m| non_empty(Some(m)))
+        });
+        let options = selection
+            .and_then(|s| s.options.as_ref())
+            .and_then(Option::as_ref)
+            .map(model_option_strings)
+            .unwrap_or_default();
+        Self {
+            model,
+            instance_id: non_empty(Some(subagent.provider_instance_id.clone())),
+            options,
+        }
+    }
+}
+
+/// Reads `ModelSelection.options` (`[{"id", "value"}]`, or an object) into string values.
+fn model_option_strings(options: &serde_json::Value) -> HashMap<String, String> {
+    let text = |value: &serde_json::Value| match value {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    };
+    match options {
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(|item| {
+                let id = item.get("id")?.as_str()?.to_owned();
+                Some((id, text(item.get("value")?)?))
+            })
+            .collect(),
+        serde_json::Value::Object(map) => map
+            .iter()
+            .filter_map(|(id, value)| Some((id.clone(), text(value)?)))
+            .collect(),
+        _ => HashMap::new(),
+    }
+}
+
 /// One thread's timeline from `orchestration.subscribeThread`.
 #[derive(Clone, Debug, Default)]
 pub struct ThreadState {
@@ -305,14 +494,26 @@ pub struct ThreadState {
     pub working: bool,
     pub sequence: Option<i64>,
     pub synchronized: bool,
+    /// True once the stream reported `thread.deleted` (T3 `threads.ts` keeps such a thread as
+    /// `deleted` with no data), until a stream snapshot shows it again. Nothing of the thread is
+    /// cached meanwhile; holders evict it.
+    pub deleted: bool,
     /// Server request id of each approval entry, by entry id, for `runtime-request.respond`.
     pub approval_requests: HashMap<String, String>,
+    /// What each approval entry asks, by entry id (see [`ThreadState::approval_details`]).
+    pub approval_details: HashMap<String, ApprovalDetails>,
+    /// Runtime requests that are still `pending`, by server request id.
+    pub pending_requests: HashMap<String, PendingRequest>,
     /// Per-entry run association and start/completion timestamps (Unix ms).
     pub entry_timings: HashMap<String, EntryTiming>,
     /// Per-run start/completion timestamps (Unix ms).
     pub run_timings: HashMap<String, RunTiming>,
     /// Ready filesystem checkpoints with changed files, keyed by `run_id`.
     pub turn_checkpoints: HashMap<String, TurnCheckpointSummary>,
+    /// The model of each subagent, by subagent id.
+    pub subagent_models: HashMap<String, SubagentModel>,
+    /// The subagent id behind each `subagent` timeline entry, by entry id.
+    pub subagent_of_entry: HashMap<String, String>,
     /// Changes whenever [`Self::apply`], [`Self::apply_projection`], or
     /// [`Self::prepend_history_page`] runs, and is unique across all thread states,
     /// so views can skip re-syncing a timeline that did not change.
@@ -329,6 +530,8 @@ pub struct ThreadState {
     compactions: Vec<TrackedCompaction>,
     runs: HashMap<String, TrackedRun>,
     messages: HashMap<String, TrackedMessage>,
+    /// Where each assistant message and question sits in its run, by item id.
+    places: HashMap<String, ItemPlace>,
 }
 
 impl ThreadState {
@@ -340,6 +543,67 @@ impl ThreadState {
             revision: next_revision(),
             ..Self::default()
         }
+    }
+
+    /// The timeline's approvals whose runtime request is still pending, in timeline order
+    /// (Conn's `derivePendingThreadRequests` approvals). An approval card whose request was
+    /// already answered, expired or cancelled is left out.
+    #[must_use]
+    pub fn pending_approvals(&self) -> Vec<PendingApproval> {
+        self.entries
+            .iter()
+            .filter_map(|entry| {
+                let TimelineEntry::Approval { id, .. } = entry else {
+                    return None;
+                };
+                let request_id = self.approval_requests.get(id)?;
+                let pending = self.pending_requests.get(request_id)?;
+                Some(PendingApproval {
+                    entry_id: id.clone(),
+                    request_id: request_id.clone(),
+                    answerable: pending.answerable,
+                    supports_feedback: pending.supports_feedback,
+                })
+            })
+            .collect()
+    }
+
+    /// What approval entry `entry_id` asks: its request kind, prompt, reason, app, options and
+    /// full-access override.
+    #[must_use]
+    pub fn approval_details(&self, entry_id: &str) -> Option<&ApprovalDetails> {
+        self.approval_details.get(entry_id)
+    }
+
+    /// What the agent wrote just before it asked question `entry_id`: the markdown of the last
+    /// assistant message of the same run and provider turn that comes before it, or `None` when
+    /// that message has no text (Conn's `contextMessageIds.at(-1)`).
+    #[must_use]
+    pub fn question_context(&self, entry_id: &str) -> Option<&str> {
+        let question = self.places.get(entry_id)?;
+        question.run_id.as_ref()?;
+        let (context_id, _) = self
+            .places
+            .iter()
+            .filter(|(_, place)| {
+                place.run_id == question.run_id
+                    && place.ordinal < question.ordinal
+                    && (place.provider_turn_id.is_none()
+                        || question.provider_turn_id.is_none()
+                        || place.provider_turn_id == question.provider_turn_id)
+            })
+            .filter(|(id, _)| {
+                self.entries
+                    .iter()
+                    .any(|e| matches!(e, TimelineEntry::Assistant { id: a, .. } if a == *id))
+            })
+            .max_by_key(|(_, place)| place.ordinal)?;
+        self.entries.iter().find_map(|entry| match entry {
+            TimelineEntry::Assistant { id, markdown, .. } if id == context_id => {
+                Some(markdown.as_str()).filter(|text| !text.trim().is_empty())
+            }
+            _ => None,
+        })
     }
 
     /// Computes the elapsed duration in milliseconds for a contiguous group of work entries.
@@ -607,11 +871,20 @@ impl ThreadState {
         }
 
         self.turn_checkpoints.clear();
+        self.places.clear();
         for checkpoint in &projection.checkpoints {
             self.record_checkpoint(checkpoint);
         }
 
         self.approval_requests.clear();
+        self.approval_details.clear();
+        self.pending_requests = projection
+            .runtime_requests
+            .iter()
+            .filter_map(|request| {
+                PendingRequest::from_runtime_request(request).map(|p| (request.id.clone(), p))
+            })
+            .collect();
         self.entry_timings.clear();
 
         // Index canonical message & subagent bodies so snapshots compacted with
@@ -633,19 +906,34 @@ impl ThreadState {
         } else {
             projection.turn_items.len()
         };
+        self.subagent_models = projection
+            .subagents
+            .iter()
+            .map(|s| (s.id.clone(), SubagentModel::from_subagent(s)))
+            .collect();
+        self.subagent_of_entry.clear();
         let mut entries = Vec::with_capacity(capacity);
         let mut entry_index: HashMap<String, usize> = HashMap::with_capacity(capacity);
         let mut ingest = |mut item: ProjectionTurnItem| {
             hydrate_deduped_projection_item(&mut item, &message_texts, &subagent_bodies);
+            if let ProjectionTurnItem::Subagent(sub) = &item {
+                self.subagent_of_entry
+                    .insert(sub.id.clone(), sub.subagent_id.clone());
+            }
             if let ProjectionTurnItem::Compaction(c) = &item {
                 self.record_compaction(c);
             }
             if let ProjectionTurnItem::ApprovalRequest(i) = &item {
                 self.approval_requests
                     .insert(i.id.clone(), i.request_id.clone());
+                self.approval_details
+                    .insert(i.id.clone(), ApprovalDetails::from_item(i));
             }
             if let Some((id, timing)) = extract_projection_timing(&item) {
                 self.entry_timings.insert(id, timing);
+            }
+            if let Some((id, place)) = place_of_projection_item(&item) {
+                self.places.insert(id, place);
             }
             if let Some(entry) = map_projection_turn_item(item) {
                 if let Some(&idx) = entry_index.get(entry.id()) {
@@ -712,12 +1000,15 @@ impl ThreadState {
         for row in rows {
             let item = row.item;
             let approval_pair = match &item {
-                ProjectionTurnItem::ApprovalRequest(i) => {
-                    Some((i.id.clone(), i.request_id.clone()))
-                }
+                ProjectionTurnItem::ApprovalRequest(i) => Some((
+                    i.id.clone(),
+                    i.request_id.clone(),
+                    ApprovalDetails::from_item(i),
+                )),
                 _ => None,
             };
             let timing = extract_projection_timing(&item);
+            let place = place_of_projection_item(&item);
 
             let Some(entry) = map_projection_turn_item(item) else {
                 continue;
@@ -725,11 +1016,15 @@ impl ThreadState {
             if existing_ids.contains(entry.id()) {
                 continue;
             }
-            if let Some((id, request_id)) = approval_pair {
+            if let Some((id, request_id, details)) = approval_pair {
+                self.approval_details.entry(id.clone()).or_insert(details);
                 self.approval_requests.entry(id).or_insert(request_id);
             }
             if let Some((id, entry_timing)) = timing {
                 self.entry_timings.entry(id).or_insert(entry_timing);
+            }
+            if let Some((id, place)) = place {
+                self.places.entry(id).or_insert(place);
             }
             if let Some(&idx) = prepended_index.get(entry.id()) {
                 prepended[idx] = entry;
@@ -755,7 +1050,8 @@ impl ThreadState {
 
     /// Applies one `subscribeThread` stream item.
     ///
-    /// Returns `true` when timeline entries or the `working` state changed.
+    /// Returns `true` when timeline entries, the `working` state or
+    /// [`Self::pending_requests`] changed.
     pub fn apply(&mut self, item: ThreadStreamItem) -> bool {
         self.revision = next_revision();
         match item {
@@ -764,6 +1060,8 @@ impl ThreadState {
                 false
             }
             ThreadStreamItem::Snapshot(snapshot) => {
+                // The stream's snapshot is the server's thread now, as when it was created again.
+                self.deleted = false;
                 self.apply_projection(snapshot.projection, Some(snapshot.snapshot_sequence));
                 self.history_cursor = snapshot.history_cursor.flatten();
                 self.has_more_history = snapshot.has_more_history.unwrap_or(false);
@@ -779,6 +1077,20 @@ impl ThreadState {
                 self.apply_fallback_event(&event_item.event.r#type, event_item.event.payload)
             }
         }
+    }
+
+    /// The thread was deleted: nothing of its cached projection stays to show or answer.
+    fn clear_deleted(&mut self) -> bool {
+        let changed = !self.deleted || !self.entries.is_empty() || self.working;
+        *self = Self {
+            thread_id: std::mem::take(&mut self.thread_id),
+            sequence: self.sequence,
+            synchronized: self.synchronized,
+            revision: self.revision,
+            deleted: true,
+            ..Self::default()
+        };
+        changed
     }
 
     fn advance_sequence(&mut self, seq: i64) {
@@ -993,6 +1305,15 @@ impl ThreadState {
                 let queue_changed = self.reconcile_queued_runs(false);
                 working_changed || queue_changed
             }
+            DomainEvent::RuntimeRequestUpdated(ev) => {
+                let request = ev.payload;
+                match PendingRequest::from_runtime_request(&request) {
+                    Some(pending) => {
+                        self.pending_requests.insert(request.id, pending) != Some(pending)
+                    }
+                    None => self.pending_requests.remove(&request.id).is_some(),
+                }
+            }
             DomainEvent::MessageUpdated(ev) => {
                 self.record_message(&ev.payload);
                 self.reconcile_queued_runs(false)
@@ -1010,9 +1331,18 @@ impl ThreadState {
                 if let TurnItem::ApprovalRequest(i) = &ev.payload {
                     self.approval_requests
                         .insert(i.id.clone(), i.request_id.clone());
+                    self.approval_details
+                        .insert(i.id.clone(), ApprovalDetails::from_item(i));
+                }
+                if let TurnItem::Subagent(i) = &ev.payload {
+                    self.subagent_of_entry
+                        .insert(i.id.clone(), i.subagent_id.clone());
                 }
                 let timing = extract_turn_item_timing(&ev.payload);
                 self.entry_timings.insert(item_id.clone(), timing);
+                if let Some((id, place)) = place_of_turn_item(&ev.payload) {
+                    self.places.insert(id, place);
+                }
                 if let Some(entry) = map_turn_item(ev.payload) {
                     let mut changed = compaction_changed;
                     if matches!(entry, TimelineEntry::User { .. }) {
@@ -1055,6 +1385,20 @@ impl ThreadState {
                 self.record_provider_thread(&ev.payload)
             }
             DomainEvent::ProviderTurnUpdated(ev) => self.record_provider_turn(&ev.payload),
+            DomainEvent::SubagentUpdated(ev) => {
+                let model = SubagentModel::from_subagent(&ev.payload);
+                let changed = self.subagent_models.get(&ev.payload.id) != Some(&model);
+                if changed {
+                    self.subagent_models.insert(ev.payload.id, model);
+                }
+                changed
+            }
+            DomainEvent::ThreadArchived(ev)
+                if ev.r#type
+                    == conn_contract::OrchestrationV2DomainEventThreadArchivedType::ThreadDeleted =>
+            {
+                self.clear_deleted()
+            }
             // Projection metadata events that do not directly add or alter timeline entries.
             DomainEvent::ThreadCreated(_)
             | DomainEvent::ThreadArchived(_)
@@ -1064,10 +1408,8 @@ impl ThreadState {
             | DomainEvent::RunAttemptCreated(_)
             | DomainEvent::RunAttemptUpdated(_)
             | DomainEvent::NodeUpdated(_)
-            | DomainEvent::SubagentUpdated(_)
             | DomainEvent::ProviderSessionAttached(_)
             | DomainEvent::ProviderSessionDetached(_)
-            | DomainEvent::RuntimeRequestUpdated(_)
             | DomainEvent::PlanUpdated(_)
             | DomainEvent::CheckpointScopeCreated(_)
             | DomainEvent::CheckpointRollbackRequested(_)
@@ -1574,7 +1916,8 @@ fn map_dynamic_tool(item: DynamicToolItem) -> Option<TimelineEntry> {
 fn map_subagent(item: SubagentItem) -> Option<TimelineEntry> {
     let title =
         format_subagent_display_title(non_empty(item.title).as_deref().unwrap_or("Subagent"));
-    let summary = subagent_detail(
+    // The card renders the Markdown; clients that cannot flatten it with `plain_subagent_detail`.
+    let summary = subagent_detail_markdown(
         item.status,
         item.progress.as_deref(),
         item.result.as_deref(),
@@ -1660,6 +2003,7 @@ fn map_user_input_request(item: UserInputRequestItem) -> Option<TimelineEntry> {
                     label: o.label,
                     description: o.description,
                     value: o.value,
+                    preview: o.preview,
                 })
                 .collect(),
             multi_select: q.multi_select == Some(true),
@@ -1869,7 +2213,9 @@ fn map_thread_created(item: ThreadCreatedItem) -> Option<TimelineEntry> {
     })
 }
 
-fn request_kind_label(kind: ProviderRequestKind) -> &'static str {
+/// The request kind as the contract spells it (`command`, `file-change`, ...), which Conn shows
+/// when an approval names no app.
+pub fn request_kind_label(kind: ProviderRequestKind) -> &'static str {
     match kind {
         ProviderRequestKind::Command => "command",
         ProviderRequestKind::FileRead => "file-read",
@@ -1929,6 +2275,48 @@ fn extract_turn_item_timing(item: &TurnItem) -> EntryTiming {
         TurnItem::LinkRequest(i) => timing_of!(i),
         TurnItem::Subagent(i) => timing_of!(i),
         TurnItem::DynamicTool(i) => timing_of!(i),
+    }
+}
+
+/// The place of an assistant message or a question; other items have none.
+fn place_of_projection_item(item: &ProjectionTurnItem) -> Option<(String, ItemPlace)> {
+    macro_rules! place_of {
+        ($i:expr) => {
+            Some((
+                $i.id.clone(),
+                ItemPlace {
+                    run_id: $i.run_id.clone(),
+                    provider_turn_id: $i.provider_turn_id.clone(),
+                    ordinal: $i.ordinal,
+                },
+            ))
+        };
+    }
+    match item {
+        ProjectionTurnItem::AssistantMessage(i) => place_of!(i),
+        ProjectionTurnItem::UserInputRequest(i) => place_of!(i),
+        _ => None,
+    }
+}
+
+/// [`place_of_projection_item`] for a streamed item.
+fn place_of_turn_item(item: &TurnItem) -> Option<(String, ItemPlace)> {
+    macro_rules! place_of {
+        ($i:expr) => {
+            Some((
+                $i.id.clone(),
+                ItemPlace {
+                    run_id: $i.run_id.clone(),
+                    provider_turn_id: $i.provider_turn_id.clone(),
+                    ordinal: $i.ordinal,
+                },
+            ))
+        };
+    }
+    match item {
+        TurnItem::AssistantMessage(i) => place_of!(i),
+        TurnItem::UserInputRequest(i) => place_of!(i),
+        _ => None,
     }
 }
 
@@ -2236,5 +2624,84 @@ mod timing_tests {
             Some((12_000.0, Some(140_000.0))),
             "compaction after_token_count serves as fallback context window usage"
         );
+    }
+
+    #[test]
+    fn question_context_is_the_last_assistant_message_before_it_in_its_run_and_turn() {
+        let assistant = |id: &str, text: &str| TimelineEntry::Assistant {
+            id: id.to_owned(),
+            markdown: text.to_owned(),
+            streaming: false,
+            created_at: None,
+            run_id: None,
+            status: ItemStatus::Completed,
+        };
+        let place = |run: &str, turn: Option<&str>, ordinal: i64| ItemPlace {
+            run_id: Some(run.to_owned()),
+            provider_turn_id: turn.map(str::to_owned),
+            ordinal,
+        };
+        let mut state = ThreadState::new("t");
+        state.entries = vec![
+            assistant("a-other-run", "from another run"),
+            assistant("a-early", "early"),
+            assistant("a-other-turn", "from another turn"),
+            assistant("a-late", "  late  "),
+            assistant("a-after", "after the question"),
+            assistant("a-empty", "  "),
+        ];
+        for (id, p) in [
+            ("a-other-run", place("r0", Some("turn-1"), 9)),
+            ("a-early", place("r1", Some("turn-1"), 1)),
+            ("a-other-turn", place("r1", Some("turn-0"), 4)),
+            ("a-late", place("r1", None, 3)),
+            ("a-after", place("r1", Some("turn-1"), 6)),
+            ("a-empty", place("r2", Some("turn-1"), 1)),
+            ("q", place("r1", Some("turn-1"), 5)),
+            ("q-empty", place("r2", Some("turn-1"), 2)),
+            (
+                "q-no-run",
+                ItemPlace {
+                    run_id: None,
+                    provider_turn_id: None,
+                    ordinal: 9,
+                },
+            ),
+        ] {
+            state.places.insert(id.to_owned(), p);
+        }
+        // `a-late` (ordinal 3, turn unknown) beats `a-early`; `a-other-turn` is another turn.
+        assert_eq!(state.question_context("q"), Some("  late  "));
+        // The nearest message has no text: nothing, not an older message.
+        assert_eq!(state.question_context("q-empty"), None);
+        assert_eq!(state.question_context("q-no-run"), None);
+        assert_eq!(state.question_context("missing"), None);
+    }
+}
+
+#[cfg(test)]
+mod subagent_model_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn model_options_read_from_an_array_or_an_object() {
+        let expected = HashMap::from([
+            ("reasoningEffort".to_owned(), "medium".to_owned()),
+            ("fastMode".to_owned(), "true".to_owned()),
+        ]);
+        assert_eq!(
+            model_option_strings(&json!([
+                { "id": "reasoningEffort", "value": "medium" },
+                { "id": "fastMode", "value": true },
+                { "id": "ignored", "value": null }
+            ])),
+            expected
+        );
+        assert_eq!(
+            model_option_strings(&json!({ "reasoningEffort": "medium", "fastMode": true })),
+            expected
+        );
+        assert!(model_option_strings(&json!("medium")).is_empty());
     }
 }

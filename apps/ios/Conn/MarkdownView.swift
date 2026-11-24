@@ -3,7 +3,12 @@ import SwiftUI
 
 struct MarkdownView: View {
     let source: String
+    /// An agent's earlier text beside a question: a size smaller, in the muted colour.
+    var muted = false
     @Environment(\.connTheme) private var theme
+
+    private var bodyFont: Font { muted ? .system(size: 15) : .kitBody }
+    private var textColor: Color { muted ? theme.mutedForeground : theme.foreground }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Kit.Space.m) {
@@ -20,14 +25,14 @@ struct MarkdownView: View {
         case let .heading(level, text):
             inlineMarkdownText(text)
                 .font(headingFont(for: level))
-                .foregroundStyle(theme.foreground)
+                .foregroundStyle(textColor)
                 .textSelection(.enabled)
                 .padding(.top, level <= 2 ? Kit.Space.xs : 0)
 
         case let .paragraph(text):
             inlineMarkdownText(text)
-                .font(.kitBody)
-                .foregroundStyle(theme.foreground)
+                .font(bodyFont)
+                .foregroundStyle(textColor)
                 .textSelection(.enabled)
 
         case let .codeBlock(language, code):
@@ -62,12 +67,12 @@ struct MarkdownView: View {
         case let .listItem(marker, text):
             HStack(alignment: .firstTextBaseline, spacing: Kit.Space.s) {
                 Text(marker)
-                    .font(.kitBody)
+                    .font(bodyFont)
                     .foregroundStyle(theme.mutedForeground)
                     .frame(minWidth: 16, alignment: .trailing)
                 inlineMarkdownText(text)
-                    .font(.kitBody)
-                    .foregroundStyle(theme.foreground)
+                    .font(bodyFont)
+                    .foregroundStyle(textColor)
                     .textSelection(.enabled)
             }
         }

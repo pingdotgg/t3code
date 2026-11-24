@@ -402,7 +402,7 @@ export const AntigravityDriver: ProviderDriver<
       usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
     });
 
-    // The probe runs only `agy --version`, never the ACP agent, so it stays cheap every minute.
+    // The probe runs only `agy --version`; the ACP agent starts only to load models (`loadModels`).
     const probe = Effect.gen(function* () {
       yield* modelCatalog.refreshInBackground;
       if (authConfigIssue !== null) {
@@ -442,6 +442,7 @@ export const AntigravityDriver: ProviderDriver<
       environment: processEnvironment,
       stampIdentity: classifyModels,
       probe,
+      loadModels: Effect.suspend(() => refreshModels()).pipe(Effect.ignore({ log: true })),
       probeUsage: usage.probe,
       clearUsage: usage.clear,
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
@@ -502,7 +503,9 @@ export const AntigravityDriver: ProviderDriver<
         }),
     });
 
-    const refreshModels = Effect.fn("AntigravityDriver.refreshModels")(
+    const refreshModels: () => Effect.Effect<void, ProviderDriverError> = Effect.fn(
+      "AntigravityDriver.refreshModels",
+    )(
       function* () {
         const processScope = yield* Scope.make();
         yield* Effect.addFinalizer((exit) => Scope.close(processScope, exit));

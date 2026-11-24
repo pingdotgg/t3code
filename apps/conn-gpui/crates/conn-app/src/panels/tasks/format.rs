@@ -11,9 +11,6 @@ use conn_desktop::orbit::tasks::{
 };
 use conn_theme::{Appearance, Rgba, Tokens, color_mix_oklab, color_mix_srgb};
 
-/// Pure white (`white` in CSS `color-mix(in oklab, var(--shell-divider) ..., white)`).
-const CSS_WHITE: Rgba = Rgba::new(1.0, 1.0, 1.0, 1.0);
-
 /// Conn's 18-color project icon palette order (`apps/web/src/projectIconColors.ts`).
 const PROJECT_ICON_COLORS: [ProjectIconColor; 18] = [
     ProjectIconColor::Gray,
@@ -290,8 +287,6 @@ pub(super) fn insight_hint(id: InsightId, insights: Option<&TaskInsights>) -> &'
 /// Tasks-specific surface colors derived from `conn_theme::Tokens`, matching `index.css` formulas.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct TasksSurfaceColors {
-    /// `--shell-card-edge`: lighter top bevel on cards and the top row of insights.
-    pub(super) shell_card_edge: Rgba,
     /// `--shell-chart-grid`: dashed horizontal gridlines in the expanded trend chart.
     pub(super) shell_chart_grid: Rgba,
     /// `--popover-rule`: dashed separator inside chart tooltips.
@@ -310,11 +305,6 @@ impl TasksSurfaceColors {
     #[must_use]
     pub(super) fn from_tokens(tokens: &Tokens) -> Self {
         let is_dark = tokens.appearance == Appearance::Dark;
-        let shell_card_edge = if is_dark {
-            color_mix_oklab(tokens.shell_divider, 0.965, CSS_WHITE)
-        } else {
-            color_mix_oklab(tokens.shell_divider, 0.80, CSS_WHITE)
-        };
         let shell_chart_grid = color_mix_oklab(tokens.shell_divider, 0.93, tokens.foreground);
         let popover_rule = color_mix_oklab(tokens.popover, 0.80, tokens.foreground);
         let (card_bg, card_hover_bg, card_ring_fill, lane_bg) = if is_dark {
@@ -339,7 +329,6 @@ impl TasksSurfaceColors {
             )
         };
         Self {
-            shell_card_edge,
             shell_chart_grid,
             popover_rule,
             card_bg,

@@ -3,13 +3,19 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use crate::approvals::FfiPendingApproval;
+use crate::questions::FfiPendingQuestion;
 use conn_client::{ClientError, ConnectionStatus, Credential, commands::format_client_error};
-use conn_contract::{ChatAttachment, OrchestrationV2AppThread};
+use conn_contract::{
+    ChatAttachment, OrchestrationV2AppThread, OrchestrationV2ProviderFailureClass,
+    OrchestrationV2ShellThreadStatus,
+};
 use conn_state::{
     EntryTiming, ItemStatus, PLAN_PREVIEW_MAX_LINES, SecretRequestStatus, ShellState,
     ThreadActivity, ThreadShell, ThreadState, TimelineEntry, TurnCheckpointSummary, TurnItemStatus,
-    collapsed_plan_preview, extract_model_slug, format_duration, parse_iso8601_epoch_ms,
-    plan_can_collapse, strip_displayed_plan_markdown, subagent_settled, subagent_status_visual,
+    UserInputQuestion, collapsed_plan_preview, extract_model_slug, format_duration,
+    parse_iso8601_epoch_ms, plan_can_collapse, strip_displayed_plan_markdown, subagent_settled,
+    subagent_status_visual,
 };
 
 /// Credential presented to `conn-server` when opening a session.
@@ -135,6 +141,12 @@ pub struct FfiThreadSummary {
     pub is_subagent: bool,
     pub pinned: bool,
     pub unread: bool,
+    /// The provider's error (`lastError`) while the thread has failed; `None` otherwise.
+    /// Conn mobile shows it as a third row line (`ThreadListV2Row`).
+    pub failure_message: Option<String>,
+    /// The failure is a usage limit (`lastErrorClass: usage_limit`), which mobile shows as a
+    /// warning ("limited") instead of an error.
+    pub usage_limited: bool,
 }
 
 /// Point-in-time shell snapshot emitted to [`crate::CoreListener::on_shell`].
@@ -254,8 +266,10 @@ impl From<&ChatAttachment> for FfiAttachment {
 pub struct FfiUserInputOption {
     pub label: String,
     pub description: String,
-    /// Value submitted when chosen (`option.value ?? option.label`).
+    /// Value submitted when chosen (`option.value ?? option.label.trim()`).
     pub value: String,
+    /// Markdown shown under the option (`option.preview`).
+    pub preview: Option<String>,
 }
 
 /// One question in an [`FfiTimelineEntry::UserInputRequest`].
@@ -465,6 +479,12 @@ pub struct FfiThreadSnapshot {
     pub active_run_id: Option<String>,
     pub queued_count: u32,
     pub synchronized: bool,
+    /// Approvals still waiting for an answer, in timeline order; the card above the composer
+    /// shows the first (Conn mobile's `activePendingApproval`).
+    pub pending_approvals: Vec<FfiPendingApproval>,
+    /// The question the panel above the composer asks; `entries` leaves its row out, since the
+    /// panel shows it (Conn mobile's `feedWithoutOpenQuestionRow`).
+    pub pending_question: Option<FfiPendingQuestion>,
 }
 
 /// Categorized reason for an [`FfiError::Orbit`] failure (mirrors [`conn_orbit::OrbitErrorReason`]).
@@ -692,7 +712,30 @@ fn map_thread_summary(shell: &ShellState, thread: &ThreadShell, settled: bool) -
         is_subagent: ShellState::is_subagent(thread),
         pinned: is_pinned(thread),
         unread: has_unseen_completion(thread),
+        failure_message: failure_message(thread),
+        usage_limited: is_usage_limited(thread),
     }
+}
+
+/// `lastError` while the thread has failed, like Conn mobile's `showsError` in `ThreadListV2Row`.
+fn failure_message(thread: &ThreadShell) -> Option<String> {
+    if thread.status != OrchestrationV2ShellThreadStatus::Failed {
+        return None;
+    }
+    thread
+        .last_error
+        .as_ref()
+        .and_then(Option::as_deref)
+        .and_then(non_empty_str)
+}
+
+/// Mobile's `resolveThreadListV2Status`: a failure of class `usage_limit` is "limited".
+fn is_usage_limited(thread: &ThreadShell) -> bool {
+    thread.status == OrchestrationV2ShellThreadStatus::Failed
+        && matches!(
+            thread.last_error_class,
+            Some(Some(OrchestrationV2ProviderFailureClass::UsageLimit))
+        )
 }
 
 fn entry_duration_ms(timing: Option<&EntryTiming>) -> Option<u64> {
@@ -814,16 +857,20 @@ pub(crate) fn build_thread_snapshot(
     let mut entries = Vec::with_capacity(thread.entries.len() + thread.turn_checkpoints.len());
     let mut emitted_checkpoints: HashSet<&str> = HashSet::new();
     let mut queued_count: u32 = 0;
+    let pending_question = crate::questions::pending_question(thread);
+    let open_question = pending_question.as_ref().map(|q| q.entry_id.as_str());
 
     for (idx, entry) in thread.entries.iter().enumerate() {
         if matches!(entry, TimelineEntry::QueuedUser { .. }) {
             queued_count = queued_count.saturating_add(1);
         }
-        entries.push(map_timeline_entry_with_context(
-            entry,
-            &thread.approval_requests,
-            &thread.entry_timings,
-        ));
+        if open_question != Some(entry.id()) {
+            entries.push(map_timeline_entry_with_context(
+                entry,
+                &thread.approval_requests,
+                &thread.entry_timings,
+            ));
+        }
 
         // Insert a TurnCheckpoint card right after the final non-user, non-queued item belonging
         // to `run_id`, matching desktop `conn-app/src/chat/cache.rs`.
@@ -863,6 +910,31 @@ pub(crate) fn build_thread_snapshot(
         active_run_id: thread.active_run_id().map(str::to_owned),
         queued_count,
         synchronized: thread.synchronized,
+        pending_approvals: crate::approvals::pending_approvals(thread),
+        pending_question,
+    }
+}
+
+/// Maps one provider question; an option without a provider value answers with its trimmed
+/// label, like Conn mobile.
+pub(crate) fn map_user_input_question(question: &UserInputQuestion) -> FfiUserInputQuestion {
+    FfiUserInputQuestion {
+        id: question.id.clone(),
+        header: question.header.clone(),
+        question: question.question.clone(),
+        options: question
+            .options
+            .iter()
+            .map(|o| FfiUserInputOption {
+                label: o.label.clone(),
+                description: o.description.clone(),
+                value: o.value.clone().unwrap_or_else(|| o.label.trim().to_owned()),
+                preview: o.preview.clone(),
+            })
+            .collect(),
+        multi_select: question.multi_select,
+        allow_custom_answer: question.allow_custom_answer,
+        initial_answer: question.initial_answer.clone(),
     }
 }
 
@@ -980,26 +1052,7 @@ pub(crate) fn map_timeline_entry_with_context(
             id: id.clone(),
             request_id: request_id.clone(),
             title: title.clone(),
-            questions: questions
-                .iter()
-                .map(|q| FfiUserInputQuestion {
-                    id: q.id.clone(),
-                    header: q.header.clone(),
-                    question: q.question.clone(),
-                    options: q
-                        .options
-                        .iter()
-                        .map(|o| FfiUserInputOption {
-                            label: o.label.clone(),
-                            description: o.description.clone(),
-                            value: o.answer_value().to_owned(),
-                        })
-                        .collect(),
-                    multi_select: q.multi_select,
-                    allow_custom_answer: q.allow_custom_answer,
-                    initial_answer: q.initial_answer.clone(),
-                })
-                .collect(),
+            questions: questions.iter().map(map_user_input_question).collect(),
             status: (*status).into(),
             pending: *pending,
             answers: answers
@@ -1075,7 +1128,11 @@ pub(crate) fn map_timeline_entry_with_context(
                 status: (*status).into(),
                 status_label: status_label.to_owned(),
                 settled: subagent_settled(*status),
-                summary: summary.clone(),
+                // The iPhone card shows one plain line; the model holds the Markdown.
+                summary: summary
+                    .as_deref()
+                    .map(conn_state::plain_subagent_detail)
+                    .filter(|line| !line.is_empty()),
                 remote_label: remote_label.clone(),
                 created_at: created_at.clone(),
                 started_at: started_at.clone(),
@@ -1295,11 +1352,13 @@ mod tests {
                         label: "SwiftUI".to_owned(),
                         description: "Native iOS".to_owned(),
                         value: Some("swiftui".to_owned()),
+                        preview: Some("`View`".to_owned()),
                     },
                     UserInputOption {
-                        label: "UIKit".to_owned(),
+                        label: " UIKit ".to_owned(),
                         description: "Classic".to_owned(),
                         value: None,
+                        preview: None,
                     },
                 ],
                 multi_select: true,
@@ -1331,11 +1390,13 @@ mod tests {
                             label: "SwiftUI".to_owned(),
                             description: "Native iOS".to_owned(),
                             value: "swiftui".to_owned(),
+                            preview: Some("`View`".to_owned()),
                         },
                         FfiUserInputOption {
-                            label: "UIKit".to_owned(),
+                            label: " UIKit ".to_owned(),
                             description: "Classic".to_owned(),
                             value: "UIKit".to_owned(),
+                            preview: None,
                         },
                     ],
                     multi_select: true,
@@ -1734,7 +1795,7 @@ mod tests {
             "lineage": {
                 "rootThreadId": root_thread_id,
                 "parentThreadId": parent_thread_id,
-                "relationshipToParent": null
+                "relationshipToParent": parent_thread_id.map(|_| "subagent")
             },
             "forkedFrom": null,
             "activeProviderThreadId": null,
@@ -1757,6 +1818,90 @@ mod tests {
             "lastVisitedAt": last_visited_at,
             "deletedAt": null
         })
+    }
+
+    #[test]
+    fn thread_summary_carries_the_failure_message_only_while_failed() {
+        let thread = |id: &str, status: &str, error: &str, class: &str| {
+            let mut json = thread_shell_json(
+                id,
+                "p-active",
+                id,
+                "2026-11-22T12:00:00Z",
+                status,
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
+            json["lastError"] = json!(error);
+            json["lastErrorClass"] = json!(class);
+            json
+        };
+        let item: OrchestrationV2ShellStreamItem = serde_json::from_value(json!({
+            "kind": "snapshot",
+            "snapshot": {
+                "schemaVersion": 1,
+                "snapshotSequence": 1,
+                "projects": [{
+                    "id": "p-active",
+                    "title": "Conn",
+                    "workspaceRoot": "/tmp/conn",
+                    "defaultModelSelection": null,
+                    "scripts": [],
+                    "createdAt": "2026-11-20T00:00:00Z",
+                    "updatedAt": "2026-11-20T00:00:00Z",
+                    "archivedAt": null
+                }],
+                "threads": [
+                    thread("t-failed", "failed", "Model claude-x is not available", "provider_error"),
+                    thread("t-limited", "failed", "Usage limit reached", "usage_limit"),
+                    thread("t-recovered", "idle", "Old error", "provider_error"),
+                    thread("t-blank", "failed", "  ", "unknown"),
+                ],
+                "archivedThreads": []
+            }
+        }))
+        .unwrap_or_else(|e| panic!("deserialize shell snapshot: {e}"));
+        let mut shell = ShellState::default();
+        shell.apply(item);
+
+        let snap = build_shell_snapshot(&shell);
+        let row = |id: &str| {
+            snap.threads
+                .iter()
+                .find(|t| t.id == id)
+                .unwrap_or_else(|| panic!("row {id} missing from shell snapshot"))
+        };
+        assert_eq!(
+            row("t-failed").failure_message.as_deref(),
+            Some("Model claude-x is not available"),
+            "a failed thread shows its provider error"
+        );
+        assert!(
+            !row("t-failed").usage_limited,
+            "a provider error is not a usage limit"
+        );
+        assert_eq!(
+            row("t-limited").failure_message.as_deref(),
+            Some("Usage limit reached"),
+            "a usage-limited thread shows its error"
+        );
+        assert!(
+            row("t-limited").usage_limited,
+            "usage_limit marks the row limited"
+        );
+        assert_eq!(
+            row("t-recovered").failure_message,
+            None,
+            "a thread that is no longer failed hides its old error"
+        );
+        assert_eq!(
+            row("t-blank").failure_message,
+            None,
+            "a blank error shows nothing"
+        );
     }
 
     #[test]

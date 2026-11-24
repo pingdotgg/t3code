@@ -72,6 +72,16 @@ pub enum SessionMsg {
         thread: String,
         read: ChildRead,
     },
+    /// A held goal run's grace ran out ([`crate::mapper::Out::GoalHeld`]).
+    GoalGrace {
+        thread: String,
+        seq: u64,
+    },
+    /// The answer to the pause that ends a goal Codex did not continue (`None`: none came).
+    GoalPaused {
+        thread: String,
+        response: Option<Value>,
+    },
 }
 
 /// A closed session's check of a silent subagent thread with Codex (`thread/read` with turns).

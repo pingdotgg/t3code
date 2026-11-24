@@ -34,6 +34,10 @@ pub struct Host {
     pub scheduled_tasks: OnceLock<conn_features::scheduled::ScheduledTasks>,
     /// Device sessions a closed thread held (`ResourceCleanupService.cleanupDevices`).
     pub devices: OnceLock<conn_devices::Devices>,
+    /// Preview tabs a deleted thread held (`ResourceCleanupService.cleanupPreviews`).
+    pub previews: OnceLock<conn_preview::tabs::Preview>,
+    /// Settled-thread cleanups run one at a time, as T3's single event consumer runs them.
+    pub settle_cleanups: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl std::fmt::Debug for Host {
@@ -80,12 +84,27 @@ impl Host {
 }
 
 impl EngineHost for Host {
+    fn refresh_settings(&self) -> BoxFuture<'_, ()> {
+        Box::pin(crate::settings::refresh(&self.environment))
+    }
+
     fn provider_instance_enabled(&self, project_id: Option<&str>, instance_id: &str) -> bool {
+        // T3 admits no launch while its settings fail to load; a retry runs first
+        // (`refresh_settings`), so this holds only while the failure lasts.
+        if self.environment.settings.needs_reload() {
+            return false;
+        }
         crate::settings::provider_instance_enabled(
             &self.environment.settings.raw(),
             project_id,
             instance_id,
         )
+    }
+
+    fn queue_instance_enabled(&self, project_id: Option<&str>, instance_id: &str) -> bool {
+        self.environment
+            .settings
+            .queue_instance_enabled(project_id, instance_id)
     }
 
     fn response_streaming_mode(
@@ -265,20 +284,48 @@ impl EngineHost for Host {
     }
 
     fn thread_closed(&self, thread_id: &str, reason: ThreadClose) {
-        match reason {
-            ThreadClose::Settled => self.terminals.close_on_settle(thread_id),
-            ThreadClose::Archived | ThreadClose::Deleted => {
-                self.terminals.close(TerminalCloseInput {
-                    thread_id: thread_id.to_owned(),
-                    terminal_id: None,
-                    delete_history: Some(reason == ThreadClose::Deleted),
-                });
-                // The thread's device sessions end; the devices stay on for other threads.
-                if let Some(devices) = self.devices.get().cloned() {
-                    let thread_id = thread_id.to_owned();
-                    tokio::spawn(async move { devices.cleanup_thread(&thread_id).await });
-                }
+        match &reason {
+            // `settleActionRunAt`: the script runs once per settlement, so only on the
+            // transition to settled.
+            ThreadClose::Settled { settled_at } => {
+                self.clean_up_settled(thread_id, settled_at.clone(), true);
             }
+            ThreadClose::SettledAgain { settled_at } => {
+                self.clean_up_settled(thread_id, settled_at.clone(), false);
+            }
+            ThreadClose::Archived | ThreadClose::Deleted => {
+                // T3's `terminal.cleanup` effect: archive and delete both drop the history. The
+                // close scans and unlinks history files under the manager's lock, so it runs on
+                // the blocking pool; the device sessions end after it.
+                let (terminals, devices) = (self.terminals.clone(), self.devices.get().cloned());
+                let thread_id = thread_id.to_owned();
+                tokio::spawn(async move {
+                    let close = TerminalCloseInput {
+                        thread_id: thread_id.clone(),
+                        terminal_id: None,
+                        delete_history: Some(true),
+                    };
+                    if let Err(error) =
+                        tokio::task::spawn_blocking(move || terminals.close(close)).await
+                    {
+                        eprintln!("terminal cleanup: {error}");
+                    }
+                    if let Some(devices) = devices {
+                        devices.cleanup_thread(&thread_id).await;
+                    }
+                });
+            }
+        }
+        // `ThreadDeletion`'s `preview.cleanup`: a deleted thread's tabs free their slots.
+        if reason == ThreadClose::Deleted
+            && let Some(previews) = self.previews.get().cloned()
+        {
+            let thread_id = thread_id.to_owned();
+            tokio::spawn(async move {
+                if let Err(error) = previews.close(&thread_id, None).await {
+                    eprintln!("preview cleanup: {error}");
+                }
+            });
         }
         // `ResourceCleanupService`: a deleted thread takes the tasks bound to it.
         if reason == ThreadClose::Deleted
@@ -291,6 +338,31 @@ impl EngineHost for Host {
                 }
             });
         }
+    }
+}
+
+impl Host {
+    /// `cleanUpSettledThread` (`ThreadSettlementService.ts:700`) for the committed settlement
+    /// named by `settled_at`, one cleanup at a time. While that settlement is still the
+    /// thread's, `closeOnSettle` closes its `stopOnSettle` terminals and then every idle one;
+    /// then a new settlement (`first`) runs the project's settle script in the worktree.
+    fn clean_up_settled(&self, thread_id: &str, settled_at: String, first: bool) {
+        let (terminals, mcp) = (self.terminals.clone(), self.mcp.get().cloned());
+        let cleanups = self.settle_cleanups.clone();
+        let thread_id = thread_id.to_owned();
+        tokio::spawn(async move {
+            let _one_at_a_time = cleanups.lock().await;
+            if let Some(mcp) = &mcp
+                && !mcp.is_current_settlement(&thread_id, &settled_at).await
+            {
+                return;
+            }
+            terminals.close_on_settle(&thread_id);
+            terminals.close_idle(&thread_id, None).await;
+            if first && let Some(mcp) = mcp {
+                mcp.run_settle_script(&thread_id, &settled_at).await;
+            }
+        });
     }
 }
 
@@ -334,6 +406,466 @@ mod tests {
     use conn_engine::Engine;
     use serde_json::json;
 
+    fn cleanup_host(dir: &std::path::Path) -> Host {
+        let environment =
+            Arc::new(Environment::load(dir, None, dir.to_path_buf(), Default::default()).unwrap());
+        let terminals = TerminalManager::new(conn_terminal::TerminalConfig {
+            history_dir: Some(dir.join("terminals")),
+            shells: vec!["/bin/sh".into()],
+            poll_interval: std::time::Duration::from_millis(50),
+            kill_grace: std::time::Duration::from_millis(500),
+            persist_delay: std::time::Duration::from_millis(10),
+            ..conn_terminal::TerminalConfig::default()
+        });
+        Host {
+            mcp: OnceLock::new(),
+            files: None,
+            vcs: VcsShared::default(),
+            terminals,
+            environment,
+            scheduled_tasks: OnceLock::new(),
+            devices: OnceLock::new(),
+            previews: OnceLock::new(),
+            settle_cleanups: Arc::default(),
+        }
+    }
+
+    fn attach(thread: &str, terminal: &str) -> conn_contract::TerminalAttachInput {
+        conn_contract::TerminalAttachInput {
+            thread_id: thread.into(),
+            terminal_id: terminal.into(),
+            cwd: Some(std::env::temp_dir().to_string_lossy().into_owned()),
+            worktree_path: None,
+            cols: None,
+            rows: None,
+            env: Some(conn_contract::support::Map::from([
+                ("PS1".to_owned(), "$ ".to_owned()),
+                ("HISTFILE".to_owned(), "/dev/null".to_owned()),
+            ])),
+            provider_instance_id: None,
+            stop_on_settle: None,
+            restart_if_not_running: None,
+            resume: None,
+            max_history_bytes: None,
+        }
+    }
+
+    /// The text a fresh attachment replays.
+    async fn replayed(host: &Host, thread: &str, terminal: &str) -> (String, Option<i64>) {
+        use conn_contract::TerminalAttachStreamEvent as E;
+        let mut sub = host.terminals.attach(attach(thread, terminal), 1).unwrap();
+        let E::Snapshot(s) = sub.next().await else {
+            panic!("an attachment starts with its snapshot")
+        };
+        (s.snapshot.history, s.snapshot.pid)
+    }
+
+    async fn print_marker(host: &Host, thread: &str, terminal: &str, marker: &str) -> i64 {
+        use conn_contract::TerminalAttachStreamEvent as E;
+        let mut sub = host.terminals.attach(attach(thread, terminal), 1).unwrap();
+        host.terminals
+            .write(
+                conn_contract::TerminalWriteInput {
+                    thread_id: thread.into(),
+                    terminal_id: terminal.into(),
+                    data: format!("printf '%s-%s\\n' {marker} seen\n"),
+                    binary: None,
+                    reply: None,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let wanted = format!("{marker}-seen");
+        let mut all = String::new();
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            while !all.contains(&wanted) {
+                match sub.next().await {
+                    E::Output(o) => all.push_str(&o.data),
+                    E::Snapshot(s) => all.push_str(&s.snapshot.history),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("the marker reaches the terminal");
+        host.terminals
+            .read(thread, terminal, None)
+            .and_then(|s| s.pid)
+            .unwrap()
+    }
+
+    fn alive(pid: i64) -> bool {
+        i32::try_from(pid)
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+            .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok())
+    }
+
+    /// T3's archive effect (`terminal.cleanup`) closes with `deleteHistory`: after unarchive,
+    /// both named terminals reopen as new shells with clean scrollback.
+    #[tokio::test(flavor = "current_thread")]
+    async fn archive_stops_terminals_and_drops_their_scrollback() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-archive-terms-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let host = cleanup_host(&dir);
+        let first = print_marker(&host, "archived", "term-1", "archmarkone").await;
+        let second = print_marker(&host, "archived", "term-2", "archmarktwo").await;
+        let other = print_marker(&host, "other", "term-1", "othermarker").await;
+
+        host.thread_closed("archived", ThreadClose::Archived);
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            while alive(first) || alive(second) {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("archive stops both shells");
+
+        for (terminal, old) in [("term-1", first), ("term-2", second)] {
+            let (history, pid) = replayed(&host, "archived", terminal).await;
+            assert!(
+                pid.is_some_and(|pid| pid != old),
+                "{terminal} is a new shell"
+            );
+            assert!(!history.contains("archmarkone-seen"), "{history:?}");
+            assert!(!history.contains("archmarktwo-seen"), "{history:?}");
+        }
+        // Another thread's terminal keeps running with its scrollback.
+        let (history, pid) = replayed(&host, "other", "term-1").await;
+        assert_eq!(pid, Some(other));
+        assert!(history.contains("othermarker-seen"), "{history:?}");
+        host.terminals.shutdown().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Archive drops the history on the blocking pool: with the terminal manager's lock held,
+    /// another RPC still completes on the server's one runtime thread.
+    #[tokio::test(flavor = "current_thread")]
+    async fn archive_cleanup_leaves_the_runtime_thread_free() {
+        use crate::table::{CallContext, Handler, MethodTable};
+        let dir =
+            std::env::temp_dir().join(format!("conn-archive-blocking-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let host = cleanup_host(&dir);
+        let mut table = MethodTable::new();
+        crate::methods::server::register(&mut table, &Deps::default());
+        let Some(Handler::Unary(probe)) = table.get("server.probe") else {
+            panic!("server.probe")
+        };
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let terminals = host.terminals.clone();
+        let holder = std::thread::spawn(move || {
+            let _held = terminals.hold_lock();
+            held_tx.send(()).unwrap();
+            // A stalled runtime fails the test after 10 s instead of hanging it.
+            done_rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .is_ok()
+        });
+        held_rx.recv().unwrap();
+        host.thread_closed("archived", ThreadClose::Archived);
+        probe(CallContext::default(), json!({})).await.unwrap();
+        let _ = done_tx.send(());
+        assert!(
+            holder.join().unwrap(),
+            "the RPC completed while history cleanup held the lock"
+        );
+        host.terminals.shutdown().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// T3's deletion effect (`preview.cleanup`) frees the deleted thread's desktop tabs: the
+    /// other thread's tabs stay, a full registry takes a new tab, and a replay is harmless.
+    #[tokio::test(flavor = "current_thread")]
+    async fn delete_closes_the_threads_desktop_previews() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-delete-previews-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let host = cleanup_host(&dir);
+        let previews = conn_preview::tabs::Preview::new(dir.clone());
+        host.previews.set(previews.clone()).unwrap();
+        let kept = previews.open_desktop("kept", &json!({})).unwrap();
+        while previews.open_desktop("deleted", &json!({})).is_ok() {}
+        previews
+            .open_desktop("newcomer", &json!({}))
+            .expect_err("the registry is full");
+
+        let sessions = |thread: &str| {
+            previews.list(thread)["sessions"]
+                .as_array()
+                .map_or(0, Vec::len)
+        };
+        for _ in 0..2 {
+            host.thread_closed("deleted", ThreadClose::Deleted);
+            for _ in 0..100 {
+                if sessions("deleted") == 0 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        }
+        assert_eq!(sessions("deleted"), 0);
+        assert_eq!(previews.list("kept")["sessions"][0]["tabId"], kept["tabId"]);
+        previews.open_desktop("newcomer", &json!({})).unwrap();
+        host.terminals.shutdown().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// T3's settle effect (`ThreadSettlementService.ts:725`) through the production path: the
+    /// engine's `thread.settled` effect reaches the host, which closes the thread's terminals
+    /// and runs the project's `runOnSettle` script in its worktree. The script runs once per
+    /// settlement; after exit 0 its terminal closes, and a failed one keeps its terminal.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_settled_thread_runs_its_settle_script_through_the_host() {
+        use conn_contract::{TerminalAttachStreamEvent as E, TerminalMetadataStreamEvent as M};
+        let dir =
+            std::env::temp_dir().join(format!("conn-host-settle-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let (root, worktree) = (dir.join("repo"), dir.join("wt"));
+        {
+            let (root, worktree) = (root.clone(), worktree.clone());
+            tokio::task::spawn_blocking(move || {
+                std::fs::create_dir_all(&root).unwrap();
+                git(&root, &["init", "-q", "-b", "main"]);
+                git(
+                    &root,
+                    &[
+                        "-c",
+                        "user.name=Test",
+                        "-c",
+                        "user.email=test@example.invalid",
+                        "-c",
+                        "commit.gpgsign=false",
+                        "commit",
+                        "-q",
+                        "--allow-empty",
+                        "-m",
+                        "init",
+                    ],
+                );
+                git(
+                    &root,
+                    &[
+                        "worktree",
+                        "add",
+                        "-q",
+                        "-b",
+                        "settle",
+                        worktree.to_str().unwrap(),
+                    ],
+                );
+            })
+            .await
+            .unwrap();
+        }
+        let environment =
+            Arc::new(Environment::load(&dir, None, dir.clone(), Default::default()).unwrap());
+        let script = |command: &str| {
+            json!({"defaultProjectScripts":[{"id":"finish","name":"Finish","icon":"play",
+                "command":command,"runOnSettle":true,"runOnWorktreeCreate":false}]})
+        };
+        environment
+            .settings
+            .update(script("printf 'ran\\n' >> settle-runs.txt"), None)
+            .unwrap();
+        let terminals = conn_terminal::TerminalManager::new(conn_terminal::TerminalConfig {
+            shells: vec!["/bin/sh".into()],
+            ..Default::default()
+        });
+        let host = Arc::new(Host {
+            mcp: OnceLock::new(),
+            files: None,
+            vcs: VcsShared::default(),
+            terminals: terminals.clone(),
+            environment: environment.clone(),
+            scheduled_tasks: OnceLock::new(),
+            devices: OnceLock::new(),
+            previews: OnceLock::new(),
+            settle_cleanups: Arc::default(),
+        });
+        let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
+        config.projects = vec![conn_engine::ProjectConfig {
+            title: "Project".into(),
+            workspace_root: root.to_string_lossy().into_owned(),
+        }];
+        config.providers = vec![Arc::new(conn_engine::fake::FakeProvider::new(
+            "claudeAgent",
+        ))];
+        config.host = Some(host.clone());
+        let engine = Arc::new(conn_engine::SqliteEngine::open(config).unwrap());
+        let service = mcp::service(
+            &Deps {
+                environment: Some(environment.clone()),
+                engine: Some(engine.clone()),
+                terminals: Some(terminals.clone()),
+                ..Deps::default()
+            },
+            "127.0.0.1:9".parse().unwrap(),
+        )
+        .unwrap();
+        host.mcp.set(service.clone()).unwrap();
+        let dispatch = |command: Value| {
+            let engine = engine.clone();
+            async move {
+                engine
+                    .dispatch(conn_contract::from_json(command).unwrap())
+                    .await
+                    .unwrap();
+            }
+        };
+        let thread = "thread:settle";
+        dispatch(json!({"type":"thread.create","commandId":"create","threadId":thread,
+            "projectId":conn_engine::SqliteEngine::project_id_for(&root.to_string_lossy()),
+            "title":"Settle","modelSelection":{"instanceId":"claudeAgent","model":"claude-haiku-5-5"},
+            "runtimeMode":"auto","interactionMode":"default","branch":"settle",
+            "worktreePath":worktree.to_string_lossy(),"createdBy":"user","creationSource":"web"}))
+        .await;
+        let settle = |n: u32| json!({"type":"thread.settle","commandId":format!("settle-{n}"),"threadId":thread});
+        let mut metadata = terminals.subscribe_metadata();
+        // The settle script's terminal appears, then goes after exit 0.
+        dispatch(settle(1)).await;
+        let wait = std::time::Duration::from_secs(30);
+        let first = tokio::time::timeout(wait, async {
+            loop {
+                if let M::Upsert(upsert) = metadata.next().await
+                    && upsert.terminal.terminal_id.starts_with("settle-finish-")
+                {
+                    return upsert.terminal.terminal_id;
+                }
+            }
+        })
+        .await
+        .expect("the settle effect starts the project's settle script");
+        tokio::time::timeout(wait, async {
+            loop {
+                if let M::Remove(removed) = metadata.next().await
+                    && removed.terminal_id == first
+                {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("the settle script's terminal closes after exit 0");
+        // A settle of the settled thread keeps its settlement: no second run.
+        dispatch(settle(2)).await;
+
+        // A new settlement whose script fails keeps its terminal.
+        dispatch(json!({"type":"thread.unsettle","commandId":"unsettle","threadId":thread,"reason":"user"})).await;
+        environment
+            .settings
+            .update(script("printf 'FAILED-%s\\n' now; exit 3"), None)
+            .unwrap();
+        dispatch(settle(3)).await;
+        let failed = loop {
+            if let M::Upsert(upsert) = metadata.next().await
+                && upsert.terminal.terminal_id.starts_with("settle-finish-")
+                && upsert.terminal.terminal_id != first
+            {
+                break upsert.terminal.terminal_id;
+            }
+        };
+        let mut output = terminals
+            .observe(
+                conn_contract::from_json(json!({"threadId":thread,"terminalId":failed})).unwrap(),
+            )
+            .unwrap();
+        let mut text = String::new();
+        let mut asked = false;
+        while !text.contains("STILL-42") {
+            match output.next().await {
+                E::Output(event) => text.push_str(&event.data),
+                E::Snapshot(event) => text.push_str(&event.snapshot.history),
+                E::Closed(_) | E::Exited(_) => {
+                    panic!("the failed script's terminal closed: {text}")
+                }
+                _ => {}
+            }
+            if !asked && text.contains("FAILED-now") {
+                asked = true;
+                terminals
+                    .write(
+                        conn_contract::from_json(json!({"threadId":thread,"terminalId":failed,
+                            "data":"echo STILL-$((40+2))\r"}))
+                        .unwrap(),
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+        // Cleanups run one at a time, and each acts only while its settlement is the thread's:
+        // held back, a settlement undone and replaced runs nothing, its replacement once.
+        environment
+            .settings
+            .update(script("printf 'again\\n' >> settle-runs.txt"), None)
+            .unwrap();
+        let unsettle = |n: u32| json!({"type":"thread.unsettle","commandId":format!("unsettle-{n}"),"threadId":thread,"reason":"user"});
+        dispatch(unsettle(2)).await;
+        let held = host.settle_cleanups.lock().await;
+        dispatch(settle(4)).await;
+        dispatch(unsettle(3)).await;
+        dispatch(settle(5)).await;
+        drop(held);
+        let last = tokio::time::timeout(wait, async {
+            loop {
+                if let M::Upsert(upsert) = metadata.next().await
+                    && upsert.terminal.terminal_id.starts_with("settle-finish-")
+                    && ![&first, &failed].contains(&&upsert.terminal.terminal_id)
+                {
+                    return upsert.terminal.terminal_id;
+                }
+            }
+        })
+        .await
+        .expect("the current settlement runs its script");
+        tokio::time::timeout(wait, async {
+            loop {
+                if let M::Remove(removed) = metadata.next().await
+                    && removed.terminal_id == last
+                {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("its terminal closes after exit 0");
+        let runs = tokio::task::spawn_blocking({
+            let file = worktree.join("settle-runs.txt");
+            move || std::fs::read_to_string(file).unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            runs, "ran\nagain\n",
+            "one run per settlement: none for a repeat or for a settlement undone since"
+        );
+        terminals.shutdown().await;
+        engine.shutdown().await;
+        drop(host);
+        drop(service);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn browser_access_is_scoped_to_project_and_captured_at_session_start() {
         let dir =
@@ -346,11 +878,14 @@ mod tests {
             ))
             .unwrap(),
         );
-        let service = mcp::service(&Deps {
-            environment: Some(environment.clone()),
-            engine: Some(engine.clone()),
-            ..Deps::default()
-        })
+        let service = mcp::service(
+            &Deps {
+                environment: Some(environment.clone()),
+                engine: Some(engine.clone()),
+                ..Deps::default()
+            },
+            "127.0.0.1:9".parse().unwrap(),
+        )
         .unwrap();
         let host = Host {
             mcp: OnceLock::new(),
@@ -360,6 +895,8 @@ mod tests {
             environment: environment.clone(),
             scheduled_tasks: OnceLock::new(),
             devices: OnceLock::new(),
+            previews: OnceLock::new(),
+            settle_cleanups: Arc::default(),
         };
         host.mcp.set(service.clone()).unwrap();
         let issue = |project: Option<&str>| {
@@ -394,6 +931,117 @@ mod tests {
         engine.shutdown().await;
         drop(host);
         drop(service);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `thread`'s stream, from now on.
+    async fn subscribe(
+        engine: &dyn Engine,
+        thread: &str,
+    ) -> conn_engine::Subscription<
+        conn_contract::ThreadStreamItem,
+        conn_contract::GetThreadProjectionError,
+    > {
+        engine
+            .subscribe_thread(conn_contract::from_json(json!({"threadId": thread})).unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// A run a previous process left active continues at start, and its new session gets
+    /// `/mcp` at the address the server listens on. The session keeps that URL, so a guess
+    /// fails every Conn tool call until the session is replaced.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_run_recovered_at_start_gets_the_listen_address() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-recovered-mcp-{}", conn_support::uuid_v4()));
+        let environment =
+            Arc::new(Environment::load(&dir, None, dir.clone(), Default::default()).unwrap());
+        let root = dir.to_string_lossy().into_owned();
+        let config = |provider: &Arc<conn_engine::fake::FakeProvider>| {
+            let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
+            config.projects = vec![conn_engine::ProjectConfig {
+                title: "P".into(),
+                workspace_root: root.clone(),
+            }];
+            let provider: Arc<dyn conn_provider::Provider> = provider.clone();
+            config.provider_set = Some(conn_provider::ProviderSet::from(vec![provider]));
+            config
+        };
+        let thread = "thread:recovered";
+
+        // The previous process stops during a turn, as on SIGTERM.
+        let previous = conn_engine::SqliteEngine::open(config(&Arc::new(
+            conn_engine::fake::FakeProvider::new("claudeAgent"),
+        )))
+        .unwrap();
+        previous
+            .launch_thread(json!({
+                "commandId": "launch", "threadId": thread,
+                "projectId": conn_engine::SqliteEngine::project_id_for(&root),
+                "title": "Agent", "runtimeMode": "full-access", "interactionMode": "default",
+                "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+                "workspaceStrategy": {"type": "root"},
+            }))
+            .await
+            .unwrap();
+        let mut stream = subscribe(&previous, thread).await;
+        previous
+            .dispatch(
+                conn_contract::from_json(json!({
+                    "type": "message.dispatch", "commandId": "hang", "threadId": thread,
+                    "messageId": "message:hang", "text": "hang", "attachments": [],
+                    "dispatchMode": {"type": "start_immediately"},
+                    "createdBy": "user", "creationSource": "web",
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        while conn_contract::to_json(&stream.recv().await.unwrap().unwrap())["event"]["type"]
+            != "provider-turn.updated"
+        {}
+        previous.begin_shutdown();
+        previous.shutdown().await;
+
+        // The next start, in `serve`'s order.
+        let host = Arc::new(Host {
+            mcp: OnceLock::new(),
+            files: None,
+            vcs: VcsShared::default(),
+            terminals: crate::methods::terminal::manager(Some(&environment)),
+            environment: environment.clone(),
+            scheduled_tasks: OnceLock::new(),
+            previews: OnceLock::new(),
+            devices: OnceLock::new(),
+            settle_cleanups: Arc::default(),
+        });
+        let provider = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));
+        let mut config = config(&provider);
+        config.host = Some(host.clone());
+        config.recover_runs = false;
+        let engine = Arc::new(conn_engine::SqliteEngine::open(config).unwrap());
+        let mut stream = subscribe(engine.as_ref(), thread).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut deps = Deps {
+            environment: Some(environment.clone()),
+            engine: Some(engine.clone()),
+            ..Deps::default()
+        };
+        crate::serve::start_agent_tools(&mut deps, &host, &engine, address).unwrap();
+        let opened = || provider.sessions.load(std::sync::atomic::Ordering::SeqCst) > 0;
+        while !opened() {
+            stream.recv().await.unwrap().unwrap();
+        }
+
+        let servers = provider.mcp_servers.lock().unwrap().clone();
+        assert_eq!(
+            servers.iter().map(|s| s.url.clone()).collect::<Vec<_>>(),
+            [format!("http://{address}/mcp")],
+            "the recovered session's `/mcp`"
+        );
+        engine.shutdown().await;
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

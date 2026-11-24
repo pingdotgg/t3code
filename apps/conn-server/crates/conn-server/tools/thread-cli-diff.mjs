@@ -24,11 +24,17 @@
 //
 // Differences in KNOWN are printed with their reason and do not fail the check. Any other
 // difference exits 1. Every server gets its own temp home, HOME and a free port.
+//
+// At the end both event logs are read: each event's top-level `providerInstanceId`, keyed by
+// event type (and a turn item's type), must be the same set on both servers. A key only one
+// server writes is listed, not failed. One known difference is excused row by row
+// (`excusedQuestion`).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 import * as NodeURL from "node:url";
 
 import { monorepo } from "../../../tools/monorepo.mjs";
@@ -346,6 +352,8 @@ async function sequence(side) {
   side.arm(transcript("plan_questions"));
   const asked = await side.step("start --wait --json: asks", startArgs(side, "Orbit task 3 thread 1"), "Ask me");
   const waiting = JSON.parse(asked.stdout || "{}");
+  // The question the providerInstanceId exception may excuse is this thread's, on this run.
+  side.asked = { threadId: waiting.threadId, runId: waiting.runId };
   const read = await copyRpc(side, "read", waiting.threadId);
   side.steps.push({ label: "t3_copy_rpc read", args: [], stdout: JSON.stringify(read.out), stderr: read.stderr, code: read.code });
   const ids = (read.out?.requests ?? []).map((r) => r.request_id).join("\n");
@@ -507,6 +515,159 @@ function compare(t3, conn) {
 }
 
 // ---------------------------------------------------------------------------------------
+// The events' `providerInstanceId`
+
+function findFiles(dir, name) {
+  const found = [];
+  for (const entry of NodeFS.readdirSync(dir, { withFileTypes: true })) {
+    const path = NodePath.join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...findFiles(path, name));
+    else if (entry.name === name) found.push(path);
+  }
+  return found;
+}
+
+/** The side's stored events, in order: type, thread, payload and envelope instance. */
+function storedEvents(side) {
+  const t3 = side.name === "t3";
+  const [file] = findFiles(side.dir, t3 ? "statev2.sqlite" : "engine.sqlite");
+  if (file === undefined) throw new Error(`${side.name}: no event store under ${side.dir}`);
+  const db = new NodeSqlite.DatabaseSync(file, { readOnly: true });
+  const rows = t3
+    ? db
+        .prepare(
+          "SELECT event_type AS type, stream_id AS thread, payload_json AS payload, metadata_json AS meta FROM orchestration_events WHERE aggregate_kind = 'thread' ORDER BY sequence",
+        )
+        .all()
+        .map((row) => {
+          const meta = JSON.parse(row.meta ?? "{}");
+          return { type: row.type, thread: row.thread, run: meta.runId, payload: JSON.parse(row.payload), instance: meta.providerInstanceId };
+        })
+    : db
+        .prepare("SELECT event FROM events ORDER BY seq")
+        .all()
+        .map((row) => JSON.parse(row.event))
+        .map((event) => ({ type: event.type, thread: event.threadId, run: event.runId, payload: event.payload, instance: event.providerInstanceId }));
+  db.close();
+  return rows;
+}
+
+const keyOf = (row) => (row.type === "turn-item.updated" ? `${row.type}:${row.payload?.type}` : row.type);
+
+/**
+ * The one known difference, matched row by row. T3's ingestor cancels a pending question when
+ * its provider turn ends (`dismissNativeUserInputs`, the session's instance). Conn has no such
+ * step: the question stays pending until its session is released, which expires it, and T3's
+ * release names no instance. A Conn row is excused only when it is the question the scenario's
+ * `asked` step reported on each side: Conn's, on that thread and run, expired right after its
+ * own session's release, after the one pending row of its request; T3's, on its own `asked`
+ * thread and run, cancelled for the same native request after the one pending row of it.
+ */
+const REQUEST = "runtime-request.updated";
+const runOrdinal = (run) => (typeof run === "string" ? run.slice(run.lastIndexOf(":") + 1) : undefined);
+const sameRef = (a, b) => a != null && JSON.stringify(a) === JSON.stringify(b);
+
+function excusedQuestion(rows, index, t3Rows, connAsked, t3Asked) {
+  const row = rows[index];
+  const before = rows[index - 1];
+  if (connAsked?.threadId === undefined || t3Asked?.threadId === undefined) return false;
+  const shaped =
+    row.type === REQUEST &&
+    row.instance === undefined &&
+    row.payload?.kind === "user_input" &&
+    row.payload?.status === "expired" &&
+    row.payload?.responseCapability?.type === "live" &&
+    before?.type === "provider-session.updated" &&
+    before.thread === row.thread &&
+    before.payload?.status === "stopped" &&
+    before.payload?.id === row.payload.responseCapability.providerSessionId;
+  if (!shaped) return false;
+  if (row.thread !== connAsked.threadId) return false;
+  const pending = rows.filter(
+    (r, i) =>
+      i < index &&
+      r.type === REQUEST &&
+      r.thread === row.thread &&
+      r.payload?.id === row.payload.id &&
+      r.payload?.status === "pending" &&
+      r.instance !== undefined,
+  );
+  if (
+    pending.length !== 1 ||
+    pending[0].run !== connAsked.runId ||
+    (row.run !== undefined && row.run !== pending[0].run)
+  ) {
+    return false;
+  }
+  const cancelled = t3Rows.filter(
+    (t) =>
+      t.type === REQUEST &&
+      t.payload?.kind === "user_input" &&
+      t.payload?.status === "cancelled" &&
+      t.instance !== undefined &&
+      sameRef(t.payload?.nativeRequestRef, row.payload.nativeRequestRef),
+  );
+  if (cancelled.length !== 1) return false;
+  const [match] = cancelled;
+  if (match.thread !== t3Asked.threadId || match.run !== t3Asked.runId) return false;
+  const matchIndex = t3Rows.indexOf(match);
+  const t3Pending = t3Rows.filter(
+    (t, i) =>
+      i < matchIndex &&
+      t.type === REQUEST &&
+      t.thread === match.thread &&
+      t.run === match.run &&
+      t.payload?.id === match.payload.id &&
+      t.payload?.status === "pending",
+  );
+  return t3Pending.length === 1 && runOrdinal(match.run) === runOrdinal(pending[0].run);
+}
+
+/** `key -> Set` of the instances (or "(none)") the rows name. */
+function instancesByKey(rows) {
+  const byKey = new Map();
+  for (const row of rows) {
+    const key = keyOf(row);
+    if (!byKey.has(key)) byKey.set(key, new Set());
+    byKey.get(key).add(row.instance ?? "(none)");
+  }
+  return byKey;
+}
+
+function compareInstances(t3, conn) {
+  const t3Rows = storedEvents(t3);
+  const connAll = storedEvents(conn);
+  const excused = connAll.map((_, i) => excusedQuestion(connAll, i, t3Rows, conn.asked, t3.asked));
+  const count = excused.filter(Boolean).length;
+  // The scenario asks one question; more matches would hide something else.
+  const connRows = count === 1 ? connAll.filter((_, i) => !excused[i]) : connAll;
+  if (count === 1) {
+    console.log(
+      "  known Conn expires its one question at its session's release with no instance; T3 cancels it at the turn's end (dismissNativeUserInputs)",
+    );
+  } else if (count > 1) {
+    console.log(`  ${count} questions match the known difference; none is excused`);
+  }
+  const a = instancesByKey(t3Rows);
+  const b = instancesByKey(connRows);
+  let failures = 0;
+  for (const key of [...new Set([...a.keys(), ...b.keys()])].sort()) {
+    const x = a.get(key);
+    const y = b.get(key);
+    if (x === undefined || y === undefined) {
+      console.log(`  only ${x === undefined ? "Conn" : "T3"} writes ${key}`);
+      continue;
+    }
+    const same = x.size === y.size && [...x].every((v) => y.has(v));
+    if (same) {
+      console.log(`ok   providerInstanceId of ${key}: ${[...x].join(", ")}`);
+    } else {
+      failures++;
+      console.log(`FAIL providerInstanceId of ${key}: T3 ${[...x].join(", ")} | Conn ${[...y].join(", ")}`);
+    }
+  }
+  return failures;
+}
 
 const sides = [makeSide("t3"), makeSide("conn")];
 let exitCode = 0;
@@ -524,6 +685,9 @@ try {
     `\n${sides[0].steps.length} steps, ${failures} differ, ${known} known difference(s)`,
   );
   if (failures > 0) exitCode = 1;
+  const instanceFailures = compareInstances(sides[0], sides[1]);
+  console.log(`${instanceFailures} event type(s) differ in providerInstanceId`);
+  if (instanceFailures > 0) exitCode = 1;
 } finally {
   await Promise.all(sides.map((side) => side.stop().catch(() => {})));
   if (keep) console.log(`kept ${root}`);

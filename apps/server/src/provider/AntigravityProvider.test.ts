@@ -135,10 +135,14 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     readonly enabled?: boolean;
     readonly safe?: boolean;
     readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
+    readonly loadsModels?: boolean;
   } = {},
 ) {
   const initialProbe = yield* Deferred.make<EffectAcpSchema.InitializeResponse, ProbeError>();
   const probeCalls = yield* Ref.make(0);
+  const loadCalls = yield* Ref.make(0);
+  // The throwaway session the health check opens reports through `onSessionStarted`.
+  const load = yield* Ref.make<Effect.Effect<void>>(Effect.void);
   const safetyCalls = yield* Ref.make(0);
   const probe = yield* Ref.make<Effect.Effect<EffectAcpSchema.InitializeResponse, ProbeError>>(
     Deferred.await(initialProbe),
@@ -150,6 +154,14 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
       stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
       ...(options.auth ? { auth: options.auth } : {}),
       ...(options.probeUsage ? { probeUsage: options.probeUsage } : {}),
+      ...(options.loadsModels
+        ? {
+            loadModels: Ref.update(loadCalls, (count) => count + 1).pipe(
+              Effect.andThen(Ref.get(load)),
+              Effect.flatten,
+            ),
+          }
+        : {}),
       probe: Ref.update(probeCalls, (count) => count + 1).pipe(
         Effect.andThen(Ref.get(probe)),
         Effect.flatten,
@@ -160,6 +172,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
       ),
     },
   );
+  yield* Ref.set(load, provider.onSessionStarted(started));
   const initialUpdate = yield* Stream.toPull(
     provider.snapshot.streamChanges.pipe(
       Stream.filter((snapshot) => snapshot.installed || snapshot.status === "error"),
@@ -178,6 +191,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     provider,
     probe,
     probeCalls,
+    loadCalls,
     safety,
     safetyCalls,
     initialProbe,
@@ -383,6 +397,24 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expectedCommands,
       );
       expect(yield* Ref.get(harness.probeCalls)).toBe(1);
+    }),
+  );
+
+  it.effect("loads models and the account in the health check, without a thread session", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ loadsModels: true });
+      yield* Deferred.succeed(harness.initialProbe, initializeResult);
+      const snapshot = yield* harness.provider.snapshot.refresh;
+      expect(snapshot).toMatchObject({
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+      });
+      expect(snapshot.message).toBeUndefined();
+      expect(snapshot.models).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
+      // A known account is not checked again on every health check.
+      yield* harness.provider.snapshot.refresh;
+      expect(yield* Ref.get(harness.loadCalls)).toBe(1);
     }),
   );
 

@@ -96,7 +96,7 @@ export function createOrbitInstanceWaker(
           }
           await waitForOperationRead({
             notices,
-            sequence: null,
+            sequence: operation.sequence ?? null,
             pollMs: operationPollDelayMs(operation.pollAfterSeconds),
             maxMs: deadline - now(),
             sleep,

@@ -3,17 +3,27 @@
 //! Reference implementation: `.refs/threadbear/desktop/web/` (`cef-rs` + `dlopen` loader +
 //! CEF offscreen rendering).
 //!
-//! All CEF code is gated behind the optional `cef` Cargo feature (default OFF) so the
-//! workspace builds and tests cleanly without downloading CEF. When `cef` is disabled (or on
-//! non-macOS targets), the full public API remains available and returns
-//! [`WebRuntimeState::NotInstalled`] / [`WebError::Unsupported`].
+//! CEF is always compiled in. It is downloaded on first use at runtime (see
+//! [`WebRuntime::ensure_installed`]), never during the build. On non-macOS targets the full
+//! public API remains available and returns [`WebRuntimeState::NotInstalled`] /
+//! [`WebError::Unsupported`].
 
-#[cfg(feature = "cef")]
 mod archive;
-#[cfg(feature = "cef")]
+#[cfg(any(target_os = "macos", test))]
+mod context_menu;
 mod download;
-#[cfg(all(feature = "cef", target_os = "macos"))]
+mod load_error;
+#[cfg(target_os = "macos")]
 mod mac;
+mod menu;
+mod trace;
+
+pub use load_error::{LoadError, net_error_name};
+pub use trace::{LOG_PATH as TRACE_LOG_PATH, trace};
+
+pub use menu::{
+    Answer as MenuAnswer, ContextMenuEvent, ContextMenuReply, ContextMenuRequest, MenuEntry,
+};
 
 use std::path::PathBuf;
 use thiserror::Error;
@@ -175,11 +185,11 @@ pub struct StartOptions {
 /// ```
 #[must_use]
 pub fn maybe_run_subprocess() -> Option<i32> {
-    #[cfg(all(feature = "cef", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     {
         mac::helper::maybe_run_subprocess()
     }
-    #[cfg(not(all(feature = "cef", target_os = "macos")))]
+    #[cfg(not(target_os = "macos"))]
     {
         None
     }
@@ -207,11 +217,11 @@ impl WebRuntime {
     /// Returns the current lifecycle state of the runtime.
     #[must_use]
     pub fn state(&self) -> WebRuntimeState {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             mac::host::state()
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             WebRuntimeState::NotInstalled
         }
@@ -220,7 +230,7 @@ impl WebRuntime {
     /// Returns `true` if the pinned CEF framework is already installed on disk.
     #[must_use]
     pub fn is_installed(&self) -> bool {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             let Some(archive) = archive::current_archive() else {
                 return false;
@@ -230,7 +240,7 @@ impl WebRuntime {
             };
             archive::is_installed(&archive::Layout::new(root), &archive.pin())
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             false
         }
@@ -246,12 +256,12 @@ impl WebRuntime {
     /// Returns [`WebError::Unsupported`] when the `cef` feature is disabled, or
     /// [`WebError::Runtime`] if the home directory cannot be resolved.
     pub fn install_dir(&self) -> Result<PathBuf, WebError> {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             let root = archive::Layout::default_root()?;
             Ok(archive::Layout::new(root).version_dir())
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             Err(WebError::Unsupported(
                 "enable the `cef` feature on macOS to use conn-web",
@@ -269,7 +279,7 @@ impl WebRuntime {
     /// Returns [`WebError::Unsupported`] without the `cef` feature on macOS, or
     /// download/integrity/I/O errors if fetching or unpacking fails.
     pub fn ensure_installed(&self, progress: impl Fn(u8)) -> Result<(), WebError> {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             let archive = archive::current_archive().ok_or(WebError::Unsupported(
                 "no pinned CEF archive for this architecture",
@@ -298,7 +308,7 @@ impl WebRuntime {
                 }
             }
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             let _ = progress;
             Err(WebError::Unsupported(
@@ -328,11 +338,11 @@ impl WebRuntime {
     /// [`WebError::Unsupported`] without the `cef` feature on macOS, or
     /// [`WebError::Runtime`] if framework loading or initialization fails.
     pub fn start_with_options(&self, options: StartOptions) -> Result<(), WebError> {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             mac::host::start(options)
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             let _ = options;
             Err(WebError::Unsupported(
@@ -341,21 +351,71 @@ impl WebRuntime {
         }
     }
 
+    /// Gets everything ready that [`WebRuntime::start`] needs and that can happen off the main
+    /// thread: the helper apps are built and signed, which takes seconds after a new build. Does
+    /// nothing, and returns [`WebError::NotInstalled`], until CEF has been downloaded.
+    ///
+    /// # Errors
+    /// Returns [`WebError::NotInstalled`] before the download, or [`WebError::Runtime`] when the
+    /// helpers cannot be built.
+    pub fn prepare(&self) -> Result<(), WebError> {
+        #[cfg(target_os = "macos")]
+        {
+            mac::host::prepare()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(WebError::Unsupported(
+                "CEF is not supported on this platform",
+            ))
+        }
+    }
+
+    /// Maps the CEF framework into the process ahead of [`WebRuntime::start`], so the main
+    /// thread does not wait for the load. Safe on any thread, and repeatable.
+    ///
+    /// # Errors
+    /// Returns [`WebError::NotInstalled`] before the download, or [`WebError::Runtime`] when the
+    /// framework cannot be loaded.
+    pub fn preload_framework(&self) -> Result<(), WebError> {
+        #[cfg(target_os = "macos")]
+        {
+            mac::host::preload_framework()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(WebError::Unsupported(
+                "CEF is not supported on this platform",
+            ))
+        }
+    }
+
     /// Requests Chromium's nested message loop to exit, if running.
     pub fn quit(&self) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             mac::host::quit();
         }
     }
 }
 
+/// A response that may carry the Laravel Toolbar's data (`x-toolbar`, `x-toolbar-summary`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolbarResponse {
+    /// The main frame's document; otherwise a fetch or XHR.
+    pub document: bool,
+    pub method: String,
+    pub url: String,
+    pub full: Option<String>,
+    pub summary: Option<String>,
+}
+
 /// Handle to an offscreen-rendered embedded Chromium view.
 #[derive(Debug)]
 pub struct BrowserView {
-    #[cfg(all(feature = "cef", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     inner: mac::view::MacBrowserView,
-    #[cfg(not(all(feature = "cef", target_os = "macos")))]
+    #[cfg(not(target_os = "macos"))]
     _private: (),
 }
 
@@ -371,12 +431,12 @@ impl BrowserView {
     /// [`WebError::NotRunning`] if the runtime is not running, or
     /// [`WebError::Runtime`] if CEF fails to create the browser.
     pub fn create(bounds: Rect, scale: f32, url: &str) -> Result<Self, WebError> {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             let inner = mac::view::MacBrowserView::create(bounds, scale, url)?;
             Ok(Self { inner })
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             let _ = (bounds, scale, url);
             Err(WebError::Unsupported(
@@ -387,46 +447,46 @@ impl BrowserView {
 
     /// Updates the offscreen viewport size in logical points and device scale factor.
     pub fn set_size(&self, width: f32, height: f32, scale: f32) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.set_size(width, height, scale);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         let _ = (width, height, scale);
     }
 
     /// Navigates the main frame to `url`.
     pub fn load_url(&self, url: &str) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.load_url(url);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         let _ = url;
     }
 
     /// Navigates back in session history, if possible.
     pub fn go_back(&self) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.go_back();
     }
 
     /// Navigates forward in session history, if possible.
     pub fn go_forward(&self) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.go_forward();
     }
 
     /// Reloads the current page.
     pub fn reload(&self) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.reload();
     }
 
     /// Returns the current main-frame URL.
     #[must_use]
     pub fn url(&self) -> String {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             self.inner.url()
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             String::new()
         }
@@ -435,11 +495,11 @@ impl BrowserView {
     /// Returns the current document title.
     #[must_use]
     pub fn title(&self) -> String {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             self.inner.title()
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             String::new()
         }
@@ -448,11 +508,11 @@ impl BrowserView {
     /// Returns `true` if the browser can navigate back.
     #[must_use]
     pub fn can_go_back(&self) -> bool {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             self.inner.can_go_back()
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             false
         }
@@ -461,11 +521,11 @@ impl BrowserView {
     /// Returns `true` if the browser can navigate forward.
     #[must_use]
     pub fn can_go_forward(&self) -> bool {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             self.inner.can_go_forward()
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             false
         }
@@ -474,11 +534,11 @@ impl BrowserView {
     /// Returns `true` while the browser is loading.
     #[must_use]
     pub fn is_loading(&self) -> bool {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             self.inner.is_loading()
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             false
         }
@@ -487,11 +547,11 @@ impl BrowserView {
     /// Returns the number of completed main-frame loads.
     #[must_use]
     pub fn load_count(&self) -> u32 {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             self.inner.load_count()
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             0
         }
@@ -500,11 +560,11 @@ impl BrowserView {
     /// Returns the monotonically increasing frame generation (0 before the first paint).
     #[must_use]
     pub fn frame_generation(&self) -> u64 {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             self.inner.frame_generation()
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             0
         }
@@ -513,11 +573,11 @@ impl BrowserView {
     /// Returns a copy of the latest BGRA frame if its generation is strictly greater than `last_generation`.
     #[must_use]
     pub fn frame_if_newer(&self, last_generation: u64) -> Option<FrameSnapshot> {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             self.inner.frame_if_newer(last_generation)
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             let _ = last_generation;
             None
@@ -527,11 +587,11 @@ impl BrowserView {
     /// Returns the cursor style currently requested by the page.
     #[must_use]
     pub fn cursor(&self) -> CursorKind {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             self.inner.cursor()
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             CursorKind::Default
         }
@@ -539,35 +599,109 @@ impl BrowserView {
 
     /// Registers a callback invoked when a new frame paints or browser UI state changes.
     pub fn on_frame(&self, callback: impl Fn() + Send + Sync + 'static) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.on_frame(callback);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
+        let _ = callback;
+    }
+
+    /// Registers a callback invoked when the main frame starts a new document, before the page's
+    /// own scripts run, receiving its URL.
+    pub fn on_load_start(&self, callback: impl Fn(&str) + Send + Sync + 'static) {
+        #[cfg(target_os = "macos")]
+        self.inner.on_load_start(callback);
+        #[cfg(not(target_os = "macos"))]
+        let _ = callback;
+    }
+
+    /// Registers a callback for each document and fetch/XHR response (any thread), with the
+    /// Laravel Toolbar headers it carries. Pages with a Content-Security-Policy get no inline
+    /// toolbar data, so the host reads the headers instead.
+    pub fn on_toolbar_response(&self, callback: impl Fn(ToolbarResponse) + Send + Sync + 'static) {
+        #[cfg(target_os = "macos")]
+        self.inner.on_toolbar_response(callback);
+        #[cfg(not(target_os = "macos"))]
         let _ = callback;
     }
 
     /// Registers a callback invoked whenever the main frame finishes loading,
     /// receiving `(url, http_status_code)`.
     pub fn on_load_end(&self, callback: impl Fn(&str, i32) + Send + Sync + 'static) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.on_load_end(callback);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         let _ = callback;
     }
 
-    /// Registers a callback invoked for page console messages. Returning `true` suppresses the
-    /// default console logging (used by Conn's injected element detector bridge).
+    /// Why the last main-frame load failed, until the next load starts. A navigation that was
+    /// only replaced (`ERR_ABORTED`) is not reported.
+    #[must_use]
+    pub fn load_error(&self) -> Option<LoadError> {
+        #[cfg(target_os = "macos")]
+        {
+            self.inner.load_error()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            None
+        }
+    }
+
+    /// Registers the host's right-click menu. The view is windowless, so Chromium draws no menu
+    /// of its own: it sends [`ContextMenuEvent::Open`] with the finished rows and waits for the
+    /// request's reply. Without a callback, right-clicking shows nothing. The callback runs on
+    /// the main thread.
+    pub fn on_context_menu(&self, callback: impl Fn(ContextMenuEvent) + Send + Sync + 'static) {
+        #[cfg(target_os = "macos")]
+        self.inner.on_context_menu(callback);
+        #[cfg(not(target_os = "macos"))]
+        let _ = callback;
+    }
+
+    /// Opens Chrome DevTools in a separate top-level window (a window that is already open is
+    /// brought forward). With `inspect_at` (view coordinates in logical points), DevTools
+    /// opens with the element at that point selected.
+    pub fn show_dev_tools(&self, inspect_at: Option<(i32, i32)>) {
+        #[cfg(target_os = "macos")]
+        self.inner.show_dev_tools(inspect_at);
+        #[cfg(not(target_os = "macos"))]
+        let _ = inspect_at;
+    }
+
+    /// Closes the DevTools window, if open.
+    pub fn close_dev_tools(&self) {
+        #[cfg(target_os = "macos")]
+        self.inner.close_dev_tools();
+    }
+
+    /// Returns `true` while a DevTools window is open for this view.
+    #[must_use]
+    pub fn has_dev_tools(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            self.inner.has_dev_tools()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    }
+
+    /// Registers a callback invoked for the detector bridge's console messages. Returning `true`
+    /// consumes a message so it stays out of Chromium's log; any message it does not consume
+    /// (returns `false`) is left alone, and DevTools' Console shows every message either way.
     pub fn on_console_message(&self, callback: impl Fn(&str) -> bool + Send + Sync + 'static) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.on_console_message(callback);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         let _ = callback;
     }
 
     /// Evaluates JavaScript in the main frame's V8 context.
     pub fn execute_javascript(&self, code: &str) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.execute_javascript(code);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         let _ = code;
     }
 
@@ -579,20 +713,20 @@ impl BrowserView {
 
     /// Tells CEF whether the view is hidden so it pauses offscreen painting and mutes audio.
     pub fn set_hidden(&self, hidden: bool) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.set_hidden(hidden);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         let _ = hidden;
     }
 
     /// Returns `true` if the view is currently hidden.
     #[must_use]
     pub fn is_hidden(&self) -> bool {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             self.inner.is_hidden()
         }
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             true
         }
@@ -600,17 +734,17 @@ impl BrowserView {
 
     /// Updates CEF's logical focus state.
     pub fn set_focus(&self, focused: bool) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.set_focus(focused);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         let _ = focused;
     }
 
     /// Forwards a pointer move (or leave) event in logical viewport points.
     pub fn send_mouse_move(&self, x: i32, y: i32, modifiers: Modifiers, mouse_leave: bool) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.send_mouse_move(x, y, modifiers, mouse_leave);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         let _ = (x, y, modifiers, mouse_leave);
     }
 
@@ -623,10 +757,10 @@ impl BrowserView {
         click_count: i32,
         modifiers: Modifiers,
     ) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner
             .send_mouse_down(x, y, button, click_count, modifiers);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         let _ = (x, y, button, click_count, modifiers);
     }
 
@@ -639,10 +773,10 @@ impl BrowserView {
         click_count: i32,
         modifiers: Modifiers,
     ) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner
             .send_mouse_up(x, y, button, click_count, modifiers);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         let _ = (x, y, button, click_count, modifiers);
     }
 
@@ -655,32 +789,32 @@ impl BrowserView {
         delta_y: i32,
         modifiers: Modifiers,
     ) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner
             .send_mouse_wheel(x, y, delta_x, delta_y, modifiers);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         let _ = (x, y, delta_x, delta_y, modifiers);
     }
 
     /// Forwards a keyboard event to CEF.
     pub fn send_key_event(&self, event: KeyEvent) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.send_key_event(event);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         let _ = event;
     }
 
     /// Executes a standard edit command on the focused frame.
     pub fn execute_edit_command(&self, command: EditCommand) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.execute_edit_command(command);
-        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         let _ = command;
     }
 
     /// Closes the offscreen browser.
     pub fn close(self) {
-        #[cfg(all(feature = "cef", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         self.inner.close_inner();
     }
 }
@@ -701,34 +835,6 @@ mod tests {
             maybe_run_subprocess(),
             None,
             "test runner without --type= should not trigger subprocess path"
-        );
-    }
-
-    #[cfg(not(feature = "cef"))]
-    #[test]
-    fn stub_api_returns_unsupported_without_cef_feature() {
-        let runtime = WebRuntime::new();
-        assert!(
-            !runtime.is_installed(),
-            "stub runtime should report not installed"
-        );
-        assert!(
-            matches!(
-                runtime.ensure_installed(|_| {}),
-                Err(WebError::Unsupported(_))
-            ),
-            "ensure_installed should return Unsupported without cef feature"
-        );
-        assert!(
-            matches!(runtime.start(), Err(WebError::Unsupported(_))),
-            "start should return Unsupported without cef feature"
-        );
-        assert!(
-            matches!(
-                BrowserView::create(Rect::default(), 2.0, "http://127.0.0.1"),
-                Err(WebError::Unsupported(_))
-            ),
-            "BrowserView::create should return Unsupported without cef feature"
         );
     }
 }

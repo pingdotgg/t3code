@@ -163,6 +163,8 @@ interface AntigravityProviderOptions {
     EffectAcpErrors.AcpError | ProviderSetupError
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
+  /** Opens a throwaway session that reports the account and models through `onSessionStarted`. */
+  readonly loadModels?: Effect.Effect<void>;
   readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
   readonly clearUsage?: Effect.Effect<void>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
@@ -337,8 +339,13 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         },
       } satisfies AntigravityProviderState;
     });
-    if (initialized !== undefined) yield* refreshUsage();
-    return yield* options.stampIdentity(next.draft);
+    if (initialized === undefined) return yield* options.stampIdentity(next.draft);
+    // Only a session proves the sign-in and lists models, so load them before anyone picks one.
+    if (options.loadModels && next.draft.auth.status === "unknown") {
+      yield* options.loadModels;
+    }
+    yield* refreshUsage();
+    return yield* getSnapshot;
   });
 
   const maintenanceCapabilities =
@@ -388,7 +395,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           ...draft,
           installed: true,
           status: "ready",
-          version: started.initializeResult.agentInfo?.version || draft.version,
+          // A health check's `agy --version` wins; a session reports its own only before one.
+          version: draft.version ?? (started.initializeResult.agentInfo?.version || null),
           auth: {
             status: "authenticated",
             type: options.auth?.type ?? "oauth-personal",

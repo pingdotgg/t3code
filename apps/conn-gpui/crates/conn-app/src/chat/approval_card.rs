@@ -7,6 +7,8 @@ use gpui_kit::{
     SharedString, StatefulInteractiveElement, Styled, deferred, div, px,
 };
 
+use gpui_kit::prelude::FluentBuilder as _;
+
 use super::approval_state::{ApprovalView, COLLAPSED_CHARS, COLLAPSED_LINES, clip};
 use super::color::{hsla, muted_icon};
 use super::{ChatEvent, ChatView, MONO_FONT_FAMILY, UI_FONT_PX, UI_LINE_HEIGHT_PX, icons};
@@ -171,7 +173,8 @@ impl ChatView {
             .w_full()
             .min_w_0()
             .pb(px(8.0))
-            .child(card.child(footer))
+            // A held approval is not answerable yet (`isVisiblePendingApproval`).
+            .child(card.when(!self.approval_held(id), |card| card.child(footer)))
             .into_any_element()
     }
 

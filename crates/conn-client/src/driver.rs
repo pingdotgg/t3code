@@ -5,7 +5,8 @@ use std::time::Duration;
 use conn_contract::{
     AgentPanelRequest, AgentPanelSubscribeInput, AnnotationList, AnnotationProjectInput,
     OrchestrationV2ShellStreamItem, OrchestrationV2SubscribeShellInput,
-    OrchestrationV2SubscribeThreadInput, OrchestrationV2ThreadStreamItem,
+    OrchestrationV2SubscribeThreadInput, OrchestrationV2ThreadStreamItem, ServerConfigStreamEvent,
+    SubscribeServerConfigPayload,
 };
 use conn_wire::{Exit, FromClient, FromServer, Request, RequestId, frame_parts};
 use futures::{SinkExt, StreamExt};
@@ -31,11 +32,13 @@ const TAG_SUBSCRIBE_SHELL: &str = "orchestration.subscribeShell";
 const TAG_SUBSCRIBE_THREAD: &str = "orchestration.subscribeThread";
 const TAG_PANELS_REQUESTS: &str = "panels.requests";
 const TAG_ANNOTATIONS_SUBSCRIBE: &str = "annotations.subscribe";
+const TAG_SUBSCRIBE_SERVER_CONFIG: &str = "subscribeServerConfig";
 const PING_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_MISSED_PONGS: u8 = 2;
 
 pub(crate) enum Command {
     SubscribeShell,
+    SubscribeServerConfig,
     SubscribeThread(String),
     UnsubscribeThread(String),
     SubscribePanelRequests(Option<String>),
@@ -67,6 +70,7 @@ struct ThreadSubState {
 
 enum ActiveStream {
     Shell,
+    ServerConfig,
     Thread(String),
     PanelRequests,
     Annotations(String),
@@ -98,6 +102,8 @@ struct DriverState {
     shell_subscribed: bool,
     shell_after_sequence: Option<i64>,
     shell_request_id: Option<RequestId>,
+    server_config_subscribed: bool,
+    server_config_request_id: Option<RequestId>,
     thread_subs: HashMap<String, ThreadSubState>,
     /// Last observed stream sequence per thread, preserved across `UnsubscribeThread` ->
     /// `SubscribeThread` so switching back replays deltas instead of re-downloading a snapshot.
@@ -128,6 +134,8 @@ impl DriverState {
             shell_subscribed: false,
             shell_after_sequence: None,
             shell_request_id: None,
+            server_config_subscribed: false,
+            server_config_request_id: None,
             thread_subs: HashMap::new(),
             thread_last_sequences: HashMap::new(),
             panel_requests_device: None,
@@ -167,6 +175,7 @@ impl DriverState {
         self.in_flight_streams.clear();
         self.generic_stream_ids.clear();
         self.shell_request_id = None;
+        self.server_config_request_id = None;
         self.panel_request_id = None;
         for sub in self.thread_subs.values_mut() {
             sub.request_id = None;
@@ -180,6 +189,9 @@ impl DriverState {
         match cmd {
             Command::SubscribeShell => {
                 self.shell_subscribed = true;
+            }
+            Command::SubscribeServerConfig => {
+                self.server_config_subscribed = true;
             }
             Command::SubscribeThread(thread_id) => {
                 let last_seq = self.thread_last_sequences.get(&thread_id).copied();
@@ -592,6 +604,10 @@ where
         send_shell_subscribe(state, ws_write).await?;
     }
 
+    if state.server_config_subscribed && state.server_config_request_id.is_none() {
+        send_server_config_subscribe(state, ws_write).await?;
+    }
+
     let thread_ids: Vec<String> = state.thread_subs.keys().cloned().collect();
     for thread_id in thread_ids {
         send_thread_subscribe(state, &thread_id, ws_write).await?;
@@ -640,6 +656,12 @@ where
             state.shell_subscribed = true;
             if state.shell_request_id.is_none() {
                 send_shell_subscribe(state, ws_write).await?;
+            }
+        }
+        Command::SubscribeServerConfig => {
+            state.server_config_subscribed = true;
+            if state.server_config_request_id.is_none() {
+                send_server_config_subscribe(state, ws_write).await?;
             }
         }
         Command::SubscribeThread(thread_id) => {
@@ -753,6 +775,35 @@ where
         .in_flight_streams
         .insert(request_id.clone(), ActiveStream::Shell);
     send_request(ws_write, request_id, TAG_SUBSCRIBE_SHELL, payload).await
+}
+
+/// `subscribeServerConfig`: the config snapshot, then provider, settings and keybinding changes.
+/// Asks for `providerStatusDeltas`, which leave out the models, slash commands and skills the
+/// client holds; the other opt-ins stay off because this client reads none of what they add.
+async fn send_server_config_subscribe<S>(
+    state: &mut DriverState,
+    ws_write: &mut S,
+) -> Result<(), String>
+where
+    S: futures::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+{
+    let input = SubscribeServerConfigPayload {
+        environment_themes: None,
+        usage_limit_sources: None,
+        usage_limits_command: None,
+        workspace_snapshots_on_demand: None,
+        provider_catalogs_on_demand: None,
+        provider_catalog_digests: None,
+        provider_status_deltas: Some(true),
+    };
+    let payload = serde_json::to_value(&input)
+        .map_err(|err| format!("failed to encode subscribeServerConfig payload: {err}"))?;
+    let request_id = state.alloc_request_id();
+    state.server_config_request_id = Some(request_id.clone());
+    state
+        .in_flight_streams
+        .insert(request_id.clone(), ActiveStream::ServerConfig);
+    send_request(ws_write, request_id, TAG_SUBSCRIBE_SERVER_CONFIG, payload).await
 }
 
 async fn send_thread_subscribe<S>(
@@ -1023,6 +1074,24 @@ where
                 }
             }
         }
+        Some(ActiveStream::ServerConfig) => {
+            for raw in values {
+                match serde_json::from_str::<ServerConfigStreamEvent>(raw.get()) {
+                    Ok(event) => {
+                        if events_tx
+                            .send(ClientEvent::ServerConfig(Box::new(event)))
+                            .await
+                            .is_err()
+                        {
+                            return Err(SessionOutcome::Closed);
+                        }
+                    }
+                    Err(err) => {
+                        warn!("conn-client failed to decode subscribeServerConfig item: {err}");
+                    }
+                }
+            }
+        }
         Some(ActiveStream::Thread(thread_id)) => {
             let thread_id = thread_id.clone();
             for raw in values {
@@ -1184,6 +1253,22 @@ async fn handle_exit(
                 if events_tx
                     .send(ClientEvent::StreamEnded {
                         tag: TAG_SUBSCRIBE_SHELL.to_owned(),
+                        key: String::new(),
+                        error,
+                    })
+                    .await
+                    .is_err()
+                {
+                    return Err(SessionOutcome::Closed);
+                }
+            }
+            ActiveStream::ServerConfig => {
+                if state.server_config_request_id.as_ref() == Some(&request_id) {
+                    state.server_config_request_id = None;
+                }
+                if events_tx
+                    .send(ClientEvent::StreamEnded {
+                        tag: TAG_SUBSCRIBE_SERVER_CONFIG.to_owned(),
                         key: String::new(),
                         error,
                     })

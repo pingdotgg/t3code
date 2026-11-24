@@ -1,5 +1,6 @@
 import DesignKit
 import SwiftUI
+import UIKit
 
 /// 1:1 port of `NewTaskDraftScreen.tsx` + `DraftThreadHeader.tsx` + `DraftEnvironmentControl.tsx`.
 /// Opened directly when tapping "+" in `WorkspacePhoneBar`.
@@ -33,36 +34,61 @@ struct NewThreadDraftView: View {
         return "conn-gpui-dev"
     }
 
+    /// Mobile's `text-2xl font-t3-medium tracking-tight`: 26pt, weight 500, -0.025em.
+    private static let heroFont = Font.system(size: 26, weight: .medium)
+    private static let heroTracking: CGFloat = -0.65
+    /// One space in the hero font, including its tracking.
+    private static let heroSpaceWidth: CGFloat =
+        (" " as NSString).size(withAttributes: [.font: UIFont.systemFont(ofSize: 26, weight: .medium)]).width
+        + heroTracking
+
     private var canLaunch: Bool {
         !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isLaunching
     }
 
     var body: some View {
         VStack(spacing: 0) {
+            // NewTaskDraftScreen.tsx splits the free space 1:2 around the hero
+            // (`flexGrow: 1` above, `flexGrow: 2` below).
             Spacer()
 
-            // Hero: "What should we build in <project>?" with tappable underlined project
-            VStack(spacing: 12) {
-                VStack(spacing: 4) {
+            // Hero: "What should we build in <project>?"; the project has a 1pt muted bottom border.
+            VStack(spacing: 24) {
+                VStack(spacing: 6) {
                     Text("What should we build")
-                        .font(.system(size: 24, weight: .semibold))
+                        .font(Self.heroFont)
+                        .tracking(Self.heroTracking)
                         .foregroundStyle(theme.foreground)
-                    HStack(spacing: 6) {
+                    HStack(spacing: 0) {
+                        // SwiftUI drops a trailing space in `Text`, so the space after "in" is padding.
                         Text("in")
-                            .font(.system(size: 24, weight: .semibold))
+                            .font(Self.heroFont)
+                            .tracking(Self.heroTracking)
                             .foregroundStyle(theme.foreground)
+                            .padding(.trailing, Self.heroSpaceWidth)
                         Button {
                             showingProjectPicker = true
                         } label: {
-                            Text(selectedProjectTitle)
-                                .font(.system(size: 24, weight: .semibold))
-                                .foregroundStyle(theme.foreground)
-                                .underline()
+                            // `max-w-[250px] border-b border-foreground-muted`
+                            CappedWidth(maxWidth: 250) {
+                                Text(selectedProjectTitle)
+                                    .font(Self.heroFont)
+                                    .tracking(Self.heroTracking)
+                                    .foregroundStyle(theme.foreground)
+                                    .lineLimit(1)
+                                    .padding(.bottom, 1)
+                                    .overlay(alignment: .bottom) {
+                                        Rectangle()
+                                            .fill(theme.mutedForeground)
+                                            .frame(height: 1)
+                                    }
+                            }
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("newThread.projectPickerButton")
                         Text("?")
-                            .font(.system(size: 24, weight: .semibold))
+                            .font(Self.heroFont)
+                            .tracking(Self.heroTracking)
                             .foregroundStyle(theme.foreground)
                     }
                 }
@@ -71,20 +97,22 @@ struct NewThreadDraftView: View {
                 // DraftEnvironmentControl: "on <environment> ›"
                 HStack(spacing: 6) {
                     ConnIcon("server.rack")
-                        .font(.system(size: 12))
+                        .font(.system(size: 13))
                         .foregroundStyle(theme.mutedForeground)
                     Text("on \(environmentLabel)")
                         .font(.system(size: 14))
                         .foregroundStyle(theme.mutedForeground)
+                        .lineLimit(1)
                     ConnIcon("chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(theme.mutedForeground)
                 }
                 .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.vertical, 8)
             }
             .padding(.horizontal, 24)
 
+            Spacer()
             Spacer()
 
             if let error = store.lastError, !error.isEmpty {
@@ -160,7 +188,7 @@ struct NewThreadDraftView: View {
                 Menu {
                     Button {
                     } label: {
-                        Label("Git", systemImage: "arrow.triangle.branch")
+                        Label("Git controls", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
                     }
                     Button {
                     } label: {
@@ -294,5 +322,20 @@ struct NewTaskProjectPickerView: View {
         }
         .buttonStyle(.plain)
         .listRowBackground(theme.background)
+    }
+}
+
+/// Caps its child's width like CSS `max-width`, without growing to the cap the way
+/// `.frame(maxWidth:)` does.
+private struct CappedWidth: Layout {
+    let maxWidth: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = min(proposal.width ?? maxWidth, maxWidth)
+        return subviews.first?.sizeThatFits(ProposedViewSize(width: width, height: proposal.height)) ?? .zero
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }

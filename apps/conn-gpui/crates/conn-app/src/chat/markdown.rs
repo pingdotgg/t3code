@@ -10,9 +10,9 @@ use std::sync::LazyLock;
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, ClipboardItem, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    InteractiveText, IntoElement, ParentElement, SharedString, StatefulInteractiveElement, Styled,
-    StyledText, UnderlineStyle, Window, div, px,
+    AnyElement, App, ClipboardItem, FontStyle, FontWeight, HighlightStyle, Hsla,
+    InteractiveElement, InteractiveText, IntoElement, ParentElement, Role, SharedString,
+    StatefulInteractiveElement, Styled, StyledText, UnderlineStyle, Window, div, px,
 };
 use markdown::mdast::Node;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
@@ -20,6 +20,8 @@ use syntect::util::LinesWithEndings;
 
 use super::color::{SyntaxRole, hsla, hsla_alpha, prose_foreground};
 use super::icons;
+use super::inline_code::{self, Built, ChipPlan, InlineCodeText};
+use crate::a11y::ConnA11yExt as _;
 
 /// Body text size matching Conn's `text-sm` (`14px`) with relaxed (`1.625`) leading.
 const BODY_FONT_PX: f32 = 14.0;
@@ -28,9 +30,10 @@ const BODY_LINE_HEIGHT_PX: f32 = 22.75;
 const BLOCK_GAP_PX: f32 = 10.4;
 /// Rounded corners for fenced code blocks matching Conn's `--radius-bubble` (`calc(0.5rem + 6px)`).
 const CODE_BLOCK_RADIUS_PX: f32 = 14.0;
-/// Monospace code size inside fenced blocks (`leading-1.625`).
-const CODE_FONT_PX: f32 = 12.5;
-const CODE_LINE_HEIGHT_PX: f32 = 20.3;
+/// Monospace code size inside fenced blocks: web's `--font-size-code` (13px default) at
+/// `--line-height-code` (1.625), so 21.125px.
+const CODE_FONT_PX: f32 = 13.0;
+const CODE_LINE_HEIGHT_PX: f32 = 13.0 * 1.625;
 const MONO_FONT_FAMILY: &str = crate::theme::MONO_FONT;
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
@@ -77,9 +80,20 @@ pub(crate) enum HeadingStyle {
     BodySize,
 }
 
+/// A quieter body for one block of Markdown: the colour, and the size when set, of Conn's
+/// `**:text-muted-foreground` and `text-xs text-foreground/70` wrappers around `ChatMarkdown`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ProseStyle {
+    pub(crate) color: Hsla,
+    /// Font size and line height in px; the body's when `None`.
+    pub(crate) size: Option<(f32, f32)>,
+}
+
 /// Per-context rendering options for [`render_blocks`] and [`render_markdown`].
 #[derive(Default)]
 pub(crate) struct MarkdownOptions<'a> {
+    /// Overrides the colour (and size) of prose, headings and inline code.
+    pub(crate) prose: Option<ProseStyle>,
     /// Heading typography style.
     pub(crate) heading_style: HeadingStyle,
     /// Block id of the code block most recently copied, to show check feedback.
@@ -94,6 +108,19 @@ pub(crate) struct MarkdownOptions<'a> {
     pub(crate) workspace_root: Option<&'a str>,
     /// Optional callback invoked when a user clicks a workspace file link or inline file path.
     pub(crate) on_open_file: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
+}
+
+impl MarkdownOptions<'_> {
+    fn prose_color(&self, tokens: &Tokens) -> Hsla {
+        self.prose
+            .map_or_else(|| prose_foreground(tokens), |prose| prose.color)
+    }
+
+    fn body_size(&self) -> (f32, f32) {
+        self.prose
+            .and_then(|prose| prose.size)
+            .unwrap_or((BODY_FONT_PX, BODY_LINE_HEIGHT_PX))
+    }
 }
 
 impl fmt::Debug for MarkdownOptions<'_> {
@@ -496,6 +523,43 @@ pub(super) fn render_blocks(
     container.into_any_element()
 }
 
+/// GPUI element id for a block's AX node. Prefixed so it never collides with other row ids.
+fn md_element_id(block_id: &str, kind: &str) -> SharedString {
+    SharedString::from(format!("md-{block_id}-{kind}"))
+}
+
+/// Stable AX identifier of a Markdown block: `chat.md.<entry>-b<n>[-i<item>-<n>].<kind>`,
+/// for example `chat.md.<entry>-b2.code` or `chat.md.<entry>-b1.item.0`.
+fn md_ax_id(block_id: &str, kind: &str) -> SharedString {
+    SharedString::from(format!("chat.md.{block_id}.{kind}"))
+}
+
+fn spans_text(spans: &[InlineSpan]) -> String {
+    spans.iter().map(|span| span.text.as_str()).collect()
+}
+
+/// Text of a list item's first block, for its AX label.
+fn list_item_text(item: &ListItem) -> String {
+    match item.blocks.first() {
+        Some(MarkdownBlock::Paragraph(spans) | MarkdownBlock::Heading { spans, .. }) => {
+            spans_text(spans)
+        }
+        _ => String::new(),
+    }
+}
+
+/// One line of at most 80 characters, so an AX label stays short for long paragraphs.
+fn ax_preview(text: &str) -> String {
+    const MAX_CHARS: usize = 80;
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= MAX_CHARS {
+        return line;
+    }
+    let mut out: String = line.chars().take(MAX_CHARS).collect();
+    out.push('…');
+    out
+}
+
 fn render_block(
     block_id: &str,
     block: &MarkdownBlock,
@@ -504,14 +568,23 @@ fn render_block(
     options: &MarkdownOptions<'_>,
 ) -> AnyElement {
     match block {
-        MarkdownBlock::Paragraph(spans) => div()
-            .w_full()
-            .min_w_0()
-            .text_size(px(BODY_FONT_PX))
-            .line_height(px(BODY_LINE_HEIGHT_PX))
-            .text_color(prose_foreground(tokens))
-            .child(render_inline_spans(block_id, spans, tokens, options))
-            .into_any_element(),
+        MarkdownBlock::Paragraph(spans) => {
+            let (font_px, line_px) = options.body_size();
+            div()
+                .id(md_element_id(block_id, "paragraph"))
+                .a11y(
+                    Role::Paragraph,
+                    md_ax_id(block_id, "paragraph"),
+                    format!("Paragraph: {}", ax_preview(&spans_text(spans))),
+                )
+                .w_full()
+                .min_w_0()
+                .text_size(px(font_px))
+                .line_height(px(line_px))
+                .text_color(options.prose_color(tokens))
+                .child(render_inline_spans(block_id, spans, tokens, options))
+                .into_any_element()
+        }
 
         MarkdownBlock::Heading { level, spans } => {
             let (font_px, line_px, weight, text_color) = match options.heading_style {
@@ -535,12 +608,19 @@ fn render_block(
                 }
             };
             let mut el = div()
+                .id(md_element_id(block_id, "heading"))
+                .a11y(
+                    Role::Heading,
+                    md_ax_id(block_id, "heading"),
+                    format!("Heading level {level}: {}", ax_preview(&spans_text(spans))),
+                )
+                .aria_level(usize::from(*level))
                 .w_full()
                 .min_w_0()
                 .text_size(px(font_px))
                 .line_height(px(line_px))
                 .font_weight(weight)
-                .text_color(text_color)
+                .text_color(options.prose.map_or(text_color, |prose| prose.color))
                 .child(render_inline_spans(block_id, spans, tokens, options));
             if !is_first {
                 // `.chat-markdown h1..h6 { margin: 1.25rem 0 0.5rem }` (20px top total with 10.4px gap).
@@ -568,8 +648,25 @@ fn render_block(
             items,
         } => {
             // `.chat-markdown li + li { margin-top: 0.25rem }` (4px).
-            let mut list_el = div().flex().flex_col().gap(px(4.0)).w_full().min_w_0();
+            let mut list_el = div()
+                .id(md_element_id(block_id, "list"))
+                .a11y(
+                    Role::List,
+                    md_ax_id(block_id, "list"),
+                    format!(
+                        "{} list, {} {}",
+                        if *ordered { "Numbered" } else { "Bulleted" },
+                        items.len(),
+                        if items.len() == 1 { "item" } else { "items" }
+                    ),
+                )
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .w_full()
+                .min_w_0();
             for (idx, item) in items.iter().enumerate() {
+                let item_kind = format!("item.{idx}");
                 let mut body = div().flex().flex_col().gap(px(4.0)).flex_1().min_w_0();
                 for (b_idx, inner) in item.blocks.iter().enumerate() {
                     let inner_id = format!("{block_id}-i{idx}-{b_idx}");
@@ -636,6 +733,19 @@ fn render_block(
                         )
                         .child(body)
                 };
+                let row = row
+                    .id(md_element_id(block_id, &item_kind))
+                    .a11y(
+                        Role::ListItem,
+                        md_ax_id(block_id, &item_kind),
+                        format!(
+                            "List item {}: {}",
+                            idx + 1,
+                            ax_preview(&list_item_text(item))
+                        ),
+                    )
+                    .aria_position_in_set(idx + 1)
+                    .aria_size_of_set(items.len());
                 list_el = list_el.child(row);
             }
             list_el.into_any_element()
@@ -644,6 +754,8 @@ fn render_block(
         MarkdownBlock::Blockquote(inner) => {
             // `.chat-markdown blockquote`: 2px left border at 35% currentColor, 0.8rem (12.8px) inset.
             let mut inner_col = div()
+                .id(md_element_id(block_id, "quote"))
+                .a11y(Role::Blockquote, md_ax_id(block_id, "quote"), "Block quote")
                 .flex()
                 .flex_col()
                 .gap(px(6.0))
@@ -652,7 +764,7 @@ fn render_block(
                 .pl(px(12.8))
                 .border_l_2()
                 .border_color(hsla_alpha(tokens.foreground, 0.35))
-                .text_color(prose_foreground(tokens));
+                .text_color(options.prose_color(tokens));
             for (idx, b) in inner.iter().enumerate() {
                 let inner_id = format!("{block_id}-q{idx}");
                 inner_col = inner_col.child(render_block(&inner_id, b, idx == 0, tokens, options));
@@ -720,6 +832,7 @@ fn render_code_block(
     // Conn `MarkdownCodeBlock`: icon-only `size="icon-xs"` (24px) button with 12px (`size-3`) glyph.
     let copy_btn = div()
         .id(SharedString::from(format!("copy-{block_id}")))
+        .a11y_button(md_ax_id(block_id, "code.copy"), "Copy code")
         .flex()
         .items_center()
         .justify_center()
@@ -783,6 +896,7 @@ fn render_code_block(
         };
         let wrap_btn = div()
             .id(SharedString::from(format!("wrap-{block_id}")))
+            .a11y_button(md_ax_id(block_id, "code.wrap"), "Toggle word wrap")
             .flex()
             .items_center()
             .justify_center()
@@ -805,6 +919,15 @@ fn render_code_block(
         Appearance::Light => hsla_alpha(tokens.border, 0.70),
     };
     div()
+        .id(md_element_id(block_id, "code"))
+        .a11y(
+            Role::Code,
+            md_ax_id(block_id, "code"),
+            match language {
+                None | Some("text") | Some("") => "Code block".to_owned(),
+                Some(lang) => format!("Code block ({lang})"),
+            },
+        )
         .w_full()
         .min_w_0()
         .overflow_hidden()
@@ -892,11 +1015,36 @@ fn render_table(
     options: &MarkdownOptions<'_>,
 ) -> AnyElement {
     let row_border = hsla_alpha(tokens.border, 0.60);
-    let mut table = div().w_full().min_w_0().flex().flex_col();
+    let column_count = headers
+        .len()
+        .max(rows.iter().map(Vec::len).max().unwrap_or(0));
+    let mut table = div()
+        .id(md_element_id(block_id, "table"))
+        .a11y(
+            Role::Table,
+            md_ax_id(block_id, "table"),
+            format!(
+                "Table, {} {}, {} {}",
+                rows.len(),
+                if rows.len() == 1 { "row" } else { "rows" },
+                column_count,
+                if column_count == 1 {
+                    "column"
+                } else {
+                    "columns"
+                }
+            ),
+        )
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col();
 
     if !headers.is_empty() {
         let col_count = headers.len();
         let mut header_row = div()
+            .id(md_element_id(block_id, "row.header"))
+            .a11y(Role::Row, md_ax_id(block_id, "row.header"), "Header row")
             .flex()
             .flex_row()
             .w_full()
@@ -915,7 +1063,7 @@ fn render_table(
                     .text_size(px(BODY_FONT_PX))
                     .line_height(px(20.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(prose_foreground(tokens))
+                    .text_color(options.prose_color(tokens))
                     .child(render_inline_spans(
                         &format!("{block_id}-th{c_idx}"),
                         cell,
@@ -930,6 +1078,12 @@ fn render_table(
     for (r_idx, row) in rows.iter().enumerate() {
         let col_count = row.len();
         let mut row_el = div()
+            .id(md_element_id(block_id, &format!("row.{r_idx}")))
+            .a11y(
+                Role::Row,
+                md_ax_id(block_id, &format!("row.{r_idx}")),
+                format!("Row {}", r_idx + 1),
+            )
             .flex()
             .flex_row()
             .w_full()
@@ -947,7 +1101,7 @@ fn render_table(
                     .py(px(7.2))
                     .text_size(px(BODY_FONT_PX))
                     .line_height(px(20.0))
-                    .text_color(prose_foreground(tokens))
+                    .text_color(options.prose_color(tokens))
                     .child(render_inline_spans(
                         &format!("{block_id}-td{r_idx}-{c_idx}"),
                         cell,
@@ -969,23 +1123,63 @@ enum ClickTarget {
 }
 
 /// Renders inline spans as a single continuously flowing `StyledText` (or `InteractiveText` when
-/// clickable URLs or workspace file paths are present).
+/// clickable URLs or workspace file paths are present). Paragraphs with inline code draw each
+/// code span as Conn's chip (see `inline_code`).
 fn render_inline_spans(
     span_id: &str,
     spans: &[InlineSpan],
     tokens: &Tokens,
     options: &MarkdownOptions<'_>,
 ) -> AnyElement {
-    let (styled, ranges, targets) = build_styled_text_with_targets(
+    let prose = options.prose.map(|prose| prose.color);
+    let workspace_root = options.workspace_root.map(str::to_owned);
+    let on_open_file = options.on_open_file.clone();
+    if spans.iter().any(|span| span.style.code) {
+        let spans = spans.to_vec();
+        let owned_tokens = tokens.clone();
+        let span_id = span_id.to_owned();
+        let background = hsla(tokens.foreground.with_alpha(0.10));
+        return InlineCodeText::new(background, move |window| {
+            let (styled, ranges, targets, chips) = build_styled_text_with_targets(
+                &spans,
+                &owned_tokens,
+                prose,
+                workspace_root.as_deref(),
+                on_open_file.is_some(),
+                Some(window),
+            );
+            let layout = styled.layout().clone();
+            let inner = interactive_inline_text(&span_id, styled, ranges, targets, on_open_file);
+            Built {
+                inner,
+                layout,
+                chips,
+            }
+        })
+        .into_any_element();
+    }
+    let (styled, ranges, targets, _) = build_styled_text_with_targets(
         spans,
         tokens,
+        prose,
         options.workspace_root,
-        options.on_open_file.is_some(),
+        on_open_file.is_some(),
+        None,
     );
+    interactive_inline_text(span_id, styled, ranges, targets, on_open_file)
+}
+
+/// `styled`, made clickable over `ranges` (URLs and workspace file paths) when there are any.
+fn interactive_inline_text(
+    span_id: &str,
+    styled: StyledText,
+    ranges: Vec<Range<usize>>,
+    targets: Vec<ClickTarget>,
+    on_open_file: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
+) -> AnyElement {
     if ranges.is_empty() {
         return styled.into_any_element();
     }
-    let on_open_file = options.on_open_file.clone();
     InteractiveText::new(SharedString::from(format!("inline-{span_id}")), styled)
         .on_click(ranges, move |ix, window, cx| {
             let Some(target) = targets.get(ix) else {
@@ -1003,27 +1197,115 @@ fn render_inline_spans(
         .into_any_element()
 }
 
+/// Builds the paragraph text and runs. With a `chip_window`, an inline code span becomes a run
+/// of invisible no-break spaces as wide as its chip, and a [`ChipPlan`] says where to paint the
+/// code; without one, the code stays in the text as a mono run on a flat background.
 fn build_styled_text_with_targets(
     spans: &[InlineSpan],
     tokens: &Tokens,
+    prose_override: Option<Hsla>,
     workspace_root: Option<&str>,
     file_links_enabled: bool,
-) -> (StyledText, Vec<Range<usize>>, Vec<ClickTarget>) {
-    // Runs, not highlights: inline code switches font family (SF Mono), which a highlight
+    chip_window: Option<&Window>,
+) -> (
+    StyledText,
+    Vec<Range<usize>>,
+    Vec<ClickTarget>,
+    Vec<ChipPlan>,
+) {
+    // Runs, not highlights: inline code switches font family (the mono font), which a highlight
     // cannot. Every run therefore carries its own font and color.
-    let prose = super::color::prose_foreground(tokens);
+    let prose = prose_override.unwrap_or_else(|| super::color::prose_foreground(tokens));
     let mut text = String::new();
     let mut runs: Vec<gpui_kit::TextRun> = Vec::new();
     let mut ranges: Vec<Range<usize>> = Vec::new();
     let mut targets: Vec<ClickTarget> = Vec::new();
+    let mut chips: Vec<ChipPlan> = Vec::new();
+    let sans = |bold: bool, italic: bool| gpui_kit::Font {
+        family: ".SystemUIFont".into(),
+        features: gpui_kit::FontFeatures::default(),
+        fallbacks: None,
+        weight: if bold {
+            FontWeight::BOLD
+        } else {
+            FontWeight::NORMAL
+        },
+        style: if italic {
+            FontStyle::Italic
+        } else {
+            FontStyle::Normal
+        },
+    };
+    // Body size and the width of one no-break space, measured once for the paragraph.
+    let body = chip_window.map(|window| {
+        let body_px = window.text_style().font_size.to_pixels(window.rem_size());
+        let space = inline_code::shape(
+            window,
+            &"\u{a0}".repeat(16),
+            sans(false, false),
+            body_px,
+            Hsla::default(),
+        );
+        (body_px, f32::from(space.width()) / 16.0)
+    });
 
     for span in spans {
+        let target = if let Some(url) = &span.link {
+            if file_links_enabled
+                && let Some(rel) = resolve_clickable_file_link(url, workspace_root)
+            {
+                Some(ClickTarget::WorkspaceFile(rel))
+            } else {
+                Some(ClickTarget::Url(url.clone()))
+            }
+        } else if span.style.code && file_links_enabled {
+            resolve_clickable_file_link(&span.text, workspace_root).map(ClickTarget::WorkspaceFile)
+        } else {
+            None
+        };
+        let is_clickable_file = matches!(target, Some(ClickTarget::WorkspaceFile(_)));
+        let code_color = if is_clickable_file {
+            hsla(tokens.info_foreground)
+        } else {
+            prose_override.unwrap_or_else(|| hsla(tokens.foreground))
+        };
+
         let start = text.len();
+        let mut is_chip = false;
         if span.style.code {
-            // Thin padding inside the inline-code chip background.
-            text.push('\u{2009}');
-            text.push_str(&span.text);
-            text.push('\u{2009}');
+            if let (Some(window), Some((body_px, space_px))) = (chip_window, body) {
+                is_chip = true;
+                let code_px = f32::from(body_px) * inline_code::CODE_EM;
+                let shaped = inline_code::shape(
+                    window,
+                    &span.text,
+                    gpui_kit::Font {
+                        family: MONO_FONT_FAMILY.into(),
+                        features: gpui_kit::FontFeatures::default(),
+                        fallbacks: None,
+                        weight: FontWeight::NORMAL,
+                        style: FontStyle::Normal,
+                    },
+                    px(code_px),
+                    code_color,
+                );
+                let room = f32::from(shaped.width()) + 2.0 * inline_code::chip_pad_x(code_px);
+                let nbsp = inline_code::nbsp_count(room, space_px);
+                text.push_str(&"\u{a0}".repeat(nbsp));
+                chips.push(ChipPlan {
+                    range: start..text.len(),
+                    nbsp,
+                    space_px,
+                    shaped,
+                    color: code_color,
+                    code_px,
+                });
+            } else {
+                // Thin padding inside the inline-code chip background.
+                text.push('\u{2009}');
+                text.push_str(&span.text);
+                text.push('\u{2009}');
+            }
         } else {
             text.push_str(&span.text);
         }
@@ -1032,60 +1314,38 @@ fn build_styled_text_with_targets(
         if len == 0 {
             continue;
         }
-
-        let target = if let Some(url) = &span.link {
-            if file_links_enabled
-                && let Some(rel) = resolve_clickable_file_path(url, workspace_root)
-            {
-                Some(ClickTarget::WorkspaceFile(rel))
-            } else {
-                Some(ClickTarget::Url(url.clone()))
-            }
-        } else if span.style.code && file_links_enabled {
-            resolve_clickable_file_path(&span.text, workspace_root).map(ClickTarget::WorkspaceFile)
-        } else {
-            None
-        };
-
-        let is_clickable_file = matches!(target, Some(ClickTarget::WorkspaceFile(_)));
         if let Some(t) = target {
             ranges.push(start..end);
             targets.push(t);
         }
 
-        let family = if span.style.code {
-            MONO_FONT_FAMILY
-        } else {
-            ".SystemUIFont"
-        };
-        let font = gpui_kit::Font {
-            family: family.into(),
-            features: gpui_kit::FontFeatures::default(),
-            fallbacks: None,
-            weight: if span.style.bold {
-                FontWeight::BOLD
-            } else {
-                FontWeight::NORMAL
-            },
-            style: if span.style.italic {
-                FontStyle::Italic
-            } else {
-                FontStyle::Normal
-            },
-        };
-        let (color, background_color, underline) = if span.style.code {
-            let fg_color = if is_clickable_file {
-                hsla(tokens.info_foreground)
-            } else {
-                hsla(tokens.foreground)
-            };
+        let (font, color, background_color, underline) = if is_chip {
+            // The chip's room: invisible. `InlineCodeText` paints the chip over it.
+            (sans(false, false), Hsla::default(), None, None)
+        } else if span.style.code {
             (
-                fg_color,
+                gpui_kit::Font {
+                    family: MONO_FONT_FAMILY.into(),
+                    features: gpui_kit::FontFeatures::default(),
+                    fallbacks: None,
+                    weight: if span.style.bold {
+                        FontWeight::BOLD
+                    } else {
+                        FontWeight::NORMAL
+                    },
+                    style: if span.style.italic {
+                        FontStyle::Italic
+                    } else {
+                        FontStyle::Normal
+                    },
+                },
+                code_color,
                 Some(hsla(tokens.foreground.with_alpha(0.10))),
                 None,
             )
         } else if span.link.is_some() {
             (
+                sans(span.style.bold, span.style.italic),
                 hsla(tokens.info_foreground),
                 None,
                 Some(UnderlineStyle {
@@ -1095,7 +1355,7 @@ fn build_styled_text_with_targets(
                 }),
             )
         } else {
-            (prose, None, None)
+            (sans(span.style.bold, span.style.italic), prose, None, None)
         };
         let strikethrough = span
             .style
@@ -1117,6 +1377,7 @@ fn build_styled_text_with_targets(
         StyledText::new(SharedString::from(text)).with_runs(runs),
         ranges,
         targets,
+        chips,
     )
 }
 
@@ -1152,6 +1413,38 @@ fn resolve_clickable_file_path(raw: &str, workspace_root: Option<&str>) -> Optio
 
     let rel = candidate.strip_prefix("./").unwrap_or(candidate);
     looks_like_file_path(rel).then(|| rel.to_owned())
+}
+
+/// Like [`resolve_clickable_file_path`], but keeps where the link points: `path:line` when the
+/// link has a `:line[:column]` suffix or an `#L10` fragment. The Files panel opens the file at
+/// that line (`revealLine`).
+fn resolve_clickable_file_link(raw: &str, workspace_root: Option<&str>) -> Option<String> {
+    let path = resolve_clickable_file_path(raw, workspace_root)?;
+    let trimmed = raw.trim();
+    let without_scheme = trimmed.strip_prefix("file://").unwrap_or(trimmed);
+    let (before_fragment, fragment) = match without_scheme.split_once('#') {
+        Some((before, fragment)) => (before, Some(fragment)),
+        None => (without_scheme, None),
+    };
+    let from_suffix = {
+        let rest = &before_fragment[strip_line_col_suffix(before_fragment).len()..];
+        rest.trim_start_matches(':')
+            .split(':')
+            .next()
+            .and_then(|n| n.parse::<usize>().ok())
+    };
+    let from_fragment = fragment
+        .and_then(|f| f.strip_prefix('L'))
+        .map(|f| {
+            f.chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+        })
+        .and_then(|n| n.parse::<usize>().ok());
+    match from_suffix.or(from_fragment).filter(|line| *line > 0) {
+        Some(line) => Some(format!("{path}:{line}")),
+        None => Some(path),
+    }
 }
 
 fn strip_line_col_suffix(path: &str) -> &str {
@@ -1232,6 +1525,44 @@ fn looks_like_file_path(rel: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ax_ids_and_labels_for_blocks_are_stable_and_short() {
+        assert_eq!(
+            md_ax_id("turn-item:x-b2", "code").as_ref(),
+            "chat.md.turn-item:x-b2.code"
+        );
+        assert_eq!(ax_preview("a  b\n c"), "a b c");
+        let long = "word ".repeat(40);
+        let preview = ax_preview(&long);
+        assert!(preview.ends_with('…'));
+        assert_eq!(preview.chars().count(), 81);
+
+        let blocks = parse_markdown("- first *item*\n- second\n\n```rust\nfn a() {}\n```");
+        let Some(MarkdownBlock::List { items, .. }) = blocks.first() else {
+            panic!("expected a list first");
+        };
+        assert_eq!(list_item_text(&items[0]), "first item");
+        assert_eq!(list_item_text(&items[1]), "second");
+        assert!(matches!(
+            blocks.get(1),
+            Some(MarkdownBlock::CodeBlock { language: Some(lang), .. }) if lang == "rust"
+        ));
+    }
+
+    #[test]
+    fn clickable_file_links_keep_their_line() {
+        let link = |raw| resolve_clickable_file_link(raw, Some("/repo"));
+        assert_eq!(link("src/a.rs:42:10").as_deref(), Some("src/a.rs:42"));
+        assert_eq!(link("src/a.rs:7").as_deref(), Some("src/a.rs:7"));
+        assert_eq!(
+            link("file:///repo/Cargo.toml#L10-L20").as_deref(),
+            Some("Cargo.toml:10")
+        );
+        assert_eq!(link("src/a.rs").as_deref(), Some("src/a.rs"));
+        assert_eq!(link("src/a.rs:0").as_deref(), Some("src/a.rs"));
+        assert_eq!(link("https://example.com/a.rs"), None);
+    }
 
     #[test]
     fn resolves_clickable_workspace_file_paths_and_rejects_non_files() {
@@ -1391,6 +1722,64 @@ mod tests {
                 );
             }
             other => panic!("expected paragraph, got {other:?}"),
+        }
+    }
+
+    /// A paragraph with inline code lays out as Conn's chip: the code is shaped at 0.85em, and
+    /// the paragraph reserves room for it with invisible no-break spaces.
+    #[gpui_kit::test]
+    fn inline_code_is_planned_as_a_085em_chip_in_reserved_room(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        use gpui_kit::{Context, IntoElement, ParentElement as _, Render, Styled as _};
+
+        struct Probe;
+        impl Render for Probe {
+            fn render(
+                &mut self,
+                window: &mut Window,
+                _cx: &mut Context<'_, Self>,
+            ) -> impl IntoElement {
+                let Some(theme) = conn_theme::theme_by_id("dark-ocean") else {
+                    panic!("dark-ocean must be built in");
+                };
+                let tokens = Tokens::derive(&theme);
+                let blocks = parse_markdown("Use `--keep-source` and `dns_unverified` here.");
+                let Some(MarkdownBlock::Paragraph(spans)) = blocks.first() else {
+                    panic!("expected a paragraph");
+                };
+                let (styled, _, _, chips) =
+                    build_styled_text_with_targets(spans, &tokens, None, None, false, Some(window));
+                let body_px = window.text_style().font_size.to_pixels(window.rem_size());
+                assert_eq!(chips.len(), 2);
+                for chip in &chips {
+                    assert!((chip.code_px - f32::from(body_px) * 0.85).abs() < 1e-3);
+                    assert!(
+                        (f32::from(chip.shaped.font_size) - chip.code_px).abs() < 1e-3,
+                        "the code is shaped at 0.85em"
+                    );
+                    let reserved = chip.nbsp as f32 * chip.space_px;
+                    let chip_width = f32::from(chip.shaped.width())
+                        + 2.0 * inline_code::chip_pad_x(chip.code_px);
+                    assert!(
+                        (reserved - chip_width).abs() <= chip.space_px / 2.0 + 1e-3,
+                        "reserved {reserved} vs chip {chip_width}"
+                    );
+                }
+                let _ = styled;
+                gpui_kit::div()
+                    .w(gpui_kit::px(240.0))
+                    .child(render_markdown(
+                        "probe",
+                        "Use `--keep-source` and `dns_unverified` here, with enough words around them to wrap.",
+                        &tokens,
+                        &MarkdownOptions::default(),
+                    ))
+            }
+        }
+
+        let (_, vcx) = cx.add_window_view(|_, _| Probe);
+        for _ in 0..2 {
+            vcx.update(|window, cx| window.render_frame(cx));
         }
     }
 }

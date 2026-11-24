@@ -148,19 +148,31 @@ describe("Operation notices over Reverb", () => {
     expect(await settled(wait(notices, 7))).toBe(true);
     sleeps.shift();
 
-    // Without the socket, the slow fallback reads and also subscribes again.
+    // A socket lost during a live wait ends it at once, and the next wait subscribes again
+    // before it waits, instead of after the 15 s and 10 s fallbacks.
+    const lost = wait(notices, 8);
     socket.disconnect();
     expect(notices.live()).toBe(false);
+    expect(await settled(lost)).toBe(true);
+    sleeps.shift();
     const offline = wait(notices, 8);
     expect(await settled(offline)).toBe(false);
-    expect(await settled(offline, OPERATION_OFFLINE_POLL_MS)).toBe(true);
     expect(sockets).toHaveLength(2);
+    expect(await settled(offline, OPERATION_OFFLINE_POLL_MS)).toBe(true);
 
-    const pending = notices.next(8);
+    // The resubscribe asks for a read even when a notice the reader then reads came after it.
+    const reconnected = sockets[1]!;
+    reconnected.emit("pusher:connection_established", { socket_id: "3.4" });
+    await reconnected.subscribed.promise;
+    reconnected.emit("pusher_internal:subscription_succeeded", {});
+    reconnected.emit("operation.updated", notice(9));
+    expect(await settled(notices.next(9))).toBe(true);
+
+    const pending = notices.next(9);
     notices.stop();
     expect(await settled(pending)).toBe(true);
-    expect(sockets[1]!.closed).toBe(true);
-    expect(await settled(notices.next(8))).toBe(true);
+    expect(reconnected.closed).toBe(true);
+    expect(await settled(notices.next(9))).toBe(true);
   });
 
   it("never waits past the caller's limit, and polls as before without notices", async () => {

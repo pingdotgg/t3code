@@ -90,6 +90,10 @@ function isTaskInsightsQuery(query: Readonly<Record<string, string>>): boolean {
   );
 }
 
+/** The Gateway channels the renderer may subscribe to: `orbit`, and one Operation's progress. */
+const isRealtimeChannel = (channel: string) =>
+  channel === "private-orbit" || /^private-operation\.[1-9][0-9]{0,15}$/.test(channel);
+
 /** The Gateway URL of an allowed call below `/api/v1`, or null for anything else. */
 export function resolveRootUrl(
   request: Pick<typeof OrbitGatewayRequest.Type, "method" | "path" | "query"> & {
@@ -109,7 +113,8 @@ export function resolveRootUrl(
       const data = body as Record<string, unknown>;
       if (
         Object.keys(data).length !== 2 ||
-        data.channel_name !== "private-orbit" ||
+        typeof data.channel_name !== "string" ||
+        !isRealtimeChannel(data.channel_name) ||
         typeof data.socket_id !== "string" ||
         !/^[0-9]{1,20}\.[0-9]{1,20}$/.test(data.socket_id)
       )

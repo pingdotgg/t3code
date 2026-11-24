@@ -25,12 +25,33 @@ use serde_json::{Value, json};
 
 use crate::commands::{CommandError, Effect, Outcome, live_thread, reject};
 use crate::engine::Inner;
-use crate::store::{Draft, PendingRollback, StoreResult, Tx};
+use crate::store::{CaptureFolder, Draft, PendingRollback, StoreResult, Tx};
 
 /// `ROLLBACK_FAILED_MESSAGE`.
 pub(crate) const ROLLBACK_FAILED_MESSAGE: &str = "The provider could not roll back this conversation. Try again; if it keeps failing, check the provider and server logs.";
 /// `SHARED_WORKSPACE_RESTORE_MESSAGE`.
 pub(crate) const SHARED_WORKSPACE_RESTORE_MESSAGE: &str = "File restore requires an isolated worktree. This workspace may contain changes from another thread or a side chat. Rewind the conversation without restoring files instead, or delete side chats you no longer need.";
+
+/// Not in T3, which restores a checkpoint into the scope's folder whichever checkout took it.
+pub(crate) const OTHER_CHECKOUT_RESTORE_MESSAGE: &str = "File restore needs the checkout this checkpoint was taken in, and the thread has moved to another checkout since. Rewind the conversation without restoring files instead.";
+
+/// Whether another checkout than the scope's folder now took `checkpoint`, or one the log
+/// cannot tell. Worktrees of one repository share its refs, so restoring it here would put
+/// that checkout's files into this one and remove what only this one has.
+fn captured_elsewhere(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    checkpoint: &Value,
+    scope: &Value,
+) -> StoreResult<bool> {
+    let id = checkpoint["id"].as_str().unwrap_or_default();
+    let now = scope["cwd"].as_str().unwrap_or_default();
+    Ok(match tx.checkpoint_capture_folder(thread_id, id)? {
+        CaptureFolder::Imported => false,
+        CaptureFolder::Unknown => true,
+        CaptureFolder::Known(captured) => captured != now && resolve(&captured) != resolve(now),
+    })
+}
 
 /// `latestProviderTurnForAttempt`, else the attempt's own turn id.
 fn provider_turn_for_attempt(turns: &[Value], attempt: &Value) -> Option<Value> {
@@ -216,6 +237,9 @@ pub(crate) fn checkpoint_rollback(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if restore_files != Some(false) && !restore_isolated(tx, &thread, &scope)? {
         return rejected(SHARED_WORKSPACE_RESTORE_MESSAGE);
     }
+    if restore_files != Some(false) && captured_elsewhere(tx, &thread_id, &checkpoint, &scope)? {
+        return rejected(OTHER_CHECKOUT_RESTORE_MESSAGE);
+    }
     let target_ordinal = checkpoint["appRunOrdinal"].as_u64().unwrap_or(0);
     if target_ordinal > 0 {
         let target_run = tx
@@ -246,8 +270,13 @@ pub(crate) fn checkpoint_rollback(tx: &mut Tx<'_>, command: Value) -> Outcome {
     thread["rollbackRequestId"] = json!(command_id);
     thread["rollbackFailure"] = Value::Null;
     thread["updatedAt"] = json!(now);
+    let selection = thread["modelSelection"]["instanceId"]
+        .as_str()
+        .map(str::to_owned);
     tx.append(
-        Draft::new(&thread_id, "thread.metadata-updated", thread).command(Some(&command_id)),
+        Draft::new(&thread_id, "thread.metadata-updated", thread)
+            .command(Some(&command_id))
+            .payload_instance(),
     )?;
     tx.append(
         Draft::new(
@@ -255,7 +284,8 @@ pub(crate) fn checkpoint_rollback(tx: &mut Tx<'_>, command: Value) -> Outcome {
             "checkpoint.rollback-requested",
             json!({"scopeId": scope_id, "checkpointId": checkpoint_id, "requestedAt": now}),
         )
-        .command(Some(&command_id)),
+        .command(Some(&command_id))
+        .provider_instance(selection.as_deref()),
     )?;
     let request = RollbackRequest {
         thread_id,
@@ -372,6 +402,7 @@ fn write_rollback_failure(
     thread["updatedAt"] = json!(now);
     tx.append(
         Draft::new(tid, "thread.metadata-updated", thread)
+            .payload_instance()
             .command(Some(&format!("{request_id}:rollback-failed"))),
     )?;
     Ok(())
@@ -389,6 +420,7 @@ struct RollbackContext {
     provider_thread_turns: Vec<Value>,
     stale: Vec<Value>,
     isolated: bool,
+    captured_elsewhere: bool,
 }
 
 enum RollbackFailure {
@@ -481,6 +513,7 @@ fn read_context(
         .collect();
     stale.sort_by_key(|c| c["ordinalWithinScope"].as_u64().unwrap_or(0));
     let isolated = restore_isolated(tx, &thread, &scope)?;
+    let captured_elsewhere = captured_elsewhere(tx, tid, &checkpoint, &scope)?;
     Ok(Ok(RollbackContext {
         thread,
         provider_thread,
@@ -492,6 +525,7 @@ fn read_context(
         provider_thread_turns,
         stale,
         isolated,
+        captured_elsewhere,
     }))
 }
 
@@ -632,6 +666,9 @@ impl Inner {
         let restore_files = request.restore_files != Some(false);
         if restore_files && !context.isolated {
             return Err(RollbackFailure::Shared);
+        }
+        if restore_files && context.captured_elsewhere {
+            return Err(RollbackFailure::Invalid("checkpoint-in-another-checkout"));
         }
 
         let snapshot_thread = if context.runs.is_empty() {
@@ -791,17 +828,22 @@ fn commit_rollback(
         };
         provider_thread["updatedAt"] = json!(now);
     }
-    tx.append(Draft::new(
-        thread_id,
-        "provider-thread.updated",
-        provider_thread,
-    ))?;
+    let instance = provider_thread["providerInstanceId"]
+        .as_str()
+        .map(str::to_owned);
+    tx.append(
+        Draft::new(thread_id, "provider-thread.updated", provider_thread).payload_instance(),
+    )?;
     for checkpoint in &context.stale {
         let mut stale = checkpoint.clone();
         stale["status"] = json!("stale");
         let draft =
             Draft::new(thread_id, "checkpoint.captured", stale).node(checkpoint["nodeId"].as_str());
-        tx.append(draft.run(checkpoint["runId"].as_str()))?;
+        tx.append(
+            draft
+                .run(checkpoint["runId"].as_str())
+                .provider_instance(instance.as_deref()),
+        )?;
     }
     for run in &context.runs {
         let run_id = run["id"].as_str();

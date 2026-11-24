@@ -29,6 +29,9 @@ pub const CLIENT_VERSION: &str = conn_contract::T3_SERVER_VERSION;
 
 /// T3's `CODEX_STOP_CONFIRM_TIMEOUT_MS`.
 pub const STOP_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// T3's `CODEX_GOAL_CONTINUATION_GRACE`: Codex starts the next goal turn milliseconds after
+/// the last one completes.
+pub const GOAL_CONTINUATION_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// How often a closed session's silent subagent is checked with Codex.
 pub const CHILD_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
@@ -57,12 +60,17 @@ pub struct CodexConfig {
     /// After a close on a shared app-server, how often a subagent that sends nothing is
     /// checked with Codex (`thread/read`). Tests shorten it.
     pub child_check_interval: std::time::Duration,
+    /// How long a completed goal turn's run waits for Codex to continue the goal before it
+    /// pauses the goal and settles (T3's `CODEX_GOAL_CONTINUATION_GRACE`, 5 s). Tests shorten it.
+    pub goal_continuation_grace: std::time::Duration,
     /// Whether the status probe runs (`checkCodexProviderStatus`). Checks turn it off, so no
     /// check runs this machine's `codex`; the entry then stays T3's pending one.
     pub status_probe: bool,
     /// The folder the probe runs in: the server's working folder (T3's `process.cwd()`).
     /// `None`: this process's working folder.
     pub status_cwd: Option<PathBuf>,
+    /// The model manifest the server accepted last; the probe classifies models with it.
+    pub model_manifest: conn_provider::LiveManifest,
 }
 
 impl Default for CodexConfig {
@@ -76,8 +84,10 @@ impl Default for CodexConfig {
             stop_confirm_timeout: STOP_CONFIRM_TIMEOUT,
             abandoned_start_timeout: crate::client::REQUEST_TIMEOUT,
             child_check_interval: CHILD_CHECK_INTERVAL,
+            goal_continuation_grace: GOAL_CONTINUATION_GRACE,
             status_probe: true,
             status_cwd: None,
+            model_manifest: conn_provider::LiveManifest::default(),
         }
     }
 }
