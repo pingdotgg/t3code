@@ -1,4 +1,9 @@
-import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type WsRpcGroup } from "@t3tools/contracts";
+import {
+  ORCHESTRATION_V2_WS_METHODS,
+  TEAM_WS_METHODS,
+  WS_METHODS,
+  type WsRpcGroup,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -269,6 +274,13 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribeServerConfig]: "server",
   [WS_METHODS.subscribeServerLifecycle]: "server",
   [WS_METHODS.subscribeAuthAccess]: "auth",
+  [TEAM_WS_METHODS.teamGetState]: "team",
+  [TEAM_WS_METHODS.teamSubscribeState]: "team",
+  [TEAM_WS_METHODS.teamInitialize]: "team",
+  [TEAM_WS_METHODS.teamUpdateMyPseudo]: "team",
+  [TEAM_WS_METHODS.teamCreateInvite]: "team",
+  [TEAM_WS_METHODS.teamRevokeInvite]: "team",
+  [TEAM_WS_METHODS.teamListThreadAttributions]: "team",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";
