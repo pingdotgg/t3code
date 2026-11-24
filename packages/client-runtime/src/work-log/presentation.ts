@@ -501,12 +501,16 @@ export interface ViewedImageAsset {
 }
 
 export function resolveViewedImageAsset(
-  source: string,
+  path: string,
   input: {
     readonly threadId: ThreadId;
     readonly workspaceRoot?: string | null | undefined;
   },
 ): ViewedImageAsset | null {
+  // A tool reports the literal path it read, not a markdown destination: escape the characters
+  // markdown resolution would decode or split off, so a name like Grok's `sessions/%2FUsers...`
+  // reaches the server unchanged.
+  const source = path.replace(/[%#?]/g, encodeURIComponent);
   const imageSource = classifyMarkdownImageSource(source, input.workspaceRoot ?? ".");
   if (imageSource._tag !== "WorkspaceFile") return null;
   const resolvedFilePath =
