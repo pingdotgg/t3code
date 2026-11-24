@@ -27,7 +27,7 @@ export function enrichedContextLinkPresentation(
   if (!reference) return undefined;
   const record = records?.find((candidate) => candidate.contextId === reference.contextId);
   const presentation =
-    records && !record
+    records && !record && !reference.gitRef
       ? UNAVAILABLE_CONTEXT_CHIP_PRESENTATION
       : contextChipPresentation(reference.kind, record);
   const size = composerChipSizeSuffix(record);

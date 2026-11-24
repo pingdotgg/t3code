@@ -36,6 +36,7 @@ const lucideIcons = [
   "bot",
   "circle-dashed",
   "film",
+  "git-branch",
   "git-merge",
   "git-pull-request-arrow",
   "git-pull-request-closed",

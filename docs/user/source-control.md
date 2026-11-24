@@ -3,6 +3,11 @@
 T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, GitCafe, and Cursor
 Origin to clone and publish repositories, create pull requests, and review changes.
 
+Type `@` followed by a branch name in the composer to reference a local or remote branch.
+Choose **Worktree** for a branch when you want the agent to inspect the checkout, including
+uncommitted changes. A branch mention includes its commit when available. Click the chip
+in the composer or a sent message to see what it refers to.
+
 ## Review turn changes
 
 A turn's changed files and diff show only the turn's own work. When a turn pulls, merges, or

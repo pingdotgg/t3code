@@ -24,6 +24,7 @@ interface ContextChipPresentation {
  */
 const CONTEXT_CHIP_PRESENTATIONS = {
   image: { accent: "#0090cd", icon: "image" },
+  "git-ref": { accent: "#0090cd", icon: "git-branch" },
   video: { accent: "#d06217", icon: "film" },
   file: { accent: "#0090cd", icon: null },
   mention: { accent: "#0096af", icon: null },

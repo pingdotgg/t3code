@@ -2867,6 +2867,7 @@ function UserMessageContent(props: UserMessageContentProps) {
   );
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
   const text = replaceComposerContextReferences(liveText, (ref) => {
+    if (ref.gitRef) return ref.source;
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
     const label = available ? ref.label : gt("{label} (unavailable)", { label: ref.label });
     return `[${label}](t3-context://v1/${ref.kind}/${ref.contextId})`;
@@ -2874,6 +2875,14 @@ function UserMessageContent(props: UserMessageContentProps) {
   const onLinkPress = (href: string) => {
     const reference = parseComposerContextHref(href);
     if (!reference) return props.linkHandlers.onLinkPress?.(href);
+    if (reference.gitRef) {
+      const { ref, cwd, worktreePath, commitSha } = reference.gitRef;
+      Dialog.alert(
+        ref,
+        [worktreePath ?? cwd, worktreePath ? null : commitSha].filter(Boolean).join("\n"),
+      );
+      return;
+    }
     const record = props.context?.records.find(
       (record) => record.contextId === reference.contextId,
     );
@@ -2917,10 +2926,14 @@ function UserMessageContent(props: UserMessageContentProps) {
               (item) => item.contextId === reference.contextId,
             );
             return {
-              title: record?.label ?? gt("Context unavailable"),
+              title: reference.gitRef?.ref ?? record?.label ?? gt("Context unavailable"),
               actions: [
                 { id: "open-context", title: gt("Open context") },
-                { id: "copy-context", title: gt("Copy context"), disabled: !record },
+                {
+                  id: "copy-context",
+                  title: gt("Copy context"),
+                  disabled: !record && !reference.gitRef,
+                },
               ],
             };
           },
@@ -2931,16 +2944,16 @@ function UserMessageContent(props: UserMessageContentProps) {
             const record = props.context?.records.find(
               (item) => item.contextId === reference.contextId,
             );
-            if (actionId === "copy-context" && record) {
+            if (actionId === "copy-context" && (record || reference.gitRef)) {
               void writeComposerContextClipboard(
                 formatComposerContextReference({
                   ...reference,
-                  label: record.label,
+                  label: record?.label ?? reference.gitRef!.ref,
                 }),
                 {
                   version: 1,
                   source: { environmentId: props.environmentId },
-                  records: [record],
+                  records: record ? [record] : [],
                 },
               )
                 .then(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success))

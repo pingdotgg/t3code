@@ -289,6 +289,8 @@ export function useBranches(input: {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
   readonly query?: string | null;
+  readonly limit?: number;
+  readonly includeMatchingRemoteRefs?: boolean;
 }) {
   const query = input.query?.trim() ?? "";
   return useEnvironmentQuery(
@@ -298,7 +300,8 @@ export function useBranches(input: {
           input: {
             cwd: input.cwd,
             ...(query.length > 0 ? { query } : {}),
-            limit: VCS_REF_LIST_LIMIT,
+            ...(input.includeMatchingRemoteRefs ? { includeMatchingRemoteRefs: true } : {}),
+            limit: input.limit ?? VCS_REF_LIST_LIMIT,
           },
         })
       : null,

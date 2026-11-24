@@ -83,6 +83,7 @@ export type GitRunStackedActionToast = typeof GitRunStackedActionToast.Type;
 
 export const VcsRef = Schema.Struct({
   name: GitRefName,
+  commitSha: Schema.optional(Schema.String),
   isRemote: Schema.optional(Schema.Boolean),
   remoteName: Schema.optional(GitRefName),
   // Full Git ref, for example refs/remotes/origin/feature.

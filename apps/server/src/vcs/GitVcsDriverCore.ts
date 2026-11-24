@@ -5367,7 +5367,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           [
             ...gitDirArgs,
             "for-each-ref",
-            "--format=%(refname)%09%(committerdate:unix)%09%(symref)%09%(upstream)",
+            "--format=%(refname)%09%(committerdate:unix)%09%(symref)" +
+              "%09%(upstream)%09%(objectname)",
             "refs/heads",
             "refs/remotes",
           ],
@@ -5417,8 +5418,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     for (const line of refsResult.stdout.split("\n")) {
       if (line.length === 0) continue;
-      const [fullRefName, lastCommitRaw, symbolicTarget, upstreamRef] = line.split("\t");
-      if (!fullRefName || symbolicTarget) continue;
+      const [fullRefName, lastCommitRaw, symbolicTarget, upstreamRef, commitSha] = line.split("\t");
+      if (!fullRefName || !commitSha || symbolicTarget) continue;
       const parsedLastCommit = Number.parseInt(lastCommitRaw ?? "0", 10);
       const lastCommit = Number.isFinite(parsedLastCommit) ? parsedLastCommit : 0;
 
@@ -5427,6 +5428,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         localBranches.push({
           ref: {
             name,
+            commitSha,
             current: false,
             isRemote: false,
             isDefault: name === defaultBranch,
@@ -5443,6 +5445,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const parsedRemoteRef = parseRemoteRefWithRemoteNames(name, remoteNames);
       const remoteBranch: VcsRef = {
         name,
+        commitSha,
         current: false,
         isRemote: true,
         isDefault:
@@ -5644,12 +5647,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       // names a branch with no ref yet, so the ref must exist before it is listed.
       const currentBranchUnlisted =
         currentBranch !== null && !snapshot.localBranches.some((ref) => ref.name === currentBranch);
+      const unlistedCommit = currentBranchUnlisted
+        ? yield* resolveCommit({
+            cwd: input.cwd,
+            revision: `refs/heads/${currentBranch}`,
+          }).pipe(Effect.orElseSucceed(() => null))
+        : null;
       const unlistedCurrentBranch: ReadonlyArray<VcsRef> =
-        currentBranchUnlisted &&
-        (yield* branchExists(input.cwd, currentBranch).pipe(Effect.orElseSucceed(() => false)))
+        currentBranchUnlisted && unlistedCommit
           ? [
               {
                 name: currentBranch,
+                commitSha: unlistedCommit.commitSha,
                 current: true,
                 isRemote: false,
                 isDefault: currentBranch === snapshot.defaultBranch,

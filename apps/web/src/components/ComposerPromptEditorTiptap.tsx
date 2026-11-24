@@ -118,6 +118,8 @@ import {
   markAsCompositionReplace,
 } from "~/composer-undo-grouping";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
+import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import { GitRefContextChip } from "./GitRefContextChip";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { isRichTextFormattingShortcut } from "~/keybindings";
 import { cn, isMacPlatform } from "~/lib/utils";
@@ -603,6 +605,10 @@ const ComposerContextReferenceExtension = Node.create({
 });
 
 function ComposerContextReferenceNodeView({ node, editor, getPos }: NodeViewProps) {
+  const source = String(node.attrs.source ?? "");
+  const label = String(node.attrs.label ?? "");
+  const gitRef =
+    node.attrs.kind === "git-ref" ? collectComposerContextReferences(source)[0]?.gitRef : undefined;
   return (
     <NodeViewWrapper
       as="span"
@@ -623,11 +629,15 @@ function ComposerContextReferenceNodeView({ node, editor, getPos }: NodeViewProp
         editor.commands.deleteRange({ from: pos, to: pos + node.nodeSize });
       }}
     >
-      <ComposerContextReferenceChip
-        kind={(node.attrs.kind as string) ?? ""}
-        contextId={(node.attrs.contextId as string) ?? ""}
-        label={(node.attrs.label as string) ?? ""}
-      />
+      {gitRef ? (
+        <GitRefContextChip target={gitRef} label={label} source={source} />
+      ) : (
+        <ComposerContextReferenceChip
+          kind={(node.attrs.kind as string) ?? ""}
+          contextId={(node.attrs.contextId as string) ?? ""}
+          label={label}
+        />
+      )}
     </NodeViewWrapper>
   );
 }

@@ -5,6 +5,7 @@ import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import { T, useGT, useMessages, Var } from "gt-react";
 import { findRevealRef } from "./markdownFindContext";
 import {
+  ComposerContextId,
   type EnvironmentId,
   type MessageId,
   type ScheduledTaskId,
@@ -91,6 +92,7 @@ import {
   TimelineRowTimestamp,
 } from "./TimelineRowParts";
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
+import { GitRefContextChip } from "../GitRefContextChip";
 import {
   resolvePreviewAnnotationImage,
   userMessageFileLabel,
@@ -682,6 +684,20 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     event.clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
   };
   const renderContextReference = (reference: ChatMarkdownContextReference) => {
+    if (reference.gitRef) {
+      return (
+        <GitRefContextChip
+          target={reference.gitRef}
+          label={reference.label}
+          source={formatComposerContextReference({
+            ...reference,
+            contextId: ComposerContextId.make(reference.contextId),
+          })}
+          threadRef={ctx.threadRef}
+          {...(ctx.markdownCwd ? { cwd: ctx.markdownCwd } : {})}
+        />
+      );
+    }
     const record = asKnownContextRecord(resolvedContext.recordsById.get(reference.contextId));
     if (record?.kind === "file" && userAudio.some((file) => file.id === record.attachmentId))
       return null;

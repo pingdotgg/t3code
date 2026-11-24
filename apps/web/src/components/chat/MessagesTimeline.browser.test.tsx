@@ -59,7 +59,10 @@ import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   decodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
-import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import {
+  collectComposerContextReferences,
+  composerGitRefItems,
+} from "@t3tools/shared/composerContextReferences";
 
 const environmentQuery = vi.hoisted(() => ({
   error: "Pull request not found" as string | null,
@@ -216,6 +219,20 @@ function renderTimeline(entries: ReadonlyArray<Entry>, props: Partial<TimelinePr
     <MessagesTimeline {...baseProps()} timelineEntries={entries as Entry[]} {...props} />,
   );
 }
+
+it("opens a sent worktree mention with its checkout path", async () => {
+  const cwd = "C:\\projects\\demo";
+  const worktreePath = "C:\\worktrees\\search & review";
+  const [, worktree] = composerGitRefItems(
+    [{ name: "feature/search", isDefault: false, current: false, worktreePath }],
+    ENVIRONMENT_ID,
+    cwd,
+    { branch: "Branch", worktree: "Worktree" },
+  );
+  await using screen = await renderTimeline([message(`Inspect ${worktree!.reference}.`)]);
+  await screen.getByRole("button", { name: /Worktree feature\/search/ }).click();
+  await expect.element(page.getByRole("dialog").getByText(worktreePath)).toBeVisible();
+});
 
 async function click(element: HTMLElement) {
   await act(async () => element.click());

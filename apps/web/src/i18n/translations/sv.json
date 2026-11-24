@@ -12797,5 +12797,8 @@
   "78ceb92a5b33a779": "Kommandot kördes inte",
   "440210447ea2814b": "Du har inte behörighet att köra kommandon här.",
   "bc84f52ae9af5493": "Skicka ett meddelande först; kommandon körs i en befintlig tråd.",
-  "50769d067d003ec9": "Det gick inte att köra kommandot."
+  "50769d067d003ec9": "Det gick inte att köra kommandot.",
+  "7a48724aadf54862": "Worktree {name}",
+  "eb40135573828cb9": "Open commit",
+  "c7e4f052c3d6c066": "Open files"
 }

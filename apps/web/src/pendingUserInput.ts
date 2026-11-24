@@ -54,9 +54,12 @@ export function projectPendingUserInputAnswer(
   answer: unknown,
   records: ReadonlyArray<AnswerContextRecord>,
 ) {
-  if (typeof answer !== "string" || records.length === 0) return answer;
+  if (typeof answer !== "string") return answer;
   const recordsById = new Map(records.map((record) => [record.contextId, record]));
   return replaceComposerContextReferences(answer, (reference) => {
+    if (reference.gitRef) {
+      return projectComposerContextForProvider({ text: reference.source, records: [] });
+    }
     const record = recordsById.get(reference.contextId);
     if (record?.kind !== reference.kind) return reference.source;
     return record.kind === "thread"

@@ -1,10 +1,12 @@
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
+import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { fileDisplayName } from "@t3tools/shared/path";
 import {
   CircleDashedIcon,
+  GitBranchIcon,
   ImageIcon,
   MessageCircleIcon,
   MessagesSquareIcon,
@@ -93,6 +95,19 @@ export function CollapsedComposerPromptPreview(props: {
           />
         );
       case "context-reference": {
+        if (
+          segment.kind === "git-ref" &&
+          collectComposerContextReferences(segment.source)[0]?.gitRef
+        ) {
+          return (
+            <ContextChipShell
+              key={key}
+              kind="git-ref"
+              icon={<GitBranchIcon />}
+              label={segment.label}
+            />
+          );
+        }
         const entry = resolvedContextRecord(props.contextRecords, segment.kind, segment.contextId);
         return entry ? (
           <ContextChipShell
