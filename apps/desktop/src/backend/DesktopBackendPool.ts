@@ -43,7 +43,10 @@ const { logInfo: logBackendPoolInfo, logWarning: logBackendPoolWarning } =
 
 const makeRecovery = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  if (environment.platform !== "darwin" || !environment.isPackaged) return undefined;
+  const supported =
+    environment.platform === "linux" ||
+    (environment.platform === "darwin" && environment.isPackaged);
+  if (!supported) return undefined;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   return DesktopBackendRecoveryProcess.make({
     appDataDirectory: environment.appDataDirectory,

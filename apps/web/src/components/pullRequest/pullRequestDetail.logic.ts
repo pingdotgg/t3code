@@ -1543,16 +1543,37 @@ const TOOL_NOISE = [
 
 const FAILURE_DETAIL_MAX_LENGTH = 320;
 
+/**
+ * The head a reader was first shown. A background refresh does not move it, so a merge or review
+ * keeps applying to the commits they read until they load the newer ones.
+ */
+export function seenPullRequestHead(
+  seen: { readonly key: string; readonly sha: string | undefined } | null,
+  key: string,
+  settledHead: string | undefined,
+) {
+  return seen !== null && seen.key === key && (seen.sha !== undefined || settledHead === undefined)
+    ? seen
+    : { key, sha: settledHead };
+}
+
+/** A merge lands the head the reader was shown, so it refuses a head that moved since. */
+export function mergeHeadPin(action: PullRequestAction, headSha: string | undefined) {
+  return (action === "merge" || action === "enable-auto-merge") && headSha !== undefined
+    ? { expectedHeadSha: headSha }
+    : {};
+}
+
 export function readableFailure(failure: unknown, hint: string): string {
   const raw =
     failure instanceof Error ? failure.message : typeof failure === "string" ? failure : "";
   const detail = raw.replace(OPERATION_PREFIX, "").trim();
   if (detail.length === 0 || TOOL_NOISE.some((pattern) => pattern.test(detail))) return hint;
-  const bounded =
-    detail.length <= FAILURE_DETAIL_MAX_LENGTH
-      ? detail
-      : `${detail.slice(0, FAILURE_DETAIL_MAX_LENGTH - 1)}…`;
-  return bounded;
+  if (detail.length <= FAILURE_DETAIL_MAX_LENGTH) return detail;
+  let end = FAILURE_DETAIL_MAX_LENGTH - 1;
+  const last = detail.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${detail.slice(0, end)}…`;
 }
 
 const isGitCommandError = Schema.is(GitCommandError);

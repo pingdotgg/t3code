@@ -8,6 +8,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import { VcsProcessExitError } from "@t3tools/contracts";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitLabCli from "./GitLabCli.ts";
@@ -378,6 +379,70 @@ layer("GitLabCli.layer", (it) => {
         expect.objectContaining({ command: "glab", args, env }),
       );
     }),
+  );
+
+  it.effect.each([
+    { host: "gitlab.com", withheld: {} },
+    {
+      host: "gitlab.example.com",
+      withheld: { GITLAB_TOKEN: "", GITLAB_ACCESS_TOKEN: "", OAUTH_TOKEN: "" },
+    },
+  ])(
+    "sends the environment token to a project on $host only when it is glab's default host",
+    ({ host, withheld }) =>
+      Effect.gen(function* () {
+        mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+
+        const glab = yield* GitLabCli.GitLabCli;
+        yield* glab.execute({ cwd: "/repo", host, args: ["api", "user"] });
+
+        expect(mockedRun).toHaveBeenCalledWith(
+          expect.objectContaining({ env: { GITLAB_HOST: host, ...withheld } }),
+        );
+      }),
+  );
+
+  it.effect.each([
+    { remote: "git@gitlab.com:group/project.git", reference: "42", withheld: {} },
+    {
+      remote: "https://gitlab.example.com/group/project.git",
+      reference: "42",
+      withheld: { GITLAB_TOKEN: "", GITLAB_ACCESS_TOKEN: "", OAUTH_TOKEN: "" },
+    },
+    {
+      remote: "git+ssh://git@gitlab.example.com/project.git",
+      reference: "42",
+      withheld: { GITLAB_TOKEN: "", GITLAB_ACCESS_TOKEN: "", OAUTH_TOKEN: "" },
+    },
+    {
+      remote: "git@gitlab.com:group/project.git",
+      reference: "https://gitlab.example.com/group/project/-/merge_requests/42",
+      withheld: { GITLAB_TOKEN: "", GITLAB_ACCESS_TOKEN: "", OAUTH_TOKEN: "" },
+    },
+  ])(
+    "keeps the environment token from the host glab picks for $reference in a $remote checkout",
+    ({ remote, reference, withheld }) =>
+      Effect.gen(function* () {
+        const environments: Array<unknown> = [];
+        const glab = yield* GitLabCli.make.pipe(
+          Effect.provide(
+            TestSourceControlHost.layer({
+              process: {
+                run: (input) => {
+                  if (input.command === "git")
+                    return Effect.succeed(processOutput(`origin\t${remote} (fetch)\n`));
+                  environments.push(input.env);
+                  return Effect.succeed(processOutput("{}"));
+                },
+              },
+            }),
+          ),
+          Effect.provideService(HostProcess.Environment, { GITLAB_TOKEN: "default-host-token" }),
+        );
+        yield* glab.checkoutMergeRequest({ cwd: "/repo", reference });
+
+        assert.deepStrictEqual(environments, [withheld]);
+      }),
   );
 
   it.effect.each(["not-found", "command-failed"] as const)(

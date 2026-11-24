@@ -76,6 +76,12 @@ export class ProviderRegistry extends Context.Service<
       instanceId?: ProviderInstanceId,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+    /**
+     * Rebuilds and re-checks enabled instances not yet found installed after the host environment
+     * changed. Drivers copy the environment when built, so only a rebuild sees a later PATH.
+     */
+    readonly rebuildMissingAndRefresh: Effect.Effect<ReadonlyArray<ServerProvider>>;
+
     /** Rebuilds and refreshes only the instances that read a secret, with the value the caller just read. */
     readonly applySecretAndRefresh: (
       reference: SecretReference,
@@ -856,6 +862,35 @@ export const layer = Layer.effect(
       return yield* instanceId === undefined ? refresh() : refreshInstance(instanceId);
     });
 
+    // Only instances whose CLI was not found are rebuilt; installed ones may have live sessions.
+    const rebuildMissingAndRefresh = Effect.fn("rebuildMissingAndRefresh")(function* () {
+      const instances = yield* instanceRegistry.listInstances;
+      yield* refresh().pipe(Effect.catchCause(recoverRefreshFailure));
+      const missing = yield* Effect.filter(instances, (instance) =>
+        Effect.gen(function* () {
+          // ACP also reports installed:false for setup states unrelated to executable discovery.
+          if (
+            !instance.enabled ||
+            instance.driverKind === "acpRegistry" ||
+            !(yield* isCurrentInstance(instance))
+          )
+            return false;
+          const snapshot = yield* instance.snapshot.getSnapshot;
+          return !snapshot.installed;
+        }),
+      );
+      if (missing.length === 0) return yield* Ref.get(providersRef);
+      yield* instanceRegistryMutator.rebuild(missing.map((instance) => instance.instanceId));
+      // A shared pass already in flight may hold the retired instances, so probe each rebuilt one.
+      yield* Effect.forEach(
+        missing,
+        (instance) =>
+          refreshInstance(instance.instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+        { concurrency: "unbounded", discard: true },
+      );
+      return yield* Ref.get(providersRef);
+    });
+
     const applySecretAndRefresh = Effect.fn("applySecretAndRefresh")(function* (
       reference: SecretReference,
       value: string,
@@ -1267,6 +1302,7 @@ export const layer = Layer.effect(
                   return input.rescan &&
                     !(
                       Equal.equals(rescanned?.skills, held?.skills) &&
+                      Equal.equals(rescanned?.models, held?.models) &&
                       Equal.equals(rescanned?.slashCommands, held?.slashCommands)
                     )
                     ? { ...scanned, workspaceRescannedAt: scannedAt }
@@ -1367,6 +1403,9 @@ export const layer = Layer.effect(
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       reloadSecretsAndRefresh: (instanceId?: ProviderInstanceId) =>
         reloadSecretsAndRefresh(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      rebuildMissingAndRefresh: rebuildMissingAndRefresh().pipe(
+        Effect.catchCause(recoverRefreshFailure),
+      ),
       applySecretAndRefresh: (reference: SecretReference, value: string) =>
         applySecretAndRefresh(reference, value).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>
