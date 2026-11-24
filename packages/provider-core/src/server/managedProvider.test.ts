@@ -1086,10 +1086,10 @@ describe("makeManagedServerProvider", () => {
           const probeResults = yield* Ref.make<
             ReadonlyArray<{
               readonly usageLimits: ServerProvider["usageLimits"];
-              readonly auth: { readonly email: string };
+              readonly auth: { readonly email: string; readonly label?: string };
             }>
           >([
-            { usageLimits: updatedLimits, auth: { email: "a@example.com" } },
+            { usageLimits: updatedLimits, auth: { email: "a@example.com", label: "Pro" } },
             { usageLimits: switchedFailure, auth: { email: "b@example.com" } },
           ]);
           const provider = yield* makeManagedServerProvider<TestSettings>({
@@ -1101,7 +1101,7 @@ describe("makeManagedServerProvider", () => {
             checkProvider: Ref.update(providerChecks, (count) => count + 1).pipe(
               Effect.as({
                 ...refreshedSnapshot,
-                auth: { status: "authenticated", email: "a@example.com" },
+                auth: { status: "authenticated", email: "a@example.com", label: "Plus" },
                 usageLimits: {
                   checkedAt: "2026-04-10T00:00:01.000Z",
                   windows: [],
@@ -1118,7 +1118,9 @@ describe("makeManagedServerProvider", () => {
           yield* provider.refreshUsage!;
           assert.strictEqual(yield* Ref.get(providerChecks), 1);
           assert.strictEqual(yield* Ref.get(usageChecks), 1);
-          assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, updatedLimits);
+          const sameAccount = yield* provider.getSnapshot;
+          assert.deepStrictEqual(sameAccount.usageLimits, updatedLimits);
+          assert.strictEqual(sameAccount.auth.label, "Pro");
           yield* provider.refreshUsage!;
           const switched = yield* provider.getSnapshot;
           assert.strictEqual(switched.auth.email, "b@example.com");

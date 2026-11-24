@@ -376,11 +376,17 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       } else if (probedAuth) {
         const email = baseAuth.email ?? probedAuth.email;
         const workspaceId = baseAuth.workspaceId ?? probedAuth.workspaceId;
-        if (email !== baseAuth.email || workspaceId !== baseAuth.workspaceId) {
+        const label = probedAuth.label ?? baseAuth.label;
+        if (
+          email !== baseAuth.email ||
+          workspaceId !== baseAuth.workspaceId ||
+          label !== baseAuth.label
+        ) {
           nextAuth = {
             ...baseAuth,
             ...(email ? { email } : {}),
             ...(workspaceId ? { workspaceId } : {}),
+            ...(label ? { label } : {}),
           };
         }
       }
@@ -388,7 +394,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         nextAuth === baseAuth ? state.snapshot : { ...state.snapshot, auth: nextAuth },
         usageLimits,
       );
-      const usageAuthLabel = probedSwitched ? undefined : state.usageAuthLabel;
+      const usageAuthLabel = probedSwitched
+        ? undefined
+        : (probedAuth?.label ?? state.usageAuthLabel);
       if (Equal.equals(state.snapshot, snapshot) && usageAuthLabel === state.usageAuthLabel) {
         return [null, state] as const;
       }
