@@ -776,6 +776,76 @@ async fn a_turn_sent_during_a_rollback_starts_after_it() {
     );
 }
 
+/// The gate's probe: the rollback's result commit frees the thread's lane, so a queued turn
+/// may start at once. It must start from the rolled-back conversation, never the old head.
+#[tokio::test(flavor = "current_thread")]
+async fn a_turn_queued_behind_a_rollback_starts_from_the_rolled_back_head() {
+    let db = TempDb::new("rollback-head");
+    let repo = Repo::new("rollback-head");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c1"),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let (paused_tx, paused_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    crate::lock(&engine.inner().worker_hooks).rollback_committed = Some((paused_tx, release_rx));
+    dispatch(
+        &engine,
+        rollback("rb-1", &checkpoint_at(&p, 1), Some(false)),
+    )
+    .await;
+    tokio::time::timeout(Duration::from_secs(5), paused_rx)
+        .await
+        .expect("the rollback committed")
+        .unwrap();
+    dispatch(&engine, message("t1", "c3", "after")).await;
+    until(&engine, |p| p["runs"][2]["status"] == "completed").await;
+    assert_eq!(
+        provider.heads.lock().unwrap().last().map(String::as_str),
+        Some("rolled-back:turn 1")
+    );
+    release_tx.send(()).unwrap();
+}
+
+/// The gate's probe: the write that records a rollback's failure fails once. The rollback's
+/// own result write settles its row `failed`, so it tries again and the client hears of the
+/// failure; the worker does not settle the row as if it had succeeded.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_rollback_result_write_is_written_again() {
+    let db = TempDb::new("rollback-result-fault");
+    let repo = Repo::new("rollback-result-fault");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent").with_failing_rollback(),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    crate::lock(&engine.inner().worker_hooks).rollback_result_faults = 1;
+    let p = projection(&engine, "t1").await;
+    dispatch(&engine, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+    let p = until(&engine, |p| p["thread"]["rollbackFailure"].is_object()).await;
+    assert_eq!(p["thread"]["rollbackFailure"]["requestId"], "rb-1");
+    let status: String = engine
+        .inner()
+        .db(|store| {
+            store.raw().query_row(
+                "SELECT status FROM effect_outbox WHERE effect_type = 'provider-thread.rollback'",
+                [],
+                |row| row.get(0),
+            )
+        })
+        .await
+        .unwrap();
+    assert_eq!(status, "failed");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_failed_provider_rollback_changes_nothing_and_tells_the_client() {
     let db = TempDb::new("rollback-fail");
@@ -1123,6 +1193,44 @@ async fn an_interrupted_child_with_a_checkpoint_wakes_its_parent_once() {
     assert_eq!(wakes(&projection(&engine, "t1").await), 1);
 }
 
+/// The #269 gate's probe: the write that records a rollback's failure keeps failing, and
+/// another engine takes the store. The write stops trying: the new engine owns the row.
+#[tokio::test(flavor = "current_thread")]
+async fn a_rollback_failure_write_stops_once_another_engine_owns_the_store() {
+    let db = TempDb::new("rb-failure-owner");
+    let repo = Repo::new("rb-failure-owner");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent").with_failing_rollback(),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    crate::lock(&engine.inner().worker_hooks).rollback_result_faults = u32::MAX;
+    let p = projection(&engine, "t1").await;
+    dispatch(&engine, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+    let faults = || crate::lock(&engine.inner().worker_hooks).rollback_result_faults;
+    for _ in 0..500 {
+        if faults() < u32::MAX {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(faults() < u32::MAX, "the failure write failed once");
+    rusqlite::Connection::open(db.path())
+        .unwrap()
+        .execute(
+            "UPDATE meta SET value = value + 1 WHERE key = 'engine_epoch'",
+            [],
+        )
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let first = faults();
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    assert_eq!(faults(), first, "no failure write after the owner changed");
+}
+
 /// The round-3 gate's probe: an engine is replaced while its provider rollback is in flight.
 /// The new engine records the rollback as interrupted. The old engine, when the provider
 /// answers, is fenced: it must touch no file and delete no ref.
@@ -1132,7 +1240,12 @@ async fn a_replaced_engine_s_rollback_touches_no_files() {
     let repo = Repo::new("rb-fenced-files");
     let pending = || -> Vec<String> {
         let conn = rusqlite::Connection::open(db.path()).unwrap();
-        let mut stmt = conn.prepare("SELECT phase FROM pending_rollbacks").unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT COALESCE(json_extract(progress, '$.phase'), 'admitted') FROM effect_outbox
+                 WHERE effect_type = 'provider-thread.rollback' AND status IN ('pending', 'running')",
+            )
+            .unwrap();
         stmt.query_map([], |row| row.get(0))
             .unwrap()
             .map(Result::unwrap)
@@ -1293,7 +1406,11 @@ async fn a_restart_finishes_or_fails_a_rollback_left_pending() {
         let pending = || -> Vec<(String, String)> {
             let conn = rusqlite::Connection::open(db.path()).unwrap();
             let mut stmt = conn
-                .prepare("SELECT command_id, phase FROM pending_rollbacks")
+                .prepare(
+                    "SELECT command_id, COALESCE(json_extract(progress, '$.phase'), 'admitted')
+                     FROM effect_outbox WHERE effect_type = 'provider-thread.rollback'
+                       AND status IN ('pending', 'running')",
+                )
                 .unwrap();
             stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
                 .unwrap()
@@ -1322,7 +1439,9 @@ async fn a_restart_finishes_or_fails_a_rollback_left_pending() {
         };
         let conn = rusqlite::Connection::open(db.path()).unwrap();
         conn.execute(
-            "UPDATE pending_rollbacks SET phase = ?1, snapshot = ?2",
+            "UPDATE effect_outbox SET progress = CASE WHEN ?1 = 'admitted' THEN NULL
+               ELSE json_object('phase', ?1, 'snapshot', json(?2)) END
+             WHERE effect_type = 'provider-thread.rollback'",
             rusqlite::params![
                 phase,
                 (phase == "provider_done").then(|| provider_thread.to_string())
@@ -1337,6 +1456,28 @@ async fn a_restart_finishes_or_fails_a_rollback_left_pending() {
         })
         .await;
         assert!(pending().is_empty(), "{phase}: the row goes");
+        let (status, error): (String, Option<String>) = rusqlite::Connection::open(db.path())
+            .unwrap()
+            .query_row(
+                "SELECT status, last_error FROM effect_outbox
+                 WHERE effect_type = 'provider-thread.rollback'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        // An interrupted rollback stays on record as failed: a succeeded row is pruned.
+        if phase == "provider" {
+            assert_eq!(
+                (status.as_str(), error.as_deref()),
+                (
+                    "failed",
+                    Some(crate::rollback::ROLLBACK_INTERRUPTED_MESSAGE)
+                ),
+                "{phase}"
+            );
+        } else {
+            assert_eq!(status, "succeeded", "{phase}");
+        }
         let statuses: Vec<_> = p["runs"]
             .as_array()
             .unwrap()

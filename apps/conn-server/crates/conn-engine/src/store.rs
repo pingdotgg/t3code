@@ -98,16 +98,6 @@ CREATE TABLE IF NOT EXISTS receipts (
 );
 -- The store's high-water mark reads the newest receipt at open.
 CREATE INDEX IF NOT EXISTS receipts_by_sequence ON receipts(sequence);
--- Rollbacks admitted and not yet committed or failed, so a restart can finish them (T3 keeps
--- `provider-thread.rollback` in its effect outbox). `phase`: `admitted`; `provider`, the
--- provider rollback was sent; `provider_done`, its answer is in `snapshot`.
-CREATE TABLE IF NOT EXISTS pending_rollbacks (
-  command_id TEXT PRIMARY KEY,
-  thread_id  TEXT NOT NULL,
-  request    TEXT NOT NULL,
-  phase      TEXT NOT NULL,
-  snapshot   TEXT
-);
 ";
 
 /// A command's receipt: a key lookup, never a scan of the event log.
@@ -156,15 +146,6 @@ fn fork_marker(thread: &Value, source_id: &str, run_id: &str) -> Value {
         "source": {"type": "run", "threadId": source_id, "runId": run_id},
         "targetThreadId": id,
     })
-}
-
-/// A rollback a previous process left pending (`pending_rollbacks`).
-pub(crate) struct PendingRollback {
-    pub(crate) command_id: String,
-    pub(crate) thread_id: String,
-    pub(crate) request: Value,
-    pub(crate) phase: String,
-    pub(crate) snapshot: Option<Value>,
 }
 
 /// The projection collections of `OrchestrationV2ThreadProjection`, in its field order.
@@ -1288,73 +1269,6 @@ impl Store {
         keyed_rows(rows)
     }
 
-    /// Rollbacks admitted and not yet committed or failed, in admission order.
-    pub(crate) fn pending_rollbacks(&self) -> StoreResult<Vec<PendingRollback>> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT command_id, thread_id, request, phase, snapshot FROM pending_rollbacks
-                 ORDER BY rowid",
-            )
-            .map_err(err)?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
-            })
-            .map_err(err)?;
-        rows.map(|row| {
-            let (command_id, thread_id, request, phase, snapshot) = row.map_err(err)?;
-            Ok(PendingRollback {
-                command_id,
-                thread_id,
-                request: parse(request)?,
-                phase,
-                snapshot: snapshot.map(parse).transpose()?,
-            })
-        })
-        .collect()
-    }
-
-    /// Moves a pending rollback from phase `from` to `to`, with the provider's answer for
-    /// `provider_done`, in one write that also checks the engine's lease. `false` when nothing
-    /// moved: another engine owns the store, or the rollback is not in `from`. A caller then
-    /// must not contact the provider.
-    pub(crate) fn advance_rollback(
-        &self,
-        command_id: &str,
-        from: &str,
-        to: &str,
-        snapshot: Option<&Value>,
-    ) -> StoreResult<bool> {
-        let lease = self.lease();
-        if matches!(lease, Lease::Released) {
-            return Ok(false);
-        }
-        self.conn
-            .execute(
-                &format!(
-                    "UPDATE pending_rollbacks SET phase = ?3, snapshot = ?4
-                     WHERE command_id = ?1 AND phase = ?2 AND {}",
-                    lease_guard(5)
-                ),
-                rusqlite::params![
-                    command_id,
-                    from,
-                    to,
-                    snapshot.map(Value::to_string),
-                    lease.guard()
-                ],
-            )
-            .map(|changed| changed == 1)
-            .map_err(err)
-    }
-
     /// Runs that were live when the store was last written: `(thread_id, run)`.
     pub(crate) fn unfinished_runs(&self) -> StoreResult<Vec<(String, Value)>> {
         let mut stmt = self
@@ -2342,34 +2256,6 @@ impl Tx<'_> {
     /// Ends the write without committing. Sequences it took are given back: the store's
     /// counter only moves on a commit.
     pub(crate) fn rollback(self) {}
-
-    /// Records an admitted rollback until it commits or fails.
-    pub(crate) fn put_pending_rollback(
-        &self,
-        command_id: &str,
-        thread_id: &str,
-        request: &Value,
-    ) -> StoreResult<()> {
-        self.tx
-            .execute(
-                "INSERT OR REPLACE INTO pending_rollbacks (command_id, thread_id, request, phase)
-                 VALUES (?1, ?2, ?3, 'admitted')",
-                rusqlite::params![command_id, thread_id, request.to_string()],
-            )
-            .map(drop)
-            .map_err(err)
-    }
-
-    /// Forgets a rollback that committed or failed.
-    pub(crate) fn clear_pending_rollback(&self, command_id: &str) -> StoreResult<()> {
-        self.tx
-            .execute(
-                "DELETE FROM pending_rollbacks WHERE command_id = ?1",
-                [command_id],
-            )
-            .map(drop)
-            .map_err(err)
-    }
 
     // Raw access for the shell derivation in `shell.rs`.
     pub(crate) fn conn(&self) -> &Connection {

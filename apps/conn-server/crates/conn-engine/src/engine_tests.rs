@@ -3352,14 +3352,6 @@ async fn a_restart_keeps_a_rollback_ahead_of_later_work() {
                     restore_files: Some(false),
                     resume_snapshot: None,
                 };
-                tx.put_pending_rollback(
-                    "rb-1",
-                    "t1",
-                    &json!({
-                    "providerThreadId": "provider-thread:t1", "checkpointId": "k",
-                    "scopeId": "s", "restoreFiles": false}),
-                )
-                .unwrap();
                 tx.enqueue(Some("rb-1"), &[crate::commands::Effect::Rollback(rollback)])
                     .unwrap();
                 tx.enqueue(
@@ -3373,6 +3365,7 @@ async fn a_restart_keeps_a_rollback_ahead_of_later_work() {
                 assert!(
                     store
                         .advance_rollback(
+                            "t1",
                             "rb-1",
                             "admitted",
                             "provider_done",
@@ -3400,7 +3393,7 @@ async fn a_restart_keeps_a_rollback_ahead_of_later_work() {
             let mut stmt = store
                 .raw()
                 .prepare(
-                    "SELECT effect_type, status, json_extract(payload, '$.resumeSnapshot.id')
+                    "SELECT effect_type, status, json_extract(progress, '$.snapshot.id')
                      FROM effect_outbox WHERE thread_id = 't1' AND status IN ('pending', 'running')
                      ORDER BY id",
                 )

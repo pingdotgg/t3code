@@ -56,6 +56,13 @@ pub(crate) struct TestHooks {
     )>,
     /// Outbox rows that hold their lane until released, then settle without running.
     pub(crate) gates: std::collections::HashMap<i64, tokio::sync::oneshot::Receiver<()>>,
+    /// Right after a rollback's result commit: sends, then waits (`rollback.rs`).
+    pub(crate) rollback_committed: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
+    /// The next rollback failure writes fail (`rollback.rs`).
+    pub(crate) rollback_result_faults: u32,
 }
 
 /// The wait before settlement try `failures + 1`: 100 ms, doubling, at most 30 s (the
@@ -159,7 +166,14 @@ impl Inner {
 
     /// Runs one claimed row and settles it; its thread's next row may then run.
     async fn run_claimed(self: Arc<Self>, claimed: Claimed) {
-        let Claimed { id, effect } = claimed;
+        let Claimed {
+            id,
+            mut effect,
+            progress,
+        } = claimed;
+        if let crate::commands::Effect::Rollback(request) = &mut effect {
+            crate::rollback::resume_from(request, progress.as_ref());
+        }
         #[cfg(test)]
         {
             let gate = crate::lock(&self.worker_hooks).gates.remove(&id);
@@ -172,6 +186,7 @@ impl Inner {
         }
         #[cfg(test)]
         let effect_type = effect.effect_type();
+        let owns_settlement = matches!(effect, crate::commands::Effect::Rollback(_));
         let outcome = self.clone().run_effect(effect).await;
         #[cfg(test)]
         {
@@ -190,7 +205,11 @@ impl Inner {
                 let _ = release.await;
             }
         }
-        self.settle_ran(id, outcome.err()).await;
+        // A rollback's own result write settles its row (`Tx::settle_rollback`): settling it
+        // here would mark a rollback whose result was never written as done.
+        if !owns_settlement {
+            self.settle_ran(id, outcome.err()).await;
+        }
         self.effects_wake.notify_one();
     }
 
@@ -233,7 +252,7 @@ impl Inner {
 
     /// Whether this engine still owns the store, read from the durable epoch after a failed
     /// write. A read that fails too counts as owned: the next try asks again.
-    async fn still_owns(&self) -> bool {
+    pub(crate) async fn still_owns(&self) -> bool {
         !self.engine_dropped.load(Ordering::SeqCst)
             && self.db(|store| store.owns_store()).await.unwrap_or(true)
     }
