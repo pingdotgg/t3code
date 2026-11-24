@@ -2,6 +2,11 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
+import {
+  DESKTOP_READINESS_CHALLENGE_PARAM,
+  DESKTOP_READINESS_PROOF_PATH,
+  desktopReadinessProof,
+} from "@t3tools/shared/desktopReadinessProof";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -29,6 +34,7 @@ const layerShellEnvironment = (prepared = true) =>
     installIntoProcess: Effect.succeed(prepared),
     awaitDiscovery: Effect.succeed(prepared),
     awaitUserShellDiscovery: Effect.succeed(prepared),
+    discoveryFinished: Effect.succeed(true),
     updates: Stream.empty,
   });
 
@@ -353,7 +359,12 @@ describe("DesktopBackendConfiguration", () => {
                 },
                 ensureNodePty: (distro) => {
                   observedDistros.push(distro);
-                  return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
+                  return {
+                    ok: true,
+                    nodePath: "/usr/bin/node",
+                    resolvedPath: "/usr/bin:/bin",
+                    t3Home: null,
+                  };
                 },
                 getDistroIp: (distro) => {
                   observedDistros.push(distro);
@@ -373,7 +384,7 @@ describe("DesktopBackendConfiguration", () => {
       );
 
       assert.equal(config.runningDistro, "Ubuntu");
-      assert.deepEqual(config.args.slice(0, 2), ["-d", "Ubuntu"]);
+      assert.deepEqual(config.args.slice(0, 5), ["-d", "Ubuntu", "--cd", "~", "--exec"]);
       assert.deepEqual(observedDistros, ["Ubuntu", "Ubuntu", "Ubuntu"]);
       assert.isTrue(Option.isNone(config.preflightFailure));
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -384,10 +395,12 @@ describe("DesktopBackendConfiguration", () => {
       windowsArchivePath: string;
       runtimeId: string;
       sha256: string;
+      t3Home: string | null;
     }> = [];
-    const observedProbeRoots: string[] = [];
+    let probeCount = 0;
     let legacyCleanupCount = 0;
-    const linuxAppRoot = "/home/test/.t3/wsl-runtime/1.2.3-x64";
+    const t3Home = "/home/test/.config/t3";
+    const linuxAppRoot = `${t3Home}/wsl-runtime/1.2.3-x64`;
     const resolvedPath = "/home/test/.local/bin:/usr/bin:/bin";
 
     return withPackagedWslHarness(
@@ -398,17 +411,18 @@ describe("DesktopBackendConfiguration", () => {
           legacyCleanupCount += 1;
         }),
         wsl: () => ({
-          prepareRuntime: (_distro, archive) => {
+          prepareRuntime: (_distro, archive, archiveT3Home) => {
             observedArchives.push({
               windowsArchivePath: archive.windowsPath,
               runtimeId: archive.runtimeId,
               sha256: archive.sha256,
+              t3Home: archiveT3Home,
             });
             return { ok: true, linuxAppRoot };
           },
-          probeRuntime: (_distro, root) => {
-            observedProbeRoots.push(root);
-            return { ok: true, resolvedPath };
+          probeRuntime: () => {
+            probeCount += 1;
+            return { ok: true, resolvedPath, t3Home };
           },
           ensureNodePty: () => {
             throw new Error("the staged runtime must not probe for node-pty");
@@ -426,9 +440,10 @@ describe("DesktopBackendConfiguration", () => {
               windowsArchivePath: archivePath,
               runtimeId: `sha256-${archiveHash}`,
               sha256: archiveHash,
+              t3Home,
             },
           ]);
-          assert.deepEqual(observedProbeRoots, [linuxAppRoot]);
+          assert.equal(probeCount, 1);
           assert.equal(
             config.entryPath,
             path.join(baseDir, "server.asar/apps/server/dist/bin.mjs"),
@@ -436,15 +451,19 @@ describe("DesktopBackendConfiguration", () => {
           assert.deepEqual(config.args, [
             "-d",
             "Ubuntu",
+            "--cd",
+            "~",
             "--exec",
             "env",
             `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${resolvedPath}`,
+            `T3CODE_HOME=${t3Home}`,
             `${linuxAppRoot}/t3`,
             "--bootstrap-fd",
             "0",
           ]);
           assert.notInclude(config.args, "/usr/bin/node");
           assert.equal(config.wslRuntimeId, `sha256-${archiveHash}`);
+          assert.equal(config.wslT3Home, t3Home);
           assert.equal(legacyCleanupCount, 1);
           assert.isTrue(Option.isNone(config.preflightFailure));
         }),
@@ -467,6 +486,7 @@ describe("DesktopBackendConfiguration", () => {
             ok: true,
             nodePath: "/usr/bin/node",
             resolvedPath: "/usr/bin:/bin",
+            t3Home: null,
           }),
         }),
       },
@@ -499,10 +519,14 @@ describe("DesktopBackendConfiguration", () => {
         archiveHash: "b".repeat(64),
         wsl: () => ({
           prepareRuntime: () => ({ ok: false, reason: "archive is corrupt" }),
-          invalidateRuntime: () => Effect.die("failed staging must not invalidate a runtime"),
           ensureNodePty: (_distro, root) => {
             observedNodePtyRoots.push(root);
-            return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
+            return {
+              ok: true,
+              nodePath: "/usr/bin/node",
+              resolvedPath: "/usr/bin:/bin",
+              t3Home: null,
+            };
           },
         }),
       },
@@ -521,28 +545,30 @@ describe("DesktopBackendConfiguration", () => {
     );
   });
 
-  it.effect("resolveWsl retires a staged runtime whose executable does not start", () => {
+  it.effect("resolveWsl does not stage a runtime when the login-shell probe fails", () => {
     const archiveHash = "c".repeat(64);
     const stagedAppRoot = `/home/test/.t3/wsl-runtime/sha256-${archiveHash}`;
-    const observedProbeRoots: string[] = [];
+    let probeCount = 0;
     const observedNodePtyRoots: string[] = [];
-    const invalidatedRuntimeIds: string[] = [];
     return withPackagedWslHarness(
       {
         archiveHash,
         wsl: () => ({
-          prepareRuntime: () => ({ ok: true, linuxAppRoot: stagedAppRoot }),
-          invalidateRuntime: (_distro, runtimeId) =>
-            Effect.sync(() => {
-              invalidatedRuntimeIds.push(runtimeId);
-            }),
-          probeRuntime: (_distro, root) => {
-            observedProbeRoots.push(root);
-            return { ok: false, reason: `${root}/t3 --version failed (exit 127)` };
+          prepareRuntime: () => {
+            throw new Error("a failed probe must not stage the runtime");
+          },
+          probeRuntime: () => {
+            probeCount += 1;
+            return { ok: false, reason: "WSL login-shell PATH could not be resolved" };
           },
           ensureNodePty: (_distro, root) => {
             observedNodePtyRoots.push(root);
-            return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
+            return {
+              ok: true,
+              nodePath: "/usr/bin/node",
+              resolvedPath: "/usr/bin:/bin",
+              t3Home: null,
+            };
           },
         }),
       },
@@ -551,7 +577,7 @@ describe("DesktopBackendConfiguration", () => {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
           const config = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
 
-          assert.deepEqual(observedProbeRoots, [stagedAppRoot]);
+          assert.equal(probeCount, 1);
           assert.deepEqual(observedNodePtyRoots, [mountedAppRoot]);
           assert.include(config.args, "/usr/bin/node");
           assert.include(config.args, `${mountedAppRoot}/apps/server/dist/bin.mjs`);
@@ -559,24 +585,18 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.entryPath, mountedEntryPath);
           assert.isUndefined(config.wslRuntimeId);
           assert.isTrue(Option.isNone(config.preflightFailure));
-          assert.deepEqual(invalidatedRuntimeIds, [`sha256-${archiveHash}`]);
         }),
     );
   });
 
   it.effect("resolveWsl keeps WSL retryable when the mounted fallback fails transiently", () => {
     const stagedAppRoot = "/home/test/.t3/wsl-runtime/cache";
-    const invalidatedRuntimeIds: string[] = [];
     return withPackagedWslHarness(
       {
         archiveHash: "f".repeat(64),
         wsl: () => ({
           prepareRuntime: () => ({ ok: true, linuxAppRoot: stagedAppRoot }),
-          invalidateRuntime: (_distro, runtimeId) =>
-            Effect.sync(() => {
-              invalidatedRuntimeIds.push(runtimeId);
-            }),
-          probeRuntime: () => ({ ok: false, reason: "t3 --version failed (exit 1)" }),
+          probeRuntime: () => ({ ok: false, reason: "WSL login-shell PATH could not be resolved" }),
           ensureNodePty: () => ({
             ok: false,
             reason: "WSL backend preflight timed out while probing for Node.js.",
@@ -593,7 +613,6 @@ describe("DesktopBackendConfiguration", () => {
           assert.isFalse(failure.fatal);
           assert.equal(failure.retryLimit, 12);
           assert.include(failure.reason, "timed out");
-          assert.deepEqual(invalidatedRuntimeIds, []);
         }),
     );
   });
@@ -630,7 +649,7 @@ describe("DesktopBackendConfiguration", () => {
                   isAvailable: true,
                   distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
                   windowsToWslPath: () => Option.some(linuxAppRoot),
-                  ensureNodePty: () => ({ ok: true, nodePath, resolvedPath }),
+                  ensureNodePty: () => ({ ok: true, nodePath, resolvedPath, t3Home: null }),
                   getDistroIp: () => Option.some("172.27.0.99"),
                 }),
               ),
@@ -651,6 +670,8 @@ describe("DesktopBackendConfiguration", () => {
         assert.deepEqual(config.args, [
           "-d",
           "Ubuntu",
+          "--cd",
+          "~",
           "--exec",
           "env",
           "PATH=/home/test user's/.nvm/versions/node/v22.0.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin",
@@ -681,6 +702,81 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(wsl.bootstrap.desktopBootstrapToken, primary.bootstrap.desktopBootstrapToken);
       }),
     ),
+  );
+
+  it.effect("resolveWsl gives each launch a readiness probe only its own backend passes", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+
+        const primary = yield* configuration.resolvePrimary;
+        const first = yield* configuration.resolveWsl({ port: 5000, distro: null });
+        const second = yield* configuration.resolveWsl({ port: 5000, distro: null });
+        const firstSecret = first.bootstrap.desktopReadinessSecret;
+        const secondSecret = second.bootstrap.desktopReadinessSecret;
+        assert.isDefined(firstSecret);
+        assert.isDefined(secondSecret);
+        assert.notEqual(firstSecret, secondSecret);
+        assert.notEqual(firstSecret, first.bootstrap.desktopBootstrapSecret);
+        assert.isUndefined(first.bootstrap.desktopTelemetryControlFd);
+        assert.isUndefined(primary.readinessProbe);
+        assert.isDefined(first.readinessProbe);
+
+        const probe = yield* first.readinessProbe!;
+        const laterProbe = yield* first.readinessProbe!;
+        assert.notEqual(probe.path, laterProbe.path);
+        const url = new URL(probe.path, first.httpBaseUrl);
+        assert.equal(url.pathname, DESKTOP_READINESS_PROOF_PATH);
+        const challenge = url.searchParams.get(DESKTOP_READINESS_CHALLENGE_PARAM)!;
+        const answerWith = (secret: string) =>
+          desktopReadinessProof(secret, challenge).pipe(Effect.provide(NodeCrypto.layerMac));
+
+        assert.isTrue(yield* probe.accept(yield* answerWith(firstSecret!)));
+        assert.isFalse(yield* probe.accept(yield* answerWith(secondSecret!)));
+        assert.isFalse(
+          yield* probe.accept(yield* answerWith(first.bootstrap.desktopBootstrapSecret!)),
+        );
+        assert.isFalse(yield* laterProbe.accept(yield* answerWith(firstSecret!)));
+        assert.isFalse(yield* probe.accept("{}"));
+      }),
+    ),
+  );
+
+  it.effect("gives the Windows and WSL backends one host scope that survives a restart", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const launch = Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const primary = yield* configuration.resolvePrimary;
+        const wsl = yield* configuration.resolveWsl({ port: 5050, distro: null });
+        assert.equal(wsl.env.T3CODE_DESKTOP_HOST_SCOPE, primary.env.T3CODE_DESKTOP_HOST_SCOPE);
+        assert.include((wsl.env.WSLENV ?? "").split(":"), "T3CODE_DESKTOP_HOST_SCOPE");
+        return primary.env.T3CODE_DESKTOP_HOST_SCOPE;
+      }).pipe(
+        Effect.provide(
+          layerBackendConfiguration().pipe(
+            Layer.provideMerge(layerServerExposure),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslServerTree.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
+          ),
+        ),
+      );
+
+      const first = yield* launch;
+      assert.match(first ?? "", /^[0-9a-f]{32}$/);
+      assert.equal(yield* launch, first);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolveWsl carries the kill switch and resource attributes into the distro", () =>
@@ -748,7 +844,7 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(config.env.T3CODE_OTLP_PROTOCOL, "http/protobuf");
         assert.equal(
           config.env.WSLENV,
-          "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
+          "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:T3CODE_DESKTOP_HOST_SCOPE:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
         );
       }).pipe(
         Effect.provide(

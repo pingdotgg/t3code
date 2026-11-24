@@ -19,6 +19,7 @@ import * as Sink from "effect/Sink";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { fromYaml } from "@t3tools/shared/schemaYaml";
 
 import {
   buildDesktopBundles,
@@ -569,7 +570,29 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
-  it.effect("declares Calendar access for hosted commands in macOS builds", () =>
+  it.effect("names updatable AppImages without a version and apart per channel", () =>
+    Effect.gen(function* () {
+      const appImageName = (version: string) =>
+        createBuildConfig("linux", "AppImage", version, false, false, undefined, undefined).pipe(
+          Effect.map((config) => (config.appImage as { artifactName: string }).artifactName),
+        );
+
+      const stable = yield* appImageName("0.0.37");
+      const nightly = yield* appImageName("0.0.38-nightly.20261026.3740");
+
+      assert.notInclude(stable, "${version}");
+      assert.notInclude(nightly, "${version}");
+      assert.notEqual(stable, nightly);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("declares Calendar and Apple Events access for hosted commands in macOS builds", () =>
     Effect.gen(function* () {
       for (const version of ["0.1.0", "0.1.1-nightly.20261019.1"]) {
         for (const signed of [false, true]) {
@@ -587,6 +610,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             "NSCalendarsUsageDescription",
             "NSCalendarsFullAccessUsageDescription",
             "NSCalendarsWriteOnlyAccessUsageDescription",
+            "NSAppleEventsUsageDescription",
           ]) {
             assert.isString(mac.extendInfo[key], `${version}, signed=${signed}: ${key}`);
             assert.isNotEmpty(mac.extendInfo[key]);
@@ -1408,6 +1432,57 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("never runs an untrusted macOS bundle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const marker = path.join(yield* fs.makeTempDirectoryScoped(), "ran");
+        const fixture = yield* makePackagedAppFixture({
+          serverEntrySource: `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "");\n`,
+        });
+        yield* validateMacPackagedPayload({ stageDistDir: fixture.stageDistDir });
+        assert.isFalse(yield* fs.exists(marker));
+      }),
+    ).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { T3CODE_DESKTOP_UNTRUSTED_BUNDLE: "true" } }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("packages the macOS preview's PR bundle as untrusted", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workflow = yield* fs.readFileString(
+        yield* path.fromFileUrl(
+          new URL("../.github/workflows/desktop-macos-preview-publish.yml", import.meta.url),
+        ),
+      );
+      const { jobs } = yield* Schema.decodeEffect(
+        fromYaml(
+          Schema.Struct({
+            jobs: Schema.Record(
+              Schema.String,
+              Schema.Struct({
+                uses: Schema.optional(Schema.String),
+                with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+              }),
+            ),
+          }),
+        ),
+      )(workflow);
+      const packaging = Object.values(jobs).filter(
+        (job) => job.uses === "./.github/workflows/release-desktop.yml",
+      );
+      assert.isNotEmpty(packaging);
+      for (const job of packaging) assert.strictEqual(job.with?.untrusted_bundle, true);
+    }),
+  );
+
   it.effect("rejects a macOS stage without a packaged app", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1517,6 +1592,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
+    assert.match(
+      entitlements,
+      /<key>com\.apple\.security\.automation\.apple-events<\/key>\s*<true\/>/u,
+    );
     assert.match(entitlements, /<key>com\.apple\.security\.device\.camera<\/key>\s*<true\/>/u);
     assert.match(entitlements, /<key>com\.apple\.security\.device\.audio-input<\/key>\s*<true\/>/u);
     assert.notInclude(entitlements, "keychain-access-groups");

@@ -65,6 +65,17 @@ describe("commandProgramName", () => {
     expect(commandProgramName(command)).toBe(program);
   });
 
+  // regression: #41718 a leading env-setup eval hid the real program behind "Running command"
+  it.each([
+    [
+      'cd /path/to/repo && eval "$(fnm env --shell zsh)" && fnm use 26.13.1 && git commit -m "msg"',
+      "fnm",
+    ],
+    ['eval "$(/opt/homebrew/bin/brew shellenv)" && pnpm test', "pnpm"],
+  ])("skips leading env-setup eval segments: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
   it.each([
     ["source ~/.nvm/nvm.sh && nvm use", "nvm"],
     ["unset DEBUG; node app.js", "node"],
@@ -155,6 +166,22 @@ describe("commandDisplayText with redacted Codex commands", () => {
   it("keeps the wrapper when redaction broke the quoting", () => {
     const input = `/bin/zsh -lc "python3 -c 'token=[REDACTED_SECRET]"apiToken\\"]; print(token)'"`;
     expect(commandDisplayText(input)).toBe(input);
+  });
+});
+
+describe("commandDisplayText with Windows shell wrappers", () => {
+  it.each([
+    [
+      `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"`,
+      "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'",
+    ],
+    [
+      `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command 'rg -n -F "new Date()" .'`,
+      'rg -n -F "new Date()" .',
+    ],
+    ['cmd.exe /c "npm test"', "npm test"],
+  ])("shows %j as %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
   });
 });
 

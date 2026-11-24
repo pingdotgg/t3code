@@ -1,5 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { pathSetupCommand } from "@t3tools/shared/shell";
+import { pathSetupCommand, resolveCommandPath } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -15,7 +15,9 @@ import packageJson from "../../package.json" with { type: "json" };
 import {
   generatedWindowsShimTarget,
   isVersionExecutable,
+  readPosixLauncherTarget,
   recordPinnedRuntimeLauncher,
+  writePosixLauncher,
 } from "../cloud/pinnedRuntime.ts";
 import { detectCliRunner, resolveCliCommand, resolveEntryPath } from "./invocation.ts";
 
@@ -41,7 +43,7 @@ const standaloneRuntime = Effect.gen(function* () {
   return Option.some({ executable, versionsDir, runtimeDir });
 });
 
-/** Links this runtime as the `t3` command the way the install scripts do, replacing only our own link. */
+/** Installs this runtime as the `t3` command the way the install scripts do, replacing only our own launcher. */
 export const installCli = Effect.fn("cli.install.install")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -84,7 +86,10 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
         Effect.flatMap((target) =>
           fs.realPath(link).pipe(Effect.orElseSucceed(() => path.resolve(binDir, target))),
         ),
+        // Not a link: the script this command and the install scripts write.
+        Effect.catch(() => readPosixLauncherTarget(link)),
         Effect.option,
+        Effect.map(Option.filter((target) => target !== undefined)),
       );
   // A dangling symlink is occupied too: writing the shim would follow it.
   const occupied =
@@ -115,22 +120,10 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
     yield* fs
       .writeFileString(link, `@echo off\r\n"${executable}" %*`, occupied ? {} : { flag: "wx" })
       .pipe(Effect.mapError(failed(`Could not write ${link}.`)));
-  } else if (!occupied) {
-    yield* fs.symlink(executable, link).pipe(Effect.mapError(failed(`Could not link ${link}.`)));
   } else {
-    // Swap a temporary link into place so a running `t3` never sees the command missing.
-    const staging = `${link}.${process.pid}.tmp`;
-    // Clean up only a staging link this call made, never a file that was already there.
-    yield* fs
-      .symlink(executable, staging)
-      .pipe(
-        Effect.andThen(
-          fs
-            .rename(staging, link)
-            .pipe(Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore))),
-        ),
-        Effect.mapError(failed(`Could not link ${link}.`)),
-      );
+    yield* writePosixLauncher({ launcher: link, executable, exclusive: !occupied }).pipe(
+      Effect.mapError(failed(`Could not write ${link}.`)),
+    );
   }
 
   // Pruning keeps what recorded launchers point at; a background service cannot see binDir otherwise.
@@ -153,28 +146,37 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   const normalize = (value: string) =>
     windows ? path.resolve(value).toLowerCase() : path.resolve(value);
   const same = (entry: string) => entry !== "" && normalize(entry) === normalize(binDir);
-  const entries = (environment.PATH ?? environment.Path ?? "").split(windows ? ";" : ":");
-  const onPath = entries.some(same);
+  const rawPath = environment.PATH ?? environment.Path ?? "";
+  const entries = rawPath === "" ? [] : rawPath.split(windows ? ";" : ":");
+  let cwd = yield* Effect.catchDefect(HostProcess.WorkingDirectory, () => Effect.undefined);
   // A t3 earlier on PATH runs instead, and an added folder goes last. Runner caches (npx's own
   // .bin) are not installs.
   const firstOther = Effect.gen(function* () {
     for (const entry of entries) {
-      if (same(entry)) return undefined;
-      if (!path.isAbsolute(entry) || detectCliRunner(`${entry}/`) !== null) continue;
+      const absolute = path.isAbsolute(entry);
+      if ((windows || absolute) && same(entry)) return null;
+      const dir = absolute ? entry : windows || !cwd ? undefined : path.resolve(cwd, entry);
+      if (dir === undefined || detectCliRunner(`${dir}/`) !== null) continue;
       for (const name of windows ? ["t3.cmd", "t3.exe"] : ["t3"]) {
-        const candidate = path.join(entry, name);
-        if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) return candidate;
+        const candidate = path.join(dir, name);
+        if (!(yield* resolveCommandPath(candidate, { env: environment }))) continue;
+        if (windows) return candidate;
+        const resolved = yield* fs.realPath(candidate).pipe(Effect.orElseSucceed(() => candidate));
+        if (normalize(resolved) !== normalize(recorded)) return candidate;
+        if (absolute) return null;
+        cwd = undefined; // Ours already won in cwd; later relative entries lose.
       }
     }
     return undefined;
   });
-  const shadowedBy = yield* firstOther;
+  // null: this launcher runs first; a path: another t3 does; undefined: no t3 on PATH.
+  const found = yield* firstOther;
   return {
     link,
-    onPath: onPath && shadowedBy === undefined,
-    shadowedBy,
+    onPath: found === null,
+    shadowedBy: found ?? undefined,
     pathCommand:
-      onPath || shadowedBy !== undefined
+      found !== undefined
         ? undefined
         : windows
           ? // PowerShell; it covers this window only, since changing the saved PATH would flatten
@@ -329,7 +331,7 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
     .readFileString(path.join(runtimeDir, "launchers"))
     .pipe(Effect.orElseSucceed(() => ""));
   const candidates = [
-    ...launchers.split(/\r?\n/).filter(Boolean),
+    ...launchers.split(/\r?\n/).filter((launcher) => path.isAbsolute(launcher)),
     path.join(path.dirname(runtimeDir), "bin", windows ? "t3.cmd" : "t3"),
     ...(environment.PATH ?? environment.Path ?? "")
       .split(windows ? ";" : ":")
@@ -339,7 +341,7 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
       .flatMap((directory) => names.map((name) => path.join(directory, name))),
   ];
   for (const candidate of candidates) {
-    if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) return true;
+    if (yield* resolveCommandPath(candidate, { env: environment })) return true;
   }
 
   const declinedFile = path.join(runtimeDir, "install-prompt-declined");
