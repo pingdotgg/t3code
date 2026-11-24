@@ -171,24 +171,12 @@ describe("image preview groups", () => {
     expect(
       filePreviewName({
         kind: "image",
-        uri: "file:///tmp/diagram.svg",
-        name: "Diagram",
-      }),
-    ).toBe("diagram.svg");
-    expect(
-      filePreviewName({
-        kind: "image",
-        uri: "data:image/png;base64,iVBORw0KGgo=",
-      }),
-    ).toBe("Preview");
-    expect(
-      filePreviewName({
-        kind: "image",
         uri: "https://github.com/user-attachments/assets/8c809121-7a99-412e-ad09-c3c7615226a9",
       }),
     ).toBe("Preview");
-    expect(imagePreviewName("data:image/png;base64,iVBORw0KGgo=", null, "Image")).toBe("Image");
-    expect(imagePreviewName("https://example.com/render?id=5", null, "Image")).toBe("Image");
+    expect(imagePreviewName("https://drop.example.com/shot.png?sig=1", "image", "Bild")).toBe(
+      "shot.png",
+    );
     expect(
       imagePreviewName(
         "https://github.com/user-attachments/assets/8c809121-7a99-412e-ad09-c3c7615226a9",

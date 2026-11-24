@@ -30,11 +30,14 @@ import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { markdownReferenceDefinitions } from "../../lib/markdownDocument";
 import { FilePreviewGallery, useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
-import { filePreviewKey, filePreviewSourceIdentifier } from "../../lib/filePreviewGallery";
+import {
+  filePreviewKey,
+  filePreviewSourceIdentifier,
+  imagePreviewName,
+} from "../../lib/filePreviewGallery";
 import {
   isPullRequestVideoUrl,
   isPullRequestWebUrl,
-  pullRequestImageName,
   pullRequestImageSource,
   pullRequestMarkdownImages,
   pullRequestMediaSource,
@@ -105,7 +108,7 @@ function MarkdownImage(props: {
   const galleryScope = useContext(PullRequestGalleryScopeContext);
   const withGallery = useFilePreviewGallery();
   const label = props.alt?.trim() || props.title?.trim() || null;
-  const name = pullRequestImageName(props.href, label, gt("Image"));
+  const name = imagePreviewName(props.href, label, gt("Image"));
   const previewSource = pullRequestImageSource(props.href, context, name);
   const sourceIdentifier = galleryScope
     ? pullRequestScopedSourceIdentifier(galleryScope, previewSource)
@@ -166,7 +169,7 @@ export function PullRequestMarkdown(props: {
       pullRequestMarkdownImages(groupSegments, (href) =>
         changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href,
       ).map(({ uri, alt }) => {
-        const name = pullRequestImageName(uri, alt, imageFallback);
+        const name = imagePreviewName(uri, alt, imageFallback);
         const source = pullRequestImageSource(uri, mediaContext, name);
         return {
           ...source,
@@ -319,18 +322,11 @@ function PullRequestMarkdownContent(props: {
           const source = pullRequestImageSource(
             uri,
             mediaContext,
-            pullRequestImageName(uri, null, gt("Image")),
+            imagePreviewName(uri, null, gt("Image")),
           );
           const key = filePreviewKey(source);
           const match = gallery.find((item) => filePreviewKey(item) === key);
-          setPreview(
-            match
-              ? { ...match, sourceIdentifier: "" }
-              : {
-                  ...source,
-                  sourceIdentifier: "",
-                },
-          );
+          setPreview({ ...(match ?? source), sourceIdentifier: "" });
         }}
         onTaskListItemPress={props.onTaskListItemPress}
       />

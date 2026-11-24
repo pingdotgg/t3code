@@ -61,7 +61,7 @@ export function pullRequestImageSource(
 ): FilePreviewItem {
   const media = pullRequestMediaSource(url, location);
   const mimeType = pullRequestImageMimeType(url);
-  const resolvedName = name ?? pullRequestImageName(url, null, "Image");
+  const resolvedName = name ?? imagePreviewName(url, null, "Image");
   return {
     kind: "image",
     ...media,
@@ -71,14 +71,6 @@ export function pullRequestImageSource(
       ? { actionsSource: { ...media, name: resolvedName, mimeType } }
       : {}),
   };
-}
-
-export function pullRequestImageName(
-  url: string,
-  label: string | null | undefined,
-  fallback: string,
-): string {
-  return imagePreviewName(url, label, fallback);
 }
 
 /** Scopes zoom targets per gallery surface so strips, descriptions, and comments never collide. */

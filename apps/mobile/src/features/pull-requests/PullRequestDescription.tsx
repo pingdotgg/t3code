@@ -10,11 +10,10 @@ import { useContext, useId, useMemo, useState, type ComponentProps, type ReactNo
 import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import {
-  pullRequestImageName,
   pullRequestImageSource,
   pullRequestScopedSourceIdentifier,
 } from "./pullRequestMediaSource";
-import { filePreviewKey } from "../../lib/filePreviewGallery";
+import { filePreviewKey, imagePreviewName } from "../../lib/filePreviewGallery";
 import { markdownReferenceDefinitions, parseMarkdownDocument } from "../../lib/markdownDocument";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -65,7 +64,7 @@ export function PullRequestDescription(props: {
     const items: FilePreviewItem[] = [];
     for (const attachment of content.attachments) {
       if (attachment.kind !== "image") continue;
-      const name = pullRequestImageName(attachment.uri, attachment.caption, imageFallback);
+      const name = imagePreviewName(attachment.uri, attachment.caption, imageFallback);
       const source = pullRequestImageSource(attachment.uri, mediaContext, name);
       const key = filePreviewKey(source);
       const existing = byKey.get(key);

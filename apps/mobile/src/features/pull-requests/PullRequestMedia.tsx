@@ -1,7 +1,6 @@
 import { useGT } from "gt-react-native";
 import { createContext, useContext, useId, useState } from "react";
 import {
-  pullRequestImageName,
   pullRequestMediaSource,
   pullRequestImageSource,
   pullRequestScopedSourceIdentifier,
@@ -14,7 +13,7 @@ import { Image } from "expo-image";
 import { AppText } from "../../components/ui/AppText";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
-import { filePreviewSourceIdentifier } from "../../lib/filePreviewGallery";
+import { filePreviewSourceIdentifier, imagePreviewName } from "../../lib/filePreviewGallery";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { VideoAttachmentTile } from "../../components/VideoAttachmentTile";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
@@ -63,7 +62,7 @@ export function PullRequestMedia(props: {
   const [video, setVideo] = useState<VideoPreviewSource | null>(null);
   const name = props.caption || props.url.split(/[?#]/)[0]?.split("/").pop() || gt("Attachment");
   if (props.kind === "image") {
-    const imageName = pullRequestImageName(props.url, props.caption, gt("Image"));
+    const imageName = imagePreviewName(props.url, props.caption, gt("Image"));
     const previewSource = pullRequestImageSource(props.url, context, imageName);
     const sourceIdentifier = galleryScope
       ? pullRequestScopedSourceIdentifier(galleryScope, previewSource)
