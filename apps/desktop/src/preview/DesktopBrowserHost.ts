@@ -34,6 +34,8 @@ const AGENT_INPUT_METHOD = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|cal
 const AGENT_INPUT_WINDOW_MS = 5_000;
 /** A viewer's pointer travelling over the stream activates nothing on the page. */
 const POINTER_TRAVEL = new Set<unknown>(["mouseMoved", "mouseWheel"]);
+const ANNOTATING_MESSAGE =
+  "This page is being annotated in the desktop app. Input resumes when the annotation ends.";
 const FOCUS_IDLE = "5 seconds";
 /** How long a screenshot waits for the client to draw its guest at full detail. */
 const CAPTURE_DRAW_WAIT = "1 second";
@@ -57,6 +59,8 @@ export interface DesktopBrowserTabDebugger {
   readonly debugger: Electron.Debugger;
   /** Runs after the server clears the tab's cookies, so state kept beside them goes too. */
   readonly cookiesCleared?: () => Promise<void>;
+  /** Whether the person at this window is annotating the page, whose overlay is theirs alone. */
+  readonly annotating?: () => boolean;
 }
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
@@ -531,6 +535,11 @@ export const make = Effect.gen(function* () {
             tab.screencasts.delete(owner);
             syncPainting(tab);
             if (tab.screencasts.size > 0) return Promise.resolve({});
+          }
+          // The annotation overlay lives in the guest and takes any input sent there as the
+          // person's at this window, so relayed input waits until they finish.
+          if (method.startsWith("Input.") && tab.debuggee.annotating?.() === true) {
+            return Promise.reject(new Error(ANNOTATING_MESSAGE));
           }
           // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
           if (AGENT_INPUT_METHOD.test(method)) {
