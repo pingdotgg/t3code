@@ -1370,6 +1370,35 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("offers an outside project reached through a link inside a symlinked base dir", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const projectDir = yield* fileSystem.realPath(
+          yield* makeTempDir("t3code-scanner-project-"),
+        );
+        const realBaseDir = yield* fileSystem.realPath(yield* makeTempDir("t3code-scanner-base-"));
+        const linkParent = yield* makeTempDir("t3code-scanner-links-");
+        const configBaseDir = path.join(linkParent, "t3-home");
+        yield* fileSystem.symlink(realBaseDir, configBaseDir);
+        const projectLink = path.join(realBaseDir, "project-link");
+        yield* fileSystem.symlink(projectDir, projectLink);
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+          contents: claudeSessionLine(projectLink),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+
+        expect(result.candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual([
+          { path: projectLink, threadCount: 1 },
+        ]);
+      }),
+    );
+
     it.effect("finds the cwd on a later line when the first records carry none", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

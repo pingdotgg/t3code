@@ -921,14 +921,17 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
-  // Chats record whichever spelling of a T3 folder they ran in, so match both.
-  const bothSpellings = (directory: string) =>
-    fileSystem.realPath(path.resolve(directory)).pipe(
-      Effect.orElseSucceed(() => path.resolve(directory)),
-      Effect.map((realPath) => [path.resolve(directory), realPath]),
-    );
-  const baseDirs = yield* bothSpellings(serverConfig.baseDir);
-  const worktreesDirs = yield* bothSpellings(serverConfig.worktreesDir);
+  const configuredT3Dirs = {
+    baseDir: path.resolve(serverConfig.baseDir),
+    worktreesDir: path.resolve(serverConfig.worktreesDir),
+  };
+  // Resolved candidates are compared with T3's folders as resolved too, so a symlinked base still matches.
+  const realPathOf = (directory: string) =>
+    fileSystem.realPath(directory).pipe(Effect.orElseSucceed(() => directory));
+  const realT3Dirs = {
+    baseDir: yield* realPathOf(configuredT3Dirs.baseDir),
+    worktreesDir: yield* realPathOf(configuredT3Dirs.worktreesDir),
+  };
   const platform = yield* HostProcess.Platform;
   const isWindows = platform === "win32";
   const foldWorktreeCase = isWindows;
@@ -952,17 +955,12 @@ export const make = Effect.gen(function* () {
         normalizeForWorktreeMatch(ancestor, foldWorktreeCase),
       ),
     );
-  const isT3OwnedPath = (candidatePath: string) =>
-    baseDirs.some((baseDir) =>
-      normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
-        normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
-      ),
-    ) ||
-    worktreesDirs.some((worktreesDir) =>
-      isT3ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase),
-    );
-  const isExcludedProjectPath = (candidatePath: string) =>
-    isScratchPath(candidatePath) || isT3OwnedPath(candidatePath);
+  const isT3OwnedPath = (candidatePath: string, t3Dirs = configuredT3Dirs) =>
+    normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
+      normalizeForWorktreeMatch(t3Dirs.baseDir, foldWorktreeCase),
+    ) || isT3ManagedWorktree(candidatePath, t3Dirs.worktreesDir, foldWorktreeCase);
+  const isExcludedProjectPath = (candidatePath: string, t3Dirs = configuredT3Dirs) =>
+    isScratchPath(candidatePath) || isT3OwnedPath(candidatePath, t3Dirs);
 
   const listDirectory = (directory: string) =>
     fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -1023,7 +1021,7 @@ export const make = Effect.gen(function* () {
       .realPath(directory)
       .pipe(Effect.orElseSucceed(() => directory));
     // Symlinks can disguise excluded worktree paths; re-check their targets.
-    return isExcludedProjectPath(realPath) ? Option.none() : stats;
+    return isExcludedProjectPath(realPath, realT3Dirs) ? Option.none() : stats;
   });
 
   // Paths whose own read outlived the deadline, mapped to when they may be read
@@ -2110,7 +2108,9 @@ export const make = Effect.gen(function* () {
   ) {
     const root = path.resolve(expandHomePath(workspaceRoot, homeDir));
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
-    if (isExcludedProjectPath(root) || isExcludedProjectPath(realRoot)) return Stream.empty;
+    if (isExcludedProjectPath(root) || isExcludedProjectPath(realRoot, realT3Dirs)) {
+      return Stream.empty;
+    }
     const rootIdentity = yield* directoryIdentity(root);
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;
