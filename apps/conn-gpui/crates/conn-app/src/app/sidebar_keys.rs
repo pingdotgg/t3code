@@ -544,7 +544,7 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         let failure = undo_failure_text(kind.action());
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connection_for_thread(&thread_id) else {
             self.show_undo_failure(failure, cx);
             return;
         };

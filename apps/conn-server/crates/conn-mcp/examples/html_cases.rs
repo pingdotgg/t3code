@@ -136,6 +136,8 @@ async fn run(state: PathBuf, input: Value) -> Result<Value, Error> {
     .await??;
     let preview = conn_preview::tabs::Preview::new(state.clone());
     let service = McpService::new(McpConfig {
+        // No agent calls `/mcp` over HTTP here: the cases call the service in-process.
+        listen_address: std::net::SocketAddr::from(([127, 0, 0, 1], 9)),
         preview: Some(preview.clone()),
         devices: None,
 

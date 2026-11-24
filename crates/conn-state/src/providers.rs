@@ -185,6 +185,8 @@ impl ModelOptionDescriptor {
         selected
             .and_then(|opts| opts.get(id))
             .and_then(serde_json::Value::as_str)
+            // A pick the model does not offer (left over from another model or provider) is ignored.
+            .filter(|value| choices.iter().any(|c| c.id == *value))
             .or(current_value.as_deref())
             .or_else(|| choices.iter().find(|c| c.is_default).map(|c| c.id.as_str()))
             .or_else(|| choices.first().map(|c| c.id.as_str()))
@@ -231,6 +233,44 @@ impl ModelOptionDescriptor {
 
 /// User-selected model options (`modelSelection.options`).
 pub type OptionMap = serde_json::Map<String, serde_json::Value>;
+
+/// Reads `ModelSelection.options` into an [`OptionMap`] keyed by option id. The contract's canonical
+/// form is an array of `{ "id", "value" }` (`ProviderOptionSelections`); the legacy form is an object
+/// of id to value. Both read the same, as web's `getRawSelectionValueById` does. Values are strings
+/// or booleans; anything else is dropped. `None` when there is nothing to read.
+#[must_use]
+pub fn model_options_from_json(value: &serde_json::Value) -> Option<OptionMap> {
+    use serde_json::Value;
+    let keep = |value: &Value| matches!(value, Value::String(_) | Value::Bool(_));
+    let map: OptionMap = match value {
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|item| {
+                let id = item.get("id")?.as_str()?;
+                let value = item.get("value")?;
+                keep(value).then(|| (id.to_owned(), value.clone()))
+            })
+            .collect(),
+        Value::Object(map) => map
+            .iter()
+            .filter(|(_, value)| keep(value))
+            .map(|(id, value)| (id.clone(), value.clone()))
+            .collect(),
+        _ => return None,
+    };
+    (!map.is_empty()).then_some(map)
+}
+
+/// The canonical wire form of `options`: an array of `{ "id", "value" }`, in key order.
+#[must_use]
+pub fn model_options_to_json(options: &OptionMap) -> serde_json::Value {
+    serde_json::Value::Array(
+        options
+            .iter()
+            .map(|(id, value)| serde_json::json!({ "id": id, "value": value }))
+            .collect(),
+    )
+}
 
 /// The docked effort column's controls (`columnControls` + `splitSpeed`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -336,6 +376,33 @@ impl ModelOption {
     #[must_use]
     pub fn display_label(&self) -> String {
         strip_leading_qualifier(&self.name, self.sub_provider.as_deref())
+    }
+
+    /// `options` reduced to what this model offers: an option the model has no descriptor for, or a
+    /// value it has no choice for, is dropped. `None` when nothing is left. Used when the model or
+    /// provider changes, so a Codex `serviceTier` or an effort the new model lacks does not carry over.
+    #[must_use]
+    pub fn supported_options(&self, options: &OptionMap) -> Option<OptionMap> {
+        let kept: OptionMap = options
+            .iter()
+            .filter(|(id, value)| {
+                self.descriptors.iter().any(|descriptor| match descriptor {
+                    ModelOptionDescriptor::Select {
+                        id: own, choices, ..
+                    } => {
+                        own == *id
+                            && value
+                                .as_str()
+                                .is_some_and(|v| choices.iter().any(|choice| choice.id == v))
+                    }
+                    ModelOptionDescriptor::Boolean { id: own, .. } => {
+                        own == *id && value.is_boolean()
+                    }
+                })
+            })
+            .map(|(id, value)| (id.clone(), value.clone()))
+            .collect();
+        (!kept.is_empty()).then_some(kept)
     }
 
     /// `columnControls(provider, selects, toggles)`.
@@ -2731,6 +2798,141 @@ mod tests {
         let mut sub = option("opencode", "OpenRouter / Kimi K2", vec![]);
         sub.sub_provider = Some("OpenRouter".to_owned());
         assert_eq!(sub.trigger_label(), "Kimi K2");
+    }
+
+    /// A Codex thread at high effort reads as High, not the first level (Low). The thread's
+    /// `modelSelection.options` is an array of `{ id, value }`; reading it as an object found
+    /// nothing, so the effort fell back to the catalog default.
+    #[test]
+    fn a_codex_thread_at_high_effort_reads_high_from_its_selection() {
+        let model = option(
+            "codex",
+            "Astra",
+            vec![
+                select(
+                    "reasoningEffort",
+                    "Reasoning",
+                    &[
+                        ("low", "Low", false),
+                        ("medium", "Medium", true),
+                        ("high", "High", false),
+                        ("xhigh", "Extra High", false),
+                    ],
+                ),
+                select(
+                    "serviceTier",
+                    "Speed",
+                    &[
+                        ("default", "Standard", true),
+                        ("fast", "Fast", false),
+                        ("ultrafast", "Ultrafast", false),
+                    ],
+                ),
+            ],
+        );
+        let selection = serde_json::json!({
+            "instanceId": "codex",
+            "model": "astra",
+            "options": [
+                { "id": "reasoningEffort", "value": "high" },
+                { "id": "serviceTier", "value": "fast" }
+            ]
+        });
+        let options = model_options_from_json(&selection["options"]);
+        assert!(
+            selection["options"].as_object().is_none(),
+            "the wire form is an array"
+        );
+        let summary = model.effort_summary(options.as_ref());
+        assert_eq!(summary.word.as_deref(), Some("High"));
+        assert_eq!(summary.speed, Some("Fast"));
+        let controls = model.column_controls();
+        assert_eq!(
+            controls
+                .effort
+                .and_then(|d| d.select_value(options.as_ref())),
+            Some("high")
+        );
+        // The old object-only read lost the selection and showed the catalog default.
+        assert_eq!(
+            model.effort_summary(None).word.as_deref(),
+            Some("Medium"),
+            "without the selection it falls back to the default"
+        );
+    }
+
+    /// Switching model or provider keeps only the options the new model offers.
+    #[test]
+    fn switching_model_drops_options_the_new_model_does_not_offer() {
+        let codex = option(
+            "codex",
+            "Astra",
+            vec![
+                select(
+                    "reasoningEffort",
+                    "Reasoning",
+                    &[("low", "Low", false), ("high", "High", false)],
+                ),
+                select(
+                    "serviceTier",
+                    "Speed",
+                    &[
+                        ("default", "Standard", true),
+                        ("ultrafast", "Ultrafast", false),
+                    ],
+                ),
+            ],
+        );
+        let grok = option(
+            "grok",
+            "Grok",
+            vec![select(
+                "reasoningEffort",
+                "Reasoning",
+                &[("low", "Low", false), ("medium", "Medium", true)],
+            )],
+        );
+        let picked = model_options_from_json(&serde_json::json!([
+            { "id": "reasoningEffort", "value": "high" },
+            { "id": "serviceTier", "value": "ultrafast" }
+        ]));
+        let Some(picked) = picked else {
+            panic!("options should read");
+        };
+        // Same provider: both stay.
+        assert_eq!(codex.supported_options(&picked), Some(picked.clone()));
+        // Grok has no service tier and no `high`: nothing carries over.
+        assert_eq!(grok.supported_options(&picked), None);
+        // A stale pick is ignored when reading the current value, too.
+        assert_eq!(
+            grok.column_controls()
+                .effort
+                .and_then(|d| d.select_value(Some(&picked))),
+            Some("medium")
+        );
+        assert_eq!(grok.column_controls().speed_select, None);
+    }
+
+    #[test]
+    fn model_options_read_from_either_wire_form_and_write_the_canonical_one() {
+        let array = serde_json::json!([
+            { "id": "reasoningEffort", "value": "high" },
+            { "id": "fastMode", "value": true },
+            { "id": "bad", "value": 3 }
+        ]);
+        let object = serde_json::json!({ "reasoningEffort": "high", "fastMode": true, "bad": 3 });
+        let from_array = model_options_from_json(&array);
+        assert_eq!(from_array, model_options_from_json(&object));
+        let Some(options) = from_array else {
+            panic!("options should read");
+        };
+        assert_eq!(options.len(), 2, "unsupported values are dropped");
+        assert_eq!(options["fastMode"], serde_json::json!(true));
+        let written = model_options_to_json(&options);
+        assert_eq!(model_options_from_json(&written), Some(options));
+        assert!(written.is_array());
+        assert_eq!(model_options_from_json(&serde_json::json!([])), None);
+        assert_eq!(model_options_from_json(&serde_json::Value::Null), None);
     }
 
     #[test]

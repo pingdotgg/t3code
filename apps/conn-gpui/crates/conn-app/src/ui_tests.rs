@@ -3607,3 +3607,833 @@ fn removing_a_workspace_drops_it_and_the_active_one_falls_back_to_all_projects(
     );
     assert!(!labelled(cx, window, "Workspace Beta"));
 }
+
+// ---- the panel seams: drag to resize, double-click to reset ----
+
+fn seam_x(cx: &mut TestAppContext, window: AnyWindowHandle, label: &str) -> Point<Pixels> {
+    row_center(cx, window, label)
+}
+
+fn drag_seam(
+    cx: &mut TestAppContext,
+    window: AnyWindowHandle,
+    from: Point<Pixels>,
+    dx: f32,
+) -> Point<Pixels> {
+    let to = Point {
+        x: from.x + px(dx),
+        y: from.y,
+    };
+    let held = Some(MouseButton::Left);
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(from, None, cx);
+        window.pointer_down(from, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.pointer_move(to, held, cx);
+        window.render_frame(cx);
+    });
+    to
+}
+
+fn layout_widths(cx: &mut TestAppContext, app: &Entity<ConnApp>) -> (f32, f32) {
+    cx.read(|cx| {
+        let layout = app.read(cx).layout();
+        (layout.sidebar_width, layout.right_panel_width)
+    })
+}
+
+fn mount_with_right_panel(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ConnApp>) {
+    let (window, app) = mount_app(cx);
+    if !cx.read(|cx| app.read(cx).layout().right_panel_open) {
+        cx.update(|cx| app.update(cx, |app, cx| app.toggle_right_panel(cx)));
+    }
+    render_twice(cx, window);
+    (window, app)
+}
+
+#[gpui_kit::test]
+fn dragging_the_sidebar_seam_widens_the_sidebar_beside_an_open_right_panel(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_with_right_panel(cx);
+    let (before, panel) = layout_widths(cx, &app);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, 60.0);
+    let (during, _) = layout_widths(cx, &app);
+    release(cx, window, to);
+    let (after, panel_after) = layout_widths(cx, &app);
+    assert!(
+        (after - (before + 60.0)).abs() < 1.5,
+        "the sidebar follows the pointer: {before} -> {after}"
+    );
+    assert_eq!(during, after, "and keeps that width on release");
+    assert!(
+        panel_after >= conn_state::RIGHT_PANEL_MIN_WIDTH && panel_after <= panel,
+        "the right panel gives way only as far as it must: {panel} -> {panel_after}"
+    );
+}
+
+#[gpui_kit::test]
+fn dragging_the_sidebar_seam_stops_at_the_minimum_and_the_maximum(cx: &mut TestAppContext) {
+    let (window, app) = mount_with_right_panel(cx);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, -600.0);
+    release(cx, window, to);
+    assert_eq!(layout_widths(cx, &app).0, conn_state::SIDEBAR_MIN_WIDTH);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, 1000.0);
+    release(cx, window, to);
+    let (sidebar, _) = layout_widths(cx, &app);
+    assert!(
+        sidebar <= conn_state::SIDEBAR_MAX_WIDTH && sidebar > conn_state::SIDEBAR_MIN_WIDTH,
+        "it grows to the cap and no further: {sidebar}"
+    );
+}
+
+#[gpui_kit::test]
+fn double_clicking_a_seam_resets_its_width(cx: &mut TestAppContext) {
+    let (window, app) = mount_with_right_panel(cx);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, 80.0);
+    release(cx, window, to);
+    assert_ne!(layout_widths(cx, &app).0, conn_state::SIDEBAR_DEFAULT_WIDTH);
+    render_twice(cx, window);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(seam, None, cx);
+        // The test pointer always reports one click; the second press of a double click says two.
+        window.pointer_down(seam, MouseButton::Left, cx);
+        window.pointer_up(seam, MouseButton::Left, cx);
+        window.dispatch_event(
+            gpui_kit::InputEvent::to_platform_input(gpui_kit::MouseDownEvent {
+                button: MouseButton::Left,
+                position: seam,
+                modifiers: window.modifiers(),
+                click_count: 2,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.pointer_up(seam, MouseButton::Left, cx);
+        window.render_frame(cx);
+    });
+    assert_eq!(layout_widths(cx, &app).0, conn_state::SIDEBAR_DEFAULT_WIDTH);
+}
+
+#[gpui_kit::test]
+fn dragging_the_right_panel_seam_resizes_the_panel(cx: &mut TestAppContext) {
+    let (window, app) = mount_with_right_panel(cx);
+    let (_, before) = layout_widths(cx, &app);
+    let seam = seam_x(cx, window, "Resize panel");
+    let to = drag_seam(cx, window, seam, -80.0);
+    release(cx, window, to);
+    let (_, after) = layout_widths(cx, &app);
+    assert!(
+        (after - (before + 80.0)).abs() < 1.5,
+        "dragging left widens the panel: {before} -> {after}"
+    );
+}
+
+#[gpui_kit::test]
+fn a_seam_drag_keeps_the_width_for_the_next_launch_and_a_reset_forgets_it(cx: &mut TestAppContext) {
+    let (window, app) = mount_with_right_panel(cx);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).saved_panel_widths_for_test()),
+        (None, None)
+    );
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, 50.0);
+    release(cx, window, to);
+    let (sidebar, _) = layout_widths(cx, &app);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).saved_panel_widths_for_test()),
+        (Some(sidebar), None),
+        "the width it ended on is kept"
+    );
+    // A press that goes nowhere keeps nothing new.
+    render_twice(cx, window);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, 0.0);
+    release(cx, window, to);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).saved_panel_widths_for_test()).0,
+        Some(sidebar)
+    );
+}
+
+#[gpui_kit::test]
+fn a_wide_sidebar_squeezes_the_right_panel_as_drawn_and_keeps_its_width(cx: &mut TestAppContext) {
+    let (window, app) = mount_with_right_panel(cx);
+    let (_, panel) = layout_widths(cx, &app);
+    let seam = seam_x(cx, window, "Resize sidebar");
+    let to = drag_seam(cx, window, seam, 400.0);
+    release(cx, window, to);
+    let (sidebar, panel_after) = layout_widths(cx, &app);
+    assert_eq!(sidebar, conn_state::SIDEBAR_MAX_WIDTH);
+    assert_eq!(
+        panel_after, panel,
+        "the width kept for the panel is not touched"
+    );
+    let drawn = cx.read(|cx| {
+        app.read(cx)
+            .right_panel_effective_width_for_test(TEST_WINDOW_WIDTH)
+    });
+    // The chat keeps 360: 1440 - 54 - 480 - 360 = 546.
+    assert_eq!(drawn, 546.0);
+}
+
+#[gpui_kit::test]
+fn threads_of_a_linked_environment_are_listed_and_name_their_environment_in_the_hover_card(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            let project: ProjectShell = match from_json(json!({
+                "id": "proj-mini",
+                "title": "orbit",
+                "workspaceRoot": "/Users/mini/orbit",
+                "defaultModelSelection": null,
+                "scripts": [],
+                "createdAt": "2026-11-20T09:00:00.000Z",
+                "updatedAt": "2026-11-22T15:00:00.000Z",
+            })) {
+                Ok(project) => project,
+                Err(err) => panic!("linked ProjectShell failed: {err}"),
+            };
+            let thread = make_thread_shell(ThreadSeedSpec {
+                id: "thread-mini",
+                project_id: "proj-mini",
+                title: "Map Stalled Orbit Threads and PRs",
+                status: "completed",
+                activity_run_status: None,
+                pinned_at: None,
+                settled_at: None,
+                pending_kind: None,
+            });
+            app.add_linked_shell_for_test(
+                "mini",
+                "mini",
+                ShellState::from_parts(vec![project], vec![thread], Vec::new(), Some(1)),
+                cx,
+            );
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        // The merged list shows the other environment's thread beside the primary one's, and
+        // its row carries no machine icon: the hover card names the environment.
+        let _ = window.find_by_label("Map Stalled Orbit Threads and PRs");
+        let _ = window.find_by_label("Failed thread card");
+        assert!(
+            window.try_find_by_label("Environment mini").is_none(),
+            "a row shows no environment icon"
+        );
+    });
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.open_thread_hover_for_test("thread-mini", cx)
+        });
+    });
+    for _ in 0..3 {
+        let _ = cx.update_window(window, |_, w, cx| w.render_frame(cx));
+        cx.run_until_parked();
+    }
+    assert!(
+        cx.update_window(window, |_, w, cx| has_label(w, cx, "Environment mini"))
+            .unwrap_or(false),
+        "the hover card names the environment"
+    );
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert_eq!(
+            app.thread_environment_for_test("thread-mini").as_deref(),
+            Some("mini")
+        );
+        assert_eq!(app.thread_environment_for_test("thread-failed"), None);
+    });
+}
+
+fn linked_mini_shell(project_root: &str, thread_title: &str) -> ShellState {
+    let project: ProjectShell = match from_json(json!({
+        "id": "proj-mini",
+        "title": "No project",
+        "workspaceRoot": project_root,
+        "defaultModelSelection": null,
+        "scripts": [],
+        "createdAt": "2026-11-20T09:00:00.000Z",
+        "updatedAt": "2026-11-22T15:00:00.000Z",
+    })) {
+        Ok(project) => project,
+        Err(err) => panic!("linked ProjectShell failed: {err}"),
+    };
+    let mut thread = make_thread_shell(ThreadSeedSpec {
+        id: "thread-mini",
+        project_id: "proj-mini",
+        title: thread_title,
+        status: "completed",
+        activity_run_status: None,
+        pinned_at: None,
+        settled_at: None,
+        pending_kind: None,
+    });
+    // A scratch thread has no branch.
+    thread.branch = None;
+    ShellState::from_parts(vec![project], vec![thread], Vec::new(), Some(1))
+}
+
+#[gpui_kit::test]
+fn a_saved_environment_lists_its_threads_while_it_is_offline_and_its_switch_takes_them_out_and_back(
+    cx: &mut TestAppContext,
+) {
+    let (_window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            // Restored from its last snapshot: no connection, as when it is asleep.
+            app.add_linked_shell_for_test(
+                "studio",
+                "superheroicons / studio",
+                linked_mini_shell("/work/studio", "Icon audit"),
+                cx,
+            );
+        });
+    });
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.merged_thread_ids_for_test()
+                .contains(&"thread-mini".to_owned())
+        );
+        let rows = app.linked_settings_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "superheroicons / studio");
+        assert!(rows[0].enabled);
+        assert_eq!(
+            rows[0].state,
+            crate::orbit_sync::LinkedEnvironmentState::Offline
+        );
+        assert_eq!(rows[0].thread_count, 1);
+    });
+
+    // Conn's switch: off takes the environment's threads out of the list and keeps it saved.
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_linked_environment_enabled("studio", false, cx);
+        });
+    });
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            !app.merged_thread_ids_for_test()
+                .contains(&"thread-mini".to_owned())
+        );
+        let rows = app.linked_settings_rows();
+        assert_eq!(
+            rows.len(),
+            1,
+            "it stays listed in Settings, to switch back on"
+        );
+        assert!(!rows[0].enabled);
+        assert_eq!(
+            rows[0].state,
+            crate::orbit_sync::LinkedEnvironmentState::Off
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_scratch_thread_on_another_machine_names_its_machine_on_the_meta_line(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.add_linked_shell_for_test(
+                "mini",
+                "mini",
+                linked_mini_shell("/Users/mini/.conn/scratch", "Quick question"),
+                cx,
+            );
+            app.set_linked_scratch_root_for_test("mini", "/Users/mini/.conn/scratch");
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        // Conn's `scratchMachineLabel`: the scratch project's thread has no branch, so the
+        // meta line says which machine it is on instead.
+        let machine = window.find_by_label("Machine mini");
+        let row = window.find_by_label("Quick question");
+        assert!(row.bounds().contains(&machine.bounds().center()));
+        // It names the machine once: the title line carries no second icon.
+        assert!(
+            window.try_find_by_label("Environment mini").is_none(),
+            "a scratch row shows the machine label, not the icon"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn the_shelf_counts_older_settled_threads_of_every_environment(cx: &mut TestAppContext) {
+    let (_window, app) = mount_app(cx);
+    let item = |before: &str, project: &str, count: i64| {
+        from_json(json!({
+            "kind": "snapshot",
+            "snapshot": {
+                "schemaVersion": 1,
+                "snapshotSequence": 5,
+                "projects": [{
+                    "id": project, "title": project, "workspaceRoot": format!("/w/{project}"),
+                    "defaultModelSelection": null, "scripts": [],
+                    "createdAt": "2026-11-20T09:00:00.000Z", "updatedAt": "2026-11-22T15:00:00.000Z"
+                }],
+                "threads": [],
+                "archivedThreads": [],
+                "olderSettled": { "before": before, "asOfSequence": 5,
+                    "counts": [{ "projectId": project, "count": count }] }
+            }
+        }))
+        .expect("snapshot decodes")
+    };
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            let mut primary = ShellState::default();
+            primary.apply(item("2026-11-10T00:00:00.000Z", "proj-primary", 3));
+            app.set_shell(primary, cx);
+            let mut mini = ShellState::default();
+            mini.apply(item("2026-11-12T00:00:00.000Z", "proj-mini", 5));
+            app.add_linked_shell_for_test("mini", "mini", mini, cx);
+        });
+    });
+    cx.read(|cx| {
+        // 3 on this environment and 5 on mini: both count toward "Show more".
+        assert_eq!(app.read(cx).unloaded_older_settled_for_test(), 8);
+    });
+}
+
+#[gpui_kit::test]
+fn the_composer_reads_the_catalog_of_the_open_threads_environment(cx: &mut TestAppContext) {
+    let (_window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.add_linked_shell_for_test(
+                "mini",
+                "mini",
+                linked_mini_shell("/Users/mini/work", "Mini thread"),
+                cx,
+            );
+            app.set_linked_config_for_test(
+                "mini",
+                std::sync::Arc::new(conn_state::providers::ServerConfigState::new()),
+            );
+            // A thread of this environment: its own catalog.
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+            assert!(app.active_server_config_is_primary_for_test());
+            // A thread of mini: mini's catalog.
+            app.set_thread_for_test(
+                "thread-mini".to_owned(),
+                ThreadState::new("thread-mini"),
+                cx,
+            );
+            assert!(!app.active_server_config_is_primary_for_test());
+            // And back.
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+            assert!(app.active_server_config_is_primary_for_test());
+        });
+    });
+}
+
+/// The context meter's popover opens when the pointer rests on the meter and closes when it
+/// leaves the meter and the popover, with web's 150ms delays; a click pins it open.
+#[gpui_kit::test]
+fn the_context_meter_popover_closes_when_the_pointer_leaves(cx: &mut TestAppContext) {
+    use std::time::Duration;
+
+    let (_window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let composer = cx.update(|cx| app.read(cx).chat_for_test().read(cx).composer_for_test());
+    let open =
+        |cx: &mut TestAppContext| cx.update(|cx| composer.read(cx).context_meter_open_for_test());
+    let settle = |cx: &mut TestAppContext| {
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+    };
+    let delay = Duration::from_millis(150);
+
+    cx.update(|cx| {
+        composer.update(cx, |composer, cx| {
+            composer.set_context_window(Some(Default::default()), cx);
+            composer.meter_trigger_hover(true, delay, cx);
+        });
+    });
+    assert!(!open(cx), "hover alone waits out the open delay");
+    settle(cx);
+    assert!(open(cx), "resting on the meter opens the popover");
+
+    cx.update(|cx| composer.update(cx, |c, cx| c.meter_trigger_hover(false, delay, cx)));
+    settle(cx);
+    assert!(!open(cx), "leaving the meter closes the popover");
+
+    // A click pins it; the pointer leaving then does not close it.
+    cx.update(|cx| {
+        composer.update(cx, |c, cx| {
+            c.meter_trigger_hover(true, delay, cx);
+            c.meter_click(cx);
+            c.meter_trigger_hover(false, delay, cx);
+        });
+    });
+    settle(cx);
+    assert!(open(cx), "a clicked popover stays open");
+}
+
+/// Every right-panel surface exposes its controls to Nick's annotator through the AX tree: each
+/// interactive element has a label, and no two elements share one path (a duplicate id).
+#[gpui_kit::test]
+fn every_right_panel_surface_has_labelled_unique_ax_controls(cx: &mut TestAppContext) {
+    use conn_state::RightPanelTab;
+    let (window, app) = mount_with_right_panel(cx);
+    let interactive = |role: &str| {
+        [
+            "Button",
+            "Tab",
+            "MenuItem",
+            "Switch",
+            "CheckBox",
+            "RadioButton",
+            "Link",
+            "ComboBox",
+        ]
+        .contains(&role)
+    };
+    let mut problems: Vec<String> = Vec::new();
+    for tab in RightPanelTab::MENU_ORDER {
+        cx.update(|cx| app.update(cx, |app, cx| app.select_right_panel_tab(tab, cx)));
+        render_twice(cx, window);
+        let elements = cx
+            .update_window(window, |_, window, _| window.elements())
+            .unwrap_or_default();
+        let mut seen = std::collections::HashSet::new();
+        for element in &elements {
+            let path = format!("{:?}", element.path());
+            if !seen.insert(path.clone()) {
+                problems.push(format!("{tab:?}: duplicate AX path {path}"));
+            }
+            let role = element.role().map(|r| format!("{r:?}")).unwrap_or_default();
+            let unlabelled = element.label().is_none_or(|l| l.trim().is_empty());
+            if interactive(&role) && unlabelled && element.visible() {
+                problems.push(format!("{tab:?}: {role} without a label at {path}"));
+            }
+        }
+        eprintln!("AX audit {tab:?}: {} elements", elements.len());
+    }
+    assert!(problems.is_empty(), "AX problems:\n{}", problems.join("\n"));
+}
+
+#[gpui_kit::test]
+fn a_threads_linked_issues_are_in_the_hover_card_and_not_on_the_row(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    let mut shell = kitchen_sink_shell();
+    let issue = |key: &str| {
+        json!({
+            "tracker": "github", "host": "github.com", "scope": "nckrtl/conn", "key": key,
+            "projectId": "p", "url": "https://github.com/nckrtl/conn/issues/1", "source": "agent",
+            "linkedAt": "2026-11-23T10:00:00.000Z", "displayKey": format!("#{key}"), "title": "t"
+        })
+    };
+    for thread in &mut shell.threads {
+        if thread.id == "thread-pinned" {
+            let mut value = serde_json::to_value(&*thread).expect("a thread serializes");
+            value["issues"] = json!([issue("1"), issue("2"), issue("3")]);
+            *thread = from_json(value).expect("a thread with issues decodes");
+        }
+    }
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(shell, cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    assert!(
+        !cx.update_window(window, |_, w, cx| has_label(w, cx, "3 linked issues"))
+            .unwrap_or(true),
+        "the row no longer shows the linked issues"
+    );
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.open_thread_hover_for_test("thread-pinned", cx)
+        });
+    });
+    for _ in 0..3 {
+        let _ = cx.update_window(window, |_, w, cx| w.render_frame(cx));
+        cx.run_until_parked();
+    }
+    assert!(
+        cx.update_window(window, |_, w, cx| has_label(w, cx, "3 linked issues"))
+            .unwrap_or(false),
+        "the hover card lists them"
+    );
+}
+
+#[gpui_kit::test]
+fn hovering_the_settle_button_highlights_only_its_icon(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    // The icon takes its colour from the button's group on hover; a debug build trips on a
+    // second hover style on the same element, so moving the pointer over it must not panic.
+    let _ = cx.update_window(window, |_, window, cx| {
+        let row = center_by_label(window, cx, "Failed thread card");
+        window.pointer_move(row, None, cx);
+        window.render_frame(cx);
+        // The settle icon sits at the right end of the title line; move across the row's width.
+        for dx in [60.0, 120.0, 160.0] {
+            let over = Point {
+                x: px(f32::from(row.x) + dx),
+                y: px(f32::from(row.y) - 8.0),
+            };
+            window.pointer_move(over, None, cx);
+            window.render_frame(cx);
+        }
+    });
+}
+
+fn mount_with_two_environments(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ConnApp>) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            // The rail starts with no workspace, not the ones saved on this machine.
+            app.set_rail_workspaces_for_test(Vec::new(), cx);
+            app.add_linked_shell_for_test(
+                "mini",
+                "mini",
+                linked_mini_shell("/Users/mini/work", "Mini thread"),
+                cx,
+            );
+        });
+    });
+    (window, app)
+}
+
+#[gpui_kit::test]
+fn the_rail_plus_opens_the_workspace_editor_and_a_created_workspace_scopes_the_sidebar(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_with_two_environments(cx);
+    // The `+` is a workspace editor, not the folder picker.
+    let plus = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "New workspace")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("no rail + button: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_down(plus, MouseButton::Left, cx);
+        window.pointer_up(plus, MouseButton::Left, cx);
+        window.render_frame(cx);
+    });
+    let editor = cx
+        .read(|cx| app.read(cx).workspace_editor_for_test())
+        .expect("the + opens the workspace editor");
+
+    // The picker lists the projects of every connected environment, under their machines.
+    let listed = cx.read(|cx| editor.read(cx).listed_for_test());
+    assert!(
+        listed.contains(&"primary:proj-parity".to_owned()),
+        "{listed:?}"
+    );
+    assert!(listed.contains(&"mini:proj-mini".to_owned()), "{listed:?}");
+
+    let _ = cx.update_window(window, |_, window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_name_for_test("  Orbit   work ", window, cx);
+            editor.style_for_test("violet", Some("rocket"), cx);
+            editor.toggle_for_test("mini:proj-mini", true, cx);
+            editor.save_for_test(cx);
+        });
+    });
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let saved = app.workspaces_for_test();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(
+            saved[0].name, "Orbit work",
+            "the name is trimmed and collapsed"
+        );
+        assert_eq!(saved[0].color, "violet");
+        assert_eq!(saved[0].icon.as_deref(), Some("rocket"));
+        assert_eq!(saved[0].project_refs, ["mini:proj-mini"]);
+        assert_eq!(
+            app.active_workspace_for_test(),
+            Some(saved[0].id.as_str()),
+            "a created workspace is selected"
+        );
+        assert!(
+            app.workspace_editor_for_test().is_none(),
+            "the editor closes"
+        );
+    });
+    // The sidebar now shows only the threads of its projects.
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        let _ = window.find_by_label("Mini thread");
+        assert!(
+            window.try_find_by_label("Failed thread card").is_none(),
+            "a thread of another project is out of the workspace"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn the_workspace_editor_refuses_a_taken_name_edits_and_deletes(cx: &mut TestAppContext) {
+    let (window, app) = mount_with_two_environments(cx);
+    let create = |cx: &mut TestAppContext, name: &str| {
+        let _ = cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| app.open_workspace_editor(None, window, cx));
+        });
+        let editor = cx
+            .read(|cx| app.read(cx).workspace_editor_for_test())
+            .expect("an editor");
+        let _ = cx.update_window(window, |_, window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_name_for_test(name, window, cx);
+                editor.save_for_test(cx);
+            });
+        });
+        editor
+    };
+    let first = create(cx, "Orbit");
+    cx.read(|cx| {
+        assert!(
+            app.read(cx).workspace_editor_for_test().is_none(),
+            "{:?}",
+            first.read(cx).error_for_test()
+        )
+    });
+
+    // The same name in another case is taken: the editor stays open and says why.
+    let second = create(cx, "orbit");
+    cx.read(|cx| {
+        assert!(app.read(cx).workspace_editor_for_test().is_some());
+        assert_eq!(
+            second.read(cx).error_for_test().as_deref(),
+            Some("A workspace named \"orbit\" already exists.")
+        );
+        assert_eq!(app.read(cx).workspaces_for_test().len(), 1);
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        second.update(cx, |editor, cx| {
+            editor.set_name_for_test("", window, cx);
+            editor.save_for_test(cx);
+        });
+    });
+    cx.read(|cx| {
+        assert_eq!(
+            second.read(cx).error_for_test().as_deref(),
+            Some("Give the workspace a name.")
+        );
+    });
+
+    // Edit… opens the workspace with its own values, and a save renames it in place.
+    let id = cx.read(|cx| app.read(cx).workspaces_for_test()[0].id.clone());
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.workspace_editor_for_test_close(window, cx);
+            app.open_workspace_editor(Some(id.clone()), window, cx);
+        });
+    });
+    let editing = cx
+        .read(|cx| app.read(cx).workspace_editor_for_test())
+        .expect("the Edit… editor");
+    let _ = cx.update_window(window, |_, window, cx| {
+        editing.update(cx, |editor, cx| {
+            editor.set_name_for_test("Orbit core", window, cx);
+            editor.save_for_test(cx);
+        });
+    });
+    cx.read(|cx| {
+        let saved = app.read(cx).workspaces_for_test();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].id, id);
+        assert_eq!(saved[0].name, "Orbit core");
+    });
+
+    // Delete removes it, and the sidebar shows every project again.
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.open_workspace_editor(Some(id.clone()), window, cx)
+        });
+    });
+    let deleting = cx
+        .read(|cx| app.read(cx).workspace_editor_for_test())
+        .expect("an editor");
+    cx.update(|cx| deleting.update(cx, |editor, cx| editor.delete_for_test(cx)));
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.workspaces_for_test().is_empty());
+        assert_eq!(app.active_workspace_for_test(), None);
+    });
+}
+
+#[gpui_kit::test]
+fn a_letter_an_icon_and_an_image_workspace_tile_have_the_same_size_and_shape(
+    cx: &mut TestAppContext,
+) {
+    let picture = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        120,
+        80,
+        image::Rgba([250, 250, 250, 255]),
+    ));
+    let url = crate::workspace_image::data_url_from_image(&picture).expect("a data url");
+    let workspace = |id: &str, name: &str, icon: Option<&str>, image: Option<&str>| {
+        conn_desktop::orbit::OrbitWorkspace {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            color: "blue".to_owned(),
+            icon: icon.map(str::to_owned),
+            image: image.map(str::to_owned),
+            project_refs: Vec::new(),
+            project_keys: Vec::new(),
+        }
+    };
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_rail_workspaces_for_test(
+                vec![
+                    workspace("w-letter", "Letter", None, None),
+                    workspace("w-icon", "Icon", Some("rocket"), None),
+                    workspace("w-image", "Image", None, Some(&url)),
+                ],
+                cx,
+            );
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        let sizes: Vec<(f32, f32)> = ["Badge Letter", "Badge Icon", "Badge Image"]
+            .iter()
+            .map(|label| {
+                let bounds = window.find_by_label(label).bounds();
+                (f32::from(bounds.size.width), f32::from(bounds.size.height))
+            })
+            .collect();
+        // `size-7`: every kind is the same 28px square inside the 38px button.
+        assert_eq!(sizes, vec![(28.0, 28.0); 3], "{sizes:?}");
+        let button = window.find_by_label("Workspace Image").bounds();
+        assert_eq!(
+            (f32::from(button.size.width), f32::from(button.size.height)),
+            (38.0, 38.0)
+        );
+    });
+}

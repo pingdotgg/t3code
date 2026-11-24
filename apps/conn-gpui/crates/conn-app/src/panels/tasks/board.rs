@@ -290,7 +290,8 @@ fn render_settings_menu(
                      disabled: bool,
                      on_press: Rc<dyn Fn(&mut Window, &mut App)>| {
         let mut row = h_flex()
-            .id(SharedString::from(id))
+            .id(SharedString::from(id.clone()))
+            .a11y_switch(format!("panel.tasks.setting.{id}"), label, checked)
             .w_full()
             .min_h(px(28.0))
             .px(px(8.0))

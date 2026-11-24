@@ -4,6 +4,7 @@
 //! Port of `apps/web/src/orbit/tasks/TaskDetail.tsx`.
 
 use crate::a11y::ConnA11yExt as _;
+use std::cell::Cell;
 use std::rc::Rc;
 
 use conn_desktop::orbit::board::tasks_error_notice;
@@ -74,6 +75,7 @@ pub(super) fn render_task_detail(
     list_title: Option<&str>,
     notice: Option<&str>,
     scroll: &ScrollHandle,
+    padded: &Cell<bool>,
     callbacks: DetailCallbacks,
 ) -> AnyElement {
     let fg = to_hsla(tokens.foreground);
@@ -239,7 +241,7 @@ pub(super) fn render_task_detail(
                 .into_any_element()
         }
         DetailLoadState::Ready(task) => {
-            render_detail_body(tokens, navigation, task, scroll, &callbacks)
+            render_detail_body(tokens, navigation, task, scroll, padded, &callbacks)
         }
     };
 
@@ -255,11 +257,30 @@ pub(super) fn render_task_detail(
         .into_any_element()
 }
 
+/// Space under the scrolling content (`pb-8` in Conn's `TaskDetailBody`).
+const DETAIL_BOTTOM_PAD_PX: f32 = 32.0;
+
+/// The bottom spacing for this frame, given the scroll range of the last one.
+///
+/// The spacing only exists while the content itself overflows. Otherwise a brief that fits the
+/// box but not its 32px of spacing would scroll by the difference (a "two-pixel scroll").
+/// `padded` remembers whether the last frame had the spacing, since the range then includes it.
+fn bottom_padding(padded: &Cell<bool>, range: f32) -> f32 {
+    let overflows = if padded.get() {
+        range > DETAIL_BOTTOM_PAD_PX + 0.5
+    } else {
+        range > 0.5
+    };
+    padded.set(overflows);
+    if overflows { DETAIL_BOTTOM_PAD_PX } else { 0.0 }
+}
+
 fn render_detail_body(
     tokens: &Tokens,
     navigation: &TasksNavigation,
     task: &TaskDetail,
     scroll: &ScrollHandle,
+    padded: &Cell<bool>,
     callbacks: &DetailCallbacks,
 ) -> AnyElement {
     let fg = to_hsla(tokens.foreground);
@@ -323,6 +344,7 @@ fn render_detail_body(
     };
 
     // The title stays fixed under the breadcrumbs; only the content below it scrolls.
+    let bottom_padding = bottom_padding(padded, scroll.max_offset().y.into());
     v_flex()
         .id("tasks-detail-body")
         .a11y_group("panel.tasks.detail", "Task detail")
@@ -341,7 +363,7 @@ fn render_detail_body(
                 .overflow_x_hidden()
                 .overflow_y_scroll()
                 .track_scroll(scroll)
-                .pb(px(32.0))
+                .pb(px(bottom_padding))
                 .child(
                     v_flex()
                         .w_full()
@@ -1210,6 +1232,27 @@ fn render_agent_state(tokens: &Tokens, agent: &TaskAgent) -> AnyElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bottom_spacing_never_makes_fitting_content_scroll() {
+        let padded = Cell::new(true);
+        // Content fits, but spacing pushes the range to 2px: the spacing goes away.
+        assert_eq!(bottom_padding(&padded, 2.0), 0.0);
+        // With no spacing the range is 0 and stays settled.
+        assert_eq!(bottom_padding(&padded, 0.0), 0.0);
+        assert_eq!(bottom_padding(&padded, 0.0), 0.0);
+    }
+
+    #[test]
+    fn bottom_spacing_returns_when_the_content_overflows() {
+        let padded = Cell::new(false);
+        // Without spacing the content overflows by 10px: the spacing is added.
+        assert_eq!(bottom_padding(&padded, 10.0), DETAIL_BOTTOM_PAD_PX);
+        // With spacing the range is 42px (10 + 32): it stays.
+        assert_eq!(bottom_padding(&padded, 42.0), DETAIL_BOTTOM_PAD_PX);
+        // A taller brief keeps it too.
+        assert_eq!(bottom_padding(&padded, 900.0), DETAIL_BOTTOM_PAD_PX);
+    }
 
     #[test]
     fn formats_subtask_meta_text_with_dashes_for_missing_values() {

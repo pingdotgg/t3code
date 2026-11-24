@@ -12,8 +12,18 @@ mod archive;
 #[cfg(any(target_os = "macos", test))]
 mod context_menu;
 mod download;
+mod load_error;
 #[cfg(target_os = "macos")]
 mod mac;
+mod menu;
+mod trace;
+
+pub use load_error::{LoadError, net_error_name};
+pub use trace::{LOG_PATH as TRACE_LOG_PATH, trace};
+
+pub use menu::{
+    Answer as MenuAnswer, ContextMenuEvent, ContextMenuReply, ContextMenuRequest, MenuEntry,
+};
 
 use std::path::PathBuf;
 use thiserror::Error;
@@ -341,6 +351,45 @@ impl WebRuntime {
         }
     }
 
+    /// Gets everything ready that [`WebRuntime::start`] needs and that can happen off the main
+    /// thread: the helper apps are built and signed, which takes seconds after a new build. Does
+    /// nothing, and returns [`WebError::NotInstalled`], until CEF has been downloaded.
+    ///
+    /// # Errors
+    /// Returns [`WebError::NotInstalled`] before the download, or [`WebError::Runtime`] when the
+    /// helpers cannot be built.
+    pub fn prepare(&self) -> Result<(), WebError> {
+        #[cfg(target_os = "macos")]
+        {
+            mac::host::prepare()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(WebError::Unsupported(
+                "CEF is not supported on this platform",
+            ))
+        }
+    }
+
+    /// Maps the CEF framework into the process ahead of [`WebRuntime::start`], so the main
+    /// thread does not wait for the load. Safe on any thread, and repeatable.
+    ///
+    /// # Errors
+    /// Returns [`WebError::NotInstalled`] before the download, or [`WebError::Runtime`] when the
+    /// framework cannot be loaded.
+    pub fn preload_framework(&self) -> Result<(), WebError> {
+        #[cfg(target_os = "macos")]
+        {
+            mac::host::preload_framework()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(WebError::Unsupported(
+                "CEF is not supported on this platform",
+            ))
+        }
+    }
+
     /// Requests Chromium's nested message loop to exit, if running.
     pub fn quit(&self) {
         #[cfg(target_os = "macos")]
@@ -348,6 +397,17 @@ impl WebRuntime {
             mac::host::quit();
         }
     }
+}
+
+/// A response that may carry the Laravel Toolbar's data (`x-toolbar`, `x-toolbar-summary`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolbarResponse {
+    /// The main frame's document; otherwise a fetch or XHR.
+    pub document: bool,
+    pub method: String,
+    pub url: String,
+    pub full: Option<String>,
+    pub summary: Option<String>,
 }
 
 /// Handle to an offscreen-rendered embedded Chromium view.
@@ -545,11 +605,55 @@ impl BrowserView {
         let _ = callback;
     }
 
+    /// Registers a callback invoked when the main frame starts a new document, before the page's
+    /// own scripts run, receiving its URL.
+    pub fn on_load_start(&self, callback: impl Fn(&str) + Send + Sync + 'static) {
+        #[cfg(target_os = "macos")]
+        self.inner.on_load_start(callback);
+        #[cfg(not(target_os = "macos"))]
+        let _ = callback;
+    }
+
+    /// Registers a callback for each document and fetch/XHR response (any thread), with the
+    /// Laravel Toolbar headers it carries. Pages with a Content-Security-Policy get no inline
+    /// toolbar data, so the host reads the headers instead.
+    pub fn on_toolbar_response(&self, callback: impl Fn(ToolbarResponse) + Send + Sync + 'static) {
+        #[cfg(target_os = "macos")]
+        self.inner.on_toolbar_response(callback);
+        #[cfg(not(target_os = "macos"))]
+        let _ = callback;
+    }
+
     /// Registers a callback invoked whenever the main frame finishes loading,
     /// receiving `(url, http_status_code)`.
     pub fn on_load_end(&self, callback: impl Fn(&str, i32) + Send + Sync + 'static) {
         #[cfg(target_os = "macos")]
         self.inner.on_load_end(callback);
+        #[cfg(not(target_os = "macos"))]
+        let _ = callback;
+    }
+
+    /// Why the last main-frame load failed, until the next load starts. A navigation that was
+    /// only replaced (`ERR_ABORTED`) is not reported.
+    #[must_use]
+    pub fn load_error(&self) -> Option<LoadError> {
+        #[cfg(target_os = "macos")]
+        {
+            self.inner.load_error()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            None
+        }
+    }
+
+    /// Registers the host's right-click menu. The view is windowless, so Chromium draws no menu
+    /// of its own: it sends [`ContextMenuEvent::Open`] with the finished rows and waits for the
+    /// request's reply. Without a callback, right-clicking shows nothing. The callback runs on
+    /// the main thread.
+    pub fn on_context_menu(&self, callback: impl Fn(ContextMenuEvent) + Send + Sync + 'static) {
+        #[cfg(target_os = "macos")]
+        self.inner.on_context_menu(callback);
         #[cfg(not(target_os = "macos"))]
         let _ = callback;
     }

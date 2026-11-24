@@ -14,6 +14,19 @@ use rust_embed::RustEmbed;
 #[include = "*.ttf"]
 struct JetBrainsMono;
 
+pub(crate) mod axes;
+
+/// The embedded faces of `family` (JetBrains Mono only), as font files.
+pub(crate) fn bundled_faces(family: &str) -> Vec<Cow<'static, [u8]>> {
+    if !family.trim().eq_ignore_ascii_case(crate::theme::MONO_FONT) {
+        return Vec::new();
+    }
+    JetBrainsMono::iter()
+        .filter_map(|name| JetBrainsMono::get(&name))
+        .map(|file| file.data)
+        .collect()
+}
+
 /// Registers JetBrains Mono. Returns false when it could not (the app then shows fallback
 /// glyphs for [`crate::theme::MONO_FONT`]).
 pub(crate) fn register(cx: &mut App) -> bool {
@@ -44,8 +57,8 @@ mod tests {
             .collect();
         assert_eq!(
             faces.len(),
-            6,
-            "regular, italic, medium, semibold, bold, bold italic"
+            2,
+            "the variable upright and italic faces (`wght` axis, v2.304)"
         );
         for name in faces {
             let Some(file) = JetBrainsMono::get(&name) else {

@@ -9,11 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::a11y::ConnA11yExt as _;
+use crate::runtime_warmup;
 use conn_client::Connection;
-use conn_desktop::api_request::toolbar::ToolbarHistoryRow;
-use conn_desktop::api_request::toolbar::{
-    ToolbarData, ToolbarHeaderPayload, decode_toolbar_headers, minimal_toolbar_row, row_from_data,
-};
 use conn_desktop::vault::{
     VaultClient, VaultLoginField, VaultLoginFillLookup, VaultLoginItem, VaultLoginsStatus,
     https_origin,
@@ -21,17 +18,16 @@ use conn_desktop::vault::{
 use conn_state::AnnotationRecord;
 use conn_theme::Tokens;
 use conn_web::{
-    BrowserView, CursorKind, EditCommand, KeyEvent as WebKeyEvent, KeyEventKind,
-    Modifiers as WebModifiers, MouseButton as WebMouseButton, Rect as WebRect, WebError,
-    WebRuntime, WebRuntimeState,
+    BrowserView, ContextMenuEvent, CursorKind, EditCommand, KeyEvent as WebKeyEvent, KeyEventKind,
+    Modifiers as WebModifiers, MouseButton as WebMouseButton, Rect as WebRect, WebRuntime,
+    WebRuntimeState,
 };
-use futures::StreamExt as _;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    Context, Entity, EventEmitter, FontWeight, IntoElement, ParentElement, Render, Styled,
-    Subscription, Window, div, px,
+    Animation, AnimationExt as _, Context, Entity, EventEmitter, FontWeight, IntoElement,
+    ParentElement, Render, Styled, Subscription, Transformation, Window, div, percentage, px,
 };
 use gpui_kit::{
     Corners, CursorStyle, FocusHandle, KeyDownEvent, KeyUpEvent, Modifiers as GpuiModifiers,
@@ -43,15 +39,17 @@ use super::annotations::{
     AnnotationAction, AnnotationSubject, AnnotationUiState, QueuePopoverAnchor,
     QueuePopoverCallbacks, render_queue_popover,
 };
+use super::browser_context_menu::{MenuActions, OpenMenu, render_context_menu};
 use super::chrome::{self, ConnTooltipExt as _};
 use super::color::to_hsla;
 use super::header::superhero_icon;
+use super::laravel_toolbar::{LaravelToolbar, host_script};
 
 const UI_TEXT_PX: f32 = 13.0;
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
 const TOOLBAR_PAD_Y_PX: f32 = 7.5;
 const TOOLBAR_PAD_START_PX: f32 = 8.0;
-const TOOLBAR_PAD_END_PX: f32 = 11.5;
+const TOOLBAR_PAD_END_PX: f32 = TOOLBAR_PAD_START_PX;
 const TOOLBAR_HEIGHT_PX: f32 = 32.0;
 const TOOLBAR_INNER_PADDING_PX: f32 = 3.0;
 const TOOLBAR_BUTTON_SIZE_PX: f32 = 24.0;
@@ -82,16 +80,13 @@ enum OverlayBridgeMessage {
         kind: String,
         #[serde(default)]
         data: serde_json::Value,
+        #[serde(default)]
+        url: String,
     },
-    LaravelToolbarHeaders {
+    LaravelToolbarDetails {
+        id: String,
         #[serde(default)]
-        full: Option<String>,
-        #[serde(default)]
-        summary: Option<String>,
-        #[serde(default)]
-        method: Option<String>,
-        #[serde(default)]
-        url: Option<String>,
+        raw: serde_json::Value,
     },
     PreviewResult {
         #[serde(rename = "requestId")]
@@ -114,13 +109,14 @@ enum BrowserOverlayEvent {
     LaravelToolbar {
         kind: String,
         data: serde_json::Value,
+        url: String,
     },
-    LaravelToolbarHeaders {
-        full: Option<String>,
-        summary: Option<String>,
-        method: Option<String>,
-        url: Option<String>,
+    LaravelToolbarDetails {
+        id: String,
+        raw: serde_json::Value,
     },
+    ToolbarResponse(conn_web::ToolbarResponse),
+    LoadStart,
     PreviewResult {
         request_id: String,
         ok: bool,
@@ -128,13 +124,7 @@ enum BrowserOverlayEvent {
         error: Option<String>,
     },
     LoadEnd,
-}
-
-#[derive(Clone, Debug)]
-struct LaravelToolbarEntry {
-    row: ToolbarHistoryRow,
-    queries_count: Option<usize>,
-    memory: Option<String>,
+    ContextMenu(ContextMenuEvent),
 }
 
 #[derive(Default)]
@@ -154,11 +144,6 @@ enum RuntimePhase {
     Starting,
     Running,
     Failed(String),
-}
-
-enum InstallUpdate {
-    Progress(u8),
-    Done(Result<(), WebError>),
 }
 
 /// Browser right-panel surface with navigation toolbar, soft URL field, and
@@ -198,11 +183,17 @@ pub(crate) struct BrowserPanel {
     annotations: AnnotationUiState,
     /// Vault login autofill popover state for HTTPS pages.
     vault_logins: VaultLoginUiState,
-    /// Docked Laravel Toolbar entries reported by the active page (`x-toolbar` / `__LARAVEL_TOOLBAR_DATA__`).
-    laravel_toolbar: Vec<LaravelToolbarEntry>,
-    laravel_toolbar_selected: usize,
+    /// The Laravel debug bar under the page (`x-toolbar` headers and `__LARAVEL_TOOLBAR_DATA__`).
+    laravel_toolbar: Entity<LaravelToolbar>,
     /// The toolbar's overflow menu (`PreviewMoreMenu`) is open.
     more_menu_open: bool,
+    /// A task follows the runtime warm-up and updates `phase`.
+    polling_runtime: bool,
+    /// The page's right-click menu while it is open. Dropping it cancels it.
+    context_menu: Option<OpenMenu>,
+    /// The user has asked for a page (typed an address, used back, forward or reload, or clicked
+    /// in the page), so a load is theirs and the reload button may spin.
+    user_load: bool,
 }
 
 impl EventEmitter<AnnotationAction> for BrowserPanel {}
@@ -259,6 +250,10 @@ impl BrowserPanel {
         }));
 
         let annotations = AnnotationUiState::new(AnnotationSubject::Page, window, cx, |_, _, _| {});
+        let view = Rc::new(RefCell::new(None));
+        let last_bounds = Rc::new(Cell::new(None));
+        let laravel_toolbar =
+            cx.new(|cx| LaravelToolbar::new(tokens.clone(), view.clone(), last_bounds.clone(), cx));
 
         Self {
             tokens,
@@ -270,12 +265,12 @@ impl BrowserPanel {
             _subscriptions: subscriptions,
             phase: initial_phase(),
             focus_handle,
-            view: Rc::new(RefCell::new(None)),
+            view,
             rendered_frame: None,
             wake_task: None,
             overlay_task: None,
             overlay_injected_load_count: Cell::new(None),
-            last_bounds: Rc::new(Cell::new(None)),
+            last_bounds,
             last_scale: Rc::new(Cell::new(window.scale_factor().max(1.0))),
             creating_view: Rc::new(Cell::new(false)),
             visible: Rc::new(Cell::new(false)),
@@ -286,9 +281,11 @@ impl BrowserPanel {
             preview_seq: 0,
             annotations,
             vault_logins: VaultLoginUiState::default(),
-            laravel_toolbar: Vec::new(),
-            laravel_toolbar_selected: 0,
+            laravel_toolbar,
             more_menu_open: false,
+            polling_runtime: false,
+            context_menu: None,
+            user_load: false,
         }
     }
 
@@ -299,6 +296,24 @@ impl BrowserPanel {
     ) {
         self.connection = connection;
         cx.notify();
+    }
+
+    /// The Laravel debug bar entity, for the host to follow its events.
+    pub(crate) fn laravel_toolbar(&self) -> Entity<LaravelToolbar> {
+        self.laravel_toolbar.clone()
+    }
+
+    /// The Conn server the thread runs on: the debug bar changes only its Orbit Instance.
+    pub(crate) fn set_environment(&mut self, environment_id: String, cx: &mut Context<'_, Self>) {
+        self.laravel_toolbar
+            .update(cx, |bar, cx| bar.set_environment(environment_id, cx));
+    }
+
+    /// The workspace root: the debug bar opens source files only inside it.
+    pub(crate) fn set_workspace_root(&mut self, root: Option<String>, cx: &mut Context<'_, Self>) {
+        self.laravel_toolbar.update(cx, |bar, cx| {
+            bar.set_project_root(root.map(std::path::PathBuf::from), cx);
+        });
     }
 
     pub(crate) fn set_project(&mut self, project_id: Option<String>, cx: &mut Context<'_, Self>) {
@@ -380,78 +395,6 @@ impl BrowserPanel {
         view.execute_javascript(CONN_ANNOTATION_OVERLAY_JS);
         view.execute_javascript("window.__CONN_GPUI_OVERLAY_BRIDGE__?.attachModeSync();");
         self.overlay_injected_load_count.set(Some(load_count));
-    }
-
-    fn record_laravel_toolbar_data(&mut self, reset: bool, data: &ToolbarData) {
-        if reset {
-            self.laravel_toolbar.clear();
-            self.laravel_toolbar_selected = 0;
-        }
-        let Some(row) = row_from_data(data) else {
-            return;
-        };
-        let queries_count = data
-            .get("queries")
-            .and_then(|q| q.get("queries").and_then(serde_json::Value::as_array))
-            .map(Vec::len)
-            .or_else(|| {
-                data.get("queries")
-                    .and_then(|q| q.get("count").and_then(serde_json::Value::as_u64))
-                    .map(|n| n as usize)
-            });
-        let memory = data
-            .get("memory")
-            .and_then(|m| {
-                m.get("peak_usage_formatted")
-                    .or_else(|| m.get("formatted"))
-                    .and_then(serde_json::Value::as_str)
-            })
-            .map(ToOwned::to_owned);
-        let entry = LaravelToolbarEntry {
-            row,
-            queries_count,
-            memory,
-        };
-        if let Some(pos) = self
-            .laravel_toolbar
-            .iter()
-            .position(|existing| existing.row.id == entry.row.id)
-        {
-            self.laravel_toolbar[pos] = entry;
-            self.laravel_toolbar_selected = pos;
-        } else {
-            self.laravel_toolbar.insert(0, entry);
-            self.laravel_toolbar.truncate(20);
-            self.laravel_toolbar_selected = 0;
-        }
-    }
-
-    fn record_laravel_toolbar_headers(
-        &mut self,
-        full: Option<&str>,
-        summary: Option<&str>,
-        method: Option<&str>,
-        url: Option<&str>,
-    ) {
-        let Some(payload) = decode_toolbar_headers(full, summary) else {
-            return;
-        };
-        match payload {
-            ToolbarHeaderPayload::Full { data } => {
-                self.record_laravel_toolbar_data(false, &data);
-            }
-            ToolbarHeaderPayload::Summary { id, row } => {
-                let row = row.unwrap_or_else(|| minimal_toolbar_row(&id, method, url));
-                let entry = LaravelToolbarEntry {
-                    row,
-                    queries_count: None,
-                    memory: None,
-                };
-                self.laravel_toolbar.insert(0, entry);
-                self.laravel_toolbar.truncate(20);
-                self.laravel_toolbar_selected = 0;
-            }
-        }
     }
 
     /// Evaluates JS in the active CEF page and returns its JSON result via the bridge.
@@ -930,11 +873,18 @@ impl BrowserPanel {
         if self.visible.get() != visible {
             self.visible.set(visible);
             apply_hidden(&self.view, &self.applied_hidden, !visible);
+            if visible {
+                self.prewarm_runtime(cx);
+            } else {
+                self.context_menu = None;
+            }
             cx.notify();
         }
     }
 
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
+        self.laravel_toolbar
+            .update(cx, |bar, cx| bar.set_tokens(tokens.clone(), cx));
         self.tokens = tokens;
         cx.notify();
     }
@@ -943,7 +893,18 @@ impl BrowserPanel {
     /// the CEF runtime on first use.
     pub(crate) fn navigate(&mut self, url: impl Into<String>, cx: &mut Context<'_, Self>) {
         let target = normalize_url(&url.into());
+        trace_browser(&format!(
+            "navigate to {target} (runtime {:?}, view {})",
+            WebRuntime::global().state(),
+            if self.view.borrow().is_some() {
+                "ready"
+            } else {
+                "not yet"
+            }
+        ));
         self.url = target;
+        self.user_load = true;
+        self.context_menu = None;
         self.ensure_runtime_and_load(cx);
     }
 
@@ -980,6 +941,7 @@ impl BrowserPanel {
     }
 
     fn go_back(&mut self, cx: &mut Context<'_, Self>) {
+        self.user_load = true;
         if let Some(view) = self.view.borrow().as_ref() {
             view.go_back();
             cx.notify();
@@ -987,6 +949,7 @@ impl BrowserPanel {
     }
 
     fn go_forward(&mut self, cx: &mut Context<'_, Self>) {
+        self.user_load = true;
         if let Some(view) = self.view.borrow().as_ref() {
             view.go_forward();
             cx.notify();
@@ -994,12 +957,25 @@ impl BrowserPanel {
     }
 
     fn reload(&mut self, cx: &mut Context<'_, Self>) {
+        self.user_load = true;
         if let Some(view) = self.view.borrow().as_ref() {
             view.reload();
             cx.notify();
         } else {
             self.ensure_runtime_and_load(cx);
         }
+    }
+
+    /// Whether a page the user asked for is loading, from CEF's loading state. The first
+    /// `about:blank` and the page of a warm start are not: the warm-up shows in the page area and
+    /// never on the reload button.
+    fn is_loading(&self) -> bool {
+        self.user_load
+            && self
+                .view
+                .borrow()
+                .as_ref()
+                .is_some_and(|view| view.is_loading() && !is_blank_page(&view.url()))
     }
 
     fn can_go_back(&self) -> bool {
@@ -1016,6 +992,8 @@ impl BrowserPanel {
             .is_some_and(BrowserView::can_go_forward)
     }
 
+    /// Loads `self.url`. Before the view exists this only keeps the address: the view is made on
+    /// it as soon as Chromium runs, so typing never waits for the runtime.
     fn ensure_runtime_and_load(&mut self, cx: &mut Context<'_, Self>) {
         if let Some(view) = self.view.borrow().as_ref() {
             view.load_url(&self.url);
@@ -1025,124 +1003,81 @@ impl BrowserPanel {
             cx.notify();
             return;
         }
-
-        let runtime = WebRuntime::global();
-        match runtime.state() {
-            WebRuntimeState::Running => {
-                self.phase = RuntimePhase::Running;
-                self.maybe_create_view_deferred(cx);
-                cx.notify();
-                return;
-            }
-            WebRuntimeState::Starting => {
-                self.phase = RuntimePhase::Starting;
-                self.poll_runtime_ready(cx);
-                cx.notify();
-                return;
-            }
-            WebRuntimeState::Downloading { progress_percent } => {
-                self.phase = RuntimePhase::Downloading(progress_percent);
-                cx.notify();
-                return;
-            }
-            WebRuntimeState::NotInstalled | WebRuntimeState::Failed(_) => {}
-        }
-
-        if runtime.is_installed() {
-            self.start_runtime(cx);
-            return;
-        }
-
-        if matches!(self.phase, RuntimePhase::Downloading(_)) {
-            return;
-        }
-
-        self.phase = RuntimePhase::Downloading(0);
-        cx.notify();
-
-        let (tx, mut rx) = futures::channel::mpsc::unbounded::<InstallUpdate>();
-        let spawned = std::thread::Builder::new()
-            .name("conn-web-install".into())
-            .spawn(move || {
-                let progress_tx = tx.clone();
-                let res = WebRuntime::global().ensure_installed(move |pct| {
-                    let _ = progress_tx.unbounded_send(InstallUpdate::Progress(pct));
-                });
-                let _ = tx.unbounded_send(InstallUpdate::Done(res));
-            });
-
-        if let Err(err) = spawned {
-            self.phase = RuntimePhase::Failed(format!("failed to start download thread: {err}"));
+        if runtime_warmup::disabled() {
+            self.phase = RuntimePhase::Failed("Chromium is turned off in this run".into());
             cx.notify();
             return;
         }
 
-        cx.spawn(async move |this, cx| {
-            while let Some(update) = rx.next().await {
-                let finished = matches!(update, InstallUpdate::Done(_));
-                let alive = this.update(cx, |panel, cx| match update {
-                    InstallUpdate::Progress(pct) => {
-                        panel.phase = RuntimePhase::Downloading(pct);
-                        cx.notify();
-                    }
-                    InstallUpdate::Done(Ok(())) => {
-                        panel.start_runtime(cx);
-                    }
-                    InstallUpdate::Done(Err(err)) => {
-                        panel.phase = RuntimePhase::Failed(err.to_string());
-                        cx.notify();
-                    }
-                });
-                if alive.is_err() || finished {
-                    break;
-                }
-            }
-        })
-        .detach();
-    }
-
-    fn start_runtime(&mut self, cx: &mut Context<'_, Self>) {
-        match WebRuntime::global().start() {
-            Ok(()) => {
-                if WebRuntime::global().state() == WebRuntimeState::Running {
-                    self.phase = RuntimePhase::Running;
-                    self.maybe_create_view_deferred(cx);
-                } else {
-                    self.phase = RuntimePhase::Starting;
-                    self.poll_runtime_ready(cx);
-                }
-            }
-            Err(err) => {
-                self.phase = RuntimePhase::Failed(err.to_string());
-            }
+        if WebRuntime::global().state() == WebRuntimeState::Running {
+            self.phase = RuntimePhase::Running;
+            self.maybe_create_view_deferred(cx);
+        } else {
+            // The launch warm-up is normally under way; this joins it, or retries after a failure.
+            runtime_warmup::begin(cx);
+            self.phase = runtime_phase(&WebRuntime::global().state());
+            self.poll_runtime_ready(cx);
         }
         cx.notify();
     }
 
+    /// Joins the runtime warm-up when the Browser tab shows, so the view exists by the first
+    /// address typed. Tests never show this panel, and `CONN_GPUI_NO_CEF=1` keeps CEF off.
+    fn prewarm_runtime(&mut self, cx: &mut Context<'_, Self>) {
+        if runtime_warmup::disabled() || self.view.borrow().is_some() {
+            return;
+        }
+        self.ensure_runtime_and_load(cx);
+    }
+
+    /// Follows the warm-up (download, helpers, start) until Chromium runs or fails, showing its
+    /// progress in the page area. The toolbar is never gated by this.
     fn poll_runtime_ready(&mut self, cx: &mut Context<'_, Self>) {
+        if self.polling_runtime {
+            return;
+        }
+        self.polling_runtime = true;
         cx.spawn(async move |this, cx| {
-            let started = std::time::Instant::now();
+            let mut starting_since: Option<std::time::Instant> = None;
             loop {
                 cx.background_executor()
-                    .timer(Duration::from_millis(50))
+                    .timer(Duration::from_millis(20))
                     .await;
-                let next = match WebRuntime::global().state() {
-                    WebRuntimeState::Running => Some(RuntimePhase::Running),
-                    WebRuntimeState::Failed(why) => Some(RuntimePhase::Failed(why)),
-                    _ if started.elapsed() > Duration::from_secs(60) => Some(RuntimePhase::Failed(
-                        "timed out waiting for Chromium to start".into(),
-                    )),
+                let state = WebRuntime::global().state();
+                let failure = runtime_warmup::failure();
+                let finished = match (&state, failure) {
+                    (WebRuntimeState::Running, _) => Some(RuntimePhase::Running),
+                    (_, Some(why)) => Some(RuntimePhase::Failed(why)),
+                    (WebRuntimeState::Failed(why), None) if !runtime_warmup::active() => {
+                        Some(RuntimePhase::Failed(why.clone()))
+                    }
+                    (WebRuntimeState::Starting, None)
+                        if starting_since
+                            .get_or_insert_with(std::time::Instant::now)
+                            .elapsed()
+                            > Duration::from_secs(60) =>
+                    {
+                        Some(RuntimePhase::Failed(
+                            "timed out waiting for Chromium to start".into(),
+                        ))
+                    }
                     _ => None,
                 };
-                if let Some(phase) = next {
-                    let _ = this.update(cx, |panel, cx| {
-                        let ready = matches!(phase, RuntimePhase::Running);
+                let alive = this.update(cx, |panel, cx| {
+                    let phase = finished.clone().unwrap_or_else(|| runtime_phase(&state));
+                    let ready = matches!(phase, RuntimePhase::Running);
+                    if panel.phase != phase {
                         panel.phase = phase;
+                        cx.notify();
+                    }
+                    if finished.is_some() {
+                        panel.polling_runtime = false;
                         if ready {
                             panel.maybe_create_view_deferred(cx);
                         }
-                        cx.notify();
-                    });
+                    }
+                });
+                if alive.is_err() || finished.is_some() {
                     break;
                 }
             }
@@ -1179,7 +1114,9 @@ impl BrowserPanel {
             }
             let rect = last_bounds.get().unwrap_or(bounds);
             let scale = last_scale.get().max(1.0);
+            let began = std::time::Instant::now();
             let result = BrowserView::create(rect, scale, &url);
+            trace_browser(&format!("view created in {:?}", began.elapsed()));
             match result {
                 Ok(browser_view) => {
                     // Bounded channel (capacity 1) coalesces frame bursts into a
@@ -1212,20 +1149,12 @@ impl BrowserPanel {
                                 OverlayBridgeMessage::Mode { active } => {
                                     BrowserOverlayEvent::Mode(active)
                                 }
-                                OverlayBridgeMessage::LaravelToolbar { kind, data } => {
-                                    BrowserOverlayEvent::LaravelToolbar { kind, data }
+                                OverlayBridgeMessage::LaravelToolbar { kind, data, url } => {
+                                    BrowserOverlayEvent::LaravelToolbar { kind, data, url }
                                 }
-                                OverlayBridgeMessage::LaravelToolbarHeaders {
-                                    full,
-                                    summary,
-                                    method,
-                                    url,
-                                } => BrowserOverlayEvent::LaravelToolbarHeaders {
-                                    full,
-                                    summary,
-                                    method,
-                                    url,
-                                },
+                                OverlayBridgeMessage::LaravelToolbarDetails { id, raw } => {
+                                    BrowserOverlayEvent::LaravelToolbarDetails { id, raw }
+                                }
                                 OverlayBridgeMessage::PreviewResult {
                                     request_id,
                                     ok,
@@ -1241,6 +1170,18 @@ impl BrowserPanel {
                             let _ = console_tx.send(ev);
                         }
                         true
+                    });
+                    let menu_tx = overlay_tx.clone();
+                    browser_view.on_context_menu(move |event| {
+                        let _ = menu_tx.send(BrowserOverlayEvent::ContextMenu(event));
+                    });
+                    let start_tx = overlay_tx.clone();
+                    let response_tx = overlay_tx.clone();
+                    browser_view.on_load_start(move |_url| {
+                        let _ = start_tx.send(BrowserOverlayEvent::LoadStart);
+                    });
+                    browser_view.on_toolbar_response(move |response| {
+                        let _ = response_tx.send(BrowserOverlayEvent::ToolbarResponse(response));
                     });
                     browser_view.on_load_end(move |_url, _status| {
                         let _ = overlay_tx.send(BrowserOverlayEvent::LoadEnd);
@@ -1277,28 +1218,43 @@ impl BrowserPanel {
                                                 cx.notify();
                                             }
                                         }
-                                        BrowserOverlayEvent::LaravelToolbar { kind, data } => {
-                                            if let Some(map) = data.as_object() {
-                                                panel.record_laravel_toolbar_data(
-                                                    kind == "page",
-                                                    map,
-                                                );
-                                                cx.notify();
+                                        BrowserOverlayEvent::LaravelToolbar { kind, data, url } => {
+                                            let map = data.as_object().cloned();
+                                            panel.laravel_toolbar.update(cx, |bar, cx| {
+                                                match (kind.as_str(), map) {
+                                                    ("page", Some(map)) => {
+                                                        bar.on_page_data(Some(map), &url, cx)
+                                                    }
+                                                    ("ready", _) => {
+                                                        bar.on_page_data(None, &url, cx)
+                                                    }
+                                                    ("update", Some(map)) => {
+                                                        bar.on_page_update(map, cx)
+                                                    }
+                                                    _ => {}
+                                                }
+                                            });
+                                            cx.notify();
+                                        }
+                                        BrowserOverlayEvent::LaravelToolbarDetails { id, raw } => {
+                                            if let Some(map) = raw.as_object().cloned() {
+                                                panel.laravel_toolbar.update(cx, |bar, cx| {
+                                                    bar.on_details(&id, map, cx)
+                                                });
                                             }
                                         }
-                                        BrowserOverlayEvent::LaravelToolbarHeaders {
-                                            full,
-                                            summary,
-                                            method,
-                                            url,
-                                        } => {
-                                            panel.record_laravel_toolbar_headers(
-                                                full.as_deref(),
-                                                summary.as_deref(),
-                                                method.as_deref(),
-                                                url.as_deref(),
-                                            );
-                                            cx.notify();
+                                        BrowserOverlayEvent::ToolbarResponse(response) => {
+                                            panel.laravel_toolbar.update(cx, |bar, cx| {
+                                                bar.on_response(response, cx)
+                                            });
+                                        }
+                                        BrowserOverlayEvent::LoadStart => {
+                                            if let Some(view) = panel.view.borrow().as_ref() {
+                                                view.execute_javascript(&host_script());
+                                            }
+                                            panel
+                                                .laravel_toolbar
+                                                .update(cx, |bar, cx| bar.on_load_start(cx));
                                         }
                                         BrowserOverlayEvent::PreviewResult {
                                             request_id,
@@ -1319,12 +1275,24 @@ impl BrowserPanel {
                                                 let _ = tx.send(reply);
                                             }
                                         }
+                                        BrowserOverlayEvent::ContextMenu(
+                                            ContextMenuEvent::Open(request),
+                                        ) => {
+                                            // A menu still open is replaced, which cancels it.
+                                            panel.context_menu = Some(OpenMenu::new(request));
+                                            cx.notify();
+                                        }
+                                        BrowserOverlayEvent::ContextMenu(
+                                            ContextMenuEvent::Dismissed,
+                                        ) => {
+                                            if panel.context_menu.take().is_some() {
+                                                cx.notify();
+                                            }
+                                        }
                                         BrowserOverlayEvent::LoadEnd => {
                                             panel.overlay_injected_load_count.set(None);
                                             panel.annotations.annotating = false;
                                             panel.vault_logins.open = false;
-                                            panel.laravel_toolbar.clear();
-                                            panel.laravel_toolbar_selected = 0;
                                             panel.ensure_bridge_injected();
                                             panel.maybe_show_existing_pins();
                                             cx.notify();
@@ -1404,6 +1372,7 @@ impl BrowserPanel {
             cx.notify();
         }
         window.focus(&self.focus_handle, cx);
+        self.user_load = true;
         let Some((x, y)) = self.local_coords(event.position) else {
             return;
         };
@@ -1477,6 +1446,58 @@ impl BrowserPanel {
         }
     }
 
+    /// Escape cancels the open menu; Up and Down move through it; Enter runs the highlighted row.
+    fn handle_context_menu_key(&mut self, key: &str, cx: &mut Context<'_, Self>) {
+        match key {
+            "escape" => self.context_menu = None,
+            "down" | "up" => {
+                if let Some(menu) = self.context_menu.as_mut() {
+                    menu.step(key == "down");
+                }
+            }
+            "enter" => {
+                if self
+                    .context_menu
+                    .as_ref()
+                    .is_some_and(OpenMenu::choose_cursor)
+                {
+                    self.context_menu = None;
+                }
+            }
+            _ => return,
+        }
+        cx.notify();
+    }
+
+    fn choose_context_row(
+        &mut self,
+        index: usize,
+        _window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self
+            .context_menu
+            .as_ref()
+            .is_some_and(|menu| menu.choose(index))
+        {
+            self.context_menu = None;
+            cx.notify();
+        }
+    }
+
+    fn hover_context_row(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+        if let Some(menu) = self.context_menu.as_mut() {
+            menu.hover(index);
+            cx.notify();
+        }
+    }
+
+    fn dismiss_context_menu(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.context_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
     fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -1484,6 +1505,12 @@ impl BrowserPanel {
         cx: &mut Context<'_, Self>,
     ) {
         if !self.focus_handle.is_focused(window) {
+            return;
+        }
+        if self.context_menu.is_some() {
+            // The open menu takes the keyboard; nothing reaches the page.
+            self.handle_context_menu_key(event.keystroke.key.as_str(), cx);
+            cx.stop_propagation();
             return;
         }
         let guard = self.view.borrow();
@@ -1653,6 +1680,24 @@ impl BrowserPanel {
                 forward_color,
             ));
 
+        // Web's `RefreshIcon` spins while the page loads (`motion-safe:visible-animate-spin`,
+        // one linear turn per second). GPUI's animation stays still under Reduce Motion.
+        let loading = self.is_loading();
+        let reload_icon = superhero_icon("superhero/refresh.svg", NAV_ICON_SIZE_PX, fg);
+        let reload_icon = if loading {
+            reload_icon
+                .with_animation(
+                    "browser-reload-spin",
+                    Animation::new(Duration::from_secs(1)).repeat(),
+                    |icon, delta| {
+                        icon.with_transformation(Transformation::rotate(percentage(delta)))
+                    },
+                )
+                .into_any_element()
+        } else {
+            reload_icon.into_any_element()
+        };
+
         let reload_btn = div()
             .id("browser-nav-reload")
             .a11y_button("browser.nav.reload", "Reload")
@@ -1664,11 +1709,7 @@ impl BrowserPanel {
             .cursor_pointer()
             .hover(move |s| s.bg(hover_bg))
             .on_click(cx.listener(|this, _, _, cx| this.reload(cx)))
-            .child(superhero_icon(
-                "superhero/refresh.svg",
-                NAV_ICON_SIZE_PX,
-                fg,
-            ));
+            .child(reload_icon);
 
         h_flex()
             .flex_shrink_0()
@@ -1908,118 +1949,6 @@ impl BrowserPanel {
                 .child(list)
                 .into_any_element(),
         )
-    }
-
-    fn render_laravel_toolbar(&self, cx: &mut Context<'_, Self>) -> Option<gpui_kit::AnyElement> {
-        let entry = self
-            .laravel_toolbar
-            .get(self.laravel_toolbar_selected)
-            .or_else(|| self.laravel_toolbar.first())?;
-
-        let fg = to_hsla(self.tokens.foreground);
-        let muted = to_hsla(self.tokens.muted_foreground);
-        let divider = to_hsla(self.tokens.shell_divider_header);
-        let bar_bg = to_hsla(self.tokens.shell_control);
-        let hover = to_hsla(self.tokens.shell_highlight);
-        let status_color = match entry.row.status_code {
-            Some(code) if code >= 500 => to_hsla(self.tokens.destructive),
-            Some(code) if code >= 400 => to_hsla(self.tokens.warning),
-            Some(code) if (200..400).contains(&code) => to_hsla(self.tokens.success),
-            _ => muted,
-        };
-
-        let mut bar = h_flex()
-            .id("browser-laravel-toolbar")
-            .a11y_group("browser.laravel-toolbar", "Laravel Toolbar")
-            .w_full()
-            .h(px(28.0))
-            .px(px(10.0))
-            .gap(px(10.0))
-            .items_center()
-            .bg(bar_bg)
-            .border_t_1()
-            .border_color(divider)
-            .text_size(px(12.0))
-            .child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(fg)
-                    .child("Laravel"),
-            )
-            .child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(status_color)
-                    .child(format!(
-                        "{} {}",
-                        entry.row.method,
-                        entry
-                            .row
-                            .status_code
-                            .map_or_else(|| "—".to_owned(), |c| c.to_string())
-                    )),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(fg)
-                    .child(entry.row.uri.clone()),
-            );
-
-        if let Some(duration) = &entry.row.duration {
-            bar = bar.child(div().text_color(muted).child(duration.clone()));
-        }
-        if let Some(queries) = entry.queries_count {
-            bar = bar.child(div().text_color(muted).child(format!("{queries} SQL")));
-        }
-        if let Some(mem) = &entry.memory {
-            bar = bar.child(div().text_color(muted).child(mem.clone()));
-        }
-        if self.laravel_toolbar.len() > 1 {
-            bar = bar.child(
-                div()
-                    .id("browser-laravel-history-next")
-                    .a11y_button("browser.laravel.history", "Cycle Laravel Toolbar requests")
-                    .px(px(5.0))
-                    .py(px(1.0))
-                    .rounded(px(4.0))
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(hover))
-                    .text_color(muted)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if !this.laravel_toolbar.is_empty() {
-                            this.laravel_toolbar_selected =
-                                (this.laravel_toolbar_selected + 1) % this.laravel_toolbar.len();
-                            cx.notify();
-                        }
-                    }))
-                    .child(format!(
-                        "{}/{}",
-                        self.laravel_toolbar_selected + 1,
-                        self.laravel_toolbar.len()
-                    )),
-            );
-        }
-        bar = bar.child(
-            div()
-                .id("browser-laravel-clear")
-                .a11y_button("browser.laravel.clear", "Clear Laravel Toolbar")
-                .px(px(4.0))
-                .py(px(2.0))
-                .rounded(px(4.0))
-                .cursor_pointer()
-                .hover(move |s| s.bg(hover))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.laravel_toolbar.clear();
-                    this.laravel_toolbar_selected = 0;
-                    cx.notify();
-                }))
-                .child(superhero_icon("superhero/close.svg", 11.0, muted)),
-        );
-
-        Some(bar.into_any_element())
     }
 
     /// The overflow menu (`PreviewMoreMenu`), below the right edge of the toolbar. It lists only
@@ -2516,6 +2445,66 @@ impl Render for BrowserPanel {
                 }))
                 .child(page_canvas);
 
+            // A page that failed to load: say why, in the page area, with a way to try again.
+            let load_error = self
+                .view
+                .borrow()
+                .as_ref()
+                .and_then(BrowserView::load_error);
+            if let Some(error) = load_error {
+                let retry_url = error.url.clone();
+                container = container.child(
+                    v_flex()
+                        .id("browser-load-error")
+                        .a11y_group("browser.load-error", "Page failed to load")
+                        .absolute()
+                        .inset_0()
+                        .items_center()
+                        .justify_center()
+                        .gap(px(10.0))
+                        .bg(to_hsla(self.tokens.background))
+                        .child(
+                            div()
+                                .text_size(px(UI_TEXT_PX))
+                                .line_height(px(UI_LINE_HEIGHT_PX))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(fg)
+                                .child(error.message()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(UI_TEXT_PX))
+                                .line_height(px(UI_LINE_HEIGHT_PX))
+                                .text_color(muted)
+                                .child(error.name()),
+                        )
+                        .child(
+                            div()
+                                .id("browser-load-error-retry")
+                                .a11y_button("browser.load-error.retry", "Retry")
+                                .h(px(28.0))
+                                .px(px(12.0))
+                                .flex()
+                                .items_center()
+                                .rounded(px(9999.0))
+                                .bg(tile_bg)
+                                .border_1()
+                                .border_color(tile_border)
+                                .text_size(px(UI_TEXT_PX))
+                                .text_color(fg)
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.user_load = true;
+                                    if let Some(view) = this.view.borrow().as_ref() {
+                                        view.load_url(&retry_url);
+                                    }
+                                    cx.notify();
+                                }))
+                                .child("Retry"),
+                        ),
+                );
+            }
+
             if let Some(message) = status_message {
                 container = container.child(
                     v_flex()
@@ -2574,7 +2563,28 @@ impl Render for BrowserPanel {
         });
 
         let vault_popover = self.render_vault_logins_popover(cx);
-        let laravel_bar = self.render_laravel_toolbar(cx);
+        let laravel_bar = self
+            .laravel_toolbar
+            .read(cx)
+            .is_visible()
+            .then(|| self.laravel_toolbar.clone());
+        let context_menu = self.context_menu.as_ref().and_then(|menu| {
+            let bounds = self.last_bounds.get()?;
+            let (x, y) = menu.position();
+            let origin = gpui_kit::point(px(bounds.x + x as f32), px(bounds.y + y as f32));
+            let actions = MenuActions {
+                choose: Self::choose_context_row,
+                hover: Self::hover_context_row,
+                dismiss: Self::dismiss_context_menu,
+            };
+            Some(render_context_menu(
+                menu,
+                origin,
+                &self.tokens,
+                &actions,
+                cx,
+            ))
+        });
 
         v_flex()
             .relative()
@@ -2631,7 +2641,14 @@ impl Render for BrowserPanel {
             .child(body)
             .children(laravel_bar)
             .children(vault_popover)
+            .children(context_menu)
     }
+}
+
+/// Logs the browser panel's start-up steps: to stderr with `CONN_WEB_TRACE=1`, and in debug
+/// builds to `/tmp/conn-web-trace.log`.
+fn trace_browser(what: &str) {
+    conn_web::trace("conn-browser", what);
 }
 
 fn default_browser_url() -> String {
@@ -2640,6 +2657,11 @@ fn default_browser_url() -> String {
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| DEFAULT_FALLBACK_URL.to_owned())
+}
+
+/// A page that shows nothing: the first load and an empty tab.
+fn is_blank_page(url: &str) -> bool {
+    url.is_empty() || url == DEFAULT_FALLBACK_URL
 }
 
 /// What the address field shows for `url`: a blank page shows the placeholder, not `about:blank`.
@@ -2652,14 +2674,18 @@ fn address_text(url: &str) -> String {
 }
 
 fn normalize_url(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return DEFAULT_FALLBACK_URL.to_owned();
-    }
-    if trimmed.contains("://") || trimmed.starts_with("about:") || trimmed.starts_with("data:") {
-        trimmed.to_owned()
-    } else {
-        format!("http://{trimmed}")
+    super::address::resolve_address(raw)
+}
+
+/// The page-area status for the runtime's state.
+fn runtime_phase(state: &WebRuntimeState) -> RuntimePhase {
+    match state {
+        WebRuntimeState::Running => RuntimePhase::Running,
+        WebRuntimeState::Downloading { progress_percent } => {
+            RuntimePhase::Downloading(*progress_percent)
+        }
+        WebRuntimeState::Failed(why) => RuntimePhase::Failed(why.clone()),
+        WebRuntimeState::Starting | WebRuntimeState::NotInstalled => RuntimePhase::Starting,
     }
 }
 

@@ -39,6 +39,9 @@ pub enum OrbitTargetKind {
         node_name: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         roles: Vec<String>,
+        /// The Gateway's `is_primary_agent`: this Node is the fleet's primary Conn entry point.
+        #[serde(default)]
+        is_primary_agent: bool,
     },
     /// Isolated Orbit Instance for a project branch on a Node.
     Instance {
@@ -129,8 +132,7 @@ impl OrbitServerTarget {
         }
     }
 
-    /// True when this target is an Orbit Node carrying the `"agent"` role. A Node with that role
-    /// is the Conn entry point; the Gateway reports `roles` only (no separate primary flag).
+    /// True when this target is an Orbit Node carrying the `"agent"` role.
     #[must_use]
     pub fn has_agent_role(&self) -> bool {
         match &self.kind {
@@ -139,6 +141,18 @@ impl OrbitServerTarget {
             }
             OrbitTargetKind::Instance { .. } => false,
         }
+    }
+
+    /// True when the Gateway marks this Node as the primary agent (`is_primary_agent`).
+    #[must_use]
+    pub fn is_primary_agent(&self) -> bool {
+        matches!(
+            self.kind,
+            OrbitTargetKind::Node {
+                is_primary_agent: true,
+                ..
+            }
+        )
     }
 
     /// Human-readable primary title (`beast` for a Node; `dlf-leden / task-6169` for an Instance).
@@ -212,6 +226,8 @@ impl OrbitServerTarget {
 pub struct OrbitFleet {
     pub nodes: Vec<OrbitServerTarget>,
     pub instances: Vec<OrbitServerTarget>,
+    /// The local Node's name given to [`Self::from_targets`], for [`Self::primary_agent_node`].
+    pub local_node_name: Option<String>,
 }
 
 impl OrbitFleet {
@@ -252,7 +268,11 @@ impl OrbitFleet {
             })
         });
 
-        Self { nodes, instances }
+        Self {
+            nodes,
+            instances,
+            local_node_name: local_node_name.map(str::to_owned),
+        }
     }
 
     /// Looks up any Node or Instance by its Gateway `server_id`.
@@ -292,21 +312,11 @@ impl OrbitFleet {
             .collect()
     }
 
-    /// Preferred default Orbit Node entry point:
-    /// 1. The first registered node carrying the `"agent"` role,
-    /// 2. The local node fallback (first registered node, else `nodes.first()`, since
-    ///    [`Self::from_targets`] sorts the local node first).
+    /// Preferred default Orbit Node entry point: [`select_primary_agent_node`] with the local
+    /// Node this fleet was built with.
     #[must_use]
     pub fn primary_agent_node(&self) -> Option<&OrbitServerTarget> {
-        self.nodes
-            .iter()
-            .find(|n| n.status == OrbitTargetStatus::Registered && n.has_agent_role())
-            .or_else(|| {
-                self.nodes
-                    .iter()
-                    .find(|n| n.status == OrbitTargetStatus::Registered)
-            })
-            .or_else(|| self.nodes.first())
+        select_primary_agent_node(&self.nodes, self.local_node_name.as_deref())
     }
 
     /// Selects the primary `agent`-role Node from this fleet, falling back only to
@@ -344,9 +354,8 @@ fn deterministic_node_order<'a>(
     )
 }
 
-/// Selects the Orbit Node carrying the `"agent"` role from the Gateway's target list
-/// (`docs/scope.md` §5.4). The Node with the `agent` role IS the Conn entry point: the Gateway
-/// reports each Node's `roles` on `GET /api/v1/conn/environments` and has no separate primary flag.
+/// Selects the primary agent Node from the Gateway's target list (`docs/scope.md` §5.4). The
+/// Gateway reports each Node's `roles` and `is_primary_agent` on `GET /api/v1/conn/environments`.
 ///
 /// Mirrors how desktop (`conn-app`) and Expo mobile (`apps/mobile/src/features/orbit/orbitGatewayStore.ts`,
 /// `OrbitEnvironmentSections.tsx`) interpret `GET /api/v1/conn/environments`:
@@ -354,12 +363,12 @@ fn deterministic_node_order<'a>(
 ///   `Registered` and not `cleanup_pending` are eligible; per-project Instance clones and
 ///   `SessionExpired` registrations are skipped.
 /// - Selection priority:
-///   1. Registered host Node whose `roles` contain `"agent"` (case-insensitive; ties broken
-///      deterministically: local node first, then ASCII case-insensitive label, then `server_id`).
-///   2. If no `agent`-role node is set and `local_node_name` is `Some(name)`, the registered host
-///      Node matching `name` by `node_name` or `label` (desktop day-1 local fallback).
-///   3. `None` when no `agent`-role node is configured and no local host Node matches (e.g. on
-///      iOS, where the phone does not host `conn-server`, or when `local_node_name` is `None`).
+///   1. The agent entry, `agent_entry_node`: the Node the Gateway marks `is_primary_agent`,
+///      else the only Node with the `"agent"` role.
+///   2. Else, when `local_node_name` is `Some(name)`, the registered host Node matching `name` by
+///      `node_name` or `label` (desktop day-1 local fallback).
+///   3. `None` when neither applies (e.g. on iOS, where the phone does not host `conn-server`,
+///      or when `local_node_name` is `None`).
 ///
 /// # Connecting to the selected node (URL + credential)
 ///
@@ -405,28 +414,39 @@ pub fn select_primary_agent_node<'a>(
     targets: &'a [OrbitServerTarget],
     local_node_name: Option<&str>,
 ) -> Option<&'a OrbitServerTarget> {
-    let eligible: Vec<&OrbitServerTarget> = targets
-        .iter()
-        .filter(|target| {
-            target.is_node()
-                && !target.cleanup_pending
-                && target.status == OrbitTargetStatus::Registered
-        })
-        .collect();
+    agent_entry_node(targets, local_node_name).or_else(|| {
+        eligible_nodes(targets)
+            .filter(|node| matches_local_node(node, local_node_name))
+            .min_by_key(|node| deterministic_node_order(node, local_node_name))
+    })
+}
 
-    if let Some(agent) = eligible
-        .iter()
-        .copied()
-        .filter(|node| node.has_agent_role())
+/// The agent entry point among registered host Nodes: the Node the Gateway marks
+/// `is_primary_agent`, else the only Node with the `"agent"` role. `None` when no Node is primary
+/// and zero or several Nodes carry the role. `local_node_name` only breaks ties.
+fn agent_entry_node<'a>(
+    targets: &'a [OrbitServerTarget],
+    local_node_name: Option<&str>,
+) -> Option<&'a OrbitServerTarget> {
+    if let Some(primary) = eligible_nodes(targets)
+        .filter(|node| node.is_primary_agent())
         .min_by_key(|node| deterministic_node_order(node, local_node_name))
     {
-        return Some(agent);
+        return Some(primary);
     }
+    let mut agents = eligible_nodes(targets).filter(|node| node.has_agent_role());
+    match (agents.next(), agents.next()) {
+        (Some(only), None) => Some(only),
+        _ => None,
+    }
+}
 
-    eligible
-        .into_iter()
-        .filter(|node| matches_local_node(node, local_node_name))
-        .min_by_key(|node| deterministic_node_order(node, local_node_name))
+fn eligible_nodes(targets: &[OrbitServerTarget]) -> impl Iterator<Item = &OrbitServerTarget> {
+    targets.iter().filter(|target| {
+        target.is_node()
+            && !target.cleanup_pending
+            && target.status == OrbitTargetStatus::Registered
+    })
 }
 
 /// One-time pairing link minted by Orbit Gateway for a Node or Instance.
@@ -915,6 +935,11 @@ fn decode_target(value: &Value) -> Option<OrbitServerTarget> {
                 .unwrap_or(&label)
                 .to_owned(),
             roles: decode_roles(obj),
+            is_primary_agent: obj
+                .get("is_primary_agent")
+                .or_else(|| obj.get("node").and_then(|n| n.get("primary_agent")))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         },
     };
 
@@ -1238,7 +1263,8 @@ mod tests {
                     "status": "registered",
                     "cleanup_pending": false,
                     "instance_id": null,
-                    "roles": ["agent", "Agent", "  "]
+                    "roles": ["agent", "Agent", "  "],
+                    "is_primary_agent": true
                 }
             ]
         })
@@ -1260,6 +1286,9 @@ mod tests {
 
         assert!(!nick.has_agent_role());
         assert!(nick.roles().is_empty());
+        assert!(!nick.is_primary_agent());
+        assert!(!beast.is_primary_agent());
+        assert!(mini.is_primary_agent());
 
         assert!(beast.has_agent_role());
         assert_eq!(beast.roles(), ["router", "agent"]);
@@ -1274,14 +1303,29 @@ mod tests {
             .collect();
         assert_eq!(agent_ids, vec!["node-beast", "node-mini"]);
 
-        // 1. Prefers the first registered node with the `"agent"` role (local node sorts first,
-        //    then label: nick has no role, so beast).
+        // 1. The Gateway's `is_primary_agent` wins over the alphabetical agent order.
         assert_eq!(
             fleet.primary_agent_node().map(|n| n.server_id.as_str()),
-            Some("node-beast")
+            Some("node-mini")
         );
 
-        // 2. The same without mini.
+        // 2. Several agent nodes and none primary: no guess, the local node.
+        let mut plain_mini = mini.clone();
+        plain_mini.kind = OrbitTargetKind::Node {
+            node_name: "mini".to_owned(),
+            roles: vec!["agent".to_owned()],
+            is_primary_agent: false,
+        };
+        let no_primary =
+            OrbitFleet::from_targets(vec![nick.clone(), beast.clone(), plain_mini], Some("nick"));
+        assert_eq!(
+            no_primary
+                .primary_agent_node()
+                .map(|n| n.server_id.as_str()),
+            Some("node-nick")
+        );
+
+        // 3. Exactly one agent node and none primary: that node.
         let without_primary =
             OrbitFleet::from_targets(vec![nick.clone(), beast.clone()], Some("nick"));
         assert_eq!(
@@ -1291,11 +1335,12 @@ mod tests {
             Some("node-beast")
         );
 
-        // 3. Without any agent-role node, falls back to the local node (sorted first).
+        // 4. Without any agent-role node, falls back to the local node (sorted first).
         let mut plain_beast = beast.clone();
         plain_beast.kind = OrbitTargetKind::Node {
             node_name: "beast".to_owned(),
             roles: Vec::new(),
+            is_primary_agent: false,
         };
         let without_agents =
             OrbitFleet::from_targets(vec![plain_beast, nick.clone()], Some("nick"));
@@ -1307,7 +1352,7 @@ mod tests {
             Some("node-nick")
         );
 
-        // 4. Empty fleet returns None.
+        // 5. Empty fleet returns None.
         assert_eq!(OrbitFleet::default().primary_agent_node(), None);
     }
 
@@ -1353,8 +1398,19 @@ mod tests {
             kind: OrbitTargetKind::Node {
                 node_name: node_name.to_owned(),
                 roles: roles.iter().map(|r| (*r).to_owned()).collect(),
+                is_primary_agent: false,
             },
         }
+    }
+
+    fn as_primary(mut node: OrbitServerTarget) -> OrbitServerTarget {
+        if let OrbitTargetKind::Node {
+            is_primary_agent, ..
+        } = &mut node.kind
+        {
+            *is_primary_agent = true;
+        }
+        node
     }
 
     fn make_instance(server_id: &str, label: &str, instance_id: i64) -> OrbitServerTarget {
@@ -1380,7 +1436,7 @@ mod tests {
     }
 
     #[test]
-    fn select_primary_agent_node_prefers_agent_role_then_local_else_none() {
+    fn select_primary_agent_node_prefers_primary_then_sole_agent_then_local() {
         let nick = make_node(
             "node-nick",
             "nick",
@@ -1407,44 +1463,43 @@ mod tests {
         );
         let instance = make_instance("inst-1", "orbit / main", 42);
 
-        // 1. An `"agent"`-role node wins over the local node regardless of slice order; ties break
-        //    by local node, then label (beast before mini).
+        // 1. The Gateway's primary agent wins over the local node and the alphabetical order.
         let targets = vec![
             instance.clone(),
             nick.clone(),
             beast_agent.clone(),
-            mini_agent,
+            as_primary(mini_agent.clone()),
         ];
         assert_eq!(
             select_primary_agent_node(&targets, Some("nick")).map(|n| n.server_id.as_str()),
-            Some("node-beast"),
-            "registered agent-role node wins over the local node; alphabetical tie-break"
+            Some("node-mini"),
+            "is_primary_agent wins over the local node and the other agent node"
         );
         assert_eq!(
             select_primary_agent_node(&targets, None).map(|n| n.server_id.as_str()),
-            Some("node-beast"),
-            "iOS caller (no local_node_name) picks the agent-role node"
+            Some("node-mini"),
+            "iOS caller (no local_node_name) picks the primary agent node"
         );
 
-        // 2. Among agent-role nodes, the local one wins; otherwise alphabetical.
-        let zed_agent = make_node(
-            "node-zed",
-            "zed",
-            "zed",
-            &["Agent"],
-            OrbitTargetStatus::Registered,
-            false,
-        );
-        let two_agents = vec![zed_agent, beast_agent, nick.clone()];
+        // 2. No primary and exactly one agent-role node: that node.
+        let one_agent = vec![instance.clone(), nick.clone(), beast_agent.clone()];
         assert_eq!(
-            select_primary_agent_node(&two_agents, None).map(|n| n.server_id.as_str()),
+            select_primary_agent_node(&one_agent, Some("nick")).map(|n| n.server_id.as_str()),
             Some("node-beast"),
-            "deterministic alphabetical tie-break when local node does not hold agent role"
+            "the only agent-role node wins over the local node"
+        );
+
+        // No primary and several agent-role nodes: no guess, only the local fallback.
+        let two_agents = vec![beast_agent, mini_agent, nick.clone()];
+        assert_eq!(
+            select_primary_agent_node(&two_agents, Some("nick")).map(|n| n.server_id.as_str()),
+            Some("node-nick"),
+            "several agent nodes without a primary fall back to the local node"
         );
         assert_eq!(
-            select_primary_agent_node(&two_agents, Some("zed")).map(|n| n.server_id.as_str()),
-            Some("node-zed"),
-            "local node wins the tie among agent-role nodes"
+            select_primary_agent_node(&two_agents, None),
+            None,
+            "several agent nodes without a primary and no local node: None"
         );
 
         // 3. No `"agent"`-role node: desktop falls back to local registered node; iOS gets None.
@@ -1532,6 +1587,27 @@ mod tests {
             select_primary_agent_node(&only_unusable, Some("mini")),
             None,
             "expired local node is not selected"
+        );
+
+        let other_agent = make_node(
+            "node-zed",
+            "zed",
+            "zed",
+            &["agent"],
+            OrbitTargetStatus::Registered,
+            false,
+        );
+        let remote_agents =
+            OrbitFleet::from_targets(vec![healthy_agent.clone(), other_agent], Some("nick"));
+        assert_eq!(
+            remote_agents.primary_agent_node(),
+            None,
+            "two unmarked remote agent nodes and no local node: no guess"
+        );
+        assert_eq!(
+            select_primary_agent_node(&remote_agents.nodes, Some("nick")),
+            None,
+            "the standalone selector agrees"
         );
 
         let fleet = OrbitFleet::from_targets(vec![healthy_agent], Some("nick"));

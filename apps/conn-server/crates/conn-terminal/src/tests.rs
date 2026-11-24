@@ -356,6 +356,83 @@ async fn shares_the_smallest_viewer_grid() {
     );
 }
 
+/// T3's "keeps a viewer's resized grid when the same viewer attaches again": a client's
+/// attach retry resends its first size, which a later resize replaced.
+#[tokio::test(flavor = "current_thread")]
+async fn keeps_a_viewers_resized_grid_when_the_same_viewer_attaches_again() {
+    let manager = TerminalManager::new(config());
+    let sized = |cols: i64| {
+        let mut input = attach_input("t12", "term-1");
+        (input.cols, input.rows) = (Some(cols), Some(15));
+        input
+    };
+    let grid = |e: &E| match e {
+        E::Activity(a) => (a.cols, a.rows),
+        _ => (None, None),
+    };
+    let mut wide = manager.attach(sized(130), 1).unwrap();
+    let E::Snapshot(first) = wide.next().await else {
+        panic!()
+    };
+    let pid = first.snapshot.pid;
+    let phone = manager.attach(sized(54), 2).unwrap();
+    until(&mut wide, |e| grid(e) == (Some(54), Some(15))).await;
+    let resize = TerminalResizeInput {
+        thread_id: "t12".into(),
+        terminal_id: "term-1".into(),
+        cols: 100,
+        rows: 15,
+    };
+    manager.resize(resize, Some(2)).unwrap();
+    until(&mut wide, |e| grid(e) == (Some(100), Some(15))).await;
+
+    let mut retry = sized(54);
+    retry.resume = Some(true);
+    let retry = manager.attach(retry, 2).unwrap();
+    let snapshot = manager.read("t12", "term-1", Some(0)).unwrap();
+    assert_eq!((snapshot.cols, snapshot.rows), (Some(100), Some(15)));
+    write(&manager, "t12", "term-1", "stty size\n").await;
+    output_contains(&mut wide, "15 100").await;
+
+    // Once the phone's last stream ends, the wide viewer's grid comes back on the same shell.
+    drop(retry);
+    drop(phone);
+    until(&mut wide, |e| grid(e) == (Some(130), Some(15))).await;
+    write(&manager, "t12", "term-1", "stty size\n").await;
+    output_contains(&mut wide, "15 130").await;
+    assert_eq!(manager.read("t12", "term-1", Some(0)).unwrap().pid, pid);
+}
+
+/// A viewer's grid belongs to the viewer, not to the stream that first reported it (T3's
+/// `retainViewer`): it stays until the viewer's last stream closes.
+#[tokio::test(flavor = "current_thread")]
+async fn keeps_a_viewers_grid_while_any_of_its_streams_stays_open() {
+    let manager = TerminalManager::new(config());
+    let sized = |cols: i64| {
+        let mut input = attach_input("t15", "term-1");
+        (input.cols, input.rows) = (Some(cols), Some(15));
+        input
+    };
+    let grid = |e: &E| match e {
+        E::Activity(a) => (a.cols, a.rows),
+        _ => (None, None),
+    };
+    let mut wide = manager.attach(sized(130), 1).unwrap();
+    assert!(matches!(wide.next().await, E::Snapshot(s) if s.snapshot.cols == Some(130)));
+    let unsized_stream = manager.attach(attach_input("t15", "term-1"), 2).unwrap();
+    let sized_stream = manager.attach(sized(54), 2).unwrap();
+    until(&mut wide, |e| grid(e) == (Some(54), Some(15))).await;
+
+    drop(sized_stream);
+    let snapshot = manager.read("t15", "term-1", Some(0)).unwrap();
+    assert_eq!((snapshot.cols, snapshot.rows), (Some(54), Some(15)));
+    write(&manager, "t15", "term-1", "stty size\n").await;
+    output_contains(&mut wide, "15 54").await;
+
+    drop(unsized_stream);
+    until(&mut wide, |e| grid(e) == (Some(130), Some(15))).await;
+}
+
 // T3 `open`: a reused terminal keeps its grid where the input omits a dimension
 // (`input.cols ?? liveSession.cols`). The desktop reruns a project action this way.
 #[tokio::test(flavor = "current_thread")]
@@ -759,10 +836,90 @@ async fn close_idle_closes_only_shells_at_their_prompt() {
         })
         .await;
     assert!(open(&manager), "a failed inspection keeps the terminal");
-    // Once its echo is out, the shell at its prompt is idle.
+    // Once its echo is out, the shell at its prompt is idle, even when the poller clears a
+    // job that ended (a settle script's) while the table is read.
     output_contains(&mut typed, "Q").await;
-    manager.close_idle("t13", None).await;
+    let ended = (i32::MAX, "sleep".to_owned());
+    manager
+        .inner
+        .lock()
+        .sessions
+        .get_mut(&("t13".to_owned(), "typed".to_owned()))
+        .unwrap()
+        .job = Some(ended);
+    manager
+        .close_idle_with("t13", None, async {
+            manager.inner.poll().await;
+            processes::process_table().await
+        })
+        .await;
     assert!(!open(&manager), "the quiet shell at its prompt closes");
+
+    // A command in its own foreground group keeps the terminal, even when the table was read
+    // before it started (between the two commands of `make test && make deploy`).
+    let listed = |manager: &TerminalManager, thread: &str| {
+        manager.list().iter().any(|t| t.thread_id == thread)
+    };
+    let mut next = manager.attach(attach_input("t14", "next"), 1).unwrap();
+    assert!(matches!(next.next().await, E::Snapshot(_)));
+    write(&manager, "t14", "next", "sleep 300\n").await;
+    until(
+        &mut next,
+        |e| matches!(e, E::Activity(a) if a.has_running_subprocess),
+    )
+    .await;
+    manager
+        .close_idle_with("t14", None, async {
+            Ok(processes::ProcessTable::default())
+        })
+        .await;
+    assert!(
+        listed(&manager, "t14"),
+        "a foreground job keeps the terminal"
+    );
+
+    // Output the reader has not taken yet keeps the terminal, so a command's last line
+    // reaches its scrollback.
+    let mut late = manager.attach(attach_input("t15", "late"), 1).unwrap();
+    assert!(matches!(late.next().await, E::Snapshot(_)));
+    write(&manager, "t15", "late", "printf 'TTY<%s>\\n' \"$(tty)\"\n").await;
+    let seen = output_contains(&mut late, ">\r\n$ ").await;
+    let tty = seen
+        .split("TTY<")
+        .find_map(|s| s.starts_with("/dev/").then(|| s.split_once('>')).flatten())
+        .map(|(path, _)| path.to_owned())
+        .unwrap();
+    let control = manager.inner.lock().sessions[&("t15".to_owned(), "late".to_owned())]
+        .proc
+        .as_ref()
+        .unwrap()
+        .control
+        .clone();
+    manager
+        .close_idle_with("t15", None, async {
+            // This future never yields, so the reader cannot take the bytes before the check.
+            use std::io::Write as _;
+            let mut tty = std::fs::OpenOptions::new().write(true).open(&tty).unwrap();
+            tty.write_all(b"LATE-42\n").unwrap();
+            let mut fds = [rustix::event::PollFd::new(
+                &*control,
+                rustix::event::PollFlags::IN,
+            )];
+            let guard = rustix::event::Timespec {
+                tv_sec: 15,
+                tv_nsec: 0,
+            };
+            assert_eq!(rustix::event::poll(&mut fds, Some(&guard)).unwrap(), 1);
+            Ok(processes::ProcessTable::default())
+        })
+        .await;
+    assert!(listed(&manager, "t15"), "unread output keeps the terminal");
+    output_contains(&mut late, "LATE-42").await;
+    manager.close_idle("t15", None).await;
+    assert!(
+        !listed(&manager, "t15"),
+        "once read, the quiet shell closes"
+    );
     drop(streams);
 }
 

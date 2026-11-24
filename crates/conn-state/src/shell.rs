@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use crate::thread::parse_iso8601_epoch_ms;
+use crate::timeline::format_subagent_display_title;
 
 use conn_contract::{
     OrchestrationProjectShell as ProjectShell, OrchestrationV2AppThreadLineage as Lineage,
@@ -80,12 +81,33 @@ struct OlderSettled {
     generation: u64,
 }
 
+/// What a merged shell keeps of another environment's Settled paging: that environment's own
+/// cut, frontier and status, and the older pages read from it (`olderOf(environmentId)`).
+#[derive(Clone, Debug, Default)]
+struct ForeignOlder {
+    cut: Option<OlderSettledCut>,
+    frontier: Option<SettledCursor>,
+    status: PageStatus,
+    /// Older settled threads read from that environment.
+    loaded: Vec<ThreadShell>,
+    /// Threads it holds that are older than its cut, by project.
+    held_by_project: HashMap<String, usize>,
+}
+
 /// What a subagent, side chat or delegated task asks of the user, shown on its parent's row
 /// (`PendingSubagentRequest`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PendingSubagentRequest {
     Approval,
     UserInput,
+}
+
+/// A child thread that waits on an approval, as its parent lists it (`ChildThreadApproval`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChildApprovalThread {
+    pub id: String,
+    /// The child's display title (`formatSubagentDisplayTitle` for a subagent).
+    pub title: String,
 }
 
 /// A request on its way up the chain; a user-only card keeps its mark (`RolledUpRequest`).
@@ -145,6 +167,11 @@ fn as_rolled(kind: PendingRequestKind) -> Rolled {
     } else {
         Rolled::Approval
     }
+}
+
+/// `hasPendingApprovals`: the thread waits on a request that is not a question or an auth refresh.
+fn asks_approval(thread: &ThreadShell) -> bool {
+    request_kind(thread).is_some_and(|kind| kind != PendingRequestKind::UserInput)
 }
 
 /// A subagent's own live request. Provider-native subagents ask on their parent, so they are
@@ -274,6 +301,10 @@ pub struct ShellState {
     /// Threads that sit under another thread's row, from the last change that could move them.
     delegated: HashSet<String>,
     requests: HashMap<String, PendingSubagentRequest>,
+    /// The Settled paging of the other environments merged in (`extend_with_environment`).
+    foreign: Vec<ForeignOlder>,
+    /// Which of `foreign` a merged-in thread belongs to, by thread id.
+    foreign_of: HashMap<String, usize>,
 }
 
 impl ShellState {
@@ -457,6 +488,74 @@ impl ShellState {
         }
     }
 
+    /// Adds another environment's projects and threads to this shell, as Conn lists every
+    /// connected environment in one sidebar. An id this shell already holds keeps its first
+    /// copy, so the primary environment always wins a collision. Threads sort again by activity.
+    /// The older-settled paging state stays this environment's own.
+    pub fn extend_with_environment(&mut self, other: &ShellState) {
+        for project in &other.projects {
+            if !self.projects.iter().any(|p| p.id == project.id) {
+                self.projects.push(project.clone());
+            }
+        }
+        let mut seen: HashSet<String> = self
+            .threads
+            .iter()
+            .chain(self.archived_threads.iter())
+            .map(|t| t.id.clone())
+            .collect();
+        let index = self.foreign.len();
+        let mut foreign = ForeignOlder {
+            cut: other.older.cut.clone(),
+            frontier: other.older.frontier.clone(),
+            status: other.older.status,
+            ..ForeignOlder::default()
+        };
+        for thread in &other.threads {
+            if seen.insert(thread.id.clone()) {
+                self.threads.push(thread.clone());
+                self.foreign_of.insert(thread.id.clone(), index);
+            }
+        }
+        for thread in &other.archived_threads {
+            if seen.insert(thread.id.clone()) {
+                self.archived_threads.push(thread.clone());
+                self.foreign_of.insert(thread.id.clone(), index);
+            }
+        }
+        for thread in &other.older.threads {
+            if seen.insert(thread.id.clone()) {
+                foreign.loaded.push(thread.clone());
+                self.foreign_of.insert(thread.id.clone(), index);
+            }
+        }
+        if let Some(cut) = &foreign.cut {
+            for thread in other
+                .threads
+                .iter()
+                .chain(&other.archived_threads)
+                .chain(&other.older.threads)
+            {
+                if is_older_settled(thread, cut.before_ms) {
+                    *foreign
+                        .held_by_project
+                        .entry(thread.project_id.clone())
+                        .or_default() += 1;
+                }
+            }
+        }
+        self.foreign.push(foreign);
+        sort_threads(&mut self.threads);
+        sort_threads(&mut self.archived_threads);
+        self.refresh_derived();
+    }
+
+    /// Forgets the Settled paging of the environments merged in, before they are merged again.
+    pub(crate) fn clear_foreign(&mut self) {
+        self.foreign.clear();
+        self.foreign_of.clear();
+    }
+
     /// Active threads of `project_id`, newest activity first.
     pub fn threads_for_project<'a>(
         &'a self,
@@ -480,6 +579,7 @@ impl ShellState {
             .iter()
             .chain(self.archived_threads.iter())
             .chain(self.older.threads.iter())
+            .chain(self.foreign.iter().flat_map(|f| f.loaded.iter()))
             .find(|t| t.id == thread_id)
     }
 
@@ -537,9 +637,64 @@ impl ShellState {
         self.requests.get(thread_id).copied()
     }
 
+    /// The descendants of `parent_id` that wait on an approval, in walk order
+    /// (`childThreadInputsAtom` filtered by `hasPendingApprovals`, the input of
+    /// `childThreadApprovalsAtom`). A descendant is a subagent, a side chat or a delegated task
+    /// of the parent or of another descendant. The shell only says that one asks; what it asks
+    /// comes from the child's own thread stream.
+    #[must_use]
+    pub fn child_approval_threads(&self, parent_id: &str) -> Vec<ChildApprovalThread> {
+        // Runs on every event batch: skip the walk while no thread asks for an approval.
+        if !self.threads.iter().any(asks_approval) {
+            return Vec::new();
+        }
+        let mut children: HashMap<&str, Vec<&ThreadShell>> = HashMap::new();
+        for thread in &self.threads {
+            let parent = thread.lineage.parent_thread_id.as_deref();
+            if let Some(parent) = parent
+                && (thread.lineage.relationship_to_parent == Some(Relationship::Subagent)
+                    || thread.lineage.side_chat == Some(true))
+            {
+                children.entry(parent).or_default().push(thread);
+            } else if let Some(from) = thread.delegated_from.as_ref() {
+                children
+                    .entry(from.thread_id.as_str())
+                    .or_default()
+                    .push(thread);
+            }
+        }
+        let mut seen: HashSet<&str> = HashSet::from([parent_id]);
+        let mut walk = vec![parent_id];
+        let mut found = Vec::new();
+        let mut index = 0;
+        while let Some(&parent) = walk.get(index) {
+            index += 1;
+            for child in children.get(parent).into_iter().flatten() {
+                if !seen.insert(child.id.as_str()) {
+                    continue;
+                }
+                walk.push(child.id.as_str());
+                let asks = subagent_request(child).is_some() || side_chat_request(child).is_some();
+                if asks && asks_approval(child) {
+                    found.push(ChildApprovalThread {
+                        id: child.id.clone(),
+                        title: if child.lineage.relationship_to_parent
+                            == Some(Relationship::Subagent)
+                        {
+                            format_subagent_display_title(&child.title)
+                        } else {
+                            child.title.clone()
+                        },
+                    });
+                }
+            }
+        }
+        found
+    }
+
     /// Recomputes what depends on other threads: tasks shown under their parent
     /// (`delegatedUnderParentAtom`) and the requests rolled up to a parent.
-    fn refresh_derived(&mut self) {
+    pub(crate) fn refresh_derived(&mut self) {
         self.requests = rolled_up_requests(&self.threads);
         self.delegated = self
             .threads
@@ -598,6 +753,7 @@ impl ShellState {
                 self.older
                     .threads
                     .iter()
+                    .chain(self.foreign.iter().flat_map(|f| f.loaded.iter()))
                     .filter(|t| t.deleted_at.is_none() && self.is_listed(t)),
             )
             .collect();
@@ -618,7 +774,12 @@ impl ShellState {
     /// turns older mid-session waits for the range that holds it.
     #[must_use]
     pub fn is_listed_settled(&self, thread: &ThreadShell) -> bool {
-        let Some(frontier) = &self.older.frontier else {
+        // A thread of another environment is listed against that environment's own frontier.
+        let frontier = match self.foreign_of.get(&thread.id) {
+            Some(&index) => &self.foreign[index].frontier,
+            None => &self.older.frontier,
+        };
+        let Some(frontier) = frontier else {
             return true;
         };
         let Some(settled_at) = thread.settled_at.as_deref() else {
@@ -644,11 +805,22 @@ impl ShellState {
     /// Where the shelf stands on older settled threads, for its count and its "Show more".
     #[must_use]
     pub fn older_settled(&self) -> OlderSettledView<'_> {
+        let statuses =
+            || std::iter::once(self.older.status).chain(self.foreign.iter().map(|f| f.status));
+        // Any environment reading a page, or failing to, is what the shelf's footer shows.
+        let status = if statuses().any(|s| s == PageStatus::Pending) {
+            PageStatus::Pending
+        } else if statuses().any(|s| s == PageStatus::Failed) {
+            PageStatus::Failed
+        } else {
+            PageStatus::Ready
+        };
         OlderSettledView {
             cut: self.older.cut.as_ref(),
             frontier: self.older.frontier.as_ref(),
-            status: self.older.status,
-            loaded: self.older.threads.len(),
+            status,
+            loaded: self.older.threads.len()
+                + self.foreign.iter().map(|f| f.loaded.len()).sum::<usize>(),
         }
     }
 
@@ -656,10 +828,37 @@ impl ShellState {
     /// hold: the server's counts minus the older rows it has (`unloadedOlderSettledCount`).
     #[must_use]
     pub fn unloaded_older_settled(&self, scope: Option<&HashSet<String>>) -> usize {
+        let in_scope = |project: &str| scope.is_none_or(|ids| ids.contains(project));
+        let own = self.unloaded_own_older_settled(&in_scope);
+        let others: usize = self
+            .foreign
+            .iter()
+            .filter_map(|foreign| {
+                let cut = foreign.cut.as_ref()?;
+                let counted: i64 = cut
+                    .counts
+                    .iter()
+                    .filter(|(project, _)| in_scope(project))
+                    .map(|(_, count)| *count)
+                    .sum();
+                let held: usize = foreign
+                    .held_by_project
+                    .iter()
+                    .filter(|(project, _)| in_scope(project))
+                    .map(|(_, held)| *held)
+                    .sum();
+                Some(
+                    usize::try_from(counted - i64::try_from(held).unwrap_or(i64::MAX)).unwrap_or(0),
+                )
+            })
+            .sum();
+        own + others
+    }
+
+    fn unloaded_own_older_settled(&self, in_scope: &dyn Fn(&str) -> bool) -> usize {
         let Some(cut) = &self.older.cut else {
             return 0;
         };
-        let in_scope = |project: &str| scope.is_none_or(|ids| ids.contains(project));
         let counted: i64 = cut
             .counts
             .iter()
@@ -671,9 +870,19 @@ impl ShellState {
             .iter()
             .chain(&self.archived_threads)
             .chain(&self.older.threads)
-            .filter(|t| in_scope(&t.project_id) && is_older_settled(t, cut.before_ms))
+            .filter(|t| {
+                in_scope(&t.project_id)
+                    && !self.foreign_of.contains_key(&t.id)
+                    && is_older_settled(t, cut.before_ms)
+            })
             .count();
         usize::try_from(counted - i64::try_from(held).unwrap_or(i64::MAX)).unwrap_or(0)
+    }
+
+    /// The projects the older pages are read for now (`None`: all), sorted.
+    #[must_use]
+    pub fn older_scope(&self) -> Option<&Vec<String>> {
+        self.older.scope.as_ref()
     }
 
     /// The projects the older pages are read for (`None`: all). A new scope drops the pages read
@@ -1015,6 +1224,59 @@ mod tests {
             chat.subagent_request("root"),
             Some(PendingSubagentRequest::UserInput)
         );
+    }
+
+    #[test]
+    fn child_approval_threads_walk_subagents_side_chats_and_delegated_tasks() {
+        let state = snapshot(
+            vec![
+                thread_json("root", "p", |_| {}),
+                thread_json(
+                    "mid",
+                    "p",
+                    child_of("root", |t| {
+                        t["title"] = json!("Subagent: /root/review_one");
+                        t["pendingRuntimeRequest"]["kind"] = json!("user_input");
+                    }),
+                ),
+                thread_json(
+                    "leaf",
+                    "p",
+                    child_of("mid", |t| t["title"] = json!("Subagent: /root/review_one")),
+                ),
+                thread_json("chat", "p", |t| {
+                    t["lineage"]["parentThreadId"] = json!("root");
+                    t["lineage"]["relationshipToParent"] = json!("fork");
+                    t["lineage"]["sideChat"] = json!(true);
+                    t["title"] = json!("Side chat");
+                    t["pendingRuntimeRequest"] = json!({"id": "r", "kind": "permission", "createdAt": "2026-11-13T09:00:00.000Z"});
+                }),
+                thread_json("task", "p", |t| {
+                    t["delegatedFrom"] =
+                        json!({"environmentId": "env-b", "threadId": "root", "title": "Root"});
+                    t["status"] = json!("running");
+                    t["title"] = json!("Review #278");
+                    t["pendingRuntimeRequest"] = json!({"id": "r", "kind": "command", "createdAt": "2026-11-13T09:00:00.000Z"});
+                }),
+                thread_json("other", "p", child_of("elsewhere", |_| {})),
+            ],
+            None,
+        );
+        let found: Vec<(String, String)> = state
+            .child_approval_threads("root")
+            .into_iter()
+            .map(|c| (c.id, c.title))
+            .collect();
+        // `mid` only asks a question; `leaf` is two levels down; `other` belongs to another parent.
+        assert_eq!(
+            found,
+            [
+                ("chat".to_owned(), "Side chat".to_owned()),
+                ("task".to_owned(), "Review #278".to_owned()),
+                ("leaf".to_owned(), "Review One".to_owned()),
+            ]
+        );
+        assert!(state.child_approval_threads("other").is_empty());
     }
 
     #[test]
