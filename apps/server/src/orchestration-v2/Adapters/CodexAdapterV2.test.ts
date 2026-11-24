@@ -7036,6 +7036,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ],
   });
 
+  // A completed turn asks Codex which retained commands still have a live terminal.
+  const backgroundTerminalLive = (id: number) => [
+    {
+      type: "expect_outbound" as const,
+      label: "list-live-background-terminals",
+      frame: {
+        id,
+        method: "thread/backgroundTerminals/list",
+        params: { threadId: BG_NATIVE_THREAD },
+      },
+    },
+    {
+      type: "emit_inbound" as const,
+      label: "list-live-background-terminals",
+      frame: { id, result: { data: [{ processId: "4242" }], nextCursor: null } },
+    },
+  ];
+
   it.effect("marks a root command it wakes the agent for once the command finishes", () =>
     Effect.gen(function* () {
       const harness = yield* makeCodexReplayHarness({
@@ -7165,6 +7183,73 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("settles a command Codex never completed once its terminal is gone", () =>
+    Effect.gen(function* () {
+      const settled = yield* Deferred.make<void>();
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "codex-bg-missing-completion",
+          entries: [
+            ...backgroundExecTranscript.entries.slice(0, -1),
+            {
+              type: "expect_outbound",
+              label: "list-background-terminals",
+              frame: {
+                id: 4,
+                method: "thread/backgroundTerminals/list",
+                params: { threadId: BG_NATIVE_THREAD },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "list-background-terminals",
+              frame: { id: 4, result: { data: [], nextCursor: null } },
+            },
+          ],
+        }),
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "command_execution" &&
+          event.turnItem.status !== "running"
+            ? Deferred.succeed(settled, undefined)
+            : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-bg-missing-completion"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* Deferred.await(settled);
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+            ? [event.turnItem.status]
+            : [],
+        ),
+        ["running", "cancelled"],
+      );
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        ["completed"],
+      );
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      assert.lengthOf(harness.continuationRequests, 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("wakes with well-formed text when the cuts split an emoji", () =>
     Effect.gen(function* () {
       const harness = yield* makeCodexReplayHarness(
@@ -7258,10 +7343,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ...backgroundExecTranscript.entries.slice(0, -2),
             ...(retainContext ? [monitor("inProgress")] : []),
             backgroundExecTranscript.entries.at(-2)!,
-            ...unsubscribe(4),
-            ...unsubscribe(5, [notification("thread/closed", { threadId: "unrelated-thread" })]),
-            ...unsubscribe(6, [closed]),
-            ...unsubscribe(7, [
+            ...backgroundTerminalLive(4),
+            ...unsubscribe(5),
+            ...unsubscribe(6, [notification("thread/closed", { threadId: "unrelated-thread" })]),
+            ...unsubscribe(7, [closed]),
+            ...unsubscribe(8, [
               closed,
               notification("item/completed", {
                 threadId: BG_NATIVE_THREAD,
@@ -7355,11 +7441,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       scenario: `codex-bg-stop-${terminated}`,
       entries: [
         ...backgroundExecTranscript.entries.slice(0, -1),
+        ...backgroundTerminalLive(4),
         {
           type: "expect_outbound",
           label: "terminate-background-command",
           frame: {
-            id: 4,
+            id: 5,
             method: "thread/backgroundTerminals/terminate",
             params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
           },
@@ -7370,17 +7457,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           frame:
             terminated === "thread_unloaded"
               ? {
-                  id: 4,
+                  id: 5,
                   error: { code: -32600, message: `thread not found: ${BG_NATIVE_THREAD}` },
                 }
-              : { id: 4, result: { terminated: terminated === true } },
+              : { id: 5, result: { terminated: terminated === true } },
         },
         ...(terminated === false || stillRunning
           ? [
               {
                 type: "expect_outbound" as const,
                 frame: {
-                  id: 5,
+                  id: 6,
                   method: "thread/backgroundTerminals/list",
                   params: { threadId: BG_NATIVE_THREAD },
                 },
@@ -7388,7 +7475,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               {
                 type: "emit_inbound" as const,
                 frame: {
-                  id: 5,
+                  id: 6,
                   result: { data: stillRunning ? [{ processId: "4242" }] : [], nextCursor: null },
                 },
               },
@@ -7399,38 +7486,38 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               {
                 type: "expect_outbound" as const,
                 frame: {
-                  id: 6,
+                  id: 7,
                   method: "thread/backgroundTerminals/terminate",
                   params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
                 },
               },
               {
                 type: "emit_inbound" as const,
-                frame: { id: 6, result: { terminated: false } },
+                frame: { id: 7, result: { terminated: false } },
               },
               {
                 type: "expect_outbound" as const,
                 frame: {
-                  id: 7,
+                  id: 8,
                   method: "thread/backgroundTerminals/list",
                   params: { threadId: BG_NATIVE_THREAD },
                 },
               },
               {
                 type: "emit_inbound" as const,
-                frame: { id: 7, result: { data: [{ processId: "4242" }], nextCursor: null } },
+                frame: { id: 8, result: { data: [{ processId: "4242" }], nextCursor: null } },
               },
               {
                 type: "expect_outbound" as const,
                 frame: {
-                  id: 8,
+                  id: 9,
                   method: "thread/backgroundTerminals/terminate",
                   params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
                 },
               },
               {
                 type: "emit_inbound" as const,
-                frame: { id: 8, result: { terminated: true } },
+                frame: { id: 9, result: { terminated: true } },
               },
             ]
           : []),
