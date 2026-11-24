@@ -1262,7 +1262,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
     threadId: string,
     item: OrchestrationV2ThreadStreamItem,
   ) => Effect.Effect<void> = () => Effect.void,
-  /** How long the server may go silent before the client drops the connection. */
+  /** How long the server may go silent before the client drops the connection or a report fails. */
   pingTimeout?: Duration.Input,
 ) {
   const http = yield* HttpClient.HttpClient;
@@ -1337,7 +1337,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
   }).pipe(
     // A server that keeps the socket open but never answers would otherwise hang the scenario.
     Effect.timeoutOrElse({
-      duration: Duration.seconds(15),
+      duration: pingTimeout ?? Duration.seconds(15),
       orElse: () => new MetricsError({ message: "an activity report got no answer" }),
     }),
   );
@@ -1958,7 +1958,8 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           // arriving every turn as fetches and agent branches add them, so caches keyed by ref
           // state churn the way they do on a real checkout.
           const head = (yield* run("git", ["rev-parse", "HEAD"], { cwd: server.project })).stdout;
-          const remotes = path.join(server.project, ".git", "refs", "remotes", "origin");
+          // Under a remote with no config, so no fetch (or a host's fetch.prune) can delete them.
+          const remotes = path.join(server.project, ".git", "refs", "remotes", "mirror");
           yield* fs.makeDirectory(remotes, { recursive: true });
           yield* Effect.forEach(
             Array.from({ length: 3_000 }, (_, index) => index),
@@ -1968,7 +1969,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           // A reftable store (GIT_DEFAULT_REF_FORMAT can still pick one) ignores refs written as files.
           const listed = yield* run(
             "git",
-            ["for-each-ref", "--count=3000", "refs/remotes/origin/"],
+            ["for-each-ref", "--count=3000", "refs/remotes/mirror/"],
             {
               cwd: server.project,
             },

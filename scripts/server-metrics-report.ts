@@ -996,12 +996,12 @@ export function retainerGrowth(
     }
     return found;
   };
-  // Smallest growth first, deeper first on a tie, so descendants are decided before ancestors: a row is left out
+  // Deepest first, so every descendant is decided before its ancestors: a row is left out
   // only when a reported descendant holds at least 80% of its growth.
   const heldBelow = new Map<number, number>();
   const kept: Array<[number, number]> = [];
   const depth = new Map([...growth.keys()].map((id) => [id, ancestors(id).length]));
-  const order = [...growth].toSorted((a, b) => a[1] - b[1] || depth.get(b[0])! - depth.get(a[0])!);
+  const order = [...growth].toSorted((a, b) => depth.get(b[0])! - depth.get(a[0])!);
   for (const [id, grown] of order) {
     if ((heldBelow.get(id) ?? 0) >= grown * 0.8) continue;
     kept.push([id, grown]);

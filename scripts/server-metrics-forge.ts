@@ -457,6 +457,7 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
         ),
         NO_PROXY: "",
         no_proxy: "",
+        GIT_SSL_CAINFO: certFile,
       },
     });
     yield* git(["branch", "-q", "--set-upstream-to", "origin/bench/feature"]);
@@ -545,6 +546,8 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
       // An empty gh config, so a gh the server runs has no login for any host.
       GH_CONFIG_DIR: path.join(dir, "gh"),
       NODE_EXTRA_CA_CERTS: certFile,
+      // Overrides a developer's own GIT_SSL_CAINFO, which would win over the repository's setting.
+      GIT_SSL_CAINFO: certFile,
       NODE_USE_ENV_PROXY: "1",
       HTTPS_PROXY: proxyUrl,
       https_proxy: proxyUrl,
