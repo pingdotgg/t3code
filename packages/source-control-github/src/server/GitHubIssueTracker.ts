@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import { GraphQLClient, GraphQLClientError, GraphQLGroup } from "effect/graphql";
 import {
@@ -51,6 +52,10 @@ const CAPABILITIES: IssueCapabilities = {
 
 /** Issue statuses are a github.com preview; Enterprise Server rejects a query that names them. */
 const asksStatuses = (host: string) => host.toLowerCase() === "github.com";
+
+/** GitHub refused the status fields themselves, as it may for an account the preview skips. */
+const statusesRefused = (error: IssueTrackerError) =>
+  Predicate.isTagged(error.cause, "GitHubApiResponseError");
 
 const REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/;
 
@@ -210,6 +215,7 @@ export const make = Effect.gen(function* () {
       ? client.IssueStatuses({ owner, name, number }).pipe(
           graphql(input.host, operation),
           Effect.map((result) => result.repository),
+          Effect.catchIf(statusesRefused, () => Effect.succeed(null)),
         )
       : Effect.succeed(null);
 
@@ -239,11 +245,16 @@ export const make = Effect.gen(function* () {
             cursor: input.cursor,
             rows: Math.min(Math.max(Math.trunc(input.limit), 1), 100),
           };
-          return (
-            asksStatuses(input.host)
-              ? client.IssueSearchWithStatus(variables)
-              : client.IssueSearch(variables)
-          ).pipe(graphql(input.host, "listIssues"), Effect.map(toIssueSearch));
+          const legacy = client
+            .IssueSearch(variables)
+            .pipe(graphql(input.host, "listIssues"), Effect.map(toIssueSearch));
+          return asksStatuses(input.host)
+            ? client.IssueSearchWithStatus(variables).pipe(
+                graphql(input.host, "listIssues"),
+                Effect.map(toIssueSearch),
+                Effect.catchIf(statusesRefused, () => legacy),
+              )
+            : legacy;
         }),
       ),
 

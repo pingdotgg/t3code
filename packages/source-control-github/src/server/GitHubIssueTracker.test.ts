@@ -566,6 +566,47 @@ describe("GitHubIssueTracker", () => {
     }),
   );
 
+  it.effect("lists issues without statuses when GitHub refuses the status fields", () =>
+    Effect.gen(function* () {
+      const operations: string[] = [];
+      const http = HttpClient.make((request) => {
+        if (request.body._tag !== "Uint8Array") return Effect.die("Expected a JSON request.");
+        const { query } = decodeVariables(new TextDecoder().decode(request.body.body));
+        const operation = query.match(/query\s+(\w+)/)?.[1] ?? "";
+        operations.push(operation);
+        const body =
+          operation === "IssueSearchWithStatus"
+            ? {
+                data: null,
+                errors: [{ message: "Field 'status' doesn't exist on type 'Issue'" }],
+              }
+            : {
+                data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } },
+              };
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(body), {
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+      });
+      const api = yield* GitHubIssueTracker.make.pipe(Effect.provide(transport(http)));
+      const listing = yield* api.listIssues({
+        cwd: "/w",
+        host: "github.com",
+        scope: "acme/web",
+        state: "open",
+        involvement: "all",
+        sort: "updated",
+        limit: 10,
+      });
+      expect(listing.items).toEqual([]);
+      expect(operations).toEqual(["IssueSearchWithStatus", "IssueSearch"]);
+    }),
+  );
+
   it.effect("asks search for the labels, assignee and order a listing names", () =>
     Effect.gen(function* () {
       const seen: unknown[] = [];
