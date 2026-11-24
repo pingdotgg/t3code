@@ -74,6 +74,14 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
 
+      # Post steps reread local actions from the workspace. A merge that changes them breaks the
+      # runner's step indexes, so restore the versions this job started with.
+      - name: Restore local actions
+        if: always()
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: git checkout --quiet "origin/$BRANCH" -- .github/actions
+
   # A new runner holds the App token and treats the merge as data.
   land:
     name: Land after CI
