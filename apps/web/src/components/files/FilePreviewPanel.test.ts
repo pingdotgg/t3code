@@ -217,6 +217,19 @@ describe("document preview contents", () => {
     expect(html.replaceAll(/<[^>]*>/g, "")).toBe("Hello boldUnicode: αvisible");
     expect(html).toContain("<strong>");
     expect(html).not.toContain("https:");
+    const styled = openRtf(
+      bytes(
+        "{\\rtf1\\ansi\\b \\uc0\\u55357 \\u56960  Launch\\b0  \\i\\uc1\\u-10187?\\u-8904?\\i0}",
+      ),
+    );
+    if (styled.type !== "document") throw new Error("Expected document");
+    expect(styled.pages[0]!.html).toBe("<p><strong>🚀 Launch</strong> <em>𝔸</em></p>");
+    const fallbacks = openRtf(bytes("{\\rtf1\\b\\uc1\\u-10179\\_\\uc0\\u-8576 }"));
+    if (fallbacks.type !== "document") throw new Error("Expected document");
+    expect(fallbacks.pages[0]!.html).toBe("<p><strong>🚀</strong></p>");
+    const escapedBreak = openRtf(bytes("{\\rtf1\\b A\\u66\\\nC\\par D}"));
+    if (escapedBreak.type !== "document") throw new Error("Expected document");
+    expect(escapedBreak.pages[0]!.html).toBe("<p><strong>ABC</strong><br><strong>D</strong></p>");
   });
 
   it("breaks lines at the paragraph and line breaks TextEdit writes", () => {
@@ -299,6 +312,18 @@ Third}`;
     for (const [rtf, expected] of [
       [String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "<p>Café</p>"],
       [String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`, "<p>Привет</p>"],
+      [
+        String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl\f0\froman\fcharset0 Times-Roman;}\f0 \'805 caf\'e9}`,
+        "<p>€5 café</p>",
+      ],
+      [
+        String.raw`{\rtf1\mac\ansicpg10000{\fonttbl\f0\fnil\fcharset0 LucidaGrande;}\f0 pridr\'9eana}`,
+        "<p>pridržana</p>",
+      ],
+      [
+        String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl{\f0\fnil\fcharset0\cpg1251 Arial;}{\f1\fnil\fcharset204 Arial{\*\fontfile\cpg1252 arial.ttf};}}\f0 \'cf\'f0\'e8\f1\'e2\'e5\'f2}`,
+        "<p>Привет</p>",
+      ],
     ] as const) {
       const decoded = openRtf(bytes(rtf));
       if (decoded.type !== "document") throw new Error("Expected document");
@@ -426,6 +451,23 @@ Third}`;
                     "final entry",
                   ],
                 },
+                {
+                  output_type: "error",
+                  ename: "ZeroDivisionError",
+                  evalue: "division by zero",
+                  traceback: [],
+                },
+                {
+                  output_type: "error",
+                  evalue: "\u001b[31mbad input\u001b[0m",
+                  traceback: [],
+                },
+                {
+                  output_type: "error",
+                  ename: "RuntimeError",
+                  evalue: "kernel reset",
+                  traceback: ["\u001b[31m\u001b[0m", "  \n"],
+                },
               ],
             },
           ],
@@ -446,6 +488,9 @@ Third}`;
         kind: "text",
         text: "Traceback (most recent call last):\nCell In[3], line 1\n----> 1 fail()\nValueError: preview proof\nfinal entry",
       },
+      { kind: "text", text: "ZeroDivisionError: division by zero" },
+      { kind: "text", text: "bad input" },
+      { kind: "text", text: "RuntimeError: kernel reset" },
     ]);
     expect(() => openNotebook(bytes('{"nbformat":3,"cells":[]}'))).toThrow(
       expect.objectContaining({ code: "notebook-unsupported" }),
@@ -533,6 +578,24 @@ Third}`;
     const result = await openDocument(archive, "odt");
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toBe(`<table>${html}</table>`);
+  });
+
+  it("preserves ODT table colspan and rowspan on merged cells", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><table:table><table:table-column table:number-columns-repeated="3"/>' +
+        '<table:table-row><table:table-cell table:number-columns-spanned="2"><text:p>Quarter</text:p></table:table-cell><table:covered-table-cell/><table:table-cell><text:p>Lead</text:p></table:table-cell></table:table-row>' +
+        '<table:table-row><table:table-cell table:number-rows-spanned="2"><text:p>North</text:p></table:table-cell><table:table-cell><text:p>Q1</text:p></table:table-cell><table:table-cell><text:p>Lead A</text:p></table:table-cell></table:table-row>' +
+        "<table:table-row><table:covered-table-cell><text:p>Hidden</text:p></table:covered-table-cell><table:table-cell><text:p>Q2</text:p></table:table-cell><table:table-cell><text:p>Lead B</text:p></table:table-cell></table:table-row>" +
+        '<table:table-row><table:table-cell table:number-columns-spanned="9999" table:number-rows-spanned="0"><text:p>Total</text:p></table:table-cell><table:table-cell table:number-columns-spanned="Infinity" table:number-rows-spanned="50.5"/></table:table-row>' +
+        '<table:table-row table:number-rows-repeated="2"><table:table-cell table:number-columns-spanned="2" table:number-rows-spanned="2"><table:table><table:table-row><table:table-cell table:number-rows-spanned="2"/></table:table-row></table:table></table:table-cell><table:table-cell table:number-columns-repeated="2" table:number-columns-spanned="2"/></table:table-row>' +
+        "</table:table></office:text></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      `<table><tr><td colspan="2"><p>Quarter</p></td><td><p>Lead</p></td></tr><tr><td rowspan="2"><p>North</p></td><td><p>Q1</p></td><td><p>Lead A</p></td></tr><tr><td><p>Q2</p></td><td><p>Lead B</p></td></tr><tr><td colspan="50"><p>Total</p></td><td></td></tr>${'<tr><td colspan="2"><table><tr><td rowspan="2"></td></tr></table></td><td></td><td></td></tr>'.repeat(2)}</table>`,
+    );
   });
 
   // LibreOffice writes every index as the templates it was built from, then the built index.
@@ -635,4 +698,30 @@ Third}`;
     expect(result.pages[1]!.html).toContain('src="data:image/png;base64,');
     expect(result.pages[1]!.html).not.toMatch(/https:|script|alert/);
   });
+
+  it.each([
+    ["percent-encoded", "My%20Book/book%201.opf", "My Book/book 1.opf", "My Book/one.xhtml"],
+    ["literal percent", "My%20Book/book.opf", "My%20Book/book.opf", "My%20Book/one.xhtml"],
+    ["malformed percent", "Book%ZZ/book.opf", "Book%ZZ/book.opf", "Book%ZZ/one.xhtml"],
+  ])(
+    "reads EPUB packages with %s rootfile paths",
+    async (_label, fullPath, packagePath, chapterPath) => {
+      const archive = new JSZip()
+        .file(
+          "META-INF/container.xml",
+          `<container><rootfiles><rootfile full-path="${fullPath}"/></rootfiles></container>`,
+        )
+        .file(
+          packagePath,
+          '<package><manifest><item id="a" href="one.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+        )
+        .file(
+          chapterPath,
+          "<html><head><title>First</title></head><body><p>Hello</p></body></html>",
+        );
+      const result = await openEpub(archive);
+      if (result.type !== "document") throw new Error("Expected document");
+      expect(result.pages).toEqual([{ title: "First", html: "<p>Hello</p>" }]);
+    },
+  );
 });

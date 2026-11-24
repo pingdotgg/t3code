@@ -37,10 +37,45 @@ const Soak = Schema.Struct({
   minutes: Schema.Number,
   heapMBPerHour: Schema.Number,
   rssMBPerHour: Schema.Number,
+  /** Processes below the server, so agent or git children that outlive their thread show. */
+  childProcessesPerHour: Schema.optional(Schema.Number),
+});
+
+const MachineState = Schema.Struct({
+  /** The highest 1-minute load average read through the run; none on Windows. */
+  load1: Schema.NullOr(Schema.Number),
+  /** Cores other node, T3 and agent processes kept busy over the run; Linux only. */
+  otherCpuCores: Schema.NullOr(Schema.Number),
+  minutes: Schema.Number,
+});
+export type MachineState = typeof MachineState.Type;
+
+const WorkingPoint = Schema.Struct({
+  ...Window.fields,
+  /** Turns finished inside the window, per minute; higher is better. */
+  turnsPerMin: Schema.Number,
+  /** Send to the agent's first API request. */
+  toRequestMs: Spread,
+  /** The turn's last reply byte to the client seeing the run end. */
+  turnEndMs: Spread,
+  /** Send to the client seeing the run end. */
+  turnMs: Spread,
+});
+export type WorkingPoint = typeof WorkingPoint.Type;
+
+const Reconnect = Schema.Struct({
+  clients: Schema.Number,
+  threadsPerClient: Schema.optional(Schema.Number),
+  /** Drop to every subscription delivering its snapshot again. */
+  resubscribedMs: Schema.Number,
+  loopDelayP99Ms: Schema.Number,
+  loopDelayMaxMs: Schema.Number,
 });
 
 /** One pass over the scenarios. */
 export const Measured = Schema.Struct({
+  /** What else the machine was doing during the pass; never compared, only warned about. */
+  machine: Schema.optional(MachineState),
   startup: Schema.optional(Schema.Struct({ readyMs: Schema.Number })),
   rest: Schema.optional(Window),
   firstWord: Schema.optional(Schema.Struct({ inPlace: FirstWord, worktree: FirstWord })),
@@ -53,13 +88,25 @@ export const Measured = Schema.Struct({
     Schema.Struct({
       /** The quiet window by subscribed thread count. */
       attached: Schema.Record(Schema.String, Window),
-      /** Every client drops and reconnects at once. */
-      storm: Schema.Struct({
-        clients: Schema.Number,
-        resubscribedMs: Schema.Number,
-        loopDelayP99Ms: Schema.Number,
-        loopDelayMaxMs: Schema.Number,
-      }),
+      /** A user's few devices, each holding the shell, VCS status and threads, drop and reconnect. */
+      reconnect: Schema.optional(Reconnect),
+      /** With --stress: 20 clients holding one thread each drop and reconnect at once. */
+      storm: Schema.optional(Reconnect),
+    }),
+  ),
+  /**
+   * N threads in worktrees of their own run editing turns back to back, all at once, with one
+   * web-like client subscribed to all of them. The scenario to steer server performance by.
+   */
+  working: Schema.optional(
+    Schema.Struct({
+      /** Each window by the number of threads working in it. */
+      active: Schema.Record(Schema.String, WorkingPoint),
+      /** Fits over the windows: what each additional working thread costs. */
+      heapMBPerThread: Schema.Number,
+      rssMBPerThread: Schema.Number,
+      cpuPctPerThread: Schema.Number,
+      loopDelayP99MsPerThread: Schema.Number,
     }),
   ),
   /** 50 short turns back to back on one thread. */
@@ -116,6 +163,14 @@ export const HeapGrowth = Schema.Struct({
   MB: Schema.Number,
 });
 
+/** An object whose retained size grew at every soak snapshot, and how it is reached. */
+export const RetainerGrowth = Schema.Struct({
+  path: Schema.String,
+  MB: Schema.Number,
+  retainedMB: Schema.Number,
+});
+export type RetainerGrowth = typeof RetainerGrowth.Type;
+
 export const ServerMetrics = Schema.Struct({
   meta: Schema.Record(
     Schema.String,
@@ -125,6 +180,7 @@ export const ServerMetrics = Schema.Struct({
   /** Top CPU self time (ms) and allocated MB by function, from the last run. */
   profiles: Schema.optional(Schema.Record(Schema.String, ProfileSummary)),
   soakHeapGrowth: Schema.optional(Schema.Array(HeapGrowth)),
+  soakRetainerGrowth: Schema.optional(Schema.Array(RetainerGrowth)),
 });
 export type ServerMetrics = typeof ServerMetrics.Type;
 
@@ -202,20 +258,186 @@ export function flatten(measured: Measured): Map<string, number> {
   return values;
 }
 
-function noiseFloor(metric: string) {
-  if (metric.startsWith("scaling.")) return metric.endsWith("cpuPctPerThread") ? 0.2 : 2;
-  if (metric.startsWith("soak.")) return 20;
-  if (metric.endsWith("cpuPct")) return 1;
-  if (metric.endsWith("wakeupsPerSec")) return 20;
-  if (metric.endsWith("MB")) return 15;
-  if (metric.endsWith("KB")) return 20;
-  if (metric.includes(".shellMs.") || metric.includes(".openMs.")) return 50;
-  if (metric.endsWith("loopDelayP50Ms")) return 2;
-  if (metric.endsWith("loopDelayP99Ms")) return 5;
-  if (metric.endsWith("loopDelayMaxMs")) return 20;
-  if (metric.endsWith("gcPauseMs")) return 10;
-  if (metric.endsWith("gcCount")) return 20;
-  return 300;
+/**
+ * How far a metric moves between runs of the same commit, and whether it moves little enough to
+ * gate on. First match wins. Re-derive from A/A files with `server-metrics noise`; see
+ * docs/internals/performance-regressions.md for the runs these came from.
+ */
+export interface NoiseRule {
+  readonly pattern: RegExp;
+  /** Absolute change a metric must clear on top of the relative threshold. */
+  readonly floor: number;
+  /** False for metrics an A/A run moves too far to gate on: shown, never counted. */
+  readonly gate: boolean;
+}
+
+/** Shown, never counted: these A/A intervals were wider than half the metric (see `noise`). */
+const informational = (pattern: RegExp): NoiseRule => ({ pattern, floor: 0, gate: false });
+
+// Estimated from A/A runs on cups (16 cores, load 1 to 20) on 2026-11-23, with and without the
+// agent scope, rounded up and taking the larger of the two.
+// busy and soak had no A/A run and keep the earlier floors.
+export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
+  informational(/loopDelayP50Ms$/),
+  informational(/^(rest|quiet|streaming|clients\.attached\.\d+)\.loopDelay(P99|Max)Ms$/),
+  informational(/^(rest|quiet|clients\.attached\.\d+)\.gc(Count|PauseMs)$/),
+  informational(/^(streaming|pipeline)\.gcPauseMs$/),
+  informational(
+    /^(pipeline\.loopDelayMaxMs|clients\.(storm|reconnect)\.loopDelayP99Ms|quiet\.cpuPct)$/,
+  ),
+  informational(/^scaling\.(cpuPct|wakeups)PerThread$/),
+  informational(/^clients\.attached\.\d+\.(cpuPct|wakeupsPerSec)$/),
+  informational(/^(firstWord\..*|pipeline\.turnEndMs)\.p90$/),
+  { pattern: /^scaling\.heapMBPerThread$/, floor: 0.06, gate: true },
+  { pattern: /^scaling\.rssMBPerThread$/, floor: 0.2, gate: true },
+  { pattern: /^soak\./, floor: 20, gate: true },
+  informational(/^working\.(cpuPct|loopDelayP99Ms)PerThread$/),
+  informational(/^working\.active\.\d+\.(wakeupsPerSec|loopDelayMaxMs|gcPauseMs)$/),
+  { pattern: /^working\.heapMBPerThread$/, floor: 0.06, gate: true },
+  { pattern: /^working\.rssMBPerThread$/, floor: 0.2, gate: true },
+  { pattern: /^working\.active\.\d+\.turnsPerMin$/, floor: 4, gate: true },
+  { pattern: /^working\.active\.\d+\.toRequestMs\.median$/, floor: 1_100, gate: true },
+  { pattern: /^working\.active\.\d+\.turnEndMs\.median$/, floor: 1_700, gate: true },
+  {
+    pattern: /^working\.active\.\d+\.(toRequestMs\.p90|turnMs\.median)$/,
+    floor: 1_900,
+    gate: true,
+  },
+  { pattern: /^working\.active\.\d+\.turnEndMs\.p90$/, floor: 2_200, gate: true },
+  { pattern: /^working\.active\.\d+\.turnMs\.p90$/, floor: 2_800, gate: true },
+  // Peak RSS while 20 agents run swings by a checkpoint's git children; the settled RSS does not.
+  { pattern: /^working\.active\.\d+\.rssPeakMB$/, floor: 170, gate: true },
+  { pattern: /^working\.active\.\d+\.(cpuPct|loopDelayP99Ms)$/, floor: 5, gate: true },
+  { pattern: /^working\.active\.\d+\.gcCount$/, floor: 8, gate: true },
+  { pattern: /^startup\.readyMs$/, floor: 600, gate: true },
+  { pattern: /^firstWord\./, floor: 600, gate: true },
+  { pattern: /^pipeline\.(toRequestMs|turnEndMs)\.median$/, floor: 300, gate: true },
+  { pattern: /^pipeline\.(toRequestMs\.p90|msPerTurn)$/, floor: 600, gate: true },
+  // The reconnect had no A/A run yet and takes the storm's floors.
+  { pattern: /^clients\.(storm|reconnect)\.resubscribedMs$/, floor: 200, gate: true },
+  { pattern: /^rest\.cpuPct$/, floor: 1, gate: true },
+  { pattern: /cpuPct$/, floor: 3.5, gate: true },
+  { pattern: /^(rest|quiet)\.wakeupsPerSec$/, floor: 12, gate: true },
+  { pattern: /wakeupsPerSec$/, floor: 110, gate: true },
+  { pattern: /rssPeakMB$/, floor: 16, gate: true },
+  { pattern: /rssMB$/, floor: 4, gate: true },
+  { pattern: /heapAfterGcMB$/, floor: 1, gate: true },
+  { pattern: /MB$/, floor: 15, gate: true },
+  { pattern: /KB$/, floor: 20, gate: true },
+  { pattern: /\.(shellMs|openMs)\./, floor: 50, gate: true },
+  { pattern: /loopDelayP99Ms$/, floor: 3, gate: true },
+  { pattern: /loopDelayMaxMs$/, floor: 22, gate: true },
+  { pattern: /gcPauseMs$/, floor: 55, gate: true },
+  { pattern: /gcCount$/, floor: 6, gate: true },
+  { pattern: /./, floor: 300, gate: true },
+];
+
+// Estimated from one quick A/A run (3 rounds) on a 4-vCPU Azure Windows Server 2025 VM on
+// 2026-11-23, rounded up. Consulted before NOISE_RULES on that OS. macOS has no A/A run yet and
+// takes the defaults.
+const NOISE_RULE_OVERRIDES: Partial<Record<string, ReadonlyArray<NoiseRule>>> = {
+  win32: [
+    informational(/^working\.active\.20\.toRequestMs\.p90$/),
+    { pattern: /^working\.rssMBPerThread$/, floor: 0.6, gate: true },
+    { pattern: /^scaling\.rssMBPerThread$/, floor: 0.5, gate: true },
+    { pattern: /^working\.active\.\d+\.rssMB$/, floor: 10, gate: true },
+    { pattern: /^working\.active\.\d+\.loopDelayP99Ms$/, floor: 6, gate: true },
+    { pattern: /^pipeline\.loopDelayP99Ms$/, floor: 8, gate: true },
+    { pattern: /^streaming\.heapAfterGcMB$/, floor: 1.5, gate: true },
+  ],
+};
+
+/**
+ * The rules for the platform (`meta.platform`, e.g. `win32-x64`) every file recorded. Files from
+ * different platforms get the defaults and a warning.
+ */
+export function noiseRulesFor(files: ReadonlyArray<ServerMetrics>) {
+  const platforms = [...new Set(files.map(({ meta }) => String(meta.platform ?? "")))];
+  if (platforms.length !== 1) {
+    return {
+      rules: NOISE_RULES,
+      warning: `the files come from ${platforms.join(" and ")}, so the default noise floors apply`,
+    };
+  }
+  const overrides = NOISE_RULE_OVERRIDES[platforms[0]!.split("-")[0]!] ?? [];
+  return { rules: [...overrides, ...NOISE_RULES], warning: undefined };
+}
+
+export function noiseRule(metric: string, rules: ReadonlyArray<NoiseRule> = NOISE_RULES) {
+  return rules.find((rule) => rule.pattern.test(metric)) ?? { floor: 0, gate: true };
+}
+
+/** An error and the errors it wraps as one line, outermost first, repeats left out. */
+export function describeFailure(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  for (let at = error; at !== undefined && at !== null && !seen.has(at);) {
+    seen.add(at);
+    if (typeof at !== "object") {
+      parts.push(String(at));
+      break;
+    }
+    const tag = "_tag" in at && typeof at._tag === "string" ? at._tag : undefined;
+    const message = "message" in at && typeof at.message === "string" ? at.message.trim() : "";
+    const text = message || tag || String(at);
+    if (!parts.some((part) => part.includes(text))) parts.push(text);
+    at = "cause" in at ? at.cause : undefined;
+  }
+  return parts.join(": ");
+}
+
+/** Why two files cannot be compared at all: a quick run measures shorter windows than a full one. */
+export function profileMismatch(before: ServerMetrics, after: ServerMetrics) {
+  const profile = (metrics: ServerMetrics) => metrics.meta.profile ?? "full";
+  return profile(before) === profile(after)
+    ? undefined
+    : `before is a ${profile(before)} run and after a ${profile(after)} one; compare quick runs only with quick runs`;
+}
+
+/** Throughput, where a drop is the regression. */
+export const higherIsBetter = (metric: string) => metric.endsWith("PerMin");
+
+/** Fields that describe a run rather than measure it. */
+const isMetric = (metric: string) =>
+  !(
+    metric === "soak.minutes" ||
+    metric.startsWith("machine.") ||
+    metric.endsWith("loopSamples") ||
+    metric === "busy.projects" ||
+    metric === "busy.ballastMB" ||
+    metric.endsWith(".clients") ||
+    metric.endsWith(".threadsPerClient") ||
+    metric.endsWith(".threads") ||
+    metric === "busy.largeThread.messages" ||
+    metric.startsWith("scaling.points")
+  );
+
+/**
+ * A run is loaded when other node, T3 and agent processes kept this share of the cores busy, or,
+ * where that is unknown, when the 1-minute load passed this much per CPU. The load counts the
+ * run's own agents too, so it is only the fallback.
+ */
+export const HEAVY_LOAD_PER_CPU = 0.75;
+export const HEAVY_OTHER_CPU_SHARE = 0.25;
+
+/** One line per side whose runs shared the machine with heavy load, so its numbers are suspect. */
+export function loadWarnings(side: string, metrics: ServerMetrics) {
+  const cpus = typeof metrics.meta.cpus === "number" ? metrics.meta.cpus : null;
+  if (cpus === null) return [];
+  const loaded = metrics.runs.flatMap(({ machine }) =>
+    machine &&
+    (machine.otherCpuCores === null
+      ? (machine.load1 ?? 0) >= cpus * HEAVY_LOAD_PER_CPU
+      : machine.otherCpuCores >= cpus * HEAVY_OTHER_CPU_SHARE)
+      ? [machine]
+      : [],
+  );
+  if (loaded.length === 0) return [];
+  const worstLoad = Math.max(...loaded.map(({ load1 }) => load1 ?? 0));
+  const worstOther = Math.max(...loaded.map(({ otherCpuCores }) => otherCpuCores ?? 0));
+  return [
+    `${side} ran under heavy load in ${loaded.length} of ${metrics.runs.length} runs (load up to ${worstLoad} on ${cpus} CPUs, other node/T3/agent processes up to ${worstOther} cores); rerun on a quieter machine before trusting a change`,
+  ];
 }
 
 const median = (values: ReadonlyArray<number>) => {
@@ -241,20 +463,139 @@ export function bootstrapMedianDifference(a: ReadonlyArray<number>, b: ReadonlyA
   return [differences[49]!, differences[1_949]!] as const;
 }
 
-export function compareMetrics(before: ServerMetrics, after: ServerMetrics, threshold = 10) {
-  const collect = (metrics: ServerMetrics) => {
-    const values = new Map<string, number[]>();
-    for (const run of metrics.runs) {
-      for (const [metric, value] of flatten(run)) {
-        values.set(metric, [...(values.get(metric) ?? []), value]);
-      }
+/**
+ * False for a wakeup count where only one side had the delay sampler: wakeups include the
+ * sampler's only when `loopSamples` sits beside them, so the two measured different things. The
+ * per-thread fit comes from the quiet windows, so it follows their method.
+ */
+function sameWakeupMethod(
+  metric: string,
+  a: ReadonlyMap<string, unknown>,
+  b: ReadonlyMap<string, unknown>,
+) {
+  const window =
+    metric === "scaling.wakeupsPerThread"
+      ? "quiet."
+      : metric.endsWith("wakeupsPerSec")
+        ? metric.slice(0, -"wakeupsPerSec".length)
+        : "";
+  return !window || a.has(`${window}loopSamples`) === b.has(`${window}loopSamples`);
+}
+
+/** CPU seconds spent between two reads keyed by pid and start time; a process that exited is lost. */
+export function competingBetween(
+  before: ReadonlyMap<string, number>,
+  after: ReadonlyMap<string, number>,
+) {
+  return [...after].reduce((total, [key, seconds]) => total + seconds - (before.get(key) ?? 0), 0);
+}
+
+/** Why a directory is not an A/A pair: its files must record one and the same commit. */
+export function noisePairProblem(dir: string, a: ServerMetrics, b: ServerMetrics) {
+  const commits = [a.meta.commit, b.meta.commit];
+  if (commits.some((commit) => typeof commit !== "string" || commit === "")) {
+    return `${dir}: a.json or b.json records no commit, so it cannot be shown to be an A/A run`;
+  }
+  return commits[0] === commits[1]
+    ? undefined
+    : `${dir}: a.json is ${commits[0]} and b.json ${commits[1]}; noise floors need one commit against itself`;
+}
+
+/** Every metric's values across a file's runs. */
+const collect = (metrics: ServerMetrics) => {
+  const values = new Map<string, number[]>();
+  for (const run of metrics.runs) {
+    for (const [metric, value] of flatten(run)) {
+      values.set(metric, [...(values.get(metric) ?? []), value]);
     }
-    return values;
-  };
+  }
+  return values;
+};
+
+/** Two significant digits, rounded up, so a derived floor never sits under what was seen. */
+const ceilSignificant = (value: number) => {
+  if (value <= 0) return 0;
+  const step = 10 ** (Math.floor(Math.log10(value)) - 1);
+  return round(Math.ceil(value / step) * step, 6);
+};
+
+/** An A/A interval wider than this share of a metric's median makes it informational. */
+export const NOISY_SHARE = 0.5;
+
+export interface NoiseRow {
+  readonly metric: string;
+  readonly median: number;
+  /** The widest half-width of an A/A pair's 95% interval of the median difference. */
+  readonly halfWidth: number;
+  /** The largest |median(A) - median(B)| over the A/A pairs. */
+  readonly aaDifference: number;
+  readonly floor: number;
+  readonly suggestedFloor: number;
+  readonly gate: boolean;
+  readonly suggestedGate: boolean;
+}
+
+/**
+ * Each metric's A/A spread as `compare` sees it: the 95% interval of the median difference. The
+ * estimated floor (half the widest half-width, or the A/A median difference if larger) is how far
+ * an A/A interval must miss zero to flag. It is an estimate, not a bound.
+ */
+export function noiseReport(
+  pairs: ReadonlyArray<readonly [ServerMetrics, ServerMetrics]>,
+  rules: ReadonlyArray<NoiseRule> = noiseRulesFor(pairs.flat()).rules,
+) {
+  const found = new Map<string, { medians: number[]; halfWidth: number; aaDifference: number }>();
+  for (const [before, after] of pairs) {
+    const a = collect(before);
+    const b = collect(after);
+    for (const [metric, x] of a) {
+      const y = b.get(metric);
+      if (!y || !isMetric(metric) || !sameWakeupMethod(metric, a, b)) continue;
+      const [low, high] = bootstrapMedianDifference(x, y);
+      const entry = found.get(metric) ?? { medians: [], halfWidth: 0, aaDifference: 0 };
+      entry.medians.push(median([...x, ...y]));
+      entry.halfWidth = Math.max(entry.halfWidth, (high - low) / 2);
+      entry.aaDifference = Math.max(entry.aaDifference, Math.abs(median(y) - median(x)));
+      found.set(metric, entry);
+    }
+  }
+  const rows: NoiseRow[] = [...found].map(([metric, entry]) => {
+    const middle = median(entry.medians);
+    const rule = noiseRule(metric, rules);
+    return {
+      metric,
+      median: round(middle, 2),
+      halfWidth: round(entry.halfWidth, 2),
+      aaDifference: round(entry.aaDifference, 2),
+      floor: rule.floor,
+      suggestedFloor: ceilSignificant(Math.max(entry.halfWidth / 2, entry.aaDifference)),
+      gate: rule.gate,
+      suggestedGate: entry.halfWidth <= Math.abs(middle) * NOISY_SHARE,
+    };
+  });
+  const lines = [
+    "| metric | median | ± A/A interval | A/A diff | floor | estimated floor | gated | suggest gating |",
+    "| :-- | --: | --: | --: | --: | --: | :-: | :-: |",
+    ...rows.map(
+      (row) =>
+        `| ${row.metric} | ${row.median} | ${row.halfWidth} | ${row.aaDifference} | ${row.floor} | ${row.suggestedFloor}${row.suggestedFloor > row.floor ? " ⚠" : ""} | ${row.gate ? "yes" : "no"} | ${row.suggestedGate ? "yes" : "no"} |`,
+    ),
+  ];
+  return { rows, table: lines.join("\n") };
+}
+
+export function compareMetrics(
+  before: ServerMetrics,
+  after: ServerMetrics,
+  threshold = 10,
+  rules?: ReadonlyArray<NoiseRule>,
+) {
+  const forPlatform = noiseRulesFor([before, after]);
+  const gating = rules ?? forPlatform.rules;
   const a = collect(before);
   const b = collect(after);
   const lines = [
-    "### Server metrics (lower is better)",
+    "### Server metrics (lower is better, except throughput per minute)",
     "",
     `before \`${before.meta.commit}\` (${before.runs.length} runs), after \`${after.meta.commit}\` (${after.runs.length} runs), ${after.meta.platform}${after.meta.noAgentScope ? ", no agent scope" : ""}`,
     "",
@@ -264,18 +605,9 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
   const regressed: string[] = [];
   const improved: string[] = [];
   let compared = 0;
+  const informational: string[] = [];
   for (const metric of new Set([...a.keys(), ...b.keys()])) {
-    if (
-      metric === "soak.minutes" ||
-      metric.endsWith("loopSamples") ||
-      metric === "busy.projects" ||
-      metric === "busy.ballastMB" ||
-      metric === "clients.storm.clients" ||
-      metric === "busy.largeThread.messages" ||
-      metric.startsWith("scaling.points")
-    ) {
-      continue;
-    }
+    if (!isMetric(metric)) continue;
     const x = a.get(metric);
     const y = b.get(metric);
     if (!x || !y) {
@@ -285,13 +617,7 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
     // Wakeups include the delay sampler's only when `loopSamples` sits beside them, so a file
     // from before the sampler and one from after measured different things. The per-thread fit
     // comes from the quiet windows.
-    const window =
-      metric === "scaling.wakeupsPerThread"
-        ? "quiet."
-        : metric.endsWith("wakeupsPerSec")
-          ? metric.slice(0, -"wakeupsPerSec".length)
-          : "";
-    if (window && a.has(`${window}loopSamples`) !== b.has(`${window}loopSamples`)) {
+    if (!sameWakeupMethod(metric, a, b)) {
       lines.push(`| ${metric} | ${median(x)} | ${median(y)} | not comparable | | |`);
       continue;
     }
@@ -299,12 +625,16 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
     const mx = median(x);
     const my = median(y);
     // A change counts only past both the relative threshold and the absolute noise floor.
-    const limit = Math.max(noiseFloor(metric), (Math.abs(mx) * threshold) / 100);
+    const rule = noiseRule(metric, gating);
+    const limit = Math.max(rule.floor, (Math.abs(mx) * threshold) / 100);
     const repeated = x.length > 1 && y.length > 1;
     const [low, high] = repeated ? bootstrapMedianDifference(x, y) : [my - mx, my - mx];
-    const verdict = low > limit ? "worse" : high < -limit ? "better" : "";
-    if (verdict === "worse") regressed.push(metric);
-    if (verdict === "better") improved.push(metric);
+    const up = low > limit ? "worse" : high < -limit ? "better" : "";
+    const moved = higherIsBetter(metric) ? { worse: "better", better: "worse", "": "" }[up] : up;
+    if (moved && !rule.gate) informational.push(metric);
+    else if (moved === "worse") regressed.push(metric);
+    else if (moved === "better") improved.push(metric);
+    const verdict = rule.gate ? moved : moved ? `${moved} (noisy, not gated)` : "noisy";
     const percent = mx === 0 ? (my === 0 ? 0 : Infinity) : ((my - mx) / Math.abs(mx)) * 100;
     const shown = Number.isFinite(percent)
       ? `${percent > 0 ? "+" : ""}${Math.round(percent)}%`
@@ -314,7 +644,12 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
       `| ${metric} | ${round(mx, 2)} | ${round(my, 2)} | ${shown} | ${interval} | ${verdict} |`,
     );
   }
-  return { table: lines.join("\n"), regressed, improved, compared };
+  const warnings = [
+    ...(rules || !forPlatform.warning ? [] : [forPlatform.warning]),
+    ...loadWarnings("before", before),
+    ...loadWarnings("after", after),
+  ];
+  return { table: lines.join("\n"), regressed, improved, informational, compared, warnings };
 }
 
 const CallFrame = Schema.Struct({
@@ -379,19 +714,24 @@ export function summarizeProfiles(
   return { cpuMs: top(cpuTotals, 0), allocatedMB: top(allocations, 1) };
 }
 
+const TypeNames = Schema.Array(Schema.Union([Schema.Array(Schema.String), Schema.String]));
 export const HeapSnapshot = Schema.Struct({
   snapshot: Schema.Struct({
     meta: Schema.Struct({
       node_fields: Schema.Array(Schema.String),
-      node_types: Schema.Array(Schema.Union([Schema.Array(Schema.String), Schema.String])),
+      node_types: TypeNames,
+      edge_fields: Schema.Array(Schema.String),
+      edge_types: TypeNames,
     }),
   }),
   nodes: Schema.Array(Schema.Number),
+  edges: Schema.Array(Schema.Number),
   strings: Schema.Array(Schema.String),
 });
+type HeapSnapshot = typeof HeapSnapshot.Type;
 
 /** Self size by constructor from a V8 heap snapshot. */
-export function heapByConstructor(snapshot: typeof HeapSnapshot.Type) {
+export function heapByConstructor(snapshot: HeapSnapshot) {
   const fields = snapshot.snapshot.meta.node_fields;
   const typeNames = snapshot.snapshot.meta.node_types[0];
   const types = Array.isArray(typeNames) ? typeNames : [];
@@ -431,6 +771,253 @@ export function heapGrowth(
     .toSorted((a, b) => b.bytes - a.bytes)
     .slice(0, 25)
     .map(({ bytes, ...entry }) => ({ ...entry, MB: round(bytes / 1e6, 2) }));
+}
+
+interface Retainer {
+  readonly retained: number;
+  /** The id of the node that dominates this one, none for the root. */
+  readonly dominator: number | undefined;
+  /** Empty below `pathBytes`: such a node is only kept to compare sizes across snapshots. */
+  readonly path: string;
+}
+
+const TEXT_NODES = new Set(["string", "concatenated string", "sliced string", "regexp", "number"]);
+const IDENTIFIER = /^[A-Za-z_$#][\w$]{0,48}$/;
+
+/**
+ * Retained size by node id for every node retaining at least `minBytes`, and for those retaining
+ * `pathBytes` the shortest strong path from the root to it. Node ids are stable within one process, so snapshots of one
+ * server line up. Paths name only code: string contents and non-identifier keys are left out.
+ */
+export function heapRetainers(snapshot: HeapSnapshot, minBytes = 16_000, pathBytes = 256_000) {
+  const { meta } = snapshot.snapshot;
+  const nodeFields = meta.node_fields.length;
+  const edgeFields = meta.edge_fields.length;
+  const list = (names: typeof meta.node_types) => {
+    const first = names[0];
+    return Array.isArray(first) ? first : [];
+  };
+  const nodeTypes = list(meta.node_types);
+  const edgeTypes = list(meta.edge_types);
+  const [typeAt, nameAt, idAt, sizeAt, edgeCountAt] = [
+    "type",
+    "name",
+    "id",
+    "self_size",
+    "edge_count",
+  ].map((field) => meta.node_fields.indexOf(field)) as [number, number, number, number, number];
+  const [edgeTypeAt, edgeNameAt, toAt] = ["type", "name_or_index", "to_node"].map((field) =>
+    meta.edge_fields.indexOf(field),
+  ) as [number, number, number];
+  const { nodes, edges, strings } = snapshot;
+  const count = nodes.length / nodeFields;
+  const firstEdge = new Uint32Array(count + 1);
+  for (let node = 0, offset = 0; node < count; node++) {
+    firstEdge[node] = offset;
+    offset += nodes[node * nodeFields + edgeCountAt]! * edgeFields;
+    firstEdge[node + 1] = offset;
+  }
+  const weak = edgeTypes.indexOf("weak");
+  const shortcut = edgeTypes.indexOf("shortcut");
+  const strong = (edge: number) =>
+    edges[edge + edgeTypeAt] !== weak && edges[edge + edgeTypeAt] !== shortcut;
+  const target = (edge: number) => edges[edge + toAt]! / nodeFields;
+
+  // Postorder from the root, then dominators by Cooper, Harvey and Kennedy's iteration.
+  const postorder = new Int32Array(count).fill(-1);
+  const order = new Int32Array(count);
+  const stack = new Int32Array(count);
+  const cursor = new Uint32Array(count);
+  const seen = new Uint8Array(count);
+  let depth = 0;
+  let visited = 0;
+  stack[depth++] = 0;
+  seen[0] = 1;
+  cursor[0] = firstEdge[0]!;
+  while (depth > 0) {
+    const node = stack[depth - 1]!;
+    if (cursor[node]! < firstEdge[node + 1]!) {
+      const edge = cursor[node]!;
+      cursor[node] = edge + edgeFields;
+      const next = target(edge);
+      if (strong(edge) && !seen[next]) {
+        seen[next] = 1;
+        cursor[next] = firstEdge[next]!;
+        stack[depth++] = next;
+      }
+    } else {
+      depth--;
+      postorder[node] = visited;
+      order[visited++] = node;
+    }
+  }
+  const predecessorStart = new Uint32Array(count + 1);
+  for (let node = 0; node < count; node++) {
+    if (!seen[node]) continue;
+    for (let edge = firstEdge[node]!; edge < firstEdge[node + 1]!; edge += edgeFields) {
+      if (strong(edge)) predecessorStart[target(edge) + 1]!++;
+    }
+  }
+  for (let node = 0; node < count; node++) predecessorStart[node + 1]! += predecessorStart[node]!;
+  const predecessors = new Int32Array(predecessorStart[count]!);
+  const fill = predecessorStart.slice(0, count);
+  for (let node = 0; node < count; node++) {
+    if (!seen[node]) continue;
+    for (let edge = firstEdge[node]!; edge < firstEdge[node + 1]!; edge += edgeFields) {
+      if (strong(edge)) predecessors[fill[target(edge)]!++] = node;
+    }
+  }
+  const dominator = new Int32Array(count).fill(-1);
+  dominator[0] = 0;
+  const intersect = (left: number, right: number) => {
+    while (left !== right) {
+      while (postorder[left]! < postorder[right]!) left = dominator[left]!;
+      while (postorder[right]! < postorder[left]!) right = dominator[right]!;
+    }
+    return left;
+  };
+  for (let changed = true; changed;) {
+    changed = false;
+    for (let index = visited - 2; index >= 0; index--) {
+      const node = order[index]!;
+      let found = -1;
+      for (let at = predecessorStart[node]!; at < predecessorStart[node + 1]!; at++) {
+        const predecessor = predecessors[at]!;
+        if (dominator[predecessor] === -1) continue;
+        found = found === -1 ? predecessor : intersect(predecessor, found);
+      }
+      if (found !== -1 && dominator[node] !== found) {
+        dominator[node] = found;
+        changed = true;
+      }
+    }
+  }
+  const retained = new Float64Array(count);
+  for (let node = 0; node < count; node++) retained[node] = nodes[node * nodeFields + sizeAt]!;
+  for (let index = 0; index < visited - 1; index++) {
+    const node = order[index]!;
+    retained[dominator[node]!]! += retained[node]!;
+  }
+
+  const parent = new Int32Array(count).fill(-1);
+  const parentEdge = new Int32Array(count).fill(-1);
+  const queue = new Int32Array(count);
+  let head = 0;
+  let tail = 0;
+  queue[tail++] = 0;
+  parent[0] = 0;
+  while (head < tail) {
+    const node = queue[head++]!;
+    for (let edge = firstEdge[node]!; edge < firstEdge[node + 1]!; edge += edgeFields) {
+      const next = target(edge);
+      if (!strong(edge) || parent[next] !== -1) continue;
+      parent[next] = node;
+      parentEdge[next] = edge;
+      queue[tail++] = next;
+    }
+  }
+  const nodeType = (node: number) => nodeTypes[nodes[node * nodeFields + typeAt]!] ?? "?";
+  const label = (node: number) => {
+    const type = nodeType(node);
+    if (TEXT_NODES.has(type)) return `(${type})`;
+    const name = strings[nodes[node * nodeFields + nameAt]!] ?? "";
+    const shown = name.length > 60 || /["'`\n\\]|:\/\/|(^|\s)\/[\w.]/.test(name) ? "?" : name;
+    if (type === "object") return shown;
+    if (type === "closure") return `${shown || "(anonymous)"}()`;
+    return `(${type}${shown ? ` ${shown}` : ""})`;
+  };
+  const edgeName = (edge: number) => {
+    const type = edgeTypes[edges[edge + edgeTypeAt]!];
+    const value = edges[edge + edgeNameAt]!;
+    if (type === "element" || type === "hidden") return `[${value}]`;
+    const name = strings[value] ?? "";
+    return IDENTIFIER.test(name) ? name : "<key>";
+  };
+  const pathTo = (node: number) => {
+    const steps: string[] = [];
+    for (let at = node; at !== 0 && steps.length < 40; at = parent[at]!) {
+      if (parent[at] === -1) return "(unreachable)";
+      const from = parent[at]!;
+      steps.push(
+        from === 0 || nodeType(from) === "synthetic"
+          ? edgeName(parentEdge[at]!)
+          : `${label(from)}.${edgeName(parentEdge[at]!)}`,
+      );
+      if (nodeType(from) === "synthetic") break;
+    }
+    const shown = steps.reverse();
+    return [...(shown.length > 6 ? ["…", ...shown.slice(-6)] : shown), label(node)].join(" → ");
+  };
+  const result = new Map<number, Retainer>();
+  for (let node = 0; node < count; node++) {
+    if (!seen[node] || retained[node]! < minBytes) continue;
+    result.set(nodes[node * nodeFields + idAt]!, {
+      retained: retained[node]!,
+      dominator: node === 0 ? undefined : nodes[dominator[node]! * nodeFields + idAt]!,
+      path:
+        retained[node]! < pathBytes
+          ? ""
+          : nodeType(node) === "synthetic"
+            ? label(node)
+            : pathTo(node),
+    });
+  }
+  return result;
+}
+
+/**
+ * The objects whose retained size grew from each snapshot to the next, at least `minBytes` in all.
+ * An object is left out when a reported object it dominates holds at least 80% of its growth: of
+ * a chain that grew by about the same amount, only the deepest is kept, the container holding the
+ * growth. Nested objects whose growth differs are each reported.
+ */
+export function retainerGrowth(
+  snapshots: ReadonlyArray<ReadonlyMap<number, Retainer>>,
+  minBytes = 1_000_000,
+) {
+  const last = snapshots.at(-1);
+  if (last === undefined || snapshots.length < 2) return [];
+  const growth = new Map<number, number>();
+  for (const [id, { retained, path }] of last) {
+    if (path === "" || path.startsWith("(synthetic")) continue;
+    const sizes = [
+      ...snapshots.slice(0, -1).map((snapshot) => snapshot.get(id)?.retained ?? 0),
+      retained,
+    ];
+    const grewEachTime = sizes.every((size, index) => index === 0 || size > sizes[index - 1]!);
+    const grown = retained - sizes[0]!;
+    if (grewEachTime && grown >= minBytes) growth.set(id, grown);
+  }
+  const ancestors = (id: number) => {
+    const found: number[] = [];
+    for (let at = last.get(id)?.dominator; at !== undefined && found.length < 500;) {
+      found.push(at);
+      at = last.get(at)?.dominator;
+    }
+    return found;
+  };
+  // Deepest first, so every descendant is decided before its ancestors: a row is left out
+  // only when a reported descendant holds at least 80% of its growth.
+  const heldBelow = new Map<number, number>();
+  const kept: Array<[number, number]> = [];
+  const depth = new Map([...growth.keys()].map((id) => [id, ancestors(id).length]));
+  const order = [...growth].toSorted((a, b) => depth.get(b[0])! - depth.get(a[0])!);
+  for (const [id, grown] of order) {
+    if ((heldBelow.get(id) ?? 0) >= grown * 0.8) continue;
+    kept.push([id, grown]);
+    for (const ancestor of ancestors(id)) {
+      heldBelow.set(ancestor, Math.max(heldBelow.get(ancestor) ?? 0, grown));
+    }
+  }
+  const rows: RetainerGrowth[] = kept
+    .toSorted((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([id, grown]) => ({
+      path: last.get(id)!.path,
+      MB: round(grown / 1e6, 2),
+      retainedMB: round(last.get(id)!.retained / 1e6, 2),
+    }));
+  return rows;
 }
 
 const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
