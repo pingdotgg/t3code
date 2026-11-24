@@ -13,6 +13,7 @@ import {
   type LimitAccount,
   displayLimitWindows,
   cursorUsageWindowDetails,
+  accountUsageLimits,
   collectProviderUsageLimits,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -2009,5 +2010,149 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("accountUsageLimits", () => {
+  const older = "2026-09-03T11:00:00.000Z";
+  const newer = "2026-09-03T11:30:00.000Z";
+  const readings = (usedPercent: number, at: string, credentialFingerprint = "fp-1") => ({
+    checkedAt: at,
+    credentialFingerprint,
+    windows: [{ ...window, usedPercent }],
+  });
+  const failed = (at: string) => ({
+    checkedAt: at,
+    windows: [],
+    unavailable: { reason: "probeFailed" as const },
+  });
+  const login = (overrides: Partial<ServerProvider> = {}) =>
+    provider({ instanceId: ProviderInstanceId.make("login"), ...overrides });
+
+  it("takes a fresher reading that shares a credential fingerprint", () => {
+    const own = login({ usageLimits: readings(80, older) });
+    const peer = login({ usageLimits: readings(20, newer) });
+    expect(accountUsageLimits(own, own.usageLimits!, [peer])).toBe(peer.usageLimits);
+  });
+
+  it("takes a fresher reading that shares an email and workspace", () => {
+    const auth = { status: "authenticated" as const, email: "Dev@Example.com", workspaceId: "w1" };
+    const own = login({ auth, usageLimits: readings(80, older, "fp-own") });
+    const peer = login({
+      auth: { ...auth, email: "dev@example.com" },
+      usageLimits: readings(20, newer, "fp-peer"),
+    });
+    expect(accountUsageLimits(own, own.usageLimits!, [peer])).toBe(peer.usageLimits);
+  });
+
+  it("prefers a readable peer over a failed local reading of the same account", () => {
+    const own = login({ usageLimits: { ...failed(newer), credentialFingerprint: "fp-1" } });
+    const peer = login({ usageLimits: readings(20, older) });
+    expect(accountUsageLimits(own, own.usageLimits!, [peer])).toBe(peer.usageLimits);
+  });
+
+  it.each([
+    ["newer own reading", readings(20, newer), readings(80, older), {}],
+    ["tied own reading", readings(20, newer), readings(80, newer), {}],
+    [
+      "other driver",
+      readings(80, older),
+      readings(20, newer),
+      { driver: ProviderDriverKind.make("claudeAgent") },
+    ],
+    ["disabled peer", readings(80, older), readings(20, newer), { enabled: false }],
+    ["uninstalled peer", readings(80, older), readings(20, newer), { installed: false }],
+    [
+      "unavailable peer",
+      readings(80, older),
+      readings(20, newer),
+      { availability: "unavailable" as const },
+    ],
+    ["failed peer", readings(80, older), failed(newer), {}],
+    [
+      "hub-routed peer",
+      readings(80, older),
+      readings(20, newer),
+      {
+        auth: {
+          status: "authenticated" as const,
+          email: "a@x.io",
+          workspaceId: "w1",
+          endpoint: "http://127.0.0.1:8317",
+        },
+      },
+    ],
+    [
+      "other workspace",
+      readings(80, older),
+      readings(20, newer),
+      { auth: { status: "authenticated" as const, email: "a@x.io", workspaceId: "w2" } },
+    ],
+    [
+      "other account",
+      readings(80, older),
+      readings(20, newer),
+      { auth: { status: "authenticated" as const, email: "b@x.io", workspaceId: "w1" } },
+    ],
+  ])("keeps its own reading against a %s", (_name, ownLimits, peerLimits, peerOverrides) => {
+    const own = login({
+      auth: { status: "authenticated", email: "a@x.io", workspaceId: "w1" },
+      usageLimits: ownLimits,
+    });
+    const peer = login({
+      auth: { status: "authenticated", email: "a@x.io", workspaceId: "w1" },
+      usageLimits: peerLimits,
+      ...peerOverrides,
+    });
+    expect(accountUsageLimits(own, ownLimits, [peer])).toBe(ownLimits);
+  });
+
+  it("keeps a hub-routed login's own reading instead of a direct peer's", () => {
+    const ownLimits = failed(older);
+    const own = login({
+      auth: { status: "authenticated", email: "a@x.io", endpoint: "http://127.0.0.1:8317" },
+      usageLimits: ownLimits,
+    });
+    const peer = login({
+      auth: { status: "authenticated", email: "a@x.io" },
+      usageLimits: readings(20, newer),
+    });
+    expect(accountUsageLimits(own, ownLimits, [peer])).toBe(ownLimits);
+  });
+
+  it("keeps its own reading when multiple workspaces make the account ambiguous", () => {
+    const ownLimits = readings(80, older);
+    const own = login({
+      auth: { status: "authenticated", email: "a@x.io" },
+      usageLimits: ownLimits,
+    });
+    const peerA = login({
+      auth: { status: "authenticated", email: "a@x.io", workspaceId: "w1" },
+      usageLimits: readings(20, newer),
+    });
+    const peerB = login({
+      auth: { status: "authenticated", email: "a@x.io", workspaceId: "w2" },
+      usageLimits: readings(10, newer),
+    });
+    expect(accountUsageLimits(own, ownLimits, [peerA, peerB])).toBe(ownLimits);
+  });
+
+  it("keeps an unsupported own reading", () => {
+    const unsupported = {
+      checkedAt: older,
+      credentialFingerprint: "fp-1",
+      windows: [],
+      unavailable: { reason: "unsupported" as const },
+    };
+    const own = login({ usageLimits: unsupported });
+    const peer = login({ usageLimits: readings(20, newer) });
+    expect(accountUsageLimits(own, unsupported, [peer])).toBe(unsupported);
+  });
+
+  it("keeps its own reading when the account has no email or credential fingerprint", () => {
+    const ownLimits = { checkedAt: older, windows: [{ ...window, usedPercent: 80 }] };
+    const own = login({ usageLimits: ownLimits });
+    const peer = login({ usageLimits: { checkedAt: newer, windows: [window] } });
+    expect(accountUsageLimits(own, ownLimits, [peer])).toBe(ownLimits);
   });
 });

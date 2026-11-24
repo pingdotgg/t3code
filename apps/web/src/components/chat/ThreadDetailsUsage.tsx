@@ -13,12 +13,14 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
+import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import { msg, useGT, useLocale, useMessages } from "gt-react";
 import type { ReactNode } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { environmentPresentations } from "../../state/presentation";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
@@ -60,7 +62,18 @@ export function ThreadDetailsUsage({
   const gt = useGT();
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
-  const resolved = resolveThreadDetailsLimits(providerInstanceId, model, providers, sources, now);
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
+  const peers = [...presentations.values()].flatMap(
+    (presentation) => presentation.serverConfig?.providers ?? [],
+  );
+  const resolved = resolveThreadDetailsLimits(
+    providerInstanceId,
+    model,
+    providers,
+    sources,
+    now,
+    peers,
+  );
   if (!resolved) return null;
 
   return (
