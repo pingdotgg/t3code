@@ -32,30 +32,25 @@ it("keeps a cached image out of view until it is fitted", async () => {
   const src = png(1600, 900);
   const host = document.createElement("div");
   host.style.cssText = "display:flex;flex-direction:column;width:500px;height:600px";
-  const imageWidth = () => host.querySelector("img")?.getBoundingClientRect().width ?? 0;
+  const image = () => host.querySelector("img");
   await using screen = await render(
     <PreviewImageContent key="first" src={src} name="wide.png" mimeType="image/png" />,
     { container: host },
   );
-  await vi.waitFor(() => expect(imageWidth()).toBeGreaterThan(400));
+  await vi.waitFor(() => expect(image()?.getBoundingClientRect().width).toBeGreaterThan(400));
 
-  // A new key remounts the preview, as a new file revision does. The image is cached now, so the
-  // new element has its natural size before onLoad runs. Record every width the new image lays out at.
-  const widths: number[] = [];
-  const sizes = new ResizeObserver((entries) => {
-    for (const entry of entries) widths.push(entry.target.getBoundingClientRect().width);
-  });
+  // A new key remounts the preview, as a new file revision does. The cached image has its natural
+  // size on insertion, and the observer measures it before the load event can fit it.
+  let insertedWidth: number | undefined;
   const mounts = new MutationObserver(() => {
-    const image = host.querySelector("img");
-    if (image) sizes.observe(image);
+    insertedWidth ??= image()?.getBoundingClientRect().width;
   });
   mounts.observe(host, { childList: true, subtree: true });
   await screen.rerender(
     <PreviewImageContent key="second" src={src} name="wide.png" mimeType="image/png" />,
   );
-  await vi.waitFor(() => expect(widths.at(-1)).toBeGreaterThan(400));
   mounts.disconnect();
-  sizes.disconnect();
 
-  expect(Math.max(...widths)).toBeLessThanOrEqual(500);
+  expect(insertedWidth).toBeLessThanOrEqual(500);
+  await vi.waitFor(() => expect(image()?.getBoundingClientRect().width).toBeGreaterThan(400));
 });
