@@ -20,6 +20,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { awaitBackgroundTurn } from "../serverActivation.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { getTelemetryIdentity, type TelemetryOwner } from "./Identify.ts";
@@ -354,7 +355,7 @@ export const make = Effect.gen(function* () {
 
   yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.andThen(flushWhenDue)), {
     disableYield: true,
-  }).pipe(Effect.forkScoped);
+  }).pipe((effect) => Effect.andThen(awaitBackgroundTurn, effect), Effect.forkScoped);
 
   yield* Effect.addFinalizer(() =>
     flush.pipe(Effect.timeout(SHUTDOWN_FLUSH_TIMEOUT), Effect.ignore),

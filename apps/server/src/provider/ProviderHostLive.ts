@@ -11,6 +11,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
+import * as ServerActivation from "../serverActivation.ts";
 import * as ServerLifecycleEvents from "../serverLifecycleEvents.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DocumentText from "./DocumentText.ts";
@@ -30,6 +31,7 @@ export const layer = Layer.effect(
     const lifecycleEvents = yield* Effect.serviceOption(
       ServerLifecycleEvents.ServerLifecycleEvents,
     );
+    const background = yield* ServerActivation.ServerBackgroundStart;
     // Optional so hosts built without the preview layer still construct.
     const portDiscovery = yield* Effect.serviceOption(PortScanner.PortDiscovery);
     // Optional like the services above; without it the bundled policy still applies.
@@ -58,7 +60,12 @@ export const layer = Layer.effect(
       shouldRunBackgroundWork: backgroundPolicy.shouldRunScopeWork,
       ...Option.match(lifecycleEvents, {
         onNone: () => ({}),
-        onSome: (events) => ({ awaitServerReady: events.awaitReady }),
+        onSome: (events) => ({
+          awaitServerReady:
+            background === undefined
+              ? events.awaitReady
+              : Effect.andThen(events.awaitReady, background.awaitTurn),
+        }),
       }),
       ...Option.match(portDiscovery, {
         onNone: () => ({}),

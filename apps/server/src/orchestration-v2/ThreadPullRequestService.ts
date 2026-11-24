@@ -28,7 +28,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { makeLinkedThreadsChangeDetector } from "../pullRequest/linkedThreads.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import { forkParked } from "../serverActivation.ts";
+import { forkBackground, forkParked } from "../serverActivation.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { makeNoPullRequestRechecks } from "./noPullRequestRechecks.ts";
 import {
@@ -607,7 +607,7 @@ export const make = Effect.gen(function* () {
         Effect.forever,
       ),
     );
-    yield* forkParked(
+    yield* forkBackground(
       Effect.gen(function* () {
         yield* worker.enqueue({ threadId: null, refresh: false, backfill: true });
         yield* worker.drain;
