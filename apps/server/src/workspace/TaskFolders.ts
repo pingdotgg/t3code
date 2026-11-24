@@ -1386,43 +1386,43 @@ const make = Effect.gen(function* () {
     // A project that lays its own folder out rebuilds it; whatever is still missing after that
     // comes back as a plain checkout below.
     const config = yield* projectFile(taskFolder.projectRoot);
-    const layout = config?.worktreeLayout;
-    const repositories: TaskFolderRepository[] = [];
-    for (const repository of taskFolder.repositories) {
-      // a package manager may replace an excluded dependency's worktree with its own clone.
-      if (
-        config?.ignoreRepositories?.some((entry) =>
-          isWithinRoot(
-            path,
-            repository.repositoryPath,
-            path.resolve(taskFolder.projectRoot, entry),
-          ),
-        ) &&
-        isWithinRoot(path, repository.repositoryPath, taskFolder.projectRoot) &&
-        isWithinRoot(path, repository.worktreePath, taskFolder.projectPath) &&
-        (yield* fileSystem
-          .lstat(path.join(repository.worktreePath, ".git"))
-          .pipe(Effect.option, Effect.map(Option.exists((stat) => stat.type === "Directory"))))
-      ) {
-        const project = yield* readProject("create", taskFolder.projectId);
-        if (
-          !project.trackedFolders.some(
-            (folder) =>
-              !folder.discovered &&
-              path.resolve(folder.path) === path.resolve(repository.repositoryPath),
+    const layout = config?.worktreeLayout ?? null;
+    // A package manager may replace an excluded dependency's worktree with its own clone. The
+    // thread resumes without it instead of refusing the clone, unless the project tracks it by hand.
+    const ignored = (config?.ignoreRepositories ?? []).map((entry) =>
+      path.resolve(taskFolder.projectRoot, entry),
+    );
+    const cloned = yield* Effect.filter(taskFolder.repositories, (repository) =>
+      ignored.some((root) => isWithinRoot(path, repository.repositoryPath, root)) &&
+      isWithinRoot(path, repository.repositoryPath, taskFolder.projectRoot) &&
+      isWithinRoot(path, repository.worktreePath, taskFolder.projectPath)
+        ? fileSystem.lstat(path.join(repository.worktreePath, ".git")).pipe(
+            Effect.map((stat) => stat.type === "Directory"),
+            Effect.orElseSucceed(() => false),
           )
-        ) {
-          yield* store.forgetRepository(taskFolder.root, repository.worktreePath);
-          continue;
-        }
+        : Effect.succeed(false),
+    );
+    let repositories = taskFolder.repositories;
+    if (cloned.length > 0) {
+      const project = yield* readProject("create", taskFolder.projectId);
+      const explicit = new Set(
+        project.trackedFolders
+          .filter((folder) => !folder.discovered)
+          .map((folder) => path.resolve(folder.path)),
+      );
+      const stale = cloned.filter(
+        (repository) => !explicit.has(path.resolve(repository.repositoryPath)),
+      );
+      if (stale.length > 0) {
+        repositories = repositories.filter((repository) => !stale.includes(repository));
+        yield* store.put({ ...taskFolder, repositories });
       }
-      repositories.push(repository);
     }
     const present = yield* Effect.forEach(
       [taskFolder.projectPath, ...repositories.map((entry) => entry.worktreePath)],
       exists,
     );
-    if (layout && present.includes(false)) {
+    if (layout !== null && present.includes(false)) {
       yield* fileSystem
         .makeDirectory(taskFolder.root, { recursive: true })
         .pipe(Effect.mapError(restoreFailed));

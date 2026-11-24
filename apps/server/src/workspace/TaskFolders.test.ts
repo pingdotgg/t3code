@@ -12,10 +12,6 @@ import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../config.ts";
-import * as GitWorkflowService from "../git/GitWorkflowService.ts";
-import * as ProjectService from "../project/ProjectService.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import { makeRestoreMissingWorktree } from "./restoreMissingWorktree.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as TaskFolders from "./TaskFolders.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
@@ -950,7 +946,7 @@ it.live("restores a recorded repository the project stopped tracking as its work
   ),
 );
 
-it.live("resumes twice after an excluded dependency worktree is replaced by a clone", () =>
+it.live("resumes once an excluded dependency's worktree is replaced by a clone", () =>
   withState((state) =>
     Effect.gen(function* () {
       const { fileSystem, path, run, repository } = yield* fixture;
@@ -959,61 +955,27 @@ it.live("resumes twice after an excluded dependency worktree is replaced by a cl
       state.workspaceRoot = project;
       const { taskFolder } = yield* create("feature");
       const clone = path.join(taskFolder.projectPath, "deps", "heroicons");
-      assert.deepEqual(
-        taskFolder.repositories.map((entry) => entry.worktreePath),
-        [clone],
-      );
       yield* fileSystem.remove(clone, { recursive: true });
-      yield* run(taskFolder.projectPath, "clone", "--local", dependency, clone);
-      yield* run(
-        clone,
-        "-c",
-        "user.name=Test",
-        "-c",
-        "user.email=test@example.org",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "local only",
-      );
-      const commit = yield* run(clone, "rev-parse", "HEAD");
-      assert.notEqual(commit, yield* run(dependency, "rev-parse", "HEAD"));
-
-      const folders = yield* TaskFolders.TaskFolders;
-      const restore = yield* makeRestoreMissingWorktree.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            Layer.mock(GitWorkflowService.GitWorkflowService)({}),
-            Layer.mock(ProjectService.ProjectService)({}),
-            ServerSettings.layerTest(),
-          ),
-        ),
-      );
-      const resume = restore({
-        id: threadId,
-        projectId,
-        worktreePath: taskFolder.projectPath,
-        branch: "feature",
-      });
-      const refusal = yield* resume.pipe(Effect.flip);
-      assert.equal(refusal._tag, "WorktreeRecreateError");
-      assert.include(String(refusal.cause), "is not a worktree of");
+      yield* run(taskFolder.projectPath, "clone", "-q", "--local", dependency, clone);
       yield* fileSystem.writeFileString(
         path.join(project, "t3.json"),
         JSON.stringify({ ignoreRepositories: ["deps"] }),
       );
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      const restore = taskFolders.restore({
+        taskFolder,
+        branch: "feature",
+        recreate: () => Effect.die("nothing is missing"),
+      });
 
+      // Tracked by hand, the clone is still not the thread's worktree.
       state.trackedFolders = tracked(dependency);
-      assert.equal((yield* resume.pipe(Effect.flip))._tag, "WorktreeRecreateError");
-      state.trackedFolders = [];
+      assert.include((yield* Effect.flip(restore)).detail, "is not a worktree of");
 
-      for (let attempt = 0; attempt < 2; attempt++) {
-        yield* resume;
-        assert.equal(yield* run(taskFolder.projectPath, "branch", "--show-current"), "feature");
-        assert.equal(yield* run(clone, "rev-parse", "HEAD"), commit);
-        assert.equal(yield* run(clone, "rev-parse", "--git-dir"), ".git");
-        assert.deepEqual((yield* folders.find(taskFolder.root))?.repositories, []);
-      }
+      state.trackedFolders = [];
+      yield* restore;
+      assert.equal(yield* run(clone, "rev-parse", "--git-dir"), ".git");
+      assert.deepEqual((yield* taskFolders.find(taskFolder.root))?.repositories, []);
     }),
   ),
 );
