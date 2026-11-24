@@ -406,6 +406,109 @@ async fn reads_the_t3_servers_files() {
     );
 }
 
+/// T3's disk decoder (`Schema.fromJsonString(AnnotationRecord)`): a record the schema refuses
+/// is skipped like unreadable JSON, so the healthy notes still decode as one
+/// `AnnotationList`. Its file stays, and it counts toward no number or revision. A healthy
+/// record is listed as decoded: unknown fields go, `null` in an `unknown` field stays.
+#[tokio::test(flavor = "current_thread")]
+async fn an_incomplete_record_is_skipped_and_kept_on_disk() {
+    let (store, dir) = store("incomplete");
+    let folder = dir.0.join("annotations").join("project_annotations");
+    std::fs::create_dir_all(&folder).expect("dir");
+    let record = |id: &str, number: u64| {
+        json!({"id": id, "comment": "Fixture", "projectId": PROJECT, "number": number,
+            "revision": number, "status": "todo", "hasScreenshot": false,
+            "createdAt": "2026-01-02T10:00:00Z"})
+    };
+    let mut legacy = record("legacy", 3);
+    legacy["appearance"] = Value::Null;
+    legacy["extra"] = json!(true);
+    std::fs::write(folder.join("legacy.json"), legacy.to_string()).expect("legacy");
+    let invalid = [
+        ("old", "status", Value::Null),
+        ("blank-project", "projectId", json!("  \u{feff}")),
+        ("null-url", "url", Value::Null),
+        ("null-bounds", "boundingBox", Value::Null),
+        ("null-screenshot", "screenshot", Value::Null),
+        ("nan-number", "number", json!("NaN")),
+        ("nan-x", "x", json!("NaN")),
+        ("object-status", "status", json!({"todo": null})),
+        ("object-source", "source", json!({"browser": null})),
+        ("array-rect", "boundingBox", json!([1, 2, 3, 4])),
+        ("array-frame", "components", json!([["App", 4]])),
+    ];
+    for (id, field, value) in &invalid {
+        let mut bad = record(id, 70);
+        match (*field, value) {
+            ("status", Value::Null) => {
+                bad.as_object_mut().expect("record").remove("status");
+            }
+            _ => bad[*field] = value.clone(),
+        }
+        std::fs::write(folder.join(format!("{id}.json")), bad.to_string()).expect(id);
+    }
+    std::fs::write(folder.join("syntax.json"), "{broken").expect("syntax");
+    let good = store.create(PROJECT, capture("good")).await.expect("good");
+    assert_eq!(good["number"], 4, "an invalid record takes no number");
+    assert_eq!(good["revision"], 4, "an invalid record takes no revision");
+    for reopened in [false, true] {
+        let store = if reopened {
+            open(&dir.0)
+        } else {
+            store.clone()
+        };
+        let list = store.list(PROJECT).await.expect("list");
+        assert_eq!(ids(&list), ["legacy", "good"], "reopened: {reopened}");
+        let listed = &list["annotations"][0];
+        assert!(listed.get("extra").is_none(), "{listed}");
+        assert_eq!(listed.get("appearance"), Some(&Value::Null), "{listed}");
+        let decoded: conn_contract::AnnotationList = from_json(list).expect("the client's list");
+        assert_eq!(decoded.annotations.len(), 2);
+    }
+    for (id, _, _) in &invalid {
+        assert!(folder.join(format!("{id}.json")).exists(), "{id} stays");
+    }
+    assert!(folder.join("syntax.json").exists());
+}
+
+/// A new note never takes the id of a file the store skipped: the create is refused before
+/// it writes the record or its screenshot, so the skipped file stays as it was.
+#[tokio::test(flavor = "current_thread")]
+async fn a_new_note_never_overwrites_a_skipped_file() {
+    let (store, dir) = store("skipped-collision");
+    let folder = dir.0.join("annotations").join("project_annotations");
+    std::fs::create_dir_all(&folder).expect("dir");
+    let incomplete = json!({"id": "old", "comment": "Fixture missing status", "projectId": PROJECT,
+        "number": 7, "revision": 7, "hasScreenshot": false, "createdAt": "2026-01-02T10:00:00Z"})
+    .to_string();
+    std::fs::write(folder.join("old.json"), &incomplete).expect("incomplete");
+    std::fs::write(folder.join("syntax.json"), "{broken").expect("syntax");
+    for (id, body) in [("old", incomplete.as_str()), ("syntax", "{broken")] {
+        let mut shot = capture(id);
+        shot.screenshot = Some(format!(
+            "data:image/png;base64,{}",
+            conn_support::base64::encode(b"png")
+        ));
+        let refused = store.create(PROJECT, shot).await;
+        assert!(
+            matches!(refused, Err(AnnotationError::Invalid { .. })),
+            "{id}: {refused:?}"
+        );
+        let kept = std::fs::read_to_string(folder.join(format!("{id}.json"))).expect(id);
+        assert_eq!(kept, body, "{id} stays as it was");
+        assert!(
+            !folder.join(format!("{id}.png")).exists(),
+            "{id}: no screenshot"
+        );
+    }
+    assert_eq!(
+        ids(&store.list(PROJECT).await.expect("list")),
+        Vec::<String>::new()
+    );
+    let good = store.create(PROJECT, capture("good")).await.expect("good");
+    assert_eq!(good["number"], 1);
+}
+
 #[derive(Debug)]
 struct Any;
 
