@@ -353,8 +353,8 @@ pub async fn serve_with_instances(
     config.host = Some(host.clone());
     config.turn_observer = Some(host.clone());
     config.checkpoints = !inert;
-    // `start_agent_tools` recovers them, once agents can reach `/mcp`.
-    config.recover_runs = false;
+    config.recover_runs = !inert;
+    config.restart_policy = crate::settings::restart_policy(&environment.settings.raw());
     // Attention events for iOS push: off unless asked for, and only where a sender exists
     // (`attention.rs`). A container server sends through its managed Gateway client.
     let attention = !inert && crate::attention::enabled_by_env();
@@ -372,6 +372,9 @@ pub async fn serve_with_instances(
         None
     };
     config.attention = attention && (provision.is_some() || native_attention.is_some());
+    // The host's services (scheduled tasks, devices, `/mcp`) start below; a replayed effect
+    // must find them, so the worker starts after them.
+    config.hold_effects = true;
     let text_generators = Arc::new(crate::text_generation::TextGenerators::for_environment(
         environment.clone(),
     ));
@@ -439,10 +442,7 @@ pub async fn serve_with_instances(
     if let Some(devices) = &deps.devices {
         let _ = host.devices.set(devices.clone());
     }
-    or_exit(
-        start_agent_tools(&mut deps, &host, &sqlite_engine, addr),
-        "cannot recover the runs a previous process left active",
-    );
+    start_agent_tools(&mut deps, &host, &sqlite_engine, addr);
     let state = AppState {
         table: Arc::new(method_table(&deps)),
         auth: auth.clone(),
@@ -567,23 +567,20 @@ pub async fn serve_with_instances(
     }
 }
 
-/// Gives the engine's agents `/mcp` at `listen`, and only then recovers the runs a previous
-/// process left active (none in an inert copy). A resumed session keeps the credential it
-/// opens with, so its URL must already be the one this server answers on.
+/// Gives the engine's agents `/mcp` at `listen`, and only then starts the effects the engine
+/// held, the ones its recovery replays too. A resumed session keeps the credential it opens
+/// with, so its URL must already be the one this server answers on.
 pub(crate) fn start_agent_tools(
     deps: &mut Deps,
     host: &Host,
     engine: &SqliteEngine,
     listen: SocketAddr,
-) -> Result<(), String> {
+) {
     deps.mcp = crate::routes::mcp::service(deps, listen);
     if let Some(mcp) = &deps.mcp {
         let _ = host.mcp.set(mcp.clone());
     }
-    if inert() {
-        return Ok(());
-    }
-    engine.recover_runs()
+    engine.start_effects();
 }
 
 /// Binds the managed ingress and starts its authority, probe, lease, ACK and notice tasks.

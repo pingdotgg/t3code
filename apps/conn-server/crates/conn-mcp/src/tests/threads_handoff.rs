@@ -1026,6 +1026,9 @@ async fn a_settled_worktree_thread_runs_its_settle_script_in_its_own_checkout() 
         .await
         .unwrap();
     assert_eq!(runs, "ran\n");
+    // The same settlement's close again, as a restart requeues a close whose row had not
+    // settled: the script started once already, so it does not start again.
+    assert_eq!(f.service.run_settle_script(&thread, &first).await, None);
 
     // A new settlement whose script fails keeps its terminal for the user to read.
     dispatch(

@@ -323,17 +323,32 @@ impl Inner {
         let (tid, rid) = (thread_id.clone(), run_id.clone());
         let effects = self
             .write(move |tx| {
+                // The run's end (the parent's wake) is written once, by the first capture to
+                // commit, whatever the run ended as. A capture that runs again after a restart
+                // finds its row marked.
+                // A capture row of an older build has no mark: a terminal run whose checkpoint
+                // committed had its end written by that capture.
+                let ended = tx.entity(&tid, "runs", &rid)?.is_some_and(|run| {
+                    run["status"] != "waiting" && !run["checkpointId"].is_null()
+                });
+                let first = !ended && !tx.run_end_recorded(&rid)?;
                 if let Some((ctx, events)) = captured {
                     commit_capture(tx, &tid, &rid, &ctx, events)?;
                 }
                 complete_waiting(tx, &tid, &rid)?;
-                let mut effects = crate::families::on_run_end(tx, &tid, &rid)?;
-                if tx
-                    .entity(&tid, "runs", &rid)?
-                    .is_some_and(|run| run["status"] == "completed")
-                {
-                    commands::release_unattended_holds(tx, &tid, &rid)?;
-                }
+                let mut effects = if first {
+                    tx.record_run_end(&rid)?;
+                    let effects = crate::families::on_run_end(tx, &tid, &rid)?;
+                    if tx
+                        .entity(&tid, "runs", &rid)?
+                        .is_some_and(|run| run["status"] == "completed")
+                    {
+                        commands::release_unattended_holds(tx, &tid, &rid)?;
+                    }
+                    effects
+                } else {
+                    vec![]
+                };
                 effects.extend(commands::start_next_queued(tx, &tid, None)?);
                 tx.enqueue(None, &effects)
             })

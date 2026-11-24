@@ -73,15 +73,21 @@ pub struct EngineConfig {
     /// The zone a command time without one is read in, as V8 reads the host's zone once at
     /// start. Default: the system's.
     pub zone: jiff::tz::TimeZone,
-    /// Recover the runs and rollbacks a previous process left active at open
-    /// ([`SqliteEngine::recover_runs`]), as the T3 server does at start. Default on. The server
-    /// turns it off and recovers once `/mcp` listens. An inert rehearsal copy
-    /// (`CONN_SERVER_INERT`) never recovers: its runs stay as imported, so nothing continues or
-    /// touches a workspace the original still owns.
+    /// Recover the runs and rollbacks a previous process left active (`restart.rs`), as the
+    /// T3 server does at start. Default on. Off for an inert rehearsal copy
+    /// (`CONN_SERVER_INERT`): its runs stay as imported, so nothing continues or touches a
+    /// workspace the original still owns. The server holds the effects they replay until
+    /// `/mcp` listens ([`Self::hold_effects`]).
     pub recover_runs: bool,
     /// Write attention events for iOS push to the outbox (`attention.rs`). Off by default:
     /// with it off, nothing is written. The server's sender drains them.
     pub attention: bool,
+    /// Effects wait in the outbox until [`SqliteEngine::start_effects`]: a server whose host
+    /// services start after the engine sets it, so an effect a restart replays finds them
+    /// ready (T3 starts its worker once its layers are built).
+    pub hold_effects: bool,
+    /// `continueThreadsAfterServerUpdate`, resolved per project by the server.
+    pub restart_policy: crate::RestartPolicy,
     /// Test hook: [`SqliteEngine::open`] stops before it takes the store's lease.
     #[cfg(test)]
     pub(crate) open_pause: Option<OpenPause>,
@@ -156,6 +162,8 @@ impl EngineConfig {
             zone: jiff::tz::TimeZone::system(),
             recover_runs: true,
             attention: false,
+            hold_effects: false,
+            restart_policy: crate::RestartPolicy::default(),
             #[cfg(test)]
             open_pause: None,
         }
@@ -168,6 +176,9 @@ pub struct SqliteEngine {
     /// lives, and a task that changes the workspace holds it too ([`Inner::store_lock`]).
     _lock: Arc<std::fs::File>,
 }
+
+/// T3's `maxAttempts` for an effect, here for the host's cleanup of a closed thread.
+const CLOSE_ATTEMPTS: u32 = 5;
 
 /// What a second open of a store that a live engine holds gets.
 pub const STORE_IN_USE: &str = "store in use: another engine has this database open";
@@ -297,6 +308,8 @@ pub(crate) struct Inner {
     pub(crate) effects_wake: Arc<tokio::sync::Notify>,
     /// The effect worker started ([`Inner::ensure_effect_worker`]).
     pub(crate) effect_worker: std::sync::atomic::AtomicBool,
+    /// [`EngineConfig::hold_effects`], until [`SqliteEngine::start_effects`].
+    pub(crate) effects_held: std::sync::atomic::AtomicBool,
     /// The [`SqliteEngine`] was dropped: the worker stops, and the store refuses its writes.
     pub(crate) engine_dropped: Arc<std::sync::atomic::AtomicBool>,
     /// The store's lock while the engine lives. A task that changes the workspace upgrades it
@@ -355,7 +368,8 @@ pub(crate) fn project_id(workspace_root: &str) -> String {
 
 impl SqliteEngine {
     /// Opens the store, adds the configured projects, and, with [`EngineConfig::recover_runs`],
-    /// recovers the runs a previous process left active ([`Self::recover_runs`]).
+    /// recovers every run a previous process left active (see `restart.rs`): a turn the
+    /// provider had continues in a new run.
     pub fn open(config: EngineConfig) -> Result<Self, String> {
         Self::open_unless(config, None)
     }
@@ -402,10 +416,16 @@ impl SqliteEngine {
             .attention
             .then(|| Arc::new(tokio::sync::Notify::new()));
         store.attention = attention.clone();
-        // What the previous process left unsettled is cancelled; the recovery below decides
-        // again from the stored runs and rollbacks.
-        store.cancel_unsettled_effects()?;
+        // T3's `reconcileAfterProcessLoss`: what the previous process left unsettled is
+        // cancelled when it was process-bound and runs again when it is replay-safe. An inert
+        // copy cancels everything.
+        store.reconcile_after_process_loss(config.recover_runs)?;
         let effects_wake = store.effects_wake.clone();
+        let (unfinished, pending_rollbacks) = if config.recover_runs {
+            (store.unfinished_runs()?, store.pending_rollbacks()?)
+        } else {
+            Default::default()
+        };
         let mut tx = store.tx()?;
         for project in &config.projects {
             tx.ensure_project(
@@ -414,6 +434,38 @@ impl SqliteEngine {
                 &project.workspace_root,
             )?;
         }
+        // A rollback a previous process left pending goes first: it was admitted before the
+        // restart, and its lane holds the thread's next turn until it ends.
+        let mut effects = vec![];
+        if config.recover_runs {
+            tx.settle_finished_rollbacks()?;
+        }
+        for pending in pending_rollbacks {
+            effects.extend(crate::rollback::recover_pending(&mut tx, pending)?);
+        }
+        // T3 holds the prompts queued in a thread the previous process left unfinished, also
+        // one whose only unfinished run is queued: the user decides when they go. Before any
+        // replayed effect runs, so a replayed capture cannot start one. A buffered provider
+        // notification is cancelled instead: its output went with the old process.
+        let mut held = std::collections::HashSet::new();
+        for (thread_id, _) in &unfinished {
+            if held.insert(thread_id.as_str()) {
+                commands::cancel_buffered_notifications(&mut tx, thread_id)?;
+                commands::hold_queue(&mut tx, thread_id)?;
+            }
+        }
+        for (thread_id, run) in unfinished
+            .iter()
+            .filter(|(_, run)| commands::is_active(run))
+        {
+            effects.extend(crate::restart::recover(
+                &mut tx,
+                thread_id,
+                run,
+                &config.restart_policy,
+            )?);
+        }
+        tx.enqueue(None, &effects)?;
         tx.commit(None)?;
         let notify = store.published.clone();
         let engine = Self {
@@ -444,6 +496,7 @@ impl SqliteEngine {
                 idle_session: config.idle_session,
                 effects_wake,
                 effect_worker: std::sync::atomic::AtomicBool::new(false),
+                effects_held: std::sync::atomic::AtomicBool::new(config.hold_effects),
                 engine_dropped,
                 store_lock: Arc::downgrade(&lock),
                 #[cfg(test)]
@@ -471,43 +524,8 @@ impl SqliteEngine {
                 }
             });
         }
-        if config.recover_runs {
-            engine.recover_runs()?;
-        }
         engine.inner.ensure_effect_worker();
         Ok(engine)
-    }
-
-    /// Recovers every run and rollback a previous process left active (see `restart.rs`): a
-    /// turn the provider had continues in a new run. Call it once, before clients reach the
-    /// engine, and once agents can reach `/mcp`: a resumed session keeps the tools it opens with.
-    pub fn recover_runs(&self) -> Result<(), String> {
-        let mut store = crate::lock(&self.inner.store);
-        let unfinished = store.unfinished_runs()?;
-        let pending_rollbacks = store.pending_rollbacks()?;
-        let mut tx = store.tx()?;
-        // A rollback a previous process left pending goes first: it was admitted before the
-        // restart, and its lane holds the thread's next turn until it ends.
-        let mut effects = vec![];
-        for pending in pending_rollbacks {
-            effects.extend(crate::rollback::recover_pending(&mut tx, pending)?);
-        }
-        for (thread_id, run) in unfinished
-            .iter()
-            .filter(|(_, run)| commands::is_active(run))
-        {
-            effects.extend(crate::restart::recover(&mut tx, thread_id, run)?);
-        }
-        tx.enqueue(None, &effects)?;
-        tx.commit(None)?;
-        drop(store);
-        // Continuations start on the caller's runtime.
-        if tokio::runtime::Handle::try_current().is_ok() {
-            self.inner.ensure_effect_worker();
-        } else if !effects.is_empty() {
-            eprintln!("conn-engine: no runtime, so restarted turns do not continue");
-        }
-        Ok(())
     }
 
     /// [`Self::open`] for a caller on the runtime: the store is opened, migrated and recovered
@@ -610,6 +628,15 @@ impl SqliteEngine {
                 )
             })
             .collect()
+    }
+
+    /// Starts the effect worker of an engine opened with [`EngineConfig::hold_effects`], on the
+    /// caller's runtime.
+    pub fn start_effects(&self) {
+        self.inner
+            .effects_held
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.inner.ensure_effect_worker();
     }
 
     /// Raised after each commit that wrote an attention event; `None` when they are off
@@ -1280,7 +1307,9 @@ impl Inner {
         }
     }
 
-    pub(crate) async fn run_effect(self: Arc<Self>, effect: Effect) {
+    /// Runs one effect. An error is the effect's own failure, which its row records; most
+    /// effects record their failures on the thread and return `Ok`.
+    pub(crate) async fn run_effect(self: Arc<Self>, effect: Effect) -> Result<(), String> {
         match effect {
             Effect::StartTurn { thread_id, run_id } => self.start_turn(thread_id, run_id).await,
             Effect::Rollback(request) => self.rollback(request).await,
@@ -1327,15 +1356,39 @@ impl Inner {
                 ) {
                     self.drop_kept_tools(|thread, _| thread == thread_id);
                 }
-                if let Some(host) = &self.host {
-                    host.thread_closed(&thread_id, reason);
-                }
+                return self.close_on_host(&thread_id, reason).await;
             }
             Effect::GenerateTitle {
                 thread_id,
                 request_id,
                 regenerate,
             } => self.generate_title(thread_id, request_id, regenerate).await,
+        }
+        Ok(())
+    }
+
+    /// The host's cleanup of a closed thread, tried again with T3's effect backoff (100 ms,
+    /// doubling) up to [`CLOSE_ATTEMPTS`] times (`maxAttempts`); the last error is the
+    /// effect's.
+    async fn close_on_host(
+        &self,
+        thread_id: &str,
+        reason: crate::ThreadClose,
+    ) -> Result<(), String> {
+        let Some(host) = &self.host else {
+            return Ok(());
+        };
+        let mut attempt = 1;
+        loop {
+            match host.thread_closed(thread_id, reason.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(e) if attempt < CLOSE_ATTEMPTS => {
+                    eprintln!("conn-engine: closing {thread_id} on the host failed: {e}");
+                    tokio::time::sleep(Duration::from_millis(100 << (attempt - 1))).await;
+                    attempt += 1;
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
 
@@ -1916,6 +1969,19 @@ impl Engine for SqliteEngine {
             .as_ref()
             .is_none_or(|host| host.provider_instance_enabled(Some(project_id), instance_id))
     }
+    fn claim_settle_script<'a>(
+        &'a self,
+        thread_id: &'a str,
+        settled_at: &'a str,
+    ) -> BoxFuture<'a, Result<bool, String>> {
+        let (thread_id, settled_at) = (thread_id.to_owned(), settled_at.to_owned());
+        Box::pin(async move {
+            self.inner
+                .db(move |store| store.claim_settle_script(&thread_id, &settled_at))
+                .await
+        })
+    }
+
     fn has_receipt<'a>(&'a self, command_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
         let command_id = command_id.to_owned();
         Box::pin(async move {

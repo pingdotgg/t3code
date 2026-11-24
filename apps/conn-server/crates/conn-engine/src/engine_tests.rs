@@ -1897,6 +1897,43 @@ async fn die_during_a_turn(db: &TempDb, command: &str) {
     next(&mut thread).await;
     dispatch(&engine, message("t1", command, "hang")).await;
     until_provider_turn(&mut thread).await;
+    // The provider took the prompt: its start row settles (the restart's evidence).
+    settled_statuses(db, "provider-turn.start").await;
+}
+
+/// Audit 5.1, T3's `reconcile` (`resolveProjectSettings(..).continueThreadsAfterServerUpdate`):
+/// the restart continues a cut turn only where the setting allows it, and a project override
+/// wins in both directions.
+#[tokio::test(flavor = "current_thread")]
+async fn a_project_override_decides_whether_a_restart_continues() {
+    for (global, project, continues) in [(false, true, true), (true, false, false)] {
+        let db = TempDb::new(&format!("restart-policy-{global}-{project}"));
+        die_during_a_turn(&db, "c2").await;
+        let mut config = EngineConfig::new(db.path());
+        config.projects = vec![ProjectConfig {
+            title: "Project".into(),
+            workspace_root: ROOT.into(),
+        }];
+        config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+        config.restart_policy = crate::RestartPolicy {
+            continue_by_default: global,
+            projects: [(project_id(), project)].into(),
+        };
+        let engine = SqliteEngine::open(config).unwrap();
+        let p = if continues {
+            run_to_end(&engine, "t1", "run:t1:2").await
+        } else {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            projection(&engine, "t1").await
+        };
+        assert_eq!(run_of(&p, "run:t1:1")["status"], "cancelled");
+        let runs = p["runs"].as_array().map(Vec::len);
+        assert_eq!(
+            runs,
+            Some(if continues { 2 } else { 1 }),
+            "global {global}, project {project}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -2096,8 +2133,10 @@ async fn restart_continuations_stop_after_three_in_a_row() {
     }
 }
 
+/// T3's "recovers starting work after restart": a user's prompt the provider never took waits
+/// at the head of the held queue; the user sends it again.
 #[tokio::test(flavor = "current_thread")]
-async fn a_restart_sends_an_undelivered_message_again() {
+async fn a_restart_holds_an_undelivered_message_for_the_user() {
     let db = TempDb::new("restart-starting");
     {
         let (engine, _) = open(&db);
@@ -2116,6 +2155,14 @@ async fn a_restart_sends_an_undelivered_message_again() {
             .unwrap();
     }
     let (engine, _) = open(&db);
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][0]["status"], "queued");
+    assert_eq!(p["runs"][0]["queueHeld"], true);
+    dispatch(
+        &engine,
+        json!({"type": "queued-run.start", "commandId": "q1", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
     let p = run_to_end(&engine, "t1", "run:t1:1").await;
     assert_eq!(p["runs"][0]["status"], "completed");
     assert_eq!(p["messages"][1]["text"], "echo: late");
@@ -2771,6 +2818,869 @@ async fn a_replaced_engine_s_running_effect_writes_nothing() {
     let p = run_to_end(&engine, "t1", "run:t1:2").await;
     assert_eq!(run_of(&p, "run:t1:2")["status"], "completed");
     assert_eq!(p["thread"]["title"], "New thread");
+}
+
+/// Commits `command` and its effects as one write, then marks rows of `running_type` as
+/// running: what a process that stopped mid-effect leaves behind.
+async fn commit_left_running(engine: &SqliteEngine, command: Value, running_type: &'static str) {
+    engine
+        .inner()
+        .db(move |store| {
+            let mut tx = store.tx().unwrap();
+            let handler = crate::commands::handler(command["type"].as_str().unwrap()).unwrap();
+            let Ok(effects) = handler(&mut tx, command) else {
+                panic!("command rejected");
+            };
+            tx.enqueue(None, &effects).unwrap();
+            tx.commit(None).unwrap();
+            store
+                .raw()
+                .execute(
+                    "UPDATE effect_outbox SET status = 'running' WHERE effect_type = ?1",
+                    [running_type],
+                )
+                .unwrap();
+        })
+        .await;
+}
+
+/// The statuses of `effect_type`'s rows once none is running or pending (up to 5 s).
+async fn settled_statuses(db: &TempDb, effect_type: &str) -> Vec<String> {
+    for _ in 0..250 {
+        let statuses = outbox_statuses(db, effect_type);
+        if statuses.iter().all(|s| s != "running" && s != "pending") {
+            return statuses;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    outbox_statuses(db, effect_type)
+}
+
+fn outbox_statuses(db: &TempDb, effect_type: &str) -> Vec<String> {
+    let conn = rusqlite::Connection::open(db.path()).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT status FROM effect_outbox WHERE effect_type = ?1 ORDER BY id")
+        .unwrap();
+    stmt.query_map([effect_type], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+/// Process loss, replay-safe: an archive's host close that a stopped process was running runs
+/// again after the restart, once. An inert copy (`recover_runs` off) cancels it instead.
+#[tokio::test(flavor = "current_thread")]
+async fn a_replay_safe_effect_runs_again_after_a_restart() {
+    for recover in [true, false] {
+        let db = TempDb::new(&format!("outbox-loss-safe-{recover}"));
+        {
+            let (engine, _) = open(&db);
+            dispatch(&engine, create("t1", "c1")).await;
+            commit_left_running(
+                &engine,
+                json!({"type": "thread.archive", "commandId": "a1", "threadId": "t1"}),
+                "thread.closed",
+            )
+            .await;
+        }
+        let host = Arc::new(RecordingHost::default());
+        let mut config = EngineConfig::new(db.path());
+        config.host = Some(host.clone());
+        config.recover_runs = recover;
+        let _engine = SqliteEngine::open(config).unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let heard = host.closed.lock().unwrap().clone();
+        if recover {
+            assert_eq!(heard, [("t1".to_owned(), crate::ThreadClose::Archived)]);
+            assert_eq!(settled_statuses(&db, "thread.closed").await, ["succeeded"]);
+        } else {
+            assert!(heard.is_empty(), "{heard:?}");
+            assert_eq!(outbox_statuses(&db, "thread.closed"), ["cancelled"]);
+        }
+    }
+}
+
+/// One case of T3's "recovers $0 work after restart" (`ProviderRuntimeRecoveryService.test.ts`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum LostStart {
+    /// A user's prompt whose start the process was running (`starting`).
+    Starting,
+    /// A user's prompt marked `running`, its start not returned: Codex may hold it already.
+    Running,
+    /// As `Running`, with the provider turn our Claude adapter reports before a cold host has
+    /// the prompt.
+    RunningEarlyTurn,
+    /// A scheduled task's prompt (`starting-scheduled`).
+    Scheduled,
+    /// An MCP agent's prompt (`running-delegated`).
+    Mcp,
+    /// The same, sent again 3 times already (`running-delegated-capped`).
+    McpCapped,
+    /// The same, on a snoozed thread (`running-delegated-snoozed`).
+    McpSnoozed,
+    /// The same, on a thread archived before the stop (the gate's probe).
+    McpArchived,
+    /// A user's prompt on a thread archived before the stop (the gate's probe).
+    UserArchived,
+    /// The #268 gate's probe: Codex confirmed the turn (`turn/started`, a strong native turn
+    /// ref) before the worker settled the start row.
+    RunningConfirmedTurn,
+    /// The #268 gate's probe: a continuation an earlier restart admitted, cut off before its
+    /// start (`RestartContinuation.test.ts`).
+    Continuation,
+    /// The #268 gate's probe: an MCP prompt whose run has a stored Stop.
+    McpStopped,
+    /// The #268 gate's probe: as `RunningEarlyTurn`, in a store from before the outbox (no
+    /// start rows): the weak turn still proves nothing.
+    LegacyEarlyTurn,
+}
+
+/// Leaves `run:t1:1` as a process that died during its start leaves it: the message and run
+/// committed, the start row running.
+async fn leave_lost_start(engine: &SqliteEngine, case: LostStart) {
+    dispatch(engine, create("t1", "c1")).await;
+    let mut command = message("t1", "c2", "late");
+    match case {
+        LostStart::Scheduled => command["scheduledTaskId"] = json!("task:1"),
+        LostStart::Mcp
+        | LostStart::McpCapped
+        | LostStart::McpSnoozed
+        | LostStart::McpArchived
+        | LostStart::McpStopped => {
+            command["createdBy"] = json!("agent");
+            command["creationSource"] = json!("mcp");
+        }
+        LostStart::Continuation => {
+            command["createdBy"] = json!("agent");
+            command["creationSource"] = json!("server");
+            command["restartContinuationOfRunId"] = json!("run:t1:0");
+        }
+        _ => {}
+    }
+    if case == LostStart::McpSnoozed {
+        dispatch(
+            engine,
+            json!({"type": "thread.snooze", "commandId": "s1", "threadId": "t1",
+                   "snoozedUntil": "2999-01-01T00:00:00.000Z"}),
+        )
+        .await;
+    }
+    let running = !matches!(case, LostStart::Starting | LostStart::Scheduled);
+    let early_turn = matches!(
+        case,
+        LostStart::RunningEarlyTurn | LostStart::RunningConfirmedTurn | LostStart::LegacyEarlyTurn
+    );
+    let strength = if case == LostStart::RunningConfirmedTurn {
+        json!({"driver": "codex", "nativeId": "turn-1", "strength": "strong"})
+    } else {
+        Value::Null
+    };
+    let stopped = case == LostStart::McpStopped;
+    let capabilities = to_json(
+        &conn_provider::Provider::capabilities(&FakeProvider::new("claudeAgent"))
+            .await
+            .unwrap(),
+    );
+    let archived = matches!(case, LostStart::McpArchived | LostStart::UserArchived);
+    engine
+        .inner()
+        .db(move |store| {
+            let mut tx = store.tx().unwrap();
+            let handler = crate::commands::handler("message.dispatch").unwrap();
+            let Ok(effects) = handler(&mut tx, command) else {
+                panic!("rejected")
+            };
+            tx.enqueue(Some("c2"), &effects).unwrap();
+            if running {
+                // What the start writes before it calls the provider.
+                let attempt = "run:t1:1:attempt:1";
+                let now = tx.now().to_owned();
+                tx.append(
+                    crate::store::Draft::new(
+                        "t1",
+                        "run-attempt.created",
+                        json!({"id": attempt, "runId": "run:t1:1", "attemptOrdinal": 1,
+                               "rootNodeId": "node:run:t1:1:root",
+                               "providerInstanceId": "claudeAgent",
+                               "providerThreadId": "provider-thread:t1", "providerTurnId": null,
+                               "reason": "initial", "status": "running", "startedAt": now,
+                               "completedAt": null}),
+                    )
+                    .run(Some("run:t1:1")),
+                )
+                .unwrap();
+                if early_turn {
+                    tx.append(
+                        crate::store::Draft::new(
+                            "t1",
+                            "provider-turn.updated",
+                            json!({"id": "turn:run:t1:1", "providerThreadId": "provider-thread:t1",
+                                   "runAttemptId": attempt, "nodeId": "node:run:t1:1:root",
+                                   "ordinal": 1, "nativeTurnRef": strength, "status": "running",
+                                   "startedAt": now, "completedAt": null}),
+                        )
+                        .run(Some("run:t1:1")),
+                    )
+                    .unwrap();
+                }
+                let mut run = tx.entity("t1", "runs", "run:t1:1").unwrap().unwrap();
+                run["status"] = json!("running");
+                run["startedAt"] = json!(now);
+                run["activeAttemptId"] = json!(attempt);
+                tx.append(crate::store::Draft::new("t1", "run.updated", run).run(Some("run:t1:1")))
+                    .unwrap();
+                // The previous process's session, which died with it.
+                tx.append(crate::store::Draft::new(
+                    "t1",
+                    "provider-session.updated",
+                    json!({"id": "provider-session:t1:run:t1:1", "status": "ready",
+                           "driver": "claudeAgent", "providerInstanceId": "claudeAgent",
+                           "capabilities": capabilities, "cwd": ROOT, "model": null,
+                           "lastError": null, "createdAt": now, "updatedAt": now}),
+                ))
+                .unwrap();
+            }
+            if stopped {
+                let now = tx.now().to_owned();
+                tx.append(
+                    crate::store::Draft::new(
+                        "t1",
+                        "turn-item.updated",
+                        json!({"id": "turn-item:run:t1:1:interrupt-request", "threadId": "t1",
+                               "runId": "run:t1:1", "type": "run_interrupt_request",
+                               "status": "completed", "startedAt": now, "updatedAt": now}),
+                    )
+                    .run(Some("run:t1:1")),
+                )
+                .unwrap();
+            }
+            tx.commit(None).unwrap();
+            store
+                .raw()
+                .execute(
+                    "UPDATE effect_outbox SET status = 'running', attempt_count = 1
+                     WHERE effect_type = 'provider-turn.start'",
+                    [],
+                )
+                .unwrap();
+            if case == LostStart::LegacyEarlyTurn {
+                store
+                    .raw()
+                    .execute(
+                        "DELETE FROM effect_outbox WHERE effect_type = 'provider-turn.start'",
+                        [],
+                    )
+                    .unwrap();
+            }
+            if case == LostStart::McpCapped {
+                for _ in 0..3 {
+                    store
+                        .raw()
+                        .execute(
+                            "INSERT INTO effect_outbox (command_id, thread_id, lane, effect_type,
+                               payload, status, attempt_count, created_at, updated_at)
+                             VALUES ('command:restart-resend:run:t1:1', 't1', 'thread',
+                               'provider-turn.start',
+                               '{\"type\":\"provider-turn.start\",\"threadId\":\"t1\",\"runId\":\"run:t1:1\"}',
+                               'cancelled', 1, '', '')",
+                            [],
+                        )
+                        .unwrap();
+                }
+            }
+        })
+        .await;
+    // Archived while its start was cut off (the gate's probe).
+    if archived {
+        dispatch(
+            engine,
+            json!({"type": "thread.archive", "commandId": "a1", "threadId": "t1"}),
+        )
+        .await;
+    }
+}
+
+/// T3's "recovers $0 work after restart", and the gate's probes. A prompt the provider never
+/// accepted is not sent again on its own: a user's prompt waits at the head of the held queue
+/// (Codex may have it already, and an archived thread must not get it). Unattended work is sent
+/// again, at most 3 times, and never to a resting thread. A provider turn alone is no proof: our
+/// Claude adapter reports one before a cold host has the prompt.
+#[tokio::test(flavor = "current_thread")]
+async fn a_prompt_the_provider_never_accepted_is_held_resent_or_cancelled() {
+    use LostStart::*;
+    for case in [
+        Starting,
+        Running,
+        RunningEarlyTurn,
+        Scheduled,
+        Mcp,
+        McpCapped,
+        McpSnoozed,
+        McpArchived,
+        UserArchived,
+        RunningConfirmedTurn,
+        Continuation,
+        McpStopped,
+        LegacyEarlyTurn,
+    ] {
+        let db = TempDb::new(&format!("lost-start-{case:?}"));
+        {
+            let (engine, _) = open(&db);
+            leave_lost_start(&engine, case).await;
+        }
+        let (engine, provider) = open(&db);
+        let starts = || {
+            crate::lock(&provider.calls)
+                .iter()
+                .filter(|c| c.as_str() == "start run:t1:1")
+                .count()
+        };
+        let p = match case {
+            Scheduled | Mcp | Continuation => run_to_end(&engine, "t1", "run:t1:1").await,
+            _ => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                projection(&engine, "t1").await
+            }
+        };
+        let run = run_of(&p, "run:t1:1");
+        match case {
+            Starting | Running | RunningEarlyTurn | LegacyEarlyTurn | UserArchived => {
+                assert_eq!(starts(), 0, "{case:?}: not sent again");
+                assert_eq!(run["status"], "queued", "{case:?}");
+                assert_eq!(run["queueHeld"], true, "{case:?}");
+                assert_eq!(run["queuePosition"], 1, "{case:?}");
+                if case != Starting && case != UserArchived {
+                    let attempt = &p["attempts"][0];
+                    assert_eq!(attempt["status"], "pending", "{case:?}");
+                }
+                assert_eq!(
+                    p["runs"].as_array().map(Vec::len),
+                    Some(1),
+                    "{case:?}: no continuation"
+                );
+                if case != Starting && case != UserArchived {
+                    let sessions = p["providerSessions"].as_array().unwrap();
+                    assert!(
+                        sessions.iter().all(|s| s["status"] == "stopped"),
+                        "{case:?}: the dead session is stopped: {sessions:?}"
+                    );
+                }
+            }
+            Scheduled | Mcp | Continuation => {
+                assert_eq!(starts(), 1, "{case:?}: sent again once");
+                assert_eq!(run["status"], "completed", "{case:?}");
+            }
+            McpCapped | McpSnoozed | McpArchived | McpStopped | RunningConfirmedTurn => {
+                assert_eq!(starts(), 0, "{case:?}");
+                assert_eq!(run["status"], "cancelled", "{case:?}");
+                assert_eq!(
+                    p["runs"].as_array().map(Vec::len),
+                    Some(1),
+                    "{case:?}: no continuation"
+                );
+            }
+        }
+    }
+}
+
+/// The #268 gate's probe: a project opted out of continuing after a restart. The cut run A is
+/// cancelled, and the user prompt B queued behind it waits in the held queue (T3's
+/// `reconcileProjection`); it does not start on its own.
+#[tokio::test(flavor = "current_thread")]
+async fn an_opted_out_restart_holds_the_queued_prompt() {
+    let db = TempDb::new("restart-opt-out-queued");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        let mut thread = engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut thread).await;
+        dispatch(&engine, message("t1", "c2", "hang")).await;
+        until_provider_turn(&mut thread).await;
+        settled_statuses(&db, "provider-turn.start").await;
+        dispatch(&engine, message("t1", "c3", "after")).await;
+        let p = projection(&engine, "t1").await;
+        assert_eq!(run_of(&p, "run:t1:2")["status"], "queued");
+    }
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    config.providers = vec![provider.clone()];
+    config.restart_policy = crate::RestartPolicy {
+        continue_by_default: true,
+        projects: [(project_id(), false)].into(),
+    };
+    let engine = SqliteEngine::open(config).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "cancelled");
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "queued");
+    assert_eq!(run_of(&p, "run:t1:2")["queueHeld"], true);
+    assert!(
+        crate::lock(&provider.calls)
+            .iter()
+            .all(|c| c != "start run:t1:2")
+    );
+}
+
+/// The #268 gate's probe: a close's host cleanup (a deleted thread's scheduled tasks) ends
+/// before its row settles, so a close replayed at start does not settle with it undone.
+#[tokio::test(flavor = "current_thread")]
+async fn a_close_settles_after_its_host_cleanup() {
+    let db = TempDb::new("close-awaits-host");
+    let host = Arc::new(RecordingHost::default());
+    let (release, hold) = tokio::sync::oneshot::channel();
+    *crate::lock(&host.close_hold) = Some(hold);
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.archive", "commandId": "a1", "threadId": "t1"}),
+    )
+    .await;
+    timeout(Duration::from_secs(5), host.closed_event.notified())
+        .await
+        .expect("the host hears of the close");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(outbox_statuses(&db, "thread.closed"), ["running"]);
+    release.send(()).unwrap();
+    assert_eq!(settled_statuses(&db, "thread.closed").await, ["succeeded"]);
+}
+
+/// The gate's probe: a child's checkpoint capture runs again after a restart (replay-safe),
+/// after its first run already wrote the child's end and the parent's wake. The parent is woken
+/// once.
+#[tokio::test(flavor = "current_thread")]
+async fn a_replayed_capture_wakes_the_parent_once() {
+    let db = TempDb::new("capture-replay-wake");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(&engine, delegate("d1", "look around", Some("always"))).await;
+    let child = "thread:delegated-task:d1";
+    let child_run = format!("run:{child}:1");
+    run_to_end(&engine, child, &child_run).await;
+    let wakes = |p: &Value| {
+        p["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| {
+                m["text"]
+                    .as_str()
+                    .is_some_and(|t| t.starts_with("Delegated task"))
+            })
+            .count()
+    };
+    assert_eq!(wakes(&projection(&engine, "t1").await), 1);
+    engine
+        .inner()
+        .clone()
+        .capture_run(child.to_owned(), child_run)
+        .await;
+    assert_eq!(wakes(&projection(&engine, "t1").await), 1);
+}
+
+/// The gate's probe: an engine opened with `hold_effects` runs no effect, also not one a
+/// restart replays, until the server's host services are up (`start_effects`).
+#[tokio::test(flavor = "current_thread")]
+async fn held_effects_wait_for_the_host() {
+    let db = TempDb::new("hold-effects");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        commit_left_running(
+            &engine,
+            json!({"type": "thread.archive", "commandId": "a1", "threadId": "t1"}),
+            "thread.closed",
+        )
+        .await;
+    }
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.host = Some(host.clone());
+    config.hold_effects = true;
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t2", "c2")).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(host.closed.lock().unwrap().is_empty());
+    assert_eq!(outbox_statuses(&db, "thread.closed"), ["pending"]);
+    engine.start_effects();
+    assert_eq!(settled_statuses(&db, "thread.closed").await, ["succeeded"]);
+    assert_eq!(
+        *host.closed.lock().unwrap(),
+        [("t1".to_owned(), crate::ThreadClose::Archived)]
+    );
+}
+
+/// The gate's probe: rollback 1, then a session detach 2, both left by a stopped process. The
+/// rollback keeps its place in the lane, ahead of the detach; a restart does not move it to the
+/// end.
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_keeps_a_rollback_ahead_of_later_work() {
+    let db = TempDb::new("rollback-lane-order");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        engine
+            .inner()
+            .db(|store| {
+                let mut tx = store.tx().unwrap();
+                let rollback = crate::rollback::RollbackRequest {
+                    thread_id: "t1".into(),
+                    command_id: "rb-1".into(),
+                    provider_thread_id: "provider-thread:t1".into(),
+                    checkpoint_id: "k".into(),
+                    scope_id: "s".into(),
+                    restore_files: Some(false),
+                    resume_snapshot: None,
+                };
+                tx.put_pending_rollback(
+                    "rb-1",
+                    "t1",
+                    &json!({
+                    "providerThreadId": "provider-thread:t1", "checkpointId": "k",
+                    "scopeId": "s", "restoreFiles": false}),
+                )
+                .unwrap();
+                tx.enqueue(Some("rb-1"), &[crate::commands::Effect::Rollback(rollback)])
+                    .unwrap();
+                tx.enqueue(
+                    Some("d-2"),
+                    &[crate::commands::Effect::CloseSession {
+                        thread_id: "t1".into(),
+                    }],
+                )
+                .unwrap();
+                tx.commit(None).unwrap();
+                assert!(
+                    store
+                        .advance_rollback(
+                            "rb-1",
+                            "admitted",
+                            "provider_done",
+                            Some(&json!({"id": "provider-thread:t1"})),
+                        )
+                        .unwrap()
+                );
+                store
+                    .raw()
+                    .execute(
+                        "UPDATE effect_outbox SET status = 'running'
+                         WHERE effect_type = 'provider-thread.rollback'",
+                        [],
+                    )
+                    .unwrap();
+            })
+            .await;
+    }
+    let mut config = EngineConfig::new(db.path());
+    config.hold_effects = true;
+    let engine = SqliteEngine::open(config).unwrap();
+    let rows: Vec<(String, String, Option<String>)> = engine
+        .inner()
+        .db(|store| {
+            let mut stmt = store
+                .raw()
+                .prepare(
+                    "SELECT effect_type, status, json_extract(payload, '$.resumeSnapshot.id')
+                     FROM effect_outbox WHERE thread_id = 't1' AND status IN ('pending', 'running')
+                     ORDER BY id",
+                )
+                .unwrap();
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        })
+        .await;
+    assert_eq!(
+        rows,
+        [
+            (
+                "provider-thread.rollback".to_owned(),
+                "pending".to_owned(),
+                Some("provider-thread:t1".to_owned())
+            ),
+            (
+                "provider-session.detach".to_owned(),
+                "pending".to_owned(),
+                None
+            ),
+        ]
+    );
+}
+
+/// An engine on `db` whose worker waits (`hold_effects`), so a test sees what recovery wrote.
+fn open_held(db: &TempDb) -> SqliteEngine {
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.hold_effects = true;
+    SqliteEngine::open(config).unwrap()
+}
+
+/// The #268 gate's probe: a continuation sent again keeps its run id. Cut off by crash after
+/// crash, it stops at the chain limit instead of being sent forever.
+#[tokio::test(flavor = "current_thread")]
+async fn a_continuation_cut_off_again_and_again_stops_at_the_chain_limit() {
+    let db = TempDb::new("continuation-crash-loop");
+    {
+        let (engine, _) = open(&db);
+        leave_lost_start(&engine, LostStart::Continuation).await;
+    }
+    for round in 1..=4 {
+        let engine = open_held(&db);
+        let p = projection(&engine, "t1").await;
+        let run = run_of(&p, "run:t1:1");
+        if round <= 3 {
+            assert_eq!(run["status"], "starting", "round {round}: sent again");
+            // The worker claimed the resend; the process died again before it settled.
+            engine
+                .inner()
+                .db(|store| {
+                    store
+                        .raw()
+                        .execute(
+                            "UPDATE effect_outbox SET status = 'running', attempt_count = 1
+                             WHERE command_id = 'command:restart-resend:run:t1:1'
+                               AND status = 'pending'",
+                            [],
+                        )
+                        .unwrap()
+                })
+                .await;
+        } else {
+            assert_eq!(run["status"], "cancelled", "round {round}: the chain ends");
+        }
+    }
+}
+
+/// The #268 gate's probe: Stop committed after the provider took the prompt, and the process
+/// died before the provider heard of it. The restart does not continue the run.
+#[tokio::test(flavor = "current_thread")]
+async fn a_stopped_run_is_not_continued_after_a_restart() {
+    let db = TempDb::new("restart-after-stop");
+    die_during_a_turn(&db, "c2").await;
+    {
+        // An inert copy reads the store as it is, to write the stored Stop.
+        let mut config = EngineConfig::new(db.path());
+        config.recover_runs = false;
+        let engine = SqliteEngine::open(config).unwrap();
+        engine
+            .inner()
+            .write(|tx| {
+                let now = tx.now().to_owned();
+                tx.append(
+                    crate::store::Draft::new(
+                        "t1",
+                        "turn-item.updated",
+                        json!({"id": "turn-item:run:t1:1:interrupt-request", "threadId": "t1",
+                               "runId": "run:t1:1", "type": "run_interrupt_request",
+                               "status": "completed", "startedAt": now, "updatedAt": now}),
+                    )
+                    .run(Some("run:t1:1")),
+                )
+            })
+            .await
+            .unwrap();
+    }
+    let engine = open_held(&db);
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "cancelled");
+    assert_eq!(
+        p["runs"].as_array().map(Vec::len),
+        Some(1),
+        "no continuation"
+    );
+}
+
+/// The #268 gate's probe: an unattended prompt is sent again, and the user's prompt queued
+/// behind it is held, as on every other restart path.
+#[tokio::test(flavor = "current_thread")]
+async fn a_resend_holds_the_prompt_queued_behind_it() {
+    let db = TempDb::new("resend-holds-queue");
+    {
+        let (engine, _) = open(&db);
+        leave_lost_start(&engine, LostStart::Mcp).await;
+        dispatch(&engine, message("t1", "c3", "after")).await;
+        assert_eq!(
+            run_of(&projection(&engine, "t1").await, "run:t1:2")["status"],
+            "queued"
+        );
+    }
+    let (engine, _) = open(&db);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "queued");
+    assert_eq!(run_of(&p, "run:t1:2")["queueHeld"], true);
+}
+
+/// The #268 gate's probe: a provider's buffered notification queued behind a run that waits
+/// for its checkpoint lost its output with the process, so a restart cancels it
+/// (`ProviderRuntimeRecoveryService`). A user prompt and a server notice with its own text
+/// stay held.
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_cancels_a_queued_buffered_provider_notification() {
+    let db = TempDb::new("restart-buffered-notification");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        dispatch(&engine, message("t1", "c2", "first")).await;
+        run_to_end(&engine, "t1", "run:t1:1").await;
+        engine.test_force_waiting("t1", "run:t1:1").await;
+        for (command, source) in [("c3", "provider"), ("c4", "server")] {
+            dispatch(
+                &engine,
+                json!({"type": "message.dispatch", "commandId": command, "threadId": "t1",
+                       "messageId": format!("message:{command}"), "text": "Background task completed.",
+                       "notification": {"source": {"kind": "background_task"},
+                           "outcome": "updated", "summary": "Background activity updated"},
+                       "attachments": [], "dispatchMode": {"type": "queue_after_active"},
+                       "createdBy": "agent", "creationSource": source}),
+            )
+            .await;
+        }
+        dispatch(&engine, message("t1", "c5", "after")).await;
+        let p = projection(&engine, "t1").await;
+        for run in ["run:t1:2", "run:t1:3", "run:t1:4"] {
+            assert_eq!(run_of(&p, run)["status"], "queued", "{run}");
+        }
+    }
+    let engine = open_held(&db);
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "cancelled");
+    for run in ["run:t1:3", "run:t1:4"] {
+        assert_eq!(run_of(&p, run)["status"], "queued", "{run}");
+        assert_eq!(run_of(&p, run)["queueHeld"], true, "{run}");
+    }
+}
+
+/// The #268 gate's probe: cancelling a buffered notification queued behind a run that waits
+/// for approval leaves that approval pending, so recovery does not continue past it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_cancelling_a_notification_keeps_the_active_approval() {
+    let db = TempDb::new("restart-notification-approval");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        let mut thread = engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .unwrap();
+        dispatch(&engine, message("t1", "c2", "ask")).await;
+        while next(&mut thread).await["event"]["type"] != "runtime-request.updated" {}
+        dispatch(
+            &engine,
+            json!({"type": "message.dispatch", "commandId": "c3", "threadId": "t1",
+                   "messageId": "message:c3", "text": "Background task completed.",
+                   "notification": {"source": {"kind": "background_task"},
+                       "outcome": "updated", "summary": "Background activity updated"},
+                   "attachments": [], "dispatchMode": {"type": "queue_after_active"},
+                   "createdBy": "agent", "creationSource": "provider"}),
+        )
+        .await;
+        assert_eq!(
+            run_of(&projection(&engine, "t1").await, "run:t1:2")["status"],
+            "queued"
+        );
+    }
+    let engine = open_held(&db);
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "cancelled");
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "cancelled");
+    assert_eq!(
+        p["runs"].as_array().map(Vec::len),
+        Some(2),
+        "the run that waited for approval does not continue on its own"
+    );
+}
+
+/// The #268 gate's probe: a host cleanup that fails is tried again; one that keeps failing
+/// leaves its row `failed` with the error, instead of `succeeded`.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_close_cleanup_is_retried_then_recorded() {
+    for failures in [1, u32::MAX] {
+        let db = TempDb::new(&format!("close-fails-{failures}"));
+        let host = Arc::new(RecordingHost::default());
+        host.close_failures
+            .store(failures, std::sync::atomic::Ordering::SeqCst);
+        let mut config = EngineConfig::new(db.path());
+        config.projects = vec![ProjectConfig {
+            title: "Project".into(),
+            workspace_root: ROOT.into(),
+        }];
+        config.host = Some(host.clone());
+        let engine = SqliteEngine::open(config).unwrap();
+        dispatch(&engine, create("t1", "c1")).await;
+        dispatch(
+            &engine,
+            json!({"type": "thread.archive", "commandId": "a1", "threadId": "t1"}),
+        )
+        .await;
+        let statuses = settled_statuses(&db, "thread.closed").await;
+        if failures == 1 {
+            assert_eq!(statuses, ["succeeded"]);
+            assert_eq!(host.closed.lock().unwrap().len(), 2, "tried again");
+        } else {
+            assert_eq!(statuses, ["failed"]);
+            let error: String = rusqlite::Connection::open(db.path())
+                .unwrap()
+                .query_row(
+                    "SELECT last_error FROM effect_outbox WHERE effect_type = 'thread.closed'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(error.contains("could not clean up"), "{error}");
+        }
+    }
+}
+
+/// The user sends a held prompt again: it runs once.
+#[tokio::test(flavor = "current_thread")]
+async fn a_held_prompt_runs_when_the_user_sends_it() {
+    let db = TempDb::new("lost-start-send");
+    {
+        let (engine, _) = open(&db);
+        leave_lost_start(&engine, LostStart::Running).await;
+    }
+    let (engine, provider) = open(&db);
+    dispatch(
+        &engine,
+        json!({"type": "queued-run.start", "commandId": "q1", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "completed");
+    assert_eq!(
+        crate::lock(&provider.calls)
+            .iter()
+            .filter(|c| c.as_str() == "start run:t1:1")
+            .count(),
+        1
+    );
 }
 
 /// `ThreadLaunchService.launch` for a scheduled run: the first message carries the task id
@@ -7154,6 +8064,10 @@ struct RecordingHost {
     closed: Mutex<Vec<(String, crate::ThreadClose)>>,
     html_cleanup: Mutex<Vec<(String, String)>>,
     closed_event: tokio::sync::Notify,
+    /// The next `thread_closed` ends only once this is sent (or dropped).
+    close_hold: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    /// How many next `thread_closed` calls fail.
+    close_failures: std::sync::atomic::AtomicU32,
 }
 
 impl crate::EngineHost for RecordingHost {
@@ -7207,12 +8121,34 @@ impl crate::EngineHost for RecordingHost {
         self.html_cleanup.lock().unwrap().extend(ids);
         Box::pin(async {})
     }
-    fn thread_closed(&self, thread_id: &str, reason: crate::ThreadClose) {
+    fn thread_closed(
+        &self,
+        thread_id: &str,
+        reason: crate::ThreadClose,
+    ) -> crate::BoxFuture<'_, Result<(), String>> {
         self.closed
             .lock()
             .unwrap()
             .push((thread_id.to_owned(), reason));
         self.closed_event.notify_one();
+        let hold = crate::lock(&self.close_hold).take();
+        let failed = self
+            .close_failures
+            .try_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok();
+        Box::pin(async move {
+            if let Some(hold) = hold {
+                let _ = hold.await;
+            }
+            if failed {
+                return Err("the host could not clean up".to_owned());
+            }
+            Ok(())
+        })
     }
 }
 
@@ -9020,6 +9956,53 @@ async fn a_late_start_failure_after_force_stop_does_not_hold_the_queue() {
             "{case}: a late failure of an ended run does not hold the queue"
         );
     }
+}
+
+/// A settle close stored by an earlier build (`"reason": "settled"`, before closes named their
+/// settlement) still decodes after a restart and reaches the host, which then cannot tell
+/// whether its settle script ran.
+#[tokio::test(flavor = "current_thread")]
+async fn a_settle_close_stored_without_its_settlement_still_runs() {
+    let db = TempDb::new("legacy-settle-close");
+    // The earlier process, opened off the runtime so its own worker never claims the row.
+    let previous = std::thread::spawn({
+        let path = db.path();
+        move || SqliteEngine::open(EngineConfig::new(path)).unwrap()
+    })
+    .join()
+    .unwrap();
+    previous
+        .inner()
+        .db(|store| {
+            store.raw().execute(
+                "INSERT INTO effect_outbox (thread_id, lane, effect_type, payload, status,
+                   created_at, updated_at)
+                 VALUES ('t1', 'thread', 'thread.closed',
+                   '{\"type\":\"thread.closed\",\"threadId\":\"t1\",\"reason\":\"settled\"}',
+                   'pending', '', '')",
+                [],
+            )
+        })
+        .await
+        .unwrap();
+    drop(previous);
+
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    timeout(Duration::from_secs(5), async {
+        while host.closed.lock().unwrap().is_empty() {
+            host.closed_event.notified().await;
+        }
+    })
+    .await
+    .expect("the stored close reached the host");
+    let closed = host.closed.lock().unwrap().clone();
+    assert_eq!(closed.len(), 1);
+    assert_eq!(closed[0].0, "t1");
+    assert_eq!(format!("{:?}", closed[0].1), "SettledUnnamed");
+    drop(engine);
 }
 
 /// A thread's effects run in the order their writes committed (T3's outbox claims by row

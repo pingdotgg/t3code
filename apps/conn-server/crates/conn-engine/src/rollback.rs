@@ -367,19 +367,31 @@ pub(crate) fn recover_pending(
         tx.clear_pending_rollback(&pending.command_id)?;
         return Ok(None);
     };
-    match (pending.phase.as_str(), pending.snapshot) {
-        ("admitted", _) => Ok(Some(Effect::Rollback(request))),
-        ("provider_done", Some(snapshot)) => {
+    // The row the previous process left keeps its place in the thread's lane, so work
+    // committed after the rollback still runs after it. A store from before the outbox has no
+    // row, and the rollback gets one.
+    let row = tx.unsettled_rollback(&pending.thread_id, &pending.command_id)?;
+    match (pending.phase.as_str(), pending.snapshot, row) {
+        ("admitted", _, Some(_)) => Ok(None),
+        ("admitted", _, None) => Ok(Some(Effect::Rollback(request))),
+        ("provider_done", Some(snapshot), Some(id)) => {
+            tx.resume_rollback(id, &snapshot)?;
+            Ok(None)
+        }
+        ("provider_done", Some(snapshot), None) => {
             request.resume_snapshot = Some(snapshot);
             Ok(Some(Effect::Rollback(request)))
         }
-        _ => {
+        (_, _, row) => {
             write_rollback_failure(
                 tx,
                 &pending.thread_id,
                 &pending.command_id,
                 ROLLBACK_INTERRUPTED_MESSAGE,
             )?;
+            if let Some(id) = row {
+                tx.fail_rollback(id, ROLLBACK_INTERRUPTED_MESSAGE)?;
+            }
             Ok(None)
         }
     }

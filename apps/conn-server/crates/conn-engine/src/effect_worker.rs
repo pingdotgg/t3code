@@ -80,6 +80,7 @@ impl Inner {
     /// nothing starts, and rows wait in the outbox for a later call.
     pub(crate) fn ensure_effect_worker(self: &Arc<Self>) {
         if tokio::runtime::Handle::try_current().is_err()
+            || self.effects_held.load(Ordering::SeqCst)
             || self.effect_worker.swap(true, Ordering::SeqCst)
         {
             return;
@@ -164,14 +165,14 @@ impl Inner {
             let gate = crate::lock(&self.worker_hooks).gates.remove(&id);
             if let Some(release) = gate {
                 let _ = release.await;
-                self.settle_ran(id).await;
+                self.settle_ran(id, None).await;
                 self.effects_wake.notify_one();
                 return;
             }
         }
         #[cfg(test)]
         let effect_type = effect.effect_type();
-        self.clone().run_effect(effect).await;
+        let outcome = self.clone().run_effect(effect).await;
         #[cfg(test)]
         {
             let pause = {
@@ -189,7 +190,7 @@ impl Inner {
                 let _ = release.await;
             }
         }
-        self.settle_ran(id).await;
+        self.settle_ran(id, outcome.err()).await;
         self.effects_wake.notify_one();
     }
 
@@ -202,9 +203,11 @@ impl Inner {
     /// `failed`, with the reason. Where T3 gives up after one failed `fail`, the row would hold
     /// its thread until a restart; here the settlement is tried again with backoff for as long
     /// as this engine owns the store.
-    async fn settle_ran(&self, id: i64) {
-        let mut status = Settled::Succeeded;
-        let mut reason = None;
+    async fn settle_ran(&self, id: i64, failure: Option<String>) {
+        let (mut status, mut reason) = match failure {
+            Some(error) => (Settled::Failed, Some(error)),
+            None => (Settled::Succeeded, None),
+        };
         let mut failures = 0;
         loop {
             let error = match self.settle(id, status, reason.clone()).await {

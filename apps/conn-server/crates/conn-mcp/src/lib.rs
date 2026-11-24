@@ -467,6 +467,20 @@ impl McpService {
             .then(|| thread.clone())
     }
 
+    /// The committed `settledAt` of a live, settled thread.
+    pub async fn current_settlement(&self, thread_id: &str) -> Option<String> {
+        let projection = self
+            .config
+            .engine
+            .get_thread_projection(thread_id.into())
+            .await
+            .ok()?;
+        let thread = &projection["thread"];
+        let settled_at = thread["settledAt"].as_str()?;
+        (thread["deletedAt"].is_null() && thread["settledOverride"] == "settled")
+            .then(|| settled_at.to_owned())
+    }
+
     /// Whether `settled_at` still names the thread's settlement (`cleanUpSettledThread`'s
     /// first check, before it closes terminals).
     pub async fn is_current_settlement(&self, thread_id: &str, settled_at: &str) -> bool {
@@ -505,6 +519,16 @@ impl McpService {
             .iter()
             .find(|p| p["id"] == thread["projectId"] && p["deletedAt"].is_null())?
             .clone();
+        // A restart runs a settle close again when its row had not settled: the record of
+        // this settlement's start keeps the script to one run.
+        match engine.claim_settle_script(thread_id, settled_at).await {
+            Ok(true) => {}
+            Ok(false) => return None,
+            Err(error) => {
+                eprintln!("settle script for {thread_id}: {error}");
+                return None;
+            }
+        }
         let run = tools::worktree::run_project_script(
             config,
             thread_id,

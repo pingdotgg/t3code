@@ -1506,6 +1506,11 @@ impl Tx<'_> {
         Ok(status.is_some_and(|s| crate::shell::ACTIVE_RUN_STATUSES.contains(&s.as_str())))
     }
 
+    /// Now, in milliseconds since the epoch, as [`Self::now`].
+    pub(crate) fn now_ms(&self) -> u64 {
+        self.now_ms
+    }
+
     /// What `command_id`'s receipt recorded, read inside this write.
     pub(crate) fn outcome(&self, command_id: &str) -> StoreResult<Option<Receipt>> {
         receipt_of(&self.tx, command_id)

@@ -71,6 +71,7 @@ pub(crate) enum Effect {
     #[serde(rename = "thread.closed")]
     ThreadClosed {
         thread_id: String,
+        #[serde(deserialize_with = "close_reason")]
         reason: crate::ThreadClose,
     },
     /// Asks the title generator; answers with `thread.title.regeneration.complete`.
@@ -80,6 +81,18 @@ pub(crate) enum Effect {
         request_id: String,
         regenerate: bool,
     },
+}
+
+/// A close's reason as an outbox row stores it. A row from before closes named their
+/// settlement holds the bare `"settled"`.
+fn close_reason<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<crate::ThreadClose, D::Error> {
+    let reason = Value::deserialize(deserializer)?;
+    if reason == "settled" {
+        return Ok(crate::ThreadClose::SettledUnnamed);
+    }
+    serde_json::from_value(reason).map_err(serde::de::Error::custom)
 }
 
 pub(crate) enum CommandError {
@@ -1105,6 +1118,27 @@ fn release_held(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<bool> {
         }
     }
     Ok(released)
+}
+
+/// Cancels the queued runs of buffered provider notifications: their output lived in the
+/// provider process that is gone (T3's `isBufferedProviderNotification` at recovery).
+pub(crate) fn cancel_buffered_notifications(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<()> {
+    for run in queued_runs(tx, thread_id)? {
+        let message_id = run["userMessageId"].as_str().unwrap_or_default();
+        let buffered = tx
+            .entity(thread_id, "messages", message_id)?
+            .is_some_and(|m| {
+                m["createdBy"] == "agent"
+                    && m["creationSource"] == "provider"
+                    && !is_null(&m, "notification")
+                    && is_null(&m, "delegatedCompletion")
+            });
+        if buffered {
+            let run_id = run["id"].as_str().unwrap_or_default();
+            finish_run(tx, thread_id, run_id, "cancelled", None)?;
+        }
+    }
+    Ok(())
 }
 
 /// Sets `queueHeld` on every queued run, so they wait for the user.
@@ -2947,6 +2981,8 @@ pub(crate) fn finish_run_as(
     if !is_live(&run) {
         return Ok(false);
     }
+    // A queued run never started, so the thread's pending requests belong to the active run.
+    let queued = run["status"] == "queued";
     crate::secret_requests::cancel_pending(tx, thread_id, run_id)?;
     if status == "interrupted" {
         write_interrupt_result(tx, thread_id, &run, None, stop_reason)?;
@@ -2999,7 +3035,12 @@ pub(crate) fn finish_run_as(
     // Only this run's requests end with it: a queued run removed while another run waits on
     // an approval must leave that approval answerable. A request names its node; the node
     // names its run.
-    for mut request in tx.entities_where(thread_id, "runtimeRequests", "status", "pending")? {
+    let pending = if queued {
+        vec![]
+    } else {
+        tx.entities_where(thread_id, "runtimeRequests", "status", "pending")?
+    };
+    for mut request in pending {
         let owner = match request["nodeId"].as_str() {
             Some(node) => tx.entity(thread_id, "nodes", node)?,
             None => None,

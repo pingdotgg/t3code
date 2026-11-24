@@ -903,6 +903,27 @@ pub fn agent_browser_access(settings: &Map<String, Value>, project_id: Option<&s
         .unwrap_or(generated::DEFAULT_AGENT_BROWSER_ACCESS)
 }
 
+/// `resolveProjectSettings(settings, projectId).settings.continueThreadsAfterServerUpdate`,
+/// for every project at once: the machine-wide value (T3's default `true`) and each project's
+/// override, which wins either way.
+pub fn restart_policy(settings: &Map<String, Value>) -> conn_engine::RestartPolicy {
+    let key = "continueThreadsAfterServerUpdate";
+    let projects = settings
+        .get("projectSettingsOverrides")
+        .and_then(Value::as_object)
+        .map(|overrides| {
+            overrides
+                .iter()
+                .filter_map(|(id, project)| Some((id.clone(), project.get(key)?.as_bool()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    conn_engine::RestartPolicy {
+        continue_by_default: settings.get(key).and_then(Value::as_bool).unwrap_or(true),
+        projects,
+    }
+}
+
 /// `resolveProjectSettings(settings, projectId).settings.removeAgentCreditsOnMerge`: the
 /// project's override when set, else the machine-wide value, else T3's default `false`.
 pub fn remove_agent_credits_on_merge(settings: &Map<String, Value>, project_id: &str) -> bool {
@@ -2015,6 +2036,27 @@ mod tests {
         assert_eq!(response_streaming_mode(&turn, None), Turn);
         assert_eq!(response_streaming_mode(&turn, Some("p")), Turn);
         assert_eq!(response_streaming_mode(&turn, Some("q")), Paragraph);
+    }
+
+    /// Audit 5.1: `continueThreadsAfterServerUpdate` is on by default, and a project override
+    /// wins in both directions.
+    #[test]
+    fn restart_policy_follows_the_project_override() {
+        let settings = |v: Value| v.as_object().cloned().unwrap();
+        let policy = restart_policy(&Map::new());
+        assert!(policy.continues(None) && policy.continues(Some("p")));
+        let off_but_p = restart_policy(&settings(json!({
+            "continueThreadsAfterServerUpdate": false,
+            "projectSettingsOverrides": {"p": {"continueThreadsAfterServerUpdate": true}, "q": {}},
+        })));
+        assert!(off_but_p.continues(Some("p")));
+        assert!(!off_but_p.continues(Some("q")) && !off_but_p.continues(None));
+        let on_but_p = restart_policy(&settings(json!({
+            "continueThreadsAfterServerUpdate": true,
+            "projectSettingsOverrides": {"p": {"continueThreadsAfterServerUpdate": false}},
+        })));
+        assert!(!on_but_p.continues(Some("p")));
+        assert!(on_but_p.continues(Some("q")));
     }
 
     /// `serverSettings.ts` (`read-provider-history`): a history that cannot be read fails

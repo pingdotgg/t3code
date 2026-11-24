@@ -83,6 +83,7 @@ pub use fold::{SearchField, field_holds_words, fold, fold_field, fold_search_que
 pub use guard::{
     CommitDecision, CommitGate, DispatchGuard, GuardRule, OwnedMessage, is_frozen_message,
 };
+pub use restart::RestartPolicy;
 pub use streaming::ResponseStreamingMode;
 pub use t3_import::{
     ImportProgress, ImportReport, import_t3_state, import_t3_state_with_progress, open_t3_read_only,
@@ -269,7 +270,16 @@ pub trait EngineHost: Send + Sync {
     }
 
     /// A thread was archived, deleted or settled; end what it holds open (terminals).
-    fn thread_closed(&self, _thread_id: &str, _reason: ThreadClose) {}
+    /// The effect settles once the returned future ends, so a replayed close finishes its
+    /// cleanup (a deleted thread's scheduled tasks) before its row settles. An error is tried
+    /// again, then recorded on the row (`failed`).
+    fn thread_closed(
+        &self,
+        _thread_id: &str,
+        _reason: ThreadClose,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(std::future::ready(Ok(())))
+    }
 
     /// A remote task of `thread_id` now owes its thread in a linked environment a stop.
     fn remote_task_changed(&self, _thread_id: &str, _task_id: &str) {}
@@ -336,6 +346,9 @@ pub enum ThreadClose {
     SettledAgain {
         settled_at: String,
     },
+    /// A settle close an earlier build stored without its settlement (`"settled"`). Its
+    /// terminals close, but nothing shows whether its settle script ran, so it does not run.
+    SettledUnnamed,
 }
 
 /// Asks a small model for a thread title (`generateTitle`, `regenerateTitle`). The engine
@@ -375,6 +388,16 @@ pub trait Engine: Send + Sync {
     fn provider_instance_enabled(&self, _project_id: &str, _instance_id: &str) -> bool {
         true
     }
+    /// Records, durably, that the settle script of `thread_id`'s settlement `settled_at`
+    /// starts: `true` the first time, `false` once any process recorded it.
+    fn claim_settle_script<'a>(
+        &'a self,
+        _thread_id: &'a str,
+        _settled_at: &'a str,
+    ) -> BoxFuture<'a, Result<bool, String>> {
+        Box::pin(std::future::ready(Ok(true)))
+    }
+
     /// Whether a command already committed; retries must use its recorded target.
     fn has_receipt<'a>(&'a self, _command_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
         Box::pin(std::future::ready(Ok(false)))

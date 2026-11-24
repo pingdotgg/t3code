@@ -375,43 +375,33 @@ impl EngineHost for Host {
         }
     }
 
-    fn thread_closed(&self, thread_id: &str, reason: ThreadClose) {
+    fn thread_closed(
+        &self,
+        thread_id: &str,
+        reason: ThreadClose,
+    ) -> BoxFuture<'_, Result<(), String>> {
         match &reason {
             // `settleActionRunAt`: the script runs once per settlement, so only on the
             // transition to settled.
             ThreadClose::Settled { settled_at } => {
-                self.clean_up_settled(thread_id, settled_at.clone(), true);
+                self.clean_up_settled(thread_id, Some(settled_at.clone()), true);
+                return Box::pin(std::future::ready(Ok(())));
             }
             ThreadClose::SettledAgain { settled_at } => {
-                self.clean_up_settled(thread_id, settled_at.clone(), false);
+                self.clean_up_settled(thread_id, Some(settled_at.clone()), false);
+                return Box::pin(std::future::ready(Ok(())));
             }
-            ThreadClose::Archived | ThreadClose::Deleted => {
-                // T3's `terminal.cleanup` effect: archive and delete both drop the history. The
-                // close scans and unlinks history files under the manager's lock, so it runs on
-                // the blocking pool; the device sessions end after it.
-                let (terminals, devices) = (self.terminals.clone(), self.devices.get().cloned());
-                let thread_id = thread_id.to_owned();
-                tokio::spawn(async move {
-                    let close = TerminalCloseInput {
-                        thread_id: thread_id.clone(),
-                        terminal_id: None,
-                        delete_history: Some(true),
-                    };
-                    if let Err(error) =
-                        tokio::task::spawn_blocking(move || terminals.close(close)).await
-                    {
-                        eprintln!("terminal cleanup: {error}");
-                    }
-                    if let Some(devices) = devices {
-                        devices.cleanup_thread(&thread_id).await;
-                    }
-                });
+            // Its settle script may have run already: the terminals close for the thread's
+            // current settlement, and no script runs.
+            ThreadClose::SettledUnnamed => {
+                self.clean_up_settled(thread_id, None, false);
+                return Box::pin(std::future::ready(Ok(())));
             }
+            ThreadClose::Archived | ThreadClose::Deleted => {}
         }
+        let deleted = reason == ThreadClose::Deleted;
         // `ThreadDeletion`'s `preview.cleanup`: a deleted thread's tabs free their slots.
-        if reason == ThreadClose::Deleted
-            && let Some(previews) = self.previews.get().cloned()
-        {
+        if deleted && let Some(previews) = self.previews.get().cloned() {
             let thread_id = thread_id.to_owned();
             tokio::spawn(async move {
                 if let Err(error) = previews.close(&thread_id, None).await {
@@ -419,31 +409,87 @@ impl EngineHost for Host {
                 }
             });
         }
+        let terminals = self.terminals.clone();
+        // The thread's device sessions end; the devices stay on for other threads.
+        let devices = self.devices.get().cloned();
         // `ResourceCleanupService`: a deleted thread takes the tasks bound to it.
-        if reason == ThreadClose::Deleted
-            && let Some(tasks) = self.scheduled_tasks.get().cloned()
-        {
-            let thread_id = thread_id.to_owned();
-            tokio::spawn(async move {
-                if let Err(error) = tasks.delete_for_thread(&thread_id).await {
-                    eprintln!("scheduled tasks: {error}");
+        let tasks = deleted
+            .then(|| self.scheduled_tasks.get().cloned())
+            .flatten();
+        let thread_id = thread_id.to_owned();
+        Box::pin(async move {
+            // Each step runs whatever the others did; their errors come back together, so the
+            // close is tried again (`ResourceCleanupService`).
+            let mut errors = vec![];
+            // T3's `terminal.cleanup` effect: archive and delete both drop the history. The
+            // close scans and unlinks history files under the manager's lock: off the runtime.
+            let closing = thread_id.clone();
+            let terminals = tokio::task::spawn_blocking(move || {
+                terminals.close(TerminalCloseInput {
+                    thread_id: closing,
+                    terminal_id: None,
+                    delete_history: Some(true),
+                });
+            })
+            .await;
+            if let Err(e) = terminals {
+                errors.push(format!("closing the thread's terminals stopped: {e}"));
+            }
+            if let Some(tasks) = tasks
+                && let Err(e) = tasks.delete_for_thread(&thread_id).await
+            {
+                errors.push(format!("deleting the thread's scheduled tasks: {e}"));
+            }
+            if let Some(devices) = devices {
+                match tokio::time::timeout(
+                    DEVICE_RELEASE_DEADLINE,
+                    devices.cleanup_thread(&thread_id),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        errors.push(format!("releasing the thread's devices: {}", e.message()));
+                    }
+                    Err(_) => errors.push(format!(
+                        "releasing the thread's devices took over {} s",
+                        DEVICE_RELEASE_DEADLINE.as_secs()
+                    )),
                 }
-            });
-        }
+            }
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors.join("; "))
+            }
+        })
     }
 }
+
+/// How long a closed thread's device release may take, all devices together. T3 lets a worker
+/// reclaim its slot from an effect after 30 s.
+const DEVICE_RELEASE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl Host {
     /// `cleanUpSettledThread` (`ThreadSettlementService.ts:700`) for the committed settlement
     /// named by `settled_at`, one cleanup at a time. While that settlement is still the
     /// thread's, `closeOnSettle` closes its `stopOnSettle` terminals and then every idle one;
     /// then a new settlement (`first`) runs the project's settle script in the worktree.
-    fn clean_up_settled(&self, thread_id: &str, settled_at: String, first: bool) {
+    /// Without `settled_at`, the thread's current settlement is the one.
+    fn clean_up_settled(&self, thread_id: &str, settled_at: Option<String>, first: bool) {
         let (terminals, mcp) = (self.terminals.clone(), self.mcp.get().cloned());
         let cleanups = self.settle_cleanups.clone();
         let thread_id = thread_id.to_owned();
         tokio::spawn(async move {
             let _one_at_a_time = cleanups.lock().await;
+            let settled_at = match (settled_at, &mcp) {
+                (Some(settled_at), _) => settled_at,
+                (None, Some(mcp)) => match mcp.current_settlement(&thread_id).await {
+                    Some(settled_at) => settled_at,
+                    None => return,
+                },
+                (None, None) => String::new(),
+            };
             if let Some(mcp) = &mcp
                 && !mcp.is_current_settlement(&thread_id, &settled_at).await
             {
@@ -600,7 +646,9 @@ mod tests {
         let second = print_marker(&host, "archived", "term-2", "archmarktwo").await;
         let other = print_marker(&host, "other", "term-1", "othermarker").await;
 
-        host.thread_closed("archived", ThreadClose::Archived);
+        host.thread_closed("archived", ThreadClose::Archived)
+            .await
+            .unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(15), async {
             while alive(first) || alive(second) {
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -652,9 +700,15 @@ mod tests {
                 .is_ok()
         });
         held_rx.recv().unwrap();
-        host.thread_closed("archived", ThreadClose::Archived);
-        probe(CallContext::default(), json!({})).await.unwrap();
-        let _ = done_tx.send(());
+        // The close waits for the lock while the RPC runs.
+        let (closed, ()) = tokio::join!(
+            host.thread_closed("archived", ThreadClose::Archived),
+            async {
+                probe(CallContext::default(), json!({})).await.unwrap();
+                let _ = done_tx.send(());
+            }
+        );
+        closed.unwrap();
         assert!(
             holder.join().unwrap(),
             "the RPC completed while history cleanup held the lock"
@@ -685,7 +739,9 @@ mod tests {
                 .map_or(0, Vec::len)
         };
         for _ in 0..2 {
-            host.thread_closed("deleted", ThreadClose::Deleted);
+            host.thread_closed("deleted", ThreadClose::Deleted)
+                .await
+                .unwrap();
             for _ in 0..100 {
                 if sessions("deleted") == 0 {
                     break;
@@ -1364,7 +1420,7 @@ mod tests {
         let provider = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));
         let mut config = config(&provider);
         config.host = Some(host.clone());
-        config.recover_runs = false;
+        config.hold_effects = true;
         let engine = Arc::new(conn_engine::SqliteEngine::open(config).unwrap());
         let mut stream = subscribe(engine.as_ref(), thread).await;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1374,7 +1430,7 @@ mod tests {
             engine: Some(engine.clone()),
             ..Deps::default()
         };
-        crate::serve::start_agent_tools(&mut deps, &host, &engine, address).unwrap();
+        crate::serve::start_agent_tools(&mut deps, &host, &engine, address);
         let opened = || provider.sessions.load(std::sync::atomic::Ordering::SeqCst) > 0;
         while !opened() {
             stream.recv().await.unwrap().unwrap();
