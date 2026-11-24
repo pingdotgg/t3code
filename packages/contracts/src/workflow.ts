@@ -15,6 +15,20 @@ export const WorkflowRunStatus = Schema.Literals([
 ]);
 export type WorkflowRunStatus = typeof WorkflowRunStatus.Type;
 
+/**
+ * The one thing a run is about, as the workflow declared it: an issue, a pull request, a thread,
+ * a project or a web address. Its `kind`, `key` and `address` read as a `WorkflowRunReference`'s.
+ */
+export const WorkflowRunSubject = Schema.Struct({
+  kind: Schema.String,
+  key: Schema.String,
+  address: Schema.Json,
+  /** Empty until something that touched it knew its title. */
+  title: Schema.String,
+  url: Schema.NullOr(Schema.String),
+});
+export type WorkflowRunSubject = typeof WorkflowRunSubject.Type;
+
 export const WorkflowRun = Schema.Struct({
   runId: Schema.String,
   workflow: Schema.String,
@@ -36,6 +50,8 @@ export const WorkflowRun = Schema.Struct({
   parentStep: Schema.NullOr(Schema.String),
   /** What the workflow tagged the run with, for filtering. Absent for a run with no tags. */
   tags: Schema.optional(Schema.Array(Schema.String)),
+  /** What the run is about. Absent for a run that declared nothing. */
+  subject: Schema.optional(WorkflowRunSubject),
   startedAt: Schema.String,
   updatedAt: Schema.String,
   endedAt: Schema.NullOr(Schema.String),
@@ -181,12 +197,7 @@ export const WorkflowRunGetInput = Schema.Struct({ runId: Schema.String });
  * its kind; `address` is whatever that kind needs to open it.
  */
 export const WorkflowRunReference = Schema.Struct({
-  kind: Schema.String,
-  key: Schema.String,
-  address: Schema.Json,
-  /** Empty until something that touched it knew its title. */
-  title: Schema.String,
-  url: Schema.NullOr(Schema.String),
+  ...WorkflowRunSubject.fields,
   /** A word for where it stands, such as `open`, `merged` or `closed`. */
   state: Schema.NullOr(Schema.String),
   /** The steps that touched it, in the order they first did. */
@@ -195,8 +206,17 @@ export const WorkflowRunReference = Schema.Struct({
 });
 export type WorkflowRunReference = typeof WorkflowRunReference.Type;
 
-/** The kinds of reference runs record today; `address` is an `IssueRef` or a `PullRequestRef`. */
-export const WorkflowReferenceKind = { issue: "issue", pullRequest: "pullRequest" } as const;
+/**
+ * The kinds of reference runs record today. `address` is an `IssueRef`, a `PullRequestRef`,
+ * `{ threadId }`, `{ projectId }` or `{ url }`.
+ */
+export const WorkflowReferenceKind = {
+  issue: "issue",
+  pullRequest: "pullRequest",
+  thread: "thread",
+  project: "project",
+  url: "url",
+} as const;
 export const WorkflowIssueAddress = IssueRef;
 export const WorkflowPullRequestAddress = PullRequestRef;
 

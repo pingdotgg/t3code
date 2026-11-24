@@ -5,6 +5,7 @@ import {
   WorkflowRun,
   type WorkflowRunReference,
   WorkflowRunStatus,
+  type WorkflowRunSubject,
   WorkflowStep,
 } from "@t3tools/contracts";
 import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
@@ -43,6 +44,8 @@ export interface RunSummaryRow {
   readonly title: string;
   /** The run's tags, as a JSON list of text. */
   readonly tags_json: string;
+  /** What the run is about, as a `WorkflowRunSubject` in JSON; null when it declared nothing. */
+  readonly subject_json: string | null;
   readonly status: WorkflowRunStatus;
   readonly detail: string | null;
   readonly result_json: string | null;
@@ -108,6 +111,8 @@ interface ReferenceRow {
 // Rows keep JSON as text. Everything stored was a JSON value when it was written.
 export const jsonText = (value: Schema.Json): string => JSON.stringify(value);
 export const jsonValue = (text: string): Schema.Json => JSON.parse(text) as Schema.Json;
+/** A `subject_json` as this store wrote it. */
+export const subjectOf = (text: string) => JSON.parse(text) as WorkflowRunSubject;
 
 const now = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -202,6 +207,8 @@ export class WorkflowStore extends Context.Service<
     readonly runTitle: (runId: string, title: string) => Effect.Effect<void>;
     /** The run's tags from now on, in place of any it had. */
     readonly runTags: (runId: string, tags: ReadonlyArray<string>) => Effect.Effect<void>;
+    /** What the run is about from now on, in place of anything it said before. */
+    readonly runSubject: (runId: string, subject: ReferenceInput) => Effect.Effect<void>;
     /** Marks the step running and returns how many times it has now been started. */
     readonly stepStarted: (
       runId: string,
@@ -375,6 +382,8 @@ export class WorkflowStore extends Context.Service<
       readonly kind?: string | undefined;
       /** Runs tagged with this. */
       readonly tag?: string | undefined;
+      /** Runs about this: the subject's kind and key, or text that is its web address or key. */
+      readonly subject?: { readonly kind: string; readonly key: string } | string | undefined;
     }) => Effect.Effect<ReadonlyArray<RunSummaryRow>>;
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
@@ -405,7 +414,7 @@ export const make = Effect.gen(function* () {
   const write = <A, E>(runId: string, effect: Effect.Effect<A, E>) =>
     effect.pipe(Effect.orDie, Effect.andThen(PubSub.publish(changes, runId)), Effect.asVoid);
   const waitColumns = sql`run_id, name, token, schema_json, request_json, watch_json, deadline, opened_at, woke_json`;
-  const summaryColumns = sql`run_id, workflow, idempotency_key, version, engine_tag, title, status, detail, result_json, parent_run_id, parent_wait, pauses, held, tags_json, started_at, updated_at, ended_at`;
+  const summaryColumns = sql`run_id, workflow, idempotency_key, version, engine_tag, title, status, detail, result_json, parent_run_id, parent_wait, pauses, held, tags_json, subject_json, started_at, updated_at, ended_at`;
 
   const hub = yield* Effect.serviceOption(MilestoneHub.MilestoneHub);
   /** Tells the milestone hub of a transition this store just wrote, under an id stable for it. */
@@ -604,6 +613,25 @@ export const make = Effect.gen(function* () {
       yield* write(
         runId,
         sql`UPDATE workflow_runs SET tags_json = ${jsonText([...tags])} WHERE run_id = ${runId}`,
+      );
+    }),
+    runSubject: Effect.fn("WorkflowStore.runSubject")(function* (runId, subject) {
+      const title = subject.title.slice(0, splitsSurrogatePair(subject.title, 200) ? 199 : 200);
+      const kept = {
+        kind: subject.kind,
+        key: subject.key,
+        address: subject.address,
+        title,
+        url: subject.url ?? null,
+      } satisfies WorkflowRunSubject;
+      yield* write(
+        runId,
+        sql`
+          UPDATE workflow_runs
+          SET subject_kind = ${kept.kind}, subject_key = ${kept.key}, subject_url = ${kept.url},
+            subject_json = ${jsonText(kept)}
+          WHERE run_id = ${runId}
+        `,
       );
     }),
     stepStarted: Effect.fn("WorkflowStore.stepStarted")(function* (runId, name, kind) {
@@ -1088,6 +1116,11 @@ export const make = Effect.gen(function* () {
           : [
               sql`EXISTS (SELECT 1 FROM json_each(r.tags_json) WHERE json_each.value = ${filter.tag})`,
             ]),
+        ...(filter.subject === undefined
+          ? []
+          : typeof filter.subject === "string"
+            ? [sql`(subject_url = ${filter.subject} OR subject_key = ${filter.subject})`]
+            : [sql`subject_kind = ${filter.subject.kind} AND subject_key = ${filter.subject.key}`]),
         ...(filter.kind === undefined
           ? []
           : [

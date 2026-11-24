@@ -46,7 +46,7 @@ Dot-files and subfolders are ignored. Keep shared helpers in a subfolder and res
 
 ```sh
 t3 workflow start <name> --input '<json>' --key <key>
-t3 workflow list [--status paused] [--tag <tag>]
+t3 workflow list [--status paused] [--tag <tag>] [--subject <url or id>]
 t3 workflow show <run>
 t3 workflow resume <run>
 t3 workflow cancel <run> [--reason '<why>']
@@ -88,6 +88,18 @@ workflow(
 Under **Needs you**, a picker then shows each kind with how many questions of it are open, and **Other** for the rest; your pick is remembered on that device. A question whose kind is not in the workflow's own `asks` is asked like any other and shows under **Other**, as do questions asked without a kind. `t3 workflow questions --kind feature` lists the questions asked with exactly that kind from the CLI.
 
 `tags([...])` labels a run for `t3 workflow list --tag backlog`, whether or not it waits on anyone.
+
+## What a run is about
+
+A run can name the one thing it is about with `subject(...)`: an issue or pull request a trigger or listing gave it, `{ threadId }`, `{ projectId }`, or a web address. Calling it again replaces the subject, and `start(workflow, payload, { key, subject })` gives a new run one from the start.
+
+```ts
+const { workflow, subject, Issue } = T3;
+
+workflow("triage", { version: 1, payload: Issue }, (issue) => subject(issue));
+```
+
+The run lists, **Needs you** included, show the subject under the run and open it beside the run. An issue's or pull request's own view lists the runs about it. `t3 workflow list --subject <url>` finds runs by their subject's web address, or by a thread or project id, and a step finds them with `runs({ subject })`. The subject is only a label with a link: nothing watches it.
 
 ## Triggers
 

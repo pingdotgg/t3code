@@ -4,6 +4,7 @@ import {
   listedWorkflowRuns,
   workflowChip,
   workflowQuestionKinds,
+  workflowReferenceLabel,
   workflowRunAsksKind,
   workflowRunLists,
   workflowRunNow,
@@ -100,6 +101,13 @@ function RunRow(props: { readonly node: WorkflowRunNode; readonly onOpen: () => 
       <Text className="font-t3-medium text-base text-foreground" numberOfLines={1}>
         {run.title}
       </Text>
+      {run.subject === undefined ? null : (
+        <Text className="text-xs text-foreground-secondary" numberOfLines={1}>
+          {[workflowReferenceLabel(run.subject), run.subject.title]
+            .filter((part, index, all) => part !== "" && all.indexOf(part) === index)
+            .join(" ")}
+        </Text>
+      )}
       <View className="flex-row items-center gap-2">
         <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
           {workflowRunNow(props.node, m)}

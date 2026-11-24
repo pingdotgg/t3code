@@ -1,4 +1,4 @@
-import { type EnvironmentId, type WorkflowRunReference } from "@t3tools/contracts";
+import { type EnvironmentId, type WorkflowRunSubject } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { WorkflowIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
@@ -21,6 +21,7 @@ import {
   type WorkflowThreadTarget,
 } from "./WorkflowRunFeed";
 import type { WorkflowPaneTab } from "./workflowPane.logic";
+import { WorkflowReferenceChip } from "./WorkflowReferences";
 import {
   allWorkflowRunNodes,
   defaultWorkflowListTab,
@@ -98,7 +99,7 @@ export function WorkflowRunsView({
   readonly shownTab: WorkflowPaneTab | null;
   readonly onSelect: (runId: string | null) => void;
   readonly onOpenThread: (runId: string, thread: WorkflowThreadTarget) => void;
-  readonly onOpenReference: (runId: string, reference: WorkflowRunReference) => void;
+  readonly onOpenReference: (runId: string, reference: WorkflowRunSubject) => void;
   readonly onOpenDefinitions: () => void;
 }) {
   const live = useEnvironmentQuery(serverEnvironment.workflowsLive({ environmentId, input: {} }));
@@ -396,7 +397,15 @@ export function WorkflowRunsView({
                       key={node.run.runId}
                       node={node}
                       current={node.run.runId === currentRunId}
+                      subjectOpen={
+                        shownTab !== null &&
+                        "kind" in shownTab &&
+                        node.run.runId === selectedRunId &&
+                        shownTab.kind === node.run.subject?.kind &&
+                        shownTab.key === node.run.subject.key
+                      }
                       onSelect={openListed}
+                      onOpenSubject={(subject) => onOpenReference(node.run.runId, subject)}
                     />
                   ))}
                 </ul>
@@ -445,22 +454,28 @@ export function WorkflowRunsView({
 function WorkflowRunListItem({
   node,
   current,
+  subjectOpen,
   onSelect,
+  onOpenSubject,
 }: {
   readonly node: WorkflowRunNode;
   readonly current: boolean;
+  /** The run's subject shows beside it now. */
+  readonly subjectOpen: boolean;
   readonly onSelect: (runId: string | null) => void;
+  readonly onOpenSubject: (subject: WorkflowRunSubject) => void;
 }) {
   const { run } = node;
+  const about = run.subject;
   const m = useMessages();
   return (
-    <li>
+    <li className={cn("rounded-lg", current ? "bg-accent" : undefined)}>
       <button
         type="button"
         aria-current={current ? "true" : undefined}
         className={cn(
           "flex w-full cursor-pointer flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:outline-none focus-visible:ring-inset",
-          current ? "bg-accent" : "hover:bg-accent/50",
+          current ? undefined : "hover:bg-accent/50",
         )}
         onClick={() => onSelect(run.runId)}
       >
@@ -477,6 +492,16 @@ function WorkflowRunListItem({
           </span>
         </span>
       </button>
+      {about === undefined ? null : (
+        <div className="flex min-w-0 px-2 pb-1.5">
+          <WorkflowReferenceChip
+            reference={about}
+            small
+            open={subjectOpen}
+            onOpen={() => onOpenSubject(about)}
+          />
+        </div>
+      )}
     </li>
   );
 }

@@ -3,7 +3,7 @@ import {
   workflowReferenceLabel,
   workflowReferencePullRequest,
 } from "@t3tools/client-runtime/workflows";
-import type { EnvironmentId, WorkflowRunReference } from "@t3tools/contracts";
+import type { EnvironmentId, WorkflowRunReference, WorkflowRunSubject } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { T } from "gt-react";
 import { CircleCheckIcon, CircleDotIcon, ExternalLinkIcon, LinkIcon } from "lucide-react";
@@ -18,8 +18,11 @@ import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
 import { Button } from "../ui/button";
 
+/** A reference, or a run's subject, which says nothing of where it stands. */
+type Shown = WorkflowRunSubject & Partial<Pick<WorkflowRunReference, "state">>;
+
 /** The mark a reference wears: its kind's icon, in the ink its state has on its own page. */
-function referenceGlyph(reference: WorkflowRunReference) {
+function referenceGlyph(reference: Shown) {
   if (workflowReferencePullRequest(reference) !== null) {
     const state =
       reference.state === "closed" || reference.state === "merged" ? reference.state : "open";
@@ -36,7 +39,7 @@ function referenceGlyph(reference: WorkflowRunReference) {
   return { Icon: LinkIcon, toneClassName: "text-muted-foreground" };
 }
 
-export function WorkflowReferenceMark({ reference }: { readonly reference: WorkflowRunReference }) {
+export function WorkflowReferenceMark({ reference }: { readonly reference: Shown }) {
   const glyph = referenceGlyph(reference);
   return <glyph.Icon aria-hidden className={cn("size-3 shrink-0", glyph.toneClassName)} />;
 }
@@ -48,7 +51,7 @@ export function WorkflowReferenceChip({
   small = false,
   onOpen,
 }: {
-  readonly reference: WorkflowRunReference;
+  readonly reference: Shown;
   /** It shows in the pane now, so another click closes it. */
   readonly open: boolean;
   /** On a step, where the label is enough. */

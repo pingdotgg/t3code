@@ -29,6 +29,7 @@ import {
   sleep,
   step,
   stop,
+  subject,
   tags,
   text,
   title,
@@ -40,10 +41,12 @@ import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
+import WorkflowRunSubjectMigration from "../persistence/Migrations/116_WorkflowRunSubject.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import {
   Issue,
   pullRequestReferenceOf,
+  type SubjectInput,
   unavailable,
   WorkflowForge,
   WorkflowForgeError,
@@ -633,6 +636,37 @@ const sorted = [
   ),
 ];
 
+/** Says what it is about, once or more, then waits; or starts one about a thread and finds it. */
+const about = workflow(
+  "about",
+  {
+    version: 1,
+    payload: Schema.Struct({ subjects: Schema.Array(Schema.Json) }),
+  },
+  Effect.fn(function* (payload) {
+    for (const value of payload.subjects) yield* subject(value as SubjectInput);
+    yield* wait("go", { returns: Schema.String });
+  }),
+);
+const aboutFinder = workflow(
+  "aboutFinder",
+  {
+    version: 1,
+    payload: Schema.Struct({ threadId: Schema.String }),
+    returns: Schema.Array(Schema.String),
+  },
+  (payload) =>
+    step(
+      "find",
+      { returns: Schema.Array(Schema.String) },
+      Effect.gen(function* () {
+        yield* start(about, { subjects: [] }, { key: "started", subject: payload });
+        const found = yield* runs({ workflow: about, subject: payload });
+        return found.map((run) => `${run.key} ${run.subject?.kind}`);
+      }),
+    ),
+);
+
 const PROJECT = "/home/me/app";
 const triage = workflow(
   "triage",
@@ -757,6 +791,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
   yield* Effect.provide(
     Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration).pipe(
       Effect.andThen(WorkflowRunTagsMigration),
+      Effect.andThen(WorkflowRunSubjectMigration),
     ),
     database,
   );
@@ -780,6 +815,8 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
     ...family,
     ...control,
     ...sorted,
+    about,
+    aboutFinder,
   ];
   const engineOf = (registered: typeof all) =>
     WorkflowEngine.layer(registered, store).pipe(
@@ -2341,6 +2378,80 @@ it.effect("questions carry their kind and runs their tags, and both can be filte
           (yield* workflows.waitFor(typo.runId, status("completed"))).status,
           "completed",
         );
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a run says what it is about, and is found by it", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const issue = {
+          projectId: "p1",
+          tracker: "github",
+          host: "github.com",
+          scope: "acme/app",
+          key: "412",
+          title: "Crash on save",
+          url: "https://github.com/acme/app/issues/412",
+        };
+        const [onIssue, moved, plain] = yield* Effect.all([
+          workflows.start("about", { subjects: [issue] }, { idempotencyKey: "a" }),
+          // A later subject replaces the earlier one.
+          workflows.start(
+            "about",
+            { subjects: [issue, { threadId: "thread-1" }] },
+            { idempotencyKey: "b" },
+          ),
+          workflows.start("about", { subjects: [] }, { idempotencyKey: "c" }),
+        ]);
+        for (const run of [onIssue, moved, plain]) {
+          yield* workflows.waitFor(run.runId, status("waiting"));
+        }
+        const snapshot = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        const subjectOf = (runId: string) =>
+          snapshot.runs.find((listed) => listed.runId === runId)?.subject;
+        assert.deepStrictEqual(subjectOf(onIssue.runId), {
+          kind: "issue",
+          key: JSON.stringify(["github", "github.com", "acme/app", "412"]),
+          address: {
+            projectId: "p1",
+            tracker: "github",
+            host: "github.com",
+            scope: "acme/app",
+            key: "412",
+          },
+          title: "Crash on save",
+          url: "https://github.com/acme/app/issues/412",
+        });
+        assert.deepStrictEqual(subjectOf(moved.runId)?.kind, "thread");
+        assert.equal(subjectOf(plain.runId), undefined);
+        // It is among what the run touched, so it opens beside the run as those do.
+        assert.deepStrictEqual(
+          (yield* workflows.get(onIssue.runId)).references.map((reference) => reference.kind),
+          ["issue"],
+        );
+        assert.deepStrictEqual(
+          (yield* workflows.list({ subject: issue.url })).map((run) => run.runId),
+          [onIssue.runId],
+        );
+        assert.deepStrictEqual(
+          (yield* workflows.list({ subject: "thread-1" })).map((run) => run.runId),
+          [moved.runId],
+        );
+
+        const finder = yield* workflows.start(
+          "aboutFinder",
+          { threadId: "thread-1" },
+          { idempotencyKey: "f" },
+        );
+        const found = yield* workflows.waitFor(finder.runId, status("completed", "paused"));
+        assert.deepStrictEqual(found.result, ["started thread", "b thread"]);
+        assert.throws(() => subject("not an address"), /is not a web address/);
+        assert.throws(() => subject({ project: "/x", url: "https://x" } as never), /subject takes/);
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

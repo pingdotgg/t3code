@@ -42,6 +42,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
               .list({
                 ...(input.status === undefined ? {} : { status: input.status }),
                 ...(input.tag === undefined ? {} : { tag: input.tag }),
+                ...(input.subject === undefined ? {} : { subject: input.subject }),
               })
               .pipe(Effect.mapError(refused)),
           };

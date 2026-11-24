@@ -3,6 +3,7 @@ import type { MFunctionType } from "gt-i18n/types";
 import {
   type IssueRef,
   type PullRequestRef,
+  threadIssueKeysEqual,
   WorkflowIssueAddress,
   WorkflowPullRequestAddress,
   WorkflowReferenceKind,
@@ -10,12 +11,15 @@ import {
   type WorkflowRun,
   type WorkflowRunReference,
   type WorkflowRunsSnapshot,
+  type WorkflowRunSubject,
   type WorkflowStep,
   type WorkflowSummary,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+
+import { threadPullRequestKeysEqual } from "./threadPullRequests.ts";
 
 export interface WorkflowQuestionView {
   readonly title: string;
@@ -811,31 +815,79 @@ const decodeIssueAddress = Schema.decodeUnknownOption(WorkflowIssueAddress);
 const decodePullRequestAddress = Schema.decodeUnknownOption(WorkflowPullRequestAddress);
 
 /** A reference's issue, when it is one and its address reads as one. */
-export function workflowReferenceIssue(reference: WorkflowRunReference): IssueRef | null {
+export function workflowReferenceIssue(reference: WorkflowRunSubject): IssueRef | null {
   return reference.kind === WorkflowReferenceKind.issue
     ? Option.getOrNull(decodeIssueAddress(reference.address))
     : null;
 }
 
 /** A reference's pull request, when it is one and its address reads as one. */
-export function workflowReferencePullRequest(
-  reference: WorkflowRunReference,
-): PullRequestRef | null {
+export function workflowReferencePullRequest(reference: WorkflowRunSubject): PullRequestRef | null {
   return reference.kind === WorkflowReferenceKind.pullRequest
     ? Option.getOrNull(decodePullRequestAddress(reference.address))
     : null;
 }
 
+/** A reference's thread, when it is one, in the run's own environment. */
+export function workflowReferenceThreadId(reference: WorkflowRunSubject): string | null {
+  const threadId = field(reference.address, "threadId");
+  return reference.kind === WorkflowReferenceKind.thread && typeof threadId === "string"
+    ? threadId
+    : null;
+}
+
 /**
  * What a reference is called in a chip: `#412` for an issue or pull request on a git host, a
- * tracker's own key such as `ENG-12`, and the title for a kind this client does not know.
+ * tracker's own key such as `ENG-12`, and otherwise the title, or the host of its web address.
  */
-export function workflowReferenceLabel(reference: WorkflowRunReference): string {
+export function workflowReferenceLabel(reference: WorkflowRunSubject): string {
   const pullRequest = workflowReferencePullRequest(reference);
   if (pullRequest !== null) return `#${pullRequest.number}`;
   const issue = workflowReferenceIssue(reference);
   if (issue !== null) return /^\d+$/.test(issue.key) ? `#${issue.key}` : issue.key;
-  return reference.title === "" ? reference.kind : reference.title;
+  if (reference.title !== "") return reference.title;
+  if (reference.url !== null && URL.canParse(reference.url)) return new URL(reference.url).host;
+  return reference.kind;
+}
+
+/** The runs whose subject is this pull request or issue, in the order they are given. */
+export function workflowRunsAbout(
+  runs: ReadonlyArray<WorkflowRun>,
+  item:
+    | {
+        readonly pullRequest: Pick<PullRequestRef, "repository" | "number"> & {
+          readonly host: string;
+          /** Its web address, which names the host a self-hosted forge is reached at. */
+          readonly url?: string;
+        };
+      }
+    | { readonly issue: Pick<IssueRef, "tracker" | "scope" | "key"> & { readonly host: string } },
+): ReadonlyArray<WorkflowRun> {
+  return runs.filter((run) => {
+    if (run.subject === undefined) return false;
+    if ("pullRequest" in item) {
+      const pullRequest = workflowReferencePullRequest(run.subject);
+      return (
+        pullRequest?.host !== undefined &&
+        threadPullRequestKeysEqual(
+          {
+            host: pullRequest.host,
+            repository: pullRequest.repository,
+            number: pullRequest.number,
+          },
+          item.pullRequest,
+        )
+      );
+    }
+    const issue = workflowReferenceIssue(run.subject);
+    return (
+      issue?.host !== undefined &&
+      threadIssueKeysEqual(
+        { tracker: issue.tracker, host: issue.host, scope: issue.scope, key: issue.key },
+        item.issue,
+      )
+    );
+  });
 }
 
 /** The references a step touched, in the order the run first touched them. */

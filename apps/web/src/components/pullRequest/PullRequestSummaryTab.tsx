@@ -110,6 +110,7 @@ import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
+import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
 
 function reviewerKey(login: string): string {
   return login.toLowerCase();
@@ -1032,6 +1033,18 @@ export function PullRequestSummaryTab({
             </PullRequestMetaRow>
           ) : null}
         </div>
+        <WorkflowRunsAbout
+          environmentId={environmentId}
+          item={{
+            pullRequest: {
+              host:
+                reference.host ?? (URL.canParse(detail.url) ? new URL(detail.url).hostname : ""),
+              repository: reference.repository,
+              number: reference.number,
+              url: detail.url,
+            },
+          }}
+        />
       </section>
 
       <PullRequestSection
