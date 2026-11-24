@@ -411,6 +411,16 @@ async function archive(path: string): Promise<Map<string, string>> {
 
 const NOTEBOOK_CELL_TYPES = ["code", "markdown", "raw"];
 
+// tqdm redraws a progress bar after a carriage return; JupyterLab shows only what the last
+// redraws leave on the line. Walking the frames from the last keeps this linear.
+function lastFrame(line: string): string {
+  let row = "";
+  for (const frame of line.split("\r").reverse())
+    // A cut through a surrogate pair blanks the glyph's other half, as a terminal does.
+    if (frame.length > row.length) row += frame.slice(row.length).replace(/^[\udc00-\udfff]/u, " ");
+  return row;
+}
+
 function* notebook(source: string): Generator<string, void> {
   const book: unknown = JSON.parse(source);
   if (!book || typeof book !== "object" || !("cells" in book) || !Array.isArray(book.cells))
@@ -422,9 +432,12 @@ function* notebook(source: string): Generator<string, void> {
         if (typeof line === "string") yield line;
       }
   }
-  function outputText(value: unknown): string {
-    // Notebook fragments can split a terminal escape sequence.
-    return NodeUtil.stripVTControlCharacters([...lines(value)].join(""));
+  function outputText(value: unknown, stream = false): string {
+    // Notebook fragments can split a terminal escape sequence or a CRLF pair.
+    const plain = NodeUtil.stripVTControlCharacters([...lines(value)].join(""));
+    return stream && /\r(?!\n)/.test(plain)
+      ? plain.replaceAll("\r\n", "\n").split("\n").map(lastFrame).join("\n")
+      : plain;
   }
   for (const [index, cell] of book.cells.entries()) {
     if (index >= 10_000) throw new Truncation("Notebook cell limit");
@@ -437,7 +450,8 @@ function* notebook(source: string): Generator<string, void> {
       yield "\nOutput:\n";
       for (const output of cell.outputs) {
         if (!output || typeof output !== "object") continue;
-        if ("text" in output) yield outputText(output.text);
+        if ("text" in output)
+          yield outputText(output.text, "output_type" in output && output.output_type === "stream");
         else if (
           "data" in output &&
           output.data &&
