@@ -255,6 +255,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
   const addSkillFile = Effect.fn("addAntigravitySkillFile")(function* (
     skillPath: string,
     scope: string,
+    pluginName?: string,
   ) {
     const fileName = path.basename(skillPath);
     if (fileName.toLowerCase() !== "skill.md" || !fileName.endsWith(".md")) return;
@@ -264,6 +265,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     if (!skill || skillsByName.has(skill.name)) return;
     skillsByName.set(skill.name, {
       ...skill,
+      ...(pluginName ? { displayName: `${pluginName}:${skill.name}` } : {}),
       path: skillPath,
       scope,
       enabled: true,
@@ -276,6 +278,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     scanChildren: boolean,
     filter: SkillEntryFilter = EMPTY_SKILL_FILTER,
     acceptSkillFile = false,
+    pluginName?: string,
   ): Effect.fn.Return<void, AntigravitySkillsProbeError, FileSystem.FileSystem> {
     const info = yield* readIfPresent(fileSystem.stat(directory), directory);
     if (info?.type === "File" && acceptSkillFile) {
@@ -306,7 +309,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     const skillFileName = sortedEntries.find((entry) => entry.toLowerCase() === "skill.md");
     if (skillFileName !== undefined) {
       if (matchesSkillFilter(path.basename(directory), filter)) {
-        yield* addSkillFile(path.join(directory, skillFileName), scope);
+        yield* addSkillFile(path.join(directory, skillFileName), scope, pluginName);
       }
       return;
     }
@@ -318,7 +321,14 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
           left.sortKey < right.sortKey ? -1 : left.sortKey > right.sortKey ? 1 : 0,
         );
       for (const { entry } of children) {
-        yield* scanDirectory(path.join(directory, entry), scope, false);
+        yield* scanDirectory(
+          path.join(directory, entry),
+          scope,
+          false,
+          EMPTY_SKILL_FILTER,
+          false,
+          pluginName,
+        );
       }
     }
   });
@@ -434,7 +444,14 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
       const pluginDirectory = path.join(pluginsDirectory, plugin);
       const info = yield* readIfPresent(fileSystem.stat(pluginDirectory), pluginDirectory);
       if (info?.type !== "Directory") continue;
-      yield* scanDirectory(path.join(pluginDirectory, "skills"), "user", true);
+      yield* scanDirectory(
+        path.join(pluginDirectory, "skills"),
+        "user",
+        true,
+        EMPTY_SKILL_FILTER,
+        false,
+        plugin,
+      );
     }
   }
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
