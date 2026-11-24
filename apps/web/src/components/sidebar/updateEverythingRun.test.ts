@@ -216,11 +216,13 @@ describe("retryFailedUpdateRunServers", () => {
   it("retries a row restored after a relaunch with the target it is given", () => {
     const environmentId = EnvironmentId.make("restored");
     const currentId = EnvironmentId.make("restored-current");
-    using _config = vi
-      .spyOn(serverEnvironment, "configValueAtom")
-      .mockImplementation(() =>
-        Atom.make({ environment: { serverVersion: "9.9.8" } } as unknown as ServerConfig),
-      );
+    // Rendered as current, but the server went back to the old version before the click.
+    const staleId = EnvironmentId.make("restored-stale");
+    using _config = vi.spyOn(serverEnvironment, "configValueAtom").mockImplementation((id) =>
+      Atom.make({
+        environment: { serverVersion: id === currentId ? "9.9.9" : "9.9.8" },
+      } as unknown as ServerConfig),
+    );
     setUpdateEverythingRun(() => ({
       localVersion: null,
       phase: "servers",
@@ -248,6 +250,17 @@ describe("retryFailedUpdateRunServers", () => {
           failure: "Not back after 32 minutes",
           providerFailure: null,
         },
+        {
+          environmentId: staleId,
+          label: "restored-stale",
+          updatesProviders: false,
+          server: null,
+          handedOffVersion: "9.9.9",
+          startedAt: 0,
+          result: "failed",
+          failure: "Not back after 32 minutes",
+          providerFailure: null,
+        },
       ],
     }));
     const target: ServerUpdateTarget = {
@@ -265,6 +278,7 @@ describe("retryFailedUpdateRunServers", () => {
       new Map<EnvironmentId, RestoredRetry>([
         [environmentId, target],
         [currentId, "current"],
+        [staleId, "current"],
       ]),
     );
 
@@ -278,6 +292,7 @@ describe("retryFailedUpdateRunServers", () => {
     expect((run as UpdateEverythingRun | null)?.machines).toMatchObject([
       { result: null, server: target, handedOffVersion: null },
       { result: "done", failure: null },
+      { result: "failed", failure: "Not back after 32 minutes" },
     ]);
   });
 });
