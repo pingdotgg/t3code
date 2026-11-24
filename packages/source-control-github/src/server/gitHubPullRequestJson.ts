@@ -280,11 +280,15 @@ export function isSubjectOfPullRequest(result: PullRequestSubject.Result): boole
           ? node.reviewCommentPullRequest.id
           : node.__typename === "PullRequestReview"
             ? node.reviewPullRequest.id
-            : node.id;
+            : node.__typename === "PullRequestReviewThread"
+              ? node.threadPullRequest.id
+              : node.id;
   return expected !== null && actual !== null && expected === actual;
 }
 
 const ReviewSubmissionSchema = Schema.Struct({
+  /** Without it GitHub records the review against whatever the head is when it arrives. */
+  commit_id: Schema.optional(Schema.String),
   event: Schema.Literals(["COMMENT", "APPROVE", "REQUEST_CHANGES"]),
   body: Schema.String,
   comments: Schema.Array(
@@ -325,8 +329,10 @@ export function buildReviewSubmission(input: {
   readonly verdict: PullRequestReviewVerdict;
   readonly body: string;
   readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+  readonly expectedHeadSha?: string | undefined;
 }): typeof ReviewSubmissionSchema.Type {
   return {
+    ...(input.expectedHeadSha === undefined ? {} : { commit_id: input.expectedHeadSha }),
     event: REVIEW_EVENTS[input.verdict],
     body: input.body,
     comments: input.comments.map((comment) => {
