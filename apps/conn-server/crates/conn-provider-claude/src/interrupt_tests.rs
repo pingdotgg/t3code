@@ -48,6 +48,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     case "call":
       log(`call ${cmd.method}`);
       if (cmd.method === "stopTask") log(`stop ${JSON.stringify(cmd.args)}`);
+      if (cmd.method === "stopTask" && fs.existsSync(LOG + ".hang-stop")) break;
       // A CLI still booting: `initializationResult` does not answer.
       if (["mcpServerStatus", "readMcpResource", "callMcpTool", "listPermissionRules"].includes(cmd.method)) log(`mcp ${JSON.stringify(cmd)}`);
       if (fs.existsSync(LOG + ".errors")) {
@@ -934,4 +935,176 @@ async fn mcp_app_notes_reach_the_claude_prompt_until_a_turn_takes_them_in() {
         .unwrap();
     assert!(last_input().to_string().contains("PROJ-42"));
     session.close().await;
+}
+
+fn api_error() -> serde_json::Value {
+    serde_json::json!({"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error",
+        "result":"Root turn failed","duration_ms":1,"duration_api_ms":1,"num_turns":1,"usage":{},
+        "modelUsage":{},"total_cost_usd":0})
+}
+
+/// The last `subagent.updated` status for a native task id.
+fn workflow_status(seen: &[serde_json::Value], task_id: &str) -> serde_json::Value {
+    seen.iter()
+        .rev()
+        .find(|e| e["subagent"]["nativeTaskRef"]["nativeId"] == task_id)
+        .map(|e| e["subagent"]["status"].clone())
+        .unwrap_or_default()
+}
+
+/// The spawned `stopTask` reaches the host a moment after the terminal event; under a loaded
+/// test run that moment can pass a second.
+async fn logged_stops(log: &Path) -> Vec<String> {
+    for _ in 0..1000 {
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        if text.contains("call stopTask") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.starts_with("stop "))
+        .map(str::to_string)
+        .collect()
+}
+
+/// `ClaudeAdapterV2`: a root that fails stops its run's live workflow through the query and
+/// settles the coordinator `failed`; a later manual Stop finds nothing running.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_root_stops_its_runs_workflow() {
+    use conn_provider::StopTaskInput;
+    if !node_available() {
+        return;
+    }
+    let dir = Scratch::new("failed-root-workflow");
+    let (helper, log) = fake_host(&dir.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = dir.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    std::fs::write(
+        log.with_extension("log.frames"),
+        serde_json::json!([api_error()]).to_string(),
+    )
+    .unwrap();
+    session
+        .start_turn(turn(1, &thread, "workflow", "full-access", &cwd))
+        .await
+        .unwrap();
+    let seen = until(&mut events, is_terminal).await;
+    assert_eq!(seen.last().unwrap()["status"], "failed");
+    assert_eq!(workflow_status(&seen, "wf1"), "failed");
+    assert_eq!(logged_stops(&log).await, ["stop [\"wf1\"]"]);
+    session
+        .stop_task(StopTaskInput {
+            provider_thread: thread,
+            task_id: "wf1".into(),
+        })
+        .await
+        .unwrap_err();
+    session.close().await;
+    helper.stop_if_idle().await;
+}
+
+/// An SDK that never answers `stopTask` must not hold the root's settlement.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unanswered_workflow_stop_lets_the_root_settle() {
+    if !node_available() {
+        return;
+    }
+    let dir = Scratch::new("failed-root-hung-stop");
+    let (helper, log) = fake_host(&dir.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = dir.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    std::fs::write(log.with_extension("log.hang-stop"), "").unwrap();
+    std::fs::write(
+        log.with_extension("log.frames"),
+        serde_json::json!([api_error()]).to_string(),
+    )
+    .unwrap();
+    session
+        .start_turn(turn(1, &thread, "workflow", "full-access", &cwd))
+        .await
+        .unwrap();
+    let seen = tokio::time::timeout(Duration::from_secs(5), until(&mut events, is_terminal))
+        .await
+        .expect("the root settles while stopTask is unanswered");
+    assert_eq!(seen.last().unwrap()["status"], "failed");
+    assert_eq!(workflow_status(&seen, "wf1"), "failed");
+    assert_eq!(logged_stops(&log).await, ["stop [\"wf1\"]"]);
+    session.close().await;
+    helper.stop_if_idle().await;
+}
+
+/// A completed root keeps its background workflow running, and a failed later run leaves
+/// the earlier run's workflow alone.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_root_leaves_another_runs_workflow_running() {
+    if !node_available() {
+        return;
+    }
+    let dir = Scratch::new("failed-root-other-run");
+    let (helper, log) = fake_host(&dir.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = dir.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    session
+        .start_turn(turn(1, &thread, "workflow-background", "full-access", &cwd))
+        .await
+        .unwrap();
+    let seen = until(&mut events, is_terminal).await;
+    assert_eq!(seen.last().unwrap()["status"], "completed");
+    assert_eq!(workflow_status(&seen, "wf1"), "running");
+    std::fs::write(
+        log.with_extension("log.frames"),
+        serde_json::json!([api_error()]).to_string(),
+    )
+    .unwrap();
+    session
+        .start_turn(turn(2, &thread, "two", "full-access", &cwd))
+        .await
+        .unwrap();
+    let seen = until(&mut events, is_terminal).await;
+    assert_eq!(seen.last().unwrap()["status"], "failed");
+    assert_eq!(workflow_status(&seen, "wf1"), serde_json::Value::Null);
+    assert!(session.has_pending_background_work());
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(!text.contains("call stopTask"), "{text}");
+    session.close().await;
+    helper.stop_if_idle().await;
+}
+
+/// A stopped root closes its query; the workflow ends `cancelled` without a `stopTask`.
+#[tokio::test(flavor = "current_thread")]
+async fn an_interrupted_root_cancels_its_workflow_without_stop_task() {
+    if !node_available() {
+        return;
+    }
+    let dir = Scratch::new("interrupted-root-workflow");
+    let (helper, log) = fake_host(&dir.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = dir.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    session
+        .start_turn(turn(1, &thread, "workflow", "full-access", &cwd))
+        .await
+        .unwrap();
+    let turn_id = running_turn_id(&mut events).await;
+    let mut seen = until(&mut events, |e| e["type"] == "subagent.updated").await;
+    session
+        .interrupt_turn(InterruptInput {
+            provider_thread: thread.clone(),
+            provider_turn_id: turn_id.as_str().into(),
+        })
+        .await
+        .unwrap();
+    seen.extend(until(&mut events, is_terminal).await);
+    assert_eq!(seen.last().unwrap()["status"], "interrupted");
+    assert_eq!(workflow_status(&seen, "wf1"), "cancelled");
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(!text.contains("call stopTask"), "{text}");
+    session.close().await;
+    helper.stop_if_idle().await;
 }

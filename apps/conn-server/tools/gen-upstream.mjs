@@ -422,6 +422,8 @@ const modelManifestRs = rustfmt(
     `pub const MODEL_MANIFEST_URL: &str = ${str(manifestUrl)};`,
     "/// `MANIFEST_TTL_MS`: a fetch counts this long.",
     `pub(super) const MANIFEST_TTL_MS: i64 = ${manifestMs("MANIFEST_TTL_MS")};`,
+    "/// `MANIFEST_ON_DEMAND_TTL_MS`: an opened model picker refetches a manifest older than this.",
+    `pub(super) const MANIFEST_ON_DEMAND_TTL_MS: i64 = ${manifestMs("MANIFEST_ON_DEMAND_TTL_MS")};`,
     "/// `MANIFEST_RETRY_MS`: a failed fetch holds off the next one this long.",
     `pub(super) const MANIFEST_RETRY_MS: i64 = ${manifestMs("MANIFEST_RETRY_MS")};`,
     "/// `FETCH_TIMEOUT_MS`.",

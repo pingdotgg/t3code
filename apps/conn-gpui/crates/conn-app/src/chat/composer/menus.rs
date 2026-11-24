@@ -3,6 +3,7 @@
 //! Styled as a floating `dropdown-glass` surface (`12px` radius, `shell_overlay` fill,
 //! `glass_divider` 1px border, `8px` row radius, `shell_highlight` hover).
 
+use crate::a11y::ConnA11yExt as _;
 use conn_contract::{ProjectEntry, ProjectEntryKind};
 pub(crate) use conn_state::providers::SkillEntry;
 use conn_theme::Tokens;
@@ -11,7 +12,7 @@ use gpui_kit::{
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
-use super::super::color::hsla;
+use super::super::color::{hsla, opaque};
 use super::super::icons;
 use super::Composer;
 
@@ -371,7 +372,8 @@ pub(super) fn render_command_menu(
     tokens: &Tokens,
     cx: &mut Context<'_, Composer>,
 ) -> AnyElement {
-    let glass_bg = hsla(tokens.shell_overlay);
+    // Opaque: no backdrop blur to hide the chat behind the glass (Nick, #332).
+    let glass_bg = opaque(tokens.shell_overlay);
     let glass_divider = hsla(tokens.glass_divider);
     let highlight_bg = hsla(tokens.shell_highlight);
     let fg = hsla(tokens.foreground);
@@ -379,6 +381,7 @@ pub(super) fn render_command_menu(
 
     let mut list = div()
         .id("composer-command-menu-list")
+        .a11y_group("composer.command-menu-list", "Command suggestions")
         .flex()
         .flex_col()
         .gap(px(2.0))
@@ -397,6 +400,7 @@ pub(super) fn render_command_menu(
                     let name = cmd.name;
                     let mut row = div()
                         .id(SharedString::from(format!("composer-slash-cmd-{name}")))
+                        .a11y_button(format!("composer.slash-command.{name}"), format!("/{name}"))
                         .flex()
                         .flex_row()
                         .items_center()
@@ -455,6 +459,7 @@ pub(super) fn render_command_menu(
                     let name = skill.name.clone();
                     let mut row = div()
                         .id(SharedString::from(format!("composer-skill-{idx}")))
+                        .a11y_button(format!("composer.skill.{idx}"), name.clone())
                         .flex()
                         .flex_row()
                         .items_center()
@@ -530,6 +535,7 @@ pub(super) fn render_command_menu(
 
                     let mut row = div()
                         .id(SharedString::from(format!("composer-file-mention-{idx}")))
+                        .a11y_button(format!("composer.file-mention.{idx}"), "File mention")
                         .flex()
                         .flex_row()
                         .items_center()
@@ -582,6 +588,7 @@ pub(super) fn render_command_menu(
 
     div()
         .id("composer-command-menu-popup")
+        .a11y_group("composer.command-menu", "Command menu")
         .flex()
         .flex_col()
         .w_full()

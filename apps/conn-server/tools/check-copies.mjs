@@ -154,6 +154,72 @@ same(
   );
 }
 
+// ---- Antigravity's texts for a failed explicit model refresh ----------------------------------
+{
+  const agyRs = rust("crates/conn-provider-acp/src/antigravity_provider.rs");
+  const agyTs = ts("apps/server/src/provider/Drivers/AntigravityDriver.ts");
+  const rustText = (name) => new RegExp(`const ${name}: &str =\\s*"([^"]*)";`).exec(agyRs)?.[1];
+  same(
+    "antigravity_provider.rs REFRESH_FAILED = AntigravityDriver's",
+    rustText("REFRESH_FAILED"),
+    /const REFRESH_FAILED =\s*"([^"]*)";/.exec(agyTs)?.[1],
+  );
+  same(
+    "antigravity_provider.rs REFRESH_TIMED_OUT = AntigravityDriver's timeout detail",
+    rustText("REFRESH_TIMED_OUT"),
+    /detail: "(Antigravity model refresh timed out[^"]*)"/.exec(agyTs)?.[1],
+  );
+  same(
+    "antigravity_provider.rs REFRESH_SIGN_IN = AntigravityDriver's sign-in detail",
+    rustText("REFRESH_SIGN_IN"),
+    /\? "(Sign in to Antigravity in provider settings[^"]*)"/.exec(agyTs)?.[1],
+  );
+  const agyStateRs = rust("crates/conn-provider-acp/src/antigravity.rs");
+  const stateText = (name) =>
+    new RegExp(`const ${name}: &str =\\s*"([^"]*)";`).exec(agyStateRs)?.[1];
+  same(
+    "antigravity.rs PYTHON_SOCKS_REQUIRED = AntigravityDriver's",
+    stateText("PYTHON_SOCKS_REQUIRED"),
+    /const PYTHON_SOCKS_REQUIRED = "([^"]*)";/.exec(agyTs)?.[1],
+  );
+  same(
+    "antigravity.rs SIGN_IN_MESSAGE = AntigravityProvider's",
+    stateText("SIGN_IN_MESSAGE"),
+    /const SIGN_IN_MESSAGE = "([^"]*)";/.exec(ts("apps/server/src/provider/AntigravityProvider.ts"))?.[1],
+  );
+  const authTs = ts("apps/server/src/provider/antigravityAuthSupport.ts");
+  same(
+    "antigravity.rs AUTH_STDOUT_PREFIX = ANTIGRAVITY_AUTH_STDOUT_PREFIX",
+    stateText("AUTH_STDOUT_PREFIX"),
+    /ANTIGRAVITY_AUTH_STDOUT_PREFIX =\s*"([^"]*)";/.exec(authTs)?.[1],
+  );
+  same(
+    "antigravity.rs SIGN_IN_REQUIRED_MESSAGE = ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE",
+    stateText("SIGN_IN_REQUIRED_MESSAGE"),
+    /ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE =\s*"([^"]*)";/.exec(authTs)?.[1],
+  );
+  same(
+    "antigravity.rs INVALID_AUTH_URL = parseAntigravityAuthorizationUrl's",
+    stateText("INVALID_AUTH_URL"),
+    /authSupportError\("(Antigravity returned an invalid Google sign-in URL\.)"\)/.exec(authTs)?.[1],
+  );
+  same(
+    "antigravity.rs MAX_AUTH_URL = maxAuthorizationUrlLength",
+    /const MAX_AUTH_URL: usize = ([\d_]+);/.exec(agyStateRs)?.[1]?.replaceAll("_", ""),
+    /const maxAuthorizationUrlLength = ([\d_]+);/.exec(authTs)?.[1]?.replaceAll("_", ""),
+  );
+  same(
+    "server.rs USAGE_LIMITS_COMMAND = @t3tools/shared USAGE_LIMITS_COMMAND",
+    /const USAGE_LIMITS_COMMAND: \(&str, &str\) =\s*\("([^"]*)",\s*"([^"]*)"\);/.exec(rust("crates/conn-server/src/methods/server.rs"))?.slice(1).join("|"),
+    /USAGE_LIMITS_COMMAND = \{\s*name: "([^"]*)",\s*description: "([^"]*)",/.exec(ts("packages/shared/src/usageLimits.ts"))?.slice(1).join("|"),
+  );
+  same(
+    "antigravity.rs NO_BROWSER_PREFIX = antigravityAuthSupport's",
+    stateText("NO_BROWSER_PREFIX"),
+    /const NATIVE_CLI_NO_BROWSER_PREFIX = "([^"]*)";/.exec(ts("apps/server/src/provider/antigravityAuthSupport.ts"))?.[1],
+  );
+}
+
 // ---- The Codex status probe's tables (apps/server/src/provider/CodexProvider.ts) ---------------
 {
   const statusRs = rust("crates/conn-provider-codex/src/status.rs");

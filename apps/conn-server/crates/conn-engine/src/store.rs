@@ -250,6 +250,25 @@ fn keyed_rows(
     .collect()
 }
 
+/// [`Tx::checkpoint_capture_folder`].
+pub(crate) enum CaptureFolder {
+    /// No capture event: the checkpoint came from the T3 server's import.
+    Imported,
+    /// Captured here, before any event recorded the scope's folder.
+    Unknown,
+    Known(String),
+}
+
+/// [`Store::thread_replay_stats`].
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ReplayStats {
+    pub(crate) events: u64,
+    /// The bytes of the events' payload JSON.
+    pub(crate) payload_bytes: u64,
+    /// Whether one of them is `thread.created`.
+    pub(crate) has_create: bool,
+}
+
 pub(crate) struct Store {
     conn: Connection,
     next_seq: u64,
@@ -414,6 +433,17 @@ impl Store {
 
     pub(crate) fn thread_exists(&self, thread_id: &str) -> StoreResult<bool> {
         thread(&self.conn, thread_id).map(|t| t.is_some())
+    }
+
+    /// Whether the thread was ever created here, deleted or not.
+    pub(crate) fn thread_known(&self, thread_id: &str) -> StoreResult<bool> {
+        self.conn
+            .query_row("SELECT 1 FROM threads WHERE id = ?1", [thread_id], |_| {
+                Ok(())
+            })
+            .optional()
+            .map(|row| row.is_some())
+            .map_err(err)
     }
 
     /// `OrchestrationV2ShellSnapshot` as of [`Self::high_water`].
@@ -841,6 +871,33 @@ impl Store {
             };
             at_or_before && rule.shows(item)
         })
+    }
+
+    /// What a resume from `after` would replay (`getAgentReplayStats`), read from at most the
+    /// first `limit` events of the thread after it, in sequence order, without decoding them.
+    pub(crate) fn thread_replay_stats(
+        &self,
+        thread_id: &str,
+        after: u64,
+        limit: usize,
+    ) -> StoreResult<ReplayStats> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*),
+                        COALESCE(SUM(LENGTH(CAST(json_extract(event, '$.payload') AS BLOB))), 0),
+                        COALESCE(MAX(type = 'thread.created'), 0)
+                 FROM (SELECT event, type FROM events WHERE thread_id = ?1 AND seq > ?2
+                       ORDER BY seq LIMIT ?3)",
+                params![thread_id, after as i64, limit as i64],
+                |row| {
+                    Ok(ReplayStats {
+                        events: row.get::<_, i64>(0)? as u64,
+                        payload_bytes: row.get::<_, i64>(1)? as u64,
+                        has_create: row.get(2)?,
+                    })
+                },
+            )
+            .map_err(err)
     }
 
     /// Stored events of one thread after `after`, at most `limit`, as `(sequence, event)`.
@@ -1330,6 +1387,55 @@ impl Tx<'_> {
 
     pub(crate) fn thread(&self, thread_id: &str) -> StoreResult<Option<Value>> {
         thread(&self.tx, thread_id)
+    }
+
+    /// Where the checkpoint was captured, by the log: the `cwd` of the last
+    /// `checkpoint-scope.created` before its last capture that did not mark it `stale`.
+    pub(crate) fn checkpoint_capture_folder(
+        &self,
+        thread_id: &str,
+        checkpoint_id: &str,
+    ) -> StoreResult<CaptureFolder> {
+        let captured: Option<i64> = self
+            .tx
+            .query_row(
+                "SELECT MAX(seq) FROM events
+                 WHERE thread_id = ?1 AND type = 'checkpoint.captured'
+                   AND json_extract(event, '$.payload.id') = ?2
+                   AND json_extract(event, '$.payload.status') <> 'stale'",
+                [thread_id, checkpoint_id],
+                |row| row.get(0),
+            )
+            .map_err(err)?;
+        let Some(captured) = captured else {
+            return Ok(CaptureFolder::Imported);
+        };
+        let cwd: Option<String> = self
+            .tx
+            .query_row(
+                "SELECT json_extract(event, '$.payload.cwd') FROM events
+                 WHERE thread_id = ?1 AND type = 'checkpoint-scope.created' AND seq < ?2
+                 ORDER BY seq DESC LIMIT 1",
+                params![thread_id, captured],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(err)?
+            .flatten();
+        Ok(cwd.map_or(CaptureFolder::Unknown, CaptureFolder::Known))
+    }
+
+    /// Whether the thread's log holds a `checkpoint-scope.created`. A scope imported from the
+    /// T3 server has its row but none.
+    pub(crate) fn has_scope_event(&self, thread_id: &str) -> StoreResult<bool> {
+        self.tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM events
+                 WHERE thread_id = ?1 AND type = 'checkpoint-scope.created')",
+                [thread_id],
+                |row| row.get(0),
+            )
+            .map_err(err)
     }
 
     /// Whether a thread with this ID was ever deleted. Its rows stay under the ID, so a
@@ -2112,6 +2218,43 @@ mod tests {
         sort_messages_by_turn_items(&mut messages, &items);
         let order: Vec<&str> = messages.iter().filter_map(|m| m["id"].as_str()).collect();
         assert_eq!(order, ["u1", "a1", "u2", "a2", "wake"]);
+    }
+
+    /// T3's `getAgentReplayStats`: the first 129 events after the cursor, in sequence order,
+    /// and their payload JSON bytes; later events are never read.
+    #[test]
+    fn replay_stats_read_at_most_129_events() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-engine-{}-replay-stats", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(&dir.join("engine.sqlite")).unwrap();
+        let payload = json!({"n": "x".repeat(10)}).to_string();
+        for seq in 1..=300_i64 {
+            // Events past the bound are larger, so reading them would change the sum.
+            let payload = if seq > 129 {
+                json!({"n": "y".repeat(1000)}).to_string()
+            } else {
+                payload.clone()
+            };
+            store
+                .conn
+                .execute(
+                    "INSERT INTO events (seq, thread_id, type, event) VALUES (?1, 't1', 'thread.visited', ?2)",
+                    params![seq, format!(r#"{{"type":"thread.visited","payload":{payload}}}"#)],
+                )
+                .unwrap();
+        }
+        let stats = store.thread_replay_stats("t1", 0, 129).unwrap();
+        assert_eq!(
+            stats,
+            ReplayStats {
+                events: 129,
+                payload_bytes: 129 * payload.len() as u64,
+                has_create: false,
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A row the engine cannot read fails the read; it never turns into `null` or vanishes.

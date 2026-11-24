@@ -933,12 +933,14 @@ mod tests {
             ))
             .unwrap(),
         );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
         let mut deps = crate::methods::Deps {
             environment: Some(environment),
             engine: Some(engine),
             ..Default::default()
         };
-        deps.mcp = crate::routes::mcp::service(&deps);
+        deps.mcp = crate::routes::mcp::service(&deps, addr);
         let state = AppState {
             table: Arc::new(MethodTable::new()),
             auth: auth.clone(),
@@ -948,8 +950,6 @@ mod tests {
             engine: None,
             deps,
         };
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, router(state)).await });
         (addr, auth)
     }

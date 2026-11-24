@@ -60,6 +60,8 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(20);
 const INTERRUPT_TIMEOUT: Duration = Duration::from_secs(10);
 /// `CLAUDE_STOP_CONFIRM_TIMEOUT_MS`: how long an interrupt waits for the CLI to exit.
 const STOP_CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a workflow `stopTask` may wait for the SDK (T3's `"15 seconds"`).
+const WORKFLOW_STOP_TIMEOUT: Duration = Duration::from_secs(15);
 /// The helper's session-file calls (T3's worker timeout).
 const FUNCTION_TIMEOUT: Duration = Duration::from_secs(30);
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
@@ -342,6 +344,25 @@ impl Inner {
                     let tail = self.lock().tails.remove(&tool_use_id);
                     if let Some(tail) = tail {
                         tail.finish().await;
+                    }
+                }
+                Out::StopTask { task_id } => {
+                    // `stopTask` only on a live query that is not already stopping.
+                    let query = {
+                        let state = self.lock();
+                        state
+                            .live
+                            .as_ref()
+                            .filter(|l| !l.stopping.load(Ordering::Relaxed) && !*l.ended.borrow())
+                            .map(|l| l.query.clone())
+                    };
+                    if let Some(query) = query {
+                        // An unanswered stop must not hold the turn's settlement.
+                        tokio::spawn(async move {
+                            let _ = query
+                                .call("stopTask", json!([task_id]), WORKFLOW_STOP_TIMEOUT)
+                                .await;
+                        });
                     }
                 }
                 Out::Skipped(kind) => {
@@ -805,8 +826,9 @@ fn end_detail(end: &QueryEnd) -> String {
 /// `compileClaudeModelSelection`: API model id, effort, settings and the prompt effort.
 fn model_selection(
     selection: &conn_contract::ModelSelection,
+    manifest: &conn_provider::LiveManifest,
 ) -> (String, Option<String>, Map<String, Value>) {
-    let compiled = catalog::compile(&to_json(selection));
+    let compiled = catalog::compile(&to_json(selection), manifest);
     (compiled.api_model_id, compiled.effort, compiled.settings)
 }
 
@@ -1076,7 +1098,8 @@ impl ClaudeSession {
         let inner = &self.inner;
         let native = native_thread_id(&input.provider_thread)
             .ok_or_else(|| failed_err("start_turn", "provider thread has no native Claude id"))?;
-        let (model, effort, selection_settings) = model_selection(&input.model_selection);
+        let (model, effort, selection_settings) =
+            model_selection(&input.model_selection, &inner.config.model_manifest);
         // `resolveSettings` may wait for the SDK host to launch; nothing is open yet.
         let run_id = input.run_id.as_str();
         let policy = self
@@ -1290,7 +1313,8 @@ impl ClaudeSession {
         native: Option<&str>,
         model_change: ModelChange,
     ) -> ProviderResult<bool> {
-        let (model, effort, settings) = model_selection(selection);
+        let (model, effort, settings) =
+            model_selection(selection, &self.inner.config.model_manifest);
         let live_change = {
             let state = self.inner.lock();
             state.live.as_ref().is_some_and(|live| {
@@ -1346,6 +1370,8 @@ impl ClaudeSession {
         // the client shows it running as T3's does; what the CLI receives does not change.
         // With a live query the host is up, and frames of that query must not reach the new
         // turn before `prepare` decided to keep or close it, so the turn opens after it.
+        let now = i64::try_from(conn_support::time::now_ms()).unwrap_or(i64::MAX);
+        let models = catalog::current_provider_models(&self.inner.config.model_manifest, now);
         let early = {
             let mut state = self.inner.lock();
             if state.mapper.turn_active() {
@@ -1354,6 +1380,7 @@ impl ClaudeSession {
                     "the previous turn is still running",
                 ));
             }
+            state.mapper.set_catalog(models);
             if state.live.is_none() && !state.closed {
                 let mode = plain_policy(&input.runtime_policy).permission_mode;
                 Some(state.mapper.begin_turn(&input, &mode))
@@ -1367,7 +1394,11 @@ impl ClaudeSession {
         }
         let run_id = input.run_id.as_str();
         // T3 reads the attachments before it opens the query (`ClaudeAdapterV2` startTurn).
-        let effort = catalog::compile(&to_json(&input.model_selection)).prompt_effort;
+        let effort = catalog::compile(
+            &to_json(&input.model_selection),
+            &self.inner.config.model_manifest,
+        )
+        .prompt_effort;
         let text = catalog::prompt_text(&input.message.text, effort.as_deref());
         let prepared = match self
             .inner
@@ -1948,7 +1979,10 @@ impl Session for ClaudeSession {
                 None => None,
             };
             let effort = match live_selection {
-                Some(selection) => catalog::compile(&to_json(selection)).prompt_effort,
+                Some(selection) => {
+                    catalog::compile(&to_json(selection), &self.inner.config.model_manifest)
+                        .prompt_effort
+                }
                 None => self.inner.lock().turn_prompt_effort.clone(),
             };
             let text = catalog::prompt_text(&input.message.text, effort.as_deref());
@@ -2352,7 +2386,7 @@ impl Session for ClaudeSession {
                 accepted: false,
             };
             if let Err(error) = query
-                .call("stopTask", json!([input.task_id]), Duration::from_secs(15))
+                .call("stopTask", json!([input.task_id]), WORKFLOW_STOP_TIMEOUT)
                 .await
             {
                 return Err(failed_err(

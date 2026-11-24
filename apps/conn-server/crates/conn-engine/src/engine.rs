@@ -66,10 +66,11 @@ pub struct EngineConfig {
     /// Every stored timestamp and the idle release read it. Default: the system clock. A
     /// replay sets a [`crate::ManualClock`], as T3's tests run on Effect's `TestClock`.
     pub clock: Arc<dyn crate::Clock>,
-    /// Recover the runs and rollbacks a previous process left active (`restart.rs`), as the
-    /// T3 server does at start. Default on. Off for an inert rehearsal copy
-    /// (`CONN_SERVER_INERT`): its runs stay as imported, so nothing continues or touches a
-    /// workspace the original still owns.
+    /// Recover the runs and rollbacks a previous process left active at open
+    /// ([`SqliteEngine::recover_runs`]), as the T3 server does at start. Default on. The server
+    /// turns it off and recovers once `/mcp` listens. An inert rehearsal copy
+    /// (`CONN_SERVER_INERT`) never recovers: its runs stay as imported, so nothing continues or
+    /// touches a workspace the original still owns.
     pub recover_runs: bool,
     /// Write attention events for iOS push to the outbox (`attention.rs`). Off by default:
     /// with it off, nothing is written. The server's sender drains them.
@@ -261,8 +262,8 @@ pub(crate) fn project_id(workspace_root: &str) -> String {
 }
 
 impl SqliteEngine {
-    /// Opens the store, adds the configured projects, and recovers every run a previous process
-    /// left active (see `restart.rs`): a turn the provider had continues in a new run.
+    /// Opens the store, adds the configured projects, and, with [`EngineConfig::recover_runs`],
+    /// recovers the runs a previous process left active ([`Self::recover_runs`]).
     pub fn open(config: EngineConfig) -> Result<Self, String> {
         let home = config.home.clone().unwrap_or_else(|| {
             config
@@ -278,11 +279,6 @@ impl SqliteEngine {
             .attention
             .then(|| Arc::new(tokio::sync::Notify::new()));
         store.attention = attention.clone();
-        let (unfinished, pending_rollbacks) = if config.recover_runs {
-            (store.unfinished_runs()?, store.pending_rollbacks()?)
-        } else {
-            Default::default()
-        };
         let mut tx = store.tx()?;
         for project in &config.projects {
             tx.ensure_project(
@@ -290,18 +286,6 @@ impl SqliteEngine {
                 &project.title,
                 &project.workspace_root,
             )?;
-        }
-        // A rollback a previous process left pending goes first: it was admitted before the
-        // restart, and its lane holds the thread's next turn until it ends.
-        let mut effects = vec![];
-        for pending in pending_rollbacks {
-            effects.extend(crate::rollback::recover_pending(&mut tx, pending)?);
-        }
-        for (thread_id, run) in unfinished
-            .iter()
-            .filter(|(_, run)| commands::is_active(run))
-        {
-            effects.extend(crate::restart::recover(&mut tx, thread_id, run)?);
         }
         tx.commit(None)?;
         let high = store.high_water();
@@ -334,27 +318,57 @@ impl SqliteEngine {
                 effect_seq: std::sync::atomic::AtomicU64::new(0),
             }),
         };
-        // Continuations and the reaper start on the caller's runtime; `open` never blocks.
+        // The reaper starts on the caller's runtime; `open` never blocks.
+        if tokio::runtime::Handle::try_current().is_ok()
+            && let Some(idle) = config.idle_session
+        {
+            let inner = Arc::downgrade(&engine.inner);
+            tokio::spawn(async move {
+                let every = (idle / 2).max(Duration::from_millis(10));
+                loop {
+                    tokio::time::sleep(every).await;
+                    // The engine is gone: stop.
+                    let Some(inner) = inner.upgrade() else { return };
+                    inner.reap_idle(idle).await;
+                }
+            });
+        }
+        if config.recover_runs {
+            engine.recover_runs()?;
+        }
+        Ok(engine)
+    }
+
+    /// Recovers every run and rollback a previous process left active (see `restart.rs`): a
+    /// turn the provider had continues in a new run. Call it once, before clients reach the
+    /// engine, and once agents can reach `/mcp`: a resumed session keeps the tools it opens with.
+    pub fn recover_runs(&self) -> Result<(), String> {
+        let mut store = crate::lock(&self.inner.store);
+        let unfinished = store.unfinished_runs()?;
+        let pending_rollbacks = store.pending_rollbacks()?;
+        let mut tx = store.tx()?;
+        // A rollback a previous process left pending goes first: it was admitted before the
+        // restart, and its lane holds the thread's next turn until it ends.
+        let mut effects = vec![];
+        for pending in pending_rollbacks {
+            effects.extend(crate::rollback::recover_pending(&mut tx, pending)?);
+        }
+        for (thread_id, run) in unfinished
+            .iter()
+            .filter(|(_, run)| commands::is_active(run))
+        {
+            effects.extend(crate::restart::recover(&mut tx, thread_id, run)?);
+        }
+        let high = tx.commit(None)?;
+        drop(store);
+        self.inner.notify.send_replace(high);
+        // Continuations start on the caller's runtime.
         if tokio::runtime::Handle::try_current().is_ok() {
-            effects
-                .into_iter()
-                .for_each(|e| engine.inner.spawn_effect(e));
-            if let Some(idle) = config.idle_session {
-                let inner = Arc::downgrade(&engine.inner);
-                tokio::spawn(async move {
-                    let every = (idle / 2).max(Duration::from_millis(10));
-                    loop {
-                        tokio::time::sleep(every).await;
-                        // The engine is gone: stop.
-                        let Some(inner) = inner.upgrade() else { return };
-                        inner.reap_idle(idle).await;
-                    }
-                });
-            }
+            effects.into_iter().for_each(|e| self.inner.spawn_effect(e));
         } else if !effects.is_empty() {
             eprintln!("conn-engine: no runtime, so restarted turns do not continue");
         }
-        Ok(engine)
+        Ok(())
     }
 
     /// Puts a completed run back to `waiting` with no checkpoint, as a kill between the
@@ -1401,6 +1415,20 @@ impl Engine for SqliteEngine {
                 .map_err(|e| match e {
                     DispatchError::Rejected(e) | DispatchError::Internal(e) => e,
                 })
+        })
+    }
+
+    fn subagent_rows(&self, thread_id: &str) -> BoxFuture<'_, Result<Vec<Value>, String>> {
+        let thread_id = thread_id.to_owned();
+        Box::pin(async move {
+            self.inner
+                .db(move |store| -> Result<Vec<Value>, String> {
+                    let tx = store.tx()?;
+                    let rows = tx.entities(&thread_id, "subagents");
+                    tx.rollback();
+                    rows
+                })
+                .await
         })
     }
 

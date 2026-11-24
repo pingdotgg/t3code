@@ -8,7 +8,7 @@
 
 use std::{
     fs,
-    os::unix::fs::symlink,
+    os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -162,6 +162,111 @@ fn reads_stay_inside_the_root_and_out_of_server_state() {
     assert!(result.truncated);
     assert_eq!(result.byte_length, big.len() as i64);
     assert_eq!(result.contents.len(), 1024 * 1024);
+
+    // T3 "rejects files with invalid UTF-8": U+FFFD would overwrite Latin-1 bytes on save.
+    fs::write(f.project.join("latin1.txt"), b"name=caf\xe9\n").unwrap();
+    assert_eq!(read(&f, "latin1.txt").unwrap_err(), Failure::BinaryFile);
+    // An incomplete last character is invalid when the whole file was read.
+    fs::write(f.project.join("cut.txt"), b"a\xe2\x82").unwrap();
+    assert_eq!(read(&f, "cut.txt").unwrap_err(), Failure::BinaryFile);
+    // T3 "drops a multibyte character split by the read limit".
+    let mut split = vec![b'a'; 1024 * 1024 - 1];
+    split.extend_from_slice("€\n".as_bytes());
+    fs::write(f.project.join("split.txt"), &split).unwrap();
+    let result = read(&f, "split.txt").unwrap();
+    assert!(result.truncated);
+    assert_eq!(result.byte_length, split.len() as i64);
+    assert_eq!(result.contents, "a".repeat(1024 * 1024 - 1));
+    // Invalid bytes before the limit are still refused.
+    split[10] = 0xe9;
+    fs::write(f.project.join("split.txt"), &split).unwrap();
+    assert_eq!(read(&f, "split.txt").unwrap_err(), Failure::BinaryFile);
+}
+
+// T3 `readFile`: storage cleanup removes an idle worktree but keeps its path, so an optional
+// read below it is absent. A required read and any other root failure keep their error.
+#[test]
+fn an_optional_read_in_a_removed_worktree_is_absent() {
+    let f = fixture("read-removed-worktree");
+    git(&f.project, &["init", "-q", "-b", "main"]);
+    git(
+        &f.project,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@e",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+    );
+    let worktree = f._base.0.join("worktree");
+    git(
+        &f.project,
+        &["worktree", "add", "-q", worktree.to_str().unwrap()],
+    );
+    let read_at = |cwd: &Path, path: &str, allow_missing: bool| {
+        let input = ProjectReadFileInput {
+            cwd: cwd.to_string_lossy().into_owned(),
+            relative_path: path.into(),
+            allow_missing: allow_missing.then_some(true),
+        };
+        workspace::read_file(&input, None, &f.files.internal)
+    };
+    let root_failure = |result: Result<_, workspace::FileFailure>| {
+        let failure = result.unwrap_err();
+        (failure.failure, failure.operation.map(|(op, _)| op))
+    };
+    let realpath_root = (
+        Failure::OperationFailed,
+        Some(conn_contract::ProjectReadFileErrorOperation::RealpathWorkspaceRoot),
+    );
+
+    // An existing worktree: a missing optional file is absent; a present one reads.
+    let missing = read_at(&worktree, "t3.json", true).unwrap();
+    assert_eq!(missing.exists, Some(false));
+    fs::write(worktree.join("t3.json"), "{}").unwrap();
+    assert_eq!(read_at(&worktree, "t3.json", true).unwrap().contents, "{}");
+
+    git(
+        &f.project,
+        &["worktree", "remove", "--force", worktree.to_str().unwrap()],
+    );
+    assert!(!worktree.exists());
+    let removed = read_at(&worktree, "t3.json", true).unwrap();
+    assert_eq!(
+        (removed.relative_path.as_str(), removed.exists),
+        ("t3.json", Some(false))
+    );
+    assert_eq!(
+        root_failure(read_at(&worktree, "t3.json", false)),
+        realpath_root
+    );
+
+    // A root that exists but cannot be resolved is an error, optional or not.
+    // A file as a root component gives ENOTDIR for every user, root included.
+    let file = f._base.0.join("plain-file");
+    fs::write(&file, "x").unwrap();
+    let not_dir = read_at(&file.join("root"), "t3.json", true);
+    assert_eq!(root_failure(not_dir), realpath_root);
+
+    // Permission denied, where the runner can actually be denied (not root).
+    let locked = f._base.0.join("locked");
+    fs::create_dir_all(locked.join("root")).unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let denied = read_at(&locked.join("root"), "t3.json", true);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    match denied {
+        Err(failure) => assert_eq!(
+            (failure.failure, failure.operation.map(|(op, _)| op)),
+            realpath_root
+        ),
+        // A privileged runner traverses mode 000, and the optional file is simply absent.
+        Ok(result) => assert_eq!(result.exists, Some(false)),
+    }
 }
 
 #[test]
@@ -243,6 +348,14 @@ fn lists_folders_with_links_inside_and_ignored_marks() {
     symlink(&f.outside, f.project.join("out")).unwrap();
     symlink(f.project.join("src"), f.project.join("src-link")).unwrap();
     symlink(&f.project, f.project.join("src/up")).unwrap();
+    // File links: inside (listed, as in T3), ignored by name, and out of the root.
+    symlink(f.project.join("src/main.rs"), f.project.join("alias.rs")).unwrap();
+    symlink(
+        f.project.join("src/main.rs"),
+        f.project.join("debug-link.log"),
+    )
+    .unwrap();
+    symlink(f.outside.join("secret.txt"), f.project.join("secret.txt")).unwrap();
 
     let listed = entries::list_directory(&f.project, "", &f.files.internal).unwrap();
     let mut names: Vec<(String, ProjectEntryKind, Option<bool>)> = listed
@@ -255,7 +368,9 @@ fn lists_folders_with_links_inside_and_ignored_marks() {
         names,
         vec![
             (".gitignore".into(), ProjectEntryKind::File, None),
+            ("alias.rs".into(), ProjectEntryKind::File, None),
             ("build".into(), ProjectEntryKind::Directory, Some(true)),
+            ("debug-link.log".into(), ProjectEntryKind::File, Some(true)),
             ("debug.log".into(), ProjectEntryKind::File, Some(true)),
             ("src".into(), ProjectEntryKind::Directory, None),
             ("src-link".into(), ProjectEntryKind::Directory, None),
@@ -274,7 +389,52 @@ fn lists_folders_with_links_inside_and_ignored_marks() {
 
     let all = entries::list_all(&f.project, &f.files.internal);
     let paths: Vec<&str> = all.entries.iter().map(|e| e.path.as_str()).collect();
-    assert_eq!(paths, [".gitignore", "src", "src/main.rs"]);
+    assert_eq!(
+        paths,
+        [".gitignore", "alias.rs", "src", "src/main.rs"],
+        "a file link counts, a folder link is not walked into"
+    );
+    let search = |query: &str| {
+        let input = ProjectSearchEntriesInput {
+            cwd: String::new(),
+            query: query.into(),
+            limit: 20,
+            kind: None,
+            image_only: None,
+        };
+        search::search_entries(&f.project, &input, &f.files.internal)
+            .entries
+            .into_iter()
+            .map(|e| (e.path, e.kind))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        search("alias.rs"),
+        [("alias.rs".to_owned(), ProjectEntryKind::File)]
+    );
+    assert!(
+        search("secret").is_empty(),
+        "a link out of the root is not offered"
+    );
+    assert!(
+        search("debug-link").is_empty(),
+        "ignore rules apply to links"
+    );
+    // Content search reads each file once, by its own name.
+    let grep = search::search_contents(
+        &f.project,
+        &ProjectSearchContentsInput {
+            cwd: String::new(),
+            query: "fn main".into(),
+            limit: 10,
+            case_sensitive: true,
+            whole_word: false,
+            use_regex: false,
+        },
+        &f.files.internal,
+    );
+    let hits: Vec<&str> = grep.matches.iter().map(|m| m.path.as_str()).collect();
+    assert_eq!(hits, ["src/main.rs"]);
     let ignored = entries::list_ignored(&f.project, &f.files.internal, None);
     let ignored: Vec<&str> = ignored.files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(ignored, ["debug.log"], "build/ is a wholly ignored folder");
@@ -388,6 +548,192 @@ fn searches_names_and_contents_without_ignored_files() {
     let broken = grep("(main", false, false, true);
     assert!(broken.regex_fallback_error.is_some());
     assert!(broken.matches.is_empty());
+
+    // A file over 4 MiB is searched, not skipped: T3 finds its first and its last line.
+    d.write(
+        "large.txt",
+        format!("earlyNeedle\n{}lateNeedle\n", "filler\n".repeat(610_000)),
+    );
+    for (needle, line) in [("earlyNeedle", 1), ("lateNeedle", 610_002)] {
+        let found = grep(needle, true, false, false);
+        let lines: Vec<i64> = found.matches.iter().map(|m| m.line_number).collect();
+        assert_eq!((lines, found.truncated), (vec![line], false), "{needle}");
+    }
+    // One line longer than the search holds: what it could not read makes the result partial.
+    d.write("one-line.txt", "x".repeat(5 * 1024 * 1024));
+    let long = grep("earlyNeedle", true, false, false);
+    assert_eq!((long.matches.len(), long.truncated), (1, true));
+}
+
+fn names(f: &Fixture, query: &str, limit: i64) -> Vec<String> {
+    let input = ProjectSearchEntriesInput {
+        cwd: String::new(),
+        query: query.into(),
+        limit,
+        kind: None,
+        image_only: None,
+    };
+    let mut paths: Vec<String> = search::search_entries(&f.project, &input, &f.files.internal)
+        .entries
+        .into_iter()
+        .map(|e| e.path)
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// fff and ripgrep read `.ignore` ahead of Git's rules: the nearest matching rule decides,
+/// before ranking and the limit (`WorkspaceSearchIndex.ts` `decideByIgnoreFiles`).
+#[test]
+fn search_leaves_out_what_ignore_files_exclude() {
+    let f = fixture("dot-ignore");
+    git(&f.project, &["init", "-q"]);
+    let d = Dir(f.project.clone());
+    d.write(".ignore", "*.scratch\n");
+    d.write(".gitignore", "*.log\n");
+    d.write("select-me.scratch", "ignore example");
+    d.write("long/directory/select-me.ts", "include example");
+    d.write("unused.scratch", "uniquemarker");
+    d.write("build.log", "uniquemarker");
+    d.write("src/a.ts", "uniquemarker");
+    // The nearer `.ignore` re-includes; a Git ignore rule there loses to it as well.
+    d.write("keep/.ignore", "!*.scratch\n!*.log\n");
+    d.write("keep/kept.scratch", "uniquemarker");
+    d.write("keep/kept.log", "uniquemarker");
+
+    assert_eq!(names(&f, "select-me", 1), ["long/directory/select-me.ts"]);
+    let grep = ProjectSearchContentsInput {
+        cwd: String::new(),
+        query: "uniquemarker".into(),
+        limit: 30,
+        case_sensitive: true,
+        whole_word: false,
+        use_regex: false,
+    };
+    let mut content: Vec<String> = search::search_contents(&f.project, &grep, &f.files.internal)
+        .matches
+        .into_iter()
+        .map(|m| m.path)
+        .collect();
+    content.sort();
+    assert_eq!(content, ["keep/kept.log", "keep/kept.scratch", "src/a.ts"]);
+    let listed = entries::list_all(&f.project, &f.files.internal);
+    let listed: Vec<&str> = listed.entries.iter().map(|e| e.path.as_str()).collect();
+    assert!(!listed.contains(&"unused.scratch"), "{listed:?}");
+    assert!(listed.contains(&"keep/kept.scratch"), "{listed:?}");
+}
+
+/// T3's WorkspaceEntries test: a path in a gitignored nested worktree is found only exactly.
+#[test]
+fn finds_a_path_inside_a_gitignored_nested_worktree_only_by_its_exact_path() {
+    let f = fixture("nested-worktree");
+    let id = [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+    ];
+    let git_id = |args: &[&str]| git(&f.project, &[&id[..], args].concat());
+    git_id(&["init", "-q"]);
+    let d = Dir(f.project.clone());
+    d.write(".gitignore", ".worktrees/\nignored/\n");
+    git_id(&["add", ".gitignore"]);
+    git_id(&["commit", "-qm", "init"]);
+    git_id(&["worktree", "add", "-q", "-b", "x", ".worktrees/x"]);
+    d.write(".worktrees/x/src/foo.py", "print(1)");
+    git_id(&["worktree", "add", "-q", "--detach", ".worktrees/line\nname"]);
+    d.write(".worktrees/line\nname/src/foo.py", "print(2)");
+    // The same file in an ignored folder that is not a checkout stays out.
+    d.write("ignored/src/foo.py", "print(3)");
+
+    assert_eq!(
+        names(&f, "src/foo.py", 25),
+        [
+            ".worktrees/line\nname/src/foo.py",
+            ".worktrees/x/src/foo.py"
+        ]
+    );
+    assert!(names(&f, "src/fo", 25).is_empty());
+    assert_eq!(names(&f, "src/foo.py", 1).len(), 1, "the limit holds");
+    // A drive-letter-like relative name is a path, not a Windows absolute one.
+    d.write(".worktrees/x/a:docs/new.py", "print(5)");
+    assert_eq!(
+        names(&f, "a:docs/new.py", 25),
+        [".worktrees/x/a:docs/new.py"]
+    );
+    // A link out of the workspace or into `.git` is not a file of the checkout.
+    symlink(
+        f.outside.join("secret.txt"),
+        f.project.join(".worktrees/x/src/leak.py"),
+    )
+    .unwrap();
+    symlink(
+        f.project.join(".git/HEAD"),
+        f.project.join(".worktrees/x/src/head.py"),
+    )
+    .unwrap();
+    for query in ["src/leak.py", "src/head.py"] {
+        assert!(names(&f, query, 25).is_empty(), "{query}");
+    }
+    // As in the walk, a name under a `.git` folder stays out; a link inside the checkout counts.
+    d.write(".worktrees/x/sub/.git/plain.py", "print(6)");
+    assert!(names(&f, "sub/.git/plain.py", 25).is_empty());
+    symlink(
+        f.project.join(".worktrees/x/src/foo.py"),
+        f.project.join(".worktrees/x/src/alias.py"),
+    )
+    .unwrap();
+    assert_eq!(names(&f, "src/alias.py", 25), [".worktrees/x/src/alias.py"]);
+    // A gone checkout's folder is no longer one of them.
+    fs::remove_dir_all(f.project.join(".worktrees/x")).unwrap();
+    d.write(".worktrees/x/src/foo.py", "print(4)");
+    assert_eq!(
+        names(&f, "src/foo.py", 25),
+        [".worktrees/line\nname/src/foo.py"]
+    );
+}
+
+/// T3's WorkspaceEntries test "matches glob metacharacters in the query literally".
+#[test]
+fn name_globs_take_brace_alternatives_and_keep_literal_braces() {
+    let f = fixture("brace-glob");
+    let d = Dir(f.project.clone());
+    for path in [
+        "src/app/game/[id]/index.tsx",
+        "src/foo{bar}.ts",
+        "src/main.ts",
+        "src/notes.md",
+        "src/UPPER.TS",
+        "src/clip.ts}",
+        "config/.env",
+        "config/app.ENV",
+    ] {
+        d.write(path, "");
+    }
+    for query in ["game/[i", "game/[id]"] {
+        assert!(names(&f, query, 10).contains(&"src/app/game/[id]/index.tsx".into()));
+    }
+    assert!(names(&f, "foo{bar}.ts", 10).contains(&"src/foo{bar}.ts".into()));
+    assert_eq!(
+        names(&f, "*.{ts,tsx}", 10),
+        [
+            "src/app/game/[id]/index.tsx",
+            "src/foo{bar}.ts",
+            "src/main.ts"
+        ]
+    );
+    assert_eq!(names(&f, "*.{ts}", 10), ["src/foo{bar}.ts", "src/main.ts"]);
+    // fff: `*.ext` filters extensions in any case; a brace glob matches case as written.
+    assert_eq!(
+        names(&f, "*.ts", 10),
+        ["src/UPPER.TS", "src/foo{bar}.ts", "src/main.ts"]
+    );
+    assert_eq!(names(&f, "*.ts}", 10), ["src/clip.ts}"]);
+    // fff wants a name longer than the extension: a bare `.env` is not an `*.env` file.
+    assert_eq!(names(&f, "*.env", 10), ["config/app.ENV"]);
+    assert_eq!(names(&f, "src/{main}.ts", 10), ["src/main.ts"]);
+    assert_eq!(names(&f, "src/{foo{bar},notes}.md", 10), ["src/notes.md"]);
+    assert_eq!(names(&f, "*.{TS}", 10), ["src/foo{bar}.ts", "src/main.ts"]);
 }
 
 #[test]
@@ -669,6 +1015,53 @@ fn served_path(served: Option<Served>) -> Option<PathBuf> {
     }
 }
 
+/// T3 `validates canonical preview dependency paths`, plus a media alias.
+#[test]
+fn page_dependencies_are_checked_on_their_canonical_path() {
+    let f = fixture("assets-canonical");
+    let d = Dir(f.project.clone());
+    d.write("report.html", "<!doctype html>");
+    for name in [
+        "report.css",
+        ".internal.css",
+        "notes.txt",
+        "clips/clip.mp4",
+        ".private.mp4",
+    ] {
+        d.write(name, "fixture");
+    }
+    let link = |target: &str, alias: &str| {
+        symlink(f.project.join(target), f.project.join(alias)).unwrap();
+    };
+    link("report.css", "theme.css");
+    link(".internal.css", "internal.css");
+    link("notes.txt", "notes.css");
+    link("clips/clip.mp4", "intro.mp4");
+    link(".private.mp4", "movie.mp4");
+    link("notes.txt", "notes.mp3");
+
+    let context = AssetContext {
+        workspace_root: Some(f.project.to_string_lossy().into_owned()),
+        project_favicon_path: None,
+    };
+    let now = now_ms();
+    let page = f
+        .files
+        .create_asset_url(
+            &resource(json!({"_tag": "workspace-file", "threadId": "t", "path": "report.html"})),
+            &context,
+            now,
+        )
+        .unwrap();
+    let (token, _) = token_and_name(&page.relative_url);
+    let resolve = |name: &str| served_path(f.files.resolve_asset(&token, name, now));
+    assert_eq!(resolve("theme.css"), Some(f.project.join("report.css")));
+    assert_eq!(resolve("intro.mp4"), Some(f.project.join("clips/clip.mp4")));
+    for denied in ["internal.css", "notes.css", "movie.mp4", "notes.mp3"] {
+        assert_eq!(resolve(denied), None, "{denied}");
+    }
+}
+
 #[test]
 fn signs_asset_urls_and_rechecks_them_when_served() {
     let f = fixture("assets");
@@ -740,7 +1133,25 @@ fn signs_asset_urls_and_rechecks_them_when_served() {
         served_path(f.files.resolve_asset(&token, "app.js", now)),
         Some(f.project.join("docs/app.js"))
     );
-    for denied in [".env.js", "..%2Fimg%2Fa.png", "../img/a.png", "app.rs"] {
+    // Media next to the page plays through the same grant (T3's `clips/clip.*` case).
+    for media in ["clips/clip.mp4", "clips/clip.webm", "clips/clip.mp3"] {
+        d.write(&format!("docs/{media}"), "media bytes");
+        assert_eq!(
+            served_path(f.files.resolve_asset(&token, media, now)),
+            Some(f.project.join("docs").join(media)),
+            "{media}"
+        );
+    }
+    d.write("docs/clips/.hidden.mp4", "media bytes");
+    d.write("docs/fig.bmp", "bitmap");
+    for denied in [
+        ".env.js",
+        "..%2Fimg%2Fa.png",
+        "../img/a.png",
+        "app.rs",
+        "clips/.hidden.mp4",
+        "fig.bmp",
+    ] {
         assert!(
             f.files.resolve_asset(&token, denied, now).is_none(),
             "{denied}"

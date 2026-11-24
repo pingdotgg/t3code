@@ -1,11 +1,13 @@
 //! Smoke test for `conn-web`'s on-demand offscreen CEF runtime on macOS.
 //!
 //! Usage:
-//!   cargo run -p conn-web --features cef --example cef_smoke -- http://127.0.0.1:8080/
+//!   cargo run -p conn-web --example cef_smoke -- https://example.com/
 //!
-//! Downloads CEF if needed, creates an offscreen browser view, loads the
-//! requested URL, waits for a painted frame and page title, prints the title,
-//! and exits 0.
+//! Downloads CEF if needed, then does what the app does: creates an offscreen view on
+//! `about:blank`, waits for it to paint, calls `load_url` with the address, and waits for the
+//! page's `on_load_end` with HTTP 200 and a new painted frame. Prints each step's time and the
+//! page title and exits 0; any load error, a status other than 200, or 45 s without a painted
+//! page exits 1. Redirects count: the final page must answer 200.
 
 #[cfg(target_os = "macos")]
 mod mac_smoke {
@@ -30,10 +32,14 @@ mod mac_smoke {
         profile_dir: PathBuf,
         browser: Option<BrowserView>,
         started_at: Instant,
-        loaded_at: Option<Instant>,
+        navigated_at: Option<Instant>,
+        blank_generation: u64,
         done: bool,
         exit_code: i32,
     }
+
+    /// `(url, status)` of every main-frame `on_load_end`.
+    static LOAD_ENDS: std::sync::Mutex<Vec<(String, i32)>> = std::sync::Mutex::new(Vec::new());
 
     thread_local! {
         static SMOKE: RefCell<Option<SmokeState>> = const { RefCell::new(None) };
@@ -77,8 +83,13 @@ mod mac_smoke {
                     width: 800.0,
                     height: 600.0,
                 };
-                match BrowserView::create(bounds, 2.0, &state.url) {
+                match BrowserView::create(bounds, 2.0, "about:blank") {
                     Ok(view) => {
+                        view.on_load_end(|url, status| {
+                            if let Ok(mut ends) = LOAD_ENDS.lock() {
+                                ends.push((url.to_owned(), status));
+                            }
+                        });
                         state.browser = Some(view);
                     }
                     Err(err) => {
@@ -95,30 +106,66 @@ mod mac_smoke {
                 return;
             };
 
-            if view.load_count() > 0 && !view.is_loading() {
-                let title = view.title();
-                let has_frame = view.frame_generation() > 0;
-                let loaded_at = *state.loaded_at.get_or_insert_with(Instant::now);
-                // Wait briefly for `on_title_change` and first OSR `on_paint` after `on_load_end`.
-                if (!title.is_empty() && has_frame) || loaded_at.elapsed() > Duration::from_secs(2)
-                {
-                    if let Some(frame) = view.frame_if_newer(0) {
-                        eprintln!(
-                            "cef_smoke: painted frame #{} ({}x{}, {} bytes)",
-                            frame.generation,
-                            frame.width,
-                            frame.height,
-                            frame.bgra.len()
-                        );
-                    }
-                    println!("{title}");
-                    if let Some(view) = state.browser.take() {
-                        view.close();
-                    }
-                    state.done = true;
-                    state.exit_code = 0;
-                    should_stop = true;
+            // Step 1: the blank page paints, as the app's first view does.
+            let Some(navigated_at) = state.navigated_at else {
+                if view.load_count() > 0 && !view.is_loading() && view.frame_generation() > 0 {
+                    state.blank_generation = view.frame_generation();
+                    state.navigated_at = Some(Instant::now());
+                    eprintln!("cef_smoke: about:blank painted; load_url {}", state.url);
+                    view.load_url(&state.url);
                 }
+                return;
+            };
+
+            // Step 2: the page itself.
+            if let Some(error) = view.load_error() {
+                eprintln!(
+                    "cef_smoke: LOAD ERROR {} ({}) for {}: {}",
+                    error.code,
+                    error.name(),
+                    error.url,
+                    error.text
+                );
+                state.done = true;
+                state.exit_code = 1;
+                should_stop = true;
+                return;
+            }
+            let page_end = LOAD_ENDS
+                .lock()
+                .ok()
+                .and_then(|ends| ends.iter().rev().find(|(u, _)| u != "about:blank").cloned());
+            let Some((final_url, status)) = page_end else {
+                return;
+            };
+            let painted = view.frame_generation() > state.blank_generation;
+            if status == 200 && painted && !view.is_loading() {
+                let title = view.title();
+                eprintln!(
+                    "cef_smoke: {final_url} answered {status}; painted after {} ms",
+                    navigated_at.elapsed().as_millis()
+                );
+                if let Some(frame) = view.frame_if_newer(0) {
+                    eprintln!(
+                        "cef_smoke: painted frame #{} ({}x{}, {} bytes)",
+                        frame.generation,
+                        frame.width,
+                        frame.height,
+                        frame.bgra.len()
+                    );
+                }
+                println!("{title}");
+                if let Some(view) = state.browser.take() {
+                    view.close();
+                }
+                state.done = true;
+                state.exit_code = 0;
+                should_stop = true;
+            } else if status != 200 {
+                eprintln!("cef_smoke: {final_url} answered {status}");
+                state.done = true;
+                state.exit_code = 1;
+                should_stop = true;
             }
         });
 
@@ -180,7 +227,8 @@ mod mac_smoke {
                 profile_dir: profile_dir.clone(),
                 browser: None,
                 started_at: Instant::now(),
-                loaded_at: None,
+                navigated_at: None,
+                blank_generation: 0,
                 done: false,
                 exit_code: 1,
             });

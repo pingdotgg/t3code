@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     error::{VcsError, VcsResult},
-    process::{OnLimit, ProcessError},
+    process::{GitCommand, OnLimit, ProcessError},
     refs::parse_worktree_branches,
     repo::{self, git},
 };
@@ -22,6 +22,9 @@ const OPERATION: &str = "GitVcsDriver.createWorktree";
 /// Branch name prefix kept in a worktree folder name, in UTF-8 bytes.
 const PREFIX_MAX_BYTES: usize = 23;
 pub const REMOVE_TIMEOUT: Duration = Duration::from_secs(300);
+/// `git ls-files --stage` output read for gitlinks, about 400,000 entries. A larger index
+/// fails safe removal, and deletes nothing.
+const INDEX_MAX_BYTES: usize = 32 << 20;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CreateWorktree {
@@ -286,6 +289,9 @@ pub async fn remove_worktree(cwd: &Path, path: &Path, removal: Removal) -> VcsRe
     } else {
         cwd.join(path)
     };
+    if let Some(annexed) = Annexed::find(cwd, &target).await? {
+        return annexed.remove(cwd, &target, removal).await;
+    }
     let mut args = vec![
         "-c".to_owned(),
         "status.showUntrackedFiles=normal".into(),
@@ -321,9 +327,231 @@ pub async fn remove_worktree(cwd: &Path, path: &Path, removal: Removal) -> VcsRe
 
 async fn path_exists(path: &Path) -> VcsResult<bool> {
     let target = path.to_owned();
-    tokio::task::spawn_blocking(move || target.exists())
+    blocking(path, move || target.exists()).await
+}
+
+async fn blocking<T: Send + 'static>(
+    cwd: &Path,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> VcsResult<T> {
+    tokio::task::spawn_blocking(work)
         .await
-        .map_err(|e| invalid(path, e.to_string()))
+        .map_err(|e| invalid(cwd, e.to_string()))
+}
+
+/// A refusal worded as `git worktree remove` words it.
+fn refuse(worktree: &Path, detail: impl std::fmt::Display) -> VcsError {
+    VcsError::invalid(
+        "GitVcsDriver.removeWorktree",
+        &worktree.to_string_lossy(),
+        format!("fatal: {detail}"),
+    )
+}
+
+/// A linked worktree whose `.git` file git-annex replaced with a symlink to its admin folder.
+/// `git worktree remove` refuses that layout, so this removes it the way git removes a
+/// worktree: the same checks, then the checkout, then the admin folder. `.git` is never
+/// rewritten.
+struct Annexed {
+    /// The checkout, resolved.
+    checkout: PathBuf,
+    /// `<common dir>/worktrees/<name>`, resolved.
+    admin: PathBuf,
+}
+
+impl Annexed {
+    /// `None` when `.git` is not a symlink: that layout is git's to handle. A symlink that does
+    /// not resolve to this repository's admin folder for this checkout is refused here, before
+    /// anything changes.
+    async fn find(cwd: &Path, worktree: &Path) -> VcsResult<Option<Self>> {
+        let dot_git = worktree.join(".git");
+        let linked = blocking(cwd, {
+            let dot_git = dot_git.clone();
+            move || std::fs::symlink_metadata(dot_git).is_ok_and(|m| m.is_symlink())
+        })
+        .await?;
+        if !linked {
+            return Ok(None);
+        }
+        let common = common_dir(cwd).await?;
+        let worktree = worktree.to_owned();
+        blocking(cwd, move || {
+            registered_admin(&worktree, &dot_git, &common)
+                .zip(std::fs::canonicalize(&worktree).ok())
+                .map(|(admin, checkout)| Some(Self { checkout, admin }))
+                .ok_or_else(|| {
+                    refuse(
+                        &worktree,
+                        format_args!("'{}' is not a working tree", worktree.display()),
+                    )
+                })
+        })
+        .await?
+    }
+
+    /// `git worktree remove`: a locked worktree is refused; without force, so is one with
+    /// submodules or with modified or untracked files.
+    async fn remove(self, cwd: &Path, worktree: &Path, removal: Removal) -> VcsResult<()> {
+        let admin = self.admin.clone();
+        let (locked, modules) = blocking(cwd, move || {
+            let locked = admin.join("locked");
+            let locked = locked.exists().then(|| {
+                std::fs::read_to_string(locked)
+                    .map(|reason| reason.trim().to_owned())
+                    .unwrap_or_default()
+            });
+            (locked, admin.join("modules").is_dir())
+        })
+        .await?;
+        match locked.as_deref() {
+            Some("") => {
+                return Err(refuse(
+                    worktree,
+                    "cannot remove a locked working tree;\nuse 'remove -f -f' to override or unlock first",
+                ));
+            }
+            Some(reason) => {
+                return Err(refuse(
+                    worktree,
+                    format_args!(
+                        "cannot remove a locked working tree, lock reason: {reason}\nuse 'remove -f -f' to override or unlock first"
+                    ),
+                ));
+            }
+            None => {}
+        }
+        if removal == Removal::Safe {
+            if modules || self.has_populated_submodule(cwd).await? {
+                return Err(refuse(
+                    worktree,
+                    "working trees containing submodules cannot be moved or removed",
+                ));
+            }
+            // One byte answers the question.
+            let status = self
+                .git([
+                    "status",
+                    "--porcelain",
+                    "--ignore-submodules=none",
+                    "--untracked-files=all",
+                ])
+                .max_stdout(1, OnLimit::Truncate)
+                .run()
+                .await?;
+            if !status.stdout.is_empty() {
+                return Err(refuse(
+                    worktree,
+                    format_args!(
+                        "'{}' contains modified or untracked files, use --force to delete it",
+                        worktree.display()
+                    ),
+                ));
+            }
+        }
+        let worktree_for_error = worktree.to_owned();
+        blocking(cwd, move || self.delete())
+            .await?
+            .map_err(|e| refuse(&worktree_for_error, e))
+    }
+
+    /// `git` on this worktree as `git worktree remove` runs it: `GIT_DIR` and `GIT_WORK_TREE`
+    /// set, so a `core.worktree` in its `config.worktree` cannot send it to another checkout.
+    fn git<const N: usize>(&self, args: [&str; N]) -> GitCommand {
+        git("GitVcsDriver.removeWorktree", &self.checkout, args)
+            .env("GIT_DIR", &self.admin)
+            .env("GIT_WORK_TREE", &self.checkout)
+            .timeout(REMOVE_TIMEOUT)
+    }
+
+    /// `validate_no_submodules`: an index entry of mode `160000` whose checkout has a `.git`
+    /// that resolves to a git directory. An unpopulated one does not count.
+    async fn has_populated_submodule(&self, cwd: &Path) -> VcsResult<bool> {
+        let index = self
+            .git(["ls-files", "--stage", "-z"])
+            .max_stdout(INDEX_MAX_BYTES, OnLimit::Fail)
+            .run()
+            .await?
+            .stdout;
+        let dot_gits: Vec<PathBuf> = {
+            use std::os::unix::ffi::OsStrExt as _;
+            index
+                .split(|b| *b == 0)
+                .filter_map(|entry| {
+                    let tab = entry.iter().position(|b| *b == b'\t')?;
+                    let (meta, name) = (entry.get(..tab)?, entry.get(tab + 1..)?);
+                    meta.starts_with(b"160000 ").then(|| {
+                        self.checkout
+                            .join(std::ffi::OsStr::from_bytes(name))
+                            .join(".git")
+                    })
+                })
+                .collect()
+        };
+        for dot_git in dot_gits {
+            if resolves_to_git_dir(cwd, &dot_git).await? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Deletes the checkout, then the admin folder even if that failed, as git does, then
+    /// `<common dir>/worktrees` once empty. `remove_dir_all` unlinks symlinks, including `.git`,
+    /// and never follows them.
+    fn delete(self) -> Result<(), String> {
+        let checkout = std::fs::remove_dir_all(&self.checkout)
+            .map_err(|e| format!("failed to delete '{}': {e}", self.checkout.display()));
+        let admin = std::fs::remove_dir_all(&self.admin)
+            .map_err(|e| format!("failed to delete '{}': {e}", self.admin.display()));
+        if let Some(worktrees) = self.admin.parent() {
+            let _ = std::fs::remove_dir(worktrees);
+        }
+        checkout.and(admin)
+    }
+}
+
+/// `resolve_gitdir_gently`, asked of git itself: `.git` is a git directory, or a `gitdir:`
+/// file that names one. Git's own resolver handles a symlinked or packed `HEAD` and paths
+/// with trailing spaces; a path git cannot be given counts as populated, so removal refuses.
+async fn resolves_to_git_dir(cwd: &Path, dot_git: &Path) -> VcsResult<bool> {
+    let Some(path) = dot_git.to_str() else {
+        return Ok(true);
+    };
+    let output = git(
+        "GitVcsDriver.removeWorktree",
+        cwd,
+        ["rev-parse", "--resolve-git-dir", path],
+    )
+    .allow_exit(&[128])
+    .timeout(REMOVE_TIMEOUT)
+    .run()
+    .await?;
+    if output.code == 0 {
+        return Ok(true);
+    }
+    // Exit 128 is "no git dir here", but also "a git dir git cannot read". Only an absent
+    // `.git` entry is unpopulated; anything else there counts as populated, so removal refuses.
+    let dot_git = dot_git.to_owned();
+    blocking(cwd, move || match std::fs::symlink_metadata(&dot_git) {
+        Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+        Ok(_) => true,
+    })
+    .await
+}
+
+/// The admin folder `target` resolves to, when it is the repository's
+/// `<common>/worktrees/<name>` and its `gitdir` names `worktree`'s own `.git`.
+fn registered_admin(worktree: &Path, target: &Path, common: &Path) -> Option<PathBuf> {
+    let admin = std::fs::canonicalize(target).ok()?;
+    if admin.parent()? != common.join("worktrees") {
+        return None;
+    }
+    let gitdir = std::fs::read_to_string(admin.join("gitdir")).ok()?;
+    let backlink = admin.join(gitdir.trim());
+    let names_dot_git = backlink.file_name()? == ".git"
+        && std::fs::canonicalize(backlink.parent()?).ok()?
+            == std::fs::canonicalize(worktree).ok()?;
+    names_dot_git.then_some(admin)
 }
 
 /// Deletes a local branch (`git branch -d`, or `-D` with `force`).

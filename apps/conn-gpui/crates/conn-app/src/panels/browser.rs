@@ -1,46 +1,34 @@
 //! Browser right-panel surface with Conn's ToolbarGroup navigation controls,
 //! soft pill URL bar, and optional CEF-on-demand offscreen-rendered Chromium view.
 
-#[cfg(feature = "cef")]
 use std::cell::{Cell, RefCell};
-#[cfg(feature = "cef")]
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
-#[cfg(feature = "cef")]
 use std::sync::Arc;
-#[cfg(feature = "cef")]
 use std::time::Duration;
 
 use crate::a11y::ConnA11yExt as _;
+use crate::runtime_warmup;
 use conn_client::Connection;
-use conn_desktop::api_request::toolbar::ToolbarHistoryRow;
-#[cfg(feature = "cef")]
-use conn_desktop::api_request::toolbar::{
-    ToolbarData, ToolbarHeaderPayload, decode_toolbar_headers, minimal_toolbar_row, row_from_data,
-};
 use conn_desktop::vault::{
     VaultClient, VaultLoginField, VaultLoginFillLookup, VaultLoginItem, VaultLoginsStatus,
     https_origin,
 };
 use conn_state::AnnotationRecord;
 use conn_theme::Tokens;
-#[cfg(feature = "cef")]
 use conn_web::{
-    BrowserView, CursorKind, EditCommand, KeyEvent as WebKeyEvent, KeyEventKind,
-    Modifiers as WebModifiers, MouseButton as WebMouseButton, Rect as WebRect, WebError,
-    WebRuntime, WebRuntimeState,
+    BrowserView, ContextMenuEvent, CursorKind, EditCommand, KeyEvent as WebKeyEvent, KeyEventKind,
+    Modifiers as WebModifiers, MouseButton as WebMouseButton, Rect as WebRect, WebRuntime,
+    WebRuntimeState,
 };
-#[cfg(feature = "cef")]
-use futures::StreamExt as _;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    Context, Entity, EventEmitter, FontWeight, IntoElement, ParentElement, Render, Styled,
-    Subscription, Window, div, px,
+    Animation, AnimationExt as _, Context, Entity, EventEmitter, FontWeight, IntoElement,
+    ParentElement, Render, Styled, Subscription, Transformation, Window, div, percentage, px,
 };
-#[cfg(feature = "cef")]
 use gpui_kit::{
     Corners, CursorStyle, FocusHandle, KeyDownEvent, KeyUpEvent, Modifiers as GpuiModifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, RenderImage,
@@ -51,31 +39,30 @@ use super::annotations::{
     AnnotationAction, AnnotationSubject, AnnotationUiState, QueuePopoverAnchor,
     QueuePopoverCallbacks, render_queue_popover,
 };
+use super::browser_context_menu::{MenuActions, OpenMenu, render_context_menu};
 use super::chrome::{self, ConnTooltipExt as _};
 use super::color::to_hsla;
 use super::header::superhero_icon;
+use super::laravel_toolbar::{LaravelToolbar, host_script};
 
 const UI_TEXT_PX: f32 = 13.0;
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
 const TOOLBAR_PAD_Y_PX: f32 = 7.5;
 const TOOLBAR_PAD_START_PX: f32 = 8.0;
-const TOOLBAR_PAD_END_PX: f32 = 11.5;
+const TOOLBAR_PAD_END_PX: f32 = TOOLBAR_PAD_START_PX;
 const TOOLBAR_HEIGHT_PX: f32 = 32.0;
 const TOOLBAR_INNER_PADDING_PX: f32 = 3.0;
 const TOOLBAR_BUTTON_SIZE_PX: f32 = 24.0;
 const NAV_ICON_SIZE_PX: f32 = 14.0;
 const DEFAULT_URL_ENV: &str = "CONN_GPUI_BROWSER_URL";
 const DEFAULT_FALLBACK_URL: &str = "about:blank";
-#[cfg(feature = "cef")]
+/// `PreviewChromeRow`'s address placeholder.
+const ADDRESS_PLACEHOLDER: &str = "Search or enter URL";
 const SCROLL_LINE_PX: f32 = 40.0;
-#[cfg(feature = "cef")]
 const OVERLAY_RPC_PREFIX: &str = "__CONN_OVERLAY_RPC__:";
-#[cfg(feature = "cef")]
 const BROWSER_OVERLAY_BRIDGE_JS: &str = include_str!("browser_overlay_bridge.js");
-#[cfg(feature = "cef")]
 const CONN_ANNOTATION_OVERLAY_JS: &str = include_str!("../../assets/annotation-overlay/inject.js");
 
-#[cfg(feature = "cef")]
 #[derive(serde::Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum OverlayBridgeMessage {
@@ -93,16 +80,13 @@ enum OverlayBridgeMessage {
         kind: String,
         #[serde(default)]
         data: serde_json::Value,
+        #[serde(default)]
+        url: String,
     },
-    LaravelToolbarHeaders {
+    LaravelToolbarDetails {
+        id: String,
         #[serde(default)]
-        full: Option<String>,
-        #[serde(default)]
-        summary: Option<String>,
-        #[serde(default)]
-        method: Option<String>,
-        #[serde(default)]
-        url: Option<String>,
+        raw: serde_json::Value,
     },
     PreviewResult {
         #[serde(rename = "requestId")]
@@ -115,7 +99,6 @@ enum OverlayBridgeMessage {
     },
 }
 
-#[cfg(feature = "cef")]
 enum BrowserOverlayEvent {
     Rpc {
         request_id: String,
@@ -126,13 +109,14 @@ enum BrowserOverlayEvent {
     LaravelToolbar {
         kind: String,
         data: serde_json::Value,
+        url: String,
     },
-    LaravelToolbarHeaders {
-        full: Option<String>,
-        summary: Option<String>,
-        method: Option<String>,
-        url: Option<String>,
+    LaravelToolbarDetails {
+        id: String,
+        raw: serde_json::Value,
     },
+    ToolbarResponse(conn_web::ToolbarResponse),
+    LoadStart,
     PreviewResult {
         request_id: String,
         ok: bool,
@@ -140,13 +124,7 @@ enum BrowserOverlayEvent {
         error: Option<String>,
     },
     LoadEnd,
-}
-
-#[derive(Clone, Debug)]
-struct LaravelToolbarEntry {
-    row: ToolbarHistoryRow,
-    queries_count: Option<usize>,
-    memory: Option<String>,
+    ContextMenu(ContextMenuEvent),
 }
 
 #[derive(Default)]
@@ -159,7 +137,6 @@ struct VaultLoginUiState {
     feedback: Option<String>,
 }
 
-#[cfg(feature = "cef")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum RuntimePhase {
     Idle,
@@ -169,14 +146,8 @@ enum RuntimePhase {
     Failed(String),
 }
 
-#[cfg(feature = "cef")]
-enum InstallUpdate {
-    Progress(u8),
-    Done(Result<(), WebError>),
-}
-
 /// Browser right-panel surface with navigation toolbar, soft URL field, and
-/// optional on-demand CEF offscreen-rendered view (when compiled with feature `cef`).
+/// on-demand CEF offscreen-rendered view.
 pub(crate) struct BrowserPanel {
     tokens: Tokens,
     connection: Option<Connection>,
@@ -186,49 +157,43 @@ pub(crate) struct BrowserPanel {
     /// The URL last written into the address field, so it follows navigation.
     shown_url: String,
     _subscriptions: Vec<Subscription>,
-    #[cfg(feature = "cef")]
     phase: RuntimePhase,
-    #[cfg(feature = "cef")]
     focus_handle: FocusHandle,
-    #[cfg(feature = "cef")]
     view: Rc<RefCell<Option<BrowserView>>>,
-    #[cfg(feature = "cef")]
     rendered_frame: Option<(u64, Arc<RenderImage>)>,
-    #[cfg(feature = "cef")]
     wake_task: Option<Task<()>>,
-    #[cfg(feature = "cef")]
     overlay_task: Option<Task<()>>,
-    #[cfg(feature = "cef")]
     overlay_injected_load_count: Cell<Option<u32>>,
-    #[cfg(feature = "cef")]
     last_bounds: Rc<Cell<Option<WebRect>>>,
-    #[cfg(feature = "cef")]
     last_scale: Rc<Cell<f32>>,
-    #[cfg(feature = "cef")]
     creating_view: Rc<Cell<bool>>,
     /// Whether the shell shows this panel (right panel open, Browser tab active).
     /// When false, CEF is marked hidden so it stops painting.
-    #[cfg(feature = "cef")]
     visible: Rc<Cell<bool>>,
     /// Size and scale last sent to CEF (`(width_px, height_px, scale_bits)`).
-    #[cfg(feature = "cef")]
     applied_size: Rc<Cell<Option<(i32, i32, u32)>>>,
     /// Hidden state last sent to CEF.
-    #[cfg(feature = "cef")]
     applied_hidden: Rc<Cell<Option<bool>>>,
     /// Pending `preview_*` JS evaluations / snapshots / actions awaiting console reply.
-    #[cfg(feature = "cef")]
     pending_preview:
         HashMap<String, tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>>,
-    #[cfg(feature = "cef")]
+    #[cfg(feature = "automation")]
     preview_seq: u64,
     /// Shared project annotations queue & click-to-annotate state.
     annotations: AnnotationUiState,
     /// Vault login autofill popover state for HTTPS pages.
     vault_logins: VaultLoginUiState,
-    /// Docked Laravel Toolbar entries reported by the active page (`x-toolbar` / `__LARAVEL_TOOLBAR_DATA__`).
-    laravel_toolbar: Vec<LaravelToolbarEntry>,
-    laravel_toolbar_selected: usize,
+    /// The Laravel debug bar under the page (`x-toolbar` headers and `__LARAVEL_TOOLBAR_DATA__`).
+    laravel_toolbar: Entity<LaravelToolbar>,
+    /// The toolbar's overflow menu (`PreviewMoreMenu`) is open.
+    more_menu_open: bool,
+    /// A task follows the runtime warm-up and updates `phase`.
+    polling_runtime: bool,
+    /// The page's right-click menu while it is open. Dropping it cancels it.
+    context_menu: Option<OpenMenu>,
+    /// The user has asked for a page (typed an address, used back, forward or reload, or clicked
+    /// in the page), so a load is theirs and the reload button may spin.
+    user_load: bool,
 }
 
 impl EventEmitter<AnnotationAction> for BrowserPanel {}
@@ -250,8 +215,8 @@ impl BrowserPanel {
     ) -> Self {
         let initial_url = default_browser_url();
         let url_input = cx.new(|cx| {
-            let mut input = InputState::new(window, cx).placeholder("Enter URL...");
-            input.set_value(initial_url.clone(), window, cx);
+            let mut input = InputState::new(window, cx).placeholder(ADDRESS_PLACEHOLDER);
+            input.set_value(address_text(&initial_url), window, cx);
             input
         });
 
@@ -263,8 +228,8 @@ impl BrowserPanel {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     let raw = input.read(cx).value().to_string();
                     let normalized = normalize_url(&raw);
-                    if normalized != raw {
-                        let value = normalized.clone();
+                    if address_text(&normalized) != raw {
+                        let value = address_text(&normalized);
                         input.update(cx, |state, cx| state.set_value(value, window, cx));
                     }
                     this.navigate(normalized, cx);
@@ -272,23 +237,23 @@ impl BrowserPanel {
             },
         ));
 
-        #[cfg(feature = "cef")]
         let focus_handle = cx.focus_handle();
-        #[cfg(feature = "cef")]
-        {
-            subscriptions.push(cx.on_focus(&focus_handle, window, |this, _window, _cx| {
-                if let Some(view) = this.view.borrow().as_ref() {
-                    view.set_focus(true);
-                }
-            }));
-            subscriptions.push(cx.on_blur(&focus_handle, window, |this, _window, _cx| {
-                if let Some(view) = this.view.borrow().as_ref() {
-                    view.set_focus(false);
-                }
-            }));
-        }
+        subscriptions.push(cx.on_focus(&focus_handle, window, |this, _window, _cx| {
+            if let Some(view) = this.view.borrow().as_ref() {
+                view.set_focus(true);
+            }
+        }));
+        subscriptions.push(cx.on_blur(&focus_handle, window, |this, _window, _cx| {
+            if let Some(view) = this.view.borrow().as_ref() {
+                view.set_focus(false);
+            }
+        }));
 
         let annotations = AnnotationUiState::new(AnnotationSubject::Page, window, cx, |_, _, _| {});
+        let view = Rc::new(RefCell::new(None));
+        let last_bounds = Rc::new(Cell::new(None));
+        let laravel_toolbar =
+            cx.new(|cx| LaravelToolbar::new(tokens.clone(), view.clone(), last_bounds.clone(), cx));
 
         Self {
             tokens,
@@ -298,40 +263,29 @@ impl BrowserPanel {
             shown_url: initial_url.clone(),
             url: initial_url,
             _subscriptions: subscriptions,
-            #[cfg(feature = "cef")]
             phase: initial_phase(),
-            #[cfg(feature = "cef")]
             focus_handle,
-            #[cfg(feature = "cef")]
-            view: Rc::new(RefCell::new(None)),
-            #[cfg(feature = "cef")]
+            view,
             rendered_frame: None,
-            #[cfg(feature = "cef")]
             wake_task: None,
-            #[cfg(feature = "cef")]
             overlay_task: None,
-            #[cfg(feature = "cef")]
             overlay_injected_load_count: Cell::new(None),
-            #[cfg(feature = "cef")]
-            last_bounds: Rc::new(Cell::new(None)),
-            #[cfg(feature = "cef")]
+            last_bounds,
             last_scale: Rc::new(Cell::new(window.scale_factor().max(1.0))),
-            #[cfg(feature = "cef")]
             creating_view: Rc::new(Cell::new(false)),
-            #[cfg(feature = "cef")]
             visible: Rc::new(Cell::new(false)),
-            #[cfg(feature = "cef")]
             applied_size: Rc::new(Cell::new(None)),
-            #[cfg(feature = "cef")]
             applied_hidden: Rc::new(Cell::new(None)),
-            #[cfg(feature = "cef")]
             pending_preview: HashMap::new(),
-            #[cfg(feature = "cef")]
+            #[cfg(feature = "automation")]
             preview_seq: 0,
             annotations,
             vault_logins: VaultLoginUiState::default(),
-            laravel_toolbar: Vec::new(),
-            laravel_toolbar_selected: 0,
+            laravel_toolbar,
+            more_menu_open: false,
+            polling_runtime: false,
+            context_menu: None,
+            user_load: false,
         }
     }
 
@@ -344,10 +298,27 @@ impl BrowserPanel {
         cx.notify();
     }
 
+    /// The Laravel debug bar entity, for the host to follow its events.
+    pub(crate) fn laravel_toolbar(&self) -> Entity<LaravelToolbar> {
+        self.laravel_toolbar.clone()
+    }
+
+    /// The Conn server the thread runs on: the debug bar changes only its Orbit Instance.
+    pub(crate) fn set_environment(&mut self, environment_id: String, cx: &mut Context<'_, Self>) {
+        self.laravel_toolbar
+            .update(cx, |bar, cx| bar.set_environment(environment_id, cx));
+    }
+
+    /// The workspace root: the debug bar opens source files only inside it.
+    pub(crate) fn set_workspace_root(&mut self, root: Option<String>, cx: &mut Context<'_, Self>) {
+        self.laravel_toolbar.update(cx, |bar, cx| {
+            bar.set_project_root(root.map(std::path::PathBuf::from), cx);
+        });
+    }
+
     pub(crate) fn set_project(&mut self, project_id: Option<String>, cx: &mut Context<'_, Self>) {
         if self.project_id != project_id {
             self.project_id = project_id;
-            #[cfg(feature = "cef")]
             self.notify_overlay_annotations_changed();
             cx.notify();
         }
@@ -361,15 +332,11 @@ impl BrowserPanel {
         cx: &mut Context<'_, Self>,
     ) {
         self.annotations.sync(annotations, watching, project_ready);
-        #[cfg(feature = "cef")]
-        {
-            self.notify_overlay_annotations_changed();
-            self.maybe_show_existing_pins();
-        }
+        self.notify_overlay_annotations_changed();
+        self.maybe_show_existing_pins();
         cx.notify();
     }
 
-    #[cfg(feature = "cef")]
     fn current_url(&self) -> String {
         self.view
             .borrow()
@@ -379,7 +346,6 @@ impl BrowserPanel {
             .unwrap_or_else(|| self.url.clone())
     }
 
-    #[cfg(feature = "cef")]
     fn current_origin(&self) -> Option<String> {
         page_origin(&self.current_url())
     }
@@ -392,34 +358,27 @@ impl BrowserPanel {
         self.annotations.annotating = next;
         self.annotations.queue_open = false;
         self.annotations.confirming_remove = false;
-        #[cfg(feature = "cef")]
-        {
-            if next {
-                window.focus(&self.focus_handle, cx);
-                if let Some(view) = self.view.borrow().as_ref() {
-                    view.set_focus(true);
-                }
-                self.ensure_overlay_injected(false);
-            }
+        if next {
+            window.focus(&self.focus_handle, cx);
             if let Some(view) = self.view.borrow().as_ref() {
-                view.execute_javascript(&format!(
-                    "window.__CONN_GPUI_OVERLAY_BRIDGE__?.setMode({next});"
-                ));
+                view.set_focus(true);
             }
+            self.ensure_overlay_injected(false);
         }
-        #[cfg(not(feature = "cef"))]
-        let _ = window;
+        if let Some(view) = self.view.borrow().as_ref() {
+            view.execute_javascript(&format!(
+                "window.__CONN_GPUI_OVERLAY_BRIDGE__?.setMode({next});"
+            ));
+        }
         cx.notify();
     }
 
-    #[cfg(feature = "cef")]
     fn ensure_bridge_injected(&self) {
         if let Some(view) = self.view.borrow().as_ref() {
             view.execute_javascript(BROWSER_OVERLAY_BRIDGE_JS);
         }
     }
 
-    #[cfg(feature = "cef")]
     fn ensure_overlay_injected(&self, force: bool) {
         let guard = self.view.borrow();
         let Some(view) = guard.as_ref() else {
@@ -438,82 +397,8 @@ impl BrowserPanel {
         self.overlay_injected_load_count.set(Some(load_count));
     }
 
-    #[cfg(feature = "cef")]
-    fn record_laravel_toolbar_data(&mut self, reset: bool, data: &ToolbarData) {
-        if reset {
-            self.laravel_toolbar.clear();
-            self.laravel_toolbar_selected = 0;
-        }
-        let Some(row) = row_from_data(data) else {
-            return;
-        };
-        let queries_count = data
-            .get("queries")
-            .and_then(|q| q.get("queries").and_then(serde_json::Value::as_array))
-            .map(Vec::len)
-            .or_else(|| {
-                data.get("queries")
-                    .and_then(|q| q.get("count").and_then(serde_json::Value::as_u64))
-                    .map(|n| n as usize)
-            });
-        let memory = data
-            .get("memory")
-            .and_then(|m| {
-                m.get("peak_usage_formatted")
-                    .or_else(|| m.get("formatted"))
-                    .and_then(serde_json::Value::as_str)
-            })
-            .map(ToOwned::to_owned);
-        let entry = LaravelToolbarEntry {
-            row,
-            queries_count,
-            memory,
-        };
-        if let Some(pos) = self
-            .laravel_toolbar
-            .iter()
-            .position(|existing| existing.row.id == entry.row.id)
-        {
-            self.laravel_toolbar[pos] = entry;
-            self.laravel_toolbar_selected = pos;
-        } else {
-            self.laravel_toolbar.insert(0, entry);
-            self.laravel_toolbar.truncate(20);
-            self.laravel_toolbar_selected = 0;
-        }
-    }
-
-    #[cfg(feature = "cef")]
-    fn record_laravel_toolbar_headers(
-        &mut self,
-        full: Option<&str>,
-        summary: Option<&str>,
-        method: Option<&str>,
-        url: Option<&str>,
-    ) {
-        let Some(payload) = decode_toolbar_headers(full, summary) else {
-            return;
-        };
-        match payload {
-            ToolbarHeaderPayload::Full { data } => {
-                self.record_laravel_toolbar_data(false, &data);
-            }
-            ToolbarHeaderPayload::Summary { id, row } => {
-                let row = row.unwrap_or_else(|| minimal_toolbar_row(&id, method, url));
-                let entry = LaravelToolbarEntry {
-                    row,
-                    queries_count: None,
-                    memory: None,
-                };
-                self.laravel_toolbar.insert(0, entry);
-                self.laravel_toolbar.truncate(20);
-                self.laravel_toolbar_selected = 0;
-            }
-        }
-    }
-
     /// Evaluates JS in the active CEF page and returns its JSON result via the bridge.
-    #[cfg(all(feature = "cef", feature = "automation"))]
+    #[cfg(feature = "automation")]
     pub(crate) fn start_preview_eval(
         &mut self,
         expression: &str,
@@ -536,7 +421,7 @@ impl BrowserPanel {
     }
 
     /// Runs a structured `preview_*` helper (`snapshot` or `act`) in the active CEF page.
-    #[cfg(all(feature = "cef", feature = "automation"))]
+    #[cfg(feature = "automation")]
     pub(crate) fn start_preview_call(
         &mut self,
         op: &str,
@@ -561,7 +446,7 @@ impl BrowserPanel {
     }
 
     /// Saves the active CEF view's latest BGRA frame as a PNG file.
-    #[cfg(all(feature = "cef", feature = "automation"))]
+    #[cfg(feature = "automation")]
     pub(crate) fn save_browser_screenshot(
         &self,
         path: &std::path::Path,
@@ -615,10 +500,7 @@ impl BrowserPanel {
         self.annotations.queue_open = false;
         cx.notify();
 
-        #[cfg(feature = "cef")]
         let url = self.current_url();
-        #[cfg(not(feature = "cef"))]
-        let url = self.url.clone();
 
         let task = crate::live::RT
             .spawn(async move { VaultClient::new().list_logins(&url, allow_unlock).await });
@@ -649,17 +531,13 @@ impl BrowserPanel {
         field: VaultLoginField,
         cx: &mut Context<'_, Self>,
     ) {
-        #[cfg(feature = "cef")]
         let page_url = self.current_url();
-        #[cfg(not(feature = "cef"))]
-        let page_url = self.url.clone();
 
         let Some(expected_origin) = https_origin(&page_url) else {
             self.vault_logins.feedback = Some("Autofill requires an HTTPS page.".to_owned());
             cx.notify();
             return;
         };
-        #[cfg(feature = "cef")]
         let expected_origin_after = expected_origin.clone();
         let task = crate::live::RT.spawn(async move {
             VaultClient::new()
@@ -671,37 +549,28 @@ impl BrowserPanel {
             let _ = this.update(cx, |panel, cx| {
                 match outcome {
                     Ok(VaultLoginFillLookup::Value(secret)) => {
-                        #[cfg(feature = "cef")]
+                        let live_url = panel.current_url();
+                        if https_origin(&live_url).as_deref()
+                            != Some(expected_origin_after.as_str())
                         {
-                            let live_url = panel.current_url();
-                            if https_origin(&live_url).as_deref()
-                                != Some(expected_origin_after.as_str())
-                            {
-                                panel.vault_logins.feedback =
-                                    Some("Page origin changed before fill.".to_owned());
-                            } else {
-                                panel.ensure_bridge_injected();
-                                if let Some(view) = panel.view.borrow().as_ref() {
-                                    let field_json = serde_json::to_string(field.as_str())
-                                        .unwrap_or_else(|_| "\"\"".to_owned());
-                                    let origin_json = serde_json::to_string(&expected_origin_after)
-                                        .unwrap_or_else(|_| "\"\"".to_owned());
-                                    let val_json = serde_json::to_string(&secret)
-                                        .unwrap_or_else(|_| "\"\"".to_owned());
-                                    view.execute_javascript(&format!(
-                                        "window.__CONN_GPUI_OVERLAY_BRIDGE__?.fillCredential({field_json}, {origin_json}, {val_json});"
-                                    ));
-                                    panel.vault_logins.feedback =
-                                        Some(format!("Filled {}.", field.as_str()));
-                                    panel.vault_logins.open = false;
-                                }
-                            }
-                        }
-                        #[cfg(not(feature = "cef"))]
-                        {
-                            let _ = secret;
                             panel.vault_logins.feedback =
-                                Some("CEF browser not built.".to_owned());
+                                Some("Page origin changed before fill.".to_owned());
+                        } else {
+                            panel.ensure_bridge_injected();
+                            if let Some(view) = panel.view.borrow().as_ref() {
+                                let field_json = serde_json::to_string(field.as_str())
+                                    .unwrap_or_else(|_| "\"\"".to_owned());
+                                let origin_json = serde_json::to_string(&expected_origin_after)
+                                    .unwrap_or_else(|_| "\"\"".to_owned());
+                                let val_json = serde_json::to_string(&secret)
+                                    .unwrap_or_else(|_| "\"\"".to_owned());
+                                view.execute_javascript(&format!(
+                                    "window.__CONN_GPUI_OVERLAY_BRIDGE__?.fillCredential({field_json}, {origin_json}, {val_json});"
+                                ));
+                                panel.vault_logins.feedback =
+                                    Some(format!("Filled {}.", field.as_str()));
+                                panel.vault_logins.open = false;
+                            }
                         }
                     }
                     Ok(VaultLoginFillLookup::OriginMismatch) => {
@@ -727,14 +596,12 @@ impl BrowserPanel {
         .detach();
     }
 
-    #[cfg(feature = "cef")]
     fn notify_overlay_annotations_changed(&self) {
         if let Some(view) = self.view.borrow().as_ref() {
             view.execute_javascript("window.__connAnnotationsChanged?.();");
         }
     }
 
-    #[cfg(feature = "cef")]
     fn maybe_show_existing_pins(&self) {
         let Some(origin) = self.current_origin() else {
             return;
@@ -749,7 +616,6 @@ impl BrowserPanel {
         }
     }
 
-    #[cfg(feature = "cef")]
     fn reply_overlay_rpc(&self, request_id: &str, result: Result<serde_json::Value, String>) {
         let guard = self.view.borrow();
         let Some(view) = guard.as_ref() else {
@@ -770,7 +636,6 @@ impl BrowserPanel {
         view.execute_javascript(&script);
     }
 
-    #[cfg(feature = "cef")]
     fn handle_overlay_rpc(
         &mut self,
         request_id: String,
@@ -1005,149 +870,130 @@ impl BrowserPanel {
     /// Shows or hides the browser panel. When hidden, CEF stops painting; when
     /// shown again, painting resumes without reloading.
     pub(crate) fn set_visible(&mut self, visible: bool, cx: &mut Context<'_, Self>) {
-        #[cfg(feature = "cef")]
-        {
-            if self.visible.get() != visible {
-                self.visible.set(visible);
-                apply_hidden(&self.view, &self.applied_hidden, !visible);
-                cx.notify();
+        if self.visible.get() != visible {
+            self.visible.set(visible);
+            apply_hidden(&self.view, &self.applied_hidden, !visible);
+            if visible {
+                self.prewarm_runtime(cx);
+            } else {
+                self.context_menu = None;
             }
-        }
-        #[cfg(not(feature = "cef"))]
-        {
-            let _ = (visible, cx);
+            cx.notify();
         }
     }
 
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
+        self.laravel_toolbar
+            .update(cx, |bar, cx| bar.set_tokens(tokens.clone(), cx));
         self.tokens = tokens;
         cx.notify();
     }
 
     /// Navigates the embedded browser to `url`, lazily installing and starting
-    /// the CEF runtime on first use when compiled with feature `cef`.
+    /// the CEF runtime on first use.
     pub(crate) fn navigate(&mut self, url: impl Into<String>, cx: &mut Context<'_, Self>) {
         let target = normalize_url(&url.into());
+        trace_browser(&format!(
+            "navigate to {target} (runtime {:?}, view {})",
+            WebRuntime::global().state(),
+            if self.view.borrow().is_some() {
+                "ready"
+            } else {
+                "not yet"
+            }
+        ));
         self.url = target;
-        #[cfg(feature = "cef")]
-        {
-            self.ensure_runtime_and_load(cx);
-        }
-        #[cfg(not(feature = "cef"))]
-        {
-            cx.notify();
-        }
+        self.user_load = true;
+        self.context_menu = None;
+        self.ensure_runtime_and_load(cx);
     }
 
     /// Diagnostic state for the automation hook.
     #[cfg(feature = "automation")]
     pub(crate) fn automation_state(&self) -> serde_json::Value {
-        #[cfg(feature = "cef")]
-        {
-            let view = self.view.borrow();
-            serde_json::json!({
-                "phase": format!("{:?}", self.phase),
-                "hasView": view.is_some(),
-                "target": self.url,
-                "url": view.as_ref().map(BrowserView::url),
-                "title": view.as_ref().map(BrowserView::title),
-                "visible": self.visible.get(),
-                "frameGeneration": view.as_ref().map(BrowserView::frame_generation),
-                "bounds": self.last_bounds.get().map(|b| [b.x, b.y, b.width, b.height]),
-                "annotating": self.annotations.annotating,
-                "overlayInjected": self.overlay_injected_load_count.get().is_some(),
-            })
-        }
-        #[cfg(not(feature = "cef"))]
-        {
-            serde_json::json!({ "cef": false, "target": self.url })
-        }
+        let view = self.view.borrow();
+        serde_json::json!({
+            "phase": format!("{:?}", self.phase),
+            "hasView": view.is_some(),
+            "target": self.url,
+            "url": view.as_ref().map(BrowserView::url),
+            "title": view.as_ref().map(BrowserView::title),
+            "visible": self.visible.get(),
+            "frameGeneration": view.as_ref().map(BrowserView::frame_generation),
+            "bounds": self.last_bounds.get().map(|b| [b.x, b.y, b.width, b.height]),
+            "annotating": self.annotations.annotating,
+            "overlayInjected": self.overlay_injected_load_count.get().is_some(),
+        })
     }
 
     /// Returns the active document title reported by CEF, or an empty string
-    /// when no page is loaded or feature `cef` is disabled.
+    /// when no page is loaded.
     #[cfg_attr(
         not(feature = "automation"),
         expect(dead_code, reason = "read by the automation hook")
     )]
     #[must_use]
     pub(crate) fn title(&self) -> String {
-        #[cfg(feature = "cef")]
-        {
-            self.view
-                .borrow()
-                .as_ref()
-                .map_or_else(String::new, BrowserView::title)
-        }
-        #[cfg(not(feature = "cef"))]
-        {
-            String::new()
-        }
+        self.view
+            .borrow()
+            .as_ref()
+            .map_or_else(String::new, BrowserView::title)
     }
 
     fn go_back(&mut self, cx: &mut Context<'_, Self>) {
-        #[cfg(feature = "cef")]
+        self.user_load = true;
         if let Some(view) = self.view.borrow().as_ref() {
             view.go_back();
             cx.notify();
         }
-        #[cfg(not(feature = "cef"))]
-        let _ = cx;
     }
 
     fn go_forward(&mut self, cx: &mut Context<'_, Self>) {
-        #[cfg(feature = "cef")]
+        self.user_load = true;
         if let Some(view) = self.view.borrow().as_ref() {
             view.go_forward();
             cx.notify();
         }
-        #[cfg(not(feature = "cef"))]
-        let _ = cx;
     }
 
     fn reload(&mut self, cx: &mut Context<'_, Self>) {
-        #[cfg(feature = "cef")]
-        {
-            if let Some(view) = self.view.borrow().as_ref() {
-                view.reload();
-                cx.notify();
-            } else {
-                self.ensure_runtime_and_load(cx);
-            }
+        self.user_load = true;
+        if let Some(view) = self.view.borrow().as_ref() {
+            view.reload();
+            cx.notify();
+        } else {
+            self.ensure_runtime_and_load(cx);
         }
-        #[cfg(not(feature = "cef"))]
-        let _ = cx;
+    }
+
+    /// Whether a page the user asked for is loading, from CEF's loading state. The first
+    /// `about:blank` and the page of a warm start are not: the warm-up shows in the page area and
+    /// never on the reload button.
+    fn is_loading(&self) -> bool {
+        self.user_load
+            && self
+                .view
+                .borrow()
+                .as_ref()
+                .is_some_and(|view| view.is_loading() && !is_blank_page(&view.url()))
     }
 
     fn can_go_back(&self) -> bool {
-        #[cfg(feature = "cef")]
-        {
-            self.view
-                .borrow()
-                .as_ref()
-                .is_some_and(BrowserView::can_go_back)
-        }
-        #[cfg(not(feature = "cef"))]
-        {
-            false
-        }
+        self.view
+            .borrow()
+            .as_ref()
+            .is_some_and(BrowserView::can_go_back)
     }
 
     fn can_go_forward(&self) -> bool {
-        #[cfg(feature = "cef")]
-        {
-            self.view
-                .borrow()
-                .as_ref()
-                .is_some_and(BrowserView::can_go_forward)
-        }
-        #[cfg(not(feature = "cef"))]
-        {
-            false
-        }
+        self.view
+            .borrow()
+            .as_ref()
+            .is_some_and(BrowserView::can_go_forward)
     }
 
-    #[cfg(feature = "cef")]
+    /// Loads `self.url`. Before the view exists this only keeps the address: the view is made on
+    /// it as soon as Chromium runs, so typing never waits for the runtime.
     fn ensure_runtime_and_load(&mut self, cx: &mut Context<'_, Self>) {
         if let Some(view) = self.view.borrow().as_ref() {
             view.load_url(&self.url);
@@ -1157,126 +1003,81 @@ impl BrowserPanel {
             cx.notify();
             return;
         }
-
-        let runtime = WebRuntime::global();
-        match runtime.state() {
-            WebRuntimeState::Running => {
-                self.phase = RuntimePhase::Running;
-                self.maybe_create_view_deferred(cx);
-                cx.notify();
-                return;
-            }
-            WebRuntimeState::Starting => {
-                self.phase = RuntimePhase::Starting;
-                self.poll_runtime_ready(cx);
-                cx.notify();
-                return;
-            }
-            WebRuntimeState::Downloading { progress_percent } => {
-                self.phase = RuntimePhase::Downloading(progress_percent);
-                cx.notify();
-                return;
-            }
-            WebRuntimeState::NotInstalled | WebRuntimeState::Failed(_) => {}
-        }
-
-        if runtime.is_installed() {
-            self.start_runtime(cx);
-            return;
-        }
-
-        if matches!(self.phase, RuntimePhase::Downloading(_)) {
-            return;
-        }
-
-        self.phase = RuntimePhase::Downloading(0);
-        cx.notify();
-
-        let (tx, mut rx) = futures::channel::mpsc::unbounded::<InstallUpdate>();
-        let spawned = std::thread::Builder::new()
-            .name("conn-web-install".into())
-            .spawn(move || {
-                let progress_tx = tx.clone();
-                let res = WebRuntime::global().ensure_installed(move |pct| {
-                    let _ = progress_tx.unbounded_send(InstallUpdate::Progress(pct));
-                });
-                let _ = tx.unbounded_send(InstallUpdate::Done(res));
-            });
-
-        if let Err(err) = spawned {
-            self.phase = RuntimePhase::Failed(format!("failed to start download thread: {err}"));
+        if runtime_warmup::disabled() {
+            self.phase = RuntimePhase::Failed("Chromium is turned off in this run".into());
             cx.notify();
             return;
         }
 
-        cx.spawn(async move |this, cx| {
-            while let Some(update) = rx.next().await {
-                let finished = matches!(update, InstallUpdate::Done(_));
-                let alive = this.update(cx, |panel, cx| match update {
-                    InstallUpdate::Progress(pct) => {
-                        panel.phase = RuntimePhase::Downloading(pct);
-                        cx.notify();
-                    }
-                    InstallUpdate::Done(Ok(())) => {
-                        panel.start_runtime(cx);
-                    }
-                    InstallUpdate::Done(Err(err)) => {
-                        panel.phase = RuntimePhase::Failed(err.to_string());
-                        cx.notify();
-                    }
-                });
-                if alive.is_err() || finished {
-                    break;
-                }
-            }
-        })
-        .detach();
-    }
-
-    #[cfg(feature = "cef")]
-    fn start_runtime(&mut self, cx: &mut Context<'_, Self>) {
-        match WebRuntime::global().start() {
-            Ok(()) => {
-                if WebRuntime::global().state() == WebRuntimeState::Running {
-                    self.phase = RuntimePhase::Running;
-                    self.maybe_create_view_deferred(cx);
-                } else {
-                    self.phase = RuntimePhase::Starting;
-                    self.poll_runtime_ready(cx);
-                }
-            }
-            Err(err) => {
-                self.phase = RuntimePhase::Failed(err.to_string());
-            }
+        if WebRuntime::global().state() == WebRuntimeState::Running {
+            self.phase = RuntimePhase::Running;
+            self.maybe_create_view_deferred(cx);
+        } else {
+            // The launch warm-up is normally under way; this joins it, or retries after a failure.
+            runtime_warmup::begin(cx);
+            self.phase = runtime_phase(&WebRuntime::global().state());
+            self.poll_runtime_ready(cx);
         }
         cx.notify();
     }
 
-    #[cfg(feature = "cef")]
+    /// Joins the runtime warm-up when the Browser tab shows, so the view exists by the first
+    /// address typed. Tests never show this panel, and `CONN_GPUI_NO_CEF=1` keeps CEF off.
+    fn prewarm_runtime(&mut self, cx: &mut Context<'_, Self>) {
+        if runtime_warmup::disabled() || self.view.borrow().is_some() {
+            return;
+        }
+        self.ensure_runtime_and_load(cx);
+    }
+
+    /// Follows the warm-up (download, helpers, start) until Chromium runs or fails, showing its
+    /// progress in the page area. The toolbar is never gated by this.
     fn poll_runtime_ready(&mut self, cx: &mut Context<'_, Self>) {
+        if self.polling_runtime {
+            return;
+        }
+        self.polling_runtime = true;
         cx.spawn(async move |this, cx| {
-            let started = std::time::Instant::now();
+            let mut starting_since: Option<std::time::Instant> = None;
             loop {
                 cx.background_executor()
-                    .timer(Duration::from_millis(50))
+                    .timer(Duration::from_millis(20))
                     .await;
-                let next = match WebRuntime::global().state() {
-                    WebRuntimeState::Running => Some(RuntimePhase::Running),
-                    WebRuntimeState::Failed(why) => Some(RuntimePhase::Failed(why)),
-                    _ if started.elapsed() > Duration::from_secs(60) => Some(RuntimePhase::Failed(
-                        "timed out waiting for Chromium to start".into(),
-                    )),
+                let state = WebRuntime::global().state();
+                let failure = runtime_warmup::failure();
+                let finished = match (&state, failure) {
+                    (WebRuntimeState::Running, _) => Some(RuntimePhase::Running),
+                    (_, Some(why)) => Some(RuntimePhase::Failed(why)),
+                    (WebRuntimeState::Failed(why), None) if !runtime_warmup::active() => {
+                        Some(RuntimePhase::Failed(why.clone()))
+                    }
+                    (WebRuntimeState::Starting, None)
+                        if starting_since
+                            .get_or_insert_with(std::time::Instant::now)
+                            .elapsed()
+                            > Duration::from_secs(60) =>
+                    {
+                        Some(RuntimePhase::Failed(
+                            "timed out waiting for Chromium to start".into(),
+                        ))
+                    }
                     _ => None,
                 };
-                if let Some(phase) = next {
-                    let _ = this.update(cx, |panel, cx| {
-                        let ready = matches!(phase, RuntimePhase::Running);
+                let alive = this.update(cx, |panel, cx| {
+                    let phase = finished.clone().unwrap_or_else(|| runtime_phase(&state));
+                    let ready = matches!(phase, RuntimePhase::Running);
+                    if panel.phase != phase {
                         panel.phase = phase;
+                        cx.notify();
+                    }
+                    if finished.is_some() {
+                        panel.polling_runtime = false;
                         if ready {
                             panel.maybe_create_view_deferred(cx);
                         }
-                        cx.notify();
-                    });
+                    }
+                });
+                if alive.is_err() || finished.is_some() {
                     break;
                 }
             }
@@ -1284,7 +1085,6 @@ impl BrowserPanel {
         .detach();
     }
 
-    #[cfg(feature = "cef")]
     fn maybe_create_view_deferred(&self, cx: &mut Context<'_, Self>) {
         if self.view.borrow().is_some() || self.creating_view.get() {
             return;
@@ -1314,7 +1114,9 @@ impl BrowserPanel {
             }
             let rect = last_bounds.get().unwrap_or(bounds);
             let scale = last_scale.get().max(1.0);
+            let began = std::time::Instant::now();
             let result = BrowserView::create(rect, scale, &url);
+            trace_browser(&format!("view created in {:?}", began.elapsed()));
             match result {
                 Ok(browser_view) => {
                     // Bounded channel (capacity 1) coalesces frame bursts into a
@@ -1328,57 +1130,59 @@ impl BrowserPanel {
                     // Console + load-end bridge for Conn's `@t3tools/annotation-overlay`.
                     let (overlay_tx, mut overlay_rx) =
                         tokio::sync::mpsc::unbounded_channel::<BrowserOverlayEvent>();
-                    {
-                        let overlay_tx = overlay_tx.clone();
-                        browser_view.on_console_message(move |msg| {
-                            let Some(json) = msg.strip_prefix(OVERLAY_RPC_PREFIX) else {
-                                return false;
+                    let console_tx = overlay_tx.clone();
+                    browser_view.on_console_message(move |msg| {
+                        let Some(json) = msg.strip_prefix(OVERLAY_RPC_PREFIX) else {
+                            return false;
+                        };
+                        if let Ok(parsed) = serde_json::from_str::<OverlayBridgeMessage>(json) {
+                            let ev = match parsed {
+                                OverlayBridgeMessage::Rpc {
+                                    request_id,
+                                    op,
+                                    payload,
+                                } => BrowserOverlayEvent::Rpc {
+                                    request_id,
+                                    op,
+                                    payload,
+                                },
+                                OverlayBridgeMessage::Mode { active } => {
+                                    BrowserOverlayEvent::Mode(active)
+                                }
+                                OverlayBridgeMessage::LaravelToolbar { kind, data, url } => {
+                                    BrowserOverlayEvent::LaravelToolbar { kind, data, url }
+                                }
+                                OverlayBridgeMessage::LaravelToolbarDetails { id, raw } => {
+                                    BrowserOverlayEvent::LaravelToolbarDetails { id, raw }
+                                }
+                                OverlayBridgeMessage::PreviewResult {
+                                    request_id,
+                                    ok,
+                                    value,
+                                    error,
+                                } => BrowserOverlayEvent::PreviewResult {
+                                    request_id,
+                                    ok,
+                                    value,
+                                    error,
+                                },
                             };
-                            if let Ok(parsed) = serde_json::from_str::<OverlayBridgeMessage>(json) {
-                                let ev = match parsed {
-                                    OverlayBridgeMessage::Rpc {
-                                        request_id,
-                                        op,
-                                        payload,
-                                    } => BrowserOverlayEvent::Rpc {
-                                        request_id,
-                                        op,
-                                        payload,
-                                    },
-                                    OverlayBridgeMessage::Mode { active } => {
-                                        BrowserOverlayEvent::Mode(active)
-                                    }
-                                    OverlayBridgeMessage::LaravelToolbar { kind, data } => {
-                                        BrowserOverlayEvent::LaravelToolbar { kind, data }
-                                    }
-                                    OverlayBridgeMessage::LaravelToolbarHeaders {
-                                        full,
-                                        summary,
-                                        method,
-                                        url,
-                                    } => BrowserOverlayEvent::LaravelToolbarHeaders {
-                                        full,
-                                        summary,
-                                        method,
-                                        url,
-                                    },
-                                    OverlayBridgeMessage::PreviewResult {
-                                        request_id,
-                                        ok,
-                                        value,
-                                        error,
-                                    } => BrowserOverlayEvent::PreviewResult {
-                                        request_id,
-                                        ok,
-                                        value,
-                                        error,
-                                    },
-                                };
-                                let _ = overlay_tx.send(ev);
-                            }
-                            true
-                        });
-                    }
+                            let _ = console_tx.send(ev);
+                        }
+                        true
+                    });
+                    let menu_tx = overlay_tx.clone();
+                    browser_view.on_context_menu(move |event| {
+                        let _ = menu_tx.send(BrowserOverlayEvent::ContextMenu(event));
+                    });
+                    let start_tx = overlay_tx.clone();
+                    let response_tx = overlay_tx.clone();
+                    browser_view.on_load_start(move |_url| {
+                        let _ = start_tx.send(BrowserOverlayEvent::LoadStart);
+                    });
+                    browser_view.on_toolbar_response(move |response| {
+                        let _ = response_tx.send(BrowserOverlayEvent::ToolbarResponse(response));
+                    });
                     browser_view.on_load_end(move |_url, _status| {
                         let _ = overlay_tx.send(BrowserOverlayEvent::LoadEnd);
                     });
@@ -1414,28 +1218,43 @@ impl BrowserPanel {
                                                 cx.notify();
                                             }
                                         }
-                                        BrowserOverlayEvent::LaravelToolbar { kind, data } => {
-                                            if let Some(map) = data.as_object() {
-                                                panel.record_laravel_toolbar_data(
-                                                    kind == "page",
-                                                    map,
-                                                );
-                                                cx.notify();
+                                        BrowserOverlayEvent::LaravelToolbar { kind, data, url } => {
+                                            let map = data.as_object().cloned();
+                                            panel.laravel_toolbar.update(cx, |bar, cx| {
+                                                match (kind.as_str(), map) {
+                                                    ("page", Some(map)) => {
+                                                        bar.on_page_data(Some(map), &url, cx)
+                                                    }
+                                                    ("ready", _) => {
+                                                        bar.on_page_data(None, &url, cx)
+                                                    }
+                                                    ("update", Some(map)) => {
+                                                        bar.on_page_update(map, cx)
+                                                    }
+                                                    _ => {}
+                                                }
+                                            });
+                                            cx.notify();
+                                        }
+                                        BrowserOverlayEvent::LaravelToolbarDetails { id, raw } => {
+                                            if let Some(map) = raw.as_object().cloned() {
+                                                panel.laravel_toolbar.update(cx, |bar, cx| {
+                                                    bar.on_details(&id, map, cx)
+                                                });
                                             }
                                         }
-                                        BrowserOverlayEvent::LaravelToolbarHeaders {
-                                            full,
-                                            summary,
-                                            method,
-                                            url,
-                                        } => {
-                                            panel.record_laravel_toolbar_headers(
-                                                full.as_deref(),
-                                                summary.as_deref(),
-                                                method.as_deref(),
-                                                url.as_deref(),
-                                            );
-                                            cx.notify();
+                                        BrowserOverlayEvent::ToolbarResponse(response) => {
+                                            panel.laravel_toolbar.update(cx, |bar, cx| {
+                                                bar.on_response(response, cx)
+                                            });
+                                        }
+                                        BrowserOverlayEvent::LoadStart => {
+                                            if let Some(view) = panel.view.borrow().as_ref() {
+                                                view.execute_javascript(&host_script());
+                                            }
+                                            panel
+                                                .laravel_toolbar
+                                                .update(cx, |bar, cx| bar.on_load_start(cx));
                                         }
                                         BrowserOverlayEvent::PreviewResult {
                                             request_id,
@@ -1456,12 +1275,24 @@ impl BrowserPanel {
                                                 let _ = tx.send(reply);
                                             }
                                         }
+                                        BrowserOverlayEvent::ContextMenu(
+                                            ContextMenuEvent::Open(request),
+                                        ) => {
+                                            // A menu still open is replaced, which cancels it.
+                                            panel.context_menu = Some(OpenMenu::new(request));
+                                            cx.notify();
+                                        }
+                                        BrowserOverlayEvent::ContextMenu(
+                                            ContextMenuEvent::Dismissed,
+                                        ) => {
+                                            if panel.context_menu.take().is_some() {
+                                                cx.notify();
+                                            }
+                                        }
                                         BrowserOverlayEvent::LoadEnd => {
                                             panel.overlay_injected_load_count.set(None);
                                             panel.annotations.annotating = false;
                                             panel.vault_logins.open = false;
-                                            panel.laravel_toolbar.clear();
-                                            panel.laravel_toolbar_selected = 0;
                                             panel.ensure_bridge_injected();
                                             panel.maybe_show_existing_pins();
                                             cx.notify();
@@ -1491,7 +1322,6 @@ impl BrowserPanel {
     /// Pulls a new BGRA frame from CEF only when `frame_generation` advances,
     /// keeping the previous frame on screen across navigations so there is no
     /// blank flash or fade.
-    #[cfg(feature = "cef")]
     fn refresh_frame(&mut self, cx: &mut Context<'_, Self>) {
         let last_gen = self
             .rendered_frame
@@ -1523,7 +1353,6 @@ impl BrowserPanel {
         }
     }
 
-    #[cfg(feature = "cef")]
     fn local_coords(&self, position: Point<Pixels>) -> Option<(i32, i32)> {
         let bounds = self.last_bounds.get()?;
         let x = (f32::from(position.x) - bounds.x).round() as i32;
@@ -1531,7 +1360,6 @@ impl BrowserPanel {
         Some((x.max(0), y.max(0)))
     }
 
-    #[cfg(feature = "cef")]
     fn handle_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -1544,6 +1372,7 @@ impl BrowserPanel {
             cx.notify();
         }
         window.focus(&self.focus_handle, cx);
+        self.user_load = true;
         let Some((x, y)) = self.local_coords(event.position) else {
             return;
         };
@@ -1563,7 +1392,6 @@ impl BrowserPanel {
         }
     }
 
-    #[cfg(feature = "cef")]
     fn handle_mouse_up(&mut self, event: &MouseUpEvent) {
         let Some((x, y)) = self.local_coords(event.position) else {
             return;
@@ -1583,7 +1411,6 @@ impl BrowserPanel {
         }
     }
 
-    #[cfg(feature = "cef")]
     fn handle_mouse_move(&mut self, event: &MouseMoveEvent) {
         let Some((x, y)) = self.local_coords(event.position) else {
             return;
@@ -1598,7 +1425,6 @@ impl BrowserPanel {
         }
     }
 
-    #[cfg(feature = "cef")]
     fn handle_scroll(&mut self, event: &ScrollEvent) {
         let Some((x, y)) = self.local_coords(event.position) else {
             return;
@@ -1620,7 +1446,58 @@ impl BrowserPanel {
         }
     }
 
-    #[cfg(feature = "cef")]
+    /// Escape cancels the open menu; Up and Down move through it; Enter runs the highlighted row.
+    fn handle_context_menu_key(&mut self, key: &str, cx: &mut Context<'_, Self>) {
+        match key {
+            "escape" => self.context_menu = None,
+            "down" | "up" => {
+                if let Some(menu) = self.context_menu.as_mut() {
+                    menu.step(key == "down");
+                }
+            }
+            "enter" => {
+                if self
+                    .context_menu
+                    .as_ref()
+                    .is_some_and(OpenMenu::choose_cursor)
+                {
+                    self.context_menu = None;
+                }
+            }
+            _ => return,
+        }
+        cx.notify();
+    }
+
+    fn choose_context_row(
+        &mut self,
+        index: usize,
+        _window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self
+            .context_menu
+            .as_ref()
+            .is_some_and(|menu| menu.choose(index))
+        {
+            self.context_menu = None;
+            cx.notify();
+        }
+    }
+
+    fn hover_context_row(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+        if let Some(menu) = self.context_menu.as_mut() {
+            menu.hover(index);
+            cx.notify();
+        }
+    }
+
+    fn dismiss_context_menu(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.context_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
     fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -1630,6 +1507,12 @@ impl BrowserPanel {
         if !self.focus_handle.is_focused(window) {
             return;
         }
+        if self.context_menu.is_some() {
+            // The open menu takes the keyboard; nothing reaches the page.
+            self.handle_context_menu_key(event.keystroke.key.as_str(), cx);
+            cx.stop_propagation();
+            return;
+        }
         let guard = self.view.borrow();
         let Some(view) = guard.as_ref() else {
             return;
@@ -1637,6 +1520,17 @@ impl BrowserPanel {
 
         let ks = &event.keystroke;
         let mods = map_modifiers(ks.modifiers, None, event.is_held);
+
+        // Toggle Developer Tools (`Alt+Command+I`, as in Conn desktop's View menu).
+        if ks.modifiers.platform && ks.modifiers.alt && !ks.modifiers.control && ks.key == "i" {
+            if view.has_dev_tools() {
+                view.close_dev_tools();
+            } else {
+                view.show_dev_tools(None);
+            }
+            cx.stop_propagation();
+            return;
+        }
 
         // Dispatch standard macOS Cmd+edit shortcuts directly to the focused frame.
         if ks.modifiers.platform && !ks.modifiers.control && !ks.modifiers.alt {
@@ -1705,7 +1599,6 @@ impl BrowserPanel {
         cx.stop_propagation();
     }
 
-    #[cfg(feature = "cef")]
     fn handle_key_up(
         &mut self,
         event: &KeyUpEvent,
@@ -1765,7 +1658,7 @@ impl BrowserPanel {
             .hover(move |s| s.bg(hover_bg))
             .on_click(cx.listener(|this, _, _, cx| this.go_back(cx)))
             .child(superhero_icon(
-                "superhero/chevron-left.svg",
+                "superhero/arrow-left.svg",
                 NAV_ICON_SIZE_PX,
                 back_color,
             ));
@@ -1782,10 +1675,28 @@ impl BrowserPanel {
             .hover(move |s| s.bg(hover_bg))
             .on_click(cx.listener(|this, _, _, cx| this.go_forward(cx)))
             .child(superhero_icon(
-                "superhero/chevron-right.svg",
+                "superhero/arrow-right.svg",
                 NAV_ICON_SIZE_PX,
                 forward_color,
             ));
+
+        // Web's `RefreshIcon` spins while the page loads (`motion-safe:visible-animate-spin`,
+        // one linear turn per second). GPUI's animation stays still under Reduce Motion.
+        let loading = self.is_loading();
+        let reload_icon = superhero_icon("superhero/refresh.svg", NAV_ICON_SIZE_PX, fg);
+        let reload_icon = if loading {
+            reload_icon
+                .with_animation(
+                    "browser-reload-spin",
+                    Animation::new(Duration::from_secs(1)).repeat(),
+                    |icon, delta| {
+                        icon.with_transformation(Transformation::rotate(percentage(delta)))
+                    },
+                )
+                .into_any_element()
+        } else {
+            reload_icon.into_any_element()
+        };
 
         let reload_btn = div()
             .id("browser-nav-reload")
@@ -1798,11 +1709,7 @@ impl BrowserPanel {
             .cursor_pointer()
             .hover(move |s| s.bg(hover_bg))
             .on_click(cx.listener(|this, _, _, cx| this.reload(cx)))
-            .child(superhero_icon(
-                "superhero/refresh.svg",
-                NAV_ICON_SIZE_PX,
-                fg,
-            ));
+            .child(reload_icon);
 
         h_flex()
             .flex_shrink_0()
@@ -2044,116 +1951,104 @@ impl BrowserPanel {
         )
     }
 
-    fn render_laravel_toolbar(&self, cx: &mut Context<'_, Self>) -> Option<gpui_kit::AnyElement> {
-        let entry = self
-            .laravel_toolbar
-            .get(self.laravel_toolbar_selected)
-            .or_else(|| self.laravel_toolbar.first())?;
+    /// The overflow menu (`PreviewMoreMenu`), below the right edge of the toolbar. It lists only
+    /// what the embedded browser can do today; see the report for the items still missing.
+    fn render_more_menu(&self, cx: &mut Context<'_, Self>) -> gpui_kit::AnyElement {
+        let tokens = &self.tokens;
+        let hover = to_hsla(tokens.shell_highlight);
+        let text_color = to_hsla(tokens.popover_foreground);
+        let muted = to_hsla(tokens.muted_foreground);
+        let page = self.shown_url.clone();
+        let can_open_external = page.starts_with("http://") || page.starts_with("https://");
 
-        let fg = to_hsla(self.tokens.foreground);
-        let muted = to_hsla(self.tokens.muted_foreground);
-        let divider = to_hsla(self.tokens.shell_divider_header);
-        let bar_bg = to_hsla(self.tokens.shell_control);
-        let hover = to_hsla(self.tokens.shell_highlight);
-        let status_color = match entry.row.status_code {
-            Some(code) if code >= 500 => to_hsla(self.tokens.destructive),
-            Some(code) if code >= 400 => to_hsla(self.tokens.warning),
-            Some(code) if (200..400).contains(&code) => to_hsla(self.tokens.success),
-            _ => muted,
-        };
-
-        let mut bar = h_flex()
-            .id("browser-laravel-toolbar")
-            .a11y_group("browser.laravel-toolbar", "Laravel Toolbar")
-            .w_full()
-            .h(px(28.0))
-            .px(px(10.0))
-            .gap(px(10.0))
+        // Web's `PreviewMoreMenu` has one DevTools item, "Open DevTools": it opens Chrome's
+        // DevTools in a separate window, or focuses it when it is already open.
+        let has_view = self.view.borrow().is_some();
+        let dev_tools = div()
+            .id("browser-more-devtools")
+            .a11y_button("browser.more.devtools", "Open DevTools")
+            .flex()
+            .flex_row()
             .items_center()
-            .bg(bar_bg)
-            .border_t_1()
-            .border_color(divider)
-            .text_size(px(12.0))
-            .child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(fg)
-                    .child("Laravel"),
-            )
-            .child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(status_color)
-                    .child(format!(
-                        "{} {}",
-                        entry.row.method,
-                        entry
-                            .row
-                            .status_code
-                            .map_or_else(|| "—".to_owned(), |c| c.to_string())
-                    )),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(fg)
-                    .child(entry.row.uri.clone()),
-            );
-
-        if let Some(duration) = &entry.row.duration {
-            bar = bar.child(div().text_color(muted).child(duration.clone()));
-        }
-        if let Some(queries) = entry.queries_count {
-            bar = bar.child(div().text_color(muted).child(format!("{queries} SQL")));
-        }
-        if let Some(mem) = &entry.memory {
-            bar = bar.child(div().text_color(muted).child(mem.clone()));
-        }
-        if self.laravel_toolbar.len() > 1 {
-            bar = bar.child(
-                div()
-                    .id("browser-laravel-history-next")
-                    .a11y_button("browser.laravel.history", "Cycle Laravel Toolbar requests")
-                    .px(px(5.0))
-                    .py(px(1.0))
-                    .rounded(px(4.0))
-                    .cursor_pointer()
+            .gap(px(8.0))
+            .min_h(px(28.0))
+            .px(px(8.0))
+            .py(px(4.0))
+            .rounded(px(8.0))
+            .text_size(px(UI_TEXT_PX))
+            .line_height(px(UI_LINE_HEIGHT_PX))
+            .text_color(text_color)
+            .when(has_view, |el| {
+                el.cursor_pointer()
                     .hover(move |s| s.bg(hover))
-                    .text_color(muted)
                     .on_click(cx.listener(|this, _, _, cx| {
-                        if !this.laravel_toolbar.is_empty() {
-                            this.laravel_toolbar_selected =
-                                (this.laravel_toolbar_selected + 1) % this.laravel_toolbar.len();
-                            cx.notify();
+                        if let Some(view) = this.view.borrow().as_ref() {
+                            view.show_dev_tools(None);
                         }
+                        this.more_menu_open = false;
+                        cx.notify();
                     }))
-                    .child(format!(
-                        "{}/{}",
-                        self.laravel_toolbar_selected + 1,
-                        self.laravel_toolbar.len()
-                    )),
-            );
-        }
-        bar = bar.child(
-            div()
-                .id("browser-laravel-clear")
-                .a11y_button("browser.laravel.clear", "Clear Laravel Toolbar")
-                .px(px(4.0))
-                .py(px(2.0))
-                .rounded(px(4.0))
-                .cursor_pointer()
-                .hover(move |s| s.bg(hover))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.laravel_toolbar.clear();
-                    this.laravel_toolbar_selected = 0;
-                    cx.notify();
-                }))
-                .child(superhero_icon("superhero/close.svg", 11.0, muted)),
-        );
+            })
+            .when(!has_view, |el| el.opacity(0.5))
+            .child(superhero_icon("superhero/code.svg", 14.0, muted))
+            .child("Open DevTools");
 
-        Some(bar.into_any_element())
+        let open_external = div()
+            .id("browser-more-open-external")
+            .a11y_button("browser.more.open-external", "Open in system browser")
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.0))
+            .min_h(px(28.0))
+            .px(px(8.0))
+            .py(px(4.0))
+            .rounded(px(8.0))
+            .text_size(px(UI_TEXT_PX))
+            .line_height(px(UI_LINE_HEIGHT_PX))
+            .text_color(text_color)
+            .when(can_open_external, |el| {
+                el.cursor_pointer()
+                    .hover(move |s| s.bg(hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.open_url(&page);
+                        this.more_menu_open = false;
+                        cx.notify();
+                    }))
+            })
+            .when(!can_open_external, |el| el.opacity(0.5))
+            .child(superhero_icon("superhero/external-link.svg", 14.0, muted))
+            .child("Open in system browser");
+
+        let menu = v_flex()
+            .id("browser-more-menu-popup")
+            .a11y(gpui_kit::Role::Menu, "browser.more.menu", "Browser menu")
+            .min_w(px(200.0))
+            .p(px(4.0))
+            .rounded(px(12.0))
+            .bg(to_hsla(tokens.popover))
+            .border_1()
+            .border_color(to_hsla(tokens.foreground.with_alpha(0.08)))
+            .shadow(vec![super::header::dropdown_glass_shadow(tokens)])
+            .on_mouse_down(gpui_kit::MouseButton::Left, |_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.more_menu_open = false;
+                cx.notify();
+            }))
+            .child(dev_tools)
+            .child(open_external);
+
+        gpui_kit::deferred(
+            div()
+                .absolute()
+                .top(px(TOOLBAR_HEIGHT_PX + 6.0))
+                .right(px(0.0))
+                .child(menu),
+        )
+        .with_priority(3)
+        .into_any_element()
     }
 
     fn render_annotations_toolbar_group(&self, cx: &mut Context<'_, Self>) -> gpui_kit::Div {
@@ -2267,6 +2162,29 @@ impl BrowserPanel {
                 )
             });
 
+        let more_open = self.more_menu_open;
+        let more_btn = div()
+            .id("browser-more-menu")
+            .a11y_button("browser.more", "Browser menu")
+            .size(px(TOOLBAR_BUTTON_SIZE_PX))
+            .rounded(px(9999.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .when(more_open, |el| el.bg(hover_bg))
+            .hover(move |s| s.bg(hover_bg))
+            .conn_tooltip("More", &self.tokens)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.more_menu_open = !this.more_menu_open;
+                cx.notify();
+            }))
+            .child(superhero_icon(
+                "superhero/more-vertical.svg",
+                NAV_ICON_SIZE_PX,
+                if more_open { fg } else { muted },
+            ));
+
         let mut anchor = div().relative().flex_shrink_0().child(
             h_flex()
                 .h(px(TOOLBAR_HEIGHT_PX))
@@ -2278,8 +2196,13 @@ impl BrowserPanel {
                 .border_1()
                 .border_color(if annotating { primary } else { border })
                 .child(annotate_btn)
-                .child(queue_btn),
+                .child(queue_btn)
+                .child(more_btn),
         );
+
+        if more_open {
+            anchor = anchor.child(self.render_more_menu(cx));
+        }
 
         if self.annotations.queue_open {
             let callbacks = QueuePopoverCallbacks {
@@ -2351,7 +2274,6 @@ impl BrowserPanel {
 impl Render for BrowserPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         // Keep the address field on the page's URL (navigation, redirects, links).
-        #[cfg(feature = "cef")]
         let current_url = self
             .view
             .borrow()
@@ -2359,12 +2281,11 @@ impl Render for BrowserPanel {
             .map(BrowserView::url)
             .filter(|u| !u.is_empty())
             .unwrap_or_else(|| self.url.clone());
-        #[cfg(not(feature = "cef"))]
-        let current_url = self.url.clone();
         if current_url != self.shown_url {
             self.shown_url = current_url.clone();
-            self.url_input
-                .update(cx, |input, cx| input.set_value(current_url, window, cx));
+            self.url_input.update(cx, |input, cx| {
+                input.set_value(address_text(&current_url), window, cx);
+            });
         }
 
         let field_bg = to_hsla(self.tokens.shell_field);
@@ -2375,7 +2296,6 @@ impl Render for BrowserPanel {
         let tile_bg = to_hsla(self.tokens.shell_tile);
         let tile_border = to_hsla(self.tokens.shell_tile_border);
 
-        #[cfg(feature = "cef")]
         let body = {
             self.last_scale.set(window.scale_factor().max(1.0));
             if self.visible.get() {
@@ -2525,6 +2445,66 @@ impl Render for BrowserPanel {
                 }))
                 .child(page_canvas);
 
+            // A page that failed to load: say why, in the page area, with a way to try again.
+            let load_error = self
+                .view
+                .borrow()
+                .as_ref()
+                .and_then(BrowserView::load_error);
+            if let Some(error) = load_error {
+                let retry_url = error.url.clone();
+                container = container.child(
+                    v_flex()
+                        .id("browser-load-error")
+                        .a11y_group("browser.load-error", "Page failed to load")
+                        .absolute()
+                        .inset_0()
+                        .items_center()
+                        .justify_center()
+                        .gap(px(10.0))
+                        .bg(to_hsla(self.tokens.background))
+                        .child(
+                            div()
+                                .text_size(px(UI_TEXT_PX))
+                                .line_height(px(UI_LINE_HEIGHT_PX))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(fg)
+                                .child(error.message()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(UI_TEXT_PX))
+                                .line_height(px(UI_LINE_HEIGHT_PX))
+                                .text_color(muted)
+                                .child(error.name()),
+                        )
+                        .child(
+                            div()
+                                .id("browser-load-error-retry")
+                                .a11y_button("browser.load-error.retry", "Retry")
+                                .h(px(28.0))
+                                .px(px(12.0))
+                                .flex()
+                                .items_center()
+                                .rounded(px(9999.0))
+                                .bg(tile_bg)
+                                .border_1()
+                                .border_color(tile_border)
+                                .text_size(px(UI_TEXT_PX))
+                                .text_color(fg)
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.user_load = true;
+                                    if let Some(view) = this.view.borrow().as_ref() {
+                                        view.load_url(&retry_url);
+                                    }
+                                    cx.notify();
+                                }))
+                                .child("Retry"),
+                        ),
+                );
+            }
+
             if let Some(message) = status_message {
                 container = container.child(
                     v_flex()
@@ -2557,36 +2537,6 @@ impl Render for BrowserPanel {
             container
         };
 
-        #[cfg(not(feature = "cef"))]
-        let body = {
-            let _ = window;
-            v_flex()
-                .flex_1()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap(px(10.0))
-                .child(
-                    div()
-                        .size(px(40.0))
-                        .rounded(px(10.0))
-                        .bg(tile_bg)
-                        .border_1()
-                        .border_color(tile_border)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(superhero_icon("superhero/globe.svg", 18.0, fg)),
-                )
-                .child(
-                    div()
-                        .text_size(px(UI_TEXT_PX))
-                        .line_height(px(UI_LINE_HEIGHT_PX))
-                        .text_color(muted)
-                        .child("Browser runtime not built (enable feature cef)"),
-                )
-        };
-
         let is_https = https_origin(&self.url).is_some();
         let vault_hover = to_hsla(self.tokens.shell_highlight);
         let vault_btn = is_https.then(|| {
@@ -2613,7 +2563,28 @@ impl Render for BrowserPanel {
         });
 
         let vault_popover = self.render_vault_logins_popover(cx);
-        let laravel_bar = self.render_laravel_toolbar(cx);
+        let laravel_bar = self
+            .laravel_toolbar
+            .read(cx)
+            .is_visible()
+            .then(|| self.laravel_toolbar.clone());
+        let context_menu = self.context_menu.as_ref().and_then(|menu| {
+            let bounds = self.last_bounds.get()?;
+            let (x, y) = menu.position();
+            let origin = gpui_kit::point(px(bounds.x + x as f32), px(bounds.y + y as f32));
+            let actions = MenuActions {
+                choose: Self::choose_context_row,
+                hover: Self::hover_context_row,
+                dismiss: Self::dismiss_context_menu,
+            };
+            Some(render_context_menu(
+                menu,
+                origin,
+                &self.tokens,
+                &actions,
+                cx,
+            ))
+        });
 
         v_flex()
             .relative()
@@ -2658,6 +2629,7 @@ impl Render for BrowserPanel {
                                 div().flex_1().min_w_0().child(
                                     Input::new(&self.url_input)
                                         .appearance(false)
+                                        .px_0()
                                         .text_size(px(UI_TEXT_PX)),
                                 ),
                             )
@@ -2669,7 +2641,14 @@ impl Render for BrowserPanel {
             .child(body)
             .children(laravel_bar)
             .children(vault_popover)
+            .children(context_menu)
     }
+}
+
+/// Logs the browser panel's start-up steps: to stderr with `CONN_WEB_TRACE=1`, and in debug
+/// builds to `/tmp/conn-web-trace.log`.
+fn trace_browser(what: &str) {
+    conn_web::trace("conn-browser", what);
 }
 
 fn default_browser_url() -> String {
@@ -2680,19 +2659,36 @@ fn default_browser_url() -> String {
         .unwrap_or_else(|| DEFAULT_FALLBACK_URL.to_owned())
 }
 
-fn normalize_url(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return DEFAULT_FALLBACK_URL.to_owned();
-    }
-    if trimmed.contains("://") || trimmed.starts_with("about:") || trimmed.starts_with("data:") {
-        trimmed.to_owned()
+/// A page that shows nothing: the first load and an empty tab.
+fn is_blank_page(url: &str) -> bool {
+    url.is_empty() || url == DEFAULT_FALLBACK_URL
+}
+
+/// What the address field shows for `url`: a blank page shows the placeholder, not `about:blank`.
+fn address_text(url: &str) -> String {
+    if url == DEFAULT_FALLBACK_URL {
+        String::new()
     } else {
-        format!("http://{trimmed}")
+        url.to_owned()
     }
 }
 
-#[cfg(feature = "cef")]
+fn normalize_url(raw: &str) -> String {
+    super::address::resolve_address(raw)
+}
+
+/// The page-area status for the runtime's state.
+fn runtime_phase(state: &WebRuntimeState) -> RuntimePhase {
+    match state {
+        WebRuntimeState::Running => RuntimePhase::Running,
+        WebRuntimeState::Downloading { progress_percent } => {
+            RuntimePhase::Downloading(*progress_percent)
+        }
+        WebRuntimeState::Failed(why) => RuntimePhase::Failed(why.clone()),
+        WebRuntimeState::Starting | WebRuntimeState::NotInstalled => RuntimePhase::Starting,
+    }
+}
+
 fn initial_phase() -> RuntimePhase {
     match WebRuntime::global().state() {
         WebRuntimeState::Running => RuntimePhase::Running,
@@ -2706,7 +2702,6 @@ fn initial_phase() -> RuntimePhase {
 }
 
 /// Sends the hidden state to CEF only when it changes.
-#[cfg(feature = "cef")]
 fn apply_hidden(
     view: &Rc<RefCell<Option<BrowserView>>>,
     applied: &Rc<Cell<Option<bool>>>,
@@ -2721,7 +2716,6 @@ fn apply_hidden(
     }
 }
 
-#[cfg(feature = "cef")]
 fn map_mouse_button(button: MouseButton) -> Option<WebMouseButton> {
     match button {
         MouseButton::Left => Some(WebMouseButton::Left),
@@ -2731,7 +2725,6 @@ fn map_mouse_button(button: MouseButton) -> Option<WebMouseButton> {
     }
 }
 
-#[cfg(feature = "cef")]
 fn map_modifiers(
     modifiers: GpuiModifiers,
     pressed_button: Option<MouseButton>,
@@ -2749,7 +2742,6 @@ fn map_modifiers(
     }
 }
 
-#[cfg(feature = "cef")]
 fn map_cursor_style(kind: CursorKind) -> CursorStyle {
     match kind {
         CursorKind::Default | CursorKind::Wait => CursorStyle::Arrow,
@@ -2772,7 +2764,6 @@ fn map_cursor_style(kind: CursorKind) -> CursorStyle {
     }
 }
 
-#[cfg(feature = "cef")]
 fn gpui_key_to_windows_vk(key: &str) -> i32 {
     match key {
         "backspace" => 0x08,
@@ -2827,7 +2818,6 @@ fn gpui_key_to_windows_vk(key: &str) -> i32 {
 }
 
 /// Returns `http(s)://host[:port]` for HTTP/HTTPS URLs, matching Conn's `pageOrigin`.
-#[cfg(feature = "cef")]
 fn page_origin(raw: &str) -> Option<String> {
     let parsed = url::Url::parse(raw.trim()).ok()?;
     if !matches!(parsed.scheme(), "http" | "https") {
@@ -2837,7 +2827,6 @@ fn page_origin(raw: &str) -> Option<String> {
 }
 
 /// Only browser annotations belonging to `origin` are visible inside that site's overlay.
-#[cfg(feature = "cef")]
 fn annotation_belongs_to_origin(record: &AnnotationRecord, origin: &str) -> bool {
     if record.source == Some(conn_state::AnnotationRecordSource::Device) {
         return false;
@@ -2851,7 +2840,6 @@ fn annotation_belongs_to_origin(record: &AnnotationRecord, origin: &str) -> bool
 
 /// Crops a region around `(x, y, w, h)` (CSS viewport points) out of CEF's BGRA frame
 /// snapshot and encodes it as a `data:image/png;base64,...` string for `@t3tools/annotation-overlay`.
-#[cfg(feature = "cef")]
 fn encode_bgra_crop_png_data_url(
     frame: &conn_web::FrameSnapshot,
     scale: f32,
@@ -2900,7 +2888,6 @@ fn encode_bgra_crop_png_data_url(
     ))
 }
 
-#[cfg(feature = "cef")]
 fn encode_base64(input: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);

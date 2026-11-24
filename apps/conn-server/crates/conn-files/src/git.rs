@@ -1,4 +1,4 @@
-//! Short `git` calls that classify files: `ls-files` and `check-ignore`. Blocking; each call
+//! Short `git` calls that classify files: `ls-files`, `check-ignore` and `worktree list`. Blocking; each call
 //! gets one helper thread that feeds stdin and kills git at its deadline, so a stuck git ends.
 
 use std::{
@@ -99,4 +99,28 @@ fn stream(
     drop(out);
     let code = watchdog.join().ok()?;
     Some(if finished { code } else { None })
+}
+
+/// The checkouts `git worktree list` names under `cwd`'s repository, the main one included.
+/// A `prunable` record is left out: its folder is gone, and another checkout may sit there.
+pub(crate) fn worktrees(cwd: &Path) -> Vec<String> {
+    let list = |args: &[&str]| {
+        let mut all = vec!["worktree", "list", "--porcelain"];
+        all.extend_from_slice(args);
+        run(cwd, &all, None, 1024 * 1024, Duration::from_secs(5))
+            .filter(|o| o.code == Some(0) && !o.truncated)
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+    // Only NUL framing keeps a newline in a path. Git before 2.36 rejects `-z`.
+    let Some(listed) = list(&["-z"]).or_else(|| list(&[]).map(|s| s.replace('\n', "\0"))) else {
+        return Vec::new();
+    };
+    listed
+        .split("\0\0")
+        .filter_map(|record| {
+            let mut fields = record.split('\0');
+            let path = fields.clone().find_map(|f| f.strip_prefix("worktree "))?;
+            (!fields.any(|f| f.starts_with("prunable"))).then(|| path.to_owned())
+        })
+        .collect()
 }

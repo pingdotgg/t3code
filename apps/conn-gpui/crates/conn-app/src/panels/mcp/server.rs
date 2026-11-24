@@ -1,6 +1,7 @@
 //! The Server tab of the MCP panel (Conn `McpPanel.tsx` `ServerTab`): connected server info,
 //! capabilities, instructions, server name, stdio working folder, and environment/header rows.
 
+use crate::a11y::ConnA11yExt as _;
 use conn_desktop::mcp::servers::{McpRow, McpServerDraft, McpTransport};
 use conn_desktop::mcp::store::McpSession;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -93,6 +94,7 @@ impl McpPanel {
 
         let mut scroller = v_flex()
             .id("mcp-server-scroll")
+            .a11y_group("panel.mcp.server", "MCP server settings")
             .flex_1()
             .min_h_0()
             .w_full()
@@ -260,6 +262,7 @@ impl McpPanel {
             rows_col = rows_col.child(
                 h_flex()
                     .id(SharedString::from(format!("mcp-kv-row-{}", row.id)))
+                    .a11y_group(format!("panel.mcp.kv-row.{}", row.id), "Key and value")
                     .group(group.clone())
                     .w_full()
                     .items_center()
