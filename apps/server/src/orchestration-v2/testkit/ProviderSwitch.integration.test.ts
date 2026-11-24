@@ -31,6 +31,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -4758,6 +4759,7 @@ describe("orchestration v2 provider switching", () => {
       const cwd = yield* checkpointWorkspace("runtime-mode-running-turn");
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
       const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
       const threadId = ThreadId.make("thread:runtime-mode-running-turn");
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -4824,6 +4826,27 @@ describe("orchestration v2 provider switching", () => {
           projection.runs.map((run) => run.status),
           ["running"],
         );
+
+        // Once the run ends, the old-mode session closes so no later turn or wake reuses it.
+        const detached = yield* orchestrator.streamStoredEvents.pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "provider-session.detached" && event.threadId === threadId,
+          ),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        yield* Deferred.succeed(release, undefined);
+        const detachedEvent = Option.getOrThrow(yield* Fiber.join(detached)).event;
+        assert.equal(
+          detachedEvent.type === "provider-session.detached" && detachedEvent.payload.reason,
+          "Runtime mode changed.",
+        );
+        const settled = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          settled.runs.map((run) => run.status),
+          ["completed"],
+        );
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
@@ -4848,6 +4871,7 @@ describe("orchestration v2 provider switching", () => {
                 responseByRunOrdinal: { 1: "Long task finished" },
                 capturedTurns,
                 holdFirstTurn: started,
+                releaseFirstTurn: release,
               }),
             ]),
           ),

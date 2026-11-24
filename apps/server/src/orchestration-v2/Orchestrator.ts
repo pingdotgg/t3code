@@ -2526,6 +2526,62 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return true;
   });
 
+  // A mode change during a run leaves sessions that cannot switch modes on the old one. Close
+  // them once no run is active, before a later turn or wake could run under the old mode.
+  const detachSessionsBehindRuntimeMode = Effect.fn("Orchestrator.detachSessionsBehindRuntimeMode")(
+    function* (threadId: ThreadId) {
+      const { thread, providerSessions } =
+        yield* projectionStore.getThreadProviderContext(threadId);
+      const fixedModeSessions = providerSessions.filter(
+        (session) =>
+          !session.capabilities.sessions.supportsRuntimeModeSwitchInSession &&
+          session.status !== "stopped" &&
+          session.status !== "error",
+      );
+      if (fixedModeSessions.length === 0) return;
+      const { runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
+        runStatuses: ["preparing", "starting", "running", "waiting"],
+        includeLatestExecutedRun: true,
+      });
+      if (runs.some(isActiveRun)) return;
+      const attemptId = latestExecutedRun(runs)?.activeAttemptId;
+      if (attemptId == null) return;
+      const { attempts } = yield* projectionStore.getThreadRecords(threadId, ["attempts"], {
+        attemptIds: [attemptId],
+      });
+      const startedMode = attempts.find((attempt) => attempt.id === attemptId)?.startedModes
+        ?.runtimeMode;
+      if (startedMode === undefined || startedMode === thread.runtimeMode) return;
+      const now = yield* DateTime.now;
+      const commandId = CommandId.make(`command:system:runtime-mode-detach:${attemptId}`);
+      const effectSuffix = yield* idAllocator.allocate.event({ threadId, commandId });
+      yield* writeSystemEvents(
+        fixedModeSessions.map((session) => ({
+          type: "provider-session.detached" as const,
+          threadId,
+          driver: session.driver,
+          providerInstanceId: session.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            providerSessionId: session.id,
+            detachedAt: now,
+            reason: "Runtime mode changed.",
+          },
+        })),
+        fixedModeSessions.map((session) => ({
+          id: `effect:${commandId}:provider-session.detach:${session.id}:${effectSuffix}`,
+          commandId,
+          threadId,
+          request: {
+            type: "provider-session.detach" as const,
+            providerSessionId: session.id,
+            detail: "Runtime mode changed.",
+          },
+        })),
+      );
+    },
+  );
+
   const startNextQueuedRunOnce = Effect.fn("Orchestrator.startNextQueuedRun")(
     function* (
       threadId: ThreadId,
@@ -4860,6 +4916,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           })
         : null;
 
+    // A running turn keeps the mode it started with; detachSessionsBehindRuntimeMode closes
+    // its session once the run ends.
+    const runtimeModeWaitsForRun =
+      command.type === "thread.runtime-mode.set" &&
+      (yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs"], {
+          runStatuses: ["preparing", "starting", "running", "waiting"],
+        })
+        .pipe(mapDispatchError(command))).runs.some(isActiveRun);
     // Archive and settle stop idle background work; serialized commands prevent starts racing detach.
     // Settlement rejects active or blocked runs.
     const detachSessionIds = new Set(
@@ -4870,7 +4935,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.worktreePath !== thread.worktreePath
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
-            ? (providerContext?.providerSessions ?? [])
+            ? (runtimeModeWaitsForRun ? [] : (providerContext?.providerSessions ?? []))
                 .filter(
                   (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
                 )
@@ -16560,7 +16625,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.dispatchMode.type === "defer_start")
     ) {
       yield* mapDispatchError(command)(
-        requeueUnreadSteers(command.threadId).pipe(
+        detachSessionsBehindRuntimeMode(command.threadId).pipe(
+          Effect.andThen(requeueUnreadSteers(command.threadId)),
           Effect.andThen(startNextQueuedRun(command.threadId, { latestRunEnded: true })),
         ),
       );
@@ -16955,10 +17021,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* threadDispatch
           .withLock(
             threadId,
-            (run.status === "completed"
-              ? releaseUnattendedHolds(threadId, run.id)
-              : Effect.void
-            ).pipe(
+            detachSessionsBehindRuntimeMode(threadId).pipe(
+              Effect.andThen(
+                run.status === "completed" ? releaseUnattendedHolds(threadId, run.id) : Effect.void,
+              ),
               Effect.andThen(
                 requeueUnreadSteers(threadId, [run.id]).pipe(
                   Effect.catchCause((cause) =>
