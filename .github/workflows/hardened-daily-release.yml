@@ -74,7 +74,7 @@ jobs:
     name: Release
     needs: [sync, resolve]
     if: ${{ !cancelled() && !inputs.sync_only && needs.sync.result == 'success' && (needs.resolve.result == 'success' || needs.resolve.result == 'skipped') }}
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
