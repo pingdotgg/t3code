@@ -539,15 +539,7 @@ describe("sidebar offline environment", () => {
       const remoteRow = rowOf("Remote thread");
 
       expect(localRow.querySelector('button[aria-label="Settle thread"]')).not.toBeNull();
-      expect(localRow.querySelector('button[aria-label="Offline"]')).toBeNull();
       expect(remoteRow.querySelector('button[aria-label="Settle thread"]')).toBeNull();
-      const offline = remoteRow.querySelector<HTMLButtonElement>('button[aria-label="Offline"]');
-      expect(offline).not.toBeNull();
-
-      await act(() => offline!.click());
-      await vi.waitFor(() =>
-        expect(screen.router!.state.location.pathname).toBe("/settings/connections"),
-      );
     },
   );
 });

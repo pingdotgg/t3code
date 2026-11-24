@@ -48,7 +48,6 @@ import {
   CircleDashedIcon,
   CircleDotDashedIcon,
   ClockIcon,
-  CloudOffIcon,
   FolderGit2Icon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
@@ -61,7 +60,6 @@ import {
   UserRoundIcon,
   XIcon,
 } from "lucide-react";
-import { useNavigate } from "@tanstack/react-router";
 import {
   memo,
   useRef,
@@ -684,48 +682,6 @@ function ThreadRenameInput(props: {
   );
 }
 
-function OfflineThreadButton(props: {
-  environmentLabel: string | null;
-  showLabel: boolean;
-  className: string;
-}) {
-  const gt = useGT();
-  const navigate = useNavigate();
-  const label = gt("Offline", { $context: "environment connection state" });
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            aria-label={label}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              void navigate({ to: "/settings/connections" });
-            }}
-            className={props.className}
-          />
-        }
-      >
-        <CloudOffIcon className="size-3.5" />
-        {props.showLabel ? label : null}
-      </TooltipTrigger>
-      <TooltipPopup side="top">
-        {props.environmentLabel === null
-          ? gt(
-              "This environment is offline. Settle it once it reconnects, or remove it in Settings.",
-            )
-          : gt(
-              "{environment} is offline. Settle it once it reconnects, or remove it in Settings.",
-              { environment: props.environmentLabel },
-            )}
-      </TooltipPopup>
-    </Tooltip>
-  );
-}
-
 const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const gt = useGT();
   const messages = useMessages();
@@ -754,9 +710,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
-  const isOffline = !useEnvironmentConnected(thread.environmentId);
-  const canOperateThread =
-    useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope) && !isOffline;
+  const hasOperateScope = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const isConnected = useEnvironmentConnected(thread.environmentId);
+  const canOperateThread = hasOperateScope && isConnected;
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const { revealRef } = props;
   const rowRef = (row: HTMLElement | null) => {
@@ -1491,16 +1447,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       </span>
                     )}
                   </span>
-                  {isOffline ? (
-                    <OfflineThreadButton
-                      environmentLabel={props.environmentLabel}
-                      showLabel={false}
-                      className={cn(
-                        "pointer-events-none absolute inset-y-0 right-0 -mr-2 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
-                        isWoke && "group-any-hover/sidebar-row:static",
-                      )}
-                    />
-                  ) : !canOperateThread ? null : variantAction === "unsnooze" ? (
+                  {!canOperateThread ? null : variantAction === "unsnooze" ? (
                     !props.snoozeSupported ? null : (
                       <button
                         type="button"
@@ -1705,7 +1652,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       <RelativeTimeLabel timestamp={resolveThreadActivityTimestamp(thread)} />
                     )}
                   </span>
-                  {props.settlementSupported || showSnoozeButton || hasUnsentDraft || isOffline ? (
+                  {(props.settlementSupported && canOperateThread) ||
+                  showSnoozeButton ||
+                  hasUnsentDraft ? (
                     <span
                       className={cn(
                         // Mouse clicks leave Settle focused; focus-within would pin controls over
@@ -1742,13 +1691,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           environmentId={thread.environmentId}
                         />
                       ) : null}
-                      {isOffline ? (
-                        <OfflineThreadButton
-                          environmentLabel={props.environmentLabel}
-                          showLabel
-                          className="-mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
-                        />
-                      ) : props.settlementSupported && canOperateThread ? (
+                      {props.settlementSupported && canOperateThread ? (
                         <Tooltip>
                           <TooltipTrigger
                             render={
