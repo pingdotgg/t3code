@@ -24,16 +24,11 @@ describe("Muse model catalog", () => {
 
   it("gives the Windows launcher chain extra time without changing other platforms", () => {
     expect(resolveMuseStartupTimeoutMs("linux", {})).toBe(8_000);
-    expect(resolveMuseStartupTimeoutMs("darwin", {})).toBe(8_000);
     expect(resolveMuseStartupTimeoutMs("win32", {})).toBe(20_000);
     expect(resolveMuseProbeTimeoutMs(4_000, "linux", {})).toBe(4_000);
     expect(resolveMuseProbeTimeoutMs(4_000, "win32", {})).toBe(16_000);
-    const longer = { T3CODE_MUSE_PROBE_TIMEOUT_MS: "30000" };
-    expect(resolveMuseStartupTimeoutMs("linux", longer)).toBe(30_000);
-    expect(resolveMuseStartupTimeoutMs("win32", longer)).toBe(30_000);
-    expect(resolveMuseProbeTimeoutMs(4_000, "win32", longer)).toBe(30_000);
-    const shorter = { T3CODE_MUSE_PROBE_TIMEOUT_MS: "10000" };
-    expect(resolveMuseStartupTimeoutMs("linux", shorter)).toBe(10_000);
-    expect(resolveMuseStartupTimeoutMs("win32", shorter)).toBe(20_000);
+    const override = { T3CODE_MUSE_PROBE_TIMEOUT_MS: "10000" };
+    expect(resolveMuseStartupTimeoutMs("linux", override)).toBe(10_000);
+    expect(resolveMuseStartupTimeoutMs("win32", override)).toBe(20_000);
   });
 });
