@@ -725,14 +725,10 @@ export const layerWithOptions = (
           else mcpTurnCheckedKeyByThread.set(threadId, turnKey);
           return new Map(current).set(key, { ...entry, mcpTurnCheckedKeyByThread });
         });
-      const threadRequiresRunScopedMcp = (
-        threadId: ThreadId,
-        runId: RunId | undefined,
-        currentCredentialRunId?: RunId,
-      ) =>
+      const threadRequiresRunScopedMcp = (threadId: ThreadId, runId: RunId | undefined) =>
         projectionStore.getThreadRecords(threadId, ["runs"]).pipe(
           Effect.flatMap(({ runs }) =>
-            runRequiresRunScopedMcp(runs, runId, currentCredentialRunId, () =>
+            runRequiresRunScopedMcp(runs, runId, () =>
               projectionStore.getThreadRecords(threadId, ["runs", "turnItems"], {
                 turnItemTypes: ["user_message"],
               }),
@@ -2338,16 +2334,12 @@ export const layerWithOptions = (
                 if (yield* retainCurrentMcpCredential(current, { unbindRun: false })) return;
                 continue;
               }
+              // A wake answering an owed run gets its own identity, so its late calls stop counting
+              // once it ends, while the owed run stays the target.
               const rotateOnRunChange =
                 input.requireRunScopedMcp !== undefined
-                  ? input.requireRunScopedMcp ||
-                    (input.owedOutputRunId !== undefined &&
-                      current?.runId !== input.owedOutputRunId)
-                  : yield* threadRequiresRunScopedMcp(
-                      input.threadId,
-                      input.runId,
-                      current?.runId,
-                    ).pipe(
+                  ? input.requireRunScopedMcp || input.owedOutputRunId !== undefined
+                  : yield* threadRequiresRunScopedMcp(input.threadId, input.runId).pipe(
                       Effect.mapError(
                         (cause) =>
                           new ProviderSessionOpenError({

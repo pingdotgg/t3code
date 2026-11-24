@@ -3646,6 +3646,7 @@ it.effect.each([
         readonly runId?: RunId;
         readonly attemptId?: RunAttemptId;
         readonly requireRunScopedMcp?: boolean;
+        readonly owedOutputRunId?: RunId;
       },
     ) =>
       manager.open({
@@ -3724,6 +3725,20 @@ it.effect.each([
           (yield* mcpSessions.read(threadId))?.authorizationHeader,
           config1!.authorizationHeader,
         );
+
+        // A wake that may answer run 1's owed result gets its own identity, so a stopped wake's late
+        // call cannot pass for run 1 once the wake ends.
+        const wakeRun = RunId.make("run-live-wake");
+        yield* openFor(manager, providerSessionId, threadId, {
+          runId: wakeRun,
+          attemptId: RunAttemptId.make("attempt-live-wake"),
+          requireRunScopedMcp: false,
+          owedOutputRunId: run1,
+        });
+        const wakeToken = rawBearer(yield* mcpSessions.read(threadId));
+        assert.notEqual(wakeToken, token1);
+        assert.equal((yield* registry.resolve(wakeToken))?.thread.runId, wakeRun);
+        assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
 
         const run2 = RunId.make("run-live-2");
         const attempt2 = RunAttemptId.make("attempt-live-2");

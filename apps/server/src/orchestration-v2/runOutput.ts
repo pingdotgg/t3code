@@ -72,11 +72,10 @@ export const resolveOwedOutputRun = <E, R>(
   );
 };
 
-/** Whether a turn needs its MCP credential rotated to match its run/attempt identity. */
+/** Whether a turn's MCP credential must name its run: it asked for a result or may answer an owed one. */
 export const runRequiresRunScopedMcp = <E, R>(
   runs: ReadonlyArray<OrchestrationV2Run>,
   runId: RunId | undefined,
-  currentCredentialRunId: RunId | undefined,
   loadContextRecords: () => Effect.Effect<
     Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems">,
     E,
@@ -90,7 +89,7 @@ export const runRequiresRunScopedMcp = <E, R>(
     return Effect.succeed(true);
   }
   return resolveOwedOutputRun(runs, loadContextRecords).pipe(
-    Effect.map((owed) => owed !== undefined && currentCredentialRunId !== owed.id),
+    Effect.map((owed) => owed !== undefined),
   );
 };
 

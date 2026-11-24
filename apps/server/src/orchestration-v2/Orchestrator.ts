@@ -12540,7 +12540,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           `Caller run ${command.callerRunId ?? "unknown"} is no longer active on thread ${command.threadId}.`,
         );
       }
-      // A wake turn may reuse the owed run's credential, so its calls cannot be told apart.
+      // A wake on an unbound credential names the owed run, so its calls cannot be told apart.
       if (
         active !== undefined &&
         active.id !== run.id &&

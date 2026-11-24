@@ -88,7 +88,6 @@ it.effect("owed output follows only the newest started request inside the curren
       yield* runRequiresRunScopedMcp(
         [asked, correction, plain],
         plain.id,
-        correction.id,
         loadContext([asked, correction, plain]),
       ),
     );
@@ -109,7 +108,6 @@ it.effect("owed output follows only the newest started request inside the curren
       yield* runRequiresRunScopedMcp(
         schedRuns,
         plain.id,
-        undefined,
         loadContext(schedRuns, scheduledFresh.userMessageId),
       ),
     );
@@ -117,8 +115,6 @@ it.effect("owed output follows only the newest started request inside the curren
     const fresh = makeRun("run:fresh", 3, { status: "running", freshContext: true });
     const freshRuns = [asked, fresh];
     assert.isUndefined(yield* resolveOwedOutputRun(freshRuns, loadContext(freshRuns)));
-    assert.isFalse(
-      yield* runRequiresRunScopedMcp(freshRuns, fresh.id, undefined, loadContext(freshRuns)),
-    );
+    assert.isFalse(yield* runRequiresRunScopedMcp(freshRuns, fresh.id, loadContext(freshRuns)));
   }),
 );

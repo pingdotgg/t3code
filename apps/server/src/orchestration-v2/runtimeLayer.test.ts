@@ -12761,23 +12761,45 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           { from: "run-f" },
         );
 
-        // A stopped wake keeps the owed run's credential, so what it submits is not kept either.
+        // A stopped wake's result is not kept, on its own credential or on an unbound one that
+        // can only name the owed run.
         yield* finishRun(runF, "run-f-completed", "completed");
         yield* send("run-g", { type: "object" });
         const runG = yield* latestRun();
         yield* finishRun(runG, "run-g-completed", "completed");
         yield* send("run-h-wake");
-        yield* requestStop(yield* latestRun(), "run-h-interrupt-request");
-        const fromStoppedWake = yield* submit("run-output-from-stopped-wake", '{"from":"h"}', {
-          callerRunId: runG.id,
-          requestedRunId: runG.id,
-        }).pipe(Effect.flip);
-        assert.equal(fromStoppedWake._tag, "ThreadManagementRunOutputRejectedError");
-        assert.include(fromStoppedWake.message, "was stopped");
+        const runH = yield* latestRun();
+        yield* requestStop(runH, "run-h-interrupt-request");
+        for (const callerRunId of [runH.id, runG.id]) {
+          const fromStoppedWake = yield* submit(
+            `run-output-from-stopped-wake-${callerRunId}`,
+            '{"from":"h"}',
+            { callerRunId, requestedRunId: runG.id },
+          ).pipe(Effect.flip);
+          assert.equal(fromStoppedWake._tag, "ThreadManagementRunOutputRejectedError");
+          assert.include(fromStoppedWake.message, "was stopped");
+        }
+
+        // Once the stopped wake ends, its credential answers for nothing while the next wake's does.
+        yield* finishRun(runH, "run-h-interrupted", "interrupted");
+        yield* send("run-i-wake");
+        const runI = yield* latestRun();
+        const lateFromStoppedWake = yield* submit(
+          "late-run-output-from-stopped-wake",
+          '{"from":"h"}',
+          { callerRunId: runH.id, requestedRunId: runG.id },
+        ).pipe(Effect.flip);
+        assert.equal(lateFromStoppedWake._tag, "ThreadManagementRunOutputRejectedError");
+        assert.include(lateFromStoppedWake.message, "no longer active");
         assert.isUndefined(
           (yield* orchestrator.getThreadProjection(threadId)).runs.find((run) => run.id === runG.id)
             ?.output,
         );
+        const fromNextWake = yield* submit("run-output-from-next-wake", '{"from":"i"}', {
+          callerRunId: runI.id,
+          requestedRunId: runG.id,
+        });
+        assert.equal(fromNextWake.runId, runG.id);
         return;
       }
 
