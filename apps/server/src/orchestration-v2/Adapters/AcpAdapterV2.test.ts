@@ -7017,6 +7017,73 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("a snapshot load records its MCP credential, so the next turn does not reload", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const instanceId = ProviderInstanceId.make("acp-test-mcp-snapshot");
+      const threadId = ThreadId.make("thread-acp-mcp-snapshot");
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const setMcp = (ordinal: number) =>
+        mcpSessions.set({
+          environmentId: EnvironmentId.make("environment-acp-mcp-snapshot"),
+          threadId,
+          providerSessionId: `mcp-session-acp-snapshot-${ordinal}`,
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: `Bearer acp-snapshot-${ordinal}-token`,
+          browserToolsAvailable: false,
+        });
+      yield* setMcp(1);
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents }),
+        },
+        selfInvocation,
+        clientTerminals: {},
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-mcp-snapshot"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const opened = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+      const providerThread = {
+        ...opened,
+        nativeThreadRef: { ...opened.nativeThreadRef!, nativeId: "mock-session-snapshot" },
+      };
+
+      yield* pollProtocolMethods(protocolEvents);
+      yield* setMcp(2);
+      yield* runtime.readThreadSnapshot({ providerThread });
+      const reloads = (methods: ReadonlyArray<string>) =>
+        methods.filter((method) => method === "session/load" || method === "session/resume");
+      assert.lengthOf(reloads(yield* pollProtocolMethods(protocolEvents)), 1);
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      assert.lengthOf(reloads(yield* pollProtocolMethods(protocolEvents)), 0);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live(
     "reports mcpCredentialRotation none for non-loadable ACP agents without MCP-over-ACP",
     () =>

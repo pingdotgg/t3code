@@ -340,6 +340,7 @@ interface LiveSessionEntry {
     ThreadId,
     {
       readonly providerThread: string;
+      readonly thread: OrchestrationV2ProviderThread;
       readonly credential: McpProviderSession.McpProviderSessionConfig;
     }
   >;
@@ -2085,7 +2086,7 @@ export const layerWithOptions = (
       const markProviderThreadLoaded = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
-        readonly providerThread: Parameters<typeof providerThreadRuntimeKey>[0];
+        readonly providerThread: OrchestrationV2ProviderThread;
         readonly providerThreadKey: string;
         readonly linkedEnvironments: boolean | null | undefined;
         readonly mcpCredential?: McpProviderSession.McpProviderSessionConfig | undefined;
@@ -2103,6 +2104,7 @@ export const layerWithOptions = (
               ? entry.loadedMcpCredentialByThread
               : new Map(entry.loadedMcpCredentialByThread).set(input.threadId, {
                   providerThread: providerThreadRuntimeKey(input.providerThread),
+                  thread: input.providerThread,
                   credential: input.mcpCredential,
                 });
           const linkedEnvironmentsByThread = new Map(entry.linkedEnvironmentsByThread);
@@ -2361,10 +2363,25 @@ export const layerWithOptions = (
               }
               // A runtime that cannot take a new credential now (no way to deliver one, or a reload that
               // would end background work) keeps it unbound; the agent then names its run in the call.
+              // A shared session reloads only this thread, so only this thread's own work blocks it.
+              const loadedThread = (yield* Ref.get(sessions))
+                .get(sessionKey(input.providerSessionId))
+                ?.loadedMcpCredentialByThread.get(input.threadId)?.thread;
+              const pendingWork =
+                input.runtime.providerSession.capabilities.sessions
+                  .supportsMultipleProviderThreadsPerSession &&
+                input.runtime.unloadThread !== undefined
+                  ? loadedThread === undefined ||
+                    input.runtime.hasPendingBackgroundWorkForThread === undefined
+                    ? Effect.succeed(false)
+                    : input.runtime.hasPendingBackgroundWorkForThread(loadedThread, {
+                        includeSubagents: true,
+                      })
+                  : (input.runtime.hasPendingBackgroundWork ?? Effect.succeed(false));
               const cannotRotate =
                 input.runtime.mcpCredentialRotation === "none" ||
                 (input.runtime.mcpCredentialRotation !== "live" &&
-                  (yield* (input.runtime.hasPendingBackgroundWork ?? Effect.succeed(false)).pipe(
+                  (yield* pendingWork.pipe(
                     Effect.catchCauseIf(
                       (cause) => !Cause.hasInterruptsOnly(cause),
                       () => Effect.succeed(true),

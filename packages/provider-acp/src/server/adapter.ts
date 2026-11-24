@@ -11125,11 +11125,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     const activated = yield* runtime
                       .loadSession(sessionId, acpMcpActivation(mcpContext))
                       .pipe(Effect.onError(() => Ref.set(loadingSessionId, null)));
+                    if (runtimeMcpBridge !== undefined && mcpContext.authorization !== undefined) {
+                      runtimeMcpBridge.setAuthorization(mcpContext.authorization);
+                    }
                     rememberTerminalEnvironment(
                       activated.sessionId,
                       yield* readMcpContext(snapshotInput.providerThread.appThreadId),
                     );
                     yield* Ref.set(activeSessionId, activated.sessionId);
+                    yield* Ref.set(activeMcpAuthorization, mcpContext.authorization);
                     yield* Ref.set(loadingSessionId, null);
                     yield* setActiveSessionSetup(activated);
                     yield* Ref.set(activeSelection, null);
