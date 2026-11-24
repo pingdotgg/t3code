@@ -101,13 +101,8 @@ function MenuSearchInput({
           size="sm"
           unstyled
           onKeyDown={(event) => {
-            // Menu typeahead would otherwise take the letters; arrows still reach the items
-            // unless an IME is composing (Base UI only ignores keyCode 229).
-            if (
-              event.nativeEvent.isComposing ||
-              event.keyCode === 229 ||
-              (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Escape")
-            ) {
+            // Menu typeahead would otherwise take the letters; arrows still reach the items.
+            if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Escape") {
               event.stopPropagation();
             }
             onKeyDown?.(event);
