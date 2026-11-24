@@ -149,33 +149,142 @@ fn exit_code(line: &str, sentinel: &str) -> Option<Option<i64>> {
     Some(number.parse().ok())
 }
 
+/// Where a followed script's output lines go (`observeCompletion.onOutputLine`).
+pub(crate) struct OutputLines<'a> {
+    /// The shell echoes typed input; lines ending with these are the wrapper, not output.
+    pub(crate) echoed: &'a [String],
+    pub(crate) sink: &'a mut (dyn FnMut(String) + Send),
+}
+
+/// Output lines are cut to this many characters (`OUTPUT_LINE_MAX_LENGTH`).
+const OUTPUT_LINE_MAX_LENGTH: usize = 400;
+
+impl OutputLines<'_> {
+    /// `handleLine` for a line that is not the sentinel.
+    fn line(&mut self, raw: &str, sentinel: &str) {
+        let cleaned = strip_terminal_control(raw);
+        let cleaned = cleaned.trim_end();
+        if cleaned.is_empty()
+            || cleaned.contains(sentinel)
+            || self
+                .echoed
+                .iter()
+                .any(|echoed| cleaned.ends_with(echoed.as_str()))
+        {
+            return;
+        }
+        (self.sink)(cleaned.chars().take(OUTPUT_LINE_MAX_LENGTH).collect());
+    }
+}
+
+/// `stripTerminalControl`: ECMA-48 CSI and OSC sequences, any other escape with its
+/// intermediates and final byte, then the remaining control characters except tab.
+fn strip_terminal_control(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            if !(c.is_control() && c != '\t' && (u32::from(c) < 0x20 || c == '\x7f')) {
+                out.push(c);
+            }
+            continue;
+        }
+        match chars.peek().copied() {
+            Some('[') => {
+                chars.next();
+                // Parameters and intermediates, then one final byte in @..~.
+                for next in chars.by_ref() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                chars.next();
+                while let Some(next) = chars.next() {
+                    if next == '\x07' {
+                        break;
+                    }
+                    if next == '\x1b' {
+                        if chars.peek() == Some(&'\\') {
+                            chars.next();
+                        }
+                        break;
+                    }
+                }
+            }
+            _ => {
+                while chars.peek().is_some_and(|n| (' '..='/').contains(n)) {
+                    chars.next();
+                }
+                if chars.peek().is_some_and(|n| ('0'..='~').contains(n)) {
+                    chars.next();
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Appends `data` to the partial line in `buffer` and returns the complete lines. Bare CR
+/// redraws progress in place, so it ends a line too, instead of growing one.
+fn take_lines(buffer: &mut String, data: &str) -> Vec<String> {
+    buffer.push_str(data);
+    let mut lines: Vec<String> = buffer
+        .split("\r\n")
+        .flat_map(|part| part.split(['\r', '\n']))
+        .map(str::to_owned)
+        .collect();
+    *buffer = lines.pop().unwrap_or_default();
+    if buffer.len() > PARTIAL_LINE_MAX_LENGTH {
+        let mut cut = buffer.len() - PARTIAL_LINE_MAX_LENGTH;
+        while !buffer.is_char_boundary(cut) {
+            cut += 1;
+        }
+        buffer.drain(..cut);
+    }
+    lines
+}
+
 /// `observeTerminalCompletion`: reads the terminal's output until the sentinel and returns
 /// its exit code, then waits briefly for the prompt to be drawn again (closing earlier mistakes
 /// the redraw for activity). `None` when the terminal exited or closed first.
+///
+/// A subscriber that falls behind loses its queued output and gets a snapshot instead
+/// (`Subscription::next`). The snapshot's status tells whether the shell exited, and its
+/// scrollback still holds a sentinel the queue dropped.
 pub(crate) async fn completion(
     stream: &mut conn_terminal::Subscription,
     sentinel: &str,
+    mut lines_out: Option<OutputLines<'_>>,
 ) -> Option<i64> {
     let mut buffer = String::new();
     let code = loop {
         match stream.next().await {
-            Event::Output(output) => {
-                buffer.push_str(&output.data);
-                // Bare CR redraws progress in place; split redraws instead of growing one line.
-                let mut lines: Vec<String> = buffer
-                    .split("\r\n")
-                    .flat_map(|part| part.split(['\r', '\n']))
-                    .map(str::to_owned)
-                    .collect();
-                buffer = lines.pop().unwrap_or_default();
-                if buffer.len() > PARTIAL_LINE_MAX_LENGTH {
-                    let mut cut = buffer.len() - PARTIAL_LINE_MAX_LENGTH;
-                    while !buffer.is_char_boundary(cut) {
-                        cut += 1;
-                    }
-                    buffer.drain(..cut);
+            Event::Snapshot(resync) => {
+                if resync.snapshot.status == conn_contract::TerminalSessionStatus::Exited {
+                    return None;
                 }
+                // The scrollback repeats lines already handed on, so none go to `lines_out`.
+                buffer.clear();
+                let lines = take_lines(&mut buffer, &resync.snapshot.history);
                 if let Some(code) = lines.iter().find_map(|line| exit_code(line, sentinel)) {
+                    break code;
+                }
+            }
+            Event::Output(output) => {
+                let lines = take_lines(&mut buffer, &output.data);
+                let mut found = None;
+                for line in &lines {
+                    if let Some(code) = exit_code(line, sentinel) {
+                        found = Some(code);
+                        break;
+                    }
+                    if let Some(out) = lines_out.as_mut() {
+                        out.line(line, sentinel);
+                    }
+                }
+                if let Some(code) = found {
                     break code;
                 }
             }
@@ -305,6 +414,83 @@ mod tests {
         } else {
             assert!(syntax.is_some_and(|code| code != 0), "{syntax:?}");
         }
+    }
+
+    /// A noisy script overflows the subscriber's queue, and the queue drops its sentinel: the
+    /// resync's snapshot still reports the exit code.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_sentinel_the_overflowing_queue_dropped_is_read_from_the_resync() {
+        let manager = conn_terminal::TerminalManager::new(conn_terminal::TerminalConfig {
+            shells: vec!["/bin/sh".into()],
+            max_queued_bytes: 16 * 1024,
+            ..Default::default()
+        });
+        let input = conn_contract::from_json(serde_json::json!({
+            "threadId": "t", "terminalId": "setup-flood",
+            "cwd": std::env::temp_dir(), "cols": 80, "rows": 24,
+            "env": {"PS1": "$ ", "HISTFILE": "/dev/null"},
+        }))
+        .unwrap();
+        let mut stream = manager.open_observed(input).unwrap();
+        let sentinel = sentinel("flood");
+        let flood = "i=0; while [ $i -lt 2000 ]; do echo line-$i-0123456789012345678901234567890123456789012345678901234567890123456789; i=$((i+1)); done";
+        let command = wrap(
+            &format!("{flood}; exit 7"),
+            CompletionShell::Posix,
+            &sentinel,
+        );
+        let write = conn_contract::from_json(serde_json::json!({
+            "threadId": "t", "terminalId": "setup-flood", "data": format!(" {command}\r"),
+        }))
+        .unwrap();
+        manager.write(write, None).await.unwrap();
+        // Nobody reads while the script runs, so the queue overflows and drops its end.
+        let reported = format!("{sentinel}7");
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            while !manager
+                .read("t", "setup-flood", None)
+                .is_some_and(|s| s.history.contains(&reported))
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the script printed its sentinel");
+        let code = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            completion(&mut stream, &sentinel, None),
+        )
+        .await
+        .expect("completion reads the sentinel from the resync");
+        assert_eq!(code, Some(7));
+        manager.shutdown().await;
+    }
+
+    #[test]
+    fn output_lines_drop_terminal_control_the_wrapper_and_the_sentinel() {
+        assert_eq!(
+            strip_terminal_control("\x1b[1;32mok\x1b[0m \x1b]0;title\x07done\x1b(B\x01"),
+            "ok done"
+        );
+        let mut seen = Vec::new();
+        let mut sink = |line: String| seen.push(line);
+        let echoed = vec!["printf '%s' x".to_owned()];
+        let sentinel = sentinel("t");
+        let mut output = OutputLines {
+            echoed: &echoed,
+            sink: &mut sink,
+        };
+        output.line("$ printf '%s' x", &sentinel);
+        output.line(&format!("echo {sentinel}"), &sentinel);
+        output.line("   ", &sentinel);
+        output.line(&"y".repeat(500), &sentinel);
+        output.line("installed 3 packages  ", &sentinel);
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen.first().map(String::len), Some(400));
+        assert_eq!(
+            seen.get(1).map(String::as_str),
+            Some("installed 3 packages")
+        );
     }
 
     #[test]

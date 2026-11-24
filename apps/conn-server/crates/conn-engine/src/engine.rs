@@ -842,34 +842,38 @@ impl Inner {
             .as_str()
             .unwrap_or_default()
             .to_owned();
+        let parent_run_id = command["parentRunId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         let id = command_id.clone();
-        let (seen, root) = self
-            .db(move |store| -> Result<(bool, Option<String>), String> {
-                let seen = store.receipt(&id)?.is_some();
-                let tx = store.tx()?;
-                let root = match tx.thread(&parent_id) {
-                    Ok(Some(parent)) => parent["projectId"]
-                        .as_str()
-                        .map(|project| tx.project(project))
-                        .transpose()
-                        .map(|project| {
-                            project
-                                .flatten()
-                                .and_then(|p| p["workspaceRoot"].as_str().map(str::to_owned))
-                        }),
-                    Ok(None) => Ok(None),
-                    Err(e) => Err(e),
-                };
-                tx.rollback();
-                Ok((seen, root?))
-            })
+        let (seen, found) = self
+            .db(
+                move |store| -> Result<(bool, Option<ChildCheckout>), String> {
+                    let seen = store.receipt(&id)?.is_some();
+                    let tx = store.tx()?;
+                    let found = child_checkout(&tx, &parent_id, &parent_run_id);
+                    tx.rollback();
+                    Ok((seen, found?))
+                },
+            )
             .await
             .map_err(DispatchError::Internal)?;
         if seen {
             return Ok((command, None));
         }
-        // No parent or project: the handler refuses the command.
-        let Some(root) = root else {
+        // The handler's refusals that need no write are checked first, so a command it would
+        // refuse runs no setup script: no parent, project or running parent run, or no task.
+        // It checks them again when it commits.
+        let task_given = command["task"]
+            .as_str()
+            .is_some_and(|t| !t.trim().is_empty());
+        let Some(ChildCheckout {
+            project_id,
+            root,
+            link_origin,
+        }) = found.filter(|_| task_given)
+        else {
             return Ok((command, None));
         };
         let Some(host) = &self.host else {
@@ -882,6 +886,8 @@ impl Inner {
         let made = host
             .provision_worktree(crate::WorktreeRequest {
                 thread_id: thread_id.clone(),
+                project_id: Some(project_id),
+                link_origin,
                 project_root: root.clone(),
                 base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
                 branch: strategy["branch"].as_str().map(str::to_owned),
@@ -1379,6 +1385,9 @@ impl Inner {
         } else {
             host.provision_worktree(crate::WorktreeRequest {
                 thread_id: thread_id.to_owned(),
+                project_id: Some(input["projectId"].as_str().unwrap_or_default().to_owned()),
+                // The origin `thread.create` stamps on the thread (`launch`).
+                link_origin: input.get("linkOrigin").filter(|o| o.is_object()).cloned(),
                 project_root: root.clone(),
                 base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
                 branch: strategy["branch"].as_str().map(str::to_owned),
@@ -1509,6 +1518,7 @@ impl Inner {
                 ));
             }
         };
+        let made_worktree = provisioned.is_some();
         let creation_source = input["creationSource"].as_str().unwrap_or("web").to_owned();
         // `ThreadLaunchService` records the launch's own actor (a scheduled task's creator).
         let created_by = input["createdBy"].as_str().unwrap_or("user").to_owned();
@@ -1721,6 +1731,10 @@ impl Inner {
             sequence = Some(seq);
             resumed = replayed;
         }
+        // The first run is handed off (or there is none): setup's agent stage is done.
+        if let (true, false, Some(host)) = (made_worktree, resumed, &self.host) {
+            host.launch_committed(&thread_id);
+        }
         #[cfg(test)]
         self.test_pause("launch.before-projection").await;
         let id = thread_id.clone();
@@ -1743,6 +1757,42 @@ impl Inner {
         }
         Ok(result)
     }
+}
+
+/// What a `worktree` delegate's child checkout is made from.
+struct ChildCheckout {
+    project_id: String,
+    root: String,
+    /// The parent's `linkOrigin`, which the child thread inherits.
+    link_origin: Option<Value>,
+}
+
+/// The parent's project and origin, when the parent and its run are there and running.
+fn child_checkout(
+    tx: &Tx<'_>,
+    parent_id: &str,
+    parent_run_id: &str,
+) -> Result<Option<ChildCheckout>, String> {
+    let Some(parent) = tx.thread(parent_id)? else {
+        return Ok(None);
+    };
+    if !tx
+        .entity(parent_id, "runs", parent_run_id)?
+        .is_some_and(|run| commands::is_active(&run))
+    {
+        return Ok(None);
+    }
+    let Some(project_id) = parent["projectId"].as_str() else {
+        return Ok(None);
+    };
+    let root = tx
+        .project(project_id)?
+        .and_then(|p| p["workspaceRoot"].as_str().map(str::to_owned));
+    Ok(root.map(|root| ChildCheckout {
+        project_id: project_id.to_owned(),
+        root,
+        link_origin: parent.get("linkOrigin").filter(|o| o.is_object()).cloned(),
+    }))
 }
 
 /// A contract error the engine builds. When the contract no longer accepts its shape, the
@@ -2316,7 +2366,7 @@ impl Engine for SqliteEngine {
 /// The project and provider instance a command would start work on (T3's
 /// `assertDispatchTargetEnabled`), or `None` when it starts none or names no known thread.
 fn dispatch_target(
-    tx: &crate::store::Tx<'_>,
+    tx: &Tx<'_>,
     command: &Value,
 ) -> crate::store::StoreResult<Option<(Option<String>, String)>> {
     let text = |v: &Value| v.as_str().map(str::to_owned);
