@@ -730,13 +730,21 @@ export const make = Effect.gen(function* () {
     }
     if (!login) {
       command = "gt";
-      login = selectLogin(
-        yield* listLogins({
+      const gtLogins = yield* listLogins({
+        cwd: input.cwd,
+        command: "gt",
+        ...(remote?.ssh && remoteUrl ? { remoteUrl } : {}),
+      });
+      login = selectLogin(gtLogins);
+      // A repository named without its server goes to gt's default instance, as it went to
+      // tea's default login. Publishing a new repository names no server.
+      if (!login && !remote && gtLogins.length > 0) {
+        const defaultHost = (yield* execute({
           cwd: input.cwd,
-          command: "gt",
-          ...(remote?.ssh && remoteUrl ? { remoteUrl } : {}),
-        }),
-      );
+          args: ["config", "get", "default_host"],
+        })).stdout.trim();
+        login = gtLogins.find((item) => item.url === defaultHost && item.default === "true");
+      }
     }
     if (!login)
       return yield* new ForgejoCliError({

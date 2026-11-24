@@ -1926,6 +1926,45 @@ it.effect("asks gt for the SSH alias of every server that is not named after the
   );
 });
 
+it.effect("sends a repository named without its server to gt's default instance", () =>
+  Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const resolved = yield* cli.resolveRepository({ cwd: "/new", repository: "maria/new" });
+    assert.strictEqual(resolved.baseUrl, "http://forgejo.local:4000");
+    assert.strictEqual(resolved.repository, "maria/new");
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({ exists: () => Effect.succeed(false) }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make(() => {
+        throw new Error("gt must handle its own HTTP request");
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) =>
+            Effect.succeed(
+              input.command === "git"
+                ? processOutput("", { exitCode: ChildProcessSpawner.ExitCode(2) })
+                : input.args[0] === "config"
+                  ? processOutput("http://forgejo.local:4000\n")
+                  : processOutput(
+                      encodeJson([
+                        { host: "http://forgejo.local:3000", user: "maria", active: true },
+                        { host: "http://forgejo.local:4000", user: "maria", active: true },
+                      ]),
+                    ),
+            ),
+        },
+      }),
+    ),
+  ),
+);
+
 it.effect(
   "treats a gt that is not the Gitea CLI as not installed, and a broken one as unknown",
   () => {
@@ -2693,6 +2732,13 @@ it.effect(
                       );
                     }
                     assert.strictEqual(input.command, "gt");
+                    if (input.args[0] === "config")
+                      return Effect.succeed(processOutput("http://forgejo.local:3000\n"));
+                    if (input.args[0] === "auth")
+                      assert.deepStrictEqual(input.args.slice(-2), [
+                        "--host",
+                        "http://forgejo.local:3000",
+                      ]);
                     return Effect.succeed(
                       input.args[0] === "version"
                         ? processOutput("gt version 2.0.0 (2026-11-18)")

@@ -15,6 +15,7 @@ import * as SourceControlProvider from "@t3tools/source-control-core/server/Sour
 import {
   combinedAuthOutput,
   firstSafeAuthLine,
+  isExecutableOnPath,
   isMissingExecutable,
   providerAuth,
   probeSourceControlProvider,
@@ -183,7 +184,30 @@ export const makeDiscovery = Effect.gen(function* () {
         }
         return fj;
       }
-      const gt = yield* probeSourceControlProvider({ cwd, process, spec: discovery });
+      // Settings names gt's default instance: a repository published without a server goes there.
+      const defaultHost = (yield* isExecutableOnPath("gt"))
+        ? yield* process
+            .run({
+              operation: "source-control.discovery.default-host",
+              command: "gt",
+              args: ["config", "get", "default_host"],
+              cwd,
+              allowNonZeroExit: true,
+              timeoutMs: 5_000,
+              maxOutputBytes: 8_000,
+            })
+            .pipe(
+              Effect.map((result) => (Number(result.exitCode) === 0 ? result.stdout.trim() : "")),
+              Effect.orElseSucceed(() => ""),
+            )
+        : "";
+      const gt = yield* probeSourceControlProvider({
+        cwd,
+        process,
+        spec: defaultHost
+          ? { ...discovery, authArgs: [...discovery.authArgs, "--host", defaultHost] }
+          : discovery,
+      });
       // Discovery keeps the install hint only for an absent executable; a slow or broken fj
       // explains itself better than gt's install advice.
       const fjAbsent = fj.status === "missing" && fj.installHint === discovery.installHint;
