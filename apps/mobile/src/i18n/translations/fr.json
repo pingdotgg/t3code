@@ -2191,7 +2191,6 @@
   "93eb8ae0bf209025": "Lecture du journal des plantages…",
   "4429ccae147b2b2f": "Collez le rapport dans une issue GitHub. Il contient la version de l’app, le message d’erreur JavaScript et la pile des composants. Les messages d’erreur peuvent citer des valeurs de l’app, relisez-le donc avant de le partager.",
   "58df920ec2681250": "Quand l’app plante ou rencontre une erreur, elle envoie à l’équipe T3 Code le message d’erreur, la trace de pile, la version de l’app, ainsi que le modèle et la version du système de l’appareil. Chaque lancement envoie aussi les temps de démarrage. Les rapports portent un ID aléatoire propre à cette installation.",
-  "e78e3d92c5840886": "Si vous désactivez cette option, l’app cesse aussi d’envoyer les traces de connexion qui servent à diagnostiquer T3 Connect.",
   "9544305f2964486f": "Impossible d’afficher le diff",
   "a488d0f5de859d6b": "Essayez de recharger la vue du diff.",
   "0c72282254a37568": "Recharger le diff",
@@ -5614,5 +5613,9 @@
   "892f08d21b8e48a9": "Fusionner {layers} dans {base} avec {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} dès que leurs conditions sont remplies. Cela peut se produire immédiatement.",
   "89bf40eb2503b6c5": "Nouvel appareil connecté à {environment}",
   "c94b5fe9ef372bc0": "{device} s’est connecté via {product}. Si ce n’était pas vous, supprimez-le dans Paramètres → Accès de T3 Code sur cet ordinateur.",
-  "bec67d0ed485f885": "{count, plural, one {{count} appareil s’est connecté} other {{count} appareils se sont connectés}} via {product}. Si ce n’était pas vous, supprimez-les dans Paramètres → Accès de T3 Code sur cet ordinateur."
+  "bec67d0ed485f885": "{count, plural, one {{count} appareil s’est connecté} other {{count} appareils se sont connectés}} via {product}. Si ce n’était pas vous, supprimez-les dans Paramètres → Accès de T3 Code sur cet ordinateur.",
+  "18c30aa94d0a807f": "Diagnostic de connexion",
+  "eb287395a09cd288": "Envoyer les traces de connexion",
+  "6787f93bbf6ce0b6": "Aide l’équipe T3 Code à résoudre les problèmes de connexion. Les traces contiennent des durées, des types d’erreur, un identifiant de cette session de l’app et la version de l’app, jamais vos fils, prompts ni votre code. Modifiable dans Réglages > À propos de T3 Code > Diagnostic.",
+  "0b1e4aecbd38e0cf": "Quand l’app se connecte à un ordinateur via {product}, elle envoie à l’équipe T3 Code la durée de chaque étape, le type d’erreur, un identifiant de cette session de l’app et la version de l’app. Les traces n’incluent jamais vos fils, prompts ni votre code."
 }

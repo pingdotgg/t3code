@@ -2191,7 +2191,6 @@
   "93eb8ae0bf209025": "Reading crash log…",
   "4429ccae147b2b2f": "Paste the report into a GitHub issue. It contains the app version, the JavaScript error message, and the component stack. Error messages can quote values from the app, so read it over before sharing.",
   "58df920ec2681250": "When the app crashes or hits an error, it sends the error message, the stack trace, the app version, and the device model and OS version to the T3 Code team. Each launch also sends startup timings. Reports carry a random ID for this install.",
-  "e78e3d92c5840886": "Turning this off also stops the connection traces the app sends to diagnose T3 Connect.",
   "9544305f2964486f": "Could not display diff",
   "a488d0f5de859d6b": "Try loading the diff view again.",
   "0c72282254a37568": "Retry diff",
@@ -5622,5 +5621,9 @@
   "892f08d21b8e48a9": "Merge {layers} into {base} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} once their requirements are met. This may happen immediately.",
   "89bf40eb2503b6c5": "New device signed in to {environment}",
   "c94b5fe9ef372bc0": "{device} connected through {product}. If this was not you, remove it in Settings → Access in T3 Code on that computer.",
-  "bec67d0ed485f885": "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. If this was not you, remove them in Settings → Access in T3 Code on that computer."
+  "bec67d0ed485f885": "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. If this was not you, remove them in Settings → Access in T3 Code on that computer.",
+  "18c30aa94d0a807f": "Connection diagnostics",
+  "eb287395a09cd288": "Send connection traces",
+  "6787f93bbf6ce0b6": "Helps the T3 Code team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About T3 Code > Diagnostics.",
+  "0b1e4aecbd38e0cf": "When the app connects to a computer through {product}, it sends the T3 Code team how long each step took, any error type, an ID for this app session, and the app version. Traces never include your threads, prompts, or code."
 }

@@ -2191,7 +2191,6 @@
   "93eb8ae0bf209025": "Leyendo el registro de fallos…",
   "4429ccae147b2b2f": "Pega el informe en una incidencia de GitHub. Contiene la versión de la app, el mensaje de error de JavaScript y la pila de componentes. Los mensajes de error pueden citar valores de la app, así que revísalo antes de compartirlo.",
   "58df920ec2681250": "Cuando la app falla o encuentra un error, envía al equipo de T3 Code el mensaje de error, la traza de la pila, la versión de la app y el modelo y la versión del sistema del dispositivo. Cada inicio también envía tiempos de arranque. Los informes llevan un ID aleatorio para esta instalación.",
-  "e78e3d92c5840886": "Al desactivarlo, la app también deja de enviar las trazas de conexión que sirven para diagnosticar T3 Connect.",
   "9544305f2964486f": "No se pudo mostrar el diff",
   "a488d0f5de859d6b": "Prueba a cargar de nuevo la vista del diff.",
   "0c72282254a37568": "Reintentar diff",
@@ -5614,5 +5613,9 @@
   "892f08d21b8e48a9": "Fusionar {layers} en {base} con {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} cuando se cumplan sus requisitos. Puede ocurrir de inmediato.",
   "89bf40eb2503b6c5": "Nuevo dispositivo conectado a {environment}",
   "c94b5fe9ef372bc0": "{device} se conectó a través de {product}. Si no fuiste tú, quítalo en Ajustes → Acceso en T3 Code en ese ordenador.",
-  "bec67d0ed485f885": "{count, plural, one {{count} dispositivo se conectó} other {{count} dispositivos se conectaron}} a través de {product}. Si no fuiste tú, quítalos en Ajustes → Acceso en T3 Code en ese ordenador."
+  "bec67d0ed485f885": "{count, plural, one {{count} dispositivo se conectó} other {{count} dispositivos se conectaron}} a través de {product}. Si no fuiste tú, quítalos en Ajustes → Acceso en T3 Code en ese ordenador.",
+  "18c30aa94d0a807f": "Diagnóstico de conexión",
+  "eb287395a09cd288": "Enviar trazas de conexión",
+  "6787f93bbf6ce0b6": "Ayuda al equipo de T3 Code a solucionar problemas de conexión. Las trazas incluyen tiempos, tipos de error, un ID de esta sesión de la app y la versión de la app, nunca tus hilos, prompts ni código. Puedes cambiarlo en Ajustes > Acerca de T3 Code > Diagnóstico.",
+  "0b1e4aecbd38e0cf": "Cuando la app se conecta a un ordenador mediante {product}, envía al equipo de T3 Code cuánto tardó cada paso, el tipo de error, un ID de esta sesión de la app y la versión de la app. Las trazas nunca incluyen tus hilos, prompts ni código."
 }

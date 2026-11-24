@@ -2191,7 +2191,6 @@
   "93eb8ae0bf209025": "Absturzprotokoll wird gelesen…",
   "4429ccae147b2b2f": "Füge den Bericht in ein GitHub-Issue ein. Er enthält die App-Version, die JavaScript-Fehlermeldung und den Komponenten-Stack. Fehlermeldungen können Werte aus der App zitieren, also lies ihn vor dem Teilen durch.",
   "58df920ec2681250": "Wenn die App abstürzt oder auf einen Fehler stößt, sendet sie die Fehlermeldung, den Stacktrace, die App-Version sowie Gerätemodell und Betriebssystemversion an das T3-Code-Team. Jeder Start sendet außerdem Startzeiten. Berichte tragen eine zufällige ID für diese Installation.",
-  "e78e3d92c5840886": "Wenn du das ausschaltest, sendet die App auch keine Verbindungs-Traces mehr, mit denen T3 Connect diagnostiziert wird.",
   "9544305f2964486f": "Diff konnte nicht angezeigt werden",
   "a488d0f5de859d6b": "Versuch, die Diff-Ansicht erneut zu laden.",
   "0c72282254a37568": "Diff erneut laden",
@@ -5620,5 +5619,9 @@
   "892f08d21b8e48a9": "{layers} per {kind, select, squash {Squash} merge {Merge} rebase {Rebase} fastForward {Fast-Forward} other {{method}}} in {base} mergen, sobald die Anforderungen erfüllt sind. Das kann sofort passieren.",
   "89bf40eb2503b6c5": "Neues Gerät bei {environment} angemeldet",
   "c94b5fe9ef372bc0": "{device} hat sich über {product} verbunden. Warst du das nicht, entferne es in T3 Code auf diesem Computer unter Einstellungen → Zugriff.",
-  "bec67d0ed485f885": "{count, plural, one {{count} Gerät hat} other {{count} Geräte haben}} sich über {product} verbunden. Warst du das nicht, entferne sie in T3 Code auf diesem Computer unter Einstellungen → Zugriff."
+  "bec67d0ed485f885": "{count, plural, one {{count} Gerät hat} other {{count} Geräte haben}} sich über {product} verbunden. Warst du das nicht, entferne sie in T3 Code auf diesem Computer unter Einstellungen → Zugriff.",
+  "18c30aa94d0a807f": "Verbindungsdiagnose",
+  "eb287395a09cd288": "Verbindungs-Traces senden",
+  "6787f93bbf6ce0b6": "Hilft dem T3 Code-Team, Verbindungsprobleme zu beheben. Traces enthalten Zeiten, Fehlertypen, eine ID für diese App-Sitzung und die App-Version, nie deine Threads, Prompts oder deinen Code. Du kannst das unter Einstellungen > Über T3 Code > Diagnose ändern.",
+  "0b1e4aecbd38e0cf": "Wenn die App über {product} eine Verbindung zu einem Computer herstellt, sendet sie dem T3 Code-Team, wie lange jeder Schritt gedauert hat, den Fehlertyp, eine ID für diese App-Sitzung und die App-Version. Traces enthalten nie deine Threads, Prompts oder deinen Code."
 }
