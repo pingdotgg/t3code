@@ -328,6 +328,9 @@ function CollapsedComment({
                 })}
               </span>
             ) : null}
+            {/* Collapsed, the status label already says "Resolved". It goes before the
+                trigger so opening doesn't shift the trigger out from under the cursor. */}
+            {open ? resolveButton : null}
             <CollapsibleTrigger
               ref={statusTriggerRef}
               className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -338,8 +341,6 @@ function CollapsedComment({
                 className={cn("size-3.5 transition-transform", open && "rotate-180")}
               />
             </CollapsibleTrigger>
-            {/* Collapsed, the status label already says "Resolved". */}
-            {open ? resolveButton : null}
             {onAddToChat ? <AddToChatButton onClick={onAddToChat} /> : null}
             {reactionBar}
           </div>
