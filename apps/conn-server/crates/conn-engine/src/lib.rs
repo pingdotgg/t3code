@@ -214,8 +214,9 @@ pub trait EngineHost: Send + Sync {
         )))
     }
 
-    /// A worktree launch with no first message committed its thread. No turn starts, so its
-    /// setup's agent stage ends now (T3 marks it done once the launch is prepared).
+    /// A worktree launch committed its thread and handed off its first run, if any: its
+    /// setup's agent stage ends now, as T3 marks it done once the launch is prepared, even
+    /// when the provider then fails before a turn starts.
     fn launch_committed(&self, _thread_id: &str) {}
 
     /// A worktree made for a command that the engine then refused (`refused` holds why) or

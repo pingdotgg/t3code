@@ -1232,13 +1232,8 @@ impl Inner {
             let (_, replayed) = self.dispatch_value(create).await.map_err(to_err)?;
             resumed = replayed;
         }
-        let first_message = input.get("initialMessage").filter(|m| m.is_object());
-        // With a first message, the agent stage ends when its turn starts.
-        if let (true, false, None, Some(host)) = (provisioned, resumed, first_message, &self.host) {
-            host.launch_committed(&thread_id);
-        }
         let mut sequence = None;
-        if let Some(message) = first_message {
+        if let Some(message) = input.get("initialMessage").filter(|m| m.is_object()) {
             let message_command = format!("{command_id}:initial-message");
             let mut command = json!({
                 "type": "message.dispatch",
@@ -1264,6 +1259,10 @@ impl Inner {
             let (seq, replayed) = self.dispatch_value(command).await.map_err(to_err)?;
             sequence = Some(seq);
             resumed = replayed;
+        }
+        // The first run is handed off (or there is none): setup's agent stage is done.
+        if let (true, false, Some(host)) = (provisioned, resumed, &self.host) {
+            host.launch_committed(&thread_id);
         }
         let id = thread_id.clone();
         let projection = self

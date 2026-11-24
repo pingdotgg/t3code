@@ -5859,3 +5859,51 @@ async fn attention_is_off_by_default() {
             .is_empty()
     );
 }
+
+/// Records the worktree launches whose first run was handed off.
+#[derive(Default)]
+struct LaunchHost {
+    committed: Mutex<Vec<String>>,
+}
+
+impl crate::EngineHost for LaunchHost {
+    fn provision_worktree(
+        &self,
+        request: crate::WorktreeRequest,
+    ) -> crate::BoxFuture<'_, Result<crate::ProvisionedWorktree, String>> {
+        Box::pin(std::future::ready(Ok(crate::ProvisionedWorktree {
+            path: format!("{ROOT}/worktrees/{}", request.thread_id),
+            branch: "feature".into(),
+        })))
+    }
+    fn launch_committed(&self, thread_id: &str) {
+        self.committed.lock().unwrap().push(thread_id.to_owned());
+    }
+}
+
+/// T3 `ThreadLaunchService`: once the first run is handed off, setup's agent stage is done and
+/// setup can no longer be cancelled, even when the provider then fails before its turn starts.
+#[tokio::test]
+async fn a_worktree_launch_with_a_first_message_ends_setup_when_the_run_is_handed_off() {
+    let db = TempDb::new("launch-handoff");
+    let host = Arc::new(LaunchHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    engine
+        .launch_thread(json!({
+            "commandId": "l1", "threadId": "t1", "projectId": project_id(), "title": "Setup",
+            "modelSelection": {"instanceId": "claudeAgent", "model": "m"},
+            "runtimeMode": "full-access", "interactionMode": "default",
+            "workspaceStrategy": {"type": "worktree", "baseRef": "main", "startFromOrigin": false},
+            "initialMessage": {"messageId": "m1", "text": "go", "attachments": []},
+        }))
+        .await
+        .unwrap();
+    assert_eq!(*host.committed.lock().unwrap(), vec!["t1".to_owned()]);
+}

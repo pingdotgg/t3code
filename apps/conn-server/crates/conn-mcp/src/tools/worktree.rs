@@ -392,14 +392,13 @@ pub(crate) async fn start_project_script(
 ) -> Result<ScriptRun, String> {
     let settings = (config.settings)();
     let project_id = project["id"].as_str().unwrap_or_default();
+    // `resolveProjectScripts`: once folded, absent machine defaults are no scripts.
+    let none = json!([]);
     let scripts = settings["projectSettingsOverrides"][project_id]
         .get("defaultProjectScripts")
         .or_else(|| {
-            if settings["projectSettingsFolded"] == true {
-                settings.get("defaultProjectScripts")
-            } else {
-                None
-            }
+            (settings["projectSettingsFolded"] == true)
+                .then(|| settings.get("defaultProjectScripts").unwrap_or(&none))
         })
         .or_else(|| {
             settings["projectScriptOverrides"].get(project_id).map(|s| {

@@ -503,3 +503,32 @@ async fn a_concurrent_retry_joins_the_first_attempts_setup() {
     assert_eq!(host.requests.lock().unwrap().len(), 1);
     assert_eq!(worktree_count(&root), 2);
 }
+
+/// T3 `resolveProjectScripts`: once project settings are folded, a project without an override
+/// uses the machine defaults, and absent defaults are no scripts, never the old project row.
+#[tokio::test]
+async fn a_folded_project_reset_to_empty_defaults_runs_no_setup_script() {
+    use crate::tools::worktree::{ScriptTrigger, start_project_script};
+    let config = crate::WorktreeConfig {
+        directory: Arc::new(|| std::env::temp_dir().join("worktrees")),
+        settings: Arc::new(|| json!({ "projectSettingsFolded": true })),
+        terminals: None,
+        hub: conn_vcs::VcsHub::default(),
+    };
+    let project = json!({
+        "id": "p1",
+        "workspaceRoot": "/repo",
+        "scripts": [{ "id": "setup", "name": "Setup", "command": "touch stale", "runOnWorktreeCreate": true }],
+    });
+    let run = start_project_script(
+        &config,
+        "t1",
+        &project,
+        "/repo/wt",
+        ScriptTrigger::Setup,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(run.started, json!({ "status": "no-script" }));
+}
