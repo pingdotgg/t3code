@@ -68,6 +68,7 @@ import {
   competingBetween,
   loadWarnings,
   noiseReport,
+  noiseRulesFor,
   noisePairProblem,
   profileMismatch,
   round,
@@ -2128,8 +2129,56 @@ const writeMetrics = Effect.fn("serverMetrics.writeMetrics")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const json = yield* encodeMetrics(metrics);
-  if (Option.isSome(out)) yield* fs.writeFileString(out.value, `${json}\n`);
-  else yield* Console.log(json);
+  if (Option.isNone(out)) return yield* Console.log(json);
+  // A sibling then a rename, so a failed write keeps the previous file whole.
+  const temp = `${out.value}.tmp`;
+  yield* fs.writeFileString(temp, `${json}\n`);
+  yield* fs.rename(temp, out.value);
+});
+
+/**
+ * Runs A and B alternately, saving a side after each of its runs so a failure keeps the finished
+ * runs. On a failure it reports how many runs of each side reached disk.
+ */
+export const runAbRounds = Effect.fn("serverMetrics.abRounds")(function* <
+  A,
+  S,
+  E,
+  R,
+  ES,
+  RS,
+>(options: {
+  readonly rounds: number;
+  readonly outDir: string;
+  readonly runSide: (side: 0 | 1) => Effect.Effect<A, E, R>;
+  readonly save: (side: 0 | 1, runs: ReadonlyArray<A>) => Effect.Effect<S, ES, RS>;
+}) {
+  const runs: [A[], A[]] = [[], []];
+  const persisted = [0, 0];
+  const saveSide = Effect.fn("serverMetrics.abSave")(function* (side: 0 | 1) {
+    const count = runs[side].length;
+    const saved = yield* options.save(side, runs[side]);
+    persisted[side] = count;
+    return saved;
+  });
+  const saved: [S, S] = [yield* saveSide(0), yield* saveSide(1)];
+  yield* Effect.gen(function* () {
+    for (let round = 0; round < options.rounds; round++) {
+      // A B, then B A, so a drift in machine load lands on both sides.
+      for (const side of round % 2 === 0 ? ([0, 1] as const) : ([1, 0] as const)) {
+        yield* Console.error(`round ${round + 1}/${options.rounds}: ${side === 0 ? "A" : "B"}`);
+        runs[side].push(yield* options.runSide(side));
+        saved[side] = yield* saveSide(side);
+      }
+    }
+  }).pipe(
+    Effect.onError(() =>
+      Console.error(
+        `ab stopped early; ${options.outDir} keeps ${persisted[0]} A and ${persisted[1]} B runs`,
+      ),
+    ),
+  );
+  return saved;
 });
 
 /** Prints the comparison and sets exit code 1 when a metric got worse. */
@@ -2374,20 +2423,21 @@ const abCommand = Command.make(
       yield* withSeed(unseeded[0], input),
       yield* withSeed(unseeded[1], input),
     ] as const;
-    const runs: [Measured[], Measured[]] = [[], []];
-    for (let round = 0; round < input.rounds; round++) {
-      // A B, then B A, so a drift in machine load lands on both sides.
-      for (const side of round % 2 === 0 ? ([0, 1] as const) : ([1, 0] as const)) {
-        yield* Console.error(`round ${round + 1}/${input.rounds}: ${side === 0 ? "A" : "B"}`);
-        runs[side].push((yield* runOnce(sides[side])).measured);
-      }
-    }
-    const loadAfter = yield* machineLoad;
-    const before: ServerMetrics = { meta: { ...metas[0], loadAfter }, runs: runs[0] };
-    const after: ServerMetrics = { meta: { ...metas[1], loadAfter }, runs: runs[1] };
-    yield* writeMetrics(Option.some(path.join(outDir, "a.json")), before);
-    yield* writeMetrics(Option.some(path.join(outDir, "b.json")), after);
-    yield* report(before, after, input.threshold);
+    // Written up front and after every run; compare takes unequal run counts.
+    const saved = yield* runAbRounds({
+      rounds: input.rounds,
+      outDir,
+      runSide: (side) => runOnce(sides[side]).pipe(Effect.map((run) => run.measured)),
+      save: Effect.fn("serverMetrics.abSaveFile")(function* (side, runs) {
+        const file: ServerMetrics = {
+          meta: { ...metas[side], loadAfter: yield* machineLoad },
+          runs: [...runs],
+        };
+        yield* writeMetrics(Option.some(path.join(outDir, side === 0 ? "a.json" : "b.json")), file);
+        return file;
+      }),
+    });
+    yield* report(saved[0], saved[1], input.threshold);
   }, Effect.scoped),
 ).pipe(
   Command.withDescription(
@@ -2444,6 +2494,8 @@ const noiseCommand = Command.make(
         return [a, b] as const;
       }),
     );
+    const { warning } = noiseRulesFor(pairs.flat());
+    if (warning !== undefined) yield* Console.error(`Warning: ${warning}`);
     const { rows, table } = noiseReport(pairs);
     if (rows.length === 0) {
       return yield* new MetricsError({

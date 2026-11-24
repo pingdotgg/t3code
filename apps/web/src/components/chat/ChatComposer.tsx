@@ -2689,9 +2689,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     <ComposerControlsBar
       environmentId={environmentId}
       workspaceCwd={gitCwd}
-      routeKind={routeKind}
+      routeKind={typeof composerDraftTarget === "string" ? "draft" : routeKind}
       routeThreadRef={routeThreadRef}
-      draftId={draftId}
+      draftId={typeof composerDraftTarget === "string" ? composerDraftTarget : draftId}
       selectedProvider={selectedProvider}
       selectedInstanceId={selectedInstanceId}
       selectedModel={selectedModel}
