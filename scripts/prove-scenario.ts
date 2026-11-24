@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Runs one scenario with `e2e run` on a base and a head commit and says whether it fails on
-// base and passes on head. See docs/operations/scenarios.md.
+// base and passes on head. See docs/internals/15_testing.md#scenarios.
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
