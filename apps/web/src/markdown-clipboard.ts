@@ -245,7 +245,15 @@ export function restorePastedMarkdownLinks(plain: string, html: string): string 
   template.innerHTML = html;
   const fragment = template.content;
   const destinations = new Map<Node, string>();
-  for (const element of fragment.querySelectorAll("script, style")) element.remove();
+  for (const element of fragment.querySelectorAll("script, style, [hidden], [style]")) {
+    if (
+      element.matches("script, style, [hidden]") ||
+      ((element instanceof HTMLElement || element instanceof SVGElement) &&
+        (element.style.display === "none" || element.style.visibility === "hidden"))
+    ) {
+      element.remove();
+    }
+  }
   for (const anchor of fragment.querySelectorAll("a[href]")) {
     const href = anchor.getAttribute("href")?.trim() ?? "";
     if (!/^(?:https?:\/\/|mailto:)/i.test(href)) continue;
@@ -280,7 +288,10 @@ export function restorePastedMarkdownLinks(plain: string, html: string): string 
     const label = plain.slice(start, end);
     if (label === href) continue;
     const prefix = plain.slice(resultEnd, start).replace(/(?<!\\)((?:\\\\)*)!$/, "$1\\!");
-    parts.push(prefix, markdownAnchor(escapeProse(label.replace(/\n/g, " ")), href, false));
+    parts.push(
+      prefix,
+      markdownAnchor(escapeProse(label.replace(/\n/g, " ")), href.replaceAll("&", "&amp;"), false),
+    );
     resultEnd = end;
   }
   if (!characters.next().done || parts.length === 0) return plain;

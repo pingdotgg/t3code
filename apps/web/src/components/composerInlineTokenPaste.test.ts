@@ -7,15 +7,14 @@ import {
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
-import { importPastedComposerText } from "./composerInlineTokenPaste";
+import { importPastedComposerText, readPastedComposerClipboard } from "./composerInlineTokenPaste";
 
 const thread = {
   environmentId: EnvironmentId.make("env-1"),
   threadId: ThreadId.make("thread-1"),
 };
-const clipboard = (data: Record<string, string>) => ({
-  getData: (type: string) => data[type] ?? "",
-});
+const clipboard = (data: Record<string, string>) =>
+  readPastedComposerClipboard({ getData: (type) => data[type] ?? "" });
 const chip = (title: string) =>
   `[${title}](t3-context://v1/thread/${threadContextRecord(thread, title).contextId})`;
 

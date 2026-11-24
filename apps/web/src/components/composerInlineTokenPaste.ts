@@ -26,21 +26,28 @@ export function readPastedPlainText(clipboardData: Pick<DataTransfer, "getData">
   return clipboardData.getData("text/plain").replace(/\r\n?/g, "\n");
 }
 
-export function readPastedComposerText(clipboardData: Pick<DataTransfer, "getData">): string {
-  return restorePastedMarkdownLinks(
-    readPastedPlainText(clipboardData),
-    clipboardData.getData("text/html"),
-  );
+export function readPastedComposerClipboard(
+  clipboardData: Pick<DataTransfer, "getData">,
+  plainTextOnly = false,
+) {
+  const plain = readPastedPlainText(clipboardData);
+  if (plainTextOnly || !plain) return { text: plain, context: null };
+  const html = clipboardData.getData("text/html");
+  const text = restorePastedMarkdownLinks(plain, html);
+  return { text, context: readPastedComposerContext(clipboardData, text, html) };
 }
 
+export type PastedComposerClipboard = ReturnType<typeof readPastedComposerClipboard>;
+
 /** Pasted thread links count as context too, so they become chips like a copied chip does. */
-export function readPastedComposerContext(
+function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
+  pastedText: string,
+  html: string,
 ): ComposerContextClipboardFragment | null {
-  const pastedText = clipboardData.getData("text/plain");
   const decodedFragment =
     decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
-    decodeComposerContextClipboardHtml(clipboardData.getData("text/html"));
+    decodeComposerContextClipboardHtml(html);
   const threads = threadLinkContextReferences(
     pastedText,
     decodedFragment?.records ?? [],
@@ -73,15 +80,13 @@ export function readPastedComposerContext(
 }
 
 export function importPastedComposerText(
-  clipboardData: Pick<DataTransfer, "getData">,
+  { text: pastedText, context: fragment }: PastedComposerClipboard,
   importContextFragment?: (
     fragment: ComposerContextClipboardFragment,
   ) => ReadonlyMap<string, string>,
 ): string {
-  const pastedText = readPastedPlainText(clipboardData);
-  const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
   const rewrittenIds =
-    fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
+    fragment && fragment.records.length > 0 ? importContextFragment?.(fragment) : null;
   if (!rewrittenIds || rewrittenIds.size === 0) return pastedText;
   const nextId = (contextId: string) => {
     const id = rewrittenIds.get(contextId);

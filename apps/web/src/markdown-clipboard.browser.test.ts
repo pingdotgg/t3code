@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { markdownTree } from "./markdown/wordsHast";
 import { restorePastedMarkdownLinks } from "./markdown-clipboard";
 
 describe("restoring pasted Markdown links", () => {
@@ -15,7 +16,13 @@ describe("restoring pasted Markdown links", () => {
       plain: "First line\n\nRead [the guide] & notes",
       html: '<p>First line</p><p>Read <a href="https://example.com/guide(part)?a=1&amp;b=2"><strong>[the guide]</strong></a> &amp; notes</p>',
       expected:
-        "First line\n\nRead [\\[the guide\\]](https://example.com/guide\\(part\\)?a=1&b=2) & notes",
+        "First line\n\nRead [\\[the guide\\]](https://example.com/guide\\(part\\)?a=1&amp;b=2) & notes",
+    },
+    {
+      case: "visible labels surrounded by hidden content",
+      plain: "Read the guide.",
+      html: '<span hidden>Skip</span>Read <a href="https://example.com/guide">the <span style="display: none">hidden </span>guide</a>.',
+      expected: "Read [the guide](https://example.com/guide).",
     },
     {
       case: "destinations without an external link scheme and anchors with no label",
@@ -25,5 +32,20 @@ describe("restoring pasted Markdown links", () => {
     },
   ])("keeps $case", ({ plain, html, expected }) => {
     expect(restorePastedMarkdownLinks(plain, html)).toBe(expected);
+  });
+
+  it("round trips literal entity names in the destination", () => {
+    const text = restorePastedMarkdownLinks(
+      "Guide",
+      '<a href="https://example.com/?q=&amp;copy;">Guide</a>',
+    );
+    expect(markdownTree(text)).toMatchObject({
+      children: [
+        {
+          tagName: "p",
+          children: [{ tagName: "a", properties: { href: "https://example.com/?q=&copy;" } }],
+        },
+      ],
+    });
   });
 });
