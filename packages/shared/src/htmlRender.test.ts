@@ -10,11 +10,13 @@ import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
 const reference = { attachmentId: "thread-abc-123.html", title: "Chart", height: 420 };
 
-it("keeps a whole emoji at the HTML filename limit", () => {
-  const fits = "a".repeat(118);
-  const crosses = "a".repeat(119);
-  expect(htmlRenderFileName(`${fits}🚀 report`)).toBe(`${fits}🚀.html`);
-  expect(htmlRenderFileName(`${crosses}🚀 report`)).toBe(`${crosses}.html`);
+describe("htmlRenderFileName", () => {
+  it("never ends on half of an emoji at the length limit", () => {
+    const fits = "a".repeat(118);
+    const crosses = "a".repeat(119);
+    expect(htmlRenderFileName(`${fits}🚀 report`)).toBe(`${fits}🚀.html`);
+    expect(htmlRenderFileName(`${crosses}🚀 report`)).toBe(`${crosses}.html`);
+  });
 });
 
 describe("injectHtmlRenderBootstrap", () => {
