@@ -2222,12 +2222,10 @@ describe("wake notification groups", () => {
         [
           userMessage(second(1)),
           work("work-1", 2),
-          mixed
-            ? { ...wake("a", 3), source: { kind: "system" as const } }
-            : wake("a", 3, "completed", 3),
+          wake("a", 3, "completed", 3),
           work("work-2", 4),
           mixed
-            ? { ...wake("b", 5, "failed"), source: { kind: "command" as const } }
+            ? { ...wake("b", 5, "failed"), source: { kind: "system" as const } }
             : wake("b", 5, "failed", 2),
           assistantMessage(second(6)),
         ].map((item, position) => projected(item, position)),

@@ -2083,12 +2083,14 @@ function notificationGroupSummary(notifications: ReadonlyArray<OrchestrationV2No
     kinds.size === 1
       ? NOTIFICATION_SOURCE_NOUNS[notifications[0]!.source.kind]
       : NOTIFICATION_SOURCE_NOUNS.system;
-  // One delegated-task wake can report a batch of tasks.
+  // One delegated-task wake can report a batch of tasks; mixed-source groups count rows.
+  const countDelegatedTasks =
+    kinds.size === 1 && notifications[0]!.source.kind === "delegated_task";
   const counts = new Map<OrchestrationV2Notification["outcome"], number>();
   let total = 0;
   for (const notification of notifications) {
     const count =
-      notification.source.kind === "delegated_task"
+      countDelegatedTasks && notification.source.kind === "delegated_task"
         ? Math.max(1, notification.source.taskIds.length)
         : 1;
     total += count;
