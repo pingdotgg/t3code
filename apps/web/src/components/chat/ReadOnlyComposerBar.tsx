@@ -12,7 +12,7 @@ export function ReadOnlyComposerBar(props: {
   // chat column on a wide window, and one row there squeezes out the lead
   // and status, so the status drops to its own line instead.
   return (
-    <div className="flex min-h-12 items-center gap-3 rounded-2xl py-2 ps-5 pe-2 text-sm">
+    <div className="flex min-h-12 items-center gap-3 rounded-2xl px-5 py-2 text-sm has-[>button]:pe-2">
       <div className="flex min-w-0 flex-1 items-center gap-3 @max-[560px]/composer-surface:flex-col @max-[560px]/composer-surface:items-start @max-[560px]/composer-surface:gap-0.5">
         {props.children}
       </div>
