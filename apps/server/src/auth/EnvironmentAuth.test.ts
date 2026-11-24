@@ -1027,6 +1027,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         yield* TestClock.adjust("20 days");
         const listed = (yield* serverAuth.listSessions()).map((session) => session.sessionId);
         expect(listed).toContain(sessionId);
+        const later = yield* serverAuth.getSessionState(
+          makeCookieRequest(sessions.cookieName, exchanged.sessionToken),
+        );
+        expect(later.authenticated).toBe(true);
       }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
     );
 

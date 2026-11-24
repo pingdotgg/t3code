@@ -86,12 +86,13 @@ export interface IssuedBearerSession {
 // MCP client tokens are restricted to /mcp; HTTP API and WebSocket RPC would bypass their access cap.
 const MCP_CLIENT_SUBJECT = "mcp-client";
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
-// A peer link's session moves back out to its full lifetime when a call finds it this far
-// short, so a used link never expires and a busy one writes at most once per step.
-const PEER_LINK_RENEWAL_STEP = Duration.days(1);
+// A peer link's or browser cookie's session moves back out to its full lifetime when a use finds
+// it this far short, so a used one never expires and a busy one writes at most once per step.
+const IN_USE_RENEWAL_STEP = Duration.days(1);
 
 // A device pairing with its DPoP key renews the session itself, so the token can be short and
-// the device stays signed in while used. One idle for the whole window pairs again.
+// the device stays signed in while used. One idle for the whole window pairs again. A browser
+// cookie session gets the same window, renewed by the server on use.
 const RENEWABLE_ACCESS_TOKEN_TTL = Duration.hours(1);
 const RENEWABLE_SESSION_WINDOW = Duration.days(30);
 const PAIRING_LINK_SUBJECT = "one-time-token";
@@ -875,6 +876,29 @@ export const make = Effect.gen(function* () {
     ...config.devAllowedOrigins,
   ]);
 
+  /** The expiry of a verified in-use session, moved out when this use finds it a step short. */
+  const renewSessionInUse = Effect.fnUntraced(function* (
+    sessionId: AuthSessionId,
+    expiresAt: DateTime.DateTime,
+    lifetime: Duration.Duration,
+  ) {
+    const now = yield* DateTime.now;
+    const renewed = DateTime.add(now, { milliseconds: Duration.toMillis(lifetime) });
+    if (DateTime.distance(expiresAt, renewed).pipe(Duration.isLessThan(IN_USE_RENEWAL_STEP))) {
+      return DateTime.toUtc(expiresAt);
+    }
+    const current = yield* sessions
+      .extend(sessionId, renewed, IN_USE_RENEWAL_STEP)
+      .pipe(mapSessionVerificationErrors);
+    // A revoke can land between the verification and the update.
+    if (Option.isNone(current)) {
+      return yield* new ServerAuthInvalidCredentialError({
+        diagnostic: "The session ended before it could be renewed.",
+      });
+    }
+    return current.value;
+  });
+
   const authenticateRequest = (
     request: HttpServerRequest.HttpServerRequest,
   ): Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError> => {
@@ -922,7 +946,14 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
-        return Effect.succeed(session);
+        if (session.method !== "browser-session-cookie" || session.expiresAt === undefined) {
+          return Effect.succeed(session);
+        }
+        return renewSessionInUse(
+          session.sessionId,
+          session.expiresAt,
+          RENEWABLE_SESSION_WINDOW,
+        ).pipe(Effect.map((expiresAt) => ({ ...session, expiresAt })));
       }),
     );
   };
@@ -1628,30 +1659,6 @@ export const make = Effect.gen(function* () {
       return yield* authenticateRequest(request);
     });
 
-  /** The expiry of a verified peer link session, moved out when this use finds it a step short. */
-  const renewPeerLinkSession = Effect.fnUntraced(function* (
-    sessionId: AuthSessionId,
-    expiresAt: DateTime.DateTime,
-  ) {
-    const now = yield* DateTime.now;
-    const renewed = DateTime.add(now, {
-      milliseconds: Duration.toMillis(MCP_CLIENT_SESSION_TTL),
-    });
-    if (DateTime.distance(expiresAt, renewed).pipe(Duration.isLessThan(PEER_LINK_RENEWAL_STEP))) {
-      return DateTime.toUtc(expiresAt);
-    }
-    const current = yield* sessions
-      .extend(sessionId, renewed, PEER_LINK_RENEWAL_STEP)
-      .pipe(mapSessionVerificationErrors);
-    // A revoke can land between the verification and the update.
-    if (Option.isNone(current)) {
-      return yield* new ServerAuthInvalidCredentialError({
-        diagnostic: "The peer link session ended before it could be renewed.",
-      });
-    }
-    return current.value;
-  });
-
   const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (request) => {
     const token = parseBearerToken(request);
     if (token === null) return Effect.fail(new ServerAuthMissingCredentialError({}));
@@ -1675,7 +1682,11 @@ export const make = Effect.gen(function* () {
           if (session.peerLink !== true || session.expiresAt === undefined) return client;
           return {
             ...client,
-            linkExpiresAt: yield* renewPeerLinkSession(session.sessionId, session.expiresAt),
+            linkExpiresAt: yield* renewSessionInUse(
+              session.sessionId,
+              session.expiresAt,
+              MCP_CLIENT_SESSION_TTL,
+            ),
           } satisfies McpClientSession;
         }),
       ),

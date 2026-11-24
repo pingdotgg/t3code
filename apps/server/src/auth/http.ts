@@ -303,8 +303,9 @@ export const layer = HttpApiBuilder.group(
               sessions.cookieName,
               sessions.legacyCookieName,
             );
+            // Re-set the cookie so its expiry follows the renewed session (and legacy cookies move).
             if (
-              credential?.source === "legacy-cookie" &&
+              (credential?.source === "cookie" || credential?.source === "legacy-cookie") &&
               result.authenticated &&
               result.sessionMethod === "browser-session-cookie" &&
               result.expiresAt
