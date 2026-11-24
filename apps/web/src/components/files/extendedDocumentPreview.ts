@@ -503,7 +503,8 @@ function tracebackLines(value: unknown): unknown {
 function lastFrame(line: string): string {
   let row = "";
   for (const frame of line.split("\r").reverse())
-    if (frame.length > row.length) row += frame.slice(row.length);
+    // A cut through a surrogate pair blanks the glyph's other half, as a terminal does.
+    if (frame.length > row.length) row += frame.slice(row.length).replace(/^[\udc00-\udfff]/u, " ");
   return row;
 }
 export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {

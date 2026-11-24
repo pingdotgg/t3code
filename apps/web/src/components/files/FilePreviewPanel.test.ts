@@ -392,7 +392,7 @@ Third}`;
                 {
                   output_type: "stream",
                   name: "stderr",
-                  text: ["\r 10%|#         |", "\r100%|##########|\n", "done\r\n"],
+                  text: ["\r 10%|#         |", "\r100%|##########|\n", "done\r\n", "🚀 ready\rX\n"],
                 },
                 { data: { "text/html": ["<b>Results</b>"], "text/plain": ["Results"] } },
               ],
@@ -414,7 +414,7 @@ Third}`;
             { kind: "text", text: "string fallback" },
             { kind: "text", text: "space fallback" },
             { kind: "text", text: "42\n" },
-            { kind: "text", text: "100%|##########|\ndone\n" },
+            { kind: "text", text: "100%|##########|\ndone\nX  ready\n" },
             { kind: "html", text: "<b>Results</b>" },
           ],
         },
