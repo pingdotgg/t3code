@@ -291,7 +291,9 @@ function odfValue(cell: XmlNode): string {
       return attr("value");
   }
 }
+const covered = (cell: XmlNode) => cell.name === "covered-table-cell";
 function hasCellText(cell: XmlNode): boolean {
+  if (covered(cell)) return false;
   if (odfValue(cell).trim() || cell.name === "noBreakHyphen") return true;
   // Space markers can have enormous repeat counts; emptiness never requires expanding them.
   if (HIDDEN.has(cell.name) || cell.spaceCount !== undefined) return false;
@@ -316,6 +318,8 @@ function* table(node: XmlNode): Generator<TextPart, void> {
         for (let i = 0; i < count; i++) {
           if (column >= 512) throw new Truncation("Column limit");
           if (column++) yield "\t";
+          // LibreOffice hides the contents a merge covers; the cell still holds its column.
+          if (covered(cell)) continue;
           yield CELL_START;
           yield* paragraphs(cell);
           yield { fallback: odfValue(cell) };
@@ -461,10 +465,13 @@ function* notebook(source: string): Generator<string, void> {
   }
 }
 
-// Per-byte decoding only supports the single-byte \fcharset values.
 const FONT_CODE_PAGES = new Map([
   [0, "windows-1252"],
   [77, "macintosh"],
+  [128, "shift_jis"],
+  [129, "euc-kr"],
+  [134, "gbk"],
+  [136, "big5"],
   [161, "windows-1253"],
   [162, "windows-1254"],
   [163, "windows-1258"],
@@ -474,19 +481,23 @@ const FONT_CODE_PAGES = new Map([
   [204, "windows-1251"],
   [222, "windows-874"],
   [238, "windows-1250"],
+  [255, "ibm866"],
 ]);
 
-// Per-byte decoding only supports single-byte code pages.
-const singleByteCodePage = (value: number) =>
-  value === 0
-    ? "windows-1252"
-    : value === 866
-      ? "ibm866"
-      : value === 10000
-        ? "macintosh"
-        : value === 874 || (value >= 1250 && value <= 1258)
-          ? `windows-${value}`
-          : undefined;
+const RTF_CODE_PAGES = new Map([
+  [0, "windows-1252"],
+  [866, "ibm866"],
+  [874, "windows-874"],
+  [932, "shift_jis"],
+  [936, "gbk"],
+  [949, "euc-kr"],
+  [950, "big5"],
+  [10000, "macintosh"],
+  [65001, "utf-8"],
+]);
+
+const rtfCodePage = (value: number) =>
+  RTF_CODE_PAGES.get(value) ?? (value >= 1250 && value <= 1258 ? `windows-${value}` : undefined);
 
 function* rtf(source: string): Generator<string, void> {
   if (!source.startsWith("{\\rtf")) throw new Error("Invalid RTF document");
@@ -507,6 +518,25 @@ function* rtf(source: string): Generator<string, void> {
   let defaultFont = 0;
   const decoder = () => fonts.get(state.font) ?? state.decoder;
   const hidden = () => state.skip || state.deleted || state.hiddenText;
+  let encoded: Uint8Array | undefined;
+  let encodedLength = 0;
+  function* flushBytes(): Generator<string, void> {
+    if (!encodedLength) return;
+    const chunk = encoded!.subarray(0, encodedLength);
+    encodedLength = 0;
+    yield decoder().decode(chunk);
+  }
+  function* emitByte(byte: number): Generator<string, void> {
+    // No supported multibyte code page uses bytes below 0x30 as trail bytes.
+    if ((!encodedLength && byte < 128) || (encodedLength && byte < 0x30)) {
+      yield* flushBytes();
+      yield String.fromCharCode(byte);
+      return;
+    }
+    encoded ??= new Uint8Array(Math.min(source.length, MAX_OUTPUT * 3 + 4));
+    if (encodedLength === encoded.length) yield* flushBytes();
+    encoded[encodedLength++] = byte;
+  }
   const symbols = new Map([
     ["endash", "–"],
     ["emdash", characterEntities.mdash],
@@ -529,7 +559,10 @@ function* rtf(source: string): Generator<string, void> {
   let fallback = 0;
   for (let i = 0; i < source.length; i++) {
     const char = source[i]!;
-    if (char === "{" || char === "}") fallback = 0;
+    if (char === "{" || char === "}") {
+      yield* flushBytes();
+      fallback = 0;
+    }
     if (char === "{") {
       stack.push({ ...state });
       if (stack.length > 128) throw new Truncation("RTF depth limit");
@@ -540,7 +573,7 @@ function* rtf(source: string): Generator<string, void> {
       const word = /^([a-z]+)(-?\d+)? ?/i.exec(rest);
       if (hex) {
         if (fallback) fallback--;
-        else if (!hidden()) yield decoder().decode(Uint8Array.of(Number.parseInt(hex[1]!, 16)));
+        else if (!hidden()) yield* emitByte(Number.parseInt(hex[1]!, 16));
         i += 3;
       } else if (word) {
         i += word[0].length;
@@ -555,6 +588,7 @@ function* rtf(source: string): Generator<string, void> {
           fallback--;
           continue;
         }
+        yield* flushBytes();
         if (
           [
             "fonttbl",
@@ -583,9 +617,10 @@ function* rtf(source: string): Generator<string, void> {
           if (state.fontTable) fonts.delete(value);
         } else if (control === "fcharset" && state.fontTable) {
           const codePage = FONT_CODE_PAGES.get(value);
-          if (codePage) fonts.set(state.font, new TextDecoder(codePage));
+          if (value === 1) fonts.delete(state.font);
+          else if (codePage) fonts.set(state.font, new TextDecoder(codePage));
         } else if (control === "cpg" && state.fontTable && !state.fontFile) {
-          const codePage = singleByteCodePage(value);
+          const codePage = rtfCodePage(value);
           if (codePage) fonts.set(state.font, new TextDecoder(codePage));
         }
         if (control === "deleted") state.deleted = value !== 0;
@@ -595,12 +630,11 @@ function* rtf(source: string): Generator<string, void> {
           state.hiddenText = false;
           state.font = defaultFont;
         }
-        if (control === "mac" || (control === "ansicpg" && value === 10000))
-          state.decoder = new TextDecoder("macintosh");
+        if (control === "mac") state.decoder = new TextDecoder("macintosh");
         else if (control === "ansicpg") {
-          const label = singleByteCodePage(value);
+          const label = rtfCodePage(value);
           if (!label) throw new Error("Unsupported RTF code page");
-          state.decoder = new TextDecoder(label, { fatal: true });
+          state.decoder = new TextDecoder(label);
         } else if (control === "uc") {
           if (!Number.isSafeInteger(value) || value < 0)
             throw new Error("Invalid RTF fallback count");
@@ -618,18 +652,22 @@ function* rtf(source: string): Generator<string, void> {
       } else {
         i++;
         if (fallback) fallback--;
-        else if (rest[0] === "*") state.skip = true;
-        // A backslash before a line break is \par; TextEdit ends paragraphs this way.
-        else if (!hidden() && (rest[0] === "\n" || rest[0] === "\r")) yield "\n";
-        else if (!hidden() && ["\\", "{", "}"].includes(rest[0]!)) yield rest[0]!;
-        else if (!hidden() && symbols.has(rest[0]!)) yield symbols.get(rest[0]!)!;
+        else if (!hidden() && ["\\", "{", "}"].includes(rest[0]!))
+          yield* emitByte(rest[0]!.charCodeAt(0));
+        else {
+          yield* flushBytes();
+          if (rest[0] === "*") state.skip = true;
+          // A backslash before a line break is \par; TextEdit ends paragraphs this way.
+          else if (!hidden() && (rest[0] === "\n" || rest[0] === "\r")) yield "\n";
+          else if (!hidden() && symbols.has(rest[0]!)) yield symbols.get(rest[0]!)!;
+        }
       }
     } else if (char !== "\n" && char !== "\r") {
       if (fallback) fallback--;
-      else if (!hidden())
-        yield char.charCodeAt(0) < 128 ? char : decoder().decode(Uint8Array.of(char.charCodeAt(0)));
+      else if (!hidden()) yield* emitByte(char.charCodeAt(0));
     }
   }
+  yield* flushBytes();
 }
 
 async function* document(path: string, extension: string): AsyncGenerator<TextPart, void> {

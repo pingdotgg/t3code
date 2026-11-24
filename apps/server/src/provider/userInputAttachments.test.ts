@@ -361,6 +361,32 @@ describe("question answer paths", () => {
       "Привет",
     ],
     [
+      "UTF-8 code page",
+      String.raw`{\rtf1\ansi\ansicpg65001 \'e4\'bd\'a0\'e5\'a5\'bd \'f0\'9f\'9a\'80}`,
+      "你好 🚀",
+    ],
+    [
+      "Shift_JIS code page",
+      "{\\rtf1\\ansi\\ansicpg932 \\'82\\'a0\\'82\\'a2\\'83\\\\\\'81@X}",
+      "あいソ\u3000X",
+    ],
+    [
+      "GBK code page with line-wrapped hex bytes",
+      "{\\rtf1\\ansi\\ansicpg936 \\'c4\n\\'e3\\'ba\\'c3}",
+      "你好",
+    ],
+    ["Big5 code page", String.raw`{\rtf1\ansi\ansicpg950 \'a7A\'a6n}`, "你好"],
+    [
+      "multibyte font charsets and font code pages",
+      String.raw`{\rtf1\ansi\ansicpg1252{\fonttbl{\f0\fcharset128 Mincho;}{\f1\fcharset134 SimSun;}{\f2\fcharset129 Gulim;}{\f3\fcharset136 MingLiU;}{\f4\cpg65001 Noto;}{\f5\fcharset255 Terminal;}{\f6\fcharset1 Default;}}\f0\'82\'a0\f1\'c4\'e3\f2\'be\'c8\f3\'a7\'41\f4\'e2\'9c\'93\f5\'8f\f6\'e9}`,
+      "あ你안你✓Пé",
+    ],
+    [
+      "multibyte unicode fallbacks",
+      String.raw`{\rtf1\ansi\ansicpg936\uc2\u20320\'c4\'e3\'ba\'c3}`,
+      "你好",
+    ],
+    [
       "font character set",
       String.raw`{\rtf1\ansi\ansicpg1252\deff1{\fonttbl\f0\fnil\fcharset178 GeezaPro;\f1\fnil\fcharset0 LucidaGrande;}
 \f0 \'e3\'e1\'c7\'cd\'d9\'c9\f1 : caf\'e9, \f0\plain\'c7a}`,
@@ -1255,6 +1281,19 @@ describe("question answer paths", () => {
         },
         {
           ext: "ods",
+          parts: {
+            "content.xml":
+              '<office:document><table:table table:name="Merged">' +
+              '<table:table-row><table:table-cell table:number-columns-spanned="3" table:number-rows-spanned="2"><text:p>Wide</text:p></table:table-cell><table:covered-table-cell office:value-type="float" office:value="4242"/><table:covered-table-cell office:value-type="string" office:string-value="Gone"/><table:table-cell table:number-columns-spanned="2"><text:p>After</text:p></table:table-cell><table:covered-table-cell><text:p>Tail</text:p></table:covered-table-cell></table:table-row>' +
+              '<table:table-row><table:covered-table-cell table:number-columns-repeated="3"><text:p>Below</text:p></table:covered-table-cell><table:table-cell><text:p>Next</text:p></table:table-cell></table:table-row>' +
+              "<table:table-row><table:covered-table-cell><text:p>Only</text:p></table:covered-table-cell></table:table-row>" +
+              "<table:table-row><table:table-cell><text:p>Last</text:p></table:table-cell></table:table-row></table:table></office:document>",
+          },
+          expected: ["## Sheet: Merged", "Wide\t\t\tAfter\n\t\t\tNext\nLast"],
+          absent: ["4242", "Gone", "Tail", "Below", "Only", "After\t"],
+        },
+        {
+          ext: "ods",
           bounded: true,
           parts: {
             "content.xml":
@@ -1580,7 +1619,7 @@ describe("question answer paths", () => {
       const deepLimited = yield* Effect.promise(() => extractDocumentText(deepPath, ".rtf"));
       expect(deepLimited).toBe("Kept\n\n[Extracted text truncated at document extraction limits.]");
       const unsupportedPath = NodePath.join(config.attachmentsDir, "unsupported-codepage.rtf");
-      NodeFS.writeFileSync(unsupportedPath, String.raw`{\rtf1\ansi\ansicpg932 \'82\'a0}`);
+      NodeFS.writeFileSync(unsupportedPath, String.raw`{\rtf1\ansi\ansicpg99999 \'82\'a0}`);
       yield* Effect.promise(async () => {
         await expect(extractDocumentText(unsupportedPath, ".rtf")).rejects.toThrow(
           "Unsupported RTF code page",

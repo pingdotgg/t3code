@@ -3,6 +3,7 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   GitManagerError,
   ProjectId,
   EventId,
@@ -1280,6 +1281,56 @@ describe("ThreadSettlementServiceV2 worker", () => {
           ]);
           expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
           expect(yield* Ref.get(fixture.summaryCalls)).toEqual([]);
+        }).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(projectionStoreSql)),
+  );
+
+  it.effect(
+    "settles a finished task delegated from a linked environment, which has no parent here",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const delegated: OrchestrationV2AppThread = {
+          ...appThread("delegated-here", null),
+          branch: "feature",
+          delegatedFrom: {
+            environmentId: EnvironmentId.make("environment-elsewhere"),
+            threadId: ThreadId.make("parent-elsewhere"),
+            title: "Parent",
+          },
+        };
+        const ordinary = { ...appThread("ordinary", null), branch: "feature" };
+        for (const thread of [delegated, ordinary]) {
+          yield* store.apply({
+            type: "thread.created",
+            id: EventId.make(`created:${thread.id}`),
+            threadId: thread.id,
+            occurredAt: thread.createdAt,
+            payload: thread,
+          });
+        }
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          projections: store,
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+          },
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* service.drain;
+          expect(yield* Ref.get(fixture.commands)).toEqual([
+            expect.objectContaining({
+              type: "thread.auto-settle",
+              threadId: delegated.id,
+              snapshotAt: delegated.updatedAt,
+            }),
+          ]);
+          expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
         }).pipe(Effect.provide(fixture.layer));
       }).pipe(Effect.provide(projectionStoreSql)),
   );
