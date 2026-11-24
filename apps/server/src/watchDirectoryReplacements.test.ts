@@ -6,10 +6,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { watchDirectoryPath } from "./watchDirectoryReplacements.ts";
 
-it.live.skipIf(!symlinksSupported)(
+it.effect.skipIf(!symlinksSupported)(
   "backs off stopped watches for an unchanged linked directory",
   () =>
     Effect.gen(function* () {
@@ -42,25 +43,21 @@ it.live.skipIf(!symlinksSupported)(
         ),
         Effect.forkScoped,
       );
-      assert.deepEqual(
-        yield* Queue.takeN(events, 10),
-        // Each acquire stats too: the first, a retry after 1 tick, then after 2 more.
-        [
-          "probe",
-          "probe",
-          "refresh",
-          "probe",
-          "probe",
-          "refresh",
-          "probe",
-          "probe",
-          "probe",
-          "refresh",
-        ],
-      );
+      // Each tick waits for the previous acquire, whose stat, realpath and watch are real I/O.
+      const tick = (expected: ReadonlyArray<"probe" | "refresh">) =>
+        TestClock.adjust("1 second").pipe(
+          Effect.andThen(Queue.takeN(events, expected.length)),
+          Effect.map((taken) => assert.deepEqual(taken, expected)),
+        );
+      // Each acquire stats too: the first, a retry after 1 tick, then after 2 more.
+      assert.deepEqual(yield* Queue.takeN(events, 3), ["probe", "probe", "refresh"]);
+      yield* tick(["probe", "probe", "refresh"]);
+      yield* tick(["probe"]);
+      yield* tick(["probe", "probe", "refresh"]);
 
       identity = secondIdentity;
-      assert.deepEqual(yield* Queue.takeN(events, 3), ["probe", "probe", "refresh"]);
+      yield* tick(["probe", "probe", "refresh"]);
+      assert.equal(yield* Queue.size(events), 0);
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
