@@ -147,8 +147,6 @@ function orderByImports(
   paths: ReadonlyArray<string>,
   imports: ReadonlyMap<string, ReadonlySet<string>>,
 ): Array<string> {
-  if (paths.length <= 1) return [...paths];
-
   const sorted = [...paths].sort((left, right) => left.localeCompare(right));
   const count = sorted.length;
   const indexByPath = new Map<string, number>();
@@ -166,9 +164,7 @@ function orderByImports(
       const dependencyIndex = indexByPath.get(dependency);
       if (dependencyIndex === undefined) continue;
       inDegree[index] = inDegree[index]! + 1;
-      if (dependencyIndex !== index) {
-        dependents[dependencyIndex]!.push(index);
-      }
+      dependents[dependencyIndex]!.push(index);
     }
   }
 
