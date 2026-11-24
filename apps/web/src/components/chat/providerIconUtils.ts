@@ -4,6 +4,7 @@ import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients"
 export type ModelEsque = {
   slug: string;
   name: string;
+  description?: string | undefined;
   shortName?: string | undefined;
   subProvider?: string | undefined;
   aliases?: ReadonlyArray<string> | undefined;

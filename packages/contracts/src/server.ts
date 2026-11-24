@@ -78,6 +78,8 @@ export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
+  /** Secondary model metadata reported by the provider, such as a credit multiplier. */
+  description: Schema.optional(TrimmedNonEmptyString),
   shortName: Schema.optional(TrimmedNonEmptyString),
   subProvider: Schema.optional(TrimmedNonEmptyString),
   aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),

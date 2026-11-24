@@ -64,6 +64,7 @@ export function readInstanceCustomModels(
 export interface AppModelOption {
   slug: string;
   name: string;
+  description?: string;
   shortName?: string;
   subProvider?: string;
   aliases?: ReadonlyArray<string>;
@@ -102,6 +103,7 @@ function toAppModelOption(
     name: model.name,
     isCustom: model.isCustom,
   };
+  if (model.description) option.description = model.description;
   const shortName = resolveModelShortName(model, driverKind);
   if (shortName) option.shortName = shortName;
   if (model.subProvider) option.subProvider = model.subProvider;
