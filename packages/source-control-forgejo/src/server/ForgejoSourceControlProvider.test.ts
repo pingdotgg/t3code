@@ -17,6 +17,8 @@ import { firstNonEmptyLine } from "@t3tools/source-control-core/server/discovery
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
+import { userFacingSourceControlDetail } from "@t3tools/source-control-core/server/SourceControlProvider";
+
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as ForgejoPullRequestProvider from "./ForgejoPullRequestProvider.ts";
 import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
@@ -337,6 +339,15 @@ it.effect("follows the Forgejo repository's delete-branch-after-merge setting", 
         `repository setting ${JSON.stringify(setting)}`,
       );
     }
+    const { provider, writes } = forgejoMergeProvider(
+      Effect.succeed(JSON.stringify({ full_name: "reviewer/project" })),
+    );
+    yield* (yield* provider).runAction({ ...forgejoMergeInput, expectedHeadSha: "0a1b2c3d4" });
+    assert.deepStrictEqual(writes[0]?.body, {
+      Do: "squash",
+      delete_branch_after_merge: false,
+      head_commit_id: "0a1b2c3d4",
+    });
   }),
 );
 
@@ -1943,6 +1954,21 @@ it.effect("prefers fj for HTTP and ported SSH aliases on root servers", () => {
     });
     assert.strictEqual(viewer.stdout, '{"login":"maria"}');
     assert.strictEqual(requests.at(-1), "https://forgejo.local:3000/api/v1/user");
+    requests.length = 0;
+    yield* cli.api({
+      cwd: "/no-remotes",
+      reference: "http://forgejo.local:3000/maria/project/pulls/42",
+      path: "user",
+    });
+    yield* cli.api({
+      cwd: "/no-remotes",
+      repository: "http://forgejo.local:3000/maria/project",
+      path: "user",
+    });
+    assert.deepStrictEqual(requests, [
+      "https://forgejo.local:3000/api/v1/user",
+      "https://forgejo.local:3000/api/v1/user",
+    ]);
     const upstreamViewer = yield* cli.api({
       cwd: "/upstream-only",
       host: "forgejo.local:3000",
@@ -2517,5 +2543,46 @@ it.effect("does not call a valid fj login on an HTTP-only server unauthenticated
       }),
     ),
     Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
+  ),
+);
+
+it.effect("exposes fixed not-found details only for repository lookup", () =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    const error = yield* Effect.flip(
+      provider.getRepositoryCloneUrls({ cwd: "/repo", repository: "vouch" }),
+    );
+    assert.strictEqual(
+      userFacingSourceControlDetail(error.cause),
+      "Repository me/vouch was not found. Check the owner and name and try again.",
+    );
+    const forbiddenError = yield* Effect.flip(
+      provider.getRepositoryCloneUrls({ cwd: "/repo", repository: "me/private" }),
+    );
+    assert.strictEqual(userFacingSourceControlDetail(forbiddenError.cause), undefined);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        TestSourceControlHost.layer({ process: {} }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          resolveRepository: (input) =>
+            Effect.succeed({
+              login: "work",
+              repository: input.repository === "me/private" ? "me/private" : "me/vouch",
+              baseUrl: "https://forgejo.test",
+            }),
+          api: (input) =>
+            Effect.fail(
+              new ForgejoCli.ForgejoCliError({
+                command: "fj",
+                cwd: "/repo",
+                reason: input.path.includes("private") ? "forbidden" : "not-found",
+                detail: "raw upstream response must not be shown",
+              }),
+            ),
+        }),
+      ),
+    ),
   ),
 );

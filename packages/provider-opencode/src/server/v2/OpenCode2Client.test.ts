@@ -495,8 +495,7 @@ describe("OpenCode2Client usage limits", () => {
         const result = yield* api.usageLimits("/remote");
         if (reason === undefined) assert.strictEqual(result, undefined);
         else assert.strictEqual(result?.unavailable?.reason, reason);
-        if ("data" in body && body.data === null)
-          assert.include(result?.unavailable?.message ?? "", "signed in");
+        if (reason === "unsupported") assert.strictEqual(result?.unavailable?.message, undefined);
         if ("message" in body)
           assert.include(result?.unavailable?.message ?? "", "OpenCode Console budgets");
       }

@@ -21,6 +21,7 @@ import { expect, vi } from "vite-plus/test";
 
 import { cli } from "../binCli.ts";
 import { buildTriageLaunchPrompt } from "../triage/triagePrompt.ts";
+import { matchAgentAnswer } from "./triage.ts";
 
 const cliPath = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
 
@@ -108,6 +109,18 @@ it.live.each([
     }),
 );
 
+it.each([
+  { answer: "2", picked: "codex" },
+  { answer: " 1 ", picked: "claude" },
+  { answer: "CLAUDE", picked: "claude" },
+  { answer: "1.5", picked: undefined },
+  { answer: "1x", picked: undefined },
+  { answer: "2codex", picked: undefined },
+  { answer: "3", picked: undefined },
+])("the agent picker reads $answer as $picked", ({ answer, picked }) => {
+  expect(matchAgentAnswer([{ id: "claude" }, { id: "codex" }], answer)?.id).toBe(picked);
+});
+
 it.live(
   "requires an explicit choice when Codex and Antigravity are installed without a terminal",
   () =>
@@ -189,4 +202,52 @@ it.live("a failed agent launch points at the prompt it could not run", () =>
       Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),
     ),
   ),
+);
+
+it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "starts an agent found through a relative PATH entry from the session directory",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-triage-bin-" });
+      // Relative to this process, as an entry like "." is to the server that checked it.
+      const relativeBinDir = NodePath.relative(process.cwd(), binDir);
+      // Nested deeper than the entry climbs, so from the session directory it leads nowhere.
+      const climbs = relativeBinDir.split(NodePath.sep).filter((part) => part === "..").length;
+      const baseDir = NodePath.join(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-triage-cli-" }),
+        ...Array.from({ length: climbs }, () => "nested"),
+      );
+      NodeFS.mkdirSync(baseDir, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(binDir, "codex"), FAILING_AGENT_POSIX, { mode: 0o755 });
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          vi.stubEnv("PATH", relativeBinDir);
+          vi.stubEnv("CODEX_HOME", NodePath.join(baseDir, "codex-home"));
+        }),
+        () => Effect.sync(() => vi.unstubAllEnvs()),
+      );
+      const previousExitCode = process.exitCode;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          process.exitCode = previousExitCode;
+        }),
+      );
+
+      yield* Command.runWith(cli, { version: "0.0.0" })([
+        "triage",
+        "--agent",
+        "codex",
+        "--base-dir",
+        baseDir,
+      ]);
+
+      // The fake agent ran and exited 1, rather than failing to start.
+      assert.equal(process.exitCode, 1);
+      assert.include((yield* TestConsole.logLines).join("\n"), "Codex exited with code 1.");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),
+      ),
+    ),
 );
