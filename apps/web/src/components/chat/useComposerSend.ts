@@ -1370,6 +1370,7 @@ export function useComposerSend(input: ComposerSendInput) {
       setSetupQueueSendThreadKey(activeThreadKey);
     } else if (isCurrentRouteThread()) {
       beginLocalDispatch({
+        providerInstanceId: ctxSelectedModelSelection.instanceId,
         preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
         submissionIntent:
           submissionIntent === "background" && !isLocalDraftThread

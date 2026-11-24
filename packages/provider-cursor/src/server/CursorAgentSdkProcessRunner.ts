@@ -119,6 +119,7 @@ interface SpawnedCursorWorker {
   readonly drainBackgroundShellStops: (sessionId: number) => Effect.Effect<void>;
   readonly closeBackgroundShellSession: (sessionId: number) => void;
   readonly isAlive: () => boolean;
+  readonly ended: Effect.Effect<void>;
   readonly close: (graceful: boolean) => Effect.Effect<void>;
 }
 
@@ -225,6 +226,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
           CursorAgentSdk.CursorAgentSdkProtocolLogger
         >();
         const closedDone = yield* Deferred.make<void>();
+        const endedDone = yield* Deferred.make<void>();
         const stdoutDone = yield* Deferred.make<void>();
         const stderrDone = yield* Deferred.make<void>();
         let nextRequestId = 0;
@@ -280,6 +282,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
           if (!wasTerminated) {
             terminated = { exitCode };
           }
+          yield* Deferred.succeed(endedDone, undefined);
           const pending = Array.from(pendingRequests.entries());
           pendingRequests.clear();
           for (const [, entry] of pending) {
@@ -714,6 +717,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
             }
           },
           isAlive: () => terminated === undefined && !closing,
+          ended: Deferred.await(endedDone),
           close,
         };
       },
@@ -792,6 +796,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
             worker.protocolLoggers.delete(input.providerSessionId);
           }
         });
+        const sessionClosedDone = yield* Deferred.make<void>();
         const closeWorkerSession = Effect.suspend(() => {
           sessionClosed = true;
           return worker
@@ -804,7 +809,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
               Effect.ignore,
               Effect.ensuring(worker.failSessionRuns(sessionId)),
             );
-        });
+        }).pipe(Effect.ensuring(Deferred.succeed(sessionClosedDone, undefined)));
         const release = (closeInWorker: boolean) =>
           (closeInWorker ? closeWorkerSession : Effect.void).pipe(
             Effect.ensuring(forgetLogger),
@@ -1122,6 +1127,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                 Effect.asVoid,
               ),
             isAlive: () => !sessionClosed && worker.isAlive(),
+            ended: Effect.raceFirst(Deferred.await(sessionClosedDone), worker.ended),
             close: closeSession,
           } satisfies CursorAgentSdk.CursorAgentSdkSession;
           handedOff = true;

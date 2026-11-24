@@ -5957,6 +5957,18 @@ describe("AcpAdapterV2", () => {
           cause: "test",
         }),
       );
+      // Clients see the next send launch an agent before the server opens its turn.
+      const gone = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "provider_session.updated"),
+        Stream.take(1),
+        Stream.runCollect,
+      );
+      assert.deepEqual(
+        Array.from(gone, (event) =>
+          event.type === "provider_session.updated" ? event.providerSession.startupPhase : null,
+        ),
+        ["launch"],
+      );
 
       yield* runtime.startTurn(
         makeTurnInput({

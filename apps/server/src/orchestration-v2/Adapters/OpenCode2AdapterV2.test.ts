@@ -4628,6 +4628,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "Arrived on the new stream.",
       ]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      assert.deepEqual(
+        collected.flatMap((event) =>
+          event.type === "provider_session.updated"
+            ? [event.providerSession.startupPhase ?? null]
+            : [],
+        ),
+        [null, "connecting", null, null],
+      );
     }),
   );
 
