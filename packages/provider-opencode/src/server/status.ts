@@ -662,7 +662,7 @@ interface WatchedCatalog {
  */
 export const makeOpenCode2CatalogWatch = Effect.fn(
   "OpencodeProviderStatus.makeOpenCode2CatalogWatch",
-)(function* () {
+)(function* (environment?: NodeJS.ProcessEnv) {
   const scope = yield* Effect.scope;
   const latest = yield* SubscriptionRef.make<ReadonlyArray<OpenCode2Model> | undefined>(undefined);
   const rescans = yield* Queue.unbounded<string, Cause.Done>();
@@ -678,8 +678,12 @@ export const makeOpenCode2CatalogWatch = Effect.fn(
   const reread = (
     watched: WatchedCatalog,
     changed: (catalog: ReadonlyArray<OpenCode2Model>) => Effect.Effect<unknown>,
+    read: Effect.Effect<
+      ReadonlyArray<OpenCode2Model>,
+      OpenCodeRuntime.OpenCodeRuntimeError
+    > = watched.read,
   ) =>
-    watched.read.pipe(
+    read.pipe(
       Effect.flatMap((catalog) => {
         const fingerprint = catalog.length > 0 ? catalogFingerprint(catalog) : undefined;
         if (fingerprint === undefined || fingerprint === watched.previous) return Effect.void;
@@ -743,7 +747,21 @@ export const makeOpenCode2CatalogWatch = Effect.fn(
             { concurrency: 4, discard: true },
           ),
         );
+        // A new server lists its startup snapshot first; nothing else reads it unless a check did.
+        const settleMachine = Effect.suspend(() => {
+          const machine = watching.machine;
+          return machine === undefined
+            ? Effect.void
+            : reread(
+                machine,
+                (catalog) => SubscriptionRef.set(latest, catalog),
+                readSettledOpenCode2Catalog(machine.read, environment).pipe(
+                  Effect.map(Option.getOrElse((): ReadonlyArray<OpenCode2Model> => [])),
+                ),
+              );
+        });
         const watch = subscribe.pipe(
+          Effect.tap(() => settleMachine),
           Effect.flatMap((events) =>
             events.pipe(
               Stream.filter((event) => event.type === "model.updated"),
