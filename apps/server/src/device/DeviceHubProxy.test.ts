@@ -76,7 +76,7 @@ const fixture = (
             Effect.succeed({
               hostId: hostId ?? LOCAL_DEVICE_HOST_ID,
               nodePath: "node",
-              hub: { origin: "http://hub.test" },
+              hub: { origin: "http://hub.test", token: "hub-token" },
               devices: {
                 list: unexpectedOperation,
                 boot: () => unexpectedOperation,
@@ -226,6 +226,7 @@ describe("device hub proxy", () => {
     await response.text();
     expect(headers).toHaveLength(1);
     expect(headers[0]?.origin).toBe("http://hub.test");
+    expect(headers[0]?.authorization).toBe("Bearer hub-token");
     expect(headers[0]).not.toHaveProperty("x-forwarded-proto");
   });
 
