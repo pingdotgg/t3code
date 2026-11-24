@@ -527,16 +527,7 @@ impl Collector {
                     return None;
                 }
                 let disk_usage = details.disk_usage();
-                let command = if details.cmd().is_empty() {
-                    process.name().to_string_lossy().into_owned()
-                } else {
-                    details
-                        .cmd()
-                        .iter()
-                        .map(|part| part.to_string_lossy())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                };
+                let command = command_label(details.cmd(), &process.name().to_string_lossy());
 
                 Some(ProcessSample {
                     pid,
@@ -686,6 +677,57 @@ fn select_tracked_pids(rows: &[(u32, u32, u64)], roots: &HashSet<u32>) -> HashSe
     }
 
     tracked
+}
+
+const SCRIPT_RUNTIMES: [&str; 3] = ["node", "bun", "deno"];
+
+fn is_script_runtime(executable: &str) -> bool {
+    let file_name = executable.rsplit(['/', '\\']).next().unwrap_or(executable);
+    let file_name = file_name.to_ascii_lowercase();
+    SCRIPT_RUNTIMES.contains(&file_name.strip_suffix(".exe").unwrap_or(&file_name))
+}
+
+fn is_process_type_argument(argument: &str) -> bool {
+    argument.strip_prefix("--type=").is_some_and(|value| {
+        !value.is_empty()
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+    })
+}
+
+/// Samples and history carry a label, never the argument list: the executable, the script a
+/// JavaScript runtime was started with, and the Chromium process type. The server groups and
+/// categorizes processes by those three.
+fn command_label<Argument: AsRef<std::ffi::OsStr>>(arguments: &[Argument], name: &str) -> String {
+    let arguments = arguments
+        .iter()
+        .map(|argument| argument.as_ref().to_string_lossy())
+        .collect::<Vec<_>>();
+    // A lone argument with spaces is a path without arguments or a title the process wrote over
+    // its own argument list. The two cannot be told apart, so the process name stands in.
+    let executable = match arguments.as_slice() {
+        [] => name,
+        [only] if only.contains(char::is_whitespace) => name,
+        [executable, ..] => executable,
+    };
+    let mut label = executable.to_owned();
+    if let Some(script) = arguments.get(1)
+        && is_script_runtime(executable)
+        && !script.starts_with('-')
+    {
+        label.push(' ');
+        label.push_str(script);
+    }
+    if let Some(process_type) = arguments
+        .iter()
+        .flat_map(|argument| argument.split_whitespace())
+        .find(|argument| is_process_type_argument(argument))
+    {
+        label.push(' ');
+        label.push_str(process_type);
+    }
+    label
 }
 
 fn truncate_utf8(mut value: String, max_bytes: usize) -> String {
@@ -1455,6 +1497,86 @@ mod tests {
         assert_eq!(own.ppid, expected.parent().map(Pid::as_u32).unwrap_or(0));
         assert_eq!(own.name, expected.name().to_string_lossy());
         assert!(table.windows(2).all(|pair| pair[0].pid < pair[1].pid));
+    }
+
+    #[test]
+    fn labels_commands_by_executable_script_and_process_type() {
+        for (arguments, name, label) in [
+            (vec![], "idle", "idle"),
+            (
+                vec!["/usr/bin/git", "fetch", "origin"],
+                "git",
+                "/usr/bin/git",
+            ),
+            (vec!["pi", "--option", "value"], "pi", "pi"),
+            (
+                vec!["/usr/bin/node", "/opt/pi/cli.js", "--option", "value"],
+                "node",
+                "/usr/bin/node /opt/pi/cli.js",
+            ),
+            (
+                vec!["C:\\Program Files\\nodejs\\Node.EXE", "cli.js", "serve"],
+                "node.exe",
+                "C:\\Program Files\\nodejs\\Node.EXE cli.js",
+            ),
+            (vec!["bun", "--eval", "value"], "bun", "bun"),
+            (vec!["sh", "-c", "node cli.js"], "sh", "sh"),
+            (
+                vec!["/opt/T3 Code/t3code", "--type=renderer", "--field=value"],
+                "t3code",
+                "/opt/T3 Code/t3code --type=renderer",
+            ),
+            (
+                vec!["/opt/t3code/t3code --type=gpu-process --field=value"],
+                "t3code",
+                "t3code --type=gpu-process",
+            ),
+            (
+                vec!["/Applications/T3 Code.app/T3 Code"],
+                "T3 Code",
+                "T3 Code",
+            ),
+            (vec!["tool", "--type=Value1"], "tool", "tool"),
+        ] {
+            assert_eq!(command_label(&arguments, name), label);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn keeps_process_arguments_out_of_samples_and_history() {
+        const ARGUMENT: &str = "t3-sampled-argument-value";
+        // The trailing `:` keeps the shell from replacing itself with its last command.
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "read _; :", "sh", ARGUMENT])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn child");
+        let mut collector = Collector::new();
+        let config = CollectorConfig {
+            root_pid: std::process::id(),
+            sample_interval: None,
+            external_processes: HashMap::new(),
+        };
+        let snapshot = collector.sample(&config, None);
+        let mut history = HistoryRecorder::default();
+        history.record(&snapshot);
+        child.kill().expect("stop child");
+        child.wait().expect("reap child");
+
+        let sampled = snapshot
+            .processes
+            .iter()
+            .find(|process| process.pid == child.id())
+            .expect("child sample");
+        assert_eq!(sampled.command, "sh");
+        for serialized in [
+            serde_json::to_string(&snapshot).expect("snapshot json"),
+            serde_json::to_string(&history.snapshots).expect("history json"),
+        ] {
+            assert!(serialized.contains(&format!("\"pid\":{}", child.id())));
+            assert!(!serialized.contains(ARGUMENT));
+        }
     }
 
     #[test]
