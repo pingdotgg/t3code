@@ -34,6 +34,7 @@ import {
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
   AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
   AuthProvidersManageScope,
   type AuthEnvironmentScope,
   ProviderDriverKind,
@@ -1637,6 +1638,11 @@ export const layerWsRpc = (
               ...result,
               tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task),
             };
+      // A project's layout command is its owner's code: only a session that may already run
+      // commands on the host has it run from a worktree request.
+      const projectCommands =
+        currentSession.scopes.includes(AuthOrchestrationOperateScope) ||
+        currentSession.scopes.includes(AuthTerminalOperateScope);
       const authorizeEffect = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         effect: Effect.Effect<A, E, R>,
@@ -3330,7 +3336,7 @@ export const layerWsRpc = (
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           // A project that tracks repositories gets a task folder, as its new worktree threads do.
-          taskFolders.createForProjectFolder(input).pipe(
+          taskFolders.createForProjectFolder(input, { projectCommands }).pipe(
             Effect.mapError(
               (cause) =>
                 new GitCommandError({
@@ -3348,28 +3354,30 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           // A thread's worktree may be a task folder: its repositories' worktrees go with it.
-          taskFolders.removeIfTaskFolder({ path: input.path, force: input.force === true }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new GitCommandError({
-                  operation: "TaskFolders.remove",
-                  command: "git worktree remove",
-                  cwd: input.cwd,
-                  detail: cause.detail,
-                }),
+          taskFolders
+            .removeIfTaskFolder({ path: input.path, force: input.force === true, projectCommands })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new GitCommandError({
+                    operation: "TaskFolders.remove",
+                    command: "git worktree remove",
+                    cwd: input.cwd,
+                    detail: cause.detail,
+                  }),
+              ),
+              Effect.flatMap((removed) =>
+                removed ? Effect.void : gitWorkflow.removeWorktree(input),
+              ),
+              // No project-root refresh here: the client awaits vcs.refreshStatus right after, and a
+              // second refresh would queue behind this one and reread an unchanged repository.
+              // Subscribers of the removed checkout learn it is no longer a repository.
+              Effect.tap(() =>
+                vcsStatusBroadcaster
+                  .refreshLocalStatus(input.path)
+                  .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid),
+              ),
             ),
-            Effect.flatMap((removed) =>
-              removed ? Effect.void : gitWorkflow.removeWorktree(input),
-            ),
-            // No project-root refresh here: the client awaits vcs.refreshStatus right after, and a
-            // second refresh would queue behind this one and reread an unchanged repository.
-            // Subscribers of the removed checkout learn it is no longer a repository.
-            Effect.tap(() =>
-              vcsStatusBroadcaster
-                .refreshLocalStatus(input.path)
-                .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid),
-            ),
-          ),
         [WS_METHODS.vcsCreateRef]: (input) =>
           (input.switchRef
             ? assertCheckoutIdle("GitWorkflowService.createRef", input.cwd)
