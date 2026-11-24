@@ -81,13 +81,14 @@ export const PierreEntryIcon = memo(function PierreEntryIcon(props: {
 
   const colors = ICON_COLORS[icon.token ?? "default"] ?? ICON_COLORS.default;
   return (
-    // Firefox maps a selection ending over the <use> to the sprite's <symbol> and collapses
-    // the reader's selection there; unselectable, it snaps to the neighbouring text instead.
+    // Firefox can end a selection inside the <use>'s shadow copy of the symbol and collapse it
+    // there; selected whole, the icon cannot hold the end. Not select-none: triple-click line
+    // selection stops at select-none boxes.
     <svg
       aria-hidden="true"
       data-pierre-icon={icon.name}
       data-icon-token={icon.token}
-      className={cn("size-4 shrink-0 select-none", props.className)}
+      className={cn("size-4 shrink-0 select-all", props.className)}
       style={{ color: colors?.[props.theme === "light" ? 0 : 1] }}
       viewBox="0 0 16 16"
     >
