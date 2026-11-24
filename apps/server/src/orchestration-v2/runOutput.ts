@@ -60,6 +60,12 @@ export interface OutputRejection {
   readonly cause?: unknown;
 }
 
+/** The rejection as told to whoever wrote the value: the problem, then what in it did not fit. */
+export const rejectionText = (rejection: OutputRejection): string =>
+  rejection.cause instanceof Error
+    ? `${rejection.problem}\n${rejection.cause.message.slice(0, 2000)}`
+    : rejection.problem;
+
 /**
  * Checks what an agent submitted against the schema its run declared. The value is kept as
  * submitted. A schema that closes its object turns down keys it does not name; an open one keeps

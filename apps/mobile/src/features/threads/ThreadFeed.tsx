@@ -43,6 +43,7 @@ import {
 import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { LinkRequestCard } from "./LinkRequestCard";
+import { FeedbackRequestCard } from "./FeedbackRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import {
@@ -64,9 +65,6 @@ import {
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
-import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
-import { turnChanges } from "@t3tools/client-runtime/state/thread-repositories";
-import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   AuthFilesystemReadScope,
@@ -86,7 +84,12 @@ import {
 } from "@t3tools/contracts";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { hasThreadLinks, hostedThreadLink, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import {
+  hasThreadLinks,
+  hostedThreadLink,
+  parseThreadLinkHref,
+  threadLinkRefs,
+} from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
@@ -106,10 +109,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  classifyMarkdownImageSource,
-  markdownImageSourceFragment,
-} from "@t3tools/client-runtime/markdown-images";
+import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import {
   contextCompactionTokenCounts,
   resolveViewedImageAsset,
@@ -162,7 +162,10 @@ import { useResolveClassNames } from "uniwind";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { assetImageSource } from "../../lib/assetImageSource";
-import { filePreviewSourceIdentifier } from "../../lib/filePreviewGallery";
+import {
+  filePreviewSourceIdentifier,
+  remoteAttachmentImageSource,
+} from "../../lib/filePreviewGallery";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import {
   isFileBackedComposerAttachment,
@@ -210,8 +213,6 @@ import {
   type MediaVideoPreviewSource,
 } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "./CopyTextButton";
-import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
-import { setReviewSelectedSectionId } from "../review/reviewState";
 import { Menu } from "../../components/ui/Menu";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useBarInset, useContentTopInset } from "../../components/ui/useBarInset";
@@ -245,6 +246,7 @@ import {
   isContextCompactionActivityGroup,
   isContextHandoffActivityGroup,
   isLinkRequestActivityGroup,
+  isFeedbackRequestActivityGroup,
   isSecretRequestActivityGroup,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
@@ -336,7 +338,16 @@ import { openSettings } from "../settings/settings-navigation";
 import { loopbackUrlForDevice } from "../browser/browserTabs";
 import { useOpenLocalPreview } from "../browser/useOpenLocalPreview";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import {
+  THREAD_FEED_MAINTAIN_SCROLL_AT_END,
+  THREAD_FEED_MAINTAIN_SCROLL_AT_END_THRESHOLD,
+} from "./threadFeedEndFollow";
 import { useMessageTimeFormatter } from "./useMessageTimeFormatter";
+
+const linkedThreadEnvironmentIds = (markdown: string, environmentId: EnvironmentId) =>
+  hasThreadLinks(markdown)
+    ? threadLinkRefs(markdown, environmentId).map((ref) => ref.environmentId)
+    : [];
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // iOS blockquotes and selectable text measure separately; definite bubble width matches UIKit's drawing width.
@@ -616,17 +627,9 @@ function MessageAttachmentImage(props: {
 }) {
   const gt = useGT();
   const withGallery = useFilePreviewGallery();
-  const resource = {
-    _tag: "attachment" as const,
-    attachmentId: props.attachmentId,
-    fileName: props.name,
-    mimeType: props.mimeType,
-  };
-  const sourceIdentifier = filePreviewSourceIdentifier({
-    kind: "image",
-    environmentId: props.environmentId,
-    resource,
-  });
+  const previewSource = remoteAttachmentImageSource(props.environmentId, props.attachmentId, props);
+  const { resource } = previewSource;
+  const sourceIdentifier = filePreviewSourceIdentifier(previewSource);
   const uri = useAssetUrl(props.environmentId, resource);
   const refreshAssetUrl = useRefreshAssetUrl(props.environmentId, resource);
   const retriedImage = useRef(false);
@@ -665,23 +668,7 @@ function MessageAttachmentImage(props: {
         height={props.height}
         accessibilityLabel={gt("Open {name}", { name: props.name })}
         {...handoffProps(handoff)}
-        onPress={() =>
-          props.onPressPreview(
-            withGallery({
-              kind: "image",
-              environmentId: props.environmentId,
-              resource,
-              name: props.name,
-              sourceIdentifier,
-              actionsSource: {
-                name: props.name,
-                mimeType: props.mimeType,
-                environmentId: props.environmentId,
-                resource,
-              },
-            }),
-          )
-        }
+        onPress={() => props.onPressPreview(withGallery({ ...previewSource, sourceIdentifier }))}
         onLoad={(size) => {
           retriedImage.current = false;
           if (handoff)
@@ -1334,7 +1321,10 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   const liveMarkdown = useLiveThreadLinkLabels(
     props.markdown,
     props.environmentId,
-    useLinkedEnvironments(hasThreadLinks(props.markdown) ? props.environmentId : null),
+    useLinkedEnvironments(
+      hasThreadLinks(props.markdown) ? props.environmentId : null,
+      linkedThreadEnvironmentIds(props.markdown, props.environmentId),
+    ),
   );
   const [quoteSelection, setQuoteSelection] = useState<{
     markdown: string;
@@ -2002,7 +1992,6 @@ function renderFeedEntry(
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleUserMessage: (rowId: string, anchorKey: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
-    readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
@@ -2097,12 +2086,6 @@ function renderFeedEntry(
             onOpenDetails={props.onOpenSetupDetails}
           />
         ) : null}
-        {entry.checkpointSummary ? (
-          <TurnDiffStat
-            checkpoint={entry.checkpointSummary}
-            onOpenTurnDiff={props.onOpenTurnDiff}
-          />
-        ) : null}
       </View>
     );
   }
@@ -2114,6 +2097,7 @@ function renderFeedEntry(
         iconSubtleColor={iconSubtleColor}
         label={entry.label}
         providerStartingLabel={entry.providerStartingLabel}
+        providerStartingDriver={entry.providerStartingDriver}
       />
     );
   }
@@ -2193,14 +2177,6 @@ function renderFeedEntry(
         hasFailure={entry.hasFailure}
         shimmer={entry.shimmer}
         thought={entry.thought}
-        trailing={
-          entry.checkpointSummary ? (
-            <TurnDiffStat
-              checkpoint={entry.checkpointSummary}
-              onOpenTurnDiff={props.onOpenTurnDiff}
-            />
-          ) : null
-        }
         onToggle={() => props.onToggleWorkGroup(entry.groupId, entry.id)}
       />
     );
@@ -2220,6 +2196,16 @@ function renderFeedEntry(
   if (entry.type === "activity-group" && isSecretRequestActivityGroup(entry)) {
     return (
       <SecretRequestCard
+        environmentId={props.environmentId}
+        projectedItem={entry.activities[0]!.projectedItem}
+        iconColor={iconSubtleColor}
+      />
+    );
+  }
+
+  if (entry.type === "activity-group" && isFeedbackRequestActivityGroup(entry)) {
+    return (
+      <FeedbackRequestCard
         environmentId={props.environmentId}
         projectedItem={entry.activities[0]!.projectedItem}
         iconColor={iconSubtleColor}
@@ -2702,12 +2688,6 @@ function renderFeedEntry(
           onPressPreview={props.onPressPreview}
           onPlaybackStart={props.onPlaybackStart}
         />
-        {showAssistantMeta && message.checkpointSummary ? (
-          <TurnDiffStat
-            checkpoint={message.checkpointSummary}
-            onOpenTurnDiff={props.onOpenTurnDiff}
-          />
-        ) : null}
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
@@ -2759,60 +2739,6 @@ function renderFeedEntry(
   );
 }
 
-function TurnDiffStat(props: {
-  readonly checkpoint: ThreadCheckpointSummary;
-  readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
-}) {
-  const gt = useGT();
-  const { repositories, rootFiles, totals } = turnChanges(props.checkpoint);
-  const { additions, deletions } = totals;
-  const folderCount = repositories.length + (rootFiles.length > 0 ? 1 : 0);
-  const repositoriesLabel =
-    repositories.length === 0
-      ? null
-      : folderCount === 1
-        ? repositories[0]!.name
-        : gt("{count} repos", { count: folderCount });
-  const changedIn =
-    repositories.length === 0
-      ? null
-      : [
-          ...(rootFiles.length > 0 ? [gt("this folder")] : []),
-          ...repositories.map((repository) => repository.name),
-        ].join(", ");
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={
-        changedIn === null
-          ? gt(
-              "{files, plural, one {Review {files} file changed, {additions} additions, {deletions} deletions} other {Review {files} files changed, {additions} additions, {deletions} deletions}}",
-              { files: totals.count, additions, deletions },
-            )
-          : gt(
-              "{files, plural, one {Review {files} file changed in {folders}, {additions} additions, {deletions} deletions} other {Review {files} files changed in {folders}, {additions} additions, {deletions} deletions}}",
-              { files: totals.count, folders: changedIn, additions, deletions },
-            )
-      }
-      onPress={() => props.onOpenTurnDiff(props.checkpoint)}
-      className="min-h-11 shrink-0 flex-row items-center gap-2 px-2 active:bg-subtle"
-    >
-      {repositoriesLabel ? (
-        <Text className="max-w-28 text-xs text-foreground-muted" numberOfLines={1}>
-          {repositoriesLabel}
-        </Text>
-      ) : null}
-      <Text className="font-t3-medium text-xs tabular-nums text-adaptive-emerald-700-300">
-        +{formatDiffCount(additions)}
-      </Text>
-      <Text className="font-t3-medium text-xs tabular-nums text-adaptive-rose-700-300">
-        −{formatDiffCount(deletions)}
-      </Text>
-      <SymbolView name="chevron.right" size={12} tintColorClassName="accent-foreground-muted" />
-    </Pressable>
-  );
-}
-
 type UserMessageContentProps = {
   readonly text: string;
   readonly environmentId: EnvironmentId;
@@ -2833,7 +2759,10 @@ function UserMessageContent(props: UserMessageContentProps) {
   const liveText = useLiveThreadLinkLabels(
     props.text,
     props.environmentId,
-    useLinkedEnvironments(hasThreadLinks(props.text) ? props.environmentId : null),
+    useLinkedEnvironments(
+      hasThreadLinks(props.text) ? props.environmentId : null,
+      linkedThreadEnvironmentIds(props.text, props.environmentId),
+    ),
   );
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
   const text = replaceComposerContextReferences(liveText, (ref) => {
@@ -3151,11 +3080,6 @@ function DisclosureRow(props: {
   );
 }
 
-const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
-  animated: false,
-  on: { dataChange: true, itemLayout: true, layout: true },
-} as const;
-
 // A thread switch remounts the feed. Starting from the last split pane's size lays rows out once,
 // instead of at width 0 and again when the new feed's own layout reports the same width.
 let lastSplitViewport: { windowWidth: number; width: number; height: number } | null = null;
@@ -3181,19 +3105,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const [retainedMediaRowId, setRetainedMediaRowId] = useState<string | null>(null);
   const focused = useIsFocused();
   if (!focused && retainedMediaRowId !== null) setRetainedMediaRowId(null);
-  const onOpenTurnDiff = useCallback(
-    (checkpoint: ThreadCheckpointSummary) => {
-      setReviewSelectedSectionId(
-        scopedThreadKey(props.environmentId, props.threadId),
-        getReviewSectionIdForCheckpoint(checkpoint),
-      );
-      navigation.navigate("ThreadReview", {
-        environmentId: props.environmentId,
-        threadId: props.threadId,
-      });
-    },
-    [navigation, props.environmentId, props.threadId],
-  );
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
@@ -3334,7 +3245,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     // A v1 link names no environment, so it falls back to this message's.
     return scopeThreadRef(props.environmentId, link.threadId);
   };
-  // The file a chat link names: in this workspace, else in the one other project that has it.
+  // Prefer the thread workspace before looking across projects or in agent directories.
   const findFileLinkTarget = async (
     linkPath: string,
     path: string,
@@ -3352,6 +3263,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return relativePath ?? path;
     }
     const workspaceRoot = props.workspaceRoot;
+    const basenameLookup = needsWorkspaceBasenameLookup(relativePath);
     const originalPath = resolveWorkspaceFilePath(workspaceRoot, relativePath);
     const queryOptions = { signal, reportFailure: false, reportDefect: false };
     const searchRoot = (root: string) =>
@@ -3399,13 +3311,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               ? [project.workspaceRoot]
               : [],
           );
-        match =
-          otherRoots.length === 0
-            ? null
-            : pickProjectLinkMatch(relativePath, await Promise.all(otherRoots.map(searchRoot)));
+        if (otherRoots.length > 0) {
+          const projectSearches = await Promise.all(otherRoots.map(searchRoot));
+          match = pickProjectLinkMatch(relativePath, [own, ...projectSearches]);
+        }
       }
       if (match === null && reply !== undefined && !signal.aborted) {
-        // No project has the file, so it opens where the agent last worked, as written.
+        // An unresolved project lookup falls back to the agent's working directories.
         const agentRoots = agentWorkingDirectories(
           appAtomRegistry.get(
             environmentThreadDetails.quietThreadAtom(
@@ -3424,7 +3336,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           (result) => result._tag === "Success" && result.value?.kind === "file",
         );
         const literal = agentPaths[index];
-        if (literal !== undefined || !needsWorkspaceBasenameLookup(relativePath)) {
+        if (literal !== undefined || !basenameLookup) {
           return literal ?? relativePath;
         }
         return (
@@ -3435,7 +3347,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       const metadata = await metadataOf(originalPath);
       // Another project's file never replaces a thread-local file the search missed.
       return metadata._tag === "Success" &&
-        (needsWorkspaceBasenameLookup(relativePath) && !otherProject
+        (basenameLookup && !otherProject
           ? metadata.value?.kind !== "directory"
           : metadata.value === null)
         ? match
@@ -3743,20 +3655,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         />
       );
     }
-    if (imageSource._tag === "Blocked") {
+    if (
+      media?.kind !== "image" ||
+      !("resource" in media.source) ||
+      media.source.resource._tag !== "media-file"
+    ) {
       return <ThreadMarkdownImageUnavailable alt={image.alt} />;
     }
     return (
       <ThreadMarkdownImage
-        environmentId={props.environmentId}
-        resource={{
-          _tag: "media-file",
-          threadId: props.threadId,
-          path: imageSource.path,
-        }}
+        environmentId={media.source.environmentId}
+        resource={media.source.resource}
         alt={image.alt}
-        srcFragment={markdownImageSourceFragment(image.href)}
-        actionsSource={media?.source.actionsSource}
+        srcFragment={media.source.srcFragment}
+        actionsSource={media.source.actionsSource}
         onPressPreview={onPressPreview}
       />
     );
@@ -4210,7 +4122,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (entry.type === "html-render") {
       return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
     }
-    if (workRowSizing.fixedRowHeight === undefined || entry.checkpointSummary) {
+    if (workRowSizing.fixedRowHeight === undefined) {
       return undefined;
     }
     switch (entry.type) {
@@ -4320,7 +4232,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onToggleWorkRow,
             onToggleUserMessage,
             onToggleTurnFold,
-            onOpenTurnDiff,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,
             markdownLinkHandlers,
@@ -4400,6 +4311,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             {...(usesNativeAutomaticInsets ? { contentInset: { top: anchorTopInset } } : {})}
             freeze={props.freeze}
             maintainScrollAtEnd={jumpReady ? false : THREAD_FEED_MAINTAIN_SCROLL_AT_END}
+            maintainScrollAtEndThreshold={THREAD_FEED_MAINTAIN_SCROLL_AT_END_THRESHOLD}
             maintainVisibleContentPosition
             data={groupedFeed}
             extraData={listAppearanceData}

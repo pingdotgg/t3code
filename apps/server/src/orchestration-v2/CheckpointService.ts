@@ -924,10 +924,11 @@ export const layer: Layer.Layer<
     const repositoryScopesIfReadable: CheckpointServiceV2Shape["repositoryScopesIfReadable"] =
       Effect.fn("CheckpointService.repositoryScopes")(
         function* (input) {
-          const [workspace, submodules] = yield* Effect.all([
-            workspaceFolders.forThread(input),
-            workspaceFolders.submodules(input),
-          ]);
+          const workspace = yield* workspaceFolders.forThread(input);
+          const submodules = yield* workspaceFolders.submodules({
+            ...input,
+            folders: workspace.folders,
+          });
           return yield* Effect.forEach(
             [...workspace.folders.filter((folder) => folder.isGitRepository), ...submodules],
             (folder) =>
