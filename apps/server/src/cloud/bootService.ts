@@ -482,6 +482,8 @@ interface WindowsTaskSteps {
   readonly remove: Effect.Effect<void, BootServiceCommandError>;
 }
 
+const schtasksPath = (systemRoot: string) => `${systemRoot}\\System32\\schtasks.exe`;
+
 function schtasksManager(input: {
   readonly path: Path.Path;
   readonly homeDir: string;
@@ -489,13 +491,14 @@ function schtasksManager(input: {
   readonly steps: WindowsTaskSteps;
 }): BootServiceManager {
   const unitPath = scheduledTaskPath(input.path, input.session.localAppData);
+  const schtasks = schtasksPath(input.session.systemRoot);
   const task = ["/TN", input.session.taskName];
   const register = {
     step: "registering the scheduled task",
-    command: "schtasks",
+    command: schtasks,
     args: ["/Create", "/XML", unitPath, ...task, "/F"],
   };
-  const run = { step: "starting the service", command: "schtasks", args: ["/Run", ...task] };
+  const run = { step: "starting the service", command: schtasks, args: ["/Run", ...task] };
   const stop: ReadonlyArray<BootServiceStep> = [
     { step: "disabling the scheduled task", run: input.steps.disable },
     {
@@ -519,7 +522,7 @@ function schtasksManager(input: {
     restart: [
       {
         step: "enabling the scheduled task",
-        command: "schtasks",
+        command: schtasks,
         args: ["/Change", ...task, "/ENABLE"],
       },
       { ...run, step: "restarting the service after a failed update" },
@@ -531,7 +534,7 @@ function schtasksManager(input: {
       restart: [
         {
           step: "ending the scheduled task",
-          command: "schtasks",
+          command: schtasks,
           args: ["/End", ...task],
           optional: true,
         },
@@ -895,7 +898,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* windowsVariable("USERDOMAIN"),
       yield* windowsVariable("USERNAME"),
     ),
-    systemRoot: (yield* windowsVariable("SystemRoot")) || "C:\\Windows",
+    systemRoot:
+      (yield* windowsVariable("SystemRoot")) || (yield* windowsVariable("windir")) || "C:\\Windows",
   };
   // The unit is per user, so the launcher to stop is the one serving the installed unit's home.
   const launcherLockPath = (unit: Option.Option<string>) =>
@@ -903,6 +907,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       Option.getOrUndefined(Option.flatMapNullishOr(unit, bootServiceBaseDirOf)) ?? input.baseDir,
     );
   const windowsTask = ["/TN", windowsSession.taskName];
+  const schtasks = schtasksPath(windowsSession.systemRoot);
   /** Runs a command that changes the task; a task that is not registered has nothing to change. */
   const changeWindowsTask = Effect.fn("cloud.boot_service.change_windows_task")(function* (
     step: string,
@@ -911,12 +916,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   ) {
     const toError = (cause: unknown) => new BootServiceCommandError({ step, cause });
     const changed = yield* runner
-      .run({ command: "schtasks", args: [verb, ...windowsTask, flag] })
+      .run({ command: schtasks, args: [verb, ...windowsTask, flag] })
       .pipe(Effect.mapError(toError));
     if (changed.code === 0) return;
     const queried = yield* runner
       .run({
-        command: "schtasks",
+        command: schtasks,
         args: ["/Query", ...windowsTask, "/HRESULT"],
         timeout: Duration.seconds(5),
       })
@@ -951,14 +956,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     unit: string,
   ) {
     const register = (xmlPath: string) =>
-      runStep("registering the scheduled task", "schtasks", [
+      runStep("registering the scheduled task", schtasks, [
         "/Create",
         "/XML",
         xmlPath,
         ...windowsTask,
         "/F",
       ]);
-    const registered = yield* probe("schtasks", ["/Query", ...windowsTask, "/XML"]);
+    const registered = yield* probe(schtasks, ["/Query", ...windowsTask, "/XML"]);
     if (
       Option.isSome(registered) &&
       registered.value.code === 0 &&
@@ -981,7 +986,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   // Task Scheduler then reports the task stopped at once, so the lock says when it really is.
   const stopWindowsLauncher = Effect.gen(function* () {
     const unit = yield* readUnit().pipe(Effect.option);
-    yield* runner.run({ command: "schtasks", args: ["/End", ...windowsTask] }).pipe(Effect.ignore);
+    yield* runner.run({ command: schtasks, args: ["/End", ...windowsTask] }).pipe(Effect.ignore);
     yield* Effect.tryPromise({
       try: (signal) => waitForServiceLauncherExit(launcherLockPath(unit), signal),
       catch: (cause) =>
@@ -1215,7 +1220,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   ) {
     const [task, running] = yield* Effect.all(
       [
-        probe("schtasks", ["/Query", "/TN", windowsSession.taskName, "/XML"]),
+        probe(schtasks, ["/Query", "/TN", windowsSession.taskName, "/XML"]),
         Effect.promise(() => serviceLauncherIsRunning(launcherLockPath(unit))),
       ],
       { concurrency: "unbounded" },
