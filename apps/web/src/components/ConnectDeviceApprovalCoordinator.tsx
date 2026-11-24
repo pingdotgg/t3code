@@ -136,7 +136,14 @@ function NewConnectDeviceToast({
           void navigate({ to: "/settings/access", search: { machine: environmentId } });
         },
       },
-      data: { hideCopyButton: true, onClose: markSeen },
+      data: {
+        hideCopyButton: true,
+        onClose: () => {
+          markSeen();
+          // A dismissed toast is gone, so the next unseen device needs a new one.
+          if (shown.current?.renderedKey === renderedKey) shown.current = null;
+        },
+      },
     });
     if (shown.current) {
       toastManager.update(shown.current.toastId, options);

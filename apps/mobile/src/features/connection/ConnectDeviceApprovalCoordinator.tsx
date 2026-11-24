@@ -65,10 +65,20 @@ interface NewDeviceNotice {
   /** Keys the queue; a later notice for the same host carries a newer watermark. */
   readonly pairingLinkId: string;
   readonly environmentId: EnvironmentId;
-  readonly title: string;
-  readonly message: string;
-  readonly newest: number;
 }
+
+/** The latest device list per watched host, read when a notice shows so it names only unseen devices. */
+const announcedHosts = new Map<
+  EnvironmentId,
+  { readonly label: string; readonly devices: ReadonlyArray<AuthConnectDevice> }
+>();
+
+const loadSeenThrough = async (environmentId: EnvironmentId) => {
+  const preferences = await loadPreferences().catch(() => null);
+  return preferences === null
+    ? null
+    : { seenThrough: preferences.connectDevicesSeenThrough?.[environmentId] };
+};
 
 const markConnectDevicesSeen = (environmentId: EnvironmentId, newest: number) =>
   updatePreferences((current) => ({
@@ -79,17 +89,41 @@ const markConnectDevicesSeen = (environmentId: EnvironmentId, newest: number) =>
   })).catch(() => undefined);
 
 const newDeviceNotices = createApprovalPromptQueue<NewDeviceNotice>((notice, answer) => {
-  const acknowledge = () => {
-    void markConnectDevicesSeen(notice.environmentId, notice.newest);
-    answer("done");
-  };
-  Dialog.alert(
-    notice.title,
-    notice.message,
-    [{ text: m(msg("OK")), onPress: acknowledge }],
-    // Another dialog took the screen; the notice shows again on the next update.
-    { onDismiss: () => answer("later") },
-  );
+  void (async () => {
+    const host = announcedHosts.get(notice.environmentId);
+    const seen = host ? await loadSeenThrough(notice.environmentId) : null;
+    const current = announcedHosts.get(notice.environmentId);
+    if (!current || seen === null || seen.seenThrough === undefined) return answer("done");
+    const { unseen, newest } = unseenConnectDevices(current.devices, seen.seenThrough);
+    if (unseen.length === 0) return answer("done");
+    const [firstDevice = ""] = unseen.map(({ client: device }) => describeConnectDevice(device));
+    Dialog.alert(
+      m(msg("New device signed in to {environment}", { environment: current.label })),
+      unseen.length === 1
+        ? m(
+            msg(
+              "{device} connected through {product}. If this was not you, remove it in Settings → Access in T3 Code on that computer.",
+              { device: firstDevice, product: "T3 Connect" },
+            ),
+          )
+        : m(
+            msg(
+              "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. If this was not you, remove them in Settings → Access in T3 Code on that computer.",
+              { count: unseen.length, product: "T3 Connect" },
+            ),
+          ),
+      [
+        {
+          text: m(msg("OK")),
+          onPress: () => {
+            void markConnectDevicesSeen(notice.environmentId, newest).then(() => answer("done"));
+          },
+        },
+      ],
+      // Another dialog took the screen; the notice shows again on the next update.
+      { onDismiss: () => answer("later") },
+    );
+  })();
 });
 
 /** Devices approved by hand are already known, so only `announce` hosts that skip approval. */
@@ -105,48 +139,30 @@ function NewConnectDeviceWatcher(props: {
   const devices = access.data?.type === "snapshot" ? access.data.payload.connectDevices : undefined;
 
   const check = useEffectEvent(async (current: ReadonlyArray<AuthConnectDevice>) => {
-    const preferences = await loadPreferences().catch(() => null);
-    if (preferences === null) return;
-    const seenThrough = preferences.connectDevicesSeenThrough?.[props.environmentId];
-    const { unseen, newest } = unseenConnectDevices(current, seenThrough);
+    announcedHosts.set(props.environmentId, { label: props.environmentLabel, devices: current });
+    const seen = await loadSeenThrough(props.environmentId);
+    // The host went away while preferences loaded.
+    if (seen === null || announcedHosts.get(props.environmentId)?.devices !== current) return;
+    const { unseen, newest } = unseenConnectDevices(current, seen.seenThrough);
     if (!props.announce || unseen.length === 0) {
-      if (seenThrough !== newest) await markConnectDevicesSeen(props.environmentId, newest);
+      if (seen.seenThrough !== newest) await markConnectDevicesSeen(props.environmentId, newest);
       return;
     }
-    const [firstDevice = ""] = unseen.map(({ client: device }) => describeConnectDevice(device));
     newDeviceNotices.offer([
-      {
-        pairingLinkId: `${props.environmentId}:${newest}`,
-        environmentId: props.environmentId,
-        title: m(
-          msg("New device signed in to {environment}", { environment: props.environmentLabel }),
-        ),
-        message:
-          unseen.length === 1
-            ? m(
-                msg(
-                  "{device} connected through {product}. If this was not you, remove it in Settings → Access in T3 Code on that computer.",
-                  { device: firstDevice, product: "T3 Connect" },
-                ),
-              )
-            : m(
-                msg(
-                  "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. If this was not you, remove them in Settings → Access in T3 Code on that computer.",
-                  { count: unseen.length, product: "T3 Connect" },
-                ),
-              ),
-        newest,
-      },
+      { pairingLinkId: `${props.environmentId}:${newest}`, environmentId: props.environmentId },
     ]);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a device this phone has not announced opens a native alert
   useEffect(() => {
     if (devices !== undefined) void check(devices);
   }, [devices]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops this host's queued notice when it goes away
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- forgets this host and drops its queued notice when it goes away
   useEffect(() => {
     const environmentId = props.environmentId;
-    return () => newDeviceNotices.drop((notice) => notice.environmentId === environmentId);
+    return () => {
+      announcedHosts.delete(environmentId);
+      newDeviceNotices.drop((notice) => notice.environmentId === environmentId);
+    };
   }, [props.environmentId]);
 
   return null;
