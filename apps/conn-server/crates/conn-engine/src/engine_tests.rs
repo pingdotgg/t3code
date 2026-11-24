@@ -13167,11 +13167,14 @@ fn transcript_queries_use_their_indexes() {
     let conn = rusqlite::Connection::open(db.path()).unwrap();
     let plan = |sql: &str| {
         let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
-        stmt.query_map(["t1"], |row| row.get::<_, String>(3))
-            .unwrap()
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .unwrap()
-            .join("; ")
+        let args = vec!["t1"; stmt.parameter_count()];
+        stmt.query_map(rusqlite::params_from_iter(args), |row| {
+            row.get::<_, String>(3)
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+        .join("; ")
     };
     let items = plan(crate::store::TRANSCRIPT_ITEMS_SQL);
     assert!(items.contains("USING INDEX turn_items_in_order"), "{items}");
@@ -13180,6 +13183,11 @@ fn transcript_queries_use_their_indexes() {
     assert!(
         outline.contains("thread_outline_rows") && !outline.contains("TEMP B-TREE"),
         "{outline}"
+    );
+    let messages = plan(crate::outline::MESSAGE_PAGE);
+    assert!(
+        messages.contains("thread_outline_rows") && !messages.contains("TEMP B-TREE"),
+        "{messages}"
     );
     let interrupts = plan(crate::store::TRANSCRIPT_INTERRUPTS_SQL);
     assert!(interrupts.contains("turn_item_interrupts"), "{interrupts}");
@@ -14787,7 +14795,7 @@ async fn a_bounded_snapshot_holds_ten_turns_and_pages_back() {
             "t1".into(),
             jumped["nextCursor"].as_str().unwrap().to_owned(),
             None,
-            false,
+            crate::HistoryView::Timeline,
         )
         .await
         .unwrap();
@@ -14799,8 +14807,40 @@ async fn a_bounded_snapshot_holds_ten_turns_and_pages_back() {
         visible[target - 25]["sourceItemId"]
     );
     let cursor = view["historyCursor"].as_str().unwrap().to_owned();
+    let crate::ThreadHistory::Page(cached) = engine
+        .thread_history_page(
+            "t1".into(),
+            cursor.clone(),
+            None,
+            crate::HistoryView::Messages,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("missing message cache page")
+    };
+    let first_visible = view["projection"]["visibleTurnItems"][0]["sourceItemId"].clone();
+    let boundary = visible
+        .iter()
+        .position(|row| row["sourceItemId"] == first_visible)
+        .unwrap();
+    let expected_messages: Vec<_> = visible[..boundary]
+        .iter()
+        .filter(|row| {
+            matches!(
+                row["item"]["type"].as_str(),
+                Some("user_message" | "assistant_message")
+            )
+        })
+        .cloned()
+        .collect();
+    assert_eq!(
+        ids(cached["items"].as_array().unwrap()),
+        ids(&expected_messages)
+    );
+    assert_eq!(cached["hasMoreHistory"], false);
     let page = engine
-        .thread_history_page("t1".into(), cursor, None, false)
+        .thread_history_page("t1".into(), cursor, None, crate::HistoryView::Timeline)
         .await
         .unwrap();
     let crate::ThreadHistory::Page(page) = page else {
@@ -14819,7 +14859,12 @@ async fn a_bounded_snapshot_holds_ten_turns_and_pages_back() {
     );
     assert_eq!(
         engine
-            .thread_history_page("t1".into(), "bad".into(), None, false)
+            .thread_history_page(
+                "t1".into(),
+                "bad".into(),
+                None,
+                crate::HistoryView::Timeline
+            )
             .await
             .unwrap(),
         crate::ThreadHistory::InvalidCursor

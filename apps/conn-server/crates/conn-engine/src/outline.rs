@@ -3,6 +3,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use conn_contract::ThreadOutlineMarker;
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
 use crate::{history, transcript::RowSink};
@@ -33,6 +34,80 @@ pub(crate) const LOCAL_WINDOW: &str = concat!(
      FROM entities INDEXED BY thread_outline_rows WHERE thread_id=?1 AND kind='turnItems'
        AND (ordinal,id) IN (SELECT ordinal,id FROM keys) ORDER BY ordinal,id"
 );
+
+// Seek from the same stable turn-item key used by the timeline. Read one extra
+// descriptor to determine whether another page exists, without reading its body.
+pub(crate) const MESSAGE_PAGE: &str = concat!(
+    "SELECT id, ordinal, descriptor ->> '$.bytes' FROM (SELECT id,ordinal,",
+    include_str!("outline_row.sql"),
+    " AS descriptor FROM entities INDEXED BY thread_outline_rows
+     WHERE thread_id=?1 AND kind='turnItems' AND (ordinal,id) <= (?2,?3))
+     WHERE (?4 OR id != ?3) AND descriptor ->> '$.type' IN ('assistant_message','user_message')
+     ORDER BY ordinal DESC, id DESC LIMIT 101"
+);
+
+/// Fast path for local timelines that need no visibility filtering. A missing anchor
+/// falls back to the normal cursor's position rule.
+pub(crate) fn local_message_page(
+    conn: &Connection,
+    thread: &str,
+    sequence: u64,
+    cursor: &history::Cursor,
+) -> rusqlite::Result<Option<history::Page>> {
+    let ordinal: Option<i64> = conn
+        .query_row(
+            "SELECT ordinal FROM entities WHERE thread_id=? AND kind='turnItems' AND id=?",
+            params![thread, cursor.source_item],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(ordinal) = ordinal else {
+        return Ok(None);
+    };
+    let mut stmt = conn.prepare(MESSAGE_PAGE)?;
+    let mut candidates = stmt.query(params![
+        thread,
+        ordinal,
+        cursor.source_item,
+        cursor.inclusive
+    ])?;
+    let mut rows = VecDeque::new();
+    let mut bytes = 0_usize;
+    let mut oldest_ordinal = ordinal;
+    let mut has_more_history = false;
+    while let Some(candidate) = candidates.next()? {
+        let id: String = candidate.get(0)?;
+        let row = json!({"visibility":"local","sourceThreadId":thread,"sourceItemId":id,"position":0,"item":null});
+        let size = candidate
+            .get::<_, usize>(2)?
+            .saturating_add(row.to_string().len());
+        if rows.len() == 100
+            || (!rows.is_empty()
+                && bytes.saturating_add(size) > history::PAGE_POLICY.max_encoded_bytes)
+        {
+            has_more_history = true;
+            break;
+        }
+        bytes = bytes.saturating_add(size);
+        oldest_ordinal = candidate.get(1)?;
+        rows.push_front(row);
+    }
+    let mut next_cursor = None;
+    if has_more_history && let Some(first) = rows.front_mut() {
+        // Retain the absolute position for the normal cursor fallback if this item is deleted.
+        let rank: u64 = conn.query_row(
+            "SELECT count(*) FROM entities WHERE thread_id=? AND kind='turnItems' AND (ordinal,id) < (?,?)",
+            params![thread,oldest_ordinal,first["sourceItemId"].as_str()], |r| r.get(0),
+        )?;
+        first["position"] = json!(rank);
+        next_cursor = Some(history::encode_cursor(sequence, first));
+    }
+    Ok(Some(history::Page {
+        rows: rows.into(),
+        next_cursor,
+        has_more_history,
+    }))
+}
 
 pub(crate) struct Markers {
     pub(crate) markers: Vec<ThreadOutlineMarker>,

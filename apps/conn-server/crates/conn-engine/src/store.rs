@@ -1253,19 +1253,39 @@ impl Store {
         sequence: u64,
         cursor: &crate::history::Cursor,
         through_entry_id: Option<&str>,
-        conversation_only: bool,
+        view: crate::HistoryView,
     ) -> StoreResult<Option<Value>> {
         use crate::history;
+        if view == crate::HistoryView::Messages && cursor.source_thread == thread_id {
+            let Some((thread, _)) = self.live_thread(thread_id)? else {
+                return Ok(None);
+            };
+            if self.unfiltered_local(thread_id, &thread)?
+                && let Some(page) =
+                    crate::outline::local_message_page(&self.conn, thread_id, sequence, cursor)
+                        .map_err(err)?
+            {
+                return self.finish_page(thread_id, sequence, page).map(Some);
+            }
+        }
         let Some((_, index)) = self.timeline_index(thread_id)? else {
             return Ok(None);
         };
-        let page = history::page_rows(
+        let mut page = history::page_rows(
             &index,
             sequence,
             cursor,
             through_entry_id,
-            conversation_only,
+            view != crate::HistoryView::Timeline,
         );
+        if view == crate::HistoryView::Messages {
+            page.rows.retain(|row| {
+                matches!(
+                    row["item"]["type"].as_str(),
+                    Some("user_message" | "assistant_message")
+                )
+            });
+        }
         drop(index);
         self.finish_page(thread_id, sequence, page).map(Some)
     }
@@ -1295,6 +1315,19 @@ impl Store {
         }))
     }
 
+    fn unfiltered_local(&self, thread_id: &str, thread: &Value) -> StoreResult<bool> {
+        if inherited_run_fork(thread).is_some() {
+            return Ok(false);
+        }
+        self.conn.query_row(
+            "SELECT NOT EXISTS (SELECT 1 FROM entities WHERE thread_id=?1 AND kind='runs'
+                AND body ->> '$.status' IN ('rolled_back','queued','cancelled'))
+             AND NOT EXISTS (SELECT 1 FROM entities WHERE thread_id=?1 AND kind='attempts'
+                AND body ->> '$.status'='superseded')
+             AND NOT EXISTS (SELECT 1 FROM entities WHERE thread_id=?1 AND kind='turnItems' AND ordinal IS NULL)",
+            [thread_id], |r| r.get::<_, bool>(0)).map_err(err)
+    }
+
     pub(crate) fn thread_window(
         &self,
         thread_id: &str,
@@ -1306,14 +1339,7 @@ impl Store {
         let mut window = crate::outline::JumpWindow::new(target, 0);
         // Forks and runs with hidden rows use the same visibility walk as the transcript.
         // In an ordinary timeline seek by key and deserialize only the neighboring rows.
-        let unfiltered = inherited_run_fork(&thread).is_none() && self.conn.query_row(
-            "SELECT NOT EXISTS (SELECT 1 FROM entities WHERE thread_id=?1 AND kind='runs'
-                AND body ->> '$.status' IN ('rolled_back','queued','cancelled'))
-             AND NOT EXISTS (SELECT 1 FROM entities WHERE thread_id=?1 AND kind='attempts'
-                AND body ->> '$.status'='superseded')
-             AND NOT EXISTS (SELECT 1 FROM entities WHERE thread_id=?1 AND kind='turnItems' AND ordinal IS NULL)",
-            [thread_id], |r| r.get::<_, bool>(0)).map_err(err)?;
-        if unfiltered {
+        if self.unfiltered_local(thread_id, &thread)? {
             let mut stmt = self
                 .conn
                 .prepare(crate::outline::LOCAL_WINDOW)

@@ -733,7 +733,7 @@ pub trait Engine: Send + Sync {
         _thread_id: ThreadId,
         _cursor: String,
         _through_entry_id: Option<String>,
-        _conversation_only: bool,
+        _view: HistoryView,
     ) -> BoxFuture<'_, Result<ThreadHistory, EngineError<GetThreadProjectionError>>> {
         unsupported("thread history pages")
     }
@@ -780,6 +780,15 @@ pub enum ThreadTranscript {
     NotFound,
     /// The file would pass the limit (`thread_transcript_too_large`).
     TooLarge,
+}
+
+/// Row selection for a paged thread history read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryView {
+    Timeline,
+    Conversation,
+    /// User and assistant rows for the native offline cache.
+    Messages,
 }
 
 /// The outcome of [`Engine::thread_history_page`].

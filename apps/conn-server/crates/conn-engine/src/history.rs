@@ -68,10 +68,10 @@ pub(crate) struct InvalidCursor;
 /// `ThreadHistoryCursorPayload`.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Cursor {
-    source_thread: String,
-    source_item: String,
+    pub(crate) source_thread: String,
+    pub(crate) source_item: String,
     position: u64,
-    inclusive: bool,
+    pub(crate) inclusive: bool,
 }
 
 pub(crate) fn encode_cursor(sequence: u64, row: &Value) -> String {

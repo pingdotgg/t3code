@@ -748,13 +748,17 @@ async fn thread_history(
     let Some(cursor) = query.get("cursor").cloned() else {
         return invalid();
     };
-    let conversation_only = query.get("view").map(String::as_str) == Some("conversation");
+    let view = match query.get("view").map(String::as_str) {
+        Some("messages") => conn_engine::HistoryView::Messages,
+        Some("conversation") => conn_engine::HistoryView::Conversation,
+        _ => conn_engine::HistoryView::Timeline,
+    };
     match engine
         .thread_history_page(
             thread_id.into(),
             cursor,
             query.get("throughEntryId").cloned(),
-            conversation_only,
+            view,
         )
         .await
     {

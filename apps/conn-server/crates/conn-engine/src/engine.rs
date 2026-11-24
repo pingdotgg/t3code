@@ -2741,7 +2741,7 @@ impl Engine for SqliteEngine {
         thread_id: ThreadId,
         cursor: String,
         through_entry_id: Option<String>,
-        conversation_only: bool,
+        view: crate::HistoryView,
     ) -> BoxFuture<'_, Result<crate::ThreadHistory, EngineError<GetThreadProjectionError>>> {
         Box::pin(async move {
             let Ok(cursor) = crate::history::decode_cursor(&cursor) else {
@@ -2756,7 +2756,7 @@ impl Engine for SqliteEngine {
                             high,
                             &cursor,
                             through_entry_id.as_deref(),
-                            conversation_only,
+                            view,
                         )?
                         .map_or(crate::ThreadHistory::NotFound, crate::ThreadHistory::Page))
                 })
