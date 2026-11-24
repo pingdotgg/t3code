@@ -56,7 +56,7 @@ export function VoiceInputErrorPill(props: {
           render={
             <Button
               type="button"
-              size={compact ? "icon-xs" : "icon-sm-pill"}
+              size={compact ? "icon-xs-pill" : "icon-sm-pill"}
               variant="ghost"
               aria-label={gt("Dismiss voice input error")}
               onPointerDown={(event) => event.preventDefault()}
@@ -92,7 +92,7 @@ export function VoiceInputErrorPill(props: {
       {props.errorAction ? (
         <Button
           type="button"
-          size={compact ? "xs" : "sm-pill"}
+          size={compact ? "xs-pill" : "sm-pill"}
           variant="outline"
           aria-label={action.label}
           disabled={props.disabled}
