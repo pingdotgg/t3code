@@ -2047,10 +2047,15 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           });
         }
         yield* validateLocalExecutable(command);
+        const root = path.parse(command).root;
+        // Resolve only the base so symlink/.. segments keep filesystem semantics.
+        const absoluteCommand = path.isAbsolute(command)
+          ? command
+          : `${path.resolve(root)}${path.sep}${command.slice(root.length)}`;
         return {
           distribution: "local",
           spawn: {
-            command: path.isAbsolute(command) ? command : `${process.cwd()}${path.sep}${command}`,
+            command: absoluteCommand,
             args: settings.commandArgs,
             cwd,
             env,

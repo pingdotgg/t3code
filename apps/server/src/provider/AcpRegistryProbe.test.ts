@@ -11,8 +11,6 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
-import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -563,19 +561,11 @@ await import(pathToFileURL(agentPath).href);
                 },
               }),
       });
-      const textGeneration = makeAcpRegistryTextGeneration(
-        {
-          instanceId,
-          settings: decodeSettings({ agentId: "mock-agent" }),
-          environment: process.env,
-        },
-        {
-          catalog,
-          spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-          random: yield* SecureRandom.SecureRandom,
-          fs,
-        },
-      );
+      const textGeneration = yield* makeAcpRegistryTextGeneration({
+        instanceId,
+        settings: decodeSettings({ agentId: "mock-agent" }),
+        environment: process.env,
+      }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
 
       const result = yield* textGeneration.generateThreadTitle({
         cwd: process.cwd(),

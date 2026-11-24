@@ -388,6 +388,16 @@ describe("AcpRegistrySupport", () => {
       expect(
         yield* (yield* catalog("C:\\bin\\cmdc.exe")).resolve(bare, "/workspace"),
       ).toMatchObject({ spawn: { command: "C:\\bin\\cmdc.exe", shell: false } });
+      const windowsPath = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
+      for (const drive of ["C:", "D:"]) {
+        const command = `${drive}tools\\link\\..\\cmdc.exe`;
+        expect(yield* (yield* catalog(command)).resolve(bare, "/workspace")).toMatchObject({
+          spawn: {
+            command: `${windowsPath.resolve(drive)}\\tools\\link\\..\\cmdc.exe`,
+            shell: false,
+          },
+        });
+      }
       // A bare name that PATHEXT resolves to a batch shim never launches, so the transport it
       // selects cannot matter: there is no session to attach MCP servers to.
       expect(

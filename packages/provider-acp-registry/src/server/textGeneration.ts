@@ -19,21 +19,15 @@ import {
 const TIMEOUT = "3 minutes";
 const isTextGenerationError = Schema.is(TextGenerationError);
 
-/**
- * Runs each request in a disposable ACP session outside the checkout.
- */
-export const makeAcpRegistryTextGeneration = (
+export const makeAcpRegistryTextGeneration = Effect.fn("AcpRegistryTextGeneration.make")(function* (
   input: Omit<AcpRegistryConfigurationProbeInput, "cwd">,
-  services: {
-    readonly catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"];
-    readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
-    readonly random: SecureRandom.SecureRandom["Service"];
-    readonly fs: FileSystem.FileSystem;
-  },
-): ProviderTextGeneration => {
+) {
+  const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const random = yield* SecureRandom.SecureRandom;
+  const fs = yield* FileSystem.FileSystem;
   const run: TextGenerationOperations.Runner = Effect.fn("AcpRegistryTextGeneration.run")(
     function* (request) {
-      const fs = yield* FileSystem.FileSystem;
       const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-acp-text-" });
       const runtime = yield* makeAcpRegistryManagementRuntime({ ...input, cwd });
       const output = yield* Ref.make("");
@@ -99,14 +93,14 @@ export const makeAcpRegistryTextGeneration = (
                 cause,
               }),
         ),
-        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, services.catalog),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, services.spawner),
-        Effect.provideService(SecureRandom.SecureRandom, services.random),
-        Effect.provideService(FileSystem.FileSystem, services.fs),
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(SecureRandom.SecureRandom, random),
+        Effect.provideService(FileSystem.FileSystem, fs),
       ),
   );
   return TextGenerationOperations.fromRunner(
     "AcpRegistryTextGeneration",
     TextGenerationOperations.withoutInvestigation("ACP Registry", run),
-  );
-};
+  ) satisfies ProviderTextGeneration;
+});

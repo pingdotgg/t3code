@@ -1065,10 +1065,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
       ),
       orchestrationAdapter,
-      textGeneration: makeAcpRegistryTextGeneration(
-        { instanceId, settings: effectiveConfig, environment: processEnvironment },
-        { catalog, spawner, random, fs: fileSystem },
-      ),
+      textGeneration: yield* makeAcpRegistryTextGeneration({
+        instanceId,
+        settings: effectiveConfig,
+        environment: processEnvironment,
+      }),
       acpSessionManagement: {
         listSessions: ({ cwd, cursor }) =>
           provideAcpManagementServices(
