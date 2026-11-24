@@ -28,6 +28,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tool from "effect/ai/Tool";
@@ -56,6 +57,7 @@ const FOLLOW_WAIT_MS = 10 * 60 * 1_000;
 const FOLLOW_MAX_BACKOFF = Duration.minutes(5);
 /** A follower that hits this many defects in a row fails its task instead of retrying. */
 const FOLLOW_MAX_DEFECTS = 3;
+const SETTLE_RETRY_WINDOW = Duration.days(1);
 /** How a follower retries; tests step it by hand. */
 export const FollowRetrySchedule = Context.Reference<Schedule.Schedule<unknown>>(
   "t3/peer/RemoteDelegation/FollowRetrySchedule",
@@ -141,6 +143,9 @@ export class RemoteDelegation extends Context.Service<
 const isModeRefusal = (error: OrchestratorMcpFailure) =>
   error.code === "runtime_mode_escalation_denied" ||
   error.code === "interaction_mode_escalation_denied";
+
+const isMcpFailure = Schema.is(OrchestratorMcpFailure);
+const isProjectionThreadNotFound = Schema.is(ProjectionStore.ProjectionStoreThreadNotFoundError);
 
 /**
  * Refusals that following again cannot change: the link was revoked, expired
@@ -1041,6 +1046,57 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => null),
   );
 
+  // A client connected only to the worker cannot group this task under its remote parent.
+  const settleThere = Effect.fn("RemoteDelegation.settleThere")(
+    function* (parentThreadId: ThreadId, taskId: NodeId) {
+      const { thread, task } = yield* readTask(parentThreadId, taskId);
+      const remote = task?.remoteChild;
+      if (thread.settledOverride !== "settled" || remote === undefined) return;
+      const scope = followScope(
+        { threadId: parentThreadId, providerInstanceId: thread.providerInstanceId },
+        remote,
+      );
+      yield* forwarding.settleThread(scope, remote.environmentId, {
+        threadId: remote.threadId,
+      });
+    },
+    // A task still running there refuses until it ends; a machine asleep, until it wakes.
+    Effect.retry({
+      schedule: followRetry.pipe(Schedule.upTo({ duration: SETTLE_RETRY_WINDOW })),
+      while: (error) =>
+        isMcpFailure(error)
+          ? error.code !== "invalid_request" && !(isFinal(error) || isModeRefusal(error))
+          : !(
+              error._tag === "OrchestratorProjectionError" &&
+              isProjectionThreadNotFound(error.cause)
+            ),
+    }),
+    Effect.ignoreCause({ log: true }),
+  );
+
+  // Each retrying settle re-reads its parent, so a repeated settle here needs no second one.
+  const settling = new Set<NodeId>();
+
+  const settleAllThere = Effect.fn("RemoteDelegation.settleAllThere")(
+    function* (parentThreadId: ThreadId) {
+      const { subagents } = yield* threads.getThreadRecords(parentThreadId, ["subagents"]);
+      for (const task of subagents) {
+        if (task.remoteChild === undefined || settling.has(task.id)) continue;
+        settling.add(task.id);
+        yield* settleThere(parentThreadId, task.id).pipe(
+          Effect.ensuring(Effect.sync(() => settling.delete(task.id))),
+          Effect.forkIn(followers),
+        );
+      }
+    },
+    Effect.retry({
+      schedule: followRetry.pipe(Schedule.upTo({ duration: SETTLE_RETRY_WINDOW })),
+      while: (error) =>
+        !(error._tag === "OrchestratorProjectionError" && isProjectionThreadNotFound(error.cause)),
+    }),
+    Effect.ignoreCause({ log: true }),
+  );
+
   const start: RemoteDelegation["Service"]["start"] = () =>
     forkParked(
       Effect.gen(function* () {
@@ -1050,7 +1106,9 @@ const make = Effect.gen(function* () {
         yield* Stream.runForEach(threads.streamDomainEvents, (event) =>
           event.type === "subagent.updated" && event.payload.remoteChild?.stoppedThere === false
             ? followOne(event.threadId, event.payload.id).pipe(Effect.forkIn(followers))
-            : Effect.void,
+            : event.type === "thread.settled"
+              ? settleAllThere(event.threadId).pipe(Effect.forkIn(followers))
+              : Effect.void,
         ).pipe(
           Effect.ignoreCause({ log: true }),
           Effect.forkIn(followers, { startImmediately: true }),
