@@ -1,5 +1,10 @@
 import { pipe } from "effect/Function";
-import { THEME_CSS_MAX_LENGTH, type EnvironmentTheme } from "@t3tools/contracts";
+import {
+  ENVIRONMENT_THEME_NAME_MAX_LENGTH,
+  THEME_CSS_MAX_LENGTH,
+  type EnvironmentTheme,
+  type EnvironmentThemeFile,
+} from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -122,8 +127,12 @@ function isThemeId(value: unknown): value is string {
   return typeof value === "string" && /^[a-z0-9](?:[a-z0-9-]{0,47})$/.test(value);
 }
 
-function isThemeLabel(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 48;
+export function isThemeLabel(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    value.trim().length <= ENVIRONMENT_THEME_NAME_MAX_LENGTH
+  );
 }
 
 function isThemeCss(value: unknown): value is string {
@@ -176,7 +185,7 @@ function parseStoredThemeVariants(
   return Object.keys(variants).length > 0 ? variants : undefined;
 }
 
-function parseStoredTheme(value: unknown): ThemeDefinition | null {
+function parseStoredTheme(value: unknown): PublishedThemeDefinition | null {
   if (!isRecord(value)) return null;
   if (!isThemeId(value.id) || RESERVED_THEME_IDS.has(value.id)) return null;
   if (!isThemeLabel(value.label) || !isThemeAppearance(value.appearance)) return null;
@@ -194,6 +203,16 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     ...(variants ? { variants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
+    ...(isRecord(value.publishedSeeds) &&
+    isThemeColor(value.publishedSeeds.canvas) &&
+    isThemeColor(value.publishedSeeds.accent)
+      ? {
+          publishedSeeds: {
+            canvas: value.publishedSeeds.canvas,
+            accent: value.publishedSeeds.accent,
+          },
+        }
+      : {}),
     ...(isThemeCss(value.css) && value.css.length > 0 ? { css: value.css } : {}),
   };
 }
@@ -271,7 +290,12 @@ function publishedThemeColors(
   return { ...base, ...lenientThemeColorOverrides(colors ?? {}) };
 }
 
-function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
+export type PublishedThemeDefinition = ThemeDefinition & {
+  readonly publishedRevision?: string;
+  readonly publishedSeeds?: { readonly canvas: string; readonly accent: string };
+};
+
+export function environmentThemeDefinition(theme: EnvironmentTheme): PublishedThemeDefinition {
   const variants: Partial<Record<ThemeAppearance, ThemeColors>> = {};
   for (const [variantAppearance, variantColors] of Object.entries(theme.variants ?? {})) {
     if (variantAppearance === theme.appearance) continue;
@@ -285,19 +309,59 @@ function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
   return {
     id: theme.id,
     label: theme.name,
+    ...(theme.revision ? { publishedRevision: theme.revision } : {}),
     appearance: theme.appearance,
     colors: publishedThemeColors(theme, theme.appearance, theme.colors),
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
-    // Only the pure seeded form is guided-generator output. An exported file,
-    // or seeds carrying explicit role overrides, must open Duplicate in the
-    // advanced editor -- the guided one regenerates from canvas and accent and
-    // would discard whatever the machine hand-tuned.
-    ...(theme.canvas !== undefined &&
-    theme.accent !== undefined &&
-    theme.colors === undefined &&
-    theme.variants === undefined
-      ? { managed: true }
+    ...(theme.canvas !== undefined && theme.accent !== undefined
+      ? {
+          publishedSeeds: { canvas: theme.canvas, accent: theme.accent },
+          // Opening the guided editor would regenerate and discard explicit overrides.
+          ...(theme.colors === undefined && theme.variants === undefined ? { managed: true } : {}),
+        }
       : {}),
+    ...(theme.css ? { css: theme.css } : {}),
+  };
+}
+
+/** The file that publishes `theme`; its id is the file's name. */
+export function environmentThemeFile(
+  theme: ThemeDefinition,
+  original: PublishedThemeDefinition,
+): EnvironmentThemeFile {
+  const guidedCanvas = theme.managed ? themeColorToHex(theme.colors.canvas) : null;
+  const guidedAccent = theme.managed ? themeColorToHex(theme.colors.accent) : null;
+  const seeds =
+    guidedCanvas?.length === 7 && guidedAccent?.length === 7
+      ? { canvas: guidedCanvas, accent: guidedAccent }
+      : original.publishedSeeds;
+  const generated = seeds
+    ? createVividThemeColors(theme.appearance, seeds.canvas, seeds.accent)
+    : null;
+  const overrides = generated
+    ? THEME_COLOR_ROLES.filter((role) => theme.colors[role] !== generated[role])
+    : [];
+  const palette = seeds
+    ? {
+        ...seeds,
+        ...(overrides.length > 0
+          ? { colors: Object.fromEntries(overrides.map((role) => [role, theme.colors[role]])) }
+          : {}),
+      }
+    : { colors: theme.colors };
+  // Variants are read over their appearance's stock defaults, so only roles that differ
+  // are written and the rest keep following those defaults.
+  const variantEntries = Object.entries(theme.variants ?? {}).map(([appearance, colors]) => {
+    const stock = getDefaultThemeColors(appearance as ThemeAppearance);
+    const changed = THEME_COLOR_ROLES.filter((role) => colors[role] !== stock[role]);
+    return [appearance, Object.fromEntries(changed.map((role) => [role, colors[role]]))] as const;
+  });
+  const variants = variantEntries.length > 0 ? Object.fromEntries(variantEntries) : undefined;
+  return {
+    name: theme.label,
+    appearance: theme.appearance,
+    ...palette,
+    ...(variants ? { variants } : {}),
     ...(theme.css ? { css: theme.css } : {}),
   };
 }
@@ -310,7 +374,7 @@ function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
  */
 export function publishedThemeDefinitions(
   themes: ReadonlyArray<EnvironmentTheme>,
-): ReadonlyArray<ThemeDefinition> {
+): ReadonlyArray<PublishedThemeDefinition> {
   return themes
     .filter((theme) => {
       if (isReservedThemeId(theme.id)) return false;
@@ -332,7 +396,7 @@ const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> | n
   return previous !== null && Equal.equals(previous, next) ? previous : next;
 }).pipe(Atom.withLabel("web-published-environment-themes"));
 
-function readStoredEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
+function readStoredEnvironmentThemes(): ReadonlyArray<PublishedThemeDefinition> {
   try {
     const parsed: unknown = JSON.parse(
       window.localStorage.getItem(ENVIRONMENT_THEMES_STORAGE_KEY) ?? "null",
@@ -352,7 +416,7 @@ export const environmentThemeDefinitionsAtom = Atom.make((get) => {
   const published = get(publishedThemesAtom);
   const definitions =
     published === null ? readStoredEnvironmentThemes() : publishedThemeDefinitions(published);
-  const previous = Option.getOrNull(get.self<ReadonlyArray<ThemeDefinition>>());
+  const previous = Option.getOrNull(get.self<ReadonlyArray<PublishedThemeDefinition>>());
   return previous !== null && Equal.equals(previous, definitions) ? previous : definitions;
 }).pipe(Atom.keepAlive, Atom.withLabel("web-environment-theme-definitions"));
 

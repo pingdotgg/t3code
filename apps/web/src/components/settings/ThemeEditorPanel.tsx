@@ -1,4 +1,5 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { ENVIRONMENT_THEME_NAME_MAX_LENGTH } from "@t3tools/contracts";
 import {
   MousePointer2Icon,
   PaintbrushIcon,
@@ -20,6 +21,7 @@ import {
   getThemeModes,
   installCustomTheme,
   isThemeColor,
+  isThemeLabel,
   parseThemeFile,
   removeCustomTheme,
   themeIdFromName,
@@ -326,6 +328,7 @@ export function ThemeEditorPanel({
   open,
   onOpenChange,
   onSaved,
+  onSaveToEnvironment,
   editingTheme,
   initialAppearance,
   seedTheme,
@@ -341,6 +344,11 @@ export function ThemeEditorPanel({
       mergedAppearance?: ThemeAppearance;
     },
   ) => boolean;
+  /**
+   * Set when `editingTheme` is published by the environment: saves go there instead of this
+   * browser's themes. Resolves false, or rejects with a reason, when the save failed.
+   */
+  onSaveToEnvironment?: ((theme: ThemeDefinition) => Promise<boolean>) | undefined;
   editingTheme: ThemeDefinition | null;
   initialAppearance: ThemeAppearance;
   seedTheme?: ThemeDefinition | null;
@@ -363,6 +371,7 @@ export function ThemeEditorPanel({
   const [css, setCss] = useState("");
   const [cssOpen, setCssOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSavingToEnvironment, setIsSavingToEnvironment] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [roleQuery, setRoleQuery] = useState("");
   const [isInspecting, setIsInspecting] = useState(false);
@@ -425,8 +434,9 @@ export function ThemeEditorPanel({
 
   const nameTargetId = themeIdFromName(name);
   const normalizedName = name.trim().toLowerCase();
+  // A published theme keeps its id, so it never merges into a saved theme.
   const mergeTarget =
-    normalizedName === ""
+    normalizedName === "" || onSaveToEnvironment
       ? null
       : (getCustomThemes().find(
           (theme) =>
@@ -440,6 +450,9 @@ export function ThemeEditorPanel({
 
   const appearanceLockReason = (appearance: ThemeAppearance): string | null => {
     if (editableAppearances && !editableAppearances.includes(appearance)) {
+      if (onSaveToEnvironment) {
+        return gt("You can only edit existing palettes in a published theme.");
+      }
       return appearance === "light"
         ? gt("“{label}” has no light palette. Create a theme with the same name to add one.", {
             label: editingTheme?.label,
@@ -780,6 +793,14 @@ export function ThemeEditorPanel({
       setError(gt("Name your theme first."));
       return;
     }
+    if (onSaveToEnvironment && !isThemeLabel(name)) {
+      setError(
+        gt("A published theme name can be at most {max} characters.", {
+          max: ENVIRONMENT_THEME_NAME_MAX_LENGTH,
+        }),
+      );
+      return;
+    }
 
     if (mergeTarget?.css && css.trim() && mergeTarget.css !== css) {
       setError(
@@ -842,7 +863,7 @@ export function ThemeEditorPanel({
       } else if (editingTheme) {
         const baseAppearance = editingTheme.appearance;
         const variantAppearance = baseAppearance === "light" ? "dark" : "light";
-        savedTheme = updateCustomTheme({
+        const editedTheme: ThemeDefinition = {
           ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: editingTheme.id,
@@ -856,7 +877,28 @@ export function ThemeEditorPanel({
             ...(cssForSave ? { css: cssForSave } : {}),
           }),
           ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
-        });
+        };
+        if (onSaveToEnvironment) {
+          setIsSavingToEnvironment(true);
+          setIsInspecting(false);
+          void onSaveToEnvironment(editedTheme).then(
+            (saved) => {
+              setIsSavingToEnvironment(false);
+              if (!saved) {
+                setError(gt("Could not save the theme."));
+                return;
+              }
+              onSaved(editedTheme, { created: false });
+              onOpenChange(false);
+            },
+            (cause: unknown) => {
+              setIsSavingToEnvironment(false);
+              setError(cause instanceof Error ? cause.message : gt("Could not save the theme."));
+            },
+          );
+          return;
+        }
+        savedTheme = updateCustomTheme(editedTheme);
       } else if (mergeTarget) {
         if (takenAppearances.includes(activeAppearance)) {
           setError(
@@ -1185,7 +1227,7 @@ export function ThemeEditorPanel({
         if (event.key !== "Escape" || event.defaultPrevented) return;
         if (!event.currentTarget.contains(event.target as Node)) return;
         event.stopPropagation();
-        onOpenChange(false);
+        if (!isSavingToEnvironment) onOpenChange(false);
       }}
       ref={panelRef}
       role="dialog"
@@ -1231,6 +1273,7 @@ export function ThemeEditorPanel({
                   isInspecting ? gt("Cancel inspecting app colors") : gt("Inspect app colors")
                 }
                 aria-pressed={isInspecting}
+                disabled={isSavingToEnvironment}
                 size="xs"
                 variant={isInspecting ? "secondary" : "ghost"}
                 onClick={() => {
@@ -1260,6 +1303,7 @@ export function ThemeEditorPanel({
         </Button>
         <Button
           aria-label={gt("Close the theme editor")}
+          disabled={isSavingToEnvironment}
           size="icon-xs"
           variant="ghost"
           onClick={() => onOpenChange(false)}
@@ -1270,7 +1314,11 @@ export function ThemeEditorPanel({
 
       {isMinimized ? null : (
         <>
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-3 pl-3 pr-1.5">
+          <div
+            aria-busy={isSavingToEnvironment}
+            className="min-h-0 flex-1 space-y-3 overflow-y-auto py-3 pl-3 pr-1.5"
+            inert={isSavingToEnvironment}
+          >
             {renderNameField()}
             {error ? (
               <p aria-live="polite" className="text-sm text-destructive">
@@ -1306,10 +1354,19 @@ export function ThemeEditorPanel({
             </div>
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border/70 px-3 py-2">
-            <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
+            <Button
+              disabled={isSavingToEnvironment}
+              size="sm"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+            >
               <T>Cancel</T>
             </Button>
-            <Button disabled={!name.trim()} size="sm" onClick={handleSubmit}>
+            <Button
+              disabled={!name.trim() || isSavingToEnvironment}
+              size="sm"
+              onClick={handleSubmit}
+            >
               {isEditing ? (
                 mergeTarget ? (
                   gt("Merge into “{label}”", { label: mergeTarget.label })

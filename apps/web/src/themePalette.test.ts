@@ -9,6 +9,7 @@ import {
   applyThemePalette,
   canonicalThemePreference,
   contextChipVariables,
+  environmentThemeFile,
   getThemeDefinition,
   getThemeColorsForMode,
   getThemeModes,
@@ -36,6 +37,110 @@ import {
   toCanonicalThemeColor,
   THEME_FILE_VERSION,
 } from "./themePalette";
+
+describe("published theme files", () => {
+  it("keeps a renamed guided palette seeded and writes only advanced overrides", () => {
+    const [theme] = publishedThemeDefinitions([
+      {
+        id: "nightfall",
+        name: "Nightfall",
+        appearance: "dark",
+        canvas: "#1a1b26",
+        accent: "#7aa2f7",
+      },
+    ]);
+    if (!theme) throw new Error("Expected a published theme");
+    const renamed = environmentThemeFile({ ...theme, label: "Night sky" }, theme);
+    expect(renamed).toEqual({
+      name: "Night sky",
+      appearance: "dark",
+      canvas: "#1a1b26",
+      accent: "#7aa2f7",
+    });
+    const edited = environmentThemeFile(
+      { ...theme, managed: false, colors: { ...theme.colors, error: "#fa1234" } },
+      theme,
+    );
+    expect(edited.colors).toEqual({ error: "#fa1234" });
+    expect(publishedThemeDefinitions([{ id: theme.id, ...renamed }])[0]?.managed).toBe(true);
+  });
+
+  it("keeps the original seeds and sparse overrides through an advanced editor save", () => {
+    const file = {
+      id: "nightfall",
+      name: "Nightfall",
+      appearance: "dark",
+      canvas: "#1a1b26",
+      accent: "#7aa2f7",
+      colors: { canvas: "#222222", error: "#fa1234" },
+    } as const;
+    const [original] = publishedThemeDefinitions([file]);
+    if (!original) throw new Error("Expected a published theme");
+    expect(original.managed).toBeUndefined();
+
+    const edited = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      id: original.id,
+      name: "Night sky",
+      appearance: original.appearance,
+      colors: original.colors,
+    });
+    const saved = environmentThemeFile(edited, original);
+    expect(saved).toEqual({
+      name: "Night sky",
+      appearance: "dark",
+      canvas: file.canvas,
+      accent: file.accent,
+      colors: {
+        canvas: canonical(file.colors.canvas),
+        error: canonical(file.colors.error),
+      },
+    });
+    expect(publishedThemeDefinitions([{ id: file.id, ...saved }])[0]?.colors).toEqual(
+      edited.colors,
+    );
+  });
+
+  it("preserves a stock secondary palette after a rename", () => {
+    const [original] = publishedThemeDefinitions([
+      {
+        id: "nightfall",
+        name: "Nightfall",
+        appearance: "dark",
+        canvas: "#1a1b26",
+        accent: "#7aa2f7",
+        variants: { light: {} },
+      },
+    ]);
+    if (!original) throw new Error("Expected a published theme");
+
+    const saved = environmentThemeFile({ ...original, label: "Night sky" }, original);
+    const [reloaded] = publishedThemeDefinitions([{ id: original.id, ...saved }]);
+    if (!reloaded) throw new Error("Expected a published theme");
+    expect(saved.variants).toEqual({ light: {} });
+    expect(getThemeModes(reloaded)).toEqual(getThemeModes(original));
+  });
+
+  it("keeps a sparse secondary palette sparse through a rename", () => {
+    const file = {
+      id: "nightfall",
+      name: "Nightfall",
+      appearance: "dark",
+      canvas: "#1a1b26",
+      accent: "#7aa2f7",
+      variants: { light: { error: "#fa1234" } },
+    } as const;
+    const [original] = publishedThemeDefinitions([file]);
+    if (!original) throw new Error("Expected a published theme");
+
+    const saved = environmentThemeFile({ ...original, label: "Night sky" }, original);
+
+    expect(saved.variants).toEqual({ light: { error: canonical(file.variants.light.error) } });
+    expect(publishedThemeDefinitions([{ id: file.id, ...saved }])[0]?.variants).toEqual(
+      original.variants,
+    );
+  });
+});
 
 function asHex(value: string): string {
   const hex = themeColorToHex(value);

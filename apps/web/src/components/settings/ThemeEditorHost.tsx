@@ -1,9 +1,15 @@
+import { useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { msg } from "gt-react";
 import { lazy, Suspense, useSyncExternalStore } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
 import { m } from "../../i18n/messages";
+import { serverEnvironment, themeServerEditableEnvironmentIdAtom } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
+  environmentThemeFile,
   getThemeDefinition,
   subscribeToCustomThemes,
   type ThemeAppearance,
@@ -28,13 +34,45 @@ export function ThemeEditorHost() {
   const session = useThemeEditorStore((store) => store.session);
   const closeThemeEditor = useThemeEditorStore((store) => store.closeThemeEditor);
   const { theme, setTheme, themeHalves, refreshTheme } = useTheme();
-  const editingTheme = useThemeDefinition(session?.editingThemeId);
+  const localEditingTheme = useThemeDefinition(session?.editingThemeId);
+  const published = session?.published;
+  const editingTheme = published?.theme ?? localEditingTheme;
   const seedTheme = useThemeDefinition(session?.seedThemeId);
+  const editableEnvironmentId = useAtomValue(themeServerEditableEnvironmentIdAtom);
+  const saveEnvironmentTheme = useAtomCommand(serverEnvironment.saveEnvironmentTheme, {
+    reportFailure: false,
+  });
+
+  const handleSaveToEnvironment = async (edited: ThemeDefinition) => {
+    if (
+      !session ||
+      !published?.theme.publishedRevision ||
+      editableEnvironmentId !== published.environmentId
+    )
+      return false;
+    const input = {
+      themeId: edited.id,
+      expectedRevision: published.theme.publishedRevision,
+      theme: environmentThemeFile(edited, published.theme),
+    };
+    const { setThemeEditorSaving } = useThemeEditorStore.getState();
+    setThemeEditorSaving(session.id, true);
+    const result = await saveEnvironmentTheme({
+      environmentId: published.environmentId,
+      input,
+    }).finally(() => setThemeEditorSaving(session.id, false));
+    if (result._tag === "Success") return true;
+    const error = Option.getOrNull(Cause.findErrorOption(result.cause));
+    // The server's refusal says what to change, such as CSS that loads files.
+    if (error?._tag === "EnvironmentThemeError") throw new Error(error.message);
+    return false;
+  };
 
   const handleSaved = (
     savedTheme: ThemeDefinition,
     { created, mergedAppearance }: { created: boolean; mergedAppearance?: ThemeAppearance },
   ) => {
+    if (useThemeEditorStore.getState().session?.id !== session?.id) return false;
     if (mergedAppearance) {
       if (!setTheme(savedTheme.id)) {
         toastManager.add(
@@ -80,9 +118,10 @@ export function ThemeEditorHost() {
         initialAppearance={session.initialAppearance}
         key={session.id}
         onOpenChange={(open) => {
-          if (!open) closeThemeEditor();
+          if (!open) closeThemeEditor(session.id);
         }}
         onSaved={handleSaved}
+        onSaveToEnvironment={published ? handleSaveToEnvironment : undefined}
         open
         restoreTheme={refreshTheme}
         seedName={session.seedName ?? undefined}

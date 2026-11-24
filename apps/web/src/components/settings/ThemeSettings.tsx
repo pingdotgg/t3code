@@ -1,3 +1,4 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import {
   CheckIcon,
   CopyIcon,
@@ -9,11 +10,23 @@ import {
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
-import { useState, type ReactElement } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
+import { useRef, useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
-import { readThemeHalvesRaw } from "../../hooks/useTheme";
+import { clearRemovedThemeSelection, readThemeHalvesRaw } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import {
+  serverEnvironment,
+  themeServerEditableEnvironmentIdAtom,
+  themeServerEnvironmentThemesAtom,
+} from "../../state/server";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  environmentThemeDefinition,
+  getCustomThemes,
   getThemeDefinition,
   singleAppearanceOf,
   getThemeModes,
@@ -584,11 +597,23 @@ export function ThemeLibrary({
   const gt = useGT();
   const openThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
   const environmentThemes = useEnvironmentThemeDefinitions();
+  const editableEnvironmentId = useAtomValue(themeServerEditableEnvironmentIdAtom);
+  const removeEnvironmentTheme = useAtomCommand(serverEnvironment.removeEnvironmentTheme, {
+    reportFailure: false,
+  });
+  const [isRemovingTheme, setIsRemovingTheme] = useState(false);
   const [themeRemovalTarget, setThemeRemovalTarget] = useState<{
     theme: ThemeDefinition;
     collectionThemes: ReadonlyArray<ThemeDefinition>;
+    /** Published by the environment, so removing it deletes the server's file. */
+    published?: { environmentId: EnvironmentId; expectedRevision: string };
   } | null>(null);
   const [isThemeRemovalOpen, setIsThemeRemovalOpen] = useState(false);
+  const removalConfirmation = useRef(0);
+  const changeRemovalOpen = (open: boolean) => {
+    removalConfirmation.current++;
+    setIsThemeRemovalOpen(open);
+  };
   const [themeIdsToRemove, setThemeIdsToRemove] = useState<ReadonlyArray<string>>([]);
   const themeIdsToRemoveSet = new Set(themeIdsToRemove);
   const removeDialogTheme = themeRemovalTarget?.theme;
@@ -607,12 +632,12 @@ export function ThemeLibrary({
     );
   };
 
-  const notifyThemeRemovalFailure = () => {
+  const notifyThemeRemovalFailure = (reason?: string) => {
     toastManager.add(
       stackedThreadToast({
         type: "error",
         title: gt("Couldn’t remove theme"),
-        description: gt("Try again."),
+        description: reason ?? gt("Try again."),
       }),
     );
   };
@@ -626,23 +651,56 @@ export function ThemeLibrary({
   const handleRemoveTheme = (
     customTheme: ThemeDefinition,
     collectionThemes: ReadonlyArray<ThemeDefinition>,
+    published?: { environmentId: EnvironmentId; expectedRevision: string },
   ) => {
-    setThemeRemovalTarget({ theme: customTheme, collectionThemes });
+    setThemeRemovalTarget({
+      theme: customTheme,
+      collectionThemes,
+      ...(published && { published }),
+    });
     setThemeIdsToRemove(collectionThemes.length > 1 ? [] : [customTheme.id]);
-    setIsThemeRemovalOpen(true);
+    changeRemovalOpen(true);
   };
 
-  const handleConfirmRemoveTheme = () => {
+  const handleConfirmRemoveTheme = async () => {
     if (!themeRemovalTarget) return;
     const removedIds = new Set(themeIdsToRemove);
     if (removedIds.size === 0) return;
-    const removesBase = removedIds.has(getThemeDefinition(theme)?.id ?? "");
-    // Read raw halves before persistTheme clears them; themeHalves omits published themes not yet streamed
-    // in.
-    const storedHalves = readThemeHalvesRaw();
-    if (removesBase && !persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) {
+    const confirmation = removalConfirmation.current;
+    const published = themeRemovalTarget.published;
+    if (published) {
+      setIsRemovingTheme(true);
+      const removed = await removeEnvironmentTheme({
+        environmentId: published.environmentId,
+        input: {
+          themeId: themeRemovalTarget.theme.id,
+          expectedRevision: published.expectedRevision,
+        },
+      });
+      setIsRemovingTheme(false);
+      if (removed._tag === "Failure") {
+        const error = Option.getOrNull(Cause.findErrorOption(removed.cause));
+        // The server's refusal says what went wrong, such as a themes directory it cannot write.
+        notifyThemeRemovalFailure(
+          error?._tag === "EnvironmentThemeError" ? error.message : undefined,
+        );
+        return;
+      }
+      if (removalConfirmation.current === confirmation) changeRemovalOpen(false);
+      const themeId = themeRemovalTarget.theme.id;
+      if (
+        appAtomRegistry.get(themeServerEditableEnvironmentIdAtom) === published.environmentId &&
+        !getCustomThemes().some(({ id }) => id === themeId) &&
+        !clearRemovedThemeSelection(themeId)
+      ) {
+        notifyThemeSaveFailure();
+      }
       return;
     }
+    const removesBase = removedIds.has(getThemeDefinition(theme)?.id ?? "");
+    // Read the current raw halves before persistTheme clears them.
+    const storedHalves = readThemeHalvesRaw();
+    if (removesBase && !persistTheme(appearanceMode)) return;
     for (const appearance of ["light", "dark"] as const) {
       const half = storedHalves[appearance];
       if (half === undefined) continue;
@@ -658,7 +716,7 @@ export function ThemeLibrary({
       notifyThemeRemovalFailure();
       return;
     }
-    setIsThemeRemovalOpen(false);
+    if (removalConfirmation.current === confirmation) changeRemovalOpen(false);
   };
 
   const baseCardId = getThemeDefinition(theme)?.id ?? null;
@@ -835,28 +893,71 @@ export function ThemeLibrary({
             // Saved themes win id resolution; show only their card to avoid duplicate keys.
             (environmentTheme) => !customThemes.some((theme) => theme.id === environmentTheme.id),
           )
-          .map((environmentTheme) => (
-            <ThemeLibraryCard
-              activeModes={pickedModesFor(environmentTheme.id)}
-              isActive={false}
-              key={environmentTheme.id}
-              onDuplicate={() =>
-                openThemeEditor({
-                  editingThemeId: null,
-                  seedThemeId: environmentTheme.id,
-                  seedName: `${environmentTheme.label} copy`,
-                  initialAppearance,
-                })
-              }
-              onUse={() => {
-                const half = singleAppearanceOf(environmentTheme);
-                if (half === null) persistTheme(environmentTheme.id);
-                else assignHalf(half, environmentTheme.id);
-              }}
-              onUseMode={handlePairPick(environmentTheme.id)}
-              theme={getThemeCardDefinition(environmentTheme)}
-            />
-          ))}
+          .map((environmentTheme) => {
+            const expectedRevision = environmentTheme.publishedRevision;
+            return (
+              <ThemeLibraryCard
+                activeModes={pickedModesFor(environmentTheme.id)}
+                isActive={false}
+                key={environmentTheme.id}
+                onDownload={() =>
+                  downloadThemeFile(
+                    `${environmentTheme.id}.json`,
+                    serializeThemeFile(environmentTheme),
+                  )
+                }
+                onDuplicate={() =>
+                  openThemeEditor({
+                    editingThemeId: null,
+                    seedThemeId: environmentTheme.id,
+                    seedName: `${environmentTheme.label} copy`,
+                    initialAppearance,
+                  })
+                }
+                {...(editableEnvironmentId === null
+                  ? {}
+                  : {
+                      onEdit: () => {
+                        const liveEnvironmentId = appAtomRegistry.get(
+                          themeServerEditableEnvironmentIdAtom,
+                        );
+                        if (liveEnvironmentId !== editableEnvironmentId) return;
+                        const liveTheme = appAtomRegistry
+                          .get(themeServerEnvironmentThemesAtom)
+                          ?.find(({ id }) => id === environmentTheme.id);
+                        if (!liveTheme?.revision) return;
+                        openThemeEditor({
+                          editingThemeId: null,
+                          published: {
+                            environmentId: editableEnvironmentId,
+                            theme: environmentThemeDefinition(liveTheme),
+                          },
+                          seedThemeId: null,
+                          seedName: null,
+                          initialAppearance,
+                        });
+                      },
+                      ...(expectedRevision
+                        ? {
+                            onRemove: () => {
+                              handleRemoveTheme(environmentTheme, [environmentTheme], {
+                                environmentId: editableEnvironmentId,
+                                expectedRevision,
+                              });
+                            },
+                          }
+                        : {}),
+                    })}
+                onUse={() => {
+                  const half = singleAppearanceOf(environmentTheme);
+                  if (half === null) persistTheme(environmentTheme.id);
+                  else assignHalf(half, environmentTheme.id);
+                }}
+                onUseMode={handlePairPick(environmentTheme.id)}
+                theme={getThemeCardDefinition(environmentTheme)}
+              />
+            );
+          })}
         {customThemeCollections.map(([collectionId, themes]) => (
           <CustomThemeCollectionCard
             activeModesFor={pickedModesFor}
@@ -974,7 +1075,7 @@ export function ThemeLibrary({
         onOpenChange={onImportOpenChange}
         open={isImportOpen}
       />
-      <AlertDialog open={isThemeRemovalOpen} onOpenChange={setIsThemeRemovalOpen}>
+      <AlertDialog open={isThemeRemovalOpen} onOpenChange={changeRemovalOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -989,7 +1090,11 @@ export function ThemeLibrary({
                 ? gt(
                     "Select the variants you want to remove. You can restore them by importing the extension again.",
                   )
-                : gt("You can bring it back anytime by importing its JSON file.")}
+                : themeRemovalTarget?.published
+                  ? gt(
+                      "This deletes the theme and its background images from the server. Download saves only the theme JSON. Back up any background image files separately before removing the theme.",
+                    )
+                  : gt("You can bring it back anytime by importing its JSON file.")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {canRemoveCollection ? (
@@ -1047,9 +1152,9 @@ export function ThemeLibrary({
               <T>Cancel</T>
             </AlertDialogClose>
             <Button
-              disabled={themeIdsToRemove.length === 0}
+              disabled={themeIdsToRemove.length === 0 || isRemovingTheme}
               variant="destructive"
-              onClick={handleConfirmRemoveTheme}
+              onClick={() => void handleConfirmRemoveTheme()}
             >
               {canRemoveCollection
                 ? themeIdsToRemove.length > 0

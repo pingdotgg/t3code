@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - the guarded file read needs open
 // flags (O_NOFOLLOW, O_NONBLOCK) the FileSystem service does not expose.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -12,6 +13,7 @@ import {
   environmentThemeFileHasColors,
   THEME_CSS_MAX_LENGTH,
 } from "@t3tools/contracts";
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { themeCssLoadsRemoteFiles } from "@t3tools/shared/themeCss";
 import {
@@ -72,6 +74,7 @@ interface PublishedThemes {
 const INVALID_ID =
   "is not a valid theme id. Use lowercase letters, digits, and hyphens, and not a built-in name.";
 const NOT_PUBLISHED = "could not be published. The themes directory may be full or not writable.";
+const NOT_REMOVED = "could not be removed. The themes directory may not be writable.";
 
 /** A theme the service will not publish or select. `problem` ends the sentence naming it. */
 export class EnvironmentThemeRefusedError extends Schema.TaggedError<EnvironmentThemeRefusedError>()(
@@ -135,6 +138,19 @@ export class EnvironmentThemeService extends Context.Service<
           }
         | { readonly appearance: Exclude<DefaultAppearancePreference, ""> },
     ) => Effect.Effect<void, EnvironmentThemeRefusedError | EnvironmentThemeNotSelectedError>;
+
+    /** Publishes `theme` under `themeId`, replacing a file already there, without selecting it. */
+    readonly save: (input: {
+      readonly themeId: string;
+      readonly expectedRevision?: string;
+      readonly theme: EnvironmentThemeFile;
+    }) => Effect.Effect<void, EnvironmentThemeRefusedError>;
+
+    /** Stops publishing `themeId`: removes its file and any background image beside it. */
+    readonly remove: (
+      themeId: string,
+      expectedRevision?: string,
+    ) => Effect.Effect<void, EnvironmentThemeRefusedError>;
 
     /** Subscribes before reading to retain changes during connection. */
     readonly streamChanges: Stream.Stream<ReadonlyArray<EnvironmentTheme>>;
@@ -290,11 +306,27 @@ export const readPublishedThemes = Effect.fn(function* (
     }
 
     const background = findThemeBackground(themesDir, id, entryNames);
-    themes.push({ id, ...file, ...(background ? { background: background.revision } : {}) });
+    themes.push({
+      id,
+      ...file,
+      revision: environmentThemeRevision({ id, ...file, background: background?.revision }),
+      ...(background ? { background: background.revision } : {}),
+    });
   }
   if (listedFileMissing) yield* onPathMissing;
   return themes;
 });
+
+export function environmentThemeRevision({
+  id: _id,
+  background,
+  revision: _revision,
+  ...file
+}: EnvironmentTheme): string {
+  return NodeCrypto.createHash("sha256")
+    .update(stableStringify({ ...file, ...(background ? { background } : {}) }))
+    .digest("hex");
+}
 
 const make = Effect.gen(function* () {
   const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
@@ -488,6 +520,127 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const requirePublished = Effect.fnUntraced(function* (themeId: string) {
+    const themes = (yield* refresh).themes;
+    const publishedTheme = themes.find(({ id }) => id === themeId);
+    if (!publishedTheme) {
+      return yield* new EnvironmentThemeRefusedError({
+        themeId,
+        problem: "is not a published theme.",
+        known: themes.map(({ id }) => id),
+      });
+    }
+    return publishedTheme;
+  });
+
+  const save: EnvironmentThemeService["Service"]["save"] = Effect.fn(
+    "EnvironmentThemeService.save",
+  )(function* ({ themeId, expectedRevision, theme }) {
+    if (!isEnvironmentThemeId(themeId)) {
+      return yield* new EnvironmentThemeRefusedError({ themeId, problem: INVALID_ID });
+    }
+    yield* publishSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* requirePublished(themeId);
+        if (expectedRevision !== undefined && expectedRevision !== current.revision) {
+          return yield* new EnvironmentThemeRefusedError({
+            themeId,
+            problem: "changed since you opened the editor. Reopen it before saving.",
+          });
+        }
+        // A saved edit is kept, so the effect that would undo it is dropped.
+        yield* publish(themeId, theme).pipe(Effect.asVoid);
+      }),
+    );
+  });
+
+  const remove: EnvironmentThemeService["Service"]["remove"] = Effect.fn(
+    "EnvironmentThemeService.remove",
+  )(function* (themeId, expectedRevision) {
+    yield* publishSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* requirePublished(themeId);
+        if (expectedRevision !== undefined && expectedRevision !== current.revision) {
+          return yield* new EnvironmentThemeRefusedError({
+            themeId,
+            problem: "changed since you opened the confirmation. Reopen it before removing.",
+          });
+        }
+        const removalError = (cause: unknown) =>
+          new EnvironmentThemeRefusedError({ themeId, problem: NOT_REMOVED, cause });
+        yield* refreshSemaphore
+          .withPermits(1)(
+            Effect.gen(function* () {
+              // Keep staged files on the same filesystem and out of the published directory scan.
+              const staging = yield* fs
+                .makeTempDirectory({
+                  directory: environmentThemesDir,
+                  prefix: ".remove-theme-",
+                })
+                .pipe(Effect.mapError(removalError));
+              const moved: string[] = [];
+              // Another writer can swap a directory in after the scan, so each moved entry is
+              // checked and anything but a regular file is moved back.
+              const stage = Effect.fnUntraced(function* (name: string) {
+                yield* fs.rename(
+                  NodePath.join(environmentThemesDir, name),
+                  NodePath.join(staging, name),
+                );
+                moved.push(name);
+                const isFile = yield* Effect.try({
+                  try: () => NodeFS.lstatSync(NodePath.join(staging, name)).isFile(),
+                  catch: removalError,
+                });
+                if (!isFile) {
+                  return yield* removalError(`${name} is not a regular file.`);
+                }
+              });
+              // Never recursive: rm refuses a directory, and rmdir only removes an empty one.
+              const removeStaging = Effect.try({
+                try: () => NodeFS.rmdirSync(staging),
+                catch: removalError,
+              }).pipe(Effect.ignoreCause({ log: true }));
+
+              const removal = yield* Effect.exit(
+                Effect.gen(function* () {
+                  for (const extension of THEME_BACKGROUND_EXTENSIONS) {
+                    const name = `${themeId}.${extension}`;
+                    const isFile = yield* Effect.try({
+                      try: () =>
+                        NodeFS.lstatSync(NodePath.join(environmentThemesDir, name), {
+                          throwIfNoEntry: false,
+                        })?.isFile() ?? false,
+                      catch: removalError,
+                    });
+                    if (isFile) yield* stage(name);
+                  }
+                  yield* stage(`${themeId}${THEME_FILE_SUFFIX}`);
+                }),
+              );
+              if (Exit.isFailure(removal)) {
+                const restored = yield* Effect.forEach(moved.reverse(), (name) =>
+                  fs
+                    .rename(NodePath.join(staging, name), NodePath.join(environmentThemesDir, name))
+                    .pipe(
+                      Effect.tapError((error) => Effect.logError(error)),
+                      Effect.exit,
+                    ),
+                );
+                // Keep any file whose restore failed so it can still be recovered.
+                if (restored.every(Exit.isSuccess)) yield* removeStaging;
+                return yield* removalError(removal.cause);
+              }
+              yield* Effect.forEach(moved, (name) =>
+                fs.remove(NodePath.join(staging, name)).pipe(Effect.ignoreCause({ log: true })),
+              );
+              yield* removeStaging;
+            }).pipe(Effect.uninterruptible),
+          )
+          .pipe(Effect.ensuring(refresh));
+      }),
+    );
+  });
+
   const read: EnvironmentThemeService["Service"]["read"] = Effect.fn(
     "EnvironmentThemeService.read",
   )(function* (themeId) {
@@ -510,6 +663,8 @@ const make = Effect.gen(function* () {
     current: Effect.map(refresh, (state) => state.themes),
     read,
     apply,
+    save,
+    remove,
     get streamChanges() {
       return Stream.unwrap(
         Effect.gen(function* () {

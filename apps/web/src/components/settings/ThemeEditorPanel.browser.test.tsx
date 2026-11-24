@@ -1,11 +1,28 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import type { ReactNode } from "react";
 
 import { act, render } from "../../../test/render";
+import {
+  CUSTOM_THEMES_STORAGE_KEY,
+  installCustomTheme,
+  publishedThemeDefinitions,
+  type ThemeDefinition,
+} from "../../themePalette";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
+import { ThemeEditorHost } from "./ThemeEditorHost";
+import { useThemeEditorStore } from "./themeEditorStore";
 import { ThemeEditorPanel } from "./ThemeEditorPanel";
+
+const LOOK = {
+  id: "look",
+  name: "Look",
+  appearance: "dark",
+  canvas: "#1a1b26",
+  accent: "#7aa2f7",
+} as const;
 
 function dragHeader(panel: HTMLElement, toX: number, toY: number) {
   const header = panel.querySelector<HTMLElement>("h2")!.closest<HTMLElement>(".cursor-grab")!;
@@ -123,6 +140,136 @@ async function editorElement(selector: string) {
 }
 
 describe("ThemeEditorPanel", () => {
+  it("saves an edit to a published theme to its environment, not to this browser", async () => {
+    window.localStorage.removeItem(CUSTOM_THEMES_STORAGE_KEY);
+    // A saved theme with the edited name would otherwise turn Save into a merge into it.
+    installCustomTheme(publishedThemeDefinitions([{ ...LOOK, id: "dusk", name: "Dusk" }])[0]!);
+    const saves: ThemeDefinition[] = [];
+    let accept = false;
+    const onOpenChange = vi.fn();
+    await using screen = await render(
+      <ThemeEditorPanel
+        open
+        onOpenChange={onOpenChange}
+        onSaved={() => true}
+        onSaveToEnvironment={async (theme) => {
+          saves.push(theme);
+          return accept;
+        }}
+        editingTheme={publishedThemeDefinitions([LOOK])[0]!}
+        initialAppearance="dark"
+        restoreTheme={() => {}}
+      />,
+    );
+    await userEvent.fill(screen.getByRole("textbox", { name: "Theme name" }), "Dusk");
+    const save = screen.getByRole("button", { name: "Save changes" });
+
+    await userEvent.click(save);
+    await expect.element(screen.getByText("Could not save the theme.")).toBeVisible();
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    accept = true;
+    await userEvent.click(save);
+    await expect.poll(() => onOpenChange.mock.calls).toEqual([[false]]);
+    expect(saves.map(({ id, label }) => ({ id, label }))).toEqual([
+      { id: "look", label: "Dusk" },
+      { id: "look", label: "Dusk" },
+    ]);
+    expect(
+      JSON.parse(window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY)!).map(
+        (theme: ThemeDefinition) => theme.id,
+      ),
+    ).toEqual(["dusk"]);
+  });
+
+  it("refuses a published theme name longer than its file allows before saving", async () => {
+    const onSaveToEnvironment = vi.fn(async () => true);
+    await using screen = await render(
+      <ThemeEditorPanel
+        open
+        onOpenChange={() => {}}
+        onSaved={() => true}
+        onSaveToEnvironment={onSaveToEnvironment}
+        editingTheme={publishedThemeDefinitions([LOOK])[0]!}
+        initialAppearance="dark"
+        restoreTheme={() => {}}
+      />,
+    );
+    await userEvent.fill(screen.getByRole("textbox", { name: "Theme name" }), "x".repeat(49));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await expect
+      .element(screen.getByText("A published theme name can be at most 48 characters."))
+      .toBeVisible();
+    expect(onSaveToEnvironment).not.toHaveBeenCalled();
+  });
+
+  it("keeps a published edit in place when its environment is unavailable", async () => {
+    const store = useThemeEditorStore.getState();
+    const storedThemes = window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY);
+    store.openThemeEditor({
+      editingThemeId: null,
+      published: {
+        environmentId: EnvironmentId.make("unavailable-environment"),
+        theme: publishedThemeDefinitions([LOOK])[0]!,
+      },
+      seedThemeId: null,
+      seedName: null,
+      initialAppearance: "dark",
+    });
+    const sessionId = useThemeEditorStore.getState().session!.id;
+    try {
+      await using screen = await render(<ThemeEditorHost />);
+      const name = screen.getByRole("textbox", { name: "Theme name" });
+      await expect.element(name).toHaveValue("Look");
+      await userEvent.fill(name, "Unsaved draft");
+      await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+      await expect.element(screen.getByText("Could not save the theme.")).toBeVisible();
+      await expect.element(name).toHaveValue("Unsaved draft");
+      expect(window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY)).toBe(storedThemes);
+    } finally {
+      store.closeThemeEditor(sessionId);
+    }
+  });
+
+  it("pauses draft editing while a published save is pending", async () => {
+    const onOpenChange = vi.fn();
+    const pendingSave = Promise.withResolvers<boolean>();
+    await using screen = await render(
+      <ThemeEditorPanel
+        open
+        onOpenChange={onOpenChange}
+        onSaved={() => true}
+        onSaveToEnvironment={() => pendingSave.promise}
+        editingTheme={publishedThemeDefinitions([LOOK])[0]!}
+        initialAppearance="dark"
+        restoreTheme={() => {}}
+      />,
+    );
+    const name = screen.getByRole("textbox", { name: "Theme name" });
+    await userEvent.fill(name, "Draft");
+    const save = screen.getByRole("button", { name: "Save changes" });
+    await userEvent.click(save);
+    await expect.element(save).toBeDisabled();
+    (name.element() as HTMLElement).focus();
+    await expect.element(name).not.toHaveFocus();
+
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    const close = screen.getByRole("button", { name: "Close the theme editor" });
+    await expect.element(cancel).toBeDisabled();
+    await expect.element(close).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Minimize the theme editor" }));
+    await userEvent.keyboard("{Escape}");
+    expect(onOpenChange).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Expand the theme editor" }));
+
+    pendingSave.resolve(false);
+    await expect.element(name).toHaveValue("Draft");
+    await expect.element(save).toBeEnabled();
+    await userEvent.click(cancel);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it("keeps its left edge when resized after the window shrank", async () => {
     await using view = await renderPanel();
     dragHeader(view.panel, 700, 40);

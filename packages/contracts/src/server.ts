@@ -640,10 +640,11 @@ const EnvironmentThemeColors = Schema.Record(
 );
 
 export const THEME_CSS_MAX_LENGTH = 100_000;
+export const ENVIRONMENT_THEME_NAME_MAX_LENGTH = 48;
 
 const environmentThemeFields = {
   version: Schema.optional(Schema.Literal(1)),
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(ENVIRONMENT_THEME_NAME_MAX_LENGTH)),
   appearance: Schema.Literals(["light", "dark"]),
   /** Derive the palette from canvas/accent, then overlay colors; without them, colors is the palette. */
   canvas: Schema.optional(EnvironmentThemeColor),
@@ -662,9 +663,12 @@ const environmentThemeFields = {
 export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);
 export type EnvironmentThemeFile = typeof EnvironmentThemeFile.Type;
 
+const EnvironmentThemeRevision = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
+
 export const EnvironmentTheme = Schema.Struct({
   id: EnvironmentThemeId,
   ...environmentThemeFields,
+  revision: Schema.optional(EnvironmentThemeRevision),
   /** Revision of the image file published beside the theme; absent without one. */
   background: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
 });
@@ -675,6 +679,29 @@ export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boole
     (file.canvas !== undefined && file.accent !== undefined) ||
     (file.colors !== undefined && Object.keys(file.colors).length > 0)
   );
+}
+
+export const EnvironmentThemeSaveInput = Schema.Struct({
+  themeId: EnvironmentThemeId,
+  expectedRevision: EnvironmentThemeRevision,
+  theme: EnvironmentThemeFile,
+});
+export type EnvironmentThemeSaveInput = typeof EnvironmentThemeSaveInput.Type;
+
+export const EnvironmentThemeRemoveInput = Schema.Struct({
+  themeId: EnvironmentThemeId,
+  expectedRevision: EnvironmentThemeRevision,
+});
+export type EnvironmentThemeRemoveInput = typeof EnvironmentThemeRemoveInput.Type;
+
+/** The server refused to save or remove a published theme; `detail` says why. */
+export class EnvironmentThemeError extends Schema.TaggedError<EnvironmentThemeError>()(
+  "EnvironmentThemeError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
 }
 
 /** tailnet means this machine's Tailscale interface; other private addresses are lan. */
