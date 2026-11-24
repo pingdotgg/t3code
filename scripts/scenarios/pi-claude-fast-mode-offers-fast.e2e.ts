@@ -86,9 +86,9 @@ test(
         { timeout: 60_000 },
       );
       await browser.locator("[data-chat-provider-model-picker-label]").first().click();
+      await app.screenshot("model-picker-service-tier");
       const serviceTier = browser.locator('[role="radiogroup"][aria-label="Service Tier"]');
       await expect(serviceTier).toBeVisible({ timeout: 60_000 });
-      await app.screenshot("model-picker-service-tier");
 
       const fast = screen.getByRole("radio", "Fast", { exact: true });
       await fast.click();
