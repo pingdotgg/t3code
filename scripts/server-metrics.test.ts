@@ -500,6 +500,7 @@ describe("heapRetainers", () => {
         strings: ["", "Holder", "Map", "cache", "(GC roots)", "a secret", "holder"],
       },
       0,
+      0,
     );
     expect(retainers.get(5)).toEqual({
       retained: 1_550,

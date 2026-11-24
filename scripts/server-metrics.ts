@@ -844,7 +844,8 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
   yield* fs.makeDirectory(project);
   yield* fs.writeFileString(path.join(project, "README.md"), "# bench\n");
   for (const args of [
-    ["init", "-q", "-b", "main"],
+    // Loose refs on purpose: the soak writes them as files, which a reftable store would ignore.
+    ["-c", "init.defaultRefFormat=files", "init", "-q", "-b", "main"],
     ["add", "."],
     ["-c", "user.email=bench@t3.codes", "-c", "user.name=bench", "commit", "-qm", "init"],
   ]) {
@@ -1260,6 +1261,8 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
     threadId: string,
     item: OrchestrationV2ThreadStreamItem,
   ) => Effect.Effect<void> = () => Effect.void,
+  /** How long the server may go silent before the client drops the connection. */
+  pingTimeout?: Duration.Input,
 ) {
   const http = yield* HttpClient.HttpClient;
   // Headers alone do not finish a request; the deadline covers the body too.
@@ -1278,7 +1281,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
     );
   const { ticket } = yield* decodeJson(Schema.Struct({ ticket: Schema.String }))(ticketBody);
   const protocol = yield* Layer.build(
-    RpcClient.layerProtocolSocket().pipe(
+    RpcClient.layerProtocolSocket(pingTimeout === undefined ? {} : { pingTimeout }).pipe(
       Layer.provide(
         Socket.layerWebSocket(
           `${server.origin.replace(/^http/, "ws")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}&wsTicket=${encodeURIComponent(ticket)}`,
@@ -1666,6 +1669,7 @@ interface RunOptions {
 /** One pass: startup, rest and firstWord share a server; quiet, streaming and soak get their own. */
 const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOptions) {
   const fs = yield* FileSystem.FileSystem;
+  const platform = yield* HostProcess.Platform;
   const path = yield* Path.Path;
   const machine = yield* watchMachine;
   const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-server-metrics-" });
@@ -1969,7 +1973,14 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           const connect = Effect.fn("serverMetrics.soakClient")(function* (
             threadIds: ReadonlyArray<string>,
           ) {
-            const client = yield* attachClient(server, token, threadIds);
+            // A heap snapshot pauses the server for longer than the default 5 s ping timeout.
+            const client = yield* attachClient(
+              server,
+              token,
+              threadIds,
+              undefined,
+              Duration.minutes(2),
+            );
             yield* forge
               .pollLikeWebClient({
                 list: client.rpc["pullRequests.list"],
@@ -1984,18 +1995,20 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           yield* Effect.sleep(Duration.seconds(60));
           // The first snapshot inflates RSS once, so the slopes start after it.
           const snapshots = [yield* server.snapshot];
-          const samples: Array<{ hours: number; window: Window; processes: number }> = [];
+          const samples: Array<{ hours: number; window: Window; processes: number | null }> = [];
           const start = yield* nowMs;
           const elapsed = Effect.map(nowMs, (now) => now - start);
           const takeSample = Effect.gen(function* () {
             const hours = (yield* elapsed) / 3_600_000;
             const window = yield* server.measure(5);
-            const processes = (yield* descendantsOf(server.pid).pipe(
-              Effect.orElseSucceed(() => []),
-            )).length;
+            // Windows lists no descendants, which is not the same as having none.
+            const processes =
+              platform === "win32"
+                ? null
+                : (yield* descendantsOf(server.pid).pipe(Effect.orElseSucceed(() => []))).length;
             samples.push({ hours, window, processes });
             yield* Console.error(
-              `soak ${round(hours * 60)} min: heap ${window.heapAfterGcMB} MB, RSS ${window.rssMB} MB, ${processes} child processes`,
+              `soak ${round(hours * 60)} min: heap ${window.heapAfterGcMB} MB, RSS ${window.rssMB} MB${processes === null ? "" : `, ${processes} child processes`}`,
             );
           });
           let nextSample = 0;
@@ -2016,7 +2029,14 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
               if (fresh === undefined || oldest === undefined)
                 return yield* new MetricsError({ message: "no soak thread to churn" });
               threads = [...rest, fresh];
+              const retiring = client;
               yield* Scope.close(scope, Exit.void);
+              // A loss while the replacement thread started still counts against the run.
+              yield* retiring.healthy.pipe(
+                Effect.mapError(
+                  (error) => new MetricsError({ message: `the retired client: ${error.message}` }),
+                ),
+              );
               scope = yield* clientScope;
               client = yield* connect(threads).pipe(Scope.provide(scope));
               yield* forge.advanceRemote;
@@ -2046,7 +2066,9 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
             minutes: options.soakMinutes,
             heapMBPerHour: perHour(({ window }) => window.heapAfterGcMB),
             rssMBPerHour: perHour(({ window }) => window.rssMB),
-            childProcessesPerHour: perHour(({ processes }) => processes),
+            ...(platform === "win32"
+              ? {}
+              : { childProcessesPerHour: perHour(({ processes }) => processes ?? 0) }),
           };
           snapshots.push(yield* server.snapshot);
           soakHeapGrowth = heapGrowth(snapshots[0]!.byConstructor, snapshots.at(-1)!.byConstructor);
@@ -2375,7 +2397,7 @@ const runFlags = {
   soak: Flag.Int("soak").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     Flag.withDescription(
-      "Minutes of soak: 10 threads under one web client, a short turn every 30 s in a project with 3,000 loose remote refs that gains one per turn; every 2 minutes a new thread replaces the oldest (archived, then deleted), the client reconnects and a fake GitHub remote gains a commit; the client polls that host's pull requests and checks. Reports heap, RSS and child-process slopes per hour, the constructors that grew, and the objects whose retained size grew at each of three snapshots with the path that holds them. Runs alone unless --only names more.",
+      "Minutes of soak: 10 threads under one web client, a short turn every 30 s in a project with 3,000 loose remote refs that gains one per turn. From minute 2, every 2 minutes a new thread replaces the oldest (archived, then deleted), the client reconnects and a fake GitHub remote gains a commit; the client polls that host's pull requests and checks. Reports heap, RSS and child-process slopes per hour, the constructors that grew, and the objects whose retained size grew at each of three snapshots with the path that holds them. Needs openssl on PATH and Node 24.5 or later. Runs alone unless --only names more.",
     ),
     Flag.withDefault(0),
   ),

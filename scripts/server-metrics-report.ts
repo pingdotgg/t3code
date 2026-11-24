@@ -777,6 +777,7 @@ interface Retainer {
   readonly retained: number;
   /** The id of the node that dominates this one, none for the root. */
   readonly dominator: number | undefined;
+  /** Empty below `pathBytes`: such a node is only kept to compare sizes across snapshots. */
   readonly path: string;
 }
 
@@ -784,11 +785,11 @@ const TEXT_NODES = new Set(["string", "concatenated string", "sliced string", "r
 const IDENTIFIER = /^[A-Za-z_$#][\w$]{0,48}$/;
 
 /**
- * Retained size by node id for every node retaining at least `minBytes`, with the shortest
- * strong path from the root to it. Node ids are stable within one process, so snapshots of one
+ * Retained size by node id for every node retaining at least `minBytes`, and for those retaining
+ * `pathBytes` the shortest strong path from the root to it. Node ids are stable within one process, so snapshots of one
  * server line up. Paths name only code: string contents and non-identifier keys are left out.
  */
-export function heapRetainers(snapshot: HeapSnapshot, minBytes = 256_000) {
+export function heapRetainers(snapshot: HeapSnapshot, minBytes = 16_000, pathBytes = 256_000) {
   const { meta } = snapshot.snapshot;
   const nodeFields = meta.node_fields.length;
   const edgeFields = meta.edge_fields.length;
@@ -953,7 +954,12 @@ export function heapRetainers(snapshot: HeapSnapshot, minBytes = 256_000) {
     result.set(nodes[node * nodeFields + idAt]!, {
       retained: retained[node]!,
       dominator: node === 0 ? undefined : nodes[dominator[node]! * nodeFields + idAt]!,
-      path: nodeType(node) === "synthetic" ? label(node) : pathTo(node),
+      path:
+        retained[node]! < pathBytes
+          ? ""
+          : nodeType(node) === "synthetic"
+            ? label(node)
+            : pathTo(node),
     });
   }
   return result;
@@ -972,7 +978,7 @@ export function retainerGrowth(
   if (last === undefined || snapshots.length < 2) return [];
   const growth = new Map<number, number>();
   for (const [id, { retained, path }] of last) {
-    if (path.startsWith("(synthetic")) continue;
+    if (path === "" || path.startsWith("(synthetic")) continue;
     const sizes = [
       ...snapshots.slice(0, -1).map((snapshot) => snapshot.get(id)?.retained ?? 0),
       retained,

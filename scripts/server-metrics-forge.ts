@@ -6,6 +6,7 @@ import * as NodeHttp2 from "node:http2";
 import * as NodeNet from "node:net";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type {
   PullRequestListInput,
   PullRequestListResult,
@@ -439,10 +440,24 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
     yield* git(["remote", "add", "origin", `https://${host}/${OWNER}/${REPO}.git`]);
     yield* git(["config", "http.sslCAInfo", certFile]);
     yield* git(["config", "http.proxy", proxyUrl]);
-    yield* git(["fetch", "-q", "origin"]);
+    // A developer's NO_PROXY could send this past the proxy, which is the only route to the host.
+    const hostEnvironment = yield* HostProcess.Environment;
+    yield* run("git", ["fetch", "-q", "origin"], {
+      cwd: project,
+      env: {
+        ...Object.fromEntries(
+          Object.entries(hostEnvironment).filter(
+            (entry): entry is [string, string] => entry[1] !== undefined,
+          ),
+        ),
+        NO_PROXY: "",
+        no_proxy: "",
+      },
+    });
     yield* git(["branch", "-q", "--set-upstream-to", "origin/bench/feature"]);
     const [feature, main] = (yield* git(["rev-parse", "HEAD", "main"])).stdout.trim().split("\n");
     for (const pr of pullRequests) pr.oid = (pr.number === 1 ? feature : main) ?? pr.oid;
+    setupRequests = requests.length;
   });
 
   let pushes = 0;
@@ -465,6 +480,9 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
     yield* git(["update-server-info"]);
   });
 
+  /** Requests the project setup made before the server started, which `verify` leaves out. */
+  let setupRequests = 0;
+  let completedPolls = 0;
   const failures: Array<string> = [];
   /**
    * What a web client with the pull requests sidebar and the branch's PR open asks for: the list,
@@ -498,8 +516,13 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
           repository: entry.repository,
           number: entry.number,
         };
-        yield* rpc.summary(ref).pipe(Effect.catch(record("pullRequests.summary")));
-        yield* rpc.checks(ref).pipe(Effect.catch(record("pullRequests.checks")));
+        const completed = yield* Effect.all([rpc.summary(ref), rpc.checks(ref)]).pipe(
+          Effect.as(true),
+          Effect.catch((error) =>
+            record("pullRequests.summary/checks")(error).pipe(Effect.as(false)),
+          ),
+        );
+        if (completed) completedPolls++;
       }
       yield* Effect.sleep(Duration.seconds(30));
     }
@@ -534,7 +557,7 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
      */
     verify: Effect.gen(function* () {
       const counts = new Map<string, number>();
-      for (const request of requests) {
+      for (const request of requests.slice(setupRequests)) {
         const key =
           request.operation ??
           (request.path.startsWith(`/${OWNER}/${REPO}.git/info/refs`)
@@ -557,6 +580,7 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
         "PullRequestCore",
         "git fetch",
       ].filter((key) => !counts.has(key));
+      if (completedPolls === 0) missing.push("one full client poll (list, summary, checks)");
       if (missing.length > 0) {
         return yield* new ScenarioError({
           message: `the soak never reached the fake GitHub for ${missing.join(", ")}`,
