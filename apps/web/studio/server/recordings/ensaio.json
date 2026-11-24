@@ -1,0 +1,145 @@
+{
+  "source": "T3 Code v0.1.11 · instância local isolada · projeções nativas",
+  "threads": {
+    "infra": "92968677-91cf-4a3d-a9a6-e85d6bb0846f",
+    "web": "8aa87dc1-ddba-4b46-a080-57d7d016fdb5"
+  },
+  "frames": [
+    {
+      "ms": 388,
+      "area": "infra",
+      "snapshot": {
+        "id": "92968677-91cf-4a3d-a9a6-e85d6bb0846f",
+        "revision": 41,
+        "status": "working",
+        "detail": "Preparing workspace",
+        "pending": null,
+        "messages": [
+          {
+            "id": "message:thread:92968677-91cf-4a3d-a9a6-e85d6bb0846f:ordinal:1:f2146849-65b8-42fd-8ea8-1eed869eaa63",
+            "role": "user",
+            "text": "Execute node --test cadastro.test.mjs e resuma o resultado em uma frase. Use o terminal."
+          }
+        ]
+      }
+    },
+    {
+      "ms": 390,
+      "area": "web",
+      "snapshot": {
+        "id": "8aa87dc1-ddba-4b46-a080-57d7d016fdb5",
+        "revision": 41,
+        "status": "idle",
+        "detail": "",
+        "pending": null,
+        "messages": []
+      }
+    },
+    {
+      "ms": 500,
+      "area": "infra",
+      "snapshot": {
+        "id": "92968677-91cf-4a3d-a9a6-e85d6bb0846f",
+        "revision": 47,
+        "status": "working",
+        "detail": "",
+        "pending": null,
+        "messages": [
+          {
+            "id": "message:thread:92968677-91cf-4a3d-a9a6-e85d6bb0846f:ordinal:1:f2146849-65b8-42fd-8ea8-1eed869eaa63",
+            "role": "user",
+            "text": "Execute node --test cadastro.test.mjs e resuma o resultado em uma frase. Use o terminal."
+          }
+        ]
+      }
+    },
+    {
+      "ms": 4107,
+      "area": "infra",
+      "snapshot": {
+        "id": "92968677-91cf-4a3d-a9a6-e85d6bb0846f",
+        "revision": 56,
+        "status": "working",
+        "detail": "",
+        "pending": null,
+        "messages": [
+          {
+            "id": "message:thread:92968677-91cf-4a3d-a9a6-e85d6bb0846f:ordinal:1:f2146849-65b8-42fd-8ea8-1eed869eaa63",
+            "role": "user",
+            "text": "Execute node --test cadastro.test.mjs e resuma o resultado em uma frase. Use o terminal."
+          },
+          {
+            "id": "message:provider:codex:native-item:msg_009c31bcc2117d1c016b05dc8aa24487d29bed36f91792ed23",
+            "role": "assistant",
+            "text": "Vou executar o teste no terminal e resumir o resultado.\n"
+          }
+        ]
+      }
+    },
+    {
+      "ms": 4326,
+      "area": "infra",
+      "snapshot": {
+        "id": "92968677-91cf-4a3d-a9a6-e85d6bb0846f",
+        "revision": 61,
+        "status": "pending",
+        "detail": "Aprovação pendente",
+        "pending": {
+          "id": "runtime-request:provider:codex:provider-turn:provider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a20ee5-7693-7643-9dac-8404f0906031:native-request:exec-432d05e7-4224-4728-b8f3-1f9d74bad042:e1cccf16-0962-4f90-8c58-379197856928",
+          "kind": "approval",
+          "text": "PowerShell · 'node --test cadastro.test.mjs'",
+          "options": [],
+          "questions": []
+        },
+        "messages": [
+          {
+            "id": "message:thread:92968677-91cf-4a3d-a9a6-e85d6bb0846f:ordinal:1:f2146849-65b8-42fd-8ea8-1eed869eaa63",
+            "role": "user",
+            "text": "Execute node --test cadastro.test.mjs e resuma o resultado em uma frase. Use o terminal."
+          },
+          {
+            "id": "message:provider:codex:native-item:msg_009c31bcc2117d1c016b05dc8aa24487d29bed36f91792ed23",
+            "role": "assistant",
+            "text": "Vou executar o teste no terminal e resumir o resultado.\n"
+          }
+        ]
+      }
+    },
+    {
+      "ms": 4498,
+      "area": "web",
+      "snapshot": {
+        "id": "8aa87dc1-ddba-4b46-a080-57d7d016fdb5",
+        "revision": 76,
+        "status": "working",
+        "detail": "",
+        "pending": null,
+        "messages": [
+          {
+            "id": "message:thread:8aa87dc1-ddba-4b46-a080-57d7d016fdb5:ordinal:1:ad247978-d308-4fb5-a875-7c50f647473b",
+            "role": "user",
+            "text": "O que acontece se o e-mail já estiver em uso? Proponha uma experiência para o cadastro em três parágrafos breves, em português. Responda diretamente sem executar ferramentas."
+          }
+        ]
+      }
+    },
+    {
+      "ms": 5919,
+      "area": "web",
+      "snapshot": {
+        "id": "8aa87dc1-ddba-4b46-a080-57d7d016fdb5",
+        "revision": 88,
+        "status": "error",
+        "detail": "A execução falhou",
+        "pending": null,
+        "messages": [
+          {
+            "id": "message:thread:8aa87dc1-ddba-4b46-a080-57d7d016fdb5:ordinal:1:ad247978-d308-4fb5-a875-7c50f647473b",
+            "role": "user",
+            "text": "O que acontece se o e-mail já estiver em uso? Proponha uma experiência para o cadastro em três parágrafos breves, em português. Responda diretamente sem executar ferramentas."
+          }
+        ]
+      }
+    }
+  ]
+}
