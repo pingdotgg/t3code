@@ -95,10 +95,11 @@ function replaceHeicColorWithProfile(heic: Uint8Array, profile: Uint8Array) {
 }
 
 describe("prepareImageForAttachment encoding", () => {
-  // Chromium runs main-thread canvas encodes as idle tasks, which stall ~1 s on a busy page.
-  it("encodes off the main thread", async () => {
+  // Main-thread canvas encodes are idle tasks and Blob reads wait behind busy frames.
+  it("decodes, resizes and encodes off the main thread", async () => {
     const source = await makeImage("srgb", "#ff0000", "image/png");
     const convertToBlob = vi.spyOn(OffscreenCanvas.prototype, "convertToBlob");
+    const decode = vi.spyOn(window, "createImageBitmap");
     try {
       const [result, thumbnail] = await Promise.all([
         prepareImageForAttachment(source, 20 * 1024 * 1024),
@@ -108,8 +109,10 @@ describe("prepareImageForAttachment encoding", () => {
       expect(result.imageSize).toEqual({ width: 2000, height: 1333 });
       expect(thumbnail).toMatch(/^data:image\/png;base64,/);
       expect(convertToBlob).not.toHaveBeenCalled();
+      expect(decode).not.toHaveBeenCalled();
     } finally {
       convertToBlob.mockRestore();
+      decode.mockRestore();
     }
   });
 });
