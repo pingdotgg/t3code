@@ -4,27 +4,37 @@ import {
   linkBatchFailureLabel,
   linkWithMintedCode,
 } from "@t3tools/client-runtime/link-batch";
-import { ANOTHER_ADDRESS, linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
 import {
+  ANOTHER_ADDRESS,
+  linkRequestFailureMessage,
+  offersLinkedEnvironments,
+} from "@t3tools/client-runtime/link-request";
+import { type PeerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
+  AuthAccessReadScope,
   AuthAccessWriteScope,
   type AuthMcpClientAccess,
   type EnvironmentId,
   type PeerLinkSummary,
 } from "@t3tools/contracts";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { peerLinkHealth, type PeerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import { PlusIcon } from "lucide-react";
-import { T, useGT, useMessages, Var } from "gt-react";
+import { ArrowLeftRightIcon, ArrowRightIcon, ChevronDownIcon } from "lucide-react";
 import { type ReactNode, useId, useRef, useState } from "react";
+import { T, useGT, useMessages, Var } from "gt-react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
-import { useEnvironment } from "~/state/environments";
+import { cn } from "~/lib/utils";
+import {
+  type EnvironmentPresentation,
+  useEnvironment,
+  useEnvironments,
+} from "~/state/environments";
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
 import {
   peerLinkEnvironment,
@@ -32,14 +42,17 @@ import {
   useLinkBackOffers,
   useLinkThroughRoutes,
 } from "~/state/peerLinks";
-import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { usePeerLinkMutation } from "~/state/use-peer-link-mutation";
+import { useLiveRefresh } from "../../hooks/useLiveRefresh";
+import { useNowMinute } from "../../hooks/useNowMinute";
+import { m as resolveMessage } from "../../i18n/messages";
 import { accessConfig } from "../auth/ConnectAgentSurface";
-import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
   Dialog,
   DialogClose,
@@ -49,18 +62,22 @@ import {
   DialogPanel,
   DialogPopup,
   DialogTitle,
-  DialogTrigger,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { LinkAccessPicker } from "./LinkAccessPicker";
+import { LinkEnvironmentAction } from "./LinkEnvironmentAction";
+import { LinkedEnvironmentEditor } from "./LinkedEnvironmentEditor";
+import {
+  linkedEnvironmentList,
+  linkedEnvironmentStatus,
+  returnLinkStatus,
+} from "./LinkedEnvironmentsSettings.logic";
 import { LinkAddressWarning, LinkMachineSelect } from "./LinkMachineSelect";
 import { LinkSeveralEnvironmentsAction } from "./LinkSeveralEnvironments";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { useLiveRefresh } from "../../hooks/useLiveRefresh";
-import { m as resolveMessage } from "../../i18n/messages";
-import { useNowMinute } from "../../hooks/useNowMinute";
 import { useSearchableSetting } from "./settingsSearch";
 
 // Console log labels for the atom commands.
@@ -71,20 +88,58 @@ const failureToast = (title: string, description: string) =>
   toastManager.add(stackedThreadToast({ type: "error", title, description }));
 
 export function LinkedEnvironmentsSettings({
-  environmentId,
-  environmentLabel,
-  isSearchTarget,
+  environments,
+  primaryEnvironmentId,
 }: {
-  readonly environmentId: EnvironmentId;
-  readonly environmentLabel: string | null;
-  readonly isSearchTarget: boolean;
+  readonly environments: ReadonlyArray<EnvironmentPresentation>;
+  readonly primaryEnvironmentId: EnvironmentId | null;
 }) {
-  const searchableSetting = useSearchableSetting();
   const gt = useGT();
-  const links = useEnvironmentQuery(
-    peerLinkEnvironment.list({ environmentId, input: {} }),
-    useMessages(),
+  const [selectedId, setSelectedId] = useState<EnvironmentId | null>(null);
+  const selected =
+    selectedId === null
+      ? (environments.find((environment) => environment.environmentId === primaryEnvironmentId) ??
+        environments[0])
+      : environments.find((environment) => environment.environmentId === selectedId);
+  if (selectedId === null && selected) setSelectedId(selected.environmentId);
+  if (!selected)
+    return selectedId === null ? null : (
+      <SettingsSection title={gt("Agent links")}>
+        <SettingsRow
+          title={gt("Source unavailable")}
+          description={gt("Reconnect the selected source to manage its links.")}
+          control={
+            <Button size="xs" variant="outline" onClick={() => setSelectedId(null)}>
+              <T>Choose another source</T>
+            </Button>
+          }
+        />
+      </SettingsSection>
+    );
+  return (
+    <SourceLinks
+      key={selected.environmentId}
+      source={selected}
+      environments={environments}
+      onSelect={setSelectedId}
+    />
   );
+}
+
+function SourceLinks({
+  source,
+  environments,
+  onSelect,
+}: {
+  readonly source: EnvironmentPresentation;
+  readonly environments: ReadonlyArray<EnvironmentPresentation>;
+  readonly onSelect: (id: EnvironmentId) => void;
+}) {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
+  const m = useMessages();
+  const environmentId = source.environmentId;
+  const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }), m);
   // Links made outside this client bump nothing the shared list reads, so showing the panel
   // asks again. Listing probes every linked environment, too costly for a timer nobody asked for.
   // A list still loading counts as read now, so the next return to the window asks again.
@@ -99,123 +154,359 @@ export function LinkedEnvironmentsSettings({
     },
   );
   const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
-  const search = searchableSetting("linked-environments");
+  const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
+  const [search, setSearch] = useState("");
+  const [attentionOnly, setAttentionOnly] = useState(false);
+  const [showAvailable, setShowAvailable] = useState(false);
+  const now = DateTime.makeUnsafe(useNowMinute());
+  const machines = useLinkableMachines(environmentId, showAvailable);
   // A batch needs at least two other machines this app has saved.
   const otherMachines = useEnvironments().environments.length - 1;
+  const all = links.data?.links ?? [];
+  const matches = (label: string) =>
+    label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase());
+  const { visible, showFilters } = linkedEnvironmentList(all, search, attentionOnly, now);
+  const visibleLinks = new Set(visible);
+  const available = machines.filter(
+    (machine) =>
+      !all.some((link) => link.environmentId === machine.environmentId) && matches(machine.label),
+  );
   return (
     <SettingsSection
-      {...(isSearchTarget ? { id: search.id } : {})}
-      title={environmentLabel === null ? search.title : `${search.title} · ${environmentLabel}`}
+      {...searchableSetting("linked-environments")}
+      title={gt("Agent links")}
       headerAction={
         canLink ? (
           <div className="flex items-center gap-2">
             {otherMachines > 1 ? (
               <LinkSeveralEnvironmentsAction environmentId={environmentId} />
             ) : null}
-            <LinkEnvironmentAction environmentId={environmentId} />
+            <LinkEnvironmentAction
+              environmentId={environmentId}
+              sourceLabel={source.label}
+              onOpen={() => onSelect(environmentId)}
+            />
           </div>
         ) : null
       }
     >
-      {links.error ? (
-        <SettingsRow title={gt("Could not load linked environments")} description={links.error} />
-      ) : !links.data ? (
-        <SettingsRow title={gt("Loading linked environments…")} role="status" />
-      ) : links.data.links.length === 0 ? (
-        <SettingsRow
-          title={gt("No linked environments")}
-          description={gt(
-            "Link another machine running T3 Code, such as a VPS, so agents here can launch and drive threads there.",
+      <div className="space-y-3 px-3 py-3 sm:px-4">
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <span id="agent-link-source">
+            <T>From</T>
+          </span>
+          {environments.length > 1 ? (
+            <div className="min-w-0 flex-1">
+              <Select
+                value={environmentId}
+                onValueChange={(id) => {
+                  if (id !== null) onSelect(id);
+                }}
+              >
+                <SelectTrigger size="sm" aria-labelledby="agent-link-source">
+                  <SelectValue>{source.label}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup alignItemWithTrigger={false}>
+                  {environments.map((environment) => (
+                    <SelectItem key={environment.environmentId} value={environment.environmentId}>
+                      {environment.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
+          ) : (
+            <span className="text-foreground">{source.label}</span>
           )}
+        </div>
+        {showFilters ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-32 flex-1">
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder={gt("Find a destination…")}
+                aria-label={gt("Find a destination")}
+                nativeInput
+              />
+            </div>
+            <Button
+              size="xs"
+              variant={!attentionOnly ? "secondary" : "ghost-muted"}
+              aria-pressed={!attentionOnly}
+              onClick={() => setAttentionOnly(false)}
+            >
+              <T>All</T>
+            </Button>
+            <Button
+              size="xs"
+              variant={attentionOnly ? "secondary" : "ghost-muted"}
+              aria-pressed={attentionOnly}
+              onClick={() => setAttentionOnly(true)}
+            >
+              <T>Needs attention</T>
+            </Button>
+          </div>
+        ) : null}
+      </div>
+      {links.error ? (
+        <SettingsRow
+          title={gt("Could not refresh links")}
+          description={links.error}
+          control={
+            <Button size="xs" variant="outline" onClick={links.refresh}>
+              <T>Retry</T>
+            </Button>
+          }
+        />
+      ) : null}
+      {!links.data ? (
+        links.error ? null : (
+          <SettingsRow title={gt("Loading links…")} role="status" />
+        )
+      ) : all.length === 0 ? (
+        <SettingsRow
+          title={gt("No destinations linked")}
+          description={gt("Link a destination so agents on {source} can work there.", {
+            source: source.label,
+          })}
         />
       ) : (
-        links.data.links.map((link) => (
-          <LinkedEnvironmentRow
-            key={link.environmentId}
-            environmentId={environmentId}
-            link={link}
-          />
-        ))
+        <>
+          <div
+            aria-hidden
+            className="grid grid-cols-[minmax(0,1fr)_6.5rem_0.75rem] gap-3 px-3 py-2 text-3xs uppercase text-muted-foreground sm:grid-cols-[minmax(0,1fr)_8.5rem_6.5rem_0.75rem] sm:px-4"
+          >
+            <span>
+              <T>Destination</T>
+            </span>
+            <span className="hidden sm:block">
+              <T>Agent permissions</T>
+            </span>
+            <span>
+              <T>Link status</T>
+            </span>
+            <span />
+          </div>
+          {visible.length === 0 ? <SettingsRow title={gt("No matching destinations")} /> : null}
+          {all.map((link) => (
+            <div key={link.environmentId} hidden={!visibleLinks.has(link)}>
+              <LinkedEnvironmentRow
+                environmentId={environmentId}
+                sourceLabel={source.label}
+                link={link}
+                open={expandedId === link.environmentId}
+                onOpenChange={(open) => {
+                  onSelect(environmentId);
+                  setExpandedId(open ? link.environmentId : null);
+                }}
+              />
+            </div>
+          ))}
+        </>
       )}
+      {canLink && !attentionOnly ? (
+        <Collapsible open={showAvailable} onOpenChange={setShowAvailable}>
+          <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-3 text-left text-xs text-muted-foreground sm:px-4">
+            <ChevronDownIcon aria-hidden className={cn("size-3", !showAvailable && "-rotate-90")} />
+            <T>Other destinations</T>
+          </CollapsibleTrigger>
+          <CollapsiblePanel animate={false}>
+            {available.length === 0 ? (
+              <SettingsRow
+                title={gt("No other known destinations")}
+                description={gt("Use Link to enter another address.")}
+              />
+            ) : (
+              available.map((machine) => (
+                <div
+                  key={machine.environmentId}
+                  className="flex items-center justify-between gap-3 border-t border-border/50 px-3 py-3 sm:px-4"
+                >
+                  <span className="min-w-0 break-words text-sm">{machine.label}</span>
+                  <LinkEnvironmentAction
+                    environmentId={environmentId}
+                    targetId={machine.environmentId}
+                    sourceLabel={source.label}
+                    onOpen={() => onSelect(environmentId)}
+                  />
+                </div>
+              ))
+            )}
+          </CollapsiblePanel>
+        </Collapsible>
+      ) : null}
     </SettingsSection>
   );
 }
 
 function LinkedEnvironmentRow({
   environmentId,
+  sourceLabel,
   link,
+  open,
+  onOpenChange,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly sourceLabel: string;
   readonly link: PeerLinkSummary;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
 }) {
   const gt = useGT();
   const m = useMessages();
-  const nowMinute = useNowMinute();
-  const health = peerLinkHealth(link, DateTime.makeUnsafe(nowMinute));
+  const now = DateTime.makeUnsafe(useNowMinute());
+  const status = linkedEnvironmentStatus(link, now, m);
+  const target = useEnvironment(link.environmentId);
+  const prepared = usePreparedConnection(link.environmentId);
+  const canRead = useEnvironmentScope(link.environmentId, AuthAccessReadScope);
+  const canCheck =
+    canRead && Option.isSome(prepared) && offersLinkedEnvironments(target?.serverConfig);
+  const reverse = useEnvironmentQuery(
+    open && canCheck
+      ? peerLinkEnvironment.list({ environmentId: link.environmentId, input: {} })
+      : null,
+    m,
+  );
+  const [evidence, setEvidence] = useState<{
+    links: ReadonlyArray<PeerLinkSummary>;
+    at: number;
+  } | null>(null);
+  const [editorMounted, setEditorMounted] = useState(open);
+  if (open && !editorMounted) setEditorMounted(true);
+  if ((!canCheck || (open && reverse.error)) && evidence !== null) setEvidence(null);
+  if (
+    open &&
+    canCheck &&
+    reverse.isSuccess &&
+    reverse.data &&
+    reverse.dataUpdatedAt !== evidence?.at
+  )
+    setEvidence({ links: reverse.data.links, at: reverse.dataUpdatedAt });
+  const reverseLinks =
+    !canCheck || (open && reverse.error) ? null : (reverse.data?.links ?? evidence?.links ?? null);
+  const direction = returnLinkStatus(environmentId, reverseLinks, now, m);
+  const returnLabel =
+    open && !canCheck
+      ? gt("Return unavailable")
+      : open && reverse.error
+        ? gt("Return unavailable")
+        : open && reverse.isPending && reverseLinks === null
+          ? gt("Checking return…")
+          : direction.label;
+  const returnDetail =
+    returnLabel === gt("Return unavailable")
+      ? gt(
+          "Connect to the destination with access to read its links to check the return direction.",
+        )
+      : returnLabel === gt("Checking return…")
+        ? gt("Checking the destination for a return link.")
+        : direction.detail;
+  const unlink = useAtomCommand(peerLinkEnvironment.unlink, { label: "unlink environment" });
   const canUnlink = useAtomValue(peerLinkEnvironment.unlink.permissionAtom(environmentId));
-  const { busy, forget } = useForgetPeerLink(environmentId, link);
-  const status = peerLinkStatusText(health, gt);
+  const [forgetting, setForgetting] = useState(false);
+  const mutation = usePeerLinkMutation(environmentId);
+  const forget = async () => {
+    if (!mutation.start()) return;
+    const perform = async () => {
+      const confirmed = await (requestConfirmDialog(
+        gt(
+          "Forget {label}? Agents on {source} stop working there. Revoke its “T3 Code · …” client in {label}’s Sharing & access to end that session too.",
+          { label: link.label, source: sourceLabel },
+        ),
+        { variant: "destructive" },
+      ) ?? Promise.resolve(false));
+      if (!confirmed) return;
+      setForgetting(true);
+      const result = await unlink({ environmentId, input: { environmentId: link.environmentId } });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result))
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: gt("Could not forget the link"),
+            description: String(squashAtomCommandFailure(result)),
+          }),
+        );
+    };
+    await perform().finally(() => {
+      setForgetting(false);
+      mutation.finish();
+    });
+  };
   return (
-    <div className={ITEM_ROW_CLASSNAME}>
-      <div className={ITEM_ROW_INNER_CLASSNAME}>
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-h-5 items-center gap-1.5">
-            <ConnectionStatusDot
-              tooltipText={status}
-              dotClassName={
-                health.kind === "reachable"
-                  ? health.expiresInDays === null
-                    ? "bg-success"
-                    : "bg-warning"
-                  : health.kind === "expired" || health.kind === "failing"
-                    ? "bg-destructive"
-                    : "bg-muted-foreground/30"
-              }
-              pingClassName={null}
+    <Collapsible open={open} onOpenChange={onOpenChange}>
+      <CollapsibleTrigger
+        disabled={forgetting}
+        className="grid w-full grid-cols-[minmax(0,1fr)_6.5rem_0.75rem] items-center gap-3 px-3 py-3 text-left outline-none hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_8.5rem_6.5rem_0.75rem] sm:px-4"
+      >
+        <span className="min-w-0 space-y-1">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="min-w-0 max-w-full break-words text-sm font-medium">{link.label}</span>
+            <Tooltip>
+              <TooltipTrigger
+                render={<span />}
+                aria-label={returnDetail}
+                className={cn(
+                  "inline-flex items-center gap-1 text-3xs font-normal",
+                  direction.warning
+                    ? "text-warning"
+                    : returnLabel === gt("Two-way")
+                      ? "text-info"
+                      : "text-muted-foreground",
+                )}
+              >
+                {returnLabel === gt("Two-way") ? (
+                  <ArrowLeftRightIcon aria-hidden className="size-3" />
+                ) : (
+                  <ArrowRightIcon aria-hidden className="size-3" />
+                )}
+                {returnLabel}
+              </TooltipTrigger>
+              <TooltipPopup>{returnDetail}</TooltipPopup>
+            </Tooltip>
+          </span>
+          <span className="block text-xs text-muted-foreground sm:hidden">
+            {m(accessConfig[link.access].label)}
+          </span>
+        </span>
+        <span className="hidden text-xs text-muted-foreground sm:block">
+          {m(accessConfig[link.access].label)}
+        </span>
+        <span
+          className="inline-flex items-center gap-1.5 text-xs"
+          aria-label={status.detail ?? status.label}
+        >
+          <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", status.dot)} />
+          {status.label}
+        </span>
+        <ChevronDownIcon
+          aria-hidden
+          className={cn("size-3 text-muted-foreground", !open && "-rotate-90")}
+        />
+      </CollapsibleTrigger>
+      <CollapsiblePanel animate={false} keepMounted={editorMounted}>
+        {editorMounted ? (
+          <div className="bg-muted/15 px-3 py-3 sm:px-4">
+            {status.detail ? <p className="mb-3 text-xs text-warning">{status.detail}</p> : null}
+            {reverse.error ? (
+              <p role="status" className="mb-3 text-xs text-muted-foreground">
+                <T>Could not check the return link.</T>{" "}
+                <Button size="xs" variant="link" onClick={reverse.refresh}>
+                  <T>Retry</T>
+                </Button>
+              </p>
+            ) : null}
+            <LinkedEnvironmentEditor
+              environmentId={environmentId}
+              link={link}
+              onForget={() => void forget()}
+              canForget={canUnlink}
+              disabled={forgetting}
             />
-            <h3 className="text-sm font-medium text-foreground">{link.label}</h3>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {m(accessConfig[link.access].label)} · {status}
-          </p>
-          <p className="truncate text-xs text-muted-foreground/80">{link.urls.join(", ")}</p>
-        </div>
-        {canUnlink ? (
-          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            <Button
-              size="xs"
-              variant="destructive-outline"
-              disabled={busy}
-              onClick={() => void forget()}
-            >
-              {busy ? gt("Forgetting…") : gt("Forget")}
-            </Button>
           </div>
         ) : null}
-      </div>
-    </div>
-  );
-}
-
-function LinkEnvironmentAction({ environmentId }: { readonly environmentId: EnvironmentId }) {
-  const gt = useGT();
-  const [open, setOpen] = useState(false);
-  return (
-    <LinkEnvironmentDialog
-      environmentId={environmentId}
-      open={open}
-      onOpenChange={setOpen}
-      trigger={
-        <DialogTrigger
-          render={
-            <Button size="xs" variant="default">
-              <PlusIcon className="size-3" />
-              {gt("Link", { $context: "verb, links an environment" })}
-            </Button>
-          }
-        />
-      }
-    />
+      </CollapsiblePanel>
+    </Collapsible>
   );
 }
 

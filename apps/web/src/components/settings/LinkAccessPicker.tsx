@@ -1,6 +1,9 @@
 import { AuthMcpClientAccess } from "@t3tools/contracts";
-import { T, useMessages } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useId } from "react";
+import { InfoIcon } from "lucide-react";
+import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -10,19 +13,41 @@ export function LinkAccessPicker({
   value,
   onChange,
   disabled = false,
+  compact = false,
 }: {
   readonly value: AuthMcpClientAccess;
   readonly onChange: (access: AuthMcpClientAccess) => void;
   readonly disabled?: boolean;
+  readonly compact?: boolean;
 }) {
+  const gt = useGT();
   const labelId = useId();
   const m = useMessages();
   const selected = accessConfig[value];
   return (
     <div className="space-y-1.5">
-      <span id={labelId} className="block text-xs font-medium">
-        <T>What agents here may do there</T>
-      </span>
+      <div className="flex items-center gap-1">
+        <span id={labelId} className="block text-xs font-medium">
+          {compact ? gt("Permissions") : gt("What agents here may do there")}
+        </span>
+        {compact ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button size="icon-tiny" variant="ghost-muted" aria-label={gt("Permission limits")}>
+                  <InfoIcon />
+                </Button>
+              }
+            />
+            <TooltipPopup>
+              <T>
+                An agent never gets more access than its own mode. Below Full access, changes are
+                limited to threads this link started. Return-link permissions are separate.
+              </T>
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
+      </div>
       <Select
         value={value}
         disabled={disabled}
@@ -56,12 +81,17 @@ export function LinkAccessPicker({
         </SelectPopup>
       </Select>
       <p className="text-xs text-muted-foreground">
-        {m(selected.description)}{" "}
-        <T>
-          An agent never gets more access there than its own mode here. Below full access, it can
-          change only threads this link started, not that machine's own threads, projects or
-          settings.
-        </T>
+        {m(selected.description)}
+        {compact ? null : (
+          <>
+            {" "}
+            <T>
+              An agent never gets more access there than its own mode here. Below full access, it
+              can change only threads this link started, not that machine's own threads, projects or
+              settings.
+            </T>
+          </>
+        )}
       </p>
     </div>
   );

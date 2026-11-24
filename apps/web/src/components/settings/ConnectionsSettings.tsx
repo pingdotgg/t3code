@@ -1931,16 +1931,12 @@ function ConnectionsSettingsContent({
           }}
         />
       ) : null}
-      {environmentsView === "list"
-        ? peerLinkHosts.map((environment, index) => (
-            <LinkedEnvironmentsSettings
-              key={environment.environmentId}
-              environmentId={environment.environmentId}
-              environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
-              isSearchTarget={index === 0}
-            />
-          ))
-        : null}
+      {environmentsView === "list" ? (
+        <LinkedEnvironmentsSettings
+          environments={peerLinkHosts}
+          primaryEnvironmentId={primaryEnvironmentId}
+        />
+      ) : null}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <PullRequestRoutingSettings environments={loadBalancingEnvironments} />
     </SettingsPageContainer>
