@@ -470,15 +470,10 @@ function OpenCommandPaletteDialog(props: {
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const resultListRef = useRef<LegendListRef | null>(null);
-  // Typing or a pushed view drops the highlight until the user moves it; auto-highlighting
-  // lists then fall back to their first row.
+  // Views without auto-highlight wait for the user to move the highlight after a reset.
   const highlightClearedRef = useRef(viewStack.length > 0);
   // Entering or leaving browse mode remounts the input; carry the caret across it.
   const remountSelectionRef = useRef<PendingInputSelection | null>(null);
-  function clearTypedHighlight(): void {
-    highlightClearedRef.current = true;
-    setHighlightedItemValue(null);
-  }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
@@ -1010,14 +1005,19 @@ function OpenCommandPaletteDialog(props: {
 
   function handleQueryChange(nextQuery: string, source: EventTarget | null): void {
     browseNavigation.invalidate();
-    clearTypedHighlight();
     const resolvedQuery = canBrowsePaths ? resolvePastedPath(query, nextQuery) : nextQuery;
+    const nextIsBrowsing =
+      canBrowsePaths && isFilesystemBrowseQuery(resolvedQuery, browseEnvironmentPlatform);
+    // Base UI owns the highlight in auto-highlight views, including on replacement input.
+    if (!autoHighlightsFirstRow || nextIsBrowsing) {
+      highlightClearedRef.current = true;
+      setHighlightedItemValue(null);
+    }
     // A rewritten paste has no matching offsets, so its caret lands at the end.
     if (
       source instanceof HTMLInputElement &&
       resolvedQuery === nextQuery &&
-      (canBrowsePaths && isFilesystemBrowseQuery(resolvedQuery, browseEnvironmentPlatform)) !==
-        isBrowsing
+      nextIsBrowsing !== isBrowsing
     ) {
       remountSelectionRef.current = {
         value: resolvedQuery,
@@ -3120,7 +3120,13 @@ function OpenCommandPaletteDialog(props: {
       items={resultRows.itemValues}
       virtualized
       onItemHighlighted={(value, eventDetails) => {
-        if (eventDetails.reason === "none" && highlightClearedRef.current) return;
+        if (
+          !autoHighlightsFirstRow &&
+          eventDetails.reason === "none" &&
+          highlightClearedRef.current
+        ) {
+          return;
+        }
         highlightClearedRef.current = false;
         setHighlightedItemValue(typeof value === "string" ? value : null);
         const rowIndex = resultRows.rowIndexByItemIndex[eventDetails.index];
