@@ -1,4 +1,5 @@
 import { TextGenerationError } from "@t3tools/contracts";
+import { readCustomModelEntries } from "@t3tools/shared/model";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
@@ -9,6 +10,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import { findModelConfigOption } from "@t3tools/provider-acp/server/runtimeModel";
+import { flattenSelectChoices } from "@t3tools/provider-acp/server/sessionConfig";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import {
@@ -57,9 +59,26 @@ export const makeAcpRegistryTextGeneration = Effect.fn("AcpRegistryTextGeneratio
       const model = request.modelSelection.model;
       const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
       if (model.length > 0 && model !== "default" && modelOption?.currentValue !== model) {
-        yield* modelOption === undefined
-          ? runtime.setSessionModel(model)
-          : runtime.setConfigOption(modelOption.id, model, { allowUnlistedValue: true });
+        const modelState = started.sessionSetupResult.models;
+        const isCustomModel = readCustomModelEntries(input.settings.customModels).some(
+          (entry) => entry.slug === model,
+        );
+        if (modelOption !== undefined) {
+          if (
+            isCustomModel ||
+            flattenSelectChoices(modelOption.options).some((choice) => choice.value === model)
+          ) {
+            yield* runtime.setConfigOption(modelOption.id, model, {
+              allowUnlistedValue: isCustomModel,
+            });
+          }
+        } else if (
+          modelState != null &&
+          modelState.currentModelId !== model &&
+          (isCustomModel || modelState.availableModels.some((choice) => choice.modelId === model))
+        ) {
+          yield* runtime.setSessionModel(model);
+        }
       }
       yield* runtime.prompt({ prompt: [{ type: "text", text: request.prompt }] });
       const text = (yield* Ref.get(output)).trim();
