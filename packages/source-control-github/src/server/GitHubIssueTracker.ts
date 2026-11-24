@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
-import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { GraphQLClient, GraphQLClientError, GraphQLGroup } from "effect/graphql";
 import {
   IssueTrackerKind,
@@ -53,9 +53,14 @@ const CAPABILITIES: IssueCapabilities = {
 /** Issue statuses are a github.com preview; Enterprise Server rejects a query that names them. */
 const asksStatuses = (host: string) => host.toLowerCase() === "github.com";
 
+const isResponseError = Schema.is(GitHubRequestPolicy.GitHubApiResponseError);
+
 /** GitHub refused the status fields themselves, as it may for an account the preview skips. */
 const statusesRefused = (error: IssueTrackerError) =>
-  Predicate.isTagged(error.cause, "GitHubApiResponseError");
+  isResponseError(error.cause) &&
+  (error.cause.githubErrors ?? []).some((message) =>
+    /planningStatus|viewerCanSetStatus|\bstatus\b/i.test(message),
+  );
 
 const REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/;
 
