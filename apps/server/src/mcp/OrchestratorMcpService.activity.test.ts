@@ -311,6 +311,8 @@ it("readThread preserves caller access errors and prefers activity-run status ov
 it("readThread pages cut-off text without splitting an emoji across pages", async () => {
   const text = "a😀bc";
   const itemId = TurnItemId.make("turn-item-mcp-reasoning");
+  const webhookToolItemId = TurnItemId.make("turn-item-mcp-webhook-tool");
+  const webhookToken = "wJalrXUtnFEMI_K7MDENG-bPxRfiCYEXAMPLEKEY1234";
   const projection = {
     thread: baseThread({
       threadId: parentThreadId,
@@ -349,6 +351,27 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
       sourceItemId: TurnItemId.make(`turn-item-mcp-${index}`),
       item: { ...row.item, text: "x".repeat(600) },
     })),
+    {
+      ...row,
+      position: 12,
+      sourceItemId: webhookToolItemId,
+      item: {
+        ...row.item,
+        type: "dynamic_tool",
+        toolName: "schedule_task",
+        input: {
+          prompt: "Triage {{body.action}}",
+          schedule: {
+            type: "webhook",
+            signature: { header: "x-hub-signature-256", encoding: "hex", prefix: "", secret: "s3" },
+          },
+        },
+        output: {
+          webhookUrl: `https://relay.test/v1/hooks/0123456789abcdef/task-1/${webhookToken}`,
+          path: `/api/hooks/task-1/${webhookToken}`,
+        },
+      },
+    },
   ];
 
   const layer = layerOrchestratorService.pipe(
@@ -429,6 +452,18 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
     });
     expect(first.items).toHaveLength(10);
     expect(first).toMatchObject({ nextPosition: 9, hasMore: true });
+
+    const webhookTool = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      itemId: webhookToolItemId,
+      maxCharsPerItem: 2_000,
+    });
+    const webhookToolText = webhookTool.items[0]?.text ?? "";
+    expect(webhookToolText).toContain("/v1/hooks/0123456789abcdef/task-1/[withheld]");
+    expect(webhookToolText).toContain("/api/hooks/task-1/[withheld]");
+    expect(webhookToolText).not.toContain(webhookToken);
+    expect(webhookToolText).not.toContain('"s3"');
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 

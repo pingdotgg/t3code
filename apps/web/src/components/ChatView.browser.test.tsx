@@ -1082,3 +1082,44 @@ it("/side sends the draft's attachments and context, and keeps them when it does
     ]),
   );
 });
+
+it("opening Settings without a page event closes the composer model picker and permissions menu", async () => {
+  using _environment = installFakeEnvironment([]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-29219");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make("thread-29219"),
+    });
+
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByTestId("composer-editor")).toBeVisible();
+  const trigger = document.querySelector<HTMLElement>("[data-chat-provider-model-picker]");
+  if (!trigger) throw new Error("composer model picker trigger missing");
+  await userEvent.click(trigger);
+  const search = page.getByPlaceholder("Search models...");
+  await expect.element(search).toBeVisible();
+
+  // The desktop menu's open-settings accelerator navigates with no key or pointer event in the page.
+  await act(() => router.navigate({ to: "/settings" }));
+  await expect.element(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  await expect.element(search).not.toBeInTheDocument();
+
+  await act(() => router.navigate({ to: "/draft/$draftId", params: { draftId } }));
+  await page.getByRole("button", { name: /^Permissions: / }).click();
+  // The modal Settings dialog aria-hides everything outside it, so match text, not role.
+  const permissions = page.getByText("Allow commands and edits without prompts.").last();
+  await expect.element(permissions).toBeVisible();
+  await act(() => router.navigate({ to: "/settings" }));
+  await expect.element(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  await expect.element(permissions).not.toBeInTheDocument();
+});

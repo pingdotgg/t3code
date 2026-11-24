@@ -17,6 +17,7 @@ import { makeDpopKey } from "./dpop.testkit.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import * as PairingGrantStore from "./PairingGrantStore.ts";
 
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -914,6 +915,49 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             }),
           ),
         ),
+    );
+
+    it.effect("issues no session to an exchange that revoking all others overtook", () =>
+      Effect.gen(function* () {
+        const pairingLinks = yield* PairingGrantStore.PairingGrantStore;
+        let afterSpend: Effect.Effect<void> = Effect.void;
+        const serverAuth = yield* EnvironmentAuth.make.pipe(
+          Effect.provideService(PairingGrantStore.PairingGrantStore, {
+            ...pairingLinks,
+            consume: (credential, input) =>
+              pairingLinks.consume(credential, input).pipe(Effect.tap(() => afterSpend)),
+          }),
+          Effect.provide(
+            Layer.merge(
+              ManagedPolicy.layerTest(),
+              ServerSecretStore.layer.pipe(Layer.provideMerge(layerServerConfig())),
+            ),
+          ),
+        );
+        const owner = yield* serverAuth.issueSession();
+        const succeeded = { onFailure: () => false, onSuccess: () => true };
+        const exchanges = [
+          (credential: string) =>
+            serverAuth
+              .createBrowserSession(credential, requestMetadata)
+              .pipe(Effect.match(succeeded)),
+          (credential: string) =>
+            serverAuth
+              .exchangeBootstrapCredentialForAccessToken(credential, undefined, requestMetadata)
+              .pipe(Effect.match(succeeded)),
+        ];
+        for (const exchange of exchanges) {
+          const pairing = yield* serverAuth.issuePairingCredential();
+          afterSpend = serverAuth.revokeOtherClientSessions(owner.sessionId).pipe(Effect.orDie);
+          const exchanged = yield* exchange(pairing.credential);
+          afterSpend = Effect.void;
+
+          expect(exchanged).toBe(false);
+          expect((yield* serverAuth.listSessions()).map((session) => session.sessionId)).toEqual([
+            owner.sessionId,
+          ]);
+        }
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
     it.effect("accepts cookie sessions on socket upgrades only from the app's own origins", () =>

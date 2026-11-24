@@ -287,6 +287,8 @@ const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(functio
 const projectFaviconAsset = Effect.fn("AssetAccess.projectFaviconAsset")(function* (
   filePath: string,
 ) {
+  // Checked again here: a link can be repointed after its URL was issued.
+  if (!isProjectFaviconPath(filePath)) return null;
   if (!filePath.toLowerCase().endsWith(".icns")) {
     return { kind: "file", path: filePath } satisfies ResolvedAsset;
   }
@@ -823,6 +825,10 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         return yield* new AssetProjectFaviconNotFoundError({
           resource: input.resource,
         });
+      }
+      // A favicon link must resolve to an image file.
+      if (canonicalFaviconPath && !isProjectFaviconPath(canonicalFaviconPath)) {
+        return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
       }
       claims =
         isExternalOverride && canonicalFaviconPath

@@ -11,6 +11,8 @@ import {
   type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthProvidersManageScope,
+  type ManagedPolicySummary,
   type WorkflowRun,
   type WorkflowStep,
   AuthSessionId,
@@ -2168,6 +2170,61 @@ it.effect.each([
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
+it.effect("thread resume replays a deleted thread's deletion and nothing recorded before it", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-10-13T00:00:00.000Z";
+    const threadId = ThreadId.make("thread:deleted-resume");
+    const insert = (version: number, type: string, payload: object) => sql`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        ${`deleted-resume:${version}`}, 'thread', ${threadId}, ${version}, ${type},
+        ${now}, 'server', ${JSON.stringify(payload)}, '{}', 2
+      )
+    `;
+    const detached = { providerSessionId: "session:deleted-resume", detachedAt: now };
+    yield* insert(0, "provider-session.detached", detached);
+    yield* insert(1, "provider-session.detached", detached);
+    yield* insert(2, "thread.deleted", {
+      createdBy: "user",
+      creationSource: "web",
+      id: threadId,
+      projectId: "project:deleted-resume",
+      title: "Deleted",
+      providerInstanceId: "codex",
+      modelSelection: { instanceId: "codex", model: "default" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      deletedAt: now,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+    });
+
+    const items = yield* subscribeOrchestrationV2Thread({ threadId, afterSequence: 0 }).pipe(
+      Effect.flatMap(Stream.runCollect),
+      Effect.provideService(ThreadManagement.ThreadManagementService, {
+        ensureLegacyTranscript: () => Effect.void,
+        streamStoredEventsFrom: () => Stream.empty,
+      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+    );
+    assert.deepEqual(
+      Array.from(items).map((item) => item.kind === "event" && item.event.type),
+      ["thread.deleted"],
+    );
+  }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
 // A prune pass can delete replayed rows after the boundary check; the read must not be trusted.
 it.effect.each(["thread", "shell"] as const)(
   "%s resume loads a snapshot when pruning advances during the replay read",
@@ -2380,6 +2437,7 @@ const acpSessionTags = [
   WS_METHODS.serverListAcpRegistrySessions,
   WS_METHODS.serverImportAcpRegistrySession,
   WS_METHODS.serverDeleteAcpRegistrySession,
+  WS_METHODS.serverPrepareAcpRegistryAgent,
 ] as const;
 const acpSessionRpcs = WsRpcGroup.omit(
   ...[...WsRpcGroup.requests.keys()].filter(
@@ -2515,7 +2573,9 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
     const instance = {
       driverKind: acpDriver,
       snapshot: {
-        getSnapshot: Effect.succeed({ nativeSessions: { canLoad: true, canDelete: true } }),
+        getSnapshot: Effect.succeed({
+          nativeSessions: { canList: true, canLoad: true, canDelete: true },
+        }),
       },
       acpSessionManagement: {
         listSessions: () =>
@@ -2750,6 +2810,127 @@ const layerWorkflowRpcTest = Layer.mergeAll(
   Layer.fresh(layerConfigSources),
   Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
   Layer.mock(ServerBrowser.ServerBrowser)({}),
+);
+
+/** A client for the ACP Registry RPCs; `calls` records what reached the agent or the catalog. */
+const makeAcpRegistryClient = Effect.fn("test.makeAcpRegistryClient")(function* (
+  calls: Array<string>,
+  options: {
+    readonly nativeSessions?: { readonly canList: boolean };
+    readonly managedPolicy?: ManagedPolicySummary;
+  },
+) {
+  const scopes = [AuthOrchestrationReadScope, AuthProvidersManageScope];
+  const instance = {
+    driverKind: acpDriver,
+    snapshot: { getSnapshot: Effect.succeed({ nativeSessions: options.nativeSessions }) },
+  } as unknown as ProviderInstance;
+  const services = Layer.mergeAll(
+    layerUnusedConfigRpcServices,
+    Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+    Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+    Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+    Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+    Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+    Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+    Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    ServerSettings.layerTest({}, options.managedPolicy),
+    Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
+      prepare: ({ agentId }) =>
+        Effect.sync(() => calls.push(`prepare:${agentId}`)).pipe(
+          Effect.as({ agentId, version: "1.0.0", distribution: "npx", prepared: true } as const),
+        ),
+    }),
+    Layer.mock(AcpRegistrySessions.AcpRegistrySessions)({
+      project: () => Effect.succeed({ workspaceRoot: "/workspace/acp" } as never),
+      sessionManager: () =>
+        Effect.succeed({
+          instance,
+          manager: {
+            listSessions: () =>
+              Effect.sync(() => calls.push("listSessions")).pipe(
+                Effect.as({ sessions: [], nextCursor: null }),
+              ),
+          } as unknown as NonNullable<ProviderInstance["acpSessionManagement"]>,
+        }),
+    }),
+  );
+  return yield* RpcTest.makeClient(acpSessionRpcs).pipe(
+    Effect.provide(
+      layerWsRpc(
+        {
+          sessionId: AuthSessionId.make("acp-test"),
+          subject: "acp-test",
+          method: "browser-session-cookie",
+          scopes,
+        },
+        {},
+        yield* ServerBrowser.ServerBrowser,
+        () => Effect.void,
+        { secretReferences: true },
+      ).pipe(Layer.provide(services), Layer.merge(RpcAuthorization.layer(scopes))),
+    ),
+  );
+});
+
+it.effect("listing ACP sessions reaches only an agent that advertises listing", () =>
+  Effect.gen(function* () {
+    const calls: Array<string> = [];
+    const input = { instanceId: acpInstanceId, projectId: acpProjectId };
+
+    const unprobed = yield* makeAcpRegistryClient(calls, {});
+    const refused = yield* unprobed[WS_METHODS.serverListAcpRegistrySessions](input).pipe(
+      Effect.flip,
+    );
+    assert.strictEqual(
+      refused._tag === "AcpRegistryOperationError" ? refused.reason : refused._tag,
+      "session_list_unsupported",
+    );
+    assert.deepEqual(calls, []);
+
+    const probed = yield* makeAcpRegistryClient(calls, { nativeSessions: { canList: true } });
+    yield* probed[WS_METHODS.serverListAcpRegistrySessions](input);
+    assert.deepEqual(calls, ["listSessions"]);
+  }).pipe(Effect.provide(layerWorkflowRpcTest)),
+);
+
+it.effect("preparing an ACP Registry agent follows the policy's allowed providers", () =>
+  Effect.gen(function* () {
+    const calls: Array<string> = [];
+    const policy = (...allowedDrivers: ReadonlyArray<string>): ManagedPolicySummary => ({
+      organization: "Example Corp",
+      lockedSettings: [],
+      limits: {
+        providers: {
+          allowedDrivers: [
+            ProviderDriverKind.make("codex"),
+            ...allowedDrivers.map((driver) => ProviderDriverKind.make(driver)),
+          ],
+          lockedInstanceFields: {},
+        },
+      },
+    });
+
+    const excluded = yield* makeAcpRegistryClient(calls, { managedPolicy: policy() });
+    const refused = yield* excluded[WS_METHODS.serverPrepareAcpRegistryAgent]({
+      agentId: "example-agent",
+    }).pipe(Effect.flip);
+    assert.strictEqual(
+      refused._tag === "AcpRegistryOperationError" ? refused.message : refused._tag,
+      "Example Corp's policy does not allow the ACP Registry provider.",
+    );
+    assert.deepEqual(calls, []);
+
+    const included = yield* makeAcpRegistryClient(calls, {
+      managedPolicy: policy("acpRegistry"),
+    });
+    yield* included[WS_METHODS.serverPrepareAcpRegistryAgent]({ agentId: "example-agent" });
+    const unmanaged = yield* makeAcpRegistryClient(calls, {});
+    yield* unmanaged[WS_METHODS.serverPrepareAcpRegistryAgent]({ agentId: "example-agent" });
+    assert.deepEqual(calls, ["prepare:example-agent", "prepare:example-agent"]);
+  }).pipe(Effect.provide(layerWorkflowRpcTest)),
 );
 
 it.effect("workflow RPCs read a run and pass an answer, a resume and a cancel to the service", () =>
