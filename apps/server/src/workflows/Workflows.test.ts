@@ -22,7 +22,18 @@ import * as TestClock from "effect/testing/TestClock";
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 import { issues, pullRequests } from "./forgeApi.ts";
 import { cancel, runs, signalAll, start } from "./stepServices.ts";
-import { type InRun, invoke, skip, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
+import {
+  type InRun,
+  invoke,
+  skip,
+  sleep,
+  step,
+  stop,
+  text,
+  title,
+  wait,
+  workflow,
+} from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
@@ -2264,3 +2275,11 @@ it.effect("a workflow can take an agent's failure as an answer and go on", () =>
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
+
+it("error text cuts at 2,000 units without leaving half an emoji", () => {
+  assert.equal(text(`${"a".repeat(1_999)}\u{1F680}tail`), "a".repeat(1_999));
+  assert.equal(
+    text(new Error("outer", { cause: `${"a".repeat(1_992)}\u{1F680}tail` })),
+    `outer: ${"a".repeat(1_992)}`,
+  );
+});
