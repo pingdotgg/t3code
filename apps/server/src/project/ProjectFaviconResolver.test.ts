@@ -202,7 +202,7 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
 <link rel="icon" href="/missing.svg">
 <link rel="icon" href="//cdn.example.com/icon.svg">
 <link rel="icon" href="/index.html/icon.svg">
-<link rel="icon" href="/brand/logo.svg">
+<link rel="icon" href="/brand/logo.svg#mark">
 <link rel="icon" href="/brand/late.svg">`,
         );
         yield* writeTextFile(cwd, "public/brand/logo.svg", "<svg>brand</svg>");
@@ -306,7 +306,7 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
     links: [
       { rel: "stylesheet", href: "/app.css" },
       { rel: "icon", href: "https://cdn.example.com/icon.svg" },
-      { rel: "icon shortcut", href: "/brand/logo.svg" },
+      { rel: "icon shortcut", href: "/brand/logo.svg#mark" },
     ],
   }),
 });`,
