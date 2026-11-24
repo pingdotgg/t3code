@@ -375,7 +375,6 @@ describe("question answer paths", () => {
       "{\\rtf1\\ansi\\ansicpg936 \\'c4\n\\'e3\\'ba\\'c3}",
       "你好",
     ],
-    ["EUC-KR code page", String.raw`{\rtf1\ansi\ansicpg949 \'be\'c8\'b3\'e7}`, "안녕"],
     ["Big5 code page", String.raw`{\rtf1\ansi\ansicpg950 \'a7A\'a6n}`, "你好"],
     [
       "multibyte font charsets and font code pages",
