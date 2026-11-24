@@ -432,6 +432,43 @@ fn writes_only_inside_known_workspaces_and_outside_git() {
         Failure::WorkspacePathOutsideRoot
     );
     assert!(!f.outside.join("audit.txt").exists());
+    // A project that is itself a linked worktree: a managed checkout its repository lists
+    // saves, though that repository lies outside the project.
+    let linked = f.outside.join("linked");
+    git(
+        &f.project,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            &linked.to_string_lossy(),
+        ],
+    );
+    let from_linked = managed.join("linked/probe-89ab");
+    git(
+        &linked,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "from-linked",
+            &from_linked.to_string_lossy(),
+        ],
+    );
+    let linked_projects = [linked.to_string_lossy().into_owned()];
+    let linked_known =
+        KnownWorkspaces::new(&linked_projects, &[]).with_managed(std::slice::from_ref(&managed));
+    assert_eq!(
+        save(&from_linked, &linked_known).unwrap().relative_path,
+        "audit.txt"
+    );
+    assert_eq!(
+        save(&nested_worktree, &linked_known).unwrap_err(),
+        Failure::WorkspacePathOutsideRoot
+    );
     for elsewhere in [managed.join("project/plain"), foreign] {
         assert_eq!(
             save(&elsewhere, &with_managed).unwrap_err(),

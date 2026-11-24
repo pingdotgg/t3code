@@ -60,7 +60,8 @@ impl Files {
 
 /// The folders `projects.writeFile` may write in: project roots, thread worktrees that
 /// `git worktree list` names for their project, and, with [`KnownWorkspaces::with_managed`],
-/// a managed worktree whose repository lies in a project and lists it (`KnownWorkspaces.ts`).
+/// a managed worktree whose repository lies in a project, or is a linked-worktree project's
+/// repository, and lists it (`KnownWorkspaces.ts`).
 /// Built per call from the engine's shell snapshot; never cached.
 #[derive(Debug, Default)]
 pub struct KnownWorkspaces {
@@ -129,8 +130,10 @@ impl KnownWorkspaces {
         let Some(repository) = worktree_repository(&checkout) else {
             return false;
         };
-        self.projects.iter().any(|p| repository.starts_with(p))
-            && git_worktrees(&repository).contains(&checkout)
+        // The repository lies in a project, or is the one a linked-worktree project belongs to.
+        self.projects.iter().any(|p| {
+            repository.starts_with(p) || worktree_repository(p).as_ref() == Some(&repository)
+        }) && git_worktrees(&repository).contains(&checkout)
     }
 }
 

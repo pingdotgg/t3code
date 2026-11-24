@@ -65,6 +65,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             m.adopt_t3_history(&input.thread_id, &input.terminal_id)
                 .await;
             let worktree = r.worktree_of(&input.thread_id, &input.cwd).await;
+            if let Some(w) = &worktree {
+                input.worktree_path = Some(Some(w.worktree_path.clone()));
+            }
             // Held across the open, the restore and the retry, as turns and captures hold it.
             let _lease = r.lease(worktree.as_ref()).await;
             match m.open(input.clone()) {
@@ -99,6 +102,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
                     )?;
                     let cwd = input.cwd.as_deref().unwrap_or_default();
                     worktree = r.worktree_of(&input.thread_id, cwd).await;
+                    if let Some(w) = &worktree {
+                        input.worktree_path = Some(Some(w.worktree_path.clone()));
+                    }
                 }
                 let _lease = r.lease(worktree.as_ref()).await;
                 let sub = match m.attach(input.clone(), ctx.connection_id) {
@@ -229,7 +235,8 @@ struct Restore {
 }
 
 impl Restore {
-    /// The thread's worktree when the terminal's `cwd` lies in it.
+    /// The thread's worktree when the terminal's `cwd` lies in it; the launch records its path,
+    /// as T3's `prepareTerminalLaunch` does.
     async fn worktree_of(&self, thread_id: &str, cwd: &str) -> Option<ThreadWorktree> {
         let worktree = self
             .engine
@@ -759,6 +766,18 @@ mod tests {
         );
         assert_eq!(git(&worktree, &["rev-parse", "HEAD"]), tip);
         assert!(worktree.join("thread.txt").exists());
+
+        // The open records the inferred worktree, so a reopen that names it keeps the shell.
+        let pid_of = |exit: &Value| exit["exit"]["value"]["pid"].clone();
+        let first = exits.iter().find(|e| e["requestId"] == 1).unwrap();
+        assert_eq!(first["exit"]["value"]["worktreePath"], json!(worktree));
+        let mut named = open("one", &worktree);
+        named["worktreePath"] = json!(worktree);
+        client.request(5, "terminal.open", named);
+        let reopened = client.until(|f| is_exit(f, 5)).await;
+        let reopened = reopened.last().unwrap();
+        assert!(pid_of(reopened).is_i64(), "{reopened}");
+        assert_eq!(pid_of(reopened), pid_of(first), "{reopened}");
 
         let elsewhere = dir.join("not-the-worktree");
         client.request(3, "terminal.open", open("three", &elsewhere));
