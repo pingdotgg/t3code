@@ -1184,8 +1184,7 @@ function ComposerPromptEditorTiptapInner(
       );
       return true;
     }
-    const pasteText =
-      isPaste && !literalText ? readPastedComposerText(clipboardData, false) : pastedText;
+    const pasteText = isPaste && !literalText ? readPastedComposerText(clipboardData) : pastedText;
     // Shown Markdown source is parsed when the caret leaves, so paste one line into it as text.
     const sourceType = view.state.schema.marks[MARKDOWN_SOURCE_MARK];
     const { from: pasteFrom, to: pasteTo, $from: $pasteFrom } = view.state.selection;
@@ -1894,10 +1893,9 @@ function ComposerPromptEditorTiptapInner(
       readPasteText: (clipboardData, atEnd) => {
         const state = editor?.state;
         const selection = state && (atEnd ? Selection.atEnd(state.doc) : state.selection);
-        return readPastedComposerText(
-          clipboardData,
-          literalText || selection?.$from.parent.type.spec.code === true,
-        );
+        return literalText || selection?.$from.parent.type.spec.code === true
+          ? readPastedPlainText(clipboardData)
+          : readPastedComposerText(clipboardData);
       },
       readSelectionRange: () => {
         readSnapshot();

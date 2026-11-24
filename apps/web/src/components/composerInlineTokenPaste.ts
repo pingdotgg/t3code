@@ -26,12 +26,11 @@ export function readPastedPlainText(clipboardData: Pick<DataTransfer, "getData">
   return clipboardData.getData("text/plain").replace(/\r\n?/g, "\n");
 }
 
-export function readPastedComposerText(
-  clipboardData: Pick<DataTransfer, "getData">,
-  plain: boolean,
-): string {
-  const text = readPastedPlainText(clipboardData);
-  return plain ? text : restorePastedMarkdownLinks(text, clipboardData.getData("text/html"));
+export function readPastedComposerText(clipboardData: Pick<DataTransfer, "getData">): string {
+  return restorePastedMarkdownLinks(
+    readPastedPlainText(clipboardData),
+    clipboardData.getData("text/html"),
+  );
 }
 
 /** Pasted thread links count as context too, so they become chips like a copied chip does. */
