@@ -1132,7 +1132,11 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       ) {
         return yield* snapshotThenLive();
       }
-      const replay = coalesceLiveUpdatedEvents(replayed);
+      // A deleted thread reads as gone: its replay starts at the deletion.
+      const deletion = replayed.findLastIndex((item) => item.event.type === "thread.deleted");
+      const replay = coalesceLiveUpdatedEvents(
+        deletion === -1 ? replayed : replayed.slice(deletion),
+      );
       const plan = decideThreadResume({
         afterSequence: input.afterSequence,
         highWater,
