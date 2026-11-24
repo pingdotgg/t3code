@@ -336,6 +336,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           registerExtensions: copilotRouting.registerExtensions,
           normalizeSessionUpdate: copilotRouting.normalizeSessionUpdate,
           extractSubagentUpdate: extractCopilotSubagentUpdate,
+          subagentsOwnedByRuntime: true,
           restartRuntimeAfterPromptError: isCopilotLostSessionError,
           // A finished background agent wakes the root after assistant.idle settled the run.
           enablePostSettleContinuation: true,

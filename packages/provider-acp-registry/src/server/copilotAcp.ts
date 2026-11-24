@@ -87,8 +87,8 @@ function copilotToolIdentity(data: Record<string, unknown>): CopilotToolIdentity
 }
 
 export function makeCopilotSubagentRouting() {
-  const sessions = new Map<string, CopilotSessionAttribution>();
-  const session = (sessionId: string) => {
+  const sessionsByRuntime = new WeakMap<object, Map<string, CopilotSessionAttribution>>();
+  const session = (sessions: Map<string, CopilotSessionAttribution>, sessionId: string) => {
     let current = sessions.get(sessionId);
     if (current === undefined) {
       current = { delta: undefined, taskByAgentId: new Map(), toolIdentityByCallId: new Map() };
@@ -96,7 +96,11 @@ export function makeCopilotSubagentRouting() {
     }
     return current;
   };
-  const release = (sessionId: string, current: CopilotSessionAttribution) => {
+  const release = (
+    sessions: Map<string, CopilotSessionAttribution>,
+    sessionId: string,
+    current: CopilotSessionAttribution,
+  ) => {
     if (
       current.delta === undefined &&
       current.taskByAgentId.size === 0 &&
@@ -106,88 +110,103 @@ export function makeCopilotSubagentRouting() {
     }
   };
 
-  const registerExtensions = (context: AcpAdapterV2ExtensionContext) =>
-    context.runtime.handleExtNotification(COPILOT_SESSION_EVENT, CopilotSessionEvent, (event) => {
-      const data = event.data ?? {};
-      switch (event.type) {
-        case "assistant.message_delta":
-        case "assistant.reasoning_delta": {
-          if (typeof data.deltaContent !== "string") return Effect.void;
-          const current = session(event.sessionId);
-          // Copilot 1.0.114+ names a subagent's deltas only by agentId, without parentToolCallId.
-          const task =
-            typeof data.parentToolCallId === "string"
-              ? data.parentToolCallId
-              : event.agentId === undefined
-                ? undefined
-                : current.taskByAgentId.get(event.agentId);
-          current.delta = {
-            kind: event.type,
-            text: data.deltaContent,
-            ...(task === undefined ? {} : { task }),
-          };
-          return Effect.void;
-        }
-        case "subagent.started": {
-          if (event.agentId !== undefined && typeof data.toolCallId === "string") {
-            session(event.sessionId).taskByAgentId.set(event.agentId, data.toolCallId);
-          }
-          return Effect.void;
-        }
-        case "tool.execution_start": {
-          const identity = copilotToolIdentity(data);
-          if (identity !== undefined && typeof data.toolCallId === "string") {
-            session(event.sessionId).toolIdentityByCallId.set(data.toolCallId, identity);
-          }
-          return Effect.void;
-        }
-        case "subagent.completed":
-        case "subagent.failed": {
-          const current = sessions.get(event.sessionId);
-          if (current !== undefined && event.agentId !== undefined) {
-            current.taskByAgentId.delete(event.agentId);
-            release(event.sessionId, current);
-          }
-          if (typeof data.toolCallId !== "string") return Effect.void;
-          // Background tasks end only here; their tool call settles at launch.
-          return context.finishSubagent({
-            sessionId: event.sessionId,
-            childSessionId: childSessionId(data.toolCallId),
-            status: event.type === "subagent.failed" ? "failed" : "completed",
-            result: typeof data.error === "string" ? data.error : null,
-          });
-        }
-        // Copilot sends no ACP compaction_update; agentId marks a subagent's own compaction.
-        // Older Copilot builds report a successful compaction without `outcome`.
-        case "session.compaction_complete": {
-          if (
-            event.agentId !== undefined ||
-            data.success !== true ||
-            (data.outcome !== undefined && data.outcome !== "applied")
-          ) {
+  const registerExtensions = (context: AcpAdapterV2ExtensionContext) => {
+    const runtimeSessions = new Map<string, CopilotSessionAttribution>();
+    sessionsByRuntime.set(context.runtime, runtimeSessions);
+    return context.runtime.handleExtNotification(
+      COPILOT_SESSION_EVENT,
+      CopilotSessionEvent,
+      (event) => {
+        const data = event.data ?? {};
+        switch (event.type) {
+          case "assistant.message_delta":
+          case "assistant.reasoning_delta": {
+            if (typeof data.deltaContent !== "string") return Effect.void;
+            const current = session(runtimeSessions, event.sessionId);
+            // Copilot 1.0.114+ names a subagent's deltas only by agentId, without parentToolCallId.
+            const task =
+              typeof data.parentToolCallId === "string"
+                ? data.parentToolCallId
+                : event.agentId === undefined
+                  ? undefined
+                  : current.taskByAgentId.get(event.agentId);
+            current.delta = {
+              kind: event.type,
+              text: data.deltaContent,
+              ...(task === undefined ? {} : { task }),
+            };
             return Effect.void;
           }
-          return context.markSessionCompacted(event.sessionId);
+          case "subagent.started": {
+            if (event.agentId !== undefined && typeof data.toolCallId === "string") {
+              session(runtimeSessions, event.sessionId).taskByAgentId.set(
+                event.agentId,
+                data.toolCallId,
+              );
+            }
+            return Effect.void;
+          }
+          case "tool.execution_start": {
+            const identity = copilotToolIdentity(data);
+            if (identity !== undefined && typeof data.toolCallId === "string") {
+              session(runtimeSessions, event.sessionId).toolIdentityByCallId.set(
+                data.toolCallId,
+                identity,
+              );
+            }
+            return Effect.void;
+          }
+          case "subagent.completed":
+          case "subagent.failed": {
+            const current = runtimeSessions.get(event.sessionId);
+            if (current !== undefined && event.agentId !== undefined) {
+              current.taskByAgentId.delete(event.agentId);
+              release(runtimeSessions, event.sessionId, current);
+            }
+            if (typeof data.toolCallId !== "string") return Effect.void;
+            // Background tasks end only here; their tool call settles at launch.
+            return context.finishSubagent({
+              sessionId: event.sessionId,
+              childSessionId: childSessionId(data.toolCallId),
+              status: event.type === "subagent.failed" ? "failed" : "completed",
+              result: typeof data.error === "string" ? data.error : null,
+            });
+          }
+          // Copilot sends no ACP compaction_update; agentId marks a subagent's own compaction.
+          // Older Copilot builds report a successful compaction without `outcome`.
+          case "session.compaction_complete": {
+            if (
+              event.agentId !== undefined ||
+              data.success !== true ||
+              (data.outcome !== undefined && data.outcome !== "applied")
+            ) {
+              return Effect.void;
+            }
+            return context.markSessionCompacted(event.sessionId);
+          }
+          // Copilot holds session/prompt while an attached async shell runs (github/copilot-cli#5293).
+          case "assistant.turn_start":
+          case "assistant.idle": {
+            if (event.agentId !== undefined || data.aborted === true) return Effect.void;
+            return context.reportForegroundWork({
+              sessionId: event.sessionId,
+              state: event.type === "assistant.idle" ? "idle" : "running",
+            });
+          }
+          default:
+            return Effect.void;
         }
-        // Copilot holds session/prompt while an attached async shell runs (github/copilot-cli#5293).
-        case "assistant.turn_start":
-        case "assistant.idle": {
-          if (event.agentId !== undefined || data.aborted === true) return Effect.void;
-          return context.reportForegroundWork({
-            sessionId: event.sessionId,
-            state: event.type === "assistant.idle" ? "idle" : "running",
-          });
-        }
-        default:
-          return Effect.void;
-      }
-    });
+      },
+    );
+  };
 
   const normalizeSessionUpdate = (
     notification: AcpSchema.SessionNotification,
+    runtime: object,
   ): AcpSchema.SessionNotification => {
     const update = notification.update;
-    const current = sessions.get(notification.sessionId);
+    const sessions = sessionsByRuntime.get(runtime);
+    const current = sessions?.get(notification.sessionId);
     if (current === undefined) return notification;
     let task: string | undefined;
     let normalized = notification;
@@ -197,7 +216,7 @@ export function makeCopilotSubagentRouting() {
     ) {
       const delta = current.delta;
       current.delta = undefined;
-      release(notification.sessionId, current);
+      release(sessions!, notification.sessionId, current);
       const kind =
         update.sessionUpdate === "agent_message_chunk"
           ? "assistant.message_delta"
@@ -219,7 +238,7 @@ export function makeCopilotSubagentRouting() {
       if (identity !== undefined) {
         if (update.status === "completed" || update.status === "failed") {
           current.toolIdentityByCallId.delete(update.toolCallId);
-          release(notification.sessionId, current);
+          release(sessions!, notification.sessionId, current);
         }
         normalized = {
           ...notification,
