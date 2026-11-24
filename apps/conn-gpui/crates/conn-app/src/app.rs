@@ -1394,20 +1394,20 @@ impl ConnApp {
                     .filter(|(id, _)| *id == thread_id)
                     .map(|(_, opened_at)| (thread_stream_item_kind(&item), *opened_at));
                 let apply_start = std::time::Instant::now();
-                let state = self
-                    .threads
-                    .entry(thread_id.clone())
-                    .or_insert_with(|| ThreadState::new(thread_id.clone()));
-                state.apply(item);
-                if let Some(env) = &self.server_url {
-                    self.offline.changed(env, &thread_id);
+                if let Some(env) = self.server_url.clone() {
+                    self.apply_cache_stream(&env, &thread_id, item);
+                } else {
+                    self.threads
+                        .entry(thread_id.clone())
+                        .or_insert_with(|| ThreadState::new(&thread_id))
+                        .apply(item);
                 }
                 if let Some((kind, opened_at)) = perf_kind
                     && kind != "event"
                 {
                     conn_client::perf_log!(
                         "app.applied thread={thread_id} kind={kind} entries={} apply_ms={:.1} +{:.1}ms",
-                        state.entries.len(),
+                        self.threads.get(&thread_id).map_or(0, |t| t.entries.len()),
                         conn_client::perf::ms_since(apply_start),
                         conn_client::perf::ms_since(opened_at),
                     );
@@ -1551,39 +1551,62 @@ impl ConnApp {
     /// Fetches the next older history page for the currently selected bounded thread and prepends
     /// its entries into [`ThreadState`] without losing the user's scroll position.
     fn load_earlier_history(&mut self, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.context_connection() else {
-            self.sync_chat(cx);
-            return;
-        };
         let Some(thread_id) = self.layout.selected_thread_id.clone() else {
             return;
         };
-        let cursor = {
+        if self.load_cached_page(&thread_id) {
+            self.sync_chat(cx);
+            return;
+        }
+        let Some(connection) = self
+            .connection_for_thread(&thread_id)
+            .filter(|_| self.thread_connected(&thread_id))
+        else {
+            if let Some(thread) = self.threads.get_mut(&thread_id) {
+                thread.has_more_history = false;
+            }
+            self.sync_chat(cx);
+            return;
+        };
+        let env = self.cache_env(&thread_id).map(str::to_owned);
+        let snapshot_cursor = self.offline.snapshot_cursor(env.as_deref(), &thread_id);
+        let (cursor, anchor) = {
             let Some(thread) = self.threads.get_mut(&thread_id) else {
                 return;
             };
             if !thread.has_more_history || thread.loading_earlier {
                 return;
             }
-            let Some(cursor) = thread.history_cursor.clone() else {
-                thread.has_more_history = false;
-                self.sync_chat(cx);
+            let Some(first) = thread.entries.first() else {
                 return;
             };
             thread.loading_earlier = true;
-            cursor
+            (thread.history_cursor.clone(), first.id().to_owned())
         };
         self.sync_chat(cx);
 
         let generation = self.connection_gen;
+        let serial = self.offline.snapshot_serial(env.as_deref(), &thread_id);
+        let expected_anchor = anchor.clone();
         let expected_cursor = cursor.clone();
         let req_thread_id = thread_id.clone();
 
         cx.spawn(async move |this, cx| {
             let task = crate::live::RT.spawn(async move {
-                connection
-                    .fetch_thread_history_page(&req_thread_id, &cursor)
-                    .await
+                if let Some(cursor) = cursor {
+                    connection
+                        .fetch_thread_history_page(&req_thread_id, &cursor)
+                        .await
+                } else {
+                    let cursor = snapshot_cursor.ok_or_else(|| {
+                        conn_client::ClientError::Connection(
+                            "waiting for the bounded thread snapshot".to_owned(),
+                        )
+                    })?;
+                    connection
+                        .fetch_history_before_message(&req_thread_id, &cursor, &anchor)
+                        .await
+                }
             });
             let result = match task.await {
                 Ok(res) => res,
@@ -1592,11 +1615,19 @@ impl ConnApp {
                 ))),
             };
             let _ = this.update(cx, |app, cx| {
-                if app.connection_gen != generation {
+                if app.connection_gen != generation
+                    || app.cache_env(&thread_id) != env.as_deref()
+                    || app.offline.snapshot_serial(env.as_deref(), &thread_id) != serial
+                {
                     return;
                 }
                 if let Some(thread) = app.threads.get_mut(&thread_id) {
-                    if thread.history_cursor.as_deref() == Some(expected_cursor.as_str()) {
+                    if thread.history_cursor == expected_cursor
+                        && thread
+                            .entries
+                            .first()
+                            .is_some_and(|entry| entry.id() == expected_anchor)
+                    {
                         match result {
                             Ok(page) => {
                                 thread.prepend_history_page(page);
@@ -3350,6 +3381,7 @@ impl ConnApp {
                 "working": t.working,
                 "synchronized": t.synchronized,
                 "entryCount": t.entries.len(),
+                "messageIds": t.entries.iter().filter(|entry|matches!(entry,conn_state::TimelineEntry::User{..}|conn_state::TimelineEntry::Assistant{..})).map(conn_state::TimelineEntry::id).collect::<Vec<_>>(),
                 "entries": t.entries.iter().take(20).map(|e| format!("{e:?}").chars().take(120).collect::<String>()).collect::<Vec<_>>(),
             })
         });

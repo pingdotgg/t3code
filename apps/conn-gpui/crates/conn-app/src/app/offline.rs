@@ -3,10 +3,10 @@ use crate::chat::{ThreadOutline, TocEntry};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use conn_cache::{Message, MessageCache};
+use conn_cache::{Message, MessageCache, fetch_history_prefix};
 use conn_client::Connection;
 use conn_state::environments::LinkedShellSnapshot;
 use conn_state::{ShellState, ThreadShell, ThreadState, TimelineEntry};
@@ -15,9 +15,11 @@ use sha2::{Digest as _, Sha256};
 
 use super::ConnApp;
 
+static CACHE_WRITER: Mutex<()> = Mutex::new(());
+
 const RETENTION_MS: i64 = 24 * 60 * 60 * 1000;
 
-fn expired(thread: &ThreadShell) -> bool {
+pub(super) fn expired(thread: &ThreadShell) -> bool {
     thread.deleted_at.is_some()
         || thread
             .settled_at
@@ -29,10 +31,24 @@ fn expired(thread: &ThreadShell) -> bool {
             })
 }
 
+type ThreadKey = (String, String);
+
+#[derive(Clone)]
+struct Backfill {
+    key: ThreadKey,
+    cursor: String,
+    anchor: Option<String>,
+    limit: usize,
+    serial: u64,
+    stamp: String,
+}
+
 #[derive(Default)]
 pub(super) struct Offline {
     dir: Option<PathBuf>,
     db: Option<MessageCache>,
+    owners: HashMap<String, String>,
+    shadow: HashMap<ThreadKey, ThreadState>,
     subscriptions: HashMap<(String, String), Connection>,
     dirty: HashSet<(String, String)>,
     expired: HashSet<(String, String)>,
@@ -42,6 +58,13 @@ pub(super) struct Offline {
     outline_queue: std::collections::VecDeque<(String, String)>,
     loading_outline: Option<(String, String)>,
     outline_epoch: u64,
+    backfills: std::collections::VecDeque<Backfill>,
+    snapshots: HashMap<ThreadKey, Arc<u64>>,
+    lifetime: Arc<()>,
+    snapshot_cursors: HashMap<ThreadKey, String>,
+    commits: HashMap<ThreadKey, Commit>,
+    serial: u64,
+    backfilling: bool,
     shell_dirty: bool,
     saving: bool,
 }
@@ -86,6 +109,10 @@ impl Offline {
         )
     }
     pub(super) fn disconnected(&mut self, env: &str) {
+        self.snapshots.retain(|(owner, _), _| owner != env);
+        self.snapshot_cursors.retain(|(owner, _), _| owner != env);
+        self.commits.retain(|(owner, _), _| owner != env);
+        self.backfills.retain(|job| job.key.0 != env);
         self.subscriptions.retain(|(owner, _), _| owner != env);
         if self
             .loading_outline
@@ -99,8 +126,21 @@ impl Offline {
         self.outline_requested.retain(|(owner, _), _| owner != env);
     }
 
-    pub(super) fn watching(&self, id: &str) -> bool {
-        self.subscriptions.keys().any(|(_, thread)| thread == id)
+    pub(super) fn watching(&self, env: Option<&str>, id: &str) -> bool {
+        env.is_some_and(|env| {
+            self.subscriptions
+                .contains_key(&(env.to_owned(), id.to_owned()))
+        })
+    }
+    pub(super) fn snapshot_cursor(&self, env: Option<&str>, id: &str) -> Option<String> {
+        self.snapshot_cursors
+            .get(&(env?.to_owned(), id.to_owned()))
+            .cloned()
+    }
+    pub(super) fn snapshot_serial(&self, env: Option<&str>, id: &str) -> Option<u64> {
+        self.snapshots
+            .get(&(env?.to_owned(), id.to_owned()))
+            .map(|serial| **serial)
     }
     pub(super) fn changed(&mut self, env: &str, id: &str) {
         if self.dir.is_some() {
@@ -112,9 +152,18 @@ impl Offline {
     }
 }
 
+enum Commit {
+    Replace,
+    Prefix {
+        anchor: Option<String>,
+        rows: Vec<Message>,
+        stamp: String,
+    },
+}
+
 enum Save {
     Shell(PathBuf, LinkedShellSnapshot),
-    Chat(String, String, Vec<Message>),
+    Chat(ThreadKey, Vec<Message>, Option<Commit>, Option<Weak<u64>>),
     Remove(String, String),
     Outline(String, String, String),
 }
@@ -165,7 +214,8 @@ fn read_chat(db: &MessageCache, env: &str, id: &str) -> io::Result<ThreadState> 
         .block_on(db.recent(env, id))
         .map_err(io::Error::other)?;
     let mut state = ThreadState::new(id);
-    state.entries = decode_messages(rows)?;
+    state.replace_cached_prefix(decode_messages(rows)?);
+    state.has_more_history = state.entries.len() == 100;
     Ok(state)
 }
 
@@ -175,13 +225,59 @@ fn decode_messages(rows: Vec<String>) -> serde_json::Result<Vec<TimelineEntry>> 
         .collect()
 }
 
+fn replace_messages(db: &MessageCache, env: &str, id: &str, rows: &[Message]) -> io::Result<()> {
+    if let Some(tail) = rows.last() {
+        merge_chat(db, env, id, std::slice::from_ref(tail))?;
+        crate::live::RT
+            .block_on(db.merge_prefix(env, id, tail.id(), &rows[..rows.len() - 1]))
+            .map_err(io::Error::other)?;
+    } else {
+        crate::live::RT
+            .block_on(db.remove(env, id))
+            .map_err(io::Error::other)?;
+    }
+    Ok(())
+}
+
 fn save(dir: &Path, db: Option<&MessageCache>, write: Save) -> io::Result<()> {
     match write {
         Save::Shell(path, snapshot) => write_shell(&path, &snapshot),
-        Save::Chat(env, id, messages) => {
+        Save::Chat((env, id), messages, commit, snapshot) => {
+            if snapshot.is_some_and(|snapshot| snapshot.strong_count() == 0) {
+                return Ok(());
+            }
             if let Some(db) = db {
                 import_legacy(db, &env, &id, &dir.join(key(&env)).join(key(&id)))?;
-                merge_chat(db, &env, &id, &messages)?;
+                let receipt = dir.join(key(&env)).join(key(&id)).with_extension("prefix");
+                match commit {
+                    Some(Commit::Replace) => {
+                        remove_legacy(&receipt)?;
+                        replace_messages(db, &env, &id, &messages)?;
+                    }
+                    Some(Commit::Prefix {
+                        anchor,
+                        mut rows,
+                        stamp,
+                    }) => {
+                        if let Some(anchor) = anchor {
+                            merge_chat(db, &env, &id, &messages)?;
+                            if !crate::live::RT
+                                .block_on(db.merge_prefix(&env, &id, &anchor, &rows))
+                                .map_err(io::Error::other)?
+                            {
+                                return Ok(());
+                            }
+                        } else {
+                            rows.extend(messages);
+                            replace_messages(db, &env, &id, &rows)?;
+                        }
+                        if let Some(parent) = receipt.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                        std::fs::write(receipt, stamp)?;
+                    }
+                    None => merge_chat(db, &env, &id, &messages)?,
+                }
             }
             Ok(())
         }
@@ -195,7 +291,9 @@ fn save(dir: &Path, db: Option<&MessageCache>, write: Save) -> io::Result<()> {
         }
         Save::Remove(env, id) => {
             if let Some(db) = db {
-                remove_legacy(&dir.join(key(&env)).join(key(&id)))?;
+                let path = dir.join(key(&env)).join(key(&id));
+                remove_legacy(&path.with_extension("prefix"))?;
+                remove_legacy(&path)?;
                 crate::live::RT
                     .block_on(db.remove(&env, &id))
                     .map_err(io::Error::other)?;
@@ -205,9 +303,8 @@ fn save(dir: &Path, db: Option<&MessageCache>, write: Save) -> io::Result<()> {
     }
 }
 
-fn capture_chat(state: &ThreadState) -> Vec<Message> {
-    let mut messages: Vec<_> = state
-        .entries
+fn capture_chat(entries: &[TimelineEntry]) -> Vec<Message> {
+    let mut messages: Vec<_> = entries
         .iter()
         .rev()
         .filter_map(Message::capture)
@@ -222,6 +319,78 @@ impl ConnApp {
         self.linked_environment_of_thread(thread)
             .or(self.server_url.as_deref())
     }
+    fn cache_shell(&self, env: &str, id: &str) -> Option<&ThreadShell> {
+        if self.server_url.as_deref() == Some(env) {
+            self.shell
+                .find_thread(id)
+                .filter(|_| self.cache_env(id) == Some(env))
+        } else {
+            self.linked.shell_for_cache(env)?.find_thread(id)
+        }
+    }
+
+    fn cache_state(&self, key: &ThreadKey) -> Option<&ThreadState> {
+        if self.offline.owners.get(&key.1) == Some(&key.0) {
+            self.threads.get(&key.1)
+        } else {
+            self.offline.shadow.get(key)
+        }
+    }
+
+    fn route_cached_thread(&mut self, env: &str, id: &str) {
+        if let Some(old) = self.offline.owners.insert(id.to_owned(), env.to_owned())
+            && old != env
+        {
+            if let Some(state) = self.threads.remove(id) {
+                self.offline.shadow.insert((old, id.to_owned()), state);
+            }
+            if let Some(state) = self.offline.shadow.remove(&(env.to_owned(), id.to_owned())) {
+                self.threads.insert(id.to_owned(), state);
+            }
+        }
+    }
+
+    pub(super) fn apply_cache_stream(
+        &mut self,
+        env: &str,
+        id: &str,
+        item: conn_state::ThreadStreamItem,
+    ) {
+        let rollback = matches!(&item,conn_state::ThreadStreamItem::Event(ev)
+            if matches!(&ev.event,conn_contract::OrchestrationV2DomainEvent::RunUpdated(run)
+                if run.payload.status == conn_contract::OrchestrationV2RunStatus::RolledBack));
+        if rollback {
+            let key = (env.to_owned(), id.to_owned());
+            if self.offline.snapshots.remove(&key).is_some() {
+                self.offline.commits.remove(&key);
+                self.offline.backfills.retain(|job| job.key != key);
+                if let Some(connection) = self.offline.subscriptions.get(&key) {
+                    connection.refresh_thread(id);
+                }
+            }
+        }
+        let snapshot = matches!(item, conn_state::ThreadStreamItem::Snapshot(_));
+        let changed = if self.cache_env(id) == Some(env) {
+            self.route_cached_thread(env, id);
+            self.threads
+                .entry(id.to_owned())
+                .or_insert_with(|| ThreadState::new(id))
+                .apply(item)
+        } else {
+            self.offline
+                .shadow
+                .entry((env.to_owned(), id.to_owned()))
+                .or_insert_with(|| ThreadState::new(id))
+                .apply(item)
+        };
+        if changed || snapshot {
+            self.offline.changed(env, id);
+        }
+        if snapshot {
+            self.offline_snapshot(env.to_owned(), id);
+        }
+    }
+
     pub(super) fn restore_offline_shell(&mut self) {
         let Some(env) = self.server_url.as_deref() else {
             return;
@@ -303,8 +472,15 @@ impl ConnApp {
     }
 
     pub(super) fn restore_offline_chat(&mut self, id: &str) {
+        if let Some(env) = self.cache_env(id).map(str::to_owned) {
+            self.route_cached_thread(&env, id);
+        }
         self.restore_outline(id);
-        if self.threads.contains_key(id) || self.shell.find_thread(id).is_none_or(expired) {
+        if self.shell.find_thread(id).is_none_or(expired) {
+            return;
+        }
+        if self.threads.contains_key(id) {
+            self.fill_warm_preview(id);
             return;
         }
         let (Some(env), Some(db)) = (self.cache_env(id), &self.offline.db) else {
@@ -321,11 +497,244 @@ impl ConnApp {
             Err(e) => eprintln!("offline message read: {e}"),
         }
     }
+    fn offline_snapshot(&mut self, env: String, id: &str) {
+        if self.offline.db.is_none() {
+            return;
+        }
+        let key = (env, id.to_owned());
+        self.offline.serial = self.offline.serial.wrapping_add(1);
+        let serial = self.offline.serial;
+        self.offline.snapshots.insert(key.clone(), Arc::new(serial));
+        self.offline.commits.remove(&key);
+        self.offline.backfills.retain(|job| job.key != key);
+        let Some(state) = self.cache_state(&key) else {
+            return;
+        };
+        let cursor = state.history_cursor.clone();
+        let messages = capture_chat(&state.entries);
+        self.offline.snapshot_cursors.remove(&key);
+        if let Some(cursor) = &cursor {
+            self.offline
+                .snapshot_cursors
+                .insert(key.clone(), cursor.clone());
+        }
+        let limit = conn_cache::MESSAGE_CAP - messages.len();
+        conn_client::perf_log!(
+            "offline.snapshot thread={id} messages={} bounded={}",
+            messages.len(),
+            cursor.is_some()
+        );
+        if limit > 0
+            && let Some(cursor) = cursor
+        {
+            let anchor = messages.first().map(|m| m.id().to_owned());
+            let stamp =
+                serde_json::json!([cursor, anchor, messages.last().map(Message::id), limit])
+                    .to_string();
+            let warm = self
+                .offline
+                .path(&key.0, Some(id))
+                .and_then(|p| std::fs::read_to_string(p.with_extension("prefix")).ok())
+                .as_ref()
+                == Some(&stamp);
+            if !warm {
+                self.offline.backfills.push_back(Backfill {
+                    key,
+                    cursor,
+                    anchor,
+                    limit,
+                    serial,
+                    stamp,
+                });
+            }
+        } else {
+            self.offline.commits.insert(key, Commit::Replace);
+            return;
+        }
+        if self.layout.selected_thread_id.as_deref() == Some(id) {
+            self.fill_warm_preview(id);
+        }
+    }
+
+    fn start_backfill(&mut self, cx: &mut Context<'_, Self>) {
+        if self.offline.backfilling {
+            return;
+        }
+        while let Some(job) = self.offline.backfills.pop_front() {
+            let (env, id) = &job.key;
+            if self.cache_shell(env, id).is_none_or(ShellState::is_settled) {
+                continue;
+            }
+            let Some(connection) = self.offline.subscriptions.get(&job.key).cloned() else {
+                continue;
+            };
+            let generation = self.connection_gen;
+            self.offline.backfilling = true;
+            conn_client::perf_log!("offline.backfill thread={id} limit={}", job.limit);
+            cx.spawn(async move |this, cx| {
+                let request = job.clone();
+                let result = crate::live::RT
+                    .spawn(async move {
+                        fetch_history_prefix(
+                            &connection,
+                            &request.key.1,
+                            &request.cursor,
+                            request.limit,
+                        )
+                        .await
+                    })
+                    .await
+                    .map_err(io::Error::other)
+                    .and_then(|r| r.map_err(io::Error::other));
+                let _ = this.update(cx, |app, cx| {
+                    if app.connection_gen != generation {
+                        return;
+                    }
+                    app.offline.backfilling = false;
+                    let (env, id) = &job.key;
+                    if app.offline.snapshots.get(&job.key).map(Arc::as_ref) == Some(&job.serial)
+                        && app
+                            .cache_shell(env, id)
+                            .is_some_and(|t| !ShellState::is_settled(t) && !expired(t))
+                    {
+                        match result {
+                            Ok(rows) => {
+                                app.offline.commits.insert(
+                                    job.key.clone(),
+                                    Commit::Prefix {
+                                        anchor: job.anchor,
+                                        rows,
+                                        stamp: job.stamp,
+                                    },
+                                );
+                                app.offline.dirty.insert(job.key);
+                                app.schedule_offline_save(cx);
+                            }
+                            Err(err) => {
+                                eprintln!("offline history fetch: {err}");
+                                cx.spawn(async move |this, cx| {
+                                    cx.background_executor().timer(Duration::from_secs(5)).await;
+                                    let _ = this.update(cx, |app, cx| {
+                                        if app.connection_gen == generation
+                                            && app.offline.snapshots.get(&job.key).map(Arc::as_ref)
+                                                == Some(&job.serial)
+                                        {
+                                            app.offline.backfills.push_back(job);
+                                            app.start_backfill(cx);
+                                        }
+                                    });
+                                })
+                                .detach();
+                            }
+                        }
+                    }
+                    app.start_backfill(cx);
+                });
+            })
+            .detach();
+            break;
+        }
+    }
+
+    fn cached_before(&self, id: &str, anchor: &str) -> Option<Vec<TimelineEntry>> {
+        let db = self.offline.db.as_ref()?;
+        let rows = crate::live::RT
+            .block_on(db.before(self.cache_env(id)?, id, anchor))
+            .ok()?;
+        decode_messages(rows).ok()
+    }
+
+    fn fill_warm_preview(&mut self, id: &str) {
+        let Some(state) = self.threads.get(id) else {
+            return;
+        };
+        let Some(env) = self.cache_env(id) else {
+            return;
+        };
+        let key = (env.to_owned(), id.to_owned());
+        if state.sequence.is_none() || !self.offline.snapshot_cursors.contains_key(&key) {
+            return;
+        }
+        let prefix_count = state.history_prefix_len();
+        if prefix_count > 100 {
+            return;
+        }
+        let mut messages = state.entries[prefix_count..].iter().filter(|e| {
+            matches!(
+                e,
+                TimelineEntry::User { .. } | TimelineEntry::Assistant { .. }
+            )
+        });
+        let (missing, rows) = if let Some(first) = messages.next() {
+            let missing = 99usize.saturating_sub(messages.count());
+            if missing == 0 {
+                return;
+            }
+            (missing, self.cached_before(id, first.id()))
+        } else {
+            if !state.has_more_history {
+                return;
+            }
+            let Some(db) = self.offline.db.as_ref() else {
+                return;
+            };
+            (
+                100,
+                crate::live::RT
+                    .block_on(db.recent(env, id))
+                    .ok()
+                    .and_then(|rows| decode_messages(rows).ok()),
+            )
+        };
+        if let Some(mut rows) = rows {
+            let has_more = rows.len() >= missing;
+            rows.drain(..rows.len().saturating_sub(missing));
+            if let Some(state) = self.threads.get_mut(id)
+                && (!rows.is_empty() || prefix_count > 0)
+            {
+                state.replace_cached_prefix(rows);
+                state.history_cursor = None;
+                state.has_more_history |= has_more;
+            }
+        }
+    }
+
+    pub(super) fn load_cached_page(&mut self, id: &str) -> bool {
+        let Some(state) = self.threads.get(id) else {
+            return false;
+        };
+        if !state.has_more_history || state.loading_earlier {
+            return false;
+        }
+        let Some(first) = state.entries.iter().find(|e| {
+            matches!(
+                e,
+                TimelineEntry::User { .. } | TimelineEntry::Assistant { .. }
+            )
+        }) else {
+            return false;
+        };
+        let Some(rows) = self
+            .cached_before(id, first.id())
+            .filter(|rows| !rows.is_empty())
+        else {
+            return false;
+        };
+        let more = rows.len() == 100 || self.thread_connected(id);
+        let Some(state) = self.threads.get_mut(id) else {
+            return false;
+        };
+        state.prepend_cached_messages(rows);
+        state.history_cursor = None;
+        state.has_more_history = more;
+        true
+    }
+
     pub(super) fn expire_offline(&mut self, cx: &mut Context<'_, Self>) {
         if self.offline.dir.is_none() {
             return;
         }
-        let expired: HashSet<_> = self
+        let mut expired_keys: HashSet<_> = self
             .shell
             .threads
             .iter()
@@ -333,87 +742,124 @@ impl ConnApp {
             .filter(|t| expired(t))
             .filter_map(|t| Some((self.cache_env(&t.id)?.to_owned(), t.id.clone())))
             .collect();
+        expired_keys.extend(self.linked.cache_threads(expired));
         self.offline
             .dirty
-            .extend(expired.difference(&self.offline.expired).cloned());
-        for key in &expired {
+            .extend(expired_keys.difference(&self.offline.expired).cloned());
+        for key in expired_keys.difference(&self.offline.expired) {
+            self.offline.shadow.remove(key);
+            if self.offline.owners.get(&key.1) == Some(&key.0) {
+                self.threads.remove(&key.1);
+            }
+        }
+        for key in &expired_keys {
             if self.offline.loading_outline.as_ref() == Some(key) {
                 self.offline.loading_outline = None;
                 self.offline.outline_epoch = self.offline.outline_epoch.wrapping_add(1);
             }
+            self.offline.snapshots.remove(key);
+            self.offline.commits.remove(key);
             self.offline.outlines.remove(key);
             self.offline.outline_writes.remove(key);
             self.offline.outline_requested.remove(key);
         }
-        self.offline.expired = expired;
+        let selection_expired = self
+            .layout
+            .selected_thread_id
+            .as_deref()
+            .and_then(|id| Some((self.cache_env(id)?.to_owned(), id.to_owned())))
+            .is_some_and(|key| expired_keys.contains(&key) && !self.offline.expired.contains(&key));
+        self.offline.expired = expired_keys;
+        if selection_expired {
+            self.sync_chat(cx);
+        }
         self.schedule_offline_save(cx);
     }
     pub(super) fn reconcile_offline(&mut self, cx: &mut Context<'_, Self>) {
         if self.offline.dir.is_none() {
             return;
         }
-        let candidates: Vec<_> = self
+        let eligible = |t: &ThreadShell| t.deleted_at.is_none() && !ShellState::is_settled(t);
+        let mut candidates: Vec<_> = self
             .shell
             .threads
             .iter()
-            .filter(|t| !ShellState::is_settled(t))
-            .map(|t| t.id.clone())
+            .filter(|t| eligible(t))
+            .filter_map(|t| Some((self.cache_env(&t.id)?.to_owned(), t.id.clone())))
             .collect();
-        for id in candidates {
-            self.queue_outline(&id);
+        candidates.extend(self.linked.cache_threads(eligible));
+        let mut desired = HashSet::new();
+        for pair in candidates {
+            if !desired.insert(pair.clone()) {
+                continue;
+            }
+            self.queue_outline(&pair);
+            if !self.offline.subscriptions.contains_key(&pair)
+                && let Some(connection) = self.cache_connection(&pair.0)
+            {
+                connection.refresh_thread(&pair.1);
+                self.offline.subscriptions.insert(pair, connection);
+            }
         }
         self.load_next_outline(cx);
-        let mut desired = HashSet::new();
-        for thread in &self.shell.threads {
-            if thread.deleted_at.is_some() || ShellState::is_settled(thread) {
-                continue;
-            }
-            let Some(env) = self.cache_env(&thread.id) else {
-                continue;
-            };
-            let pair = (env.to_owned(), thread.id.clone());
-            if !self.offline.subscriptions.contains_key(&pair)
-                && let Some(conn) = self.connection_for_thread(&thread.id)
-            {
-                conn.subscribe_thread(&thread.id);
-                self.offline.subscriptions.insert(pair.clone(), conn);
-            }
-            desired.insert(pair);
-        }
+        self.offline.commits.retain(|key, commit| {
+            !matches!(commit, Commit::Prefix { .. }) || desired.contains(key)
+        });
+        self.offline
+            .snapshots
+            .retain(|key, _| desired.contains(key));
+        self.offline
+            .backfills
+            .retain(|job| desired.contains(&job.key));
+        let opened_env = self
+            .subscribed_thread_id
+            .as_deref()
+            .and_then(|id| self.cache_env(id))
+            .map(str::to_owned);
         self.offline.subscriptions.retain(|pair, conn| {
             if desired.contains(pair) {
                 return true;
             }
-            if self.subscribed_thread_id.as_ref() != Some(&pair.1) {
+            if self.subscribed_thread_id.as_ref() != Some(&pair.1)
+                || opened_env.as_ref() != Some(&pair.0)
+            {
                 conn.unsubscribe_thread(&pair.1);
             }
             false
         });
     }
     pub(super) fn refresh_selected_outline(&mut self, cx: &mut Context<'_, Self>) {
-        if let Some(id) = self.layout.selected_thread_id.clone() {
-            self.queue_outline(&id);
+        if let Some(id) = self.layout.selected_thread_id.clone()
+            && let Some(env) = self.cache_env(&id).map(str::to_owned)
+        {
+            self.queue_outline(&(env, id));
             self.load_next_outline(cx);
         }
     }
 
-    fn queue_outline(&mut self, id: &str) {
-        if self.offline.dir.is_none() || !self.thread_connected(id) {
+    fn cache_connection(&self, env: &str) -> Option<Connection> {
+        if self.server_url.as_deref() == Some(env) {
+            self.connection.clone()
+        } else {
+            self.linked_connection(env)
+        }
+    }
+
+    fn queue_outline(&mut self, key: &ThreadKey) {
+        if self.offline.dir.is_none() || !self.cache_environment_connected(&key.0) {
             return;
         }
-        let Some(t) = self.shell.find_thread(id).filter(|t| !expired(t)) else {
+        let Some(stamp) = self
+            .cache_shell(&key.0, &key.1)
+            .filter(|t| !expired(t))
+            .map(|t| t.updated_at.clone())
+        else {
             return;
         };
-        let Some(env) = self.cache_env(id) else {
-            return;
-        };
-        let key = (env.to_owned(), id.to_owned());
-        if self.offline.outline_requested.get(&key) != Some(&t.updated_at) {
-            self.offline
-                .outline_requested
-                .insert(key.clone(), t.updated_at.clone());
-            if !self.offline.outline_queue.contains(&key) {
-                self.offline.outline_queue.push_back(key);
+        if self.offline.outline_requested.get(key) != Some(&stamp) {
+            self.offline.outline_requested.insert(key.clone(), stamp);
+            if !self.offline.outline_queue.contains(key) {
+                self.offline.outline_queue.push_back(key.clone());
             }
         }
     }
@@ -426,7 +872,7 @@ impl ConnApp {
             let Some(stamp) = self.offline.outline_requested.get(&key).cloned() else {
                 continue;
             };
-            let Some(connection) = self.connection_for_thread(&key.1) else {
+            let Some(connection) = self.cache_connection(&key.0) else {
                 continue;
             };
             self.offline.loading_outline = Some(key.clone());
@@ -439,9 +885,8 @@ impl ConnApp {
                         return;
                     }
                     app.offline.loading_outline = None;
-                    if app.offline.outline_requested.contains_key(&key)
-                        && app.cache_env(&key.1) == Some(&key.0)
-                        && app.shell.find_thread(&key.1).is_some_and(|t| !expired(t))
+                    if app.offline.outline_requested.get(&key) == Some(&stamp)
+                        && app.cache_shell(&key.0, &key.1).is_some_and(|t| !expired(t))
                     {
                         match result {
                             Ok(outline) => {
@@ -555,15 +1000,20 @@ impl ConnApp {
             writes.push(Save::Shell(path, primary));
         }
         for (env, id) in std::mem::take(&mut self.offline.dirty) {
-            if self.cache_env(&id) != Some(&env) {
-                continue;
-            }
-            if self.shell.find_thread(&id).is_none_or(expired) {
+            let key = (env.clone(), id.clone());
+            if self.cache_shell(&env, &id).is_none_or(expired) {
                 writes.push(Save::Remove(env, id));
-            } else if let Some(state) = self.threads.get(&id)
+            } else if let Some(state) = self.cache_state(&key)
                 && state.sequence.is_some()
             {
-                writes.push(Save::Chat(env, id, capture_chat(state)));
+                let key = (env, id);
+                let start = state.history_prefix_len();
+                writes.push(Save::Chat(
+                    key.clone(),
+                    capture_chat(&state.entries[start..]),
+                    self.offline.commits.remove(&key),
+                    self.offline.snapshots.get(&key).map(Arc::downgrade),
+                ));
             }
         }
         writes
@@ -578,6 +1028,7 @@ impl ConnApp {
             return;
         }
         self.offline.saving = true;
+        let lifetime = Arc::downgrade(&self.offline.lifetime);
         let generation = self.connection_gen;
         let Some(dir) = self.offline.dir.clone() else {
             return;
@@ -605,8 +1056,23 @@ impl ConnApp {
                 }
                 let dir = dir.clone();
                 let db = db.clone();
+                let refresh = writes
+                    .iter()
+                    .filter_map(|value| match value {
+                        Save::Chat(key, _, Some(Commit::Prefix { .. }), _) => Some(key.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                let lifetime = lifetime.clone();
                 cx.background_executor()
                     .spawn(async move {
+                        // A previous connection generation may still be draining its last write.
+                        let _guard = CACHE_WRITER
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if lifetime.strong_count() == 0 {
+                            return;
+                        }
                         for value in writes {
                             if let Err(e) = save(&dir, db.as_ref(), value) {
                                 eprintln!("offline thread cache: {e}");
@@ -614,6 +1080,19 @@ impl ConnApp {
                         }
                     })
                     .await;
+                let _ = this.update(cx, |app, cx| {
+                    if app.connection_gen == generation {
+                        for (env, id) in refresh {
+                            if app.cache_env(&id) == Some(&env)
+                                && app.layout.selected_thread_id.as_ref() == Some(&id)
+                            {
+                                app.fill_warm_preview(&id);
+                                app.sync_chat(cx);
+                            }
+                        }
+                        app.start_backfill(cx);
+                    }
+                });
             }
         })
         .detach();
@@ -623,7 +1102,6 @@ impl ConnApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use conn_state::ItemStatus;
 
     #[test]
     fn cache_retains_latest_thousand_messages_and_opens_latest_hundred_in_order() {
@@ -637,7 +1115,7 @@ mod tests {
                 streaming: false,
                 created_at: None,
                 run_id: None,
-                status: ItemStatus::Completed,
+                status: conn_state::ItemStatus::Completed,
             });
             state.entries.push(TimelineEntry::Notice {
                 id: format!("notice-{index}"),
@@ -645,9 +1123,9 @@ mod tests {
                 is_error: false,
             });
         }
-        let messages = capture_chat(&state);
+        let messages = capture_chat(&state.entries);
         assert_eq!(messages.len(), 1000);
-        assert!(matches!(&messages[0],Message::Assistant{id,..} if id=="50"));
+        assert_eq!(messages[0].id(), "50");
         let db = crate::live::RT
             .block_on(MessageCache::open(&path))
             .expect("open SQLite");

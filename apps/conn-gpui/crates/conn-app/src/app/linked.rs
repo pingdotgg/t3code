@@ -128,6 +128,30 @@ impl LinkedEnvironments {
         linked
     }
 
+    pub(super) fn shell_for_cache(&self, env: &str) -> Option<&conn_state::ShellState> {
+        self.shells.shell(env)
+    }
+
+    pub(super) fn cache_threads(
+        &self,
+        predicate: impl Fn(&conn_state::ThreadShell) -> bool,
+    ) -> Vec<(String, String)> {
+        let mut keys = Vec::new();
+        for env in self.shells.environments() {
+            if let Some(shell) = self.shells.shell(&env.id) {
+                keys.extend(
+                    shell
+                        .threads
+                        .iter()
+                        .chain(&shell.archived_threads)
+                        .filter(|t| predicate(t))
+                        .map(|t| (env.id.clone(), t.id.clone())),
+                );
+            }
+        }
+        keys
+    }
+
     /// Lists `environment_id` again from its saved snapshot (it was switched back on).
     fn restore_cached(&mut self, environment_id: &str) {
         let Some(store) = &self.store else {
@@ -248,6 +272,15 @@ impl ConnApp {
         matches!(status, Some(ConnectionStatus::Connected))
     }
 
+    pub(super) fn cache_environment_connected(&self, env: &str) -> bool {
+        let status = if self.server_url.as_deref() == Some(env) {
+            self.status.as_ref()
+        } else {
+            self.linked.statuses.get(env)
+        };
+        matches!(status, Some(ConnectionStatus::Connected))
+    }
+
     /// The connection of the environment `thread_id` lives on.
     pub(crate) fn connection_for_thread(&self, thread_id: &str) -> Option<Connection> {
         match self.linked_environment_of_thread(thread_id) {
@@ -276,7 +309,7 @@ impl ConnApp {
             .collect()
     }
 
-    fn linked_connection(&self, environment_id: &str) -> Option<Connection> {
+    pub(super) fn linked_connection(&self, environment_id: &str) -> Option<Connection> {
         self.linked
             .set
             .as_ref()
@@ -435,12 +468,15 @@ impl ConnApp {
         let Some(previous) = self.subscribed_thread_id.take() else {
             return;
         };
-        let connection = match self.linked.subscribed_env.take() {
-            Some(environment) => self.linked_connection(&environment),
+        let owner = self.linked.subscribed_env.take();
+        let connection = match &owner {
+            Some(environment) => self.linked_connection(environment),
             None => self.connection.clone(),
         };
         if let Some(connection) = connection
-            && !self.offline.watching(&previous)
+            && !self
+                .offline
+                .watching(owner.as_deref().or(self.server_url.as_deref()), &previous)
         {
             connection.unsubscribe_thread(&previous);
         }
@@ -1111,6 +1147,24 @@ impl ConnApp {
         .detach();
     }
 
+    #[cfg(feature = "automation")]
+    pub(crate) fn automation_connect_saved(
+        &mut self,
+        id: &str,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<(), String> {
+        let session = conn_desktop::orbit::OrbitSessionStore::load_default()
+            .sessions
+            .remove(id)
+            .ok_or_else(|| format!("Missing saved environment {id}"))?;
+        let config = ServerConfig {
+            http_base_url: url::Url::parse(&session.url).map_err(|e| e.to_string())?,
+            credential: Credential::Bearer(session.bearer),
+        };
+        self.connect_linked(id.to_owned(), session.label, config, cx);
+        Ok(())
+    }
+
     fn connect_linked(
         &mut self,
         environment_id: String,
@@ -1250,11 +1304,7 @@ impl ConnApp {
                 changed
             }
             ClientEvent::Thread { thread_id, item } => {
-                self.offline.changed(&environment_id, &thread_id);
-                self.threads
-                    .entry(thread_id.clone())
-                    .or_insert_with(|| ThreadState::new(thread_id))
-                    .apply(item);
+                self.apply_cache_stream(&environment_id, &thread_id, item);
                 false
             }
             ClientEvent::StreamEnded { tag, key, error } => {
