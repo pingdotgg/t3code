@@ -967,8 +967,9 @@ export function heapRetainers(snapshot: HeapSnapshot, minBytes = 16_000, pathByt
 
 /**
  * The objects whose retained size grew from each snapshot to the next, at least `minBytes` in all.
- * Of a chain of dominators that grew by about the same amount, only the deepest is kept: that is
- * the container holding the growth, and its path names who holds it.
+ * An object is left out when a reported object it dominates holds at least 80% of its growth: of
+ * a chain that grew by about the same amount, only the deepest is kept, the container holding the
+ * growth. Nested objects whose growth differs are each reported.
  */
 export function retainerGrowth(
   snapshots: ReadonlyArray<ReadonlyMap<number, Retainer>>,
@@ -995,27 +996,27 @@ export function retainerGrowth(
     }
     return found;
   };
-  const holdsChildGrowth = new Set<number>();
-  for (const [id, grown] of growth) {
+  // Smallest growth first, deeper first on a tie, so descendants are decided before ancestors: a row is left out
+  // only when a reported descendant holds at least 80% of its growth.
+  const heldBelow = new Map<number, number>();
+  const kept: Array<[number, number]> = [];
+  const depth = new Map([...growth.keys()].map((id) => [id, ancestors(id).length]));
+  const order = [...growth].toSorted((a, b) => a[1] - b[1] || depth.get(b[0])! - depth.get(a[0])!);
+  for (const [id, grown] of order) {
+    if ((heldBelow.get(id) ?? 0) >= grown * 0.8) continue;
+    kept.push([id, grown]);
     for (const ancestor of ancestors(id)) {
-      const ancestorGrowth = growth.get(ancestor);
-      if (ancestorGrowth !== undefined && grown >= ancestorGrowth * 0.8)
-        holdsChildGrowth.add(ancestor);
+      heldBelow.set(ancestor, Math.max(heldBelow.get(ancestor) ?? 0, grown));
     }
   }
-  const reported = new Set<number>();
-  const rows: RetainerGrowth[] = [];
-  for (const [id, grown] of [...growth].toSorted((a, b) => b[1] - a[1])) {
-    if (holdsChildGrowth.has(id) || ancestors(id).some((ancestor) => reported.has(ancestor)))
-      continue;
-    reported.add(id);
-    rows.push({
+  const rows: RetainerGrowth[] = kept
+    .toSorted((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([id, grown]) => ({
       path: last.get(id)!.path,
       MB: round(grown / 1e6, 2),
       retainedMB: round(last.get(id)!.retained / 1e6, 2),
-    });
-    if (rows.length === 10) break;
-  }
+    }));
   return rows;
 }
 

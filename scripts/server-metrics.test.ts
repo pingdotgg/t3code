@@ -528,6 +528,26 @@ describe("retainerGrowth", () => {
     ]);
     expect(growth).toEqual([{ path: "node 5", MB: 4, retainedMB: 4.9 }]);
   });
+  it("keeps an ancestor its reported descendant does not account for", () => {
+    // A chain 1 → 2 → 3 growing by 7, 6 and 5 MB, and 4 under 1 growing by 2 MB.
+    const chain = (scale: number) =>
+      new Map(
+        [
+          [1, 7, undefined],
+          [2, 6, 1],
+          [3, 5, 2],
+          [4, 2, 1],
+        ].map(([id, mb, dominator]) => [
+          id!,
+          { retained: (10 + mb! * scale) * 1e6, dominator, path: `node ${id}` },
+        ]),
+      );
+    expect(retainerGrowth([chain(0), chain(0.5), chain(1)]).map(({ path }) => path)).toEqual([
+      "node 1",
+      "node 3",
+      "node 4",
+    ]);
+  });
 });
 
 describe("slope", () => {

@@ -403,7 +403,12 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
     }
   });
   const proxyPort = yield* Effect.acquireRelease(
-    Effect.callback<number>((resume) => {
+    Effect.callback<number, ScenarioError>((resume) => {
+      proxy.once("error", (error) =>
+        resume(
+          Effect.fail(new ScenarioError({ message: `the fake GitHub proxy: ${error.message}` })),
+        ),
+      );
       proxy.listen(0, "127.0.0.1", () => {
         const address = proxy.address();
         resume(Effect.succeed(typeof address === "object" && address !== null ? address.port : 0));
@@ -560,11 +565,15 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
       for (const request of requests.slice(setupRequests)) {
         const key =
           request.operation ??
-          (request.path.startsWith(`/${OWNER}/${REPO}.git/info/refs`)
-            ? "git fetch"
-            : request.path.startsWith(`/${OWNER}/${REPO}.git/`)
+          (request.path.startsWith(`/${OWNER}/${REPO}.git/`)
+            ? request.status !== 200
               ? undefined
-              : `${request.method} ${request.path.replace(/\?.*/, "")} ${request.status}`);
+              : request.path.startsWith(`/${OWNER}/${REPO}.git/info/refs`)
+                ? "git fetch"
+                : request.path.includes("/objects/")
+                  ? "git objects"
+                  : undefined
+            : `${request.method} ${request.path.replace(/\?.*/, "")} ${request.status}`);
         if (key !== undefined) counts.set(key, (counts.get(key) ?? 0) + 1);
       }
       const listed = [...counts].map(([key, count]) => `${key} ×${count}`).join(", ");
@@ -580,6 +589,8 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
         "PullRequestCore",
         "git fetch",
       ].filter((key) => !counts.has(key));
+      // Each pushed commit is new to the server, so a working fetch downloads its objects.
+      if (pushes > 0 && !counts.has("git objects")) missing.push("git objects of a pushed commit");
       if (completedPolls === 0) missing.push("one full client poll (list, summary, checks)");
       if (missing.length > 0) {
         return yield* new ScenarioError({

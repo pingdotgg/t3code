@@ -590,7 +590,8 @@ const descendantsOf = Effect.fn("serverMetrics.descendantsOf")(function* (pid: n
     }
   } else if (platform === "darwin") {
     const table = yield* output("ps", ["-A", "-o", "pid=,ppid="]);
-    for (const line of Option.getOrElse(table, () => "").split("\n")) {
+    if (Option.isNone(table)) return yield* new MetricsError({ message: "ps listed no processes" });
+    for (const line of table.value.split("\n")) {
       const [child, parent] = line.trim().split(/\s+/).map(Number);
       if (child && parent) add(child, parent);
     }
@@ -1964,6 +1965,17 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
             (index) => fs.writeFileString(path.join(remotes, `bench-${index}`), head),
             { concurrency: 64, discard: true },
           );
+          // A reftable store (GIT_DEFAULT_REF_FORMAT can still pick one) ignores refs written as files.
+          const listed = yield* run(
+            "git",
+            ["for-each-ref", "--count=3000", "refs/remotes/origin/"],
+            {
+              cwd: server.project,
+            },
+          );
+          if (listed.stdout.trim().split("\n").length < 3_000) {
+            return yield* new MetricsError({ message: "git does not see the soak's loose refs" });
+          }
           const token = yield* server.issueToken;
           // The client gets a scope of its own so each churn cycle can drop it and reconnect.
           const clientScope = Effect.acquireRelease(Scope.make(), (scope, exit) =>
@@ -1995,9 +2007,15 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           yield* Effect.sleep(Duration.seconds(60));
           // The first snapshot inflates RSS once, so the slopes start after it.
           const snapshots = [yield* server.snapshot];
-          const samples: Array<{ hours: number; window: Window; processes: number | null }> = [];
+          const samples: Array<{
+            hours: number;
+            window: Window;
+            rssMB: number;
+            processes: number | null;
+          }> = [];
           const start = yield* nowMs;
           const elapsed = Effect.map(nowMs, (now) => now - start);
+          let snapshotRssMB = 0;
           const takeSample = Effect.gen(function* () {
             const hours = (yield* elapsed) / 3_600_000;
             const window = yield* server.measure(5);
@@ -2005,8 +2023,12 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
             const processes =
               platform === "win32"
                 ? null
-                : (yield* descendantsOf(server.pid).pipe(Effect.orElseSucceed(() => []))).length;
-            samples.push({ hours, window, processes });
+                : yield* descendantsOf(server.pid).pipe(
+                    Effect.map((found) => found.length),
+                    // Unknown, not zero: a failed probe leaves the process slope out.
+                    Effect.orElseSucceed(() => null),
+                  );
+            samples.push({ hours, window, rssMB: window.rssMB - snapshotRssMB, processes });
             yield* Console.error(
               `soak ${round(hours * 60)} min: heap ${window.heapAfterGcMB} MB, RSS ${window.rssMB} MB${processes === null ? "" : `, ${processes} child processes`}`,
             );
@@ -2014,7 +2036,10 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           let nextSample = 0;
           for (let turn = 0; (yield* elapsed) < options.soakMinutes * 60_000; turn++) {
             if (snapshots.length === 1 && (yield* elapsed) >= options.soakMinutes * 30_000) {
+              // RSS the snapshot itself added stays off the slope: later samples drop the step.
+              const before = (yield* sample(server.pid)).rss;
               snapshots.push(yield* server.snapshot);
+              snapshotRssMB = Math.max(0, ((yield* sample(server.pid)).rss - before) / 1e6);
             }
             if ((yield* elapsed) >= nextSample) {
               yield* takeSample;
@@ -2065,8 +2090,8 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           measured.soak = {
             minutes: options.soakMinutes,
             heapMBPerHour: perHour(({ window }) => window.heapAfterGcMB),
-            rssMBPerHour: perHour(({ window }) => window.rssMB),
-            ...(platform === "win32"
+            rssMBPerHour: perHour(({ rssMB }) => rssMB),
+            ...(samples.some(({ processes }) => processes === null)
               ? {}
               : { childProcessesPerHour: perHour(({ processes }) => processes ?? 0) }),
           };
