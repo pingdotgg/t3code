@@ -2780,10 +2780,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const queuedProviderThread: OrchestrationV2ProviderThread = targetProviderThread ?? {
         id: idAllocator.derive.providerThread({
           driver: targetAdapter.driver,
-          // The queue reserved `pending:<run>` for this run; another run may have taken it.
+          // The queue reserved `pending:<run>` for this run; another run may have taken it. An edit
+          // that moved the run to another instance of the same driver must not replace that row.
           nativeThreadId: freshContext
             ? `pending:${queuedRun.id}:fresh`
-            : `pending:${queuedRun.id}`,
+            : storedProviderThread.providerInstanceId === queuedRun.providerInstanceId
+              ? `pending:${queuedRun.id}`
+              : `pending:${queuedRun.id}:${queuedRun.providerInstanceId}`,
         }),
         driver: targetAdapter.driver,
         providerInstanceId: queuedRun.providerInstanceId,

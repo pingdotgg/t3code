@@ -11843,10 +11843,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
   it.effect("starts an edited queued run on the provider and model it was edited to", () =>
     Effect.gen(function* () {
-      const instanceId = claudeInstanceId;
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const sink = yield* EventSink.EventSinkV2;
       const threadId = ThreadId.make("queued-edit-model");
+      const claudeSelection = { instanceId: claudeInstanceId, model: "claude-test" };
       yield* orchestrator.dispatch({
         type: "thread.create",
         createdBy: "user",
@@ -11855,34 +11855,38 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         projectId: ProjectId.make(`${threadId}:project`),
         title: "Queued model",
-        modelSelection,
+        modelSelection: claudeSelection,
         runtimeMode: "full-access",
         interactionMode: "default",
         branch: null,
         worktreePath: process.cwd(),
       });
-      for (const type of ["start_immediately", "queue_after_active"] as const) {
+      // Both queued runs reserve rows on codex, which has no conversation on this thread yet.
+      for (const [name, type, selection] of [
+        ["active", "start_immediately", claudeSelection],
+        ["edited", "queue_after_active", modelSelection],
+        ["next", "queue_after_active", modelSelection],
+      ] as const) {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           createdBy: "user",
           creationSource: "web",
-          commandId: CommandId.make(`${threadId}:${type}`),
+          commandId: CommandId.make(`${threadId}:${name}`),
           threadId,
-          messageId: MessageId.make(`${threadId}:${type}`),
-          text: type,
+          messageId: MessageId.make(`${threadId}:${name}`),
+          text: name,
           attachments: [],
-          modelSelection,
+          modelSelection: selection,
           dispatchMode: { type },
         });
       }
       const before = yield* orchestrator.getThreadProjection(threadId);
-      const active = before.runs[0]!;
-      const queued = before.runs[1]!;
+      const [active, queued, next] = before.runs;
       const selection = {
-        instanceId,
+        instanceId: alternateInstanceId,
         model: "changed-model",
         options: [
-          { id: "effort", value: "medium" },
+          { id: "reasoningEffort", value: "medium" },
           { id: "fastMode", value: true },
         ],
       };
@@ -11890,7 +11894,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         type: "queued-run.edit",
         commandId: CommandId.make(`${threadId}:edit`),
         threadId,
-        runId: queued.id,
+        runId: queued!.id,
         text: "Edited",
         modelSelection: selection,
       });
@@ -11901,26 +11905,28 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             id: EventId.make(`${threadId}:completed`),
             type: "run.updated",
             threadId,
-            runId: active.id,
+            runId: active!.id,
             occurredAt: now,
-            payload: { ...active, status: "completed", completedAt: now },
+            payload: { ...active!, status: "completed", completedAt: now },
           },
         ],
       });
       yield* orchestrator.resumeQueuedRuns;
       const after = yield* orchestrator.getThreadProjection(threadId);
-      const started = after.runs.find((run) => run.id === queued.id)!;
+      const started = after.runs.find((run) => run.id === queued!.id)!;
+      const instanceOf = (providerThreadId: string | null | undefined) =>
+        after.providerThreads.find((row) => row.id === providerThreadId)?.providerInstanceId;
       assert.equal(started.status, "starting");
       assert.deepEqual(started.modelSelection, selection);
-      assert.equal(started.providerInstanceId, instanceId);
-      assert.equal(
-        after.providerThreads.find((row) => row.id === started.providerThreadId)
-          ?.providerInstanceId,
-        instanceId,
-      );
+      assert.equal(started.providerInstanceId, alternateInstanceId);
+      assert.equal(instanceOf(started.providerThreadId), alternateInstanceId);
       assert.equal(
         after.attempts.find((row) => row.id === started.activeAttemptId)?.providerInstanceId,
-        instanceId,
+        alternateInstanceId,
+      );
+      assert.equal(
+        instanceOf(after.runs.find((run) => run.id === next!.id)?.providerThreadId),
+        modelSelection.instanceId,
       );
     }),
   );
