@@ -128,10 +128,10 @@ export function createThreadTriageOutbox<R, E, SendError>(input: {
   ) {
     for (const entry of yield* read(registry)) {
       if (entry.environmentId !== environmentId) continue;
-      // Cancelled or replaced while an earlier change was being sent.
-      if (pendingFor(registry, environmentId, entry.threadId)?.commandId !== entry.commandId) {
-        continue;
-      }
+      // Read again: this or another tab may have cancelled or replaced it while an earlier
+      // change was being sent.
+      const stored = yield* read(registry);
+      if (!stored.some((current) => current.commandId === entry.commandId)) continue;
       const thread = registry
         .get(input.sourceSnapshotAtom(environmentId))
         ?.threads.find((candidate) => candidate.id === entry.threadId);

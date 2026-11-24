@@ -25,6 +25,8 @@ import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { RpcClientError } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
@@ -921,6 +923,35 @@ describe("settle and snooze while the environment is offline", () => {
       );
       yield* h.commands.unsnooze.run(h.registry, undo);
       expect(yield* queued(h)).toEqual([]);
+    }),
+  );
+
+  it.effect("skips a change another tab cancelled while an earlier send failed", () =>
+    Effect.gen(function* () {
+      const storage = { value: null as string | null };
+      const h = yield* makeHarness({ connected: false, storage });
+      const otherTab = yield* makeHarness({ connected: false, storage });
+      const second = { ...SNAPSHOT.threads[0]!, id: ThreadId.make("second") };
+      const twoThreads = { ...SNAPSHOT, threads: [SNAPSHOT.threads[0]!, second] };
+      for (const tab of [h, otherTab])
+        tab.registry.set(tab.snapshotAtom(ENVIRONMENT_ID), twoThreads);
+      const settleSecond = { environmentId: ENVIRONMENT_ID, input: { threadId: second.id } };
+      yield* Effect.exit(h.commands.settle.run(h.registry, target));
+      yield* Effect.exit(h.commands.settle.run(h.registry, settleSecond));
+
+      yield* h.reconnect();
+      const first = yield* Queue.take(h.requests);
+      yield* otherTab.commands.unsettle.run(otherTab.registry, {
+        ...settleSecond,
+        input: { ...settleSecond.input, reason: "user" as const },
+      });
+      yield* Deferred.fail(
+        first.reply,
+        new RpcClientError.RpcClientError({ reason: new Socket.SocketCloseError({ code: 1006 }) }),
+      );
+      // The replay re-reads storage before the next change, which drops the cancelled one.
+      yield* waitFor(h.registry, h.pendingSyncAtom, (threads) => !threads.has(second.id));
+      yield* expectNothingSent(h);
     }),
   );
 
