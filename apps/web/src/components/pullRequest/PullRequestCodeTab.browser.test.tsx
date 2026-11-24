@@ -15,69 +15,83 @@ import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { setAppearanceMode } from "../../hooks/useTheme";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
-  const { AsyncResult, Atom } = await import("effect/reactivity");
-  const filePatch = (path: string, addition = "after()") =>
-    [
-      `diff --git a/${path} b/${path}`,
-      "index 1111111..2222222 100644",
-      `--- a/${path}`,
-      `+++ b/${path}`,
-      "@@ -1,6 +1,6 @@",
-      "-before()",
-      `+${addition}`,
-      " one()",
-      " two()",
-      " three()",
-      " four()",
-      " five()",
-      "",
-    ].join("\n");
-  const firstPage: PullRequestDiffResult = {
-    patch: filePatch("a.ts"),
-    truncated: false,
-    nextCursor: null,
-  };
-  const pagedDiffAtom = Atom.family((shortPages: boolean) => {
-    const pages: Record<string, PullRequestDiffResult> = {
-      first: {
-        patch: Array.from({ length: shortPages ? 2 : 40 }, (_, index) =>
-          filePatch(index === 1 ? "early-1.test.ts" : `early-${index}.ts`),
-        ).join(""),
-        truncated: true,
-        nextCursor: "page-2",
-      },
-      "page-2": {
-        patch: (shortPages ? filePatch("late.ts") : "") + filePatch("late.test.ts"),
-        truncated: false,
-        nextCursor: null,
-      },
+const { diffAtom, testFileDiffAtom, twoFileDiffAtom, pagedDiffAtom } = await vi.hoisted(
+  async () => {
+    const { AsyncResult, Atom } = await import("effect/reactivity");
+    const filePatch = (path: string, addition = "after()") =>
+      [
+        `diff --git a/${path} b/${path}`,
+        "index 1111111..2222222 100644",
+        `--- a/${path}`,
+        `+++ b/${path}`,
+        "@@ -1,6 +1,6 @@",
+        "-before()",
+        `+${addition}`,
+        " one()",
+        " two()",
+        " three()",
+        " four()",
+        " five()",
+        "",
+      ].join("\n");
+    const firstPage: PullRequestDiffResult = {
+      patch: filePatch("a.ts"),
+      truncated: false,
+      nextCursor: null,
     };
-    return Atom.family((cursor: string) => Atom.make(AsyncResult.success(pages[cursor]!)));
-  });
-  return {
-    // An environment query whose refetch returns equal content hands back the previous value
-    // itself, so a refresh publishes a new result around the very same page.
-    diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
-    testFileDiffAtom: Atom.make(() =>
-      AsyncResult.success({
-        patch:
-          filePatch("early-0.ts") +
-          filePatch("early-1.test.ts", "testOnly()") +
-          filePatch("early-2.generated.ts") +
-          (mocks.refreshed ? filePatch("early-3.ts") : ""),
-        truncated: false,
-        nextCursor: null,
-      }),
-    ),
-    pagedDiffAtom,
-  };
-});
+    const pagedDiffAtom = Atom.family((shortPages: boolean) => {
+      const pages: Record<string, PullRequestDiffResult> = {
+        first: {
+          patch: Array.from({ length: shortPages ? 2 : 40 }, (_, index) =>
+            filePatch(index === 1 ? "early-1.test.ts" : `early-${index}.ts`),
+          ).join(""),
+          truncated: true,
+          nextCursor: "page-2",
+        },
+        "page-2": {
+          patch: (shortPages ? filePatch("late.ts") : "") + filePatch("late.test.ts"),
+          truncated: false,
+          nextCursor: null,
+        },
+      };
+      return Atom.family((cursor: string) => Atom.make(AsyncResult.success(pages[cursor]!)));
+    });
+    return {
+      // An environment query whose refetch returns equal content hands back the previous value
+      // itself, so a refresh publishes a new result around the very same page.
+      diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
+      testFileDiffAtom: Atom.make(() =>
+        AsyncResult.success({
+          patch:
+            filePatch("early-0.ts") +
+            filePatch("early-1.test.ts", "testOnly()") +
+            filePatch("early-2.generated.ts") +
+            (mocks.refreshed ? filePatch("early-3.ts") : ""),
+          truncated: false,
+          nextCursor: null,
+        }),
+      ),
+      twoFileDiffAtom: Atom.make(() =>
+        AsyncResult.success({
+          patch:
+            filePatch("a.ts") +
+            filePatch("b.ts") +
+            (mocks.otherFileEdited ? filePatch("c.ts") : ""),
+          truncated: false,
+          nextCursor: null,
+        }),
+      ),
+      pagedDiffAtom,
+    };
+  },
+);
 
 const mocks = vi.hoisted(() => ({
   paged: false,
   shortPages: false,
   withTestFile: false,
+  twoFiles: false,
+  otherFileEdited: false,
   refreshed: false,
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
@@ -128,6 +142,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
         mocks.diffCommits.push(input.commit);
         if (mocks.paged) return pagedDiffAtom(mocks.shortPages)(input.cursor ?? "first");
+        if (mocks.twoFiles) return twoFileDiffAtom;
         return mocks.withTestFile ? testFileDiffAtom : diffAtom;
       }) as never,
     },
@@ -197,6 +212,8 @@ function setup({ paged }: { paged: boolean }) {
   mocks.paged = paged;
   mocks.shortPages = false;
   mocks.withTestFile = false;
+  mocks.twoFiles = false;
+  mocks.otherFileEdited = false;
   mocks.refreshed = false;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
@@ -307,6 +324,56 @@ it("keeps a revealed file open when its Viewed mark loads afterwards", async () 
     .element(screen.getByRole("button", { name: "Collapse diff" }))
     .toHaveAttribute("aria-expanded", "true");
   await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+});
+
+// regression: #42199 an agent's push that adds another file must not discard an open inline comment
+it("keeps an unfinished inline comment when a background refresh adds another file", async () => {
+  setup({ paged: false });
+  mocks.twoFiles = true;
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  using _preferences = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  const codeTab = (backgroundRefreshToken: number) => (
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={detail}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+      refreshToken={0}
+      backgroundRefreshToken={backgroundRefreshToken}
+      revealRequest={null}
+      onAddToAgentSelection={() => {}}
+    />
+  );
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(codeTab(0), { container });
+  await expect.element(screen.getByText("2 files", { exact: true })).toBeVisible();
+  const addedLineNumber = await vi.waitFor(() => {
+    const cell = container
+      .querySelector("diffs-container")
+      ?.shadowRoot?.querySelector('[data-column-number][data-line-type="change-addition"]');
+    expect(cell).toBeTruthy();
+    return cell as HTMLElement;
+  });
+  await userEvent.click(addedLineNumber);
+  const editor = screen.getByPlaceholder("Add a comment…");
+  await expect.element(editor).toBeVisible();
+  await userEvent.type(editor, "Half-written review note");
+
+  mocks.otherFileEdited = true;
+  await screen.rerender(codeTab(1));
+  await expect.element(screen.getByText("3 files", { exact: true })).toBeVisible();
+
+  await expect
+    .element(screen.getByPlaceholder("Add a comment…"))
+    .toHaveValue("Half-written review note");
 });
 
 function pagedContainer() {
