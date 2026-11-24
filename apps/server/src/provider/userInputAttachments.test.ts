@@ -1014,6 +1014,27 @@ describe("question answer paths", () => {
           ext: "xlsx",
           bounded: true,
           parts: {
+            "_rels/.rels":
+              '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="docs/book.xml"/></Relationships>',
+            "docs/book.xml": '<workbook><sheets><sheet name="Data" r:id="a"/></sheets></workbook>',
+            "docs/_rels/book.xml.rels":
+              '<Relationships><Relationship Id="a" Target="sheets/data.xml"/><Relationship Id="strings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="strings.xml"/></Relationships>',
+            "docs/strings.xml": "<sst><si><t>Harbor</t></si></sst>",
+            "docs/styles.xml":
+              '<styleSheet><numFmts><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts><cellXfs><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs></styleSheet>',
+            "docs/sheets/data.xml":
+              '<worksheet><sheetData><row><c r="A1" t="s"><v>0</v></c><c r="B1" s="1"><v>45293</v></c></row></sheetData></worksheet>',
+          },
+          expected: [
+            "## Sheet: Data",
+            "Harbor\t45293 [Excel numFmtId=164; format=yyyy-mm-dd; date system 1900]",
+          ],
+          absent: ["[Skipped document part"],
+        },
+        {
+          ext: "xlsx",
+          bounded: true,
+          parts: {
             "xl/workbook.xml": '<workbook><sheet name="Phonetics" r:id="a"/></workbook>',
             "xl/_rels/workbook.xml.rels":
               '<Relationships><Relationship Id="a" Target="worksheets/a.xml"/></Relationships>',
@@ -1136,6 +1157,28 @@ describe("question answer paths", () => {
           expected: ["Slide text"],
           absent: ["Notes:", "57"],
         },
+        ...[
+          { target: "deck/main.xml", prefix: "deck/" },
+          { target: "/main.xml", prefix: "" },
+        ].map(({ target, prefix }) => ({
+          ext: "pptx",
+          bounded: true,
+          parts: {
+            "_rels/.rels": `<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="${target}"/></Relationships>`,
+            [`${prefix}main.xml`]:
+              '<presentation><sldIdLst><sldId r:id="a"/></sldIdLst></presentation>',
+            [`${prefix}_rels/main.xml.rels`]:
+              '<Relationships><Relationship Id="a" Target="slides/one.xml"/></Relationships>',
+            [`${prefix}slides/one.xml`]:
+              "<p:sld><a:p><a:r><a:t>Harbor launch</a:t></a:r></a:p></p:sld>",
+            [`${prefix}slides/_rels/one.xml.rels`]:
+              '<Relationships><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notes/n1.xml"/></Relationships>',
+            [`${prefix}notes/n1.xml`]:
+              "<p:notes><a:p><a:r><a:t>Check tide table</a:t></a:r></a:p></p:notes>",
+          },
+          expected: ["## Slide 1", "Harbor launch\nNotes:\nCheck tide table"],
+          absent: ["[Skipped document part"],
+        })),
         ...[false, true].map((missing) => ({
           ext: "pptx",
           bounded: true,
@@ -1209,6 +1252,19 @@ describe("question answer paths", () => {
               '<office:document><table:table table:name="Cargo"><table:table-row><table:table-cell><text:p>Violet</text:p></table:table-cell><table:table-cell office:value="19"/><table:table-cell office:value="27"><text:p/></table:table-cell></table:table-row></table:table></office:document>',
           },
           expected: ["## Sheet: Cargo", "Violet\t19\t27"],
+        },
+        {
+          ext: "ods",
+          parts: {
+            "content.xml":
+              '<office:document><table:table table:name="Merged">' +
+              '<table:table-row><table:table-cell table:number-columns-spanned="3" table:number-rows-spanned="2"><text:p>Wide</text:p></table:table-cell><table:covered-table-cell office:value-type="float" office:value="4242"/><table:covered-table-cell office:value-type="string" office:string-value="Gone"/><table:table-cell table:number-columns-spanned="2"><text:p>After</text:p></table:table-cell><table:covered-table-cell><text:p>Tail</text:p></table:covered-table-cell></table:table-row>' +
+              '<table:table-row><table:covered-table-cell table:number-columns-repeated="3"><text:p>Below</text:p></table:covered-table-cell><table:table-cell><text:p>Next</text:p></table:table-cell></table:table-row>' +
+              "<table:table-row><table:covered-table-cell><text:p>Only</text:p></table:covered-table-cell></table:table-row>" +
+              "<table:table-row><table:table-cell><text:p>Last</text:p></table:table-cell></table:table-row></table:table></office:document>",
+          },
+          expected: ["## Sheet: Merged", "Wide\t\t\tAfter\n\t\t\tNext\nLast"],
+          absent: ["4242", "Gone", "Tail", "Below", "Only", "After\t"],
         },
         {
           ext: "ods",

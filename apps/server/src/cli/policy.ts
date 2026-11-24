@@ -96,14 +96,15 @@ const checkCommand = Command.make("check", {
   Command.withDescription("Validate a policy file before deploying it."),
   Command.withHandler(
     Effect.fn("cli.policy.check")(function* ({ file }) {
+      const policyFile = yield* expandHomePath(file);
       // Startup treats a missing file as no policy; a draft that is not there checks nothing.
-      if (!(yield* (yield* FileSystem.FileSystem).exists(file))) {
+      if (!(yield* (yield* FileSystem.FileSystem).exists(policyFile))) {
         return yield* new CliError.UserError({
           cause: file,
           userMessage: `No policy file at ${file}.`,
         });
       }
-      const policy = yield* ManagedPolicy.load(file);
+      const policy = yield* ManagedPolicy.load(policyFile);
       yield* Console.log(describePolicy(policy, yield* ManagedPolicy.loadedPolicy(policy)));
     }),
   ),

@@ -291,7 +291,9 @@ function odfValue(cell: XmlNode): string {
       return attr("value");
   }
 }
+const covered = (cell: XmlNode) => cell.name === "covered-table-cell";
 function hasCellText(cell: XmlNode): boolean {
+  if (covered(cell)) return false;
   if (odfValue(cell).trim() || cell.name === "noBreakHyphen") return true;
   // Space markers can have enormous repeat counts; emptiness never requires expanding them.
   if (HIDDEN.has(cell.name) || cell.spaceCount !== undefined) return false;
@@ -316,6 +318,8 @@ function* table(node: XmlNode): Generator<TextPart, void> {
         for (let i = 0; i < count; i++) {
           if (column >= 512) throw new Truncation("Column limit");
           if (column++) yield "\t";
+          // LibreOffice hides the contents a merge covers; the cell still holds its column.
+          if (covered(cell)) continue;
           yield CELL_START;
           yield* paragraphs(cell);
           yield { fallback: odfValue(cell) };
@@ -659,14 +663,20 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         return { name: "root", attrs: {}, children: [] };
       }
     };
+    const partRels = (name: string) =>
+      NodePath.posix.join(
+        NodePath.posix.dirname(name),
+        "_rels",
+        `${NodePath.posix.basename(name)}.rels`,
+      );
     const relations = (name: string) =>
       new Map(
         [...all(read(name), "Relationship")]
           .filter((rel) => rel.attrs.TargetMode !== "External")
           .map((rel) => [rel.attrs.Id, rel.attrs]),
       );
-    if (extension === ".docx") {
-      // The package relationship names the main part; Word for the web saves word/document2.xml.
+    // The package relationship names the main part; Word for the web saves word/document2.xml.
+    const mainPart = (fallback: string) => {
       const target = has("_rels/.rels")
         ? [...all(read("_rels/.rels"), "Relationship")].find(
             (rel) =>
@@ -674,7 +684,10 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
           )?.attrs.Target
         : undefined;
       const main = target && NodePath.posix.normalize(target).replace(/^\//, "");
-      yield* paragraphs(read(main && has(main) ? main : "word/document.xml"));
+      return main && has(main) ? main : fallback;
+    };
+    if (extension === ".docx") {
+      yield* paragraphs(read(mainPart("word/document.xml")));
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
       const content = read("content.xml");
       if (extension === ".odt") yield* paragraphs(content);
@@ -700,12 +713,16 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         }
       }
     } else if (extension === ".xlsx") {
-      const workbook = read("xl/workbook.xml");
-      const rels = relations("xl/_rels/workbook.xml.rels");
+      const workbookPath = mainPart("xl/workbook.xml");
+      const workbookDir = NodePath.posix.dirname(workbookPath);
+      const resolveWorkbookPart = (target: string) =>
+        NodePath.posix.resolve(`/${workbookDir}`, target).slice(1);
+      const workbook = read(workbookPath);
+      const rels = relations(partRels(workbookPath));
       const workbookRelations = [...rels.values()];
       const workbookPartPath = (part: string) => {
         const target = workbookRelations.find((rel) => rel.Type?.endsWith(`/${part}`))?.Target;
-        return target ? NodePath.posix.resolve("/xl", target).slice(1) : `xl/${part}.xml`;
+        return resolveWorkbookPart(target || `${part}.xml`);
       };
       const dateSystem = ["1", "true"].includes(
         all(workbook, "workbookPr").next().value?.attrs.date1904 ?? "",
@@ -731,9 +748,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
           skip(`sheet relationship ${sheet.attrs.name}`);
           continue;
         }
-        const name = target.startsWith("/")
-          ? target.slice(1)
-          : NodePath.posix.normalize(`xl/${target}`);
+        const name = resolveWorkbookPart(target);
         const populated = (cell: XmlNode) => {
           const value = all(cell, "v").next().value;
           if (cell.attrs.t === "s") {
@@ -795,8 +810,10 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         }
       }
     } else if (extension === ".pptx") {
-      const rels = relations("ppt/_rels/presentation.xml.rels");
-      const [presentation] = children(read("ppt/presentation.xml"));
+      const presentationPath = mainPart("ppt/presentation.xml");
+      const presentationDir = NodePath.posix.dirname(presentationPath);
+      const rels = relations(partRels(presentationPath));
+      const [presentation] = children(read(presentationPath));
       const slideList = children(presentation).find((node) => node.name === "sldIdLst");
       const inheritedAttributes = { ...presentation?.attrs, ...slideList?.attrs };
       let index = 0;
@@ -807,15 +824,9 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
           skip(`slide relationship ${index}`);
           continue;
         }
-        const name = target.startsWith("/")
-          ? target.slice(1)
-          : NodePath.posix.normalize(`ppt/${target}`);
+        const name = NodePath.posix.resolve(`/${presentationDir}`, target).slice(1);
         yield* paragraphs(read(name));
-        const slideRels = NodePath.posix.join(
-          NodePath.posix.dirname(name),
-          "_rels",
-          `${NodePath.posix.basename(name)}.rels`,
-        );
+        const slideRels = partRels(name);
         if (!has(slideRels)) continue;
         for (const rel of all(read(slideRels), "Relationship")) {
           const target = rel.attrs.Target;
