@@ -61,6 +61,7 @@ const mocks = vi.hoisted(() => ({
   transcripts: [] as Array<string | Error>,
   committed: vi.fn(),
   draft: "",
+  appleSpeech: false,
   storedDraft: "",
 }));
 
@@ -175,44 +176,53 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       return { text: `Cleaned ${transcript}` };
     }),
 }));
-vi.mock("./browserVoiceInput", () => ({
-  createBrowserVoiceInputPlatform: (
-    input: Parameters<typeof createBrowserVoiceInputPlatform>[0],
-  ) => {
-    const environmentId = input.prepared.environmentId;
-    mocks.platforms.push(environmentId);
-    return {
-      recorder: {
-        uri: `blob:${environmentId}`,
-        prepareToRecordAsync: async () => {
-          mocks.microphoneRequests.push(environmentId);
-        },
-        record() {},
-        stop: async () => {},
-      },
-      transcriber: {
-        prepare: async () => {
-          mocks.recordingOptions.push(input.getTranscriptionOptions());
-          return {
-            locale: "en",
-            transcribe: async () => {
-              mocks.transcribeCalls.push(
-                input.cloudProvider
-                  ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
-                  : environmentId,
-              );
-              const next = mocks.transcripts.shift() ?? "dictated";
-              if (next instanceof Error) throw next;
-              return next;
-            },
-          };
-        },
-      },
-      cancelRecording() {},
-      deleteRecording() {},
-    };
-  },
+vi.mock("./appleSpeech", () => ({
+  useAppleSpeechLocales: () => (mocks.appleSpeech ? ["en-US"] : []),
 }));
+vi.mock("./browserVoiceInput", () => ({
+  createAppleSpeechVoiceInputPlatform: (
+    input: Omit<Parameters<typeof createBrowserVoiceInputPlatform>[0], "prepared">,
+  ) => mockPlatform("apple-speech", input),
+  createBrowserVoiceInputPlatform: (input: Parameters<typeof createBrowserVoiceInputPlatform>[0]) =>
+    mockPlatform(input.prepared.environmentId, input),
+}));
+
+function mockPlatform(
+  environmentId: string,
+  input: Omit<Parameters<typeof createBrowserVoiceInputPlatform>[0], "prepared">,
+) {
+  mocks.platforms.push(environmentId);
+  return {
+    recorder: {
+      uri: `blob:${environmentId}`,
+      prepareToRecordAsync: async () => {
+        mocks.microphoneRequests.push(environmentId);
+      },
+      record() {},
+      stop: async () => {},
+    },
+    transcriber: {
+      prepare: async () => {
+        mocks.recordingOptions.push(input.getTranscriptionOptions());
+        return {
+          locale: "en",
+          transcribe: async () => {
+            mocks.transcribeCalls.push(
+              input.cloudProvider
+                ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
+                : environmentId,
+            );
+            const next = mocks.transcripts.shift() ?? "dictated";
+            if (next instanceof Error) throw next;
+            return next;
+          },
+        };
+      },
+    },
+    cancelRecording() {},
+    deleteRecording() {},
+  };
+}
 
 const THREAD_ENV = "thread-env";
 
@@ -248,6 +258,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.transcripts = [];
   mocks.committed.mockClear();
   mocks.draft = "";
+  mocks.appleSpeech = false;
   mocks.storedDraft = "";
 }
 
@@ -387,6 +398,29 @@ it.each([
   expect(mocks.committed).not.toHaveBeenCalled();
 });
 
+it.each([true, false])(
+  "transcribes on this Mac with Apple Speech, never an environment, when available is %s",
+  async (available) => {
+    setup();
+    mocks.appleSpeech = available;
+    chooseAudioDestination({ kind: "device" });
+    await using _screen = await render(<Probe />);
+    expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
+    expect(mocks.voice.available).toBe(available);
+    await act(() => mocks.voice.start());
+    if (!available) {
+      expectNoAudioSent();
+      return;
+    }
+    await act(() => mocks.voice.stop());
+    expect(new Set([...mocks.platforms, ...mocks.transcribeCalls])).toEqual(
+      new Set(["apple-speech"]),
+    );
+    expect(mocks.statusRequests).toEqual([]);
+    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
+  },
+);
+
 it("retries a failed transcription on the same chosen environment", async () => {
   setup({ destination: "env-a" });
   mocks.transcripts = [new Error("inference failed"), "second try"];
@@ -401,10 +435,15 @@ it("retries a failed transcription on the same chosen environment", async () => 
 });
 
 it.each([
-  ["a stored thread draft keeps recording into it", true],
-  ["an editor-only draft is abandoned", false],
-])("when the editor switches owner mid-recording, %s", async (_name, persistent) => {
+  ["a stored thread draft keeps recording into it", true, false],
+  ["an editor-only draft is abandoned", false, false],
+  ["Apple Speech keeps recording into a stored thread draft", true, true],
+])("when the editor switches owner mid-recording, %s", async (_name, persistent, onDevice) => {
   setup({ destination: "env-a" });
+  if (onDevice) {
+    mocks.appleSpeech = true;
+    chooseAudioDestination({ kind: "device" });
+  }
   mocks.storedDraft = "Earlier text";
   const view = (ownerKey: string) => (
     <>
@@ -432,7 +471,7 @@ it.each([
   await page.getByRole("button", { name: "Finish voice input" }).click();
 
   await vi.waitFor(() => expect(mocks.storedDraft).toBe("Earlier text dictated"));
-  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+  expect(mocks.transcribeCalls).toEqual([onDevice ? "apple-speech" : "env-a"]);
   expect(mocks.committed).not.toHaveBeenCalled();
 });
 
@@ -947,4 +986,32 @@ it("lets the user retry after a status failure without reselecting the destinati
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual(["env-a"]);
+});
+
+it("delivers a queued submission for a persistent draft after switching owners", async () => {
+  setup({ destination: "env-a" });
+  const submit = vi.fn();
+  await using screen = await render(<Probe ownerKey="thread-a" persistent />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+  await act(async () => {
+    mocks.voice.submitAfterDictation(submit);
+    await screen.rerender(<Probe ownerKey="thread-b" persistent />);
+  });
+  await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("dictated"));
+  expect(mocks.storedDraft).toBe("dictated");
+});
+
+it("drops a queued submission for a non-persistent draft when switching owners", async () => {
+  setup({ destination: "env-a" });
+  const submit = vi.fn();
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+  await act(async () => {
+    mocks.voice.submitAfterDictation(submit);
+    await screen.rerender(<Probe ownerKey="thread-b" />);
+  });
+  await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("idle"));
+  expect(submit).not.toHaveBeenCalled();
 });

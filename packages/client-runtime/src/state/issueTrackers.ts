@@ -1,7 +1,12 @@
 import {
+  MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES,
   WS_METHODS,
+  issueTrackerBindingScopes,
+  type IssueTrackerBindProjectInput,
   type IssueTrackerConnection,
   type IssueTrackerConnectionList,
+  type IssueTrackerProjectBinding,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
@@ -77,6 +82,21 @@ export function issueTrackerDetailText(detail: string, resolve: MFunctionType = 
   return knownTrackerSentence(detail, SERVER_TRACKER_DETAILS, resolve);
 }
 
+/** Every project's binding, whichever account it was made with. */
+export function issueTrackerBindings(
+  list: IssueTrackerConnectionList | null | undefined,
+): IssueTrackerConnectionList["bindings"] {
+  return { ...list?.bindings, ...list?.accountBindings };
+}
+
+/** Whether a project binding reads through this account of the tracker. */
+function issueTrackerBindingIsFor(
+  binding: IssueTrackerProjectBinding,
+  tracker: Pick<IssueTrackerConnection, "tracker" | "accountId">,
+): boolean {
+  return binding.tracker === tracker.tracker && binding.accountId === tracker.accountId;
+}
+
 /**
  * The line under a tracker's name. A connected tracker lists nothing until a project is linked
  * to one of its scopes, so the line says how many are, and what to do when none is.
@@ -94,8 +114,8 @@ export function issueTrackerSummary(
     );
   if (tracker.account === null)
     return tracker.detail ?? resolve(msg("The saved credential was rejected."));
-  const linked = Object.values(bindings).filter(
-    (binding) => binding.tracker === tracker.tracker,
+  const linked = Object.values(bindings).filter((binding) =>
+    issueTrackerBindingIsFor(binding, tracker),
   ).length;
   return linked === 0
     ? knownTrackerSentence(
@@ -114,4 +134,64 @@ export function issueTrackerSummary(
           { account: tracker.account, count: linked },
         ),
       );
+}
+
+type TrackerAccount = Pick<IssueTrackerConnection, "tracker" | "accountId">;
+
+export function boundIssueTrackerScopes(
+  tracker: TrackerAccount,
+  binding: IssueTrackerProjectBinding | undefined,
+): ReadonlyArray<string> {
+  return binding !== undefined && issueTrackerBindingIsFor(binding, tracker)
+    ? issueTrackerBindingScopes(binding)
+    : [];
+}
+
+export function issueTrackerBindingFor(
+  { tracker, accountId }: TrackerAccount,
+  current: ReadonlyArray<string>,
+  scopes: ReadonlyArray<string>,
+): IssueTrackerProjectBinding | null {
+  const kept = current.filter((key) => scopes.includes(key));
+  const [scope, ...additionalScopes] = [...kept, ...scopes.filter((key) => !kept.includes(key))];
+  if (scope === undefined) return null;
+  return {
+    tracker,
+    ...(accountId === undefined ? {} : { accountId }),
+    scope,
+    ...(additionalScopes.length === 0 ? {} : { additionalScopes }),
+  };
+}
+
+/** The request that saves a project's picks under this account; an unbind names the account. */
+export function issueTrackerBindInput(
+  projectId: ProjectId,
+  { accountId }: TrackerAccount,
+  binding: IssueTrackerProjectBinding | null,
+): IssueTrackerBindProjectInput {
+  return binding === null && accountId !== undefined
+    ? { projectId, binding, accountId }
+    : { projectId, binding };
+}
+
+export function issueTrackerScopeOptions(
+  tracker: IssueTrackerConnection,
+  bound: ReadonlyArray<string>,
+): ReadonlyArray<{ readonly key: string; readonly name: string; readonly addable: boolean }> {
+  const offered = new Set(tracker.scopes.map((scope) => scope.key));
+  const full = bound.length > MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES;
+  return [
+    ...tracker.scopes,
+    ...bound.filter((key) => !offered.has(key)).map((key) => ({ key, name: key })),
+  ].map((scope) => ({ ...scope, addable: !full || bound.includes(scope.key) }));
+}
+
+export function hasIssueTrackerTeams(
+  tracker: IssueTrackerConnection,
+  bindings: IssueTrackerConnectionList["bindings"],
+): boolean {
+  return (
+    tracker.scopes.length > 0 ||
+    Object.values(bindings).some((binding) => issueTrackerBindingIsFor(binding, tracker))
+  );
 }

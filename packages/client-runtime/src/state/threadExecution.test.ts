@@ -32,10 +32,12 @@ import {
   deriveThreadActivityRun,
   deriveThreadRuntime,
   formatModelSelectionEffort,
+  formatSubagentEffort,
   isBackgroundWorkStopPending,
   presentPendingBackgroundWork,
   presentProviderGoal,
   presentRunStop,
+  readSelectedEffortValue,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
 
@@ -413,26 +415,88 @@ describe("thread execution presentation", () => {
     const starting = { ...v2Projection, runs: [openRun], providerSessions: [session] };
 
     expect(deriveThreadActivityRun(starting)?.providerStartingLabel).toBe("Starting Claude");
-    expect(
-      deriveThreadActivityRun({ ...starting, providerSessions: [] })?.providerStartingLabel,
-    ).toBe("Starting");
+    expect(deriveThreadActivityRun(starting)?.providerStarting).toEqual({
+      instanceId: openRun.providerInstanceId,
+      driver: session.driver,
+    });
     expect(
       deriveThreadActivityRun({
         ...starting,
-        providerTurns: [
-          {
-            id: ProviderTurnId.make("provider-turn-starting"),
-            providerThreadId: ProviderThreadId.make("provider-thread-starting"),
-            nodeId: NodeId.make("node-starting"),
-            runAttemptId: attemptId,
-            nativeTurnRef: null,
-            ordinal: 1,
-            status: "running",
-            startedAt: now,
-            completedAt: null,
-          },
-        ],
+        providerSessions: [{ ...session, startupPhase: "plugins" }],
       })?.providerStartingLabel,
+    ).toBe("Loading Claude plugins");
+    expect(
+      deriveThreadActivityRun({
+        ...starting,
+        providerSessions: [{ ...session, startupPhase: "a-later-server's-phase" }],
+      })?.providerStartingLabel,
+    ).toBe("Starting Claude");
+    // A session shared by several threads shows its phase only on the thread it names.
+    const sharedPhase = (threadId: ThreadId) =>
+      deriveThreadActivityRun({
+        ...starting,
+        providerSessions: [{ ...session, startupPhase: "mcp", startupPhaseThreadId: threadId }],
+      })?.providerStartingLabel;
+    expect(sharedPhase(v2Projection.thread.id)).toBe("Starting Claude MCP servers");
+    expect(sharedPhase(ThreadId.make("another-thread"))).toBe("Starting Claude");
+    expect(
+      deriveThreadActivityRun({ ...starting, providerSessions: [] })?.providerStartingLabel,
+    ).toBe("Starting");
+    // Before its session exists, the run still names its provider from the instances the client knows.
+    const unopened = deriveThreadActivityRun({ ...starting, providerSessions: [] }, [
+      { instanceId: openRun.providerInstanceId, driver: session.driver },
+    ]);
+    expect(unopened?.providerStartingLabel).toBe("Starting Claude");
+    expect(unopened?.providerStarting).toEqual({
+      instanceId: openRun.providerInstanceId,
+      driver: session.driver,
+    });
+
+    const providerTurnId = ProviderTurnId.make("provider-turn-starting");
+    const turnStarted = {
+      ...starting,
+      providerTurns: [
+        {
+          id: providerTurnId,
+          providerThreadId: ProviderThreadId.make("provider-thread-starting"),
+          nodeId: NodeId.make("node-starting"),
+          runAttemptId: attemptId,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running" as const,
+          startedAt: now,
+          completedAt: null,
+        },
+      ],
+    };
+    expect(deriveThreadActivityRun(turnStarted)?.providerStartingLabel).toBeUndefined();
+
+    // A provider can still be preparing after its turn opens; its phase shows until the first output.
+    const connecting = {
+      ...turnStarted,
+      providerSessions: [{ ...session, startupPhase: "connecting" }],
+    };
+    expect(deriveThreadActivityRun(connecting)?.providerStartingLabel).toBe("Connecting to Claude");
+    const reasoning = {
+      id: TurnItemId.make("first-output"),
+      threadId: v2Projection.thread.id,
+      runId: openRun.id,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      type: "reasoning" as const,
+      status: "running" as const,
+      streaming: true,
+      title: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    };
+    expect(
+      deriveThreadActivityRun({ ...connecting, turnItems: [reasoning] })?.providerStartingLabel,
     ).toBeUndefined();
   });
 
@@ -760,6 +824,74 @@ describe("formatModelSelectionEffort", () => {
     );
 
     expect(formatModelSelectionEffort(selection, models)).toBe("Extra High");
+  });
+
+  it("reads ACP thought_level and role: reasoning controls for cataloged and uncataloged models", () => {
+    const models = [
+      {
+        slug: "gemini-4-neon",
+        name: "Gemini 4 Neon",
+        isCustom: false,
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            {
+              id: "thought_level",
+              label: "Thinking",
+              type: "select",
+              role: "reasoning",
+              options: [
+                { id: "medium", label: "Medium", isDefault: true },
+                { id: "high", label: "High" },
+              ],
+            },
+          ],
+        }),
+      },
+      {
+        slug: "acp-custom-agent",
+        name: "ACP Custom Agent",
+        isCustom: false,
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            {
+              id: "custom_thinking_mode",
+              label: "Thinking",
+              type: "select",
+              role: "reasoning",
+              options: [{ id: "deep", label: "Deep" }],
+            },
+          ],
+        }),
+      },
+    ];
+    const antigravitySelection = createModelSelection(
+      ProviderInstanceId.make("antigravity"),
+      "gemini-4-neon",
+      [{ id: "thought_level", value: "high" }],
+    );
+    const customSelection = createModelSelection(
+      ProviderInstanceId.make("acpRegistry"),
+      "acp-custom-agent",
+      [{ id: "custom_thinking_mode", value: "deep" }],
+    );
+    const uncatalogedSelection = createModelSelection(
+      ProviderInstanceId.make("antigravity"),
+      "gemini-4-neon-preview",
+      [{ id: "thought_level", value: "high" }],
+    );
+
+    expect(formatModelSelectionEffort(antigravitySelection, models)).toBe("High");
+    expect(formatModelSelectionEffort(customSelection, models)).toBe("Deep");
+    expect(
+      formatSubagentEffort({
+        modelSlug: "gemini-4-neon-preview",
+        modelSelection: uncatalogedSelection,
+        provider: { driver: ProviderDriverKind.make("antigravity"), models },
+      }),
+    ).toBe("high");
+    expect(
+      readSelectedEffortValue(customSelection, models[1]?.capabilities?.optionDescriptors),
+    ).toBe("deep");
   });
 });
 
