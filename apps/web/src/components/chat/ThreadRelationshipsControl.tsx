@@ -15,6 +15,7 @@ import {
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { deriveProviderSubagentStatus } from "@t3tools/client-runtime/state/thread-execution";
 import {
+  delegatedChildStartupStatus,
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
   isParentThreadRelationship,
@@ -264,7 +265,13 @@ function currentSubagent<Agent extends RuntimeSubagent>(
   agent: Agent | undefined,
   childThread: OrchestrationV2ThreadShell | null | undefined,
 ): Agent | undefined {
-  if (!agent || !childThread || isOrchestrationV2WorkActive(agent.status)) return agent;
+  if (!agent || !childThread) return agent;
+  if (isOrchestrationV2WorkActive(agent.status)) {
+    // Its child has not started; the shell's start time falls back to when it was requested.
+    return delegatedChildStartupStatus(childThread)
+      ? { ...agent, status: "pending", startedAt: null, completedAt: null }
+      : agent;
+  }
   const liveStatus =
     childThread.activityRunStatus ?? (childThread.status === "queued" ? "queued" : null);
   const newerRun =
@@ -671,10 +678,7 @@ export function ThreadRelationshipsPanel(props: {
   const runningCount =
     (projection?.subagents.filter(
       (agent) => agent.childThreadId === null && agent.status === "running",
-    ).length ?? 0) +
-    // The parent records a delegated subagent as running while its child is still starting.
-    active.filter(({ edge }) => ["preparing", "starting", "running"].includes(edge.status ?? ""))
-      .length;
+    ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
 
   // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = currentThread?.delegatedFrom;
@@ -828,17 +832,20 @@ export function ThreadRelationshipsPanel(props: {
       projectedAgent === undefined ? undefined : workflowGroupsById.get(projectedAgent.id);
     const agent = workflowGroup ? projectedAgent : currentSubagent(projectedAgent, node?.thread);
     const failed = rowStatus === "failed" || rowStatus === "error";
+    // A task still starting its child stays stoppable through its own record.
+    const stopTarget =
+      projectedAgent && isOrchestrationV2WorkActive(projectedAgent.status) ? projectedAgent : agent;
     const canStop =
-      agent &&
-      (agent.origin === "app_owned" ||
-        (agent.origin === "provider_native" &&
-          agent.driver === "claudeAgent" &&
-          agent.runId != null &&
-          agent.nativeTaskRef?.strength === "strong" &&
-          agent.nativeTaskRef.nativeId !== null &&
-          ["pending", "running", "waiting"].includes(agent.nativeStatus))) &&
-      agent.startedAt &&
-      ["pending", "running", "waiting"].includes(agent.status);
+      stopTarget &&
+      (stopTarget.origin === "app_owned" ||
+        (stopTarget.origin === "provider_native" &&
+          stopTarget.driver === "claudeAgent" &&
+          stopTarget.runId != null &&
+          stopTarget.nativeTaskRef?.strength === "strong" &&
+          stopTarget.nativeTaskRef.nativeId !== null &&
+          ["pending", "running", "waiting"].includes(stopTarget.nativeStatus))) &&
+      stopTarget.startedAt &&
+      ["pending", "running", "waiting"].includes(stopTarget.status);
     const threadTitle = relationshipThreadTitle({
       title:
         workflowGroup?.workflow.workflowName ??

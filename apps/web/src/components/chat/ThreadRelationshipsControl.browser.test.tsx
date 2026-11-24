@@ -633,6 +633,8 @@ it("does not show a delegated subagent still starting with the idle status dot",
       forkedFrom: null,
       lineage: { parentThreadId: projection.thread.id, relationshipToParent: "subagent" },
       activityRunStatus: "starting",
+      // The shell falls back to when the run was requested until it starts.
+      activityRunStartedAt: startedAt,
       status: "starting",
     },
   ];
@@ -651,4 +653,7 @@ it("does not show a delegated subagent still starting with the idle status dot",
   expect(dot).not.toBeNull();
   // The parent's timeline card shows this same subagent as running with the bg-info dot.
   expect(dot!.className).not.toContain("bg-muted-foreground");
+  // Its child has not started, so it shows Starting rather than time since delegation.
+  await expect.element(row).toHaveTextContent("Starting childStarting");
+  await expect.element(screen.getByText("Lineage", { exact: true })).toBeVisible();
 });

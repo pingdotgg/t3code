@@ -130,6 +130,17 @@ export function deriveThreadRelationshipGraph(input: {
   return { nodes, edges: [...edgesByKey.values()] };
 }
 
+/**
+ * The child's run status while it has not started yet. A parent records the task it delegated as
+ * running before the child opens its provider session, so this child status is the honest one.
+ */
+export function delegatedChildStartupStatus(
+  child: Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "status"> | null | undefined,
+): "preparing" | "starting" | "queued" | null {
+  const status = child?.activityRunStatus ?? (child?.status === "queued" ? "queued" : null);
+  return status === "preparing" || status === "starting" || status === "queued" ? status : null;
+}
+
 export function immediateThreadRelationships(
   graph: ThreadRelationshipGraph,
   threadId: ThreadId,

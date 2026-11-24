@@ -3,7 +3,9 @@ import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import { use, type ReactNode } from "react";
-import { useThreadShell, useProject } from "../../state/entities";
+import { useQuietThreadShell, useThreadShell, useProject } from "../../state/entities";
+import { delegatedChildStartupStatus } from "@t3tools/client-runtime/state/thread-relationships";
+import { threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import { SideThreadsOpenContext, useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import { useLinkedThreadOpener } from "../../state/linkedThreadView";
@@ -26,6 +28,7 @@ import {
   subagentCardDetail,
 } from "@t3tools/client-runtime/state/subagent-display";
 import {
+  isOrchestrationV2WorkActive,
   ProviderDriverKind,
   type ModelSelection,
   type OrchestrationV2ModelSwitch,
@@ -477,9 +480,20 @@ function SubagentTimelineLink(props: {
       : (remoteOpener?.open ?? null);
   // A task on a connected linked environment opens there, on the main screen only.
   const panel = threadId !== null || remoteOpener?.mode === "linked";
-  const liveStatus = agent?.status ?? props.status;
+  const recordStatus = agent?.status ?? props.status;
+  const childShell = useQuietThreadShell(
+    threadId === null ? null : scopeThreadRef(props.parentRef.environmentId, threadId),
+  )?.source;
+  const startupStatus = isOrchestrationV2WorkActive(recordStatus)
+    ? delegatedChildStartupStatus(childShell)
+    : null;
+  const liveStatus = startupStatus === null ? recordStatus : "pending";
   const status = props.event ? props.event.status : liveStatus;
-  const statusLabel = props.event?.label ?? m(subagentStatusVisual(liveStatus).label);
+  const statusLabel =
+    props.event?.label ??
+    (startupStatus === null
+      ? m(subagentStatusVisual(liveStatus).label)
+      : threadRelationshipStatusLabel(startupStatus, m));
   const result = (agent?.result ?? props.result)?.trim();
   const progress = (agent?.progress ?? props.progress)?.trim();
   const settled = SETTLED_SUBAGENT_STATUSES.has(status ?? liveStatus);
@@ -488,7 +502,7 @@ function SubagentTimelineLink(props: {
   const failed = status === "failed";
   const timing = {
     status: liveStatus,
-    startedAt: isoOrNull(agent?.startedAt ?? props.startedAt),
+    startedAt: startupStatus === null ? isoOrNull(agent?.startedAt ?? props.startedAt) : null,
     completedAt: isoOrNull(agent?.completedAt ?? props.completedAt),
   };
   const content = (
