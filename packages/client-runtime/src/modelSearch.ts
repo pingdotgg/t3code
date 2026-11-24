@@ -4,6 +4,7 @@ export type ModelPickerSearchableModel = {
   driverKind: string;
   providerDisplayName: string;
   name: string;
+  slug?: string;
   shortName?: string;
   subProvider?: string;
   isFavorite?: boolean;
@@ -20,6 +21,7 @@ function getModelPickerSearchFields(model: ModelPickerSearchableModel): string[]
     normalizeSearchQuery(model.driverKind),
     normalizeSearchQuery(model.providerDisplayName),
     buildModelPickerSearchText(model),
+    ...(model.slug ? [normalizeSearchQuery(model.slug)] : []),
   ];
 }
 
@@ -67,7 +69,8 @@ export function scoreModelPickerSearch(
   const normalizedQuery = tokens.join(" ");
   if (
     normalizedQuery === normalizeModelName(model.name) ||
-    normalizedQuery === normalizeModelName(model.shortName ?? "")
+    normalizedQuery === normalizeModelName(model.shortName ?? "") ||
+    normalizedQuery === normalizeModelName(model.slug ?? "")
   ) {
     return MODEL_PICKER_EXACT_NAME_SCORE;
   }

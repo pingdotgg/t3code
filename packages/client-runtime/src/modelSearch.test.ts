@@ -134,6 +134,18 @@ function search(query: string, models: ReadonlyArray<CatalogModel> = catalog): s
 }
 
 describe("rankModelPickerSearch", () => {
+  it("finds an unfavorited model by full ID or by the ID without its provider prefix", () => {
+    const model = {
+      driverKind: "opencode",
+      providerDisplayName: "OpenCode",
+      name: "DeepSeek V4.1 Flash 1017",
+      slug: "opencode-go/deepseek-v4.1-flash",
+    };
+
+    expect(search(model.slug, [model])).toEqual([model.name]);
+    expect(search("deepseek-v4.1-flash", [model])).toEqual([model.name]);
+  });
+
   it("keeps newest first when a version token narrows the family", () => {
     expect(search("opus 4")).toEqual([
       "Claude Opus 4.8",
