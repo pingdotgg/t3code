@@ -131,11 +131,11 @@ export interface ThreadActionMenuState {
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
     "find",
-    "filter-by-project",
     "new-thread-on-branch",
     "project-settings",
     "mark-unread",
     "share-guest",
+    "filter-by-project",
     "copy",
     "copy-path",
     "copy-branch",

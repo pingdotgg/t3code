@@ -72,6 +72,9 @@ vi.mock(import("~/state/environments"), async (original) => ({
   useEnvironments: (() => ({ environments })) as never,
   readEnvironment: ((id: EnvironmentId) =>
     environments.find((environment) => environment.environmentId === id) ?? null) as never,
+  readEnvironmentConnected: (id: EnvironmentId) =>
+    environments.find((environment) => environment.environmentId === id)?.connection.phase ===
+    "connected",
   usePrimaryEnvironmentId: () => primaryId,
 }));
 vi.mock(import("~/state/entities"), async (original) => ({
