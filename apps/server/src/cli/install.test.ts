@@ -70,15 +70,50 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       const onPath = yield* provide(installCli(), { PATH: `/usr/bin:${path.join(root, "bin")}/` });
       assert.isTrue(onPath.onPath);
       // Another t3 earlier on PATH still runs first, so `t3` would not run this one.
+      const binDir = path.join(root, "bin");
       const otherBin = path.join(root, "other-bin");
       yield* fs.makeDirectory(otherBin);
       yield* fs.writeFileString(path.join(otherBin, "t3"), "", { mode: 0o755 });
-      const shadowed = yield* provide(installCli(), {
-        PATH: `${otherBin}:${path.join(root, "bin")}`,
-      });
-      assert.isFalse(shadowed.onPath);
-      assert.equal(shadowed.shadowedBy, path.join(otherBin, "t3"));
-      assert.isUndefined(shadowed.pathCommand);
+      const installIn = (cwd: string, PATH: string) =>
+        provide(installCli().pipe(Effect.provideService(HostProcess.WorkingDirectory, cwd)), {
+          PATH,
+        });
+      const assertShadowed = (result: Effect.Success<ReturnType<typeof installCli>>) => {
+        assert.isFalse(result.onPath);
+        assert.equal(result.shadowedBy, path.join(otherBin, "t3"));
+        assert.isUndefined(result.pathCommand);
+      };
+      assertShadowed(yield* provide(installCli(), { PATH: `${otherBin}:${binDir}` }));
+      for (const [cwd, pathEnv] of [
+        [root, `other-bin:${binDir}`],
+        [otherBin, `:${binDir}`],
+        [binDir, `:${otherBin}`],
+      ] as const) {
+        assertShadowed(yield* installIn(cwd, pathEnv));
+      }
+      for (const [cwd, pathEnv] of [
+        [otherBin, ""],
+        [binDir, ":/usr/bin"],
+      ] as const) {
+        const offPath = yield* installIn(cwd, pathEnv);
+        assert.isFalse(offPath.onPath);
+        assert.isUndefined(offPath.shadowedBy);
+        assert.isDefined(offPath.pathCommand);
+      }
+      yield* fs.remove(alias);
+      yield* fs.symlink(binDir, alias);
+      for (const pathEnv of [
+        `alias:${binDir}`,
+        `${alias}:${otherBin}`,
+        `${alias}:/usr/bin`,
+        `bin:other-bin:${binDir}`,
+      ]) {
+        const installedOnPath = yield* installIn(root, pathEnv);
+        assert.isTrue(installedOnPath.onPath);
+        assert.isUndefined(installedOnPath.shadowedBy);
+        assert.isUndefined(installedOnPath.pathCommand);
+      }
+      yield* fs.remove(alias);
       yield* fs.remove(path.join(otherBin, "t3"));
       yield* fs.makeDirectory(path.join(otherBin, "t3"));
       const directory = yield* provide(installCli(), {
