@@ -4962,7 +4962,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
-  it.effect("accepts the inherited options it reports back as a delegate target", () =>
+  it.effect("accepts the inherited options it reports back, never inheriting Ultracode", () =>
     Effect.gen(function* () {
       // t3_thread_launch keeps a model selection as given, so a thread can hold an option its model lacks.
       const inherited = {
@@ -4971,95 +4971,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         options: [
           { id: "reasoningEffort", value: "low" },
           { id: "fastMode", value: false },
-        ],
-      } as const;
-      const commands: Array<{ readonly modelSelection?: unknown }> = [];
-      const task = {
-        id: taskId,
-        threadId: parentThreadId,
-        origin: "app_owned",
-        childThreadId,
-        providerInstanceId: codexInstanceId,
-        model: inherited.model,
-        status: "running",
-        result: null,
-      };
-      const dependencies = Layer.mergeAll(
-        NodeServices.layer,
-        NodeCrypto.layer,
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          hasReceipt: () => Effect.succeed(false),
-          assertProviderInstanceEnabled: () => Effect.void,
-          getThreadRecords: (threadId) =>
-            Effect.succeed(
-              threadId === parentThreadId
-                ? parentProjection(commands.length > 0 ? [task] : [], inherited)
-                : childProjection,
-            ),
-          dispatch: (command) =>
-            Effect.sync(() => {
-              commands.push(command as { readonly modelSelection?: unknown });
-              return {
-                sequence: 1,
-                storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
-              } as never;
-            }),
-        }),
-        ServerSettings.layerTest(),
-        providerRegistryLayer([
-          {
-            ...providerSnapshot({
-              instanceId: codexInstanceId,
-              driver: ProviderDriverKind.make("codex"),
-            }),
-            models: [
-              {
-                slug: inherited.model,
-                name: inherited.model,
-                isCustom: false,
-                capabilities: {
-                  optionDescriptors: [
-                    {
-                      id: "reasoningEffort",
-                      label: "Reasoning",
-                      type: "select",
-                      options: [{ id: "low", label: "Low" }],
-                    },
-                  ],
-                },
-              },
-            ],
-          },
-        ]),
-        adapterRegistryLayer([codexInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-      );
-      yield* Effect.gen(function* () {
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const { inheritedOptions } = yield* service.capabilities(scope);
-        yield* service.delegateTask(scope, {
-          task: "Review the change.",
-          target: yield* decodeTarget({ options: inheritedOptions }),
-          mode: "async",
-        });
-        assert.deepEqual(commands[0]?.modelSelection, {
-          ...inherited,
-          options: [inherited.options[0]],
-        });
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
-    }),
-  );
-
-  it.effect("never passes a parent's Ultracode to a child unless the target asks for it", () =>
-    Effect.gen(function* () {
-      const inherited = {
-        instanceId: codexInstanceId,
-        model: "gpt-5.4",
-        options: [
-          { id: "reasoningEffort", value: "low" },
           { id: "ultracode", value: true },
         ],
       } as const;
@@ -5132,17 +5043,24 @@ describe("OrchestratorMcpService provider resolution", () => {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         const { inheritedOptions } = yield* service.capabilities(scope);
         assert.deepEqual(inheritedOptions, [inherited.options[0]]);
+        yield* service.delegateTask(scope, {
+          task: "Review the change.",
+          target: yield* decodeTarget({ options: inheritedOptions }),
+          mode: "async",
+        });
         yield* service.delegateTask(scope, { task: "Review the change.", mode: "async" });
         yield* service.delegateTask(scope, {
           task: "Review the change with Ultracode.",
           target: yield* decodeTarget({ options: [{ id: "ultracode", value: true }] }),
           mode: "async",
         });
-        assert.deepEqual(commands[0]?.modelSelection, {
+        const withoutUltracode = { ...inherited, options: [inherited.options[0]] };
+        assert.deepEqual(commands[0]?.modelSelection, withoutUltracode);
+        assert.deepEqual(commands[1]?.modelSelection, withoutUltracode);
+        assert.deepEqual(commands[2]?.modelSelection, {
           ...inherited,
-          options: [inherited.options[0]],
+          options: [inherited.options[0], inherited.options[2]],
         });
-        assert.deepEqual(commands[1]?.modelSelection, inherited);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
     }),
   );
