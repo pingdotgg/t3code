@@ -2086,6 +2086,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           }
           yield* takeSample;
           yield* client.healthy;
+          yield* forge.checkFetched(server.project);
           const perHour = (pick: (sample: (typeof samples)[number]) => number) =>
             round(slope(samples.map((sample) => [sample.hours, pick(sample)])));
           measured.soak = {

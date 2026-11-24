@@ -464,6 +464,7 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
     const [feature, main] = (yield* git(["rev-parse", "HEAD", "main"])).stdout.trim().split("\n");
     for (const pr of pullRequests) pr.oid = (pr.number === 1 ? feature : main) ?? pr.oid;
     setupRequests = requests.length;
+    publishedMain = main;
   });
 
   let pushes = 0;
@@ -488,6 +489,8 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
 
   /** Requests the project setup made before the server started, which `verify` leaves out. */
   let setupRequests = 0;
+  let publishedMain: string | undefined;
+  let fetchedPush = false;
   let completedPolls = 0;
   const failures: Array<string> = [];
   /**
@@ -557,6 +560,13 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
     },
     setupProject,
     advanceRemote,
+    /** Records whether the project's origin/main moved past setup, i.e. the server fetched a push. */
+    checkFetched: (project: string) =>
+      run("git", ["rev-parse", "refs/remotes/origin/main"], { cwd: project }).pipe(
+        Effect.map(({ stdout }) => {
+          fetchedPush = stdout.trim() !== publishedMain;
+        }),
+      ),
     requests: requests as ReadonlyArray<ForgeRequest>,
     pollLikeWebClient,
     /**
@@ -573,9 +583,7 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
               ? undefined
               : request.path.startsWith(`/${OWNER}/${REPO}.git/info/refs`)
                 ? "git fetch"
-                : request.path.includes("/objects/")
-                  ? "git objects"
-                  : undefined
+                : undefined
             : `${request.method} ${request.path.replace(/\?.*/, "")} ${request.status}`);
         if (key !== undefined) counts.set(key, (counts.get(key) ?? 0) + 1);
       }
@@ -592,8 +600,7 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
         "PullRequestCore",
         "git fetch",
       ].filter((key) => !counts.has(key));
-      // Each pushed commit is new to the server, so a working fetch downloads its objects.
-      if (pushes > 0 && !counts.has("git objects")) missing.push("git objects of a pushed commit");
+      if (pushes > 0 && !fetchedPush) missing.push("a fetch that brought in a pushed commit");
       if (completedPolls === 0) missing.push("one full client poll (list, summary, checks)");
       if (missing.length > 0) {
         return yield* new ScenarioError({
