@@ -689,6 +689,11 @@ function layerTest(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
+  // Stands in for a provider instance reload: once `active`, the registry resolves a new adapter.
+  readonly replacement?: {
+    readonly active: Ref.Ref<boolean>;
+    readonly state: Ref.Ref<TestProviderRuntimeState>;
+  };
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -741,7 +746,28 @@ function layerTest(input: {
       ...(input.eventStreamsEnded === undefined
         ? {}
         : { eventStreamsEnded: input.eventStreamsEnded }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+    }).pipe(
+      Effect.flatMap((current) => {
+        const replacement = input.replacement;
+        if (replacement === undefined) {
+          return Effect.succeed(ProviderAdapterRegistry.layerSingle(current));
+        }
+        return makeProviderAdapter(replacement.state).pipe(
+          Effect.map((next) =>
+            Layer.succeed(
+              ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+              ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+                get: () =>
+                  Ref.get(replacement.active).pipe(
+                    Effect.map((active) => (active ? next : current)),
+                  ),
+                list: () => Effect.succeed([current.instanceId]),
+              }),
+            ),
+          ),
+        );
+      }),
+    ),
   );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
@@ -1199,6 +1225,43 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
       ),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 does not reuse a live session built by an adapter its instance replaced",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const replacement = {
+        active: yield* Ref.make(false),
+        state: yield* Ref.make(emptyState),
+      };
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-instance-replaced");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const openInput = { threadId, providerSessionId, modelSelection, runtimePolicy };
+
+        const before = yield* manager.open(openInput);
+        // A settings change rebuilt the instance; the old adapter's scope (and its auth) is closed.
+        yield* Ref.set(replacement.active, true);
+        const after = yield* manager.open(openInput);
+
+        assert.notStrictEqual(after, before);
+        assert.equal((yield* Ref.get(replacement.state)).openCount, 1);
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, replacement })));
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 opens provider sessions inside the installation gate", () =>
