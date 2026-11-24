@@ -252,9 +252,18 @@ pub(crate) fn thread_fork(tx: &mut Tx<'_>, command: Value) -> Outcome {
     {
         transfer["sourceTokenUsage"] = usage;
     }
-    tx.append(Draft::new(&target_id, "thread.created", target).command(Some(&command_id)))?;
+    let source_instance = transfer["sourceProviderInstanceId"]
+        .as_str()
+        .map(str::to_owned);
     tx.append(
-        Draft::new(&target_id, "context-transfer.created", transfer).command(Some(&command_id)),
+        Draft::new(&target_id, "thread.created", target)
+            .command(Some(&command_id))
+            .payload_instance(),
+    )?;
+    tx.append(
+        Draft::new(&target_id, "context-transfer.created", transfer)
+            .command(Some(&command_id))
+            .provider_instance(source_instance.as_deref()),
     )?;
     Ok(vec![])
 }

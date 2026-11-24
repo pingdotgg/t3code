@@ -56,7 +56,11 @@ async fn run(state_dir: &Path, project: &Path, config_out: &Path) {
         environment: Some(environment.clone()),
         ..Deps::default()
     };
-    deps.mcp = mcp::service(&deps);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let address = listener.local_addr().expect("local address");
+    deps.mcp = mcp::service(&deps, address);
     let service = deps.mcp.clone().expect("mcp service");
 
     // The thread whose agent Claude plays: launched idle, as a provider session would see it.
@@ -75,11 +79,6 @@ async fn run(state_dir: &Path, project: &Path, config_out: &Path) {
         .await
         .expect("launch the agent thread");
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind");
-    let address = listener.local_addr().expect("local address");
-    service.set_listen_address(address);
     let entry = service.issue_thread_credential(ThreadCredentialRequest {
         thread_id: thread_id.into(),
         provider_instance_id: "claudeAgent".into(),

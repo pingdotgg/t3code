@@ -32,6 +32,8 @@ use crate::sidebar::tree::SidebarTree;
 use crate::theme::{apply_kit_theme, hsla};
 use gpui_kit::prelude::FluentBuilder as _;
 
+mod child_approvals;
+mod linked;
 mod rail_workspaces;
 mod sidebar_keys;
 mod sidebar_more;
@@ -276,6 +278,12 @@ pub(crate) struct ConnApp {
     thread_menu: Option<ThreadMenuAnchor>,
     /// Open workspace menu (right-click on a rail tile).
     rail_menu: Option<crate::sidebar::rail::RailMenuAnchor>,
+    /// The workspace editor (`WorkspaceDialog`), open from the rail's `+` or a tile's `Edit…`.
+    workspace_editor: Option<Entity<crate::workspace_editor::WorkspaceEditor>>,
+    /// The workspace the editor edits; none while it creates one.
+    workspace_editor_target: Option<String>,
+    /// Each workspace's badge image, decoded once from its data URL.
+    workspace_images: HashMap<String, (String, Option<std::sync::Arc<gpui_kit::Image>>)>,
     /// A workspace tile held in the rail, and where the tiles were painted.
     rail_gesture: crate::sidebar::rail::RailGesture,
     /// Bumped to cancel a pending `Copy` submenu hover-intent close.
@@ -301,6 +309,10 @@ pub(crate) struct ConnApp {
     orbit: crate::orbit_sync::OrbitSyncState,
     /// Thread id requested via `conn://thread/...` or control socket while switching servers.
     pending_open_thread: Option<String>,
+    /// Orbit environments listed beside the primary one (`app/linked.rs`).
+    linked: linked::LinkedEnvironments,
+    /// Child threads subscribed for their approvals (`app/child_approvals.rs`).
+    child_approvals: child_approvals::ChildApprovals,
     /// Live control socket server handle (dropped on app exit).
     _control_server: Option<conn_desktop::control::ControlServerHandle>,
     /// Background task draining `conn://` URLs and Unix control socket requests.
@@ -344,6 +356,15 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let mut layout = LayoutState::default();
+        // The widths the user dragged the panels to last time (`useResizableWidth`).
+        let sidebar_state = sidebar_more::SidebarState::load();
+        let (saved_sidebar_width, saved_panel_width) = sidebar_state.saved_widths();
+        if let Some(width) = saved_sidebar_width {
+            layout.set_sidebar_width(width);
+        }
+        if let Some(width) = saved_panel_width {
+            layout.set_right_panel_width(width);
+        }
         let env_pinned_server = crate::live::server_config_from_env().is_some();
         let server_url = server.as_ref().map(|s| s.config.http_base_url.to_string());
         let server_label = server.as_ref().and_then(|s| s.label.clone());
@@ -422,6 +443,13 @@ impl ConnApp {
                 crate::chat::ChatEvent::Approval { entry_id, decision } => {
                     app.respond_approval(entry_id, decision, cx);
                 }
+                crate::chat::ChatEvent::ChildApproval {
+                    thread_id,
+                    request_id,
+                    decision,
+                } => {
+                    app.respond_child_approval(thread_id, request_id, decision, cx);
+                }
                 crate::chat::ChatEvent::ModelSelected {
                     instance_id,
                     model,
@@ -445,7 +473,13 @@ impl ConnApp {
                     app.fork_selected_from_run(run_id, cx);
                 }
                 crate::chat::ChatEvent::OpenFile(path) => {
-                    app.select_right_panel_surface(PanelSurface::File(path.clone()), cx);
+                    // A chat link may end in `:line`; the file opens at that line.
+                    let (file, line) = crate::panels::file_path::split_line_suffix(path);
+                    app.select_right_panel_surface(PanelSurface::File(file.to_owned()), cx);
+                    if let Some(line) = line {
+                        app.right_panel
+                            .update(cx, |panel, cx| panel.reveal_line(line, cx));
+                    }
                 }
                 crate::chat::ChatEvent::RuntimeModeSelected(mode) => {
                     app.set_runtime_mode(mode, cx);
@@ -505,14 +539,19 @@ impl ConnApp {
             panel.set_embedded(true, cx);
             panel
         });
-        cx.subscribe(
+        cx.subscribe_in(
             &right_panel,
-            |app, _, event: &crate::panels::RightPanelEvent, cx| match event {
+            window,
+            |app, _, event: &crate::panels::RightPanelEvent, window, cx| match event {
                 crate::panels::RightPanelEvent::OpenFile(path) => {
                     app.select_right_panel_surface(PanelSurface::File(path.clone()), cx);
                 }
                 crate::panels::RightPanelEvent::OpenTab(tab) => {
                     app.select_right_panel_tab(*tab, cx);
+                }
+                crate::panels::RightPanelEvent::InsertMention(mention) => {
+                    app.chat
+                        .update(cx, |chat, cx| chat.insert_mention(mention, window, cx));
                 }
                 crate::panels::RightPanelEvent::SendPrompt(prompt) => {
                     app.send_prompt(prompt.clone(), cx);
@@ -567,8 +606,8 @@ impl ConnApp {
             geometry: ShellGeometry::default(),
             shell,
             layout,
-            active_workspace: None,
-            sidebar: sidebar_more::SidebarState::load(),
+            active_workspace: rail_workspaces::saved_active_workspace(&orbit.workspaces),
+            sidebar: sidebar_state,
             focus_handle: cx.focus_handle(),
             theme_id,
             connection,
@@ -622,6 +661,9 @@ impl ConnApp {
             rename_in_header: false,
             thread_menu: None,
             rail_menu: None,
+            workspace_editor: None,
+            workspace_editor_target: None,
+            workspace_images: HashMap::new(),
             rail_gesture: crate::sidebar::rail::RailGesture::default(),
             thread_menu_copy_close_gen: 0,
             header_menu_generation: 0,
@@ -635,6 +677,8 @@ impl ConnApp {
             connection_gen: 1,
             orbit,
             pending_open_thread: None,
+            linked: linked::LinkedEnvironments::load(),
+            child_approvals: child_approvals::ChildApprovals::default(),
             _control_server: None,
             _activation_task: None,
             subscribed_thread_id: None,
@@ -842,6 +886,15 @@ impl ConnApp {
                 } => {
                     app.wake_orbit_instance(*instance_id, server_id.clone(), cx);
                 }
+                SettingsEvent::LinkedEnvironmentEnabled {
+                    environment_id,
+                    enabled,
+                } => {
+                    app.set_linked_environment_enabled(environment_id, *enabled, cx);
+                }
+                SettingsEvent::LinkInstance { server_id, linked } => {
+                    app.set_linked_instance(server_id, *linked, cx);
+                }
                 SettingsEvent::OrbitToggleSyncWorkspaces(enabled) => {
                     app.orbit.snapshot.prefs.sync_workspaces = *enabled;
                     app.orbit.persist_snapshot();
@@ -886,10 +939,18 @@ impl ConnApp {
 
     /// A full-height seam with a `16px` (`w-4`) drag handle over it (Conn's `SidebarRail`):
     /// a `1px` stripe lights on hover, dragging resizes, and double-click resets the width.
-    fn render_seam(&self, right_panel: bool, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render_seam(
+        &self,
+        right_panel: bool,
+        viewport_w: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
         use crate::panels::chrome::ConnTooltipExt as _;
-        use gpui_kit::{CursorStyle, MouseButton, MouseDownEvent};
+        use gpui_kit::{CursorStyle, MouseButton, MouseDownEvent, TestSupportExt as _};
         let stripe = hsla(self.tokens.sidebar_border);
+        // The panel as drawn, which may be narrower than the width kept for it: the drag starts
+        // from what the user sees.
+        let panel_width_now = self.right_panel_effective_width(viewport_w);
         let dragging = matches!(
             (self.seam_drag, right_panel),
             (Some(SeamDrag::RightPanel { .. }), true) | (Some(SeamDrag::Sidebar { .. }), false)
@@ -900,6 +961,19 @@ impl ConnApp {
             } else {
                 "seam-sidebar"
             })
+            .test_support()
+            .a11y_button(
+                if right_panel {
+                    "shell.seam.right-panel"
+                } else {
+                    "shell.seam.sidebar"
+                },
+                if right_panel {
+                    "Resize panel"
+                } else {
+                    "Resize sidebar"
+                },
+            )
             .absolute()
             .top_0()
             .bottom_0()
@@ -930,18 +1004,22 @@ impl ConnApp {
                     cx.stop_propagation();
                     let x = f32::from(event.position.x);
                     if event.click_count >= 2 {
+                        // `resetSidebarWidth`: back to the default, which is then not kept.
+                        let (kept_sidebar, kept_panel) = app.sidebar.saved_widths();
                         if right_panel {
                             app.layout
                                 .set_right_panel_width(conn_state::RIGHT_PANEL_DEFAULT_WIDTH);
+                            app.sidebar.remember_widths(kept_sidebar, None);
                         } else {
                             app.layout
                                 .set_sidebar_width(conn_state::SIDEBAR_DEFAULT_WIDTH);
+                            app.sidebar.remember_widths(None, kept_panel);
                         }
                         app.seam_drag = None;
                     } else if right_panel {
                         app.seam_drag = Some(SeamDrag::RightPanel {
                             from_x: x,
-                            start: app.layout.right_panel_width,
+                            start: panel_width_now,
                         });
                     } else {
                         app.seam_drag = Some(SeamDrag::Sidebar {
@@ -967,6 +1045,7 @@ impl ConnApp {
         self.layout.right_panel_open
             && self.command_palette.is_none()
             && self.settings_modal.is_none()
+            && self.workspace_editor.is_none()
     }
 
     fn sync_browser_visibility(&self, cx: &mut Context<'_, Self>) {
@@ -977,6 +1056,8 @@ impl ConnApp {
 
     /// Pushes the selected thread's timeline (or active draft state) into the chat view and right panel.
     fn sync_chat(&mut self, cx: &mut Context<'_, Self>) {
+        self.sync_chat_environment(cx);
+        let child_approvals = self.sync_child_approvals();
         let selected = self.layout.selected_thread_id.as_deref();
         let shell_thread = selected.and_then(|id| self.shell.find_thread(id));
         let draft_view = self.draft.as_ref().map(|draft| {
@@ -1006,7 +1087,7 @@ impl ConnApp {
                     &draft.project_id,
                     project.map(|p| p.workspace_root.as_str()),
                 ),
-                scratch_available: self.scratch_workspace_root.is_some(),
+                scratch_available: self.scratch_root_for_project(&draft.project_id).is_some(),
             }
         });
         let title = if self.draft.is_some() {
@@ -1038,7 +1119,9 @@ impl ConnApp {
         let surface = self.right_panel_surface();
         let surface_visible = self.right_panel_surface_visible();
         let panel_root = root.clone();
+        let environment_id = self.environment_id();
         self.right_panel.update(cx, |panel, cx| {
+            panel.set_environment(environment_id, cx);
             panel.set_context(project_id.clone(), panel_root, thread_id, shell_thread, cx);
             panel.set_surface(&surface, cx);
             panel.set_surface_visible(surface_visible, cx);
@@ -1067,10 +1150,11 @@ impl ConnApp {
             let model_instance = shell_thread.map(|t| t.provider_instance_id.clone());
             let model_options = shell_thread
                 .map(|t| conn_contract::to_json(&t.model_selection))
+                // `options` is `[{ id, value }]` on the wire; reading it as an object found nothing
+                // and the picker showed the catalog default effort (Nick, #333).
                 .and_then(|v| {
                     v.get("options")
-                        .and_then(serde_json::Value::as_object)
-                        .cloned()
+                        .and_then(conn_state::providers::model_options_from_json)
                 });
             let branch = shell_thread.and_then(|t| t.branch.clone());
             let worktree_active = shell_thread.is_some_and(|t| t.worktree_path.is_some());
@@ -1110,6 +1194,7 @@ impl ConnApp {
             chat.set_project_id(project_id.clone(), cx);
             chat.set_workspace_root(root, cx);
             chat.set_thread(thread, title, cx);
+            chat.set_child_approvals(child_approvals, cx);
             chat.set_branch_context(branch_context, cx);
             chat.set_thread_context(branch, worktree_active, runtime_mode, interaction_mode, cx);
             if let Some(model) = model {
@@ -1206,6 +1291,7 @@ impl ConnApp {
             }
             ClientEvent::Shell(item) => {
                 let change = self.shell.apply(item);
+                self.remerge_linked_shells();
                 self.release_settled_drop();
                 if change.snapshot_required || !change.threads_changed.is_empty() {
                     self.drive_older_pages(cx);
@@ -1298,6 +1384,7 @@ impl ConnApp {
         event: conn_contract::ServerConfigStreamEvent,
         cx: &mut Context<'_, Self>,
     ) {
+        self.record_primary_machine(&event);
         let change = std::sync::Arc::make_mut(&mut self.server_config).apply(event);
         if change.config_changed {
             let root = self
@@ -1316,13 +1403,16 @@ impl ConnApp {
 
     /// Gives the chat and an open Settings window the current server config.
     fn push_server_config(&mut self, cx: &mut Context<'_, Self>) {
-        let config = std::sync::Arc::clone(&self.server_config);
+        // The composer and the right panel offer the catalog of the open thread's environment;
+        // Settings stays on the connected one.
+        let config = self.active_server_config();
         self.chat.update(cx, |chat, cx| {
             chat.set_server_config(std::sync::Arc::clone(&config), cx)
         });
         self.right_panel.update(cx, |panel, cx| {
             panel.set_server_config(std::sync::Arc::clone(&config), cx)
         });
+        let primary_config = std::sync::Arc::clone(&self.server_config);
         if let Some(modal) = &self.settings_modal {
             let shells = self
                 .shell
@@ -1333,7 +1423,7 @@ impl ConnApp {
                 .collect();
             modal.update(cx, |modal, cx| {
                 modal.set_project_shells(shells, cx);
-                modal.set_server_config(config, cx);
+                modal.set_server_config(primary_config, cx);
             });
         }
         cx.notify();
@@ -1355,9 +1445,6 @@ impl ConnApp {
 
     /// Resubscribes ended thread streams whose thread the shell now lists.
     fn resubscribe_ended_threads(&mut self) {
-        let Some(connection) = &self.connection else {
-            return;
-        };
         let ready: Vec<String> = self
             .ended_threads
             .iter()
@@ -1365,6 +1452,9 @@ impl ConnApp {
             .cloned()
             .collect();
         for id in ready {
+            let Some(connection) = self.connection_for_thread(&id) else {
+                continue;
+            };
             self.ended_threads.remove(&id);
             connection.subscribe_thread(&id);
         }
@@ -1381,17 +1471,10 @@ impl ConnApp {
             self.perf_open = Some((thread_id.clone(), std::time::Instant::now()));
             self.perf_open_pending_chat = true;
         }
-        if let Some(connection) = &self.connection
+        if self.connection.is_some()
             && self.subscribed_thread_id.as_deref() != Some(thread_id.as_str())
         {
-            if let Some(prev) = self.subscribed_thread_id.take() {
-                connection.unsubscribe_thread(&prev);
-            }
-            self.threads
-                .entry(thread_id.clone())
-                .or_insert_with(|| ThreadState::new(thread_id.clone()));
-            connection.subscribe_thread(&thread_id);
-            self.subscribed_thread_id = Some(thread_id.clone());
+            self.subscribe_open_thread(&thread_id);
         }
         self.layout.selected_thread_id = Some(thread_id);
     }
@@ -1399,7 +1482,7 @@ impl ConnApp {
     /// Fetches the next older history page for the currently selected bounded thread and prepends
     /// its entries into [`ThreadState`] without losing the user's scroll position.
     fn load_earlier_history(&mut self, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.context_connection() else {
             self.sync_chat(cx);
             return;
         };
@@ -1570,8 +1653,7 @@ impl ConnApp {
                 .map(str::to_owned);
             let opts = val
                 .get("options")
-                .and_then(serde_json::Value::as_object)
-                .cloned();
+                .and_then(conn_state::providers::model_options_from_json);
             (instance, slug, opts)
         } else if let Some((inst, slug, opts)) = self.chat.read(cx).current_model_selection(cx) {
             (Some(inst), Some(slug), opts)
@@ -1625,11 +1707,7 @@ impl ConnApp {
         window: Option<&mut Window>,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(connection) = &self.connection
-            && let Some(prev) = self.subscribed_thread_id.take()
-        {
-            connection.unsubscribe_thread(&prev);
-        }
+        self.unsubscribe_open_thread();
         self.layout.selected_project_id = Some(session.project_id.clone());
         self.layout.selected_thread_id = None;
         let frozen = self.sidebar_row_of_opening_draft(&session, cx);
@@ -2182,7 +2260,7 @@ impl ConnApp {
             self.apply_thread_branch(Some(entry.name), target.next_worktree_path, cx);
             return;
         }
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.context_connection() else {
             return;
         };
         let fallback = if entry.is_remote {
@@ -2217,7 +2295,7 @@ impl ConnApp {
 
     fn create_branch_ref(&mut self, name: String, cx: &mut Context<'_, Self>) {
         let (Some(connection), Some((project_cwd, worktree_path, _))) =
-            (self.connection.clone(), self.branch_cwds())
+            (self.context_connection(), self.branch_cwds())
         else {
             return;
         };
@@ -2260,7 +2338,7 @@ impl ConnApp {
             return;
         }
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -2290,8 +2368,8 @@ impl ConnApp {
             return true;
         }
         let trim = |path: &str| path.trim_end_matches('/').to_owned();
-        match (self.scratch_workspace_root.as_deref(), workspace_root) {
-            (Some(scratch), Some(root)) => trim(scratch) == trim(root),
+        match (self.scratch_root_for_project(project_id), workspace_root) {
+            (Some(scratch), Some(root)) => trim(&scratch) == trim(root),
             _ => false,
         }
     }
@@ -2349,7 +2427,7 @@ impl ConnApp {
         window: Option<&mut Window>,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.context_connection() else {
             self.chat.update(cx, |chat, cx| {
                 chat.set_error(
                     Some(
@@ -2388,7 +2466,7 @@ impl ConnApp {
             {
                 obj.insert(
                     "options".to_owned(),
-                    serde_json::Value::Object(opts.clone()),
+                    conn_state::providers::model_options_to_json(opts),
                 );
             }
             Some(serde_json::Value::Object(obj))
@@ -2399,7 +2477,10 @@ impl ConnApp {
             if let Some(opts) = opts
                 && !opts.is_empty()
             {
-                obj.insert("options".to_owned(), serde_json::Value::Object(opts));
+                obj.insert(
+                    "options".to_owned(),
+                    conn_state::providers::model_options_to_json(&opts),
+                );
             }
             Some(serde_json::Value::Object(obj))
         } else {
@@ -2578,7 +2659,7 @@ impl ConnApp {
             return;
         }
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -2684,7 +2765,7 @@ impl ConnApp {
     ) {
         let send_window = Some(window.window_handle());
         let (Some(connection), Some(thread_id), None) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
             self.draft.as_ref(),
         ) else {
@@ -2893,7 +2974,7 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -2931,7 +3012,7 @@ impl ConnApp {
     /// (Conn `onForkFromRun` -> `forkThreadFromRun`).
     pub(crate) fn fork_selected_from_run(&mut self, run_id: &str, cx: &mut Context<'_, Self>) {
         let (Some(connection), Some(source_thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -2980,7 +3061,7 @@ impl ConnApp {
             return;
         }
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -3004,7 +3085,7 @@ impl ConnApp {
     /// Stops the selected thread's running turn.
     pub(crate) fn stop_selected(&mut self, cx: &mut Context<'_, Self>) {
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -3023,7 +3104,7 @@ impl ConnApp {
     /// Promotes a queued message to steer the active turn, or starts it immediately when stopped.
     pub(crate) fn promote_queued_message(&mut self, run_id: &str, cx: &mut Context<'_, Self>) {
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -3069,7 +3150,7 @@ impl ConnApp {
     /// Removes a queued message from the selected thread's queue (`queued-run.cancel`).
     pub(crate) fn cancel_queued_message(&mut self, run_id: &str, cx: &mut Context<'_, Self>) {
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -3108,7 +3189,7 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         let (Some(connection), Some(thread_id)) = (
-            self.connection.clone(),
+            self.context_connection(),
             self.layout.selected_thread_id.clone(),
         ) else {
             return;
@@ -3482,6 +3563,7 @@ impl ConnApp {
             )
         {
             self.active_workspace = None;
+            rail_workspaces::save_active_workspace(None);
         }
         self.reveal_open_row = true;
         // Always reveal the chat column when selecting a thread in the sidebar.
@@ -3697,6 +3779,18 @@ impl ConnApp {
         cx.notify();
     }
 
+    /// The widths kept for the next launch: the thread sidebar's and the right panel's.
+    #[cfg(test)]
+    pub(crate) fn saved_panel_widths_for_test(&self) -> (Option<f32>, Option<f32>) {
+        self.sidebar.saved_widths()
+    }
+
+    /// The right panel's width as drawn in a window `viewport_w` wide.
+    #[cfg(test)]
+    pub(crate) fn right_panel_effective_width_for_test(&self, viewport_w: f32) -> f32 {
+        self.right_panel_effective_width(viewport_w)
+    }
+
     #[cfg(test)]
     pub(crate) fn dismiss_shell_popovers_for_test(&mut self, cx: &mut Context<'_, Self>) {
         self.dismiss_shell_popovers(cx);
@@ -3737,6 +3831,7 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         self.active_workspace = workspace_id;
+        rail_workspaces::save_active_workspace(self.active_workspace.as_deref());
         // A selection made under one scope can hold threads the next scope hides.
         self.thread_selection.clear();
         self.sidebar_filter_menu_open = false;
@@ -4052,7 +4147,7 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
         done: impl FnOnce(&mut Self, bool, &mut Context<'_, Self>) + 'static,
     ) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connection_for_thread(&thread_id) else {
             done(self, false, cx);
             return;
         };
@@ -4148,15 +4243,15 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
         done: impl FnOnce(&mut Self, &mut Context<'_, Self>) + 'static,
     ) {
-        let Some(connection) = self.connection.clone() else {
-            return;
-        };
         let cmd = match cmd {
             Ok(cmd) => cmd,
             Err(e) => {
                 eprintln!("{what}: could not build command: {e}");
                 return;
             }
+        };
+        let Some(connection) = self.connection_for_command(&cmd) else {
+            return;
         };
         cx.spawn(
             async move |this, cx| match connection.dispatch_command(cmd).await {
@@ -4534,10 +4629,9 @@ impl ConnApp {
         self._sidebar_clock = Some(task);
     }
 
-    /// Applies one pointer move of a seam drag, keeping the chat column at least `640px`
-    /// (`THREAD_MAIN_CONTENT_MIN_WIDTH`).
+    /// Applies one pointer move of a seam drag: the width follows the pointer between its
+    /// minimum and what the window leaves (`LayoutState::drag_sidebar_width`).
     fn apply_seam_drag(&mut self, drag: SeamDrag, x: f32, y: f32, viewport: (f32, f32)) {
-        const CHAT_MIN_WIDTH_PX: f32 = 640.0;
         let (viewport_w, viewport_h) = viewport;
         let rail = crate::shell::WORKSPACE_RAIL_WIDTH_PX;
         match drag {
@@ -4546,28 +4640,44 @@ impl ConnApp {
                     clamp_terminal_drawer_height(start + (from_y - y), viewport_h);
             }
             SeamDrag::Sidebar { from_x, start } => {
-                let right = if self.layout.right_panel_open {
-                    self.layout.right_panel_width
-                } else {
-                    0.0
-                };
-                let max = (viewport_w - rail - right - CHAT_MIN_WIDTH_PX)
-                    .max(conn_state::SIDEBAR_MIN_WIDTH);
                 self.layout
-                    .set_sidebar_width((start + (x - from_x)).min(max));
+                    .drag_sidebar_width(start + (x - from_x), viewport_w, rail);
             }
             SeamDrag::RightPanel { from_x, start } => {
-                let left = if self.layout.sidebar_open {
-                    rail + self.layout.sidebar_width
-                } else {
-                    0.0
-                };
-                let max =
-                    (viewport_w - left - CHAT_MIN_WIDTH_PX).max(conn_state::RIGHT_PANEL_MIN_WIDTH);
                 self.layout
-                    .set_right_panel_width((start - (x - from_x)).min(max));
+                    .drag_right_panel_width(start - (x - from_x), viewport_w, rail);
             }
         }
+    }
+
+    /// The right panel's width as drawn: the width kept for it, held to what the window and the
+    /// sidebar leave (`getPreviewPanelMaxWidth`).
+    fn right_panel_effective_width(&self, viewport_w: f32) -> f32 {
+        let left = if self.layout.sidebar_open {
+            crate::shell::WORKSPACE_RAIL_WIDTH_PX + self.layout.sidebar_width
+        } else {
+            0.0
+        };
+        self.layout
+            .right_panel_width
+            .min(conn_state::right_panel_max_width(viewport_w, left))
+            .max(conn_state::RIGHT_PANEL_MIN_WIDTH)
+    }
+
+    /// Keeps the width a finished seam drag ended on, when it moved (`finish` in
+    /// `useResizableWidth`).
+    fn remember_seam_width(&mut self, drag: SeamDrag) {
+        let (mut sidebar, mut panel) = self.sidebar.saved_widths();
+        match drag {
+            SeamDrag::Sidebar { start, .. } if self.layout.sidebar_width != start => {
+                sidebar = Some(self.layout.sidebar_width);
+            }
+            SeamDrag::RightPanel { start, .. } if self.layout.right_panel_width != start => {
+                panel = Some(self.layout.right_panel_width);
+            }
+            _ => return,
+        }
+        self.sidebar.remember_widths(sidebar, panel);
     }
 
     /// Toggles the top-right Thread Details card and loads its data when it opens.
@@ -4605,7 +4715,7 @@ impl ConnApp {
             self.thread_details.previous_agents_expanded = false;
         }
         self.thread_details.loaded_for = Some(thread_id.clone());
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.context_connection() else {
             return;
         };
         if let Some(cwd) = cwd {
@@ -4743,7 +4853,7 @@ impl ConnApp {
         else {
             return;
         };
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.context_connection() else {
             return;
         };
         self.thread_details.git_init_pending = true;
@@ -4893,7 +5003,7 @@ impl ConnApp {
             cx.notify();
             return;
         }
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connection_for_thread(&thread_id) else {
             cx.notify();
             return;
         };
@@ -5074,8 +5184,7 @@ impl ConnApp {
                 .and_then(|id| self.shell.find_thread(id))
         {
             let environment_label = self
-                .server_label
-                .clone()
+                .hover_environment_label(self.layout.selected_thread_id.as_deref())
                 .unwrap_or_else(|| "Local".to_owned());
             let card = render_thread_details_card(
                 &DetailsCardProps {
@@ -5212,7 +5321,11 @@ impl ConnApp {
         false
     }
 
-    fn render_right_panel_column(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render_right_panel_column(
+        &self,
+        viewport_w: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
         use crate::panels::header::{PanelHeaderCallbacks, PanelHeaderProps, render_panel_header};
         use std::rc::Rc;
         let app = cx.entity();
@@ -5326,7 +5439,9 @@ impl ConnApp {
         let column = if self.right_panel_maximized {
             column.flex_1().min_w_0()
         } else {
-            column.w(px(self.layout.right_panel_width)).flex_shrink_0()
+            column
+                .w(px(self.right_panel_effective_width(viewport_w)))
+                .flex_shrink_0()
         };
         column.child(header).child(card)
     }
@@ -5823,6 +5938,7 @@ impl ConnApp {
             if let Ok(Ok(fleet)) = task.await {
                 let _ = this.update(cx, |app, cx| {
                     app.orbit.fleet = fleet;
+                    app.sync_linked_environments(cx);
                     app.refresh_settings_orbit_info(cx);
                     cx.notify();
                 });
@@ -5885,6 +6001,7 @@ impl ConnApp {
                 let effects =
                     self.orbit
                         .apply_fetch(result, self.tokens.appearance, allow_theme_adopt);
+                self.sync_linked_environments(cx);
                 if let Some(reduce) = effects.reduce_transparency {
                     self.apply_reduce_transparency_choice(reduce, false, cx);
                 }
@@ -6046,11 +6163,13 @@ impl ConnApp {
         self.orbit.connecting_server_id = orbit_server_id.clone();
         self.orbit.notice = None;
 
+        self.reset_linked_environments();
         self.shell = ShellState::default();
         self.server_config = std::sync::Arc::default();
         self.threads.clear();
         self.ended_threads.clear();
         self.subscribed_thread_id = None;
+        self.reset_child_approvals();
         self.subscribed_annotation_project = None;
         self.annotations.clear();
         self.annotation_last_sent.clear();
@@ -6074,6 +6193,7 @@ impl ConnApp {
         self.right_panel
             .update(cx, |panel, cx| panel.set_connection(Some(connection), cx));
         self.sync_chat(cx);
+        self.sync_linked_environments(cx);
         self.refresh_settings_orbit_info(cx);
         cx.notify();
     }
@@ -6435,7 +6555,9 @@ impl ConnApp {
             };
             let live_connection = self.connection.clone();
             let projects = self.scheduled_task_projects();
-            let info = self.orbit.settings_info(self.server_url.as_deref());
+            let mut info = self.orbit.settings_info(self.server_url.as_deref());
+            info.linked_environments = self.linked_settings_rows();
+            info.linked_instance_ids = self.linked_instance_ids();
             let custom = self.orbit.custom_themes.clone();
             modal.update(cx, |m, cx| {
                 m.set_orbit_state(connection, live_connection, projects, info, &custom, cx);
@@ -6602,6 +6724,9 @@ impl ConnApp {
         if let Some(palette) = &self.command_palette {
             palette.update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
         }
+        if let Some(editor) = &self.workspace_editor {
+            editor.update(cx, |e, cx| e.set_tokens(tokens.clone(), cx));
+        }
         self.tokens = tokens;
         cx.notify();
     }
@@ -6639,6 +6764,7 @@ pub(crate) fn start_frame_log(cx: &mut App) {
 
 impl Render for ConnApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        self.refresh_workspace_images();
         RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.sync_thread_menu_focus(window, cx);
         self.sync_undo_notice_focus(window, cx);
@@ -6815,11 +6941,14 @@ impl Render for ConnApp {
             .thread_hover
             .open_for()
             .filter(|_| !self.thread_hover_suppressed());
+        let hover_environment_label = self.hover_environment_label(hover_open_for);
+        let machine_icons = self.linked.machine_icons();
+        let scratch_projects = self.scratch_project_ids();
         if self.layout.sidebar_open {
             root = root
                 .child(render_workspace_rail(
-                    &self.shell,
                     &self.orbit.workspaces,
+                    &self.workspace_images,
                     self.active_workspace.as_deref(),
                     &self.tokens,
                     &self.geometry,
@@ -6878,7 +7007,11 @@ impl Render for ConnApp {
                     self.sidebar_filter_menu_open,
                     &ThreadHoverView {
                         open_for: hover_open_for,
-                        environment_label: self.server_label.as_deref(),
+                        environment_label: hover_environment_label.as_deref(),
+                        origins: Some(self.linked.origins()),
+                        machine_icons: &machine_icons,
+                        scratch_projects: &scratch_projects,
+                        primary_machine_icon: self.primary_machine_icon(),
                         rect: self.thread_hover.row_rect(),
                     },
                     &mut self.sidebar_tree,
@@ -6887,7 +7020,7 @@ impl Render for ConnApp {
                     window,
                     cx,
                 ))
-                .child(self.render_seam(false, cx));
+                .child(self.render_seam(false, viewport_w, cx));
         }
 
         let maximized = self.layout.right_panel_open && self.right_panel_maximized;
@@ -6897,9 +7030,9 @@ impl Render for ConnApp {
 
         if self.layout.right_panel_open {
             if !maximized {
-                root = root.child(self.render_seam(true, cx));
+                root = root.child(self.render_seam(true, viewport_w, cx));
             }
-            root = root.child(self.render_right_panel_column(cx));
+            root = root.child(self.render_right_panel_column(viewport_w, cx));
         }
 
         // A row held or swept (`SidebarPointerSensor`): window-level capture listeners follow the
@@ -6983,7 +7116,8 @@ impl Render for ConnApp {
                                     return;
                                 }
                                 let _ = up_entity.update(cx, |app, cx| {
-                                    if app.seam_drag.take().is_some() {
+                                    if let Some(drag) = app.seam_drag.take() {
+                                        app.remember_seam_width(drag);
                                         cx.notify();
                                     }
                                 });
@@ -7021,6 +7155,9 @@ impl Render for ConnApp {
 
         if let Some(modal) = &self.settings_modal {
             root = root.child(crate::settings::render_overlay(modal));
+        }
+        if let Some(editor) = &self.workspace_editor {
+            root = root.child(editor.clone());
         }
         if let Some(palette) = &self.command_palette {
             root = root.child(crate::palette::render_overlay(palette));

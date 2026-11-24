@@ -12,7 +12,7 @@ use gpui_kit::{
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
-use super::super::color::hsla;
+use super::super::color::{hsla, opaque};
 use super::super::icons;
 use super::Composer;
 
@@ -372,7 +372,8 @@ pub(super) fn render_command_menu(
     tokens: &Tokens,
     cx: &mut Context<'_, Composer>,
 ) -> AnyElement {
-    let glass_bg = hsla(tokens.shell_overlay);
+    // Opaque: no backdrop blur to hide the chat behind the glass (Nick, #332).
+    let glass_bg = opaque(tokens.shell_overlay);
     let glass_divider = hsla(tokens.glass_divider);
     let highlight_bg = hsla(tokens.shell_highlight);
     let fg = hsla(tokens.foreground);

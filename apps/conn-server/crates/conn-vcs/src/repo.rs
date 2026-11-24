@@ -473,6 +473,16 @@ async fn resolve_base_inner(
         }));
     }
 
+    // A plain recorded base such as `main` compares with the remote that local branch tracks,
+    // which need not be the primary remote.
+    if let Some(configured) = configured.as_deref()
+        && !configured.is_empty()
+        && configured != branch
+        && let Some(tracked) = tracked_remote_base(cwd, configured).await?
+    {
+        return Ok(Some(tracked));
+    }
+
     let loaded;
     let remotes = match remotes {
         Some(remotes) => remotes,
@@ -505,22 +515,8 @@ async fn resolve_base_inner(
             .map(str::to_owned)
             .unwrap_or(name);
         if name == branch {
-            if let Some(upstream) = optional_text(git(
-                "GitVcsDriver.upstreamRef",
-                cwd,
-                [
-                    "rev-parse".to_owned(),
-                    "--symbolic-full-name".into(),
-                    format!("{branch}@{{upstream}}"),
-                ],
-            ))
-            .await?
-                && let Some(short) = upstream.strip_prefix("refs/remotes/")
-            {
-                return Ok(Some(BaseRef {
-                    base_ref: short.to_owned(),
-                    comparison_ref: upstream.clone(),
-                }));
+            if let Some(tracked) = tracked_remote_base(cwd, branch).await? {
+                return Ok(Some(tracked));
             }
             if let Some(remote) = primary.as_deref() {
                 let full = format!("refs/remotes/{remote}/{name}");
@@ -550,6 +546,28 @@ async fn resolve_base_inner(
         }
     }
     Ok(None)
+}
+
+/// The remote-tracking ref `branch` tracks, as a full ref so a local branch or tag of the same
+/// short name cannot shadow it.
+async fn tracked_remote_base(cwd: &Path, branch: &str) -> VcsResult<Option<BaseRef>> {
+    let upstream = optional_text(git(
+        "GitVcsDriver.resolveTrackedRemoteBaseRef",
+        cwd,
+        [
+            "rev-parse".to_owned(),
+            "--symbolic-full-name".into(),
+            format!("{branch}@{{upstream}}"),
+        ],
+    ))
+    .await?;
+    Ok(upstream.and_then(|full| {
+        let short = full.strip_prefix("refs/remotes/")?.to_owned();
+        Some(BaseRef {
+            base_ref: short,
+            comparison_ref: full,
+        })
+    }))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

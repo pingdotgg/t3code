@@ -115,11 +115,17 @@ Where they differ, because the engine does not do it yet:
 - `conn_thread_wait` ends on `waiting` too, as Orbit's driver expects; no restart chains, since the
   engine ends a run on restart.
 - `conn_thread_update`: `rename` only.
-- `conn_thread_search` follows `searchThreads` (`ThreadSearch.ts`): title, branch and project hits
-  among the project's active listed threads, then message hits from the engine's index (one per
-  thread, outside the title hits), with a fifth of the slots kept for messages. Not ported:
-  T3's title scoring (`scoreThreadSearch`) and message ranking (`rankMessageMatches`,
-  `compareHits`). Ours orders titles by activity and takes each thread's newest message hit;
+- `conn_thread_search` follows `searchThreads` (`ThreadSearch.ts`): title hits among the
+  project's active listed threads, matched as `scoreThreadSearch` matches them. Every word must
+  sit in some field: the title (inside a word too, from four characters), a visible PR's number
+  or one of the newest three PR titles, the branch without the worktree prefix, or the project's
+  name. When no word is in the title, one field must explain the words left after the project's
+  name (`matchHint`), so "lakebed #7483" finds a thread of project Lakebed linked to #7483.
+  `owner/repo#N`, a PR URL and the thread id match by `matchReference`'s rule. The query folds
+  as `foldSearchQuery` (wrapping quotes, NFC, case and accents), and so do the fields. Then
+  message hits from the engine's index (one per thread, outside the title hits), with a fifth of
+  the slots kept for messages. Not ported: typos and joined words ("vscode" for "VS Code"),
+  T3's title scoring and message ranking (`rankMessageMatches`, `compareHits`). Ours orders titles by activity and takes each thread's newest message hit;
   T3 takes the best match, then the user's words. Parity compares titles and sources in order
   for three queries on one thread, so this gap is not covered there.
 - `conn_thread_organize`: the own agent's settle mid-turn waits in the background for the run

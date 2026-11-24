@@ -244,7 +244,14 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
     let e = with(&engine);
     table.unary(
         "orchestration.dispatchCommand",
-        move |_, command: Command| {
+        move |_, mut command: Command| {
+            // T3's `withCreationProvenance`: only the server stamps a link's origin or folds in
+            // a first message, so a client cannot.
+            if let Command::ThreadCreate(create) = &mut command {
+                create.link_origin = None;
+                create.delegated_from = None;
+                create.initial_message = None;
+            }
             let e = e.clone();
             async move { e.dispatch(command).await.map_err(failure) }
         },
@@ -295,6 +302,50 @@ mod tests {
     use crate::table::{CallContext, Handler};
     use conn_engine::{EngineConfig, ProjectConfig, SqliteEngine};
     use serde_json::json;
+
+    /// T3's `withCreationProvenance`: only the server folds a first message into a create, so a
+    /// client's `initialMessage` is dropped and cannot skip admission.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_client_create_drops_its_first_message() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-server-orch-init-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut config = EngineConfig::new(dir.join("engine.sqlite"));
+        config.projects = vec![ProjectConfig {
+            title: "P".into(),
+            workspace_root: "/tmp/p".into(),
+        }];
+        let fake = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));
+        let provider: Arc<dyn conn_provider::Provider> = fake.clone();
+        config.provider_set = Some(conn_provider::ProviderSet::from(vec![provider]));
+        let engine: Arc<dyn Engine> = Arc::new(SqliteEngine::open(config).unwrap());
+        let mut table = MethodTable::new();
+        register(
+            &mut table,
+            &Deps {
+                engine: Some(engine.clone()),
+                ..Deps::default()
+            },
+        );
+        let Some(Handler::Unary(dispatch)) = table.get("orchestration.dispatchCommand") else {
+            panic!()
+        };
+        let create = json!({
+            "type": "thread.create", "commandId": "c1", "threadId": "t1",
+            "projectId": SqliteEngine::project_id_for("/tmp/p"), "title": "T",
+            "modelSelection": {"instanceId": "claudeAgent", "model": "m"},
+            "runtimeMode": "full-access", "interactionMode": "default",
+            "branch": null, "worktreePath": null, "createdBy": "user", "creationSource": "web",
+            "initialMessage": {"messageId": "m1", "text": "hi", "attachments": []},
+        });
+        dispatch(CallContext::default(), create).await.unwrap();
+        let p = to_json(&engine.get_thread_projection("t1".into()).await.unwrap());
+        assert_eq!(p["messages"], json!([]), "{p}");
+        assert_eq!(p["runs"], json!([]), "{p}");
+        assert_eq!(fake.sessions.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn serves_the_engine_over_json() {

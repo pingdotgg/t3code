@@ -30,6 +30,8 @@ pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
 }
 
 #[cfg(test)]
+mod goal_tests;
+#[cfg(test)]
 mod live_tests;
 #[cfg(test)]
 mod replay_tests;

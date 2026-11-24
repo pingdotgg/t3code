@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 use rusqlite::params;
 use serde_json::{Value, json};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::store::{Store, StoreResult};
 use crate::time::millis_from_iso;
@@ -17,7 +18,10 @@ const NEWEST_SETTLED_KEPT: usize = 25;
 /// `searchThreads` scans at most this many newest messages, so one search cannot hold the
 /// database thread for long.
 const SEARCH_SCAN_LIMIT: i64 = 20_000;
-const SNIPPET_CHARS: usize = 240;
+/// `SNIPPET_LENGTH` in `ThreadSearch.ts`: a snippet's UTF-16 units, its ellipses included.
+const SNIPPET_LENGTH: usize = 240;
+/// `SNIPPET_LEAD`: the units a snippet may show before the match. A result row shows one line.
+const SNIPPET_LEAD: usize = 24;
 /// `MESSAGE_CANDIDATE_LIMIT` in `ThreadSearch.ts`: the newest index hits the filters may pass
 /// over, so a common word does not read every hit.
 const SEARCH_CANDIDATE_LIMIT: i64 = 10_000;
@@ -25,6 +29,8 @@ const SEARCH_CANDIDATE_LIMIT: i64 = 10_000;
 const SEARCH_HIT_LIMIT: i64 = 2_000;
 /// `MESSAGE_TOKEN_MIN_LENGTH` in `paletteSearch.ts`: a shorter Latin word is noise.
 const MESSAGE_TOKEN_MIN_LENGTH: usize = 3;
+/// `MESSAGE_WORD_START_LENGTH`: a shorter word must start a word, so "fts" does not find "drafts".
+const MESSAGE_WORD_START_LENGTH: usize = 4;
 
 /// The filters every search shares, after `hits(rowid)` names the candidate messages, newest
 /// first. `CROSS JOIN` keeps the hits first, so the planner never scans `entities` or
@@ -42,6 +48,7 @@ macro_rules! search_sql {
                                 'message', json(e.body))
              FROM hits h
              CROSS JOIN message_keys k ON k.id = h.rowid
+             CROSS JOIN message_search folded ON folded.rowid = h.rowid
              CROSS JOIN threads t ON t.id = k.thread_id
              CROSS JOIN entities e
                ON e.thread_id = k.thread_id AND e.kind = 'messages' AND e.id = k.message_id
@@ -54,7 +61,7 @@ macro_rules! search_sql {
                AND k.thread_id NOT IN (SELECT value FROM json_each(?7))
                AND NOT EXISTS (
                  SELECT 1 FROM json_each(?2) AS token
-                 WHERE instr(lower(COALESCE(json_extract(e.body, '$.text'), '')), token.value) = 0
+                 WHERE instr(folded.text, token.value) = 0
                )
              ORDER BY h.rowid DESC
              LIMIT ?5"
@@ -72,57 +79,190 @@ const SEARCH_INDEXED_SQL: &str = search_sql!(
 const SEARCH_SCAN_SQL: &str =
     search_sql!("SELECT id AS rowid FROM message_keys WHERE ?1 IS NULL ORDER BY id DESC LIMIT ?4");
 
-/// The SQL inputs of one message search (`buildMessageSearch` in `ThreadSearch.ts`).
+/// The SQL inputs of one message search (`buildMessageSearch` in `ThreadSearch.ts`), and the
+/// words its matcher checks in each hit (`messageMatcher` in `paletteSearch.ts`).
 struct MessageSearch {
     /// Quoted long words for FTS5 `MATCH`, or `None` when the index cannot serve them.
     fts_match: Option<String>,
-    /// Lowercase words each hit must contain as a substring.
+    /// Folded words each hit's folded text must contain as a substring.
     substrings: Vec<String>,
-    /// The word the snippet centres on.
-    needle: String,
+    /// Every word, long ones first.
+    tokens: Vec<MatchToken>,
+    /// Two or more words, as typed and lowercased, that a hit may hold side by side.
+    phrase: Option<Vec<String>>,
+    /// The same words with accents folded.
+    folded_phrase: Option<Vec<String>>,
+    /// Whether the query, as typed, has a character outside ASCII (`NON_ASCII`).
+    non_ascii: bool,
+}
+
+/// One query word as the matcher reads it.
+struct MatchToken {
+    /// The word lowercased, as `messageSearchTokens` gives it.
+    word: String,
+    /// The word folded as `foldInPlace` folds it, marks dropped, for the accent-blind pass.
+    folded: String,
+    non_ascii: bool,
+    /// Shorter than `MESSAGE_WORD_START_LENGTH`: it must start a word, so "fts" does not find
+    /// "drafts".
+    must_start_word: bool,
 }
 
 impl MessageSearch {
     /// `None` when the query has no word long enough to search (`messageSearchTokens`).
     fn new(query: &str) -> Option<Self> {
-        let quotes: &[char] = &[
-            '"', '\'', '`', '\u{201c}', '\u{201d}', '\u{2018}', '\u{2019}',
-        ];
-        let query = query
+        let lowered = query
             .trim()
-            .trim_matches(quotes)
-            .replace(['\u{2018}', '\u{2019}'], "'")
+            .trim_matches(crate::fold::WRAPPING_QUOTES)
+            .chars()
+            .map(crate::fold::straight)
+            .nfc()
+            .collect::<String>()
             .to_lowercase();
-        let (long, short): (Vec<&str>, Vec<&str>) = query
-            .split_whitespace()
-            .partition(|token| searchable(token));
-        let needle = (*long.first()?).to_owned();
+        // Each word with its index fold. A word the index folds away is not searched.
+        let words: Vec<(&str, String)> = lowered
+            .split(crate::fold::is_js_space)
+            .map(|word| (word, crate::fold::fold(word)))
+            .filter(|(_, folded)| !folded.is_empty())
+            .collect();
+        let (long, short): (Vec<_>, Vec<_>) = words
+            .iter()
+            .partition(|(word, _)| searchable(word.chars().count(), word));
+        if long.is_empty() {
+            return None;
+        }
         let indexed = long
             .iter()
-            .all(|token| token.chars().count() >= MESSAGE_TOKEN_MIN_LENGTH);
+            .all(|(word, _)| word.chars().count() >= MESSAGE_TOKEN_MIN_LENGTH);
         let fts_match = indexed.then(|| {
             long.iter()
-                .map(|token| format!("\"{}\"", token.replace('"', "\"\"")))
+                .map(|(_, token)| format!("\"{}\"", token.replace('"', "\"\"")))
                 .collect::<Vec<_>>()
                 .join(" ")
         });
         let mut substrings: Vec<String> = if indexed {
             vec![]
         } else {
-            long.iter().map(|t| (*t).to_owned()).collect()
+            long.iter().map(|(_, token)| token.clone()).collect()
         };
-        substrings.extend(short.iter().map(|t| (*t).to_owned()));
+        substrings.extend(short.iter().map(|(_, token)| token.clone()));
+        let without_marks = |word: &str| -> String {
+            crate::fold::fold_field(word)
+                .chars()
+                .filter(|&c| !unicode_normalization::char::is_combining_mark(c))
+                .collect()
+        };
+        let tokens = long
+            .iter()
+            .chain(&short)
+            .map(|(word, _)| MatchToken {
+                word: (*word).to_owned(),
+                folded: without_marks(word),
+                non_ascii: !word.is_ascii(),
+                must_start_word: word.chars().count() < MESSAGE_WORD_START_LENGTH,
+            })
+            .collect();
+        let phrase = |words: Vec<String>| (words.len() > 1).then_some(words);
         Some(Self {
             fts_match,
             substrings,
-            needle,
+            tokens,
+            phrase: phrase(words.iter().map(|(word, _)| (*word).to_owned()).collect()),
+            folded_phrase: phrase(
+                words
+                    .iter()
+                    .map(|(word, _)| without_marks(word))
+                    .filter(|word| !word.is_empty())
+                    .collect(),
+            ),
+            non_ascii: !query.is_ascii(),
         })
+    }
+
+    /// `messageMatcher`: where the snippet of a hit starts, in UTF-16 units, or `None` when a
+    /// word sits only inside a hex id, or a short word only inside words. Each word is looked
+    /// for lowercased, then with accents folded when that finds no whole word. The snippet
+    /// starts where the words sit side by side as typed, else at the shortest stretch that
+    /// holds one best place of every word.
+    fn accept(&self, text: &str) -> Option<usize> {
+        use crate::fold::{Folded, Placement, push_field};
+        let text_non_ascii = !text.is_ascii();
+        let plain =
+            Folded::message_lowercase(text).unwrap_or_else(|| Folded::message(text, push_field));
+        let mut folded: Option<Folded> = None;
+        let first_only = self.tokens.len() == 1;
+        let mut places: Vec<Vec<usize>> = Vec::with_capacity(self.tokens.len());
+        for token in &self.tokens {
+            let mut found = plain.find_token(&token.word, first_only);
+            let whole = matches!(found, Some((Placement::Whole, _)));
+            if !whole && !token.folded.is_empty() && (token.non_ascii || text_non_ascii) {
+                found = folded
+                    .get_or_insert_with(|| Folded::message(text, push_field))
+                    .find_token(&token.folded, first_only);
+            }
+            let (placement, at) = found?;
+            if placement == Placement::Inside && token.must_start_word {
+                return None;
+            }
+            places.push(at.into_iter().map(|i| plain.utf16_offset(i)).collect());
+        }
+        let mut together = self
+            .phrase
+            .as_ref()
+            .and_then(|words| plain.find_phrase(words));
+        if together.is_none()
+            && (self.non_ascii || text_non_ascii)
+            && let Some(words) = &self.folded_phrase
+        {
+            together = folded
+                .get_or_insert_with(|| Folded::message(text, push_field))
+                .find_phrase(words);
+        }
+        Some(together.map_or_else(|| shortest_span(&places), |at| plain.utf16_offset(at)))
     }
 }
 
+/// `shortestSpan` in `paletteSearch.ts`: where the shortest stretch of text starts that holds
+/// one place of each word, from each word's places in order, in UTF-16 units.
+fn shortest_span(places: &[Vec<usize>]) -> usize {
+    let mut hits: Vec<(usize, usize)> = places
+        .iter()
+        .enumerate()
+        .flat_map(|(word, at)| at.iter().map(move |&index| (index, word)))
+        .collect();
+    hits.sort_by_key(|&(index, _)| index);
+    let mut counts = vec![0_usize; places.len()];
+    let mut covered = 0;
+    let mut best = (hits.first().map_or(0, |&(index, _)| index), usize::MAX);
+    let mut left = 0;
+    for &(index, word) in &hits {
+        if let Some(count) = counts.get_mut(word) {
+            *count += 1;
+            if *count == 1 {
+                covered += 1;
+            }
+        }
+        while covered == places.len() {
+            let Some(&(first, first_word)) = hits.get(left) else {
+                break;
+            };
+            if index - first < best.1 {
+                best = (first, index - first);
+            }
+            if let Some(count) = counts.get_mut(first_word) {
+                *count -= 1;
+                if *count == 0 {
+                    covered -= 1;
+                }
+            }
+            left += 1;
+        }
+    }
+    best.0
+}
+
 /// Three characters or more, or two when one is a CJK word character.
-fn searchable(token: &str) -> bool {
-    let length = token.chars().count();
+fn searchable(length: usize, token: &str) -> bool {
     length >= MESSAGE_TOKEN_MIN_LENGTH || (length == 2 && token.chars().any(is_cjk_word))
 }
 
@@ -145,24 +285,57 @@ fn settled_millis(row: &Value) -> Option<i64> {
     row["settledAt"].as_str().and_then(millis_from_iso)
 }
 
+/// `OLDER_SETTLED_TITLE_ROWS` and `OLDER_SETTLED_MESSAGE_ROWS` in `ThreadSearch.ts`.
+const OLDER_SETTLED_TITLE_ROWS: usize = 15;
+const OLDER_SETTLED_MESSAGE_ROWS: usize = 5;
+
+/// `foldSearchQuery`, as far as a candidate filter needs: lowercase words, straight
+/// apostrophes, no wrapping quotes.
+fn fold_search_words(query: &str) -> Vec<String> {
+    let quotes: &[char] = &['"', '`', '\u{201c}', '\u{201d}'];
+    query
+        .trim()
+        .trim_matches(quotes)
+        .replace(['\u{2018}', '\u{2019}'], "'")
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Every word appears in the title, the branch or a pull request's number or title.
+fn title_matches(row: &Value, words: &[String]) -> bool {
+    let mut text = String::new();
+    for field in [&row["title"], &row["branch"]] {
+        text.push_str(field.as_str().unwrap_or_default());
+        text.push('\n');
+    }
+    for pull_request in row["pullRequests"].as_array().into_iter().flatten() {
+        if let Some(number) = pull_request["number"].as_u64() {
+            text.push_str(&format!("#{number}\n"));
+        }
+        text.push_str(pull_request["title"].as_str().unwrap_or_default());
+        text.push('\n');
+    }
+    let text = text.to_lowercase().replace(['\u{2018}', '\u{2019}'], "'");
+    words.iter().all(|word| text.contains(word.as_str()))
+}
+
 /// `isOlderSettledThreadShell`: listed, settled before `before`.
 fn older_settled(row: &Value, before: i64) -> bool {
     listed(row) && settled_millis(row).is_some_and(|at| at < before)
 }
 
 /// The settle time below which a thread is "older settled": the 25th newest settle time of
-/// listed threads, or `None` with fewer than 25.
+/// listed threads, the oldest with fewer (so none is older), or `None` when none is settled.
 fn older_settled_cut(rows: &[Value]) -> Option<i64> {
     let mut times: Vec<i64> = rows
         .iter()
         .filter(|row| listed(row))
         .filter_map(settled_millis)
         .collect();
-    if times.len() < NEWEST_SETTLED_KEPT {
-        return None;
-    }
     times.sort_unstable_by(|a, b| b.cmp(a));
-    Some(times[NEWEST_SETTLED_KEPT - 1])
+    times.get(NEWEST_SETTLED_KEPT - 1).or(times.last()).copied()
 }
 
 /// A live subagent row stays in a shell that omits idle subagents (`isLiveSubagentShell`).
@@ -196,12 +369,19 @@ impl Store {
             .filter(|r| r["lineage"]["relationshipToParent"] == "subagent")
             .map(|r| r["lineage"]["parentThreadId"].clone())
             .collect();
+        let remote_task_owners = self.remote_task_owners()?;
+        let owns_remote_task = |r: &Value| {
+            r["id"]
+                .as_str()
+                .is_some_and(|id| remote_task_owners.contains(id))
+        };
         let mut keep: Vec<Value> = rows.clone();
         if omit_idle {
             keep.retain(|r| {
                 r["lineage"]["relationshipToParent"] != "subagent"
                     || live_subagent(r)
                     || parent_of_subagent.contains(&r["id"])
+                    || owns_remote_task(r)
             });
         }
         if omit_older {
@@ -232,6 +412,7 @@ impl Store {
                         .is_some_and(|until| until > now)
                     || live_subagent(r)
                     || ancestors.contains(&r["id"])
+                    || owns_remote_task(r)
             });
             let counts: Vec<Value> = counts
                 .into_iter()
@@ -387,13 +568,95 @@ impl Store {
             .next())
     }
 
-    /// `searchThreads`: the newest message of each thread that holds every search word, newest
-    /// first, as `ThreadSearch.ts`. Titles are the client's to match.
+    /// `searchThreadsWithOlderSettledRows`: message matches, and with `olderSettledBefore` the
+    /// rows of the best older settled matches, which a shell that omits them does not hold.
     pub(crate) fn search_threads(&self, input: &Value) -> StoreResult<Value> {
+        let mut result = self.search_messages(input)?;
+        let Some(before) = input["olderSettledBefore"]
+            .as_str()
+            .and_then(millis_from_iso)
+        else {
+            return Ok(result);
+        };
+        let message_threads: Vec<String> = result["matches"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|m| m["threadId"].as_str().map(str::to_owned))
+            .collect();
+        let threads = self.older_settled_search(input, before, &message_threads)?;
+        result["snapshotSequence"] = json!(self.high_water());
+        result["threads"] = json!(threads);
+        Ok(result)
+    }
+
+    /// `searchOlderSettled`: up to 15 older settled threads whose title, branch or pull
+    /// request matches every query word, by recent use, then up to 5 of the message matches.
+    /// Rows only; the client ranks them with its own palette scorer.
+    fn older_settled_search(
+        &self,
+        input: &Value,
+        before: i64,
+        message_threads: &[String],
+    ) -> StoreResult<Vec<Value>> {
+        let projects: Option<Vec<&str>> = input["projectIds"]
+            .as_array()
+            .map(|ids| ids.iter().filter_map(Value::as_str).collect());
+        let words = fold_search_words(input["query"].as_str().unwrap_or_default());
+        let mut candidates: Vec<Value> = self
+            .shell_rows()?
+            .into_iter()
+            .filter(|row| row["archivedAt"].is_null() && older_settled(row, before))
+            .filter(|row| {
+                projects
+                    .as_ref()
+                    .is_none_or(|ids| ids.contains(&row["projectId"].as_str().unwrap_or("")))
+            })
+            .collect();
+        let recent_use = |row: &Value| -> i64 {
+            row["latestUserMessageAt"]
+                .as_str()
+                .or_else(|| row["createdAt"].as_str())
+                .and_then(millis_from_iso)
+                .unwrap_or(0)
+        };
+        let mut titled: Vec<Value> = candidates
+            .iter()
+            .filter(|row| !words.is_empty() && title_matches(row, &words))
+            .cloned()
+            .collect();
+        titled.sort_by_key(|row| std::cmp::Reverse(recent_use(row)));
+        titled.truncate(OLDER_SETTLED_TITLE_ROWS);
+        let mut seen: Vec<String> = Vec::new();
+        for id in message_threads {
+            if seen.len() >= OLDER_SETTLED_MESSAGE_ROWS {
+                break;
+            }
+            if seen.contains(id)
+                || titled.iter().any(|row| row["id"] == id.as_str())
+                || !candidates.iter().any(|row| row["id"] == id.as_str())
+            {
+                continue;
+            }
+            seen.push(id.clone());
+        }
+        candidates.retain(|row| seen.iter().any(|id| row["id"] == id.as_str()));
+        candidates.sort_by_key(|row| {
+            seen.iter()
+                .position(|id| row["id"] == id.as_str())
+                .unwrap_or(usize::MAX)
+        });
+        titled.extend(candidates);
+        Ok(titled)
+    }
+
+    /// `searchThreads`: the newest message of each thread that holds every search word, newest
+    /// first, as `ThreadSearch.ts`.
+    fn search_messages(&self, input: &Value) -> StoreResult<Value> {
         let limit = input["limit"].as_u64().unwrap_or(20).clamp(1, 50) as usize;
         let mut matches: Vec<Value> = Vec::new();
-        // Messages only: the client matches titles itself, and `titlesOnly` asks for no message
-        // search at all. A query with no long word searches no messages (`buildMessageSearch`).
+        // `titlesOnly` asks for no message search at all. A query with no long word searches no
+        // messages (`buildMessageSearch`).
         let Some(search) = (input["titlesOnly"] != true)
             .then(|| MessageSearch::new(input["query"].as_str().unwrap_or_default()))
             .flatten()
@@ -433,12 +696,15 @@ impl Store {
                 continue;
             }
             let message = &hit["message"];
-            let text = message["text"].as_str().unwrap_or_default();
+            let text = link_labels(message["text"].as_str().unwrap_or_default());
+            let Some(at) = search.accept(&text) else {
+                continue;
+            };
             matches.push(json!({
                 "threadId": thread_id,
                 "projectId": hit["projectId"],
                 "source": if message["role"] == "user" { "user" } else { "assistant" },
-                "snippet": snippet(text, &search.needle),
+                "snippet": snippet(&text, at),
                 "messageCreatedAt": message["createdAt"],
                 "messageId": message["id"],
             }));
@@ -553,46 +819,135 @@ fn count_occurrences(text: &str, needle: &str) -> u64 {
     text.to_lowercase().matches(needle).count() as u64
 }
 
-/// Up to 240 characters around the first match.
-///
-/// Lowercasing can make a character longer (`İ` becomes two characters), so the match is found
-/// in a lowercase copy that records, for each of its bytes, the original character it came from.
-fn snippet(text: &str, needle: &str) -> String {
-    let mut lower = String::with_capacity(text.len());
-    let mut origin: Vec<usize> = Vec::with_capacity(text.len());
-    for (index, c) in text.chars().enumerate() {
-        let before = lower.len();
-        lower.extend(c.to_lowercase());
-        origin.resize(origin.len() + (lower.len() - before), index);
+/// `buildSearchSnippet` in `ThreadSearch.ts`: up to 240 UTF-16 units of `text` from a few words
+/// before the match that starts `at` units in, emphasis and code marks dropped, whitespace
+/// collapsed, with ellipses where the text was cut. A lone surrogate, where T3 would leave one,
+/// reads as U+FFFD.
+fn snippet(text: &str, at: usize) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let is_space =
+        |unit: &u16| char::from_u32(u32::from(*unit)).is_some_and(crate::fold::is_js_space);
+    let is_low_surrogate = |unit: Option<&u16>| unit.is_some_and(|u| (0xdc00..=0xdfff).contains(u));
+    let at = at.min(units.len());
+    let mut start = at.saturating_sub(SNIPPET_LEAD);
+    if start > 0
+        && let Some(space) = units
+            .get(start..at)
+            .and_then(|lead| lead.iter().position(is_space))
+    {
+        start += space + 1;
     }
-    let at = lower
-        .find(needle)
-        .and_then(|byte| origin.get(byte).copied())
-        .unwrap_or(0);
-    let start = at.saturating_sub(SNIPPET_CHARS / 3);
-    text.chars()
-        .skip(start)
-        .take(SNIPPET_CHARS)
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    if is_low_surrogate(units.get(start)) {
+        start += 1;
+    }
+    let raw_end = units.len().min(start + SNIPPET_LENGTH * 2);
+    let raw = units.get(start..raw_end).unwrap_or_default();
+    // `/\*\*|`+/g` goes first, so whitespace on both sides of a mark collapses into one space
+    // (`/\s+/g`), and `trim` drops it at the ends.
+    let mut shown: Vec<u16> = Vec::with_capacity(raw.len());
+    let mut rest = raw.iter().peekable();
+    while let Some(&unit) = rest.next() {
+        match unit {
+            0x2a if rest.next_if_eq(&&0x2a).is_some() => {}
+            0x60 => while rest.next_if_eq(&&0x60).is_some() {},
+            _ if is_space(&unit) => {
+                if shown.last().is_some_and(|&last| last != 0x20) {
+                    shown.push(0x20);
+                }
+            }
+            _ => shown.push(unit),
+        }
+    }
+    if shown.last() == Some(&0x20) {
+        shown.pop();
+    }
+    let mut end = shown.len().min(SNIPPET_LENGTH - 2);
+    if is_low_surrogate(shown.get(end)) {
+        end -= 1;
+    }
+    let cut = end < shown.len() || raw_end < units.len();
+    format!(
+        "{}{}{}",
+        if start > 0 { "…" } else { "" },
+        String::from_utf16_lossy(shown.get(..end).unwrap_or_default()),
+        if cut { "…" } else { "" }
+    )
+}
+
+/// `MARKDOWN_LINK` in `ThreadSearch.ts`: a thread shows a link (or image) as its label, so search
+/// reads `[label](address)` as `label`.
+fn link_labels(text: &str) -> std::borrow::Cow<'_, str> {
+    fn link_at(rest: &str) -> Option<(&str, usize)> {
+        let body = rest.strip_prefix('!').unwrap_or(rest).strip_prefix('[')?;
+        let close = body.find([']', '\n'])?;
+        let address = body[close..].strip_prefix("](")?;
+        let end = address.find(|c: char| c == ')' || c.is_whitespace())?;
+        address[end..].starts_with(')').then(|| {
+            let used = rest.len() - address.len() + end + 1;
+            (&body[..close], used)
+        })
+    }
+    if !text.contains("](") {
+        return text.into();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(next) = rest.find(['!', '[']) {
+        out.push_str(&rest[..next]);
+        rest = &rest[next..];
+        match link_at(rest) {
+            Some((label, used)) => {
+                out.push_str(label);
+                rest = &rest[used..];
+            }
+            None => {
+                out.push(rest.as_bytes()[0] as char);
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out.into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// `İ` (U+0130) lowercases to two characters, so a lowercase index is not an index into
-    /// the original text. Before the fix this panicked (`range start index 320 out of range`).
+    fn snip(text: &str, needle: &str) -> String {
+        let folded = crate::fold::Folded::new(text, crate::fold::push_indexed);
+        snippet(text, folded.find(needle).unwrap_or(0))
+    }
+
+    /// `buildSearchSnippet` in `ThreadSearch.ts`, each row's snippet from T3's own function: 24
+    /// UTF-16 units before the match, from the next word start, emphasis and code marks gone,
+    /// whitespace collapsed, ellipses where the text was cut. `İ` (U+0130) lowercases to two
+    /// characters, so a lowercase index is not an index into the original text: before the fix
+    /// that panicked (`range start index 320 out of range`).
     #[test]
     fn snippet_survives_lowercase_expansion() {
         let text = format!("{}abc tail", "İ".repeat(200));
-        let got = snippet(&text, "abc");
-        assert!(got.contains("abc tail"), "{got}");
-        assert!(got.starts_with('İ'), "{got}");
-        // The match sits 80 characters into the snippet, as for plain text.
-        assert_eq!(got.chars().position(|c| c == 'a'), Some(SNIPPET_CHARS / 3));
+        assert_eq!(snip(&text, "abc"), format!("…{}abc tail", "İ".repeat(24)));
+        let long = format!("needle {}", "word ".repeat(100));
+        let emoji = format!("x{}yneedle", "😀".repeat(30));
+        for (text, at, expected) in [
+            (
+                "alpha bravo charlie delta echo foxtrot golf needle hotel",
+                44,
+                "…echo foxtrot golf needle hotel".to_owned(),
+            ),
+            (
+                "intro **bold** and `code`\n\n  needle",
+                0,
+                "intro bold and code needle".to_owned(),
+            ),
+            ("a ** b *`c` ***d", 0, "a b *c *d".to_owned()),
+            (&long, 0, format!("needle {}w…", "word ".repeat(46))),
+            // The lead starts on the second half of an emoji: the snippet starts after it.
+            (&emoji, 62, format!("…{}yneedle", "😀".repeat(11))),
+        ] {
+            assert_eq!(snippet(text, at), expected, "{text}");
+        }
     }
 
     fn plan(sql: &str, fts: Option<&str>) -> Vec<String> {
@@ -672,12 +1027,49 @@ mod tests {
         assert_eq!(s.fts_match.as_deref(), Some("\"a\"\"bc\""));
     }
 
+    fn accept(query: &str, text: &str) -> Option<usize> {
+        MessageSearch::new(query).and_then(|search| search.accept(text))
+    }
+
+    /// `messageMatcher` gives the snippet's offset in UTF-16 units, as T3 does: an emoji is two.
+    /// Words written together as typed come before the shortest stretch that holds them.
+    #[test]
+    fn the_snippet_offset_counts_utf16_units_and_prefers_the_phrase() {
+        // By characters the emoji stretch is shorter (47 against 67); by UTF-16 units it is
+        // longer (87), so T3 shows the later pair.
+        let emoji = format!(
+            "alpha {} beta {} alpha {} beta",
+            "😀".repeat(40),
+            "z".repeat(225),
+            "x".repeat(60)
+        );
+        assert_eq!(accept("alpha beta", &emoji), Some(318));
+        let phrase = format!("bar foo {} foo bar", "y".repeat(100));
+        assert_eq!(accept("foo bar", &phrase), Some(109));
+        // The snippet reads the offset back in UTF-16 units.
+        let text = format!("{}needle tail", "😀".repeat(200));
+        assert_eq!(
+            snippet(&text, 400),
+            format!("…{}needle tail", "😀".repeat(12))
+        );
+    }
+
+    /// `messageMatcher` looks for the word as typed, lowercased, first, and folds accents only
+    /// when that finds no whole word: "cafe" shows the later "cafe", not "Café".
+    #[test]
+    fn the_exact_spelling_comes_before_the_folded_one() {
+        let text = format!("Café {} cafe", "z".repeat(300));
+        assert_eq!(accept("cafe", &text), Some(306));
+        assert_eq!(accept("café", &text), Some(0));
+        assert_eq!(accept("cafe", "Café ouvert"), Some(0));
+    }
+
     #[test]
     fn snippet_handles_every_expanding_position() {
         for before in 0..300 {
             let text = format!("{}needle{}", "İ".repeat(before), "İ".repeat(before));
-            assert!(snippet(&text, "needle").contains("needle"));
-            assert!(snippet(&text, "absent").chars().count() <= SNIPPET_CHARS);
+            assert!(snip(&text, "needle").contains("needle"));
+            assert!(snip(&text, "absent").chars().count() <= SNIPPET_LENGTH);
             assert_eq!(count_occurrences(&text, "needle"), 1);
         }
     }
