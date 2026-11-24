@@ -91,10 +91,10 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
 - Rendered Markdown loads remote images and media from the host its author
   names, so that host learns the reader's network address and when the content
   was shown. A page in a preview tab can likewise start a download, as it can
-  in a browser. It is a finding when the request carries a credential, names
-  the environment the content was rendered in, or is made where the product
-  says none is made. It is also a finding when the app does for the content
-  what the content could not do from where it runs (see 7 and 8).
+  in a browser. It is a finding when the request carries a credential or names
+  the environment it was rendered in, when it is made where the product says
+  none is made, or when the app does for the content what the content could
+  not do from where it runs (see 7 and 8).
 - A full-access agent can do whatever the user can. Prompt injection that stays
   within the agent's mode is the provider's concern; one that lets it act above
   that mode is in scope (see 3).
@@ -105,9 +105,9 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
 - A webhook URL is a credential for one task. Unless the task requires a
   signature, whoever holds the URL can start that task's run, and the request's
   content, within the route's limits, is theirs to choose. It is a finding when
-  a request starts a different task, runs without a required signature, or has
-  its values treated as anything but untrusted data. Tokens in or around the
-  request remain covered by 6.
+  a request starts a different task, runs without a signature the task
+  requires, or has its values treated as anything but untrusted data. Tokens in
+  or around the request remain covered by 6.
 - The machine owner's own configuration. Whoever sets a provider's launch
   arguments, an environment variable, a binary path, or the endpoint or file T3
   Code points at already holds the OS account, so a value weakening their own
