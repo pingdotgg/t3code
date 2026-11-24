@@ -1,6 +1,6 @@
 // Dev container for T3 Code. Mirrors CI (ubuntu-24.04, Node 26, Rust stable)
-// and the canonical setup in docs/operations/development.md: global `vp`, `vp i`.
-// Contributor doc: docs/internals/devcontainer.md
+// and the canonical setup in docs/operations/00_development.md: global `vp`, `vp i`.
+// Contributor doc: docs/operations/01_devcontainer.md
 {
   "name": "T3 Code",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
@@ -52,7 +52,7 @@
   },
   "customizations": {
     "codespaces": {
-      "openFiles": ["docs/internals/devcontainer.md"]
+      "openFiles": ["docs/operations/01_devcontainer.md"]
     },
     "vscode": {
       "extensions": ["oxc.oxc-vscode", "rust-lang.rust-analyzer"],

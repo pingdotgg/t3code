@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - publish commits and rollbacks
 // move exact directory entries with rename, which the FileSystem service does
 // not expose atomically.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 
 import {
@@ -21,6 +22,7 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
 import {
   MAX_THEME_FILE_BYTES,
@@ -119,6 +121,17 @@ export class ThemePublishError extends Schema.TaggedError<ThemePublishError>()(
     return `Could not publish the theme into ${this.themesDir}.`;
   }
 }
+
+export class ThemeDestinationDirectoryError extends Schema.TaggedError<ThemeDestinationDirectoryError>()(
+  "ThemeDestinationDirectoryError",
+  { themeId: Schema.String, destinationPath: Schema.String },
+) {
+  override get message(): string {
+    return `${this.destinationPath} is a directory, so the theme cannot be published as "${this.themeId}". Move it, or pass another id with --id.`;
+  }
+}
+
+const isThemeDestinationDirectoryError = Schema.is(ThemeDestinationDirectoryError);
 
 const INVALID_THEME_ID_REASON =
   "is not a valid theme id (lowercase letters, digits, and hyphens; not an appearance keyword)";
@@ -306,8 +319,6 @@ const publishThemeFile = Effect.fn(function* (input: {
   }
 
   const destinationPath = path.join(input.themesDir, `${themeId}.json`);
-  // Non-JSON suffixes hide these from the watcher; PIDs isolate concurrent publishers.
-  const backupPath = `${destinationPath}.rollback-${process.pid}`;
   const stagingPath = `${destinationPath}.staging-${process.pid}`;
   yield* fs
     .makeDirectory(input.themesDir, { recursive: true })
@@ -315,6 +326,14 @@ const publishThemeFile = Effect.fn(function* (input: {
 
   const publishFailure = (cause: unknown) =>
     new ThemePublishError({ themesDir: input.themesDir, cause });
+
+  const destinationIsDirectory = yield* Effect.try({
+    try: () => NodeFS.lstatSync(destinationPath, { throwIfNoEntry: false })?.isDirectory() ?? false,
+    catch: publishFailure,
+  });
+  if (destinationIsDirectory) {
+    return yield* new ThemeDestinationDirectoryError({ themeId, destinationPath });
+  }
 
   // O_EXCL prevents following a symlink at the predictable staging path.
   // Preserve bytes exactly: even an added newline could exceed the watcher's size limit.
@@ -338,19 +357,42 @@ const publishThemeFile = Effect.fn(function* (input: {
     catch: publishFailure,
   });
 
-  // Atomic rename avoids a check/replace race and preserves the exact entry for rollback.
-  const hadPrevious = yield* Effect.try({
+  const backupPath = yield* Effect.try({
     try: () => {
+      // A fresh path leaves any backup from a crashed publish intact.
+      const rollbackPath = `${destinationPath}.rollback-${NodeCrypto.randomUUID()}`;
+      // A rename onto a regular file rejects a directory even if it appeared after lstat.
+      const fd = NodeFS.openSync(rollbackPath, "wx", 0o600);
+      let saved = false;
       try {
-        NodeFS.renameSync(destinationPath, backupPath);
-        return true;
+        NodeFS.closeSync(fd);
+        NodeFS.renameSync(destinationPath, rollbackPath);
+        saved = true;
+        return rollbackPath;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        if (NodeFS.lstatSync(destinationPath, { throwIfNoEntry: false })?.isDirectory()) {
+          throw new ThemeDestinationDirectoryError({ themeId, destinationPath });
+        }
         throw error;
+      } finally {
+        if (!saved) {
+          try {
+            NodeFS.unlinkSync(rollbackPath);
+          } catch {}
+        }
       }
     },
-    catch: publishFailure,
-  });
+    catch: (cause) => (isThemeDestinationDirectoryError(cause) ? cause : publishFailure(cause)),
+  }).pipe(
+    Effect.onError(() =>
+      Effect.sync(() => {
+        try {
+          NodeFS.unlinkSync(stagingPath);
+        } catch {}
+      }),
+    ),
+  );
 
   const revert = Effect.sync(() => {
     try {
@@ -365,7 +407,7 @@ const publishThemeFile = Effect.fn(function* (input: {
           return null;
         }
       })();
-      if (hadPrevious) {
+      if (backupPath !== null) {
         if (destinationIno === null || destinationIno === stagedIno) {
           NodeFS.renameSync(backupPath, destinationPath);
         } else {
@@ -378,7 +420,7 @@ const publishThemeFile = Effect.fn(function* (input: {
   });
   const cleanup = Effect.sync(() => {
     try {
-      if (hadPrevious) NodeFS.unlinkSync(backupPath);
+      if (backupPath !== null) NodeFS.unlinkSync(backupPath);
     } catch {}
   });
 
@@ -414,7 +456,7 @@ const themeSetCommand = Command.make("set", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const target = yield* expandHomePath(flags.theme.trim());
+      let target = yield* expandHomePath(flags.theme.trim());
       if (target.length === 0) {
         return yield* new ThemeTargetMissingError();
       }
@@ -426,6 +468,17 @@ const themeSetCommand = Command.make("set", {
         target.includes("/") ||
         target.includes("\\") ||
         target.startsWith("~");
+      if (looksLikePath) {
+        // Spaces stay part of the path when the argument names a file as typed. Win32 drops
+        // trailing spaces from ordinary paths, so only leading ones can name another file there.
+        const expanded = yield* expandHomePath(flags.theme);
+        const asTyped =
+          (yield* HostProcess.Platform) === "win32" && !expanded.startsWith("\\\\?\\")
+            ? expanded.replace(/ +$/, "")
+            : expanded;
+        const info = yield* fs.stat(asTyped).pipe(Effect.option);
+        if (Option.isSome(info) && info.value.type === "File") target = asTyped;
+      }
       const targetIsFile =
         looksLikePath && (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false)));
       let themeId: string;

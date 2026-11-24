@@ -19,6 +19,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RunId,
   ScheduledTaskId,
   ThreadId,
   TurnItemId,
@@ -58,6 +59,7 @@ import * as EffectOutbox from "../EffectOutbox.ts";
 import * as ProjectionReplay from "./ProjectionReplay.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   CLAUDE_MODEL_SELECTION,
@@ -115,7 +117,10 @@ function makeTestAdapter(input: {
     Record<number, Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">>
   >;
   readonly failure?: ReturnType<typeof makeProviderFailure>;
+  readonly rejectedNativeThreads?: Ref.Ref<ReadonlySet<string>>;
   readonly failedRunOrdinals?: ReadonlySet<number>;
+  readonly promptDroppedRunOrdinals?: ReadonlySet<number>;
+  readonly brokenRunOrdinals?: ReadonlySet<number>;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
   readonly cancelledRunOrdinals?: ReadonlySet<number>;
   readonly holdRunOrdinal?: number;
@@ -132,8 +137,11 @@ function makeTestAdapter(input: {
   readonly backgroundTasksEndWithProcess?: true;
   readonly backgroundWork?: Ref.Ref<boolean>;
   readonly closedSessions?: Ref.Ref<ReadonlyArray<string>>;
+  /** Like ACP: opening resumes the initial native id, and forcing a new thread restarts the runtime. */
+  readonly runtimeStarts?: Ref.Ref<ReadonlyArray<string>>;
   // ACP cannot truncate, so its rollback answers with a fresh, empty native session.
   readonly rollback?: "truncates" | "replaces_native_thread";
+  readonly beforeForcedNativeThread?: Effect.Effect<void>;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -144,6 +152,12 @@ function makeTestAdapter(input: {
       Effect.gen(function* () {
         if (input.holdOpenSession !== undefined) yield* Deferred.await(input.holdOpenSession);
         const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        if (input.runtimeStarts !== undefined) {
+          yield* Ref.update(input.runtimeStarts, (starts) => [
+            ...starts,
+            sessionInput.initialNativeThreadId ?? "new",
+          ]);
+        }
         if (input.closedSessions !== undefined) {
           const closedSessions = input.closedSessions;
           yield* Effect.addFinalizer(() =>
@@ -197,6 +211,11 @@ function makeTestAdapter(input: {
               }),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
+              if (threadInput.forceNewNativeThread && input.runtimeStarts !== undefined) {
+                yield* Ref.update(input.runtimeStarts, (starts) => [...starts, "replacement"]);
+              }
+              if (threadInput.forceNewNativeThread && input.beforeForcedNativeThread !== undefined)
+                yield* input.beforeForcedNativeThread;
               const createdAt = yield* DateTime.now;
               const generation =
                 input.nativeThreadGeneration === undefined
@@ -229,6 +248,7 @@ function makeTestAdapter(input: {
           resumeThread: ({ providerThread }) =>
             Effect.gen(function* () {
               if (
+                (input.brokenRunOrdinals !== undefined && providerThread.status === "error") ||
                 input.failResume ||
                 (input.failResumeOnce !== undefined &&
                   (yield* Ref.getAndSet(input.failResumeOnce, false)))
@@ -349,13 +369,27 @@ function makeTestAdapter(input: {
                 yield* Deferred.await(input.releaseFirstTurn);
               }
               const eventTime = yield* DateTime.now;
-              const terminalStatus = input.failedRunOrdinals?.has(turnInput.runOrdinal)
-                ? "failed"
-                : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
-                  ? "interrupted"
-                  : input.cancelledRunOrdinals?.has(turnInput.runOrdinal)
-                    ? "cancelled"
-                    : "completed";
+              const nativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId ?? "";
+              if (
+                input.rejectedNativeThreads &&
+                input.failedRunOrdinals?.has(turnInput.runOrdinal)
+              ) {
+                yield* Ref.update(
+                  input.rejectedNativeThreads,
+                  (ids) => new Set([...ids, nativeThreadId]),
+                );
+              }
+              const rejectedHistory =
+                input.rejectedNativeThreads !== undefined &&
+                (yield* Ref.get(input.rejectedNativeThreads)).has(nativeThreadId);
+              const terminalStatus =
+                input.failedRunOrdinals?.has(turnInput.runOrdinal) || rejectedHistory
+                  ? "failed"
+                  : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
+                    ? "interrupted"
+                    : input.cancelledRunOrdinals?.has(turnInput.runOrdinal)
+                      ? "cancelled"
+                      : "completed";
               const response =
                 input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
@@ -378,6 +412,9 @@ function makeTestAdapter(input: {
                     status: terminalStatus,
                     startedAt: eventTime,
                     completedAt: eventTime,
+                    ...(input.promptDroppedRunOrdinals?.has(turnInput.runOrdinal)
+                      ? { promptDropped: true as const }
+                      : {}),
                   },
                 },
                 {
@@ -404,7 +441,7 @@ function makeTestAdapter(input: {
                     messageId: MessageId.make(
                       `message:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
                     ),
-                    text: response,
+                    text: rejectedHistory ? "" : response,
                     streaming: false,
                   },
                 },
@@ -427,7 +464,12 @@ function makeTestAdapter(input: {
                           }),
                       }
                     : { status: terminalStatus, failure: null }),
-                  threadDisposition: "reusable",
+                  threadDisposition: input.brokenRunOrdinals?.has(turnInput.runOrdinal)
+                    ? "broken"
+                    : "reusable",
+                  ...(input.promptDroppedRunOrdinals?.has(turnInput.runOrdinal)
+                    ? { promptDropped: true as const }
+                    : {}),
                 },
               ];
               const reportedUsage = input.tokenUsageByRunOrdinal?.[turnInput.runOrdinal];
@@ -440,6 +482,17 @@ function makeTestAdapter(input: {
                     status: "running",
                     completedAt: null,
                     tokenUsage: { ...reportedUsage, updatedAt: DateTime.formatIso(eventTime) },
+                  },
+                });
+              }
+              if (input.brokenRunOrdinals?.has(turnInput.runOrdinal)) {
+                yield* PubSub.publish(events, {
+                  type: "provider_thread.updated",
+                  driver: input.driver,
+                  providerThread: {
+                    ...turnInput.providerThread,
+                    status: "error",
+                    updatedAt: eventTime,
                   },
                 });
               }
@@ -1390,6 +1443,438 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
+  const importedNativeSessionScenario = (
+    scenario: "first-send" | "after-failed-switch" | "resume-fails",
+  ) =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace(`imported-native-session-${scenario}`);
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const claudeOrdinal = scenario === "after-failed-switch" ? 2 : 1;
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: { [claudeOrdinal]: "PELICAN" },
+          capturedTurns,
+          failResume: scenario === "resume-fails",
+        }),
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+          failedRunOrdinals: new Set([1]),
+        }),
+      ]);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("imported-native:create"),
+          threadId,
+          projectId,
+          createdBy: "system",
+          creationSource: "server",
+          title: "Imported Claude Code session",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        // The rows AgentSessionImporter writes: imported messages without a run,
+        // bound to the strong native session they came from.
+        const created = yield* orchestrator.getThreadProjection(threadId);
+        const at = created.thread.createdAt;
+        const providerThread: OrchestrationV2ProviderThread = {
+          id: ProviderThreadId.make("provider-thread:imported-native"),
+          driver: CLAUDE_DRIVER,
+          providerInstanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          providerSessionId: null,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          nativeThreadRef: {
+            driver: CLAUDE_DRIVER,
+            nativeId: "native-session",
+            strength: "strong",
+          },
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: at,
+          updatedAt: at,
+        };
+        const common = {
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          status: "completed" as const,
+          title: null,
+          startedAt: at,
+          completedAt: at,
+          updatedAt: at,
+        };
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("imported-native:thread"),
+              type: "thread.metadata-updated",
+              threadId,
+              providerInstanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              occurredAt: at,
+              payload: {
+                ...created.thread,
+                historyOrigin: "v1_import",
+                activeProviderThreadId: providerThread.id,
+              },
+            },
+            {
+              id: EventId.make("imported-native:user"),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: at,
+              payload: {
+                ...common,
+                id: TurnItemId.make("imported-native:user"),
+                ordinal: 1,
+                createdBy: "user",
+                creationSource: "server",
+                type: "user_message",
+                messageId: MessageId.make("imported-native:user"),
+                inputIntent: "turn_start",
+                text: "Remember the code word PELICAN.",
+                attachments: [],
+              },
+            },
+            {
+              id: EventId.make("imported-native:assistant"),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: at,
+              payload: {
+                ...common,
+                id: TurnItemId.make("imported-native:assistant"),
+                ordinal: 2,
+                type: "assistant_message",
+                messageId: MessageId.make("imported-native:assistant"),
+                text: "OK",
+                streaming: false,
+              },
+            },
+            {
+              id: EventId.make("imported-native:provider-thread"),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CLAUDE_DRIVER,
+              providerInstanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              occurredAt: at,
+              payload: providerThread,
+            },
+          ],
+        });
+        const send = (ordinal: number, modelSelection: ModelSelection) =>
+          Effect.gen(function* () {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`imported-native:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`imported-native:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: "What was the code word?",
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+          });
+        if (scenario === "after-failed-switch") yield* send(1, CODEX_MODEL_SELECTION);
+        yield* send(claudeOrdinal, CLAUDE_MODEL_SELECTION);
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(projection.runs.at(-1)?.status, "completed");
+        const claudeTurn = (yield* Ref.get(capturedTurns)).findLast(
+          (turn) => turn.driver === CLAUDE_DRIVER,
+        );
+        const importHandoffTargets = projection.contextHandoffs
+          .filter((handoff) => handoff.strategy === "manual_context")
+          .map((handoff) => handoff.toProviderThreadId);
+        if (scenario === "resume-fails") {
+          // The replacement session is empty, so the recovery summary carries the import.
+          assert.notEqual(claudeTurn?.nativeThreadId, "native-session");
+          assert.deepEqual(
+            projection.contextHandoffs.map((handoff) => handoff.strategy),
+            ["full_thread_summary"],
+          );
+          assert.include(claudeTurn?.text ?? "", "Remember the code word PELICAN.");
+          return;
+        }
+        assert.equal(claudeTurn?.nativeThreadId, "native-session");
+        assert.notInclude(importHandoffTargets, providerThread.id);
+        assert.lengthOf(importHandoffTargets, scenario === "after-failed-switch" ? 1 : 0);
+        if (scenario === "first-send") assert.deepEqual(projection.contextHandoffs, []);
+        assert.notInclude(claudeTurn?.text ?? "", "Remember the code word PELICAN.");
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: `imported-native-session-${scenario}`,
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: { type: "readOnly" },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    });
+  it.live("resumes an imported native session without resending its history", () =>
+    importedNativeSessionScenario("first-send"),
+  );
+  it.live("returns to an imported native session without resending its history", () =>
+    importedNativeSessionScenario("after-failed-switch"),
+  );
+  it.live("recovers an imported native session's history when its resume fails", () =>
+    importedNativeSessionScenario("resume-fails"),
+  );
+
+  it.live.each([
+    "live",
+    "legacy",
+    "raw-error",
+    "other-error",
+    "repaired-native",
+    "background",
+  ] as const)("recovers invalid encrypted Codex history on the next prompt: %s", (scenario) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("codex-rejected-history");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const generation = yield* Ref.make(0);
+        const rejectedNativeThreads = yield* Ref.make<ReadonlySet<string>>(new Set());
+        const pendingBackgroundWork = yield* Ref.make(false);
+        const code =
+          scenario === "raw-error"
+            ? "other"
+            : scenario === "other-error"
+              ? "serverOverloaded"
+              : "invalid_encrypted_content";
+        const registry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            capturedTurns,
+            injectedHistory,
+            nativeThreadGeneration: generation,
+            rejectedNativeThreads,
+            pendingBackgroundWork,
+            subagentOnlyBackgroundWork: true,
+            failedRunOrdinals: new Set([2]),
+            failure: makeProviderFailure({
+              code,
+              message:
+                scenario === "raw-error"
+                  ? JSON.stringify({
+                      error: {
+                        code: "invalid_encrypted_content",
+                        message: "Encrypted content could not be verified",
+                      },
+                    })
+                  : "Encrypted content could not be verified",
+              class: "provider_error",
+            }),
+            responseByRunOrdinal: { 1: "BASELINE_OK", 3: "RECOVERY_OK", 4: "FOLLOWUP_OK" },
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const dispatch = Effect.fn("rejectedHistory.dispatch")(function* (
+            ordinal: number,
+            text: string,
+          ) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`rejected:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`rejected:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text,
+              attachments: [],
+              modelSelection: CODEX_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(threadId);
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("rejected:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Rejected Codex history",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          assert.equal(
+            (yield* dispatch(1, "Reply BASELINE_OK; remember the constraint")).runs.at(-1)?.status,
+            "completed",
+          );
+          const failed = yield* dispatch(2, "Continue using encrypted history");
+          assert.equal(failed.runs.at(-1)?.status, "failed");
+          assert.isTrue(
+            failed.turnItems.some((item) => item.type === "error" && item.failure.code === code),
+          );
+          if (scenario === "legacy") {
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("rejected:detach"),
+              threadId,
+              providerSessionId: failed.providerThreads[0]!.providerSessionId!,
+            });
+            yield* worker.drain();
+          }
+          if (scenario === "legacy") {
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: failed.attempts.map(
+                ({ nativeThreadId: _nativeThreadId, ...attempt }, index) => ({
+                  id: EventId.make(`rejected:legacy:${index}`),
+                  type: "run-attempt.updated" as const,
+                  threadId,
+                  occurredAt: failed.thread.createdAt,
+                  payload: attempt,
+                }),
+              ),
+            });
+          }
+          if (scenario === "repaired-native") {
+            const providerThread = failed.providerThreads[0]!;
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("rejected:repaired-native"),
+                  type: "provider-thread.updated",
+                  threadId,
+                  occurredAt: failed.thread.createdAt,
+                  payload: {
+                    ...providerThread,
+                    nativeThreadRef: {
+                      ...providerThread.nativeThreadRef!,
+                      nativeId: "already-repaired",
+                    },
+                  },
+                },
+              ],
+            });
+          }
+          if (scenario === "background") yield* Ref.set(pendingBackgroundWork, true);
+          const recovered = yield* dispatch(3, "huh");
+          if (scenario === "repaired-native") {
+            assert.equal(recovered.runs.at(-1)?.status, "completed");
+            assert.equal(yield* Ref.get(generation), 1);
+            assert.lengthOf(recovered.contextHandoffs, 0);
+            return;
+          }
+          if (scenario === "other-error" || scenario === "background") {
+            assert.equal(recovered.runs.at(-1)?.status, "failed");
+            assert.equal(yield* Ref.get(generation), 1);
+            assert.lengthOf(yield* Ref.get(capturedTurns), scenario === "background" ? 2 : 3);
+            if (scenario === "background") {
+              yield* Ref.set(pendingBackgroundWork, false);
+              assert.equal(
+                (yield* dispatch(4, "Continue after the worker finished")).runs.at(-1)?.status,
+                "completed",
+              );
+              assert.equal(yield* Ref.get(generation), 2);
+            }
+            return;
+          }
+          assert.equal(recovered.runs.at(-1)?.status, "completed");
+          assert.equal(yield* Ref.get(generation), 2);
+          const turns = yield* Ref.get(capturedTurns);
+          assert.lengthOf(turns, 3);
+          assert.equal(turns[2]!.text, "huh");
+          assert.notEqual(turns[2]!.nativeThreadId, turns[1]!.nativeThreadId);
+          assert.equal(turns[2]!.providerThreadId, turns[1]!.providerThreadId);
+          const history = yield* encodeJson(yield* Ref.get(injectedHistory));
+          assert.include(history, "remember the constraint");
+          assert.include(history, "BASELINE_OK");
+          assert.notInclude(history, '"encrypted_content"');
+          assert.notInclude(history, "huh");
+          assert.isTrue(
+            recovered.turnItems.some(
+              (item) => item.type === "assistant_message" && item.text === "RECOVERY_OK",
+            ),
+          );
+          const next = yield* dispatch(4, "ok");
+          assert.equal(next.runs.at(-1)?.status, "completed");
+          assert.equal(yield* Ref.get(generation), 2);
+          assert.equal(
+            (yield* Ref.get(capturedTurns))[3]!.nativeThreadId,
+            turns[2]!.nativeThreadId,
+          );
+          assert.equal(yield* encodeJson(yield* Ref.get(injectedHistory)), history);
+          assert.equal(next.contextHandoffs.length, recovered.contextHandoffs.length);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "codex-rejected-history",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              registry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live.each(["native", "legacy"] as const)(
     "starts a replacement native thread as new after the resume fallback with %s attempts",
     (attempts) =>
@@ -1527,6 +2012,348 @@ describe("orchestration v2 provider switching", () => {
       }),
   );
 
+  const unverifiedReplacementHarness = <A, E, R>(
+    name: string,
+    adapters: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>,
+    body: (helpers: {
+      readonly orchestrator: Orchestrator.OrchestratorV2["Service"];
+      readonly worker: EffectWorker.OrchestrationEffectWorkerV2["Service"];
+      readonly dispatchRequest: (
+        ordinal: number,
+        selection: ModelSelection,
+      ) => ReturnType<Orchestrator.OrchestratorV2["Service"]["dispatch"]>;
+      readonly awaitSettled: (
+        ordinal: number,
+      ) => Effect.Effect<
+        number,
+        Orchestrator.OrchestratorV2Error | EffectWorker.OrchestrationEffectWorkerError
+      >;
+    }) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace(name);
+        return yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("unverified-replacement:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Unverified replacement",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          return yield* body({
+            orchestrator,
+            worker,
+            dispatchRequest: (ordinal, selection) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`unverified-replacement:${ordinal}`),
+                threadId,
+                messageId: MessageId.make(`unverified-replacement:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text: `Request ${ordinal}`,
+                attachments: [],
+                modelSelection: selection,
+                dispatchMode: { type: "start_immediately" },
+              }),
+            awaitSettled: (ordinal) =>
+              orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    (event.payload.status === "completed" ||
+                      event.payload.status === "failed" ||
+                      event.payload.status === "interrupted"),
+                ),
+                Stream.runHead,
+                Effect.andThen(worker.drain()),
+              ),
+          });
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name,
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              ProviderAdapterRegistry.layerFromAdapters(adapters),
+            ),
+          ),
+        );
+      }),
+    );
+  // Replacement bookkeeping is a full-thread summary handoff plus a resume-fallback transfer.
+  const replacementRecordsFor = (projection: OrchestrationV2ThreadProjection, runId: string) => [
+    ...projection.contextHandoffs.filter(
+      (handoff) => handoff.targetRunId === runId && handoff.strategy === "full_thread_summary",
+    ),
+    ...projection.contextTransfers.filter(
+      (transfer) =>
+        transfer.targetRunId === runId && transfer.id.includes("provider_resume_fallback"),
+    ),
+  ];
+
+  it.live("fails honestly when the provider reuses its session for a context handoff", () =>
+    Effect.gen(function* () {
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      yield* unverifiedReplacementHarness(
+        "unverified-replacement-reused",
+        [
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: { 2: `Source work ${"s".repeat(12_000)}` },
+            capturedTurns,
+          }),
+          // Without a generation every ensureThread returns the same native id, like Muse.
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            getModelContextWindow: () => 32_000,
+          }),
+        ],
+        ({ orchestrator, dispatchRequest, awaitSettled }) =>
+          Effect.gen(function* () {
+            yield* dispatchRequest(1, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(1);
+            const target = (yield* orchestrator.getThreadProjection(threadId)).providerThreads[0]!;
+            // The native session has no room left for the returning handoff.
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("unverified-replacement-usage"),
+                  type: "provider-thread.updated",
+                  threadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: { ...target, contextUsage: { usedTokens: 31_000, maxTokens: 32_000 } },
+                },
+              ],
+            });
+            yield* dispatchRequest(2, CODEX_MODEL_SELECTION);
+            yield* awaitSettled(2);
+            yield* dispatchRequest(3, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(3);
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            const run3 = projection.runs.at(-1)!;
+            assert.equal(run3.status, "failed");
+            assert.deepEqual(replacementRecordsFor(projection, run3.id), []);
+            const failure = projection.turnItems.findLast((item) => item.type === "error");
+            assert.equal(
+              failure?.type === "error" ? failure.failure.message : null,
+              "claudeAgent provider protocol error: the provider returned its existing session when asked for a fresh one, so the conversation context could not be moved to a new session.",
+            );
+            assert.deepEqual(
+              (yield* Ref.get(capturedTurns)).map((turn) => turn.driver),
+              [CLAUDE_DRIVER, CODEX_DRIVER],
+            );
+          }),
+      );
+    }),
+  );
+
+  it.live("fails without retrying when a failed resume's replacement reuses the session", () =>
+    Effect.gen(function* () {
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const failResumeOnce = yield* Ref.make(false);
+      yield* unverifiedReplacementHarness(
+        "unverified-replacement-reused-resume",
+        [
+          // Without a generation every ensureThread returns the same native id, like Muse.
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            failResumeOnce,
+          }),
+        ],
+        ({ orchestrator, worker, dispatchRequest, awaitSettled }) =>
+          Effect.gen(function* () {
+            yield* dispatchRequest(1, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(1);
+            const original = (yield* orchestrator.getThreadProjection(threadId))
+              .providerThreads[0]!;
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("unverified-replacement:detach"),
+              threadId,
+              providerSessionId: original.providerSessionId!,
+            });
+            yield* worker.drain();
+            // Only the first attempt fails to resume; a retry would find the session loaded.
+            yield* Ref.set(failResumeOnce, true);
+            yield* dispatchRequest(2, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(2);
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            const run2 = projection.runs.at(-1)!;
+            assert.equal(run2.status, "failed");
+            assert.deepEqual(replacementRecordsFor(projection, run2.id), []);
+            const failure = projection.turnItems.findLast((item) => item.type === "error");
+            assert.equal(
+              failure?.type === "error" ? failure.failure.message : null,
+              "claudeAgent provider protocol error: the provider returned its existing session when asked for a fresh one, so the conversation context could not be moved to a new session.",
+            );
+            assert.equal((yield* Ref.get(capturedTurns)).length, 1);
+          }),
+      );
+    }),
+  );
+
+  it.live("keeps failing honestly on the next turn after rejecting a reused session", () =>
+    Effect.gen(function* () {
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      yield* unverifiedReplacementHarness(
+        "unverified-replacement-reused-next-turn",
+        [
+          // Resume always fails and every ensureThread returns the same native id.
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            failResume: true,
+          }),
+        ],
+        ({ orchestrator, worker, dispatchRequest, awaitSettled }) =>
+          Effect.gen(function* () {
+            yield* dispatchRequest(1, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(1);
+            const original = (yield* orchestrator.getThreadProjection(threadId))
+              .providerThreads[0]!;
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("unverified-replacement:detach"),
+              threadId,
+              providerSessionId: original.providerSessionId!,
+            });
+            yield* worker.drain();
+            yield* dispatchRequest(2, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(2);
+            // The rejected session must not count as loaded, or this turn would skip resume and
+            // run on it without the recovery history.
+            yield* dispatchRequest(3, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(3);
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(
+              projection.runs.map((run) => run.status),
+              ["completed", "failed", "failed"],
+            );
+            assert.deepEqual(replacementRecordsFor(projection, projection.runs[2]!.id), []);
+            assert.equal((yield* Ref.get(capturedTurns)).length, 1);
+          }),
+      );
+    }),
+  );
+
+  it.live("drops replacement bookkeeping when the run stops during replacement", () =>
+    Effect.gen(function* () {
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const failResumeOnce = yield* Ref.make(false);
+      const replacementRequested = yield* Deferred.make<void>();
+      const releaseReplacement = yield* Deferred.make<void>();
+      yield* unverifiedReplacementHarness(
+        "unverified-replacement-interrupted",
+        [
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            failResumeOnce,
+            nativeThreadGeneration: yield* Ref.make(0),
+            beforeForcedNativeThread: Deferred.succeed(replacementRequested, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseReplacement)),
+            ),
+          }),
+        ],
+        ({ orchestrator, worker, dispatchRequest, awaitSettled }) =>
+          Effect.gen(function* () {
+            yield* dispatchRequest(1, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(1);
+            const original = (yield* orchestrator.getThreadProjection(threadId))
+              .providerThreads[0]!;
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("unverified-replacement:detach"),
+              threadId,
+              providerSessionId: original.providerSessionId!,
+            });
+            yield* worker.drain();
+            yield* Ref.set(failResumeOnce, true);
+            yield* dispatchRequest(2, CLAUDE_MODEL_SELECTION);
+            yield* Deferred.await(replacementRequested);
+            const run2 = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+            assert.equal(run2.status, "starting");
+            // run.interrupt would also cancel the start effect, so move the run on directly to
+            // reach the window where the replacement session exists but is not yet recorded.
+            const settledAt = yield* DateTime.now;
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("unverified-replacement-interrupted"),
+                  type: "run.updated",
+                  threadId,
+                  runId: run2.id,
+                  occurredAt: settledAt,
+                  payload: { ...run2, status: "interrupted", completedAt: settledAt },
+                },
+              ],
+            });
+            yield* Deferred.succeed(releaseReplacement, undefined);
+
+            // Effects run one at a time per thread, so run 3 settles after run 2's start finishes.
+            // The next turn resumes the original native session with no abandoned replacement.
+            yield* dispatchRequest(3, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(3);
+            const final = yield* orchestrator.getThreadProjection(threadId);
+            const run3 = final.runs.at(-1)!;
+            assert.equal(final.runs[1]?.status, "interrupted");
+            assert.deepEqual(replacementRecordsFor(final, run2.id), []);
+            assert.equal(run3.status, "completed");
+            assert.deepEqual(replacementRecordsFor(final, run3.id), []);
+            assert.equal(
+              final.providerThreads[0]?.nativeThreadRef?.nativeId,
+              original.nativeThreadRef?.nativeId,
+            );
+            const turns = yield* Ref.get(capturedTurns);
+            assert.equal(turns.length, 2);
+            assert.equal(turns[1]?.nativeThreadId, original.nativeThreadRef?.nativeId);
+            assert.include(turns[1]!.text, "Request 3");
+          }),
+      );
+    }),
+  );
+
   it.live.each(["an older handoff", "a missed request"] as const)(
     "keeps the latest turn when a resume fallback also delivers %s",
     (older) =>
@@ -1622,7 +2449,8 @@ describe("orchestration v2 provider switching", () => {
             ["completed", "failed", "completed", "completed"],
           );
           const run4NativeThreadId = (yield* Ref.get(capturedTurns)).at(-1)?.nativeThreadId;
-          assert.equal(
+          // Run 3's summary already covers run 2's handoff, so run 4's fresh session must not get it again.
+          assert.notEqual(
             projection.contextHandoffs.find(
               (handoff) => handoff.targetRunId === projection.runs[1]?.id,
             )?.delivery?.nativeThreadId,
@@ -1967,6 +2795,17 @@ describe("orchestration v2 provider switching", () => {
         detail: "Claude provider query ended before the turn could start.",
       }),
     ],
+    // ACP rejects a model it cannot select before sending the prompt.
+    [
+      "an ACP start that rejected the model",
+      new ProviderAdapter.ProviderAdapterTurnStartError({
+        driver: GROK_DRIVER,
+        threadId,
+        providerThreadId: ProviderThreadId.make("provider-thread:acp-refused-start"),
+        runId: RunId.make("run:acp-refused-start"),
+        refusedBeforePrompt: true,
+      }),
+    ],
     // Injected history is text only, so a refusal after injection must not settle the image.
     [
       "background work after native history injection",
@@ -2089,7 +2928,8 @@ describe("orchestration v2 provider switching", () => {
   it.live.each(
     (
       [
-        ["failed", false, false, false],
+        ["failed", false, false, false, false],
+        ["failed", false, false, false, true],
         ["failed", true, true, true],
         ["interrupted", false, true, false],
         ["interrupted", true, false, true],
@@ -2097,13 +2937,13 @@ describe("orchestration v2 provider switching", () => {
         ["cancelled", true, true, false],
       ] as const
     ).map(
-      ([status, queued, returning, native]) =>
+      ([status, queued, returning, native, broken]) =>
         [
-          `${status} context ${queued ? "through the queue" : "immediately"} to ${returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}`,
-          { status, queued, returning, native },
+          `${status}${broken ? " broken" : ""} context ${queued ? "through the queue" : "immediately"} to ${returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}`,
+          { status, queued, returning, native, broken },
         ] as const,
     ),
-  )("hands off %s", ([, { status, queued, returning, native }]) =>
+  )("hands off %s", ([, { status, queued, returning, native, broken }]) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace(`handoff-${status}-${queued}-${returning}`);
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
@@ -2113,6 +2953,7 @@ describe("orchestration v2 provider switching", () => {
       const sourceOrdinal = returning ? 2 : 1;
       const sourceSelection = returning ? CLAUDE_MODEL_SELECTION : CODEX_MODEL_SELECTION;
       const targetSelection = returning ? CODEX_MODEL_SELECTION : CLAUDE_MODEL_SELECTION;
+      const generation = yield* Ref.make(0);
       const originalPrompt = "Keep the release marker violet and preserve the existing API.";
       const partialResponse = "I checked the API and found the release configuration.";
       const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(
@@ -2135,6 +2976,12 @@ describe("orchestration v2 provider switching", () => {
             ...(modelSelection.instanceId === sourceSelection.instanceId
               ? {
                   failedRunOrdinals: new Set(status === "failed" ? [sourceOrdinal] : []),
+                  ...(broken
+                    ? {
+                        brokenRunOrdinals: new Set([sourceOrdinal]),
+                        nativeThreadGeneration: generation,
+                      }
+                    : {}),
                   interruptedRunOrdinals: new Set(status === "interrupted" ? [sourceOrdinal] : []),
                   cancelledRunOrdinals: new Set(status === "cancelled" ? [sourceOrdinal] : []),
                   holdRunOrdinal: sourceOrdinal,
@@ -2248,8 +3095,17 @@ describe("orchestration v2 provider switching", () => {
         yield* dispatch("back", "Finish the remaining work", sourceSelection);
         yield* waitForRun(sourceOrdinal + 2, "completed");
         const back = (yield* Ref.get(capturedTurns)).at(-1)!;
-        assert.notInclude(back.text, originalPrompt);
-        assert.notInclude(back.text, partialResponse);
+        if (broken) {
+          const source = (yield* Ref.get(capturedTurns)).find(
+            (turn) => turn.modelSelection.instanceId === sourceSelection.instanceId,
+          )!;
+          assert.notEqual(back.nativeThreadId, source.nativeThreadId);
+          assert.include(back.text, originalPrompt);
+          assert.include(back.text, partialResponse);
+        } else {
+          assert.notInclude(back.text, originalPrompt);
+          assert.notInclude(back.text, partialResponse);
+        }
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
@@ -2353,7 +3209,7 @@ describe("orchestration v2 provider switching", () => {
 
         // The handoff itself is not a failure: the run completes once the session closes.
         const runSettled = yield* awaitEvent(
-          (event) => event.type === "run.updated" && event.payload.status === "waiting",
+          (event) => event.type === "run.updated" && event.payload.status === "completed",
         );
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
@@ -2386,6 +3242,124 @@ describe("orchestration v2 provider switching", () => {
         Effect.provide(ProviderReplayHarness.layerWithRegistry({ name: key }, layerRegistry)),
       );
     }),
+  );
+
+  it.live.each([
+    { name: "a slash command", text: "/implement do X", verbatim: true },
+    { name: "a message opening with a path", text: "/usr/lib/foo is broken", verbatim: false },
+  ] as const)(
+    "a switched ACP provider gets $name with the handoff where the command allows it",
+    ({ text: firstMessage, verbatim }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace(`slash-command-handoff-${verbatim}`);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const originalPrompt = "Keep the release marker violet and preserve the existing API.";
+          const codexResponse = "I checked the API and found the release configuration.";
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CODEX_MODEL_SELECTION.instanceId,
+              driver: CODEX_DRIVER,
+              capabilities: CodexProviderCapabilitiesV2,
+              modelSelection: CODEX_MODEL_SELECTION,
+              responseByRunOrdinal: { 1: codexResponse },
+              capturedTurns,
+            }),
+            makeTestAdapter({
+              instanceId: GROK_MODEL_SELECTION.instanceId,
+              driver: GROK_DRIVER,
+              capabilities: AcpProviderCapabilitiesV2,
+              modelSelection: GROK_MODEL_SELECTION,
+              responseByRunOrdinal: { 2: "Implemented.", 3: "Continued." },
+              capturedTurns,
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const waitForRun = (ordinal: number) =>
+              orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.threadId === threadId &&
+                    event.payload.ordinal === ordinal &&
+                    event.payload.status === "completed",
+                ),
+                Stream.runHead,
+                Effect.andThen(worker.drain()),
+              );
+            const dispatch = (key: string, text: string, modelSelection: ModelSelection) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`command:slash-handoff:${key}`),
+                threadId,
+                messageId: MessageId.make(`message:slash-handoff:${key}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection,
+                dispatchMode: { type: "start_immediately" },
+              });
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("command:slash-handoff:create"),
+              threadId,
+              projectId,
+              createdBy: "user",
+              creationSource: "web",
+              title: "Slash command provider handoff",
+              modelSelection: CODEX_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* dispatch("source", originalPrompt, CODEX_MODEL_SELECTION);
+            yield* waitForRun(1);
+            yield* dispatch("slash", firstMessage, GROK_MODEL_SELECTION);
+            yield* waitForRun(2);
+            const slashTurn = (yield* Ref.get(capturedTurns)).at(-1)!;
+            assert.equal(slashTurn.driver, GROK_DRIVER);
+            if (!verbatim) {
+              assert.include(slashTurn.text, originalPrompt);
+              assert.include(slashTurn.text, `User message:\n${firstMessage}`);
+              return;
+            }
+            assert.equal(
+              slashTurn.text,
+              firstMessage,
+              "ACP only expands a native slash command when the prompt starts with it",
+            );
+
+            yield* dispatch("next", "Continue", GROK_MODEL_SELECTION);
+            yield* waitForRun(3);
+            const next = (yield* Ref.get(capturedTurns)).at(-1)!;
+            assert.include(next.text, originalPrompt);
+            assert.include(next.text, codexResponse);
+            assert.include(next.text, "User message:\nContinue");
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "slash-command-handoff",
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
   );
 
   it.live("checks the queued provider's capability while the current provider stays running", () =>
@@ -3587,7 +4561,10 @@ describe("orchestration v2 provider switching", () => {
         }
 
         yield* worker.drain();
-        const afterFirst = yield* waitForIdle(handoffThreadId);
+        yield* waitForIdle(handoffThreadId);
+        // The run completes before its checkpoint capture; let the capture finish first.
+        yield* worker.drain();
+        const afterFirst = yield* orchestrator.getThreadProjection(handoffThreadId);
         const firstSession = afterFirst.providerSessions.find(
           (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
         );
@@ -3911,15 +4888,23 @@ describe("orchestration v2 provider switching", () => {
       }),
   );
 
-  it.live.each(["immediately", "behind a running turn"] as const)(
+  it.live.each([
+    "immediately",
+    "behind a running turn",
+    "and recovers it after it breaks",
+    "and recovers it after it breaks and the server restarts",
+  ] as const)(
     "starts a fresh provider session %s and never hands earlier runs to a later provider",
     (variant) =>
       Effect.gen(function* () {
-        const queued = variant !== "immediately";
-        const key = queued ? "queued" : "immediate";
+        const queued = variant === "behind a running turn";
+        const restarted = variant === "and recovers it after it breaks and the server restarts";
+        const broken = restarted || variant === "and recovers it after it breaks";
+        const key = queued ? "queued" : restarted ? "restarted" : broken ? "broken" : "immediate";
         const cwd = yield* checkpointWorkspace(`fresh-context-${key}`);
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+        const runtimeStarts = yield* Ref.make<ReadonlyArray<string>>([]);
         // A queued start has nobody to refuse, so a busy session must stay up.
         const backgroundWork = yield* Ref.make(queued);
         const started = yield* Deferred.make<void>();
@@ -3933,10 +4918,17 @@ describe("orchestration v2 provider switching", () => {
             responseByRunOrdinal: {},
             capturedTurns,
             closedSessions,
+            runtimeStarts,
             backgroundWork,
             nativeThreadGeneration: yield* Ref.make(0),
             ...(queued
               ? { holdFirstTurn: started, releaseFirstTurn: release, holdRunOrdinal: 2 }
+              : {}),
+            ...(broken
+              ? {
+                  failedRunOrdinals: new Set([3]),
+                  brokenRunOrdinals: new Set([3]),
+                }
               : {}),
           }),
           makeTestAdapter({
@@ -4031,6 +5023,22 @@ describe("orchestration v2 provider switching", () => {
           // Claude hosts one native thread per session, so an idle old one is closed.
           assert.deepEqual(yield* Ref.get(closedSessions), queued ? [] : [firstSession.id]);
           yield* Ref.set(backgroundWork, false);
+          let startsBeforeRecovery = 0;
+          if (broken) {
+            if (restarted) {
+              const brokenProjection = yield* orchestrator.getThreadProjection(freshThreadId);
+              const brokenThread = brokenProjection.providerThreads.find(
+                (thread) => thread.id === brokenProjection.thread.activeProviderThreadId,
+              )!;
+              assert.equal(brokenThread.status, "error");
+              const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+              yield* sessions.close(brokenThread.providerSessionId!);
+            }
+            startsBeforeRecovery = (yield* Ref.get(runtimeStarts)).length;
+            yield* send("epsilon", CLAUDE_MODEL_SELECTION);
+            yield* worker.drain();
+            yield* waitForIdle(freshThreadId);
+          }
           yield* send("delta", CODEX_MODEL_SELECTION);
           yield* worker.drain();
           yield* waitForIdle(freshThreadId);
@@ -4058,6 +5066,27 @@ describe("orchestration v2 provider switching", () => {
           assert.equal(turnFor("beta").text, "Prompt beta");
           if (queued) {
             assert.equal(turnFor("gamma").providerThreadId, turnFor("beta").providerThreadId);
+          }
+          if (broken) {
+            const recovered = turnFor("epsilon");
+            assert.equal(recovered.providerThreadId, turnFor("beta").providerThreadId);
+            assert.notEqual(recovered.nativeThreadId, turnFor("beta").nativeThreadId);
+            assert.include(recovered.text, "Prompt beta");
+            assert.notInclude(recovered.text, "Prompt alpha");
+            assert.notInclude(recovered.text, "Prompt zero");
+            // The broken native id is never reopened; a reopened session starts fresh only once.
+            assert.deepEqual(
+              (yield* Ref.get(runtimeStarts)).slice(startsBeforeRecovery),
+              restarted ? ["new"] : ["replacement"],
+            );
+            const recoveredRun = projection.runs.find(
+              (run) => run.userMessageId === `message:fresh-context:${key}:epsilon`,
+            )!;
+            assert.equal(
+              projection.contextHandoffs.find((handoff) => handoff.targetRunId === recoveredRun.id)!
+                .coveredRunOrdinals.from,
+              3,
+            );
           }
           const codexTurn = turnFor("delta");
           assert.notEqual(codexTurn.providerThreadId, turnFor("zero").providerThreadId);
@@ -4192,6 +5221,8 @@ describe("orchestration v2 provider switching", () => {
           responseByRunOrdinal: {},
           capturedTurns,
           nativeThreadGeneration: yield* Ref.make(0),
+          failedRunOrdinals: new Set([5]),
+          brokenRunOrdinals: new Set([5]),
         }),
       ]);
       const threadId = ThreadId.make("thread:scheduled-fresh-user-chat");
@@ -4239,6 +5270,7 @@ describe("orchestration v2 provider switching", () => {
           ["compaction", false],
           ["scheduled-after-compaction", true],
           ["user-third", false],
+          ["user-fourth", false],
         ] as const) {
           if (name === "compaction") {
             // The user's run compacts, so later dispatches no longer read the first scheduled run's message.
@@ -4289,6 +5321,21 @@ describe("orchestration v2 provider switching", () => {
         // The scheduled run's fresh session must not replace the user's conversation.
         assert.equal(turnFor("user-second")!.nativeThreadId, turnFor("user-first")!.nativeThreadId);
         assert.equal(turnFor("user-third")!.nativeThreadId, turnFor("user-first")!.nativeThreadId);
+        // The user's session broke; recovery reads the whole thread, so scheduled runs do not cut it.
+        const recovered = turnFor("user-fourth")!;
+        assert.equal(recovered.providerThreadId, turnFor("user-first")!.providerThreadId);
+        assert.notEqual(recovered.nativeThreadId, turnFor("user-first")!.nativeThreadId);
+        assert.include(recovered.text, "user-first");
+        assert.include(recovered.text, "user-third");
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const recoveredRun = projection.runs.find(
+          (run) => run.userMessageId === "message:scheduled-fresh-user-chat:user-fourth",
+        )!;
+        assert.equal(
+          projection.contextHandoffs.find((handoff) => handoff.targetRunId === recoveredRun.id)!
+            .coveredRunOrdinals.from,
+          1,
+        );
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
@@ -4309,6 +5356,134 @@ describe("orchestration v2 provider switching", () => {
         ),
       );
     }),
+  );
+
+  it.live(
+    "keeps the post-clear conversation when the pre-clear session's background task settles",
+    () =>
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("fresh-context-old-session-wake");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const backgroundWork = yield* Ref.make(false);
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            backgroundWork,
+            nativeThreadGeneration: yield* Ref.make(0),
+            holdFirstTurn: started,
+            releaseFirstTurn: release,
+          }),
+        ]);
+        const threadId = ThreadId.make("thread:fresh-context-old-session-wake");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          const dispatch = (name: string, freshContext = false) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:fresh-context-old-session-wake:${name}`),
+              threadId,
+              messageId: MessageId.make(`message:fresh-context-old-session-wake:${name}`),
+              text: name,
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "queue_after_active" },
+              ...(freshContext ? { freshContext: true } : {}),
+            });
+          const send = (name: string) =>
+            Effect.gen(function* () {
+              yield* dispatch(name);
+              yield* worker.drain();
+              yield* waitForIdle(threadId);
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:fresh-context-old-session-wake:create"),
+            threadId,
+            projectId: ProjectId.make("project:fresh-context-old-session-wake"),
+            title: "Fresh context with an old session's background task",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* dispatch("before-clear");
+          yield* Deferred.await(started);
+          // Queued behind a running turn, the fresh run starts without waiting for its background work.
+          yield* dispatch("after-clear", true);
+          // The turn ends with a run_in_background command still running in its session.
+          yield* Ref.set(backgroundWork, true);
+          yield* Deferred.succeed(release, undefined);
+          yield* worker.drain();
+          yield* waitForIdle(threadId);
+          yield* send("after-clear-reply");
+          const turns = () => Ref.get(capturedTurns);
+          const turnFor = (all: ReadonlyArray<CapturedTurn>, name: string) =>
+            all.find((turn) => turn.text.endsWith(name))!;
+          const oldProviderThreadId = turnFor(yield* turns(), "before-clear").providerThreadId;
+          assert.notEqual(
+            turnFor(yield* turns(), "after-clear").providerThreadId,
+            oldProviderThreadId,
+          );
+          assert.equal(
+            turnFor(yield* turns(), "after-clear-reply").nativeThreadId,
+            turnFor(yield* turns(), "after-clear").nativeThreadId,
+          );
+          // The old Claude session reports its background task settled, as on task_notification.
+          const oldProviderThread = (yield* orchestrator.getThreadProjection(
+            threadId,
+          )).providerThreads.find((providerThread) => providerThread.id === oldProviderThreadId)!;
+          const settledAt = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make("event:fresh-context-old-session-wake:old-session-settled"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: settledAt,
+                payload: { ...oldProviderThread, pendingBackgroundTasks: [], updatedAt: settledAt },
+              },
+            ],
+          });
+          yield* send("next-user-message");
+          const all = yield* turns();
+          assert.equal(
+            turnFor(all, "next-user-message").nativeThreadId,
+            turnFor(all, "after-clear").nativeThreadId,
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "fresh-context-old-session-wake",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
   );
 
   it.live("keeps the thread a queued fresh run reserved for that run", () =>
@@ -4425,6 +5600,7 @@ describe("orchestration v2 provider switching", () => {
   it.live.each([
     ["automatic", "Claude"],
     ["queue.resume", "compatible Codex"],
+    ["queue.resume", "broken compatible Codex"],
   ] as const)(
     "delivers a queued PR update on the current provider through %s (%s)",
     ([delivery, target]) =>
@@ -4433,7 +5609,9 @@ describe("orchestration v2 provider switching", () => {
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const started = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
-        const compatible = target === "compatible Codex";
+        const compatible = target !== "Claude";
+        const broken = target === "broken compatible Codex";
+        const generation = yield* Ref.make(0);
         const selection = {
           ...(compatible
             ? { ...CODEX_MODEL_SELECTION, instanceId: ProviderInstanceId.make("codex-alternate") }
@@ -4445,7 +5623,7 @@ describe("orchestration v2 provider switching", () => {
               ...CodexProviderCapabilitiesV2,
               context: {
                 ...CodexProviderCapabilitiesV2.context,
-                canConsumeHandoffSummaries: false,
+                canConsumeHandoffSummaries: broken,
               },
             }
           : ClaudeProviderCapabilitiesV2;
@@ -4460,6 +5638,9 @@ describe("orchestration v2 provider switching", () => {
             holdFirstTurn: started,
             releaseFirstTurn: release,
             failedRunOrdinals: new Set([1]),
+            ...(broken
+              ? { brokenRunOrdinals: new Set([1]), nativeThreadGeneration: generation }
+              : {}),
             failure: makeProviderFailure({
               message: "Usage limit reached",
               class: "usage_limit",
@@ -4473,6 +5654,9 @@ describe("orchestration v2 provider switching", () => {
             modelSelection: selection,
             responseByRunOrdinal: {},
             capturedTurns,
+            ...(broken
+              ? { brokenRunOrdinals: new Set<number>(), nativeThreadGeneration: generation }
+              : {}),
           }),
         ];
         const layerRegistry = compatible
@@ -4610,7 +5794,12 @@ describe("orchestration v2 provider switching", () => {
             assert.equal(executed.providerThreadId, turns[1]!.providerThreadId);
             assert.equal(executed.nativeThreadId, turns[1]!.nativeThreadId);
           }
-          if (compatible) {
+          if (broken) {
+            assert.notEqual(executed.nativeThreadId, turns[0]!.nativeThreadId);
+            assert.isFalse(executed.nativeThreadHasTurns);
+            assert.include(executed.text, "Original work");
+          }
+          if (compatible && !broken) {
             assert.equal(executed.nativeThreadId, turns[0]!.nativeThreadId);
             assert.isEmpty(after.contextHandoffs);
           }
@@ -5350,5 +6539,167 @@ describe("orchestration v2 provider switching", () => {
           ),
         );
       }),
+  );
+
+  it.effect.each([
+    "same-provider-retry",
+    "cancelled-dropped",
+    "switch-away-and-return",
+    "persisted-failure",
+  ] as const)("handles an inline context handoff after a failed returning turn (%s)", (variant) =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace(`dropped-handoff-${variant}`);
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const dropped = variant !== "persisted-failure";
+      const cancelled = variant === "cancelled-dropped";
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: {
+            1: "Morning Codex summary.",
+            3: "",
+            4: "Recovered Codex answer.",
+            5: "Recovered Codex after round-trip.",
+          },
+          capturedTurns,
+          ...(cancelled
+            ? { cancelledRunOrdinals: new Set([3]) }
+            : { failedRunOrdinals: new Set([3]) }),
+          ...(dropped ? { promptDroppedRunOrdinals: new Set([3]) } : {}),
+        }),
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {
+            2: "Afternoon Claude shipped b63 live draft.",
+            4: "Extra Claude turn after dropped handoff.",
+          },
+          capturedTurns,
+        }),
+      ]);
+
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const testThreadId = ThreadId.make(`thread:dropped-handoff:${variant}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`command:dropped-handoff:${variant}:create`),
+          threadId: testThreadId,
+          projectId,
+          title: `Dropped handoff ${variant}`,
+          modelSelection: CODEX_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        let step = 0;
+        const send = (text: string, modelSelection: ModelSelection) =>
+          Effect.gen(function* () {
+            step += 1;
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:dropped-handoff:${variant}:msg-${step}`),
+              threadId: testThreadId,
+              messageId: MessageId.make(`message:dropped-handoff:${variant}:${step}`),
+              text,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            yield* waitForIdle(testThreadId);
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(testThreadId);
+          });
+
+        // Run 1: establish native session on Codex.
+        yield* send("Morning task", CODEX_MODEL_SELECTION);
+        // Run 2: switch to Claude and do real work.
+        yield* send("Build live draft b63", CLAUDE_MODEL_SELECTION);
+        // Run 3: switch back to Codex (delta handoff covering run 2); fails.
+        const afterRun3 = yield* send("Resume after failure", CODEX_MODEL_SELECTION);
+        const run3 = afterRun3.runs.find((run) => run.ordinal === 3)!;
+        assert.equal(run3.status, cancelled ? "cancelled" : "failed");
+        const run3Handoff = afterRun3.contextHandoffs.find(
+          (handoff) => handoff.targetRunId === run3.id,
+        );
+        assert.isDefined(run3Handoff);
+        assert.deepEqual(run3Handoff?.coveredRunOrdinals, { from: 2, to: 2 });
+
+        if (dropped) {
+          assert.isUndefined(
+            run3Handoff?.delivery,
+            "dropping the failed prompt must clear inline handoff delivery",
+          );
+          const run3Turn = afterRun3.providerTurns.find(
+            (turn) => turn.runAttemptId === run3.activeAttemptId,
+          );
+          assert.equal(run3Turn?.promptDropped, true);
+        } else {
+          assert.equal(run3Handoff?.delivery?.status, "inline");
+        }
+
+        if (variant === "same-provider-retry" || variant === "cancelled-dropped") {
+          // Run 4: stay on Codex; must re-deliver run 2's handoff.
+          const afterRun4 = yield* send("Resume", CODEX_MODEL_SELECTION);
+          const turns = yield* Ref.get(capturedTurns);
+          const run4Turn = turns.at(-1)!;
+          assert.include(run4Turn.text, "Afternoon Claude shipped b63 live draft.");
+          assert.include(run4Turn.text, "Resume after failure");
+          assert.include(run4Turn.text, "User message:\nResume");
+          const updatedHandoff = afterRun4.contextHandoffs.find(
+            (handoff) => handoff.id === run3Handoff!.id,
+          );
+          assert.equal(updatedHandoff?.delivery?.status, "inline");
+        } else if (variant === "switch-away-and-return") {
+          // Run 4: bounce back to Claude, then Run 5: return to Codex.
+          yield* send("Continue on Claude", CLAUDE_MODEL_SELECTION);
+          const afterRun5 = yield* send("Back to Codex", CODEX_MODEL_SELECTION);
+          const run5 = afterRun5.runs.find((run) => run.ordinal === 5)!;
+          const run5Handoff = afterRun5.contextHandoffs.find(
+            (handoff) => handoff.targetRunId === run5.id,
+          );
+          assert.isDefined(run5Handoff);
+          assert.deepEqual(run5Handoff?.coveredRunOrdinals, { from: 2, to: 4 });
+          const run5Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.include(run5Turn.text, "Afternoon Claude shipped b63 live draft.");
+          assert.include(run5Turn.text, "Extra Claude turn after dropped handoff.");
+        } else {
+          // Control: run 3 persisted its prompt before failing, so run 4 must not re-send run 2.
+          yield* send("Resume", CODEX_MODEL_SELECTION);
+          const run4Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.notInclude(run4Turn.text, "Afternoon Claude shipped b63 live draft.");
+        }
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: `dropped-handoff-${variant}`,
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
   );
 });

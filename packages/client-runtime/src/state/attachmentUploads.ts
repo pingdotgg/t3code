@@ -29,17 +29,23 @@ export function attachmentUploadError(cause: unknown): AttachmentUploadError {
 }
 
 export type AttachmentUploadStatus =
-  | { readonly status: "uploading"; readonly progress: number }
+  /** `retrying` marks an upload started again after it failed. */
+  | { readonly status: "uploading"; readonly progress: number; readonly retrying?: true }
   | { readonly status: "ready" }
   | { readonly status: "failed"; readonly reason: string };
 
-/** Equal by key; the request rides along for the upload. */
+const uploading = (progress: number, retry: boolean): AttachmentUploadStatus =>
+  retry ? { status: "uploading", progress, retrying: true } : { status: "uploading", progress };
+
+/** Equal by id; the request and retry flag only matter when starting a transfer. */
 class UploadKey<Request> implements Equal.Equal {
   readonly id: string;
   readonly request: Request | null;
-  constructor(id: string, request: Request | null) {
+  readonly retry: boolean;
+  constructor(id: string, request: Request | null, retry = false) {
     this.id = id;
     this.request = request;
+    this.retry = retry;
   }
   [Equal.symbol](that: unknown): boolean {
     return that instanceof UploadKey && that.id === this.id;
@@ -78,7 +84,8 @@ export function createAttachmentUploadRegistry<Request>(options: {
       previous === status ||
       (previous?.status === "uploading" &&
         status?.status === "uploading" &&
-        previous.progress === status.progress)
+        previous.progress === status.progress &&
+        previous.retrying === status.retrying)
     )
       return;
     const next = { ...statuses };
@@ -109,13 +116,14 @@ export function createAttachmentUploadRegistry<Request>(options: {
     const request = key.request!;
     return Effect.suspend(() => {
       if (statuses[key.id]?.status !== "uploading") {
-        setOwnStatus(owner, key.id, { status: "uploading", progress: 0 });
+        setOwnStatus(owner, key.id, uploading(0, key.retry));
       }
       return options.upload(request, (progress) =>
-        setOwnStatus(owner, key.id, {
-          status: "uploading",
-          progress: Math.floor(Math.max(0, Math.min(1, progress)) * 20) / 20,
-        }),
+        setOwnStatus(
+          owner,
+          key.id,
+          uploading(Math.floor(Math.max(0, Math.min(1, progress)) * 20) / 20, key.retry),
+        ),
       );
     }).pipe(
       Semaphore.withPermits(permitsFor(options.environmentId(request)), 1),
@@ -134,7 +142,7 @@ export function createAttachmentUploadRegistry<Request>(options: {
         lookup: Effect.fn("AttachmentUploads.lookup")(function* (key: UploadKey<Request>) {
           const owner = {};
           owners.set(key.id, owner);
-          setStatus(key.id, { status: "uploading", progress: 0 });
+          setStatus(key.id, uploading(0, key.retry));
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
               setOwnStatus(owner, key.id, undefined);
@@ -154,14 +162,11 @@ export function createAttachmentUploadRegistry<Request>(options: {
       }),
     ),
   );
-  const keyOf = (request: Request) => new UploadKey(options.key(request), request);
-
   let disposed = false;
-  /** Keeps the request's upload running until the returned release is called. */
-  function hold(request: Request): () => void {
+  function holdUpload(key: UploadKey<Request>): () => void {
     if (disposed) return () => {};
     const holder = Scope.makeUnsafe();
-    Effect.runSync(Scope.provide(holder)(RcMap.get(uploads, keyOf(request))));
+    Effect.runSync(Scope.provide(holder)(RcMap.get(uploads, key)));
     let released = false;
     return () => {
       if (released) return;
@@ -172,8 +177,7 @@ export function createAttachmentUploadRegistry<Request>(options: {
 
   const synced = new Map<string, () => void>();
   let requested: ReadonlyArray<Request> = [];
-  /** Holds exactly these uploads; anything no longer requested and held nowhere else stops. */
-  function sync(requests: ReadonlyArray<Request>) {
+  function syncUploads(requests: ReadonlyArray<Request>, retryKey?: string) {
     if (disposed) return;
     requested = requests;
     const keys = new Map(requests.map((request) => [options.key(request), request]));
@@ -183,7 +187,7 @@ export function createAttachmentUploadRegistry<Request>(options: {
       release();
     }
     for (const [id, request] of keys) {
-      if (!synced.has(id)) synced.set(id, hold(request));
+      if (!synced.has(id)) synced.set(id, holdUpload(new UploadKey(id, request, id === retryKey)));
     }
   }
 
@@ -192,17 +196,24 @@ export function createAttachmentUploadRegistry<Request>(options: {
     Effect.runSync(RcMap.invalidate(uploads, new UploadKey<Request>(key, null)));
   }
 
-  /** Drops the key's upload and starts it again for whatever `sync` holds. */
+  /** Drops the key's upload and replaces it if `sync` holds it. */
   function restart(key: string) {
+    const retry = statuses[key]?.status === "failed";
     invalidate(key);
     synced.get(key)?.();
     synced.delete(key);
-    sync(requested);
+    syncUploads(requested, retry ? key : undefined);
   }
 
   return {
-    hold,
-    sync,
+    /** Keeps the request's upload running until the returned release is called. */
+    hold(request: Request): () => void {
+      return holdUpload(new UploadKey(options.key(request), request));
+    },
+    /** Holds exactly these uploads; anything no longer requested and held nowhere else stops. */
+    sync(requests: ReadonlyArray<Request>) {
+      syncUploads(requests);
+    },
     invalidate,
     restart,
     /**
@@ -213,8 +224,12 @@ export function createAttachmentUploadRegistry<Request>(options: {
       return Effect.suspend(() => {
         if (disposed) return Effect.fail(attachmentUploadError(new Error("Upload cancelled.")));
         const key = options.key(request);
-        if (statuses[key]?.status === "failed") restart(key);
-        return RcMap.get(uploads, keyOf(request)).pipe(Effect.flatMap(Fiber.join), Effect.scoped);
+        const retry = statuses[key]?.status === "failed";
+        if (retry) restart(key);
+        return RcMap.get(uploads, new UploadKey(key, request, retry)).pipe(
+          Effect.flatMap(Fiber.join),
+          Effect.scoped,
+        );
       });
     },
     /** Starts a failed upload that `sync` holds again. */
