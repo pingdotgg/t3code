@@ -1054,6 +1054,71 @@ it.effect("creating a project through MCP refuses a model default instead of dro
   }),
 );
 
+it.effect("a project created through MCP keeps its actions once project settings are folded", () =>
+  Effect.gen(function* () {
+    const scripts = [
+      {
+        id: "likec4-start",
+        name: "LikeC4 podgląd",
+        command: "npx -y likec4@latest start",
+        icon: "play",
+        runOnWorktreeCreate: false,
+        async: true,
+      },
+    ] satisfies ProjectScript[];
+    const harness = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      // Any saved override folds project settings, as every install with a project has.
+      overrideModel: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet",
+      },
+      launched: [],
+    });
+    const created: Array<ProjectRecord> = [];
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mock(Project.ProjectService)({
+        create: (input) => {
+          const project = {
+            id: input.projectId,
+            title: input.title,
+            workspaceRoot: input.workspaceRoot,
+            defaultModelSelection: null,
+            scripts: input.scripts ?? [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            deletedAt: null,
+          } as unknown as ProjectRecord;
+          created.push(project);
+          return Effect.succeed(project);
+        },
+        getById: (id) => Effect.succeed(Option.fromNullishOr(created.find((p) => p.id === id))),
+      }),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    const create = yield* toolkit
+      .handle("t3_project_create", {
+        title: "LikeC4 - experiments",
+        workspaceRoot: "/projects/likec4",
+        scripts,
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(create.at(-1)?.result).toMatchObject({ scripts });
+
+    const projectId = created[0]!.id;
+    const read = yield* toolkit
+      .handle("t3_project_read", { projectId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(read.at(-1)?.result).toMatchObject({ scripts });
+  }),
+);
+
 it.effect("an agent's clone is not cut off while git is still transferring", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
