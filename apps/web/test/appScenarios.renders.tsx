@@ -392,7 +392,7 @@ it("app-open-thread-from-draft", async () => {
 
 // Through the diff.toggle shortcut, the same handler as the header's diff button.
 const toggleDiff = (to: "open" | "close") => async () => {
-  await userEvent.keyboard("{Control>}d{/Control}");
+  await userEvent.keyboard("{ControlOrMeta>}d{/ControlOrMeta}");
   const diff = page.getByRole("group", { name: "Diff layout" });
   if (to === "open") await expect.element(diff).toBeVisible();
   else await expect.element(diff).not.toBeInTheDocument();

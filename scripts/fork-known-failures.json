@@ -178,15 +178,5 @@
     "file": "apps/web/src/keybindings.test.ts",
     "test": "toggles the thread panel by default without taking terminal keystrokes",
     "reason": "fails on upstream v0.1.11 too"
-  },
-  {
-    "file": "apps/web/test/appScenarios.renders.tsx",
-    "test": "warm up",
-    "reason": "fails on upstream v0.1.11 too"
-  },
-  {
-    "file": "apps/web/test/appScenarios.renders.tsx",
-    "test": "app-toggle-diff-panel",
-    "reason": "fails on upstream v0.1.11 too"
   }
 ]
