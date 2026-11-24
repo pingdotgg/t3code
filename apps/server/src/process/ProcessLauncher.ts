@@ -22,6 +22,16 @@ import type { LauncherEvent, LauncherSpawnRequest } from "./processLauncherWorke
 const READY_TIMEOUT = "10 seconds";
 const SPAWN_REPLY_TIMEOUT = "10 seconds";
 
+/**
+ * Exposes the active Linux process-launcher helper PID so callers such as port discovery can
+ * recognize direct children spawned through the helper instead of directly from the server.
+ */
+export class ProcessLauncher extends Context.Reference<{
+  readonly currentPid: Effect.Effect<number | undefined>;
+}>("t3/process/ProcessLauncher", {
+  defaultValue: () => ({ currentPid: Effect.undefined }),
+}) {}
+
 /** A child of the launcher, presented to the native spawner as a Node ChildProcess. */
 class HostedChild
   extends NodeEvents.EventEmitter
@@ -152,7 +162,11 @@ export const make = Effect.fn("ProcessLauncher.make")(function* (
   replyTimeout: Duration.Input = SPAWN_REPLY_TIMEOUT,
 ) {
   const fallback = yield* ChildProcessSpawner.ChildProcessSpawner;
-  if ((yield* HostProcess.Platform) !== "linux") return fallback;
+  if ((yield* HostProcess.Platform) !== "linux") {
+    return Context.make(ChildProcessSpawner.ChildProcessSpawner, fallback).pipe(
+      Context.add(ProcessLauncher, { currentPid: Effect.undefined }),
+    );
+  }
 
   const executablePath = yield* HostProcess.ExecutablePath;
   const args = yield* launcherArguments();
@@ -368,13 +382,16 @@ export const make = Effect.fn("ProcessLauncher.make")(function* (
   );
   // Start while the server is still small; the launcher's own fork is the last full-size one.
   launch();
-  return ChildProcessSpawner.make((command) =>
+  const spawner = ChildProcessSpawner.make((command) =>
     Effect.flatMap(isReady, (ready) => (ready ? hosted : fallback).spawn(command)),
+  );
+  return Context.make(ChildProcessSpawner.ChildProcessSpawner, spawner).pipe(
+    Context.add(ProcessLauncher, { currentPid: Effect.sync(() => current?.worker.pid) }),
   );
 });
 
 /** Replaces the ChildProcessSpawner in context, which stays the fallback when the launcher cannot start. */
-export const layer = Layer.effect(ChildProcessSpawner.ChildProcessSpawner, make());
+export const layer = Layer.effectContext(make());
 
 /** The server's one spawner: memoized, so every build site shares a single launcher. */
 export const layerServer = layer.pipe(Layer.provide(NonBlockingSpawner.layer));

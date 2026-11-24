@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as ProcessGroup from "@t3tools/provider-core/server/processGroup";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -18,11 +19,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { expect, vi } from "vite-plus/test";
 import { FetchHttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ProcessLauncher from "../process/ProcessLauncher.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
 
@@ -1023,12 +1026,17 @@ effectIt.effect.each(["linux", "darwin"] as const)(
 effectIt.effect("stops only a job's own process group", () =>
   Effect.sync(() => {
     const serverPid = 100;
+    const launcherPid = 150;
     const rows = [
       { pid: 10, ppid: 1, pgid: 10 }, // `vp run dev`, whose job holds this server
       { pid: 20, ppid: 10, pgid: 10 }, // the web dev server in the same job
       { pid: serverPid, ppid: 10, pgid: 10 },
-      { pid: 200, ppid: serverPid, pgid: 200 }, // agent CLI
+      { pid: launcherPid, ppid: serverPid, pgid: 10 }, // Linux ProcessLauncher worker
+      { pid: 200, ppid: serverPid, pgid: 200 }, // direct agent CLI
       { pid: 210, ppid: 200, pgid: 200 }, // a server it spawned without a group of its own
+      { pid: 250, ppid: launcherPid, pgid: 250 }, // launcher-spawned agent CLI (e.g. agy acp)
+      { pid: 260, ppid: 250, pgid: 250 }, // a server in the launcher-spawned agent CLI's group
+      { pid: 270, ppid: 250, pgid: 270 }, // a job started by the launcher-spawned agent CLI
       { pid: 300, ppid: 200, pgid: 300 }, // agent tool shell
       { pid: 400, ppid: 300, pgid: 400 }, // `npm run dev &`
       { pid: 401, ppid: 400, pgid: 400 },
@@ -1036,10 +1044,11 @@ effectIt.effect("stops only a job's own process group", () =>
       { pid: 600, ppid: 500, pgid: 600 }, // terminal job
     ];
     const table = new Map(rows.map((row) => [row.pid, row]));
-    expect(PortScanner.stoppableProcessGroup(table, 401, serverPid)).toBe(400);
-    expect(PortScanner.stoppableProcessGroup(table, 600, serverPid)).toBe(600);
-    for (const pid of [20, 210, 500, 999]) {
-      expect(PortScanner.stoppableProcessGroup(table, pid, serverPid)).toBeNull();
+    expect(PortScanner.stoppableProcessGroup(table, 401, serverPid, launcherPid)).toBe(400);
+    expect(PortScanner.stoppableProcessGroup(table, 600, serverPid, launcherPid)).toBe(600);
+    expect(PortScanner.stoppableProcessGroup(table, 270, serverPid, launcherPid)).toBe(270);
+    for (const pid of [20, 150, 210, 250, 260, 500, 999]) {
+      expect(PortScanner.stoppableProcessGroup(table, pid, serverPid, launcherPid)).toBeNull();
     }
     // The tool shell is the command; its `npm run dev &` job only inherited the name.
     const variables = new Map([
@@ -1053,6 +1062,82 @@ effectIt.effect("stops only a job's own process group", () =>
     expect(PortScanner.agentCommandsInGroup(variables, table.get(400)!).size).toBe(0);
     expect(PortScanner.agentCommandsInGroup(variables, table.get(600)!).size).toBe(0);
   }),
+);
+
+effectIt.effect(
+  "excludes Linux agent CLIs spawned through ProcessLauncher (including after restarts) while keeping their dev servers",
+  () => {
+    let launcherPid = 9_000;
+    const firstDevPort = 43_201;
+    const secondDevPort = 43_202;
+    let lsofStdout =
+      `p4300\ncagy\nn127.0.0.1:43200\n` +
+      `p4301\ncclaude\nn127.0.0.1:43199\n` +
+      `p4242\ncnode\nn127.0.0.1:${firstDevPort}\n`;
+    const procFiles: Record<string, string> = {
+      "/proc/4300/environ": `${PortScanner.AGENT_THREAD_ENV}=thread-agy\0`,
+      "/proc/4300/stat": `4300 (agy) S ${launcherPid} 4300 4300 0`,
+      "/proc/4301/environ": `${PortScanner.AGENT_THREAD_ENV}=thread-claude\0`,
+      "/proc/4301/stat": `4301 (claude) S ${process.pid} 4301 4301 0`,
+      "/proc/4242/environ": `${PortScanner.AGENT_THREAD_ENV}=thread-agy\0`,
+      "/proc/4242/stat": "4242 (node) S 4300 4300 4300 0",
+    };
+    const missing = FileSystem.makeNoop({});
+    const layer = layerScanner.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FileSystem.layerNoop({
+            readFileString: (path) => {
+              const content = procFiles[path];
+              return content === undefined ? missing.readFileString(path) : Effect.succeed(content);
+            },
+          }),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              input.command === "lsof"
+                ? Effect.succeed(processOutput(lsofStdout))
+                : Effect.succeed(
+                    processOutput(
+                      `${launcherPid} ${process.pid} ${process.pid}\n` +
+                        `4300 ${launcherPid} 4300\n` +
+                        "4242 4300 4300\n",
+                    ),
+                  ),
+          }),
+          Layer.succeed(ProcessLauncher.ProcessLauncher, {
+            currentPid: Effect.sync(() => launcherPid),
+          }),
+          Layer.succeed(HostProcess.Platform, "linux"),
+          FetchHttpClient.layer.pipe(
+            Layer.provide(Layer.succeed(FetchHttpClient.Fetch, () => Promise.reject(new Error()))),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      expect(yield* scanner.scan()).toMatchObject([
+        { port: firstDevPort, pid: 4242, agent: { threadId: "thread-agy" } },
+      ]);
+
+      // Refuses to stop a server sharing the ProcessLauncher-spawned agent CLI's process group.
+      const stop = yield* Effect.flip(scanner.stopServer({ pid: 4242, port: firstDevPort }));
+      expect(stop.reason).toBe("shared-group");
+
+      // After ProcessLauncher restarts with a new helper PID, new agent CLIs are still excluded.
+      launcherPid = 9_001;
+      procFiles["/proc/4400/environ"] = `${PortScanner.AGENT_THREAD_ENV}=thread-agy-2\0`;
+      procFiles["/proc/4400/stat"] = `4400 (agy) S ${launcherPid} 4400 4400 0`;
+      procFiles["/proc/4401/environ"] = `${PortScanner.AGENT_THREAD_ENV}=thread-agy-2\0`;
+      procFiles["/proc/4401/stat"] = "4401 (node) S 4400 4401 4401 0";
+      lsofStdout = `p4400\ncagy\nn127.0.0.1:43210\np4401\ncnode\nn127.0.0.1:${secondDevPort}\n`;
+
+      expect(yield* scanner.scan()).toMatchObject([
+        { port: secondDevPort, pid: 4401, agent: { threadId: "thread-agy-2" } },
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
 );
 
 const AGENT_SERVER_SCRIPT = `
@@ -1158,6 +1243,99 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       Effect.provide(
         layerScanner.pipe(
           Layer.provide(ProcessRunner.layer),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+        ),
+      ),
+    ),
+);
+
+const LAUNCHER_AGENT_SCRIPT = `
+const http = require("node:http");
+const cp = require("node:child_process");
+const childScript = process.argv[1];
+const agentServer = http.createServer((_, res) => { res.writeHead(404); res.end(); });
+agentServer.listen(0, "127.0.0.1", () => {
+  const child = cp.spawn(process.execPath, ["-e", childScript], {
+    detached: true,
+    env: process.env,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  child.stdout.once("data", (chunk) => {
+    const [childPid, childPort] = String(chunk).trim().split(" ");
+    process.stdout.write(
+      [process.pid, process.ppid, agentServer.address().port, childPid, childPort].join(" ") + "\\n",
+    );
+  });
+});
+`;
+
+effectIt.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "excludes a live ProcessLauncher-spawned agent CLI's own port while showing and stopping its dev server",
+  () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const launcher = yield* ProcessLauncher.ProcessLauncher;
+      const scanner = yield* PortScanner.PortDiscovery;
+      yield* Effect.acquireRelease(Effect.sync(scanner.trackAgent), (release) =>
+        Effect.sync(release),
+      );
+      const handle = yield* spawner.spawn(
+        ChildProcess.make(process.execPath, ["-e", LAUNCHER_AGENT_SCRIPT, AGENT_SERVER_SCRIPT], {
+          detached: true,
+          env: { ...process.env, [PortScanner.AGENT_THREAD_ENV]: "thread-launcher-live" },
+        }),
+      );
+      const line = yield* handle.stdout.pipe(
+        Stream.decodeText(),
+        Stream.splitLines,
+        Stream.runHead,
+      );
+      expect(line._tag).toBe("Some");
+      const [agentPid, agentPpid, agentPort, devPid, devPort] =
+        line._tag === "Some" ? line.value.trim().split(" ").map(Number) : [];
+      const launcherPid = yield* launcher.currentPid;
+      expect(launcherPid).toBeDefined();
+      expect(agentPpid).toBe(launcherPid);
+      expect(agentPpid).not.toBe(process.pid);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const target of [devPid, agentPid]) {
+            try {
+              if (target !== undefined) process.kill(target, "SIGKILL");
+            } catch {}
+          }
+        }),
+      );
+
+      const discovered = yield* scanner.scan();
+      expect(discovered).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ pid: agentPid, port: agentPort })]),
+      );
+      expect(discovered).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            pid: devPid,
+            port: devPort,
+            agent: { threadId: "thread-launcher-live" },
+          }),
+        ]),
+      );
+
+      const stopAgent = yield* Effect.flip(
+        scanner.stopServer({ pid: agentPid!, port: agentPort! }),
+      );
+      expect(stopAgent.reason).toBe("not-found");
+      expect(isRunning(agentPid!)).toBe(true);
+
+      yield* scanner.stopServer({ pid: devPid!, port: devPort! });
+      expect(isRunning(devPid!)).toBe(false);
+      expect(isRunning(agentPid!)).toBe(true);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerScanner.pipe(
+          Layer.provide(ProcessRunner.layer),
+          Layer.provideMerge(ProcessLauncher.layerServer),
           Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
         ),
       ),
