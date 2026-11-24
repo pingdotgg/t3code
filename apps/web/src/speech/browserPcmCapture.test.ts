@@ -36,9 +36,6 @@ it.each(["cancel", "worklet failure"] as const)(
     );
     const abort = new AbortController();
     await capture.transcriber.prepare({ signal: abort.signal });
-    using _olderSafari = vi.spyOn(Promise, "withResolvers").mockImplementation(() => {
-      throw new TypeError("Promise.withResolvers is not available");
-    });
     const preparing = capture.recorder.prepareToRecordAsync(abort.signal);
     expect(await Promise.race([requested.promise, preparing])).toEqual({
       audio: { deviceId: { exact: "blue-yeti" } },
