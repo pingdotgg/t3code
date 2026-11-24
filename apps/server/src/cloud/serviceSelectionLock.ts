@@ -17,11 +17,17 @@ export async function acquireServiceSelectionLock(selectionPath: string): Promis
   const owner = `${process.pid}.${bootEpochSeconds()}.${NodeCrypto.randomUUID()}`;
   const candidate = `${lock}.${owner}`;
   const deadline = Date.now() + 30_000;
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+  const windows = NodeOS.platform() === "win32";
   const removeEmptyLock = () => {
     try {
       NodeFS.rmdirSync(lock);
     } catch (error) {
-      if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? ""))
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      if (
+        !["ENOENT", "ENOTEMPTY", "EEXIST"].includes(code) &&
+        !(windows && ["EBUSY", "EPERM", "EACCES"].includes(code))
+      )
         throw error;
     }
   };
@@ -37,8 +43,13 @@ export async function acquireServiceSelectionLock(selectionPath: string): Promis
           removeEmptyLock();
         };
       } catch (error) {
-        if (!["EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? ""))
-          throw error;
+        const code = (error as NodeJS.ErrnoException).code ?? "";
+        // Windows MoveFileExW fails with EPERM/EACCES when the target directory already exists.
+        const contended =
+          code === "EEXIST" ||
+          code === "ENOTEMPTY" ||
+          (windows && (code === "EPERM" || code === "EACCES"));
+        if (!contended) throw error;
       }
       let owners: string[];
       try {
