@@ -310,29 +310,36 @@ describe("CommandPalette open intents", () => {
   });
 
   it.each([
-    { entry: "root search", intent: {} },
-    { entry: "New thread in... picker", intent: { open: "new-thread-in" as const } },
-  ])("moves to the second result with one ArrowDown in the $entry", async ({ intent }) => {
-    setup({ projects: [makeProject("fleet-api"), makeProject("fleet-web")] });
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    {
+      entry: "root search",
+      intent: {},
+      placeholder: "Search commands, projects, and threads...",
+    },
+    {
+      entry: "New thread in... picker",
+      intent: { open: "new-thread-in" as const },
+      placeholder: "Search...",
+    },
+  ])(
+    "moves to the second result with one ArrowDown after filtering in the $entry",
+    async ({ intent, placeholder }) => {
+      setup({ projects: ["fleet-api", "fleet-web", "unrelated"].map(makeProject) });
+      await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
 
-    openCommandPalette(intent);
-    if (!intent.open) {
-      await userEvent.fill(
-        page.getByPlaceholder("Search commands, projects, and threads..."),
-        "fleet",
-      );
-    }
-    await expect.element(page.getByRole("option", { name: /fleet-web/ }).first()).toBeVisible();
-    const first = page.getByRole("option").nth(0);
-    const second = page.getByRole("option").nth(1);
-    await expect.element(first).toHaveAttribute("data-active");
+      openCommandPalette(intent);
+      await userEvent.fill(page.getByPlaceholder(placeholder), "fleet");
+      await expect.element(page.getByRole("option", { name: /fleet-web/ }).first()).toBeVisible();
+      await expect.element(page.getByRole("option", { name: /unrelated/ })).not.toBeInTheDocument();
+      const first = page.getByRole("option").nth(0);
+      const second = page.getByRole("option").nth(1);
+      await expect.element(first).toHaveAttribute("data-active");
 
-    await userEvent.keyboard("{ArrowDown}");
+      await userEvent.keyboard("{ArrowDown}");
 
-    await expect.element(second).toHaveAttribute("data-active");
-    await expect.element(first).not.toHaveAttribute("data-active");
-  });
+      await expect.element(second).toHaveAttribute("data-active");
+      await expect.element(first).not.toHaveAttribute("data-active");
+    },
+  );
 
   it("preserves keyboard navigation when replacement input keeps the highlighted result", async () => {
     setup({ projects: ["fleet-api", "fleet-docs", "fleet-web"].map(makeProject) });
