@@ -416,7 +416,7 @@ const certFailureFetch = ((_input: Parameters<typeof globalThis.fetch>[0]) => {
   return Promise.reject(new TypeError("fetch failed", { cause }));
 }) as typeof globalThis.fetch;
 
-effectIt.effect(
+effectIt.live(
   "keeps an unowned configured HTTPS URL when the HTTP probe fails but the listener speaks TLS",
   () => {
     const server = NodeHttps.createServer(testCertificates, (_request, response) => {
@@ -444,7 +444,7 @@ effectIt.effect(
   },
 );
 
-effectIt.effect.each([
+effectIt.live.each([
   { label: "404", response: new Response("not found", { status: 404 }) },
   {
     label: "200 application/json",
@@ -483,7 +483,7 @@ effectIt.effect.each([
   },
 );
 
-effectIt.effect(
+effectIt.live(
   "probes a configured HTTPS URL on its own host, not the discovered localhost record",
   () => {
     const server = NodeHttps.createServer(testCertificates, (_request, response) => {
@@ -510,7 +510,7 @@ effectIt.effect(
   },
 );
 
-effectIt.effect("keeps a configured HTTPS URL when its own host serves self-signed TLS", () => {
+effectIt.live("keeps a configured HTTPS URL when its own host serves self-signed TLS", () => {
   const server = NodeHttps.createServer(testCertificates, (_request, response) => {
     response.writeHead(200, { "content-type": "text/html" });
     response.end("ok");

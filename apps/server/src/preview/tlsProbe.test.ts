@@ -47,7 +47,7 @@ const listenOnHost = (server: NodeNet.Server, host: string) =>
       }),
   );
 
-effectIt.effect("detects a TLS listener with a self-signed certificate", () =>
+effectIt.live("detects a TLS listener with a self-signed certificate", () =>
   withServer(
     () =>
       NodeHttps.createServer({ key, cert }, (_request, response) => {
@@ -61,7 +61,7 @@ effectIt.effect("detects a TLS listener with a self-signed certificate", () =>
   ),
 );
 
-effectIt.effect("answers false for a plain HTTP listener", () =>
+effectIt.live("answers false for a plain HTTP listener", () =>
   withServer(
     () =>
       NodeHttp.createServer((_request, response) => {
@@ -82,7 +82,7 @@ effectIt.effect("never probes a non-loopback host", () =>
   }),
 );
 
-effectIt.effect("accepts a bracketed IPv6 loopback host", () =>
+effectIt.live("accepts a bracketed IPv6 loopback host", () =>
   Effect.acquireUseRelease(
     Effect.sync(() =>
       NodeHttps.createServer({ key, cert }, (_request, response) => {
