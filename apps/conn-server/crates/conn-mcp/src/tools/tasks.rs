@@ -399,7 +399,7 @@ async fn read_task(cx: &Cx<'_>, parent: &str, task_id: &str, wait_timed_out: boo
     let terminal = TERMINAL.contains(&status);
     let terminal_run = runs.iter().rev().find(|run| !view::is_live(run)).copied();
     let summary = terminal
-        .then(|| latest.and_then(|r| view::run_result_text(&child, r["id"].as_str()?)))
+        .then(|| latest.and_then(|r| view::run_result_text(&child, r)))
         .flatten();
     let requests: Vec<&Value> = child["runtimeRequests"]
         .as_array()
