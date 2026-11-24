@@ -194,14 +194,9 @@ function namedProjectIconSvg(name: string): string {
 }
 
 function namedProjectReadme(name: string): string {
-  return [
-    `<img src="assets/icon.svg" width="64" height="64" alt="">`,
-    "",
-    `# ${name}`,
-    "",
-    "Created in [T3 Code](https://t3.codes).",
-    "",
-  ].join("\n");
+  return [`<img src="assets/icon.svg" width="64" height="64" alt="">`, "", `# ${name}`, ""].join(
+    "\n",
+  );
 }
 
 function describeCommitFailure(stderr: string): string {

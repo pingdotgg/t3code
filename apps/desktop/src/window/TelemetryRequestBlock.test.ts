@@ -16,7 +16,7 @@ describe("installTelemetryRequestBlock", () => {
       { urls: Array<string> },
       (details: unknown, callback: (response: { cancel: boolean }) => void) => void,
     ];
-    assert.include(filter.urls, "https://ingest.t3.codes/*");
+    assert.include(filter.urls, "https://*.t3.codes/*");
     assert.include(filter.urls, "https://*.posthog.com/*");
     let response: { cancel: boolean } | undefined;
     listener({}, (value) => (response = value));

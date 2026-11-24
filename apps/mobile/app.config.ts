@@ -22,7 +22,6 @@ const iosBundleIdentifierOverride = (
   repoEnv.T3CODE_IOS_BUNDLE_ID ?? repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID
 )?.trim();
 const appNameOverride = repoEnv.T3CODE_APP_NAME?.trim();
-const isForkIdentityBuild = Boolean(iosBundleIdentifierOverride || appNameOverride);
 // Path to a 1024x1024 PNG, relative to the repository root.
 const appIconOverride = repoEnv.T3CODE_APP_ICON?.trim() || "assets/pseudocode/app-icon-1024.png";
 // App Store Connect rejects a reused build number, so fork TestFlight uploads set this.
@@ -288,14 +287,7 @@ const config: ExpoConfig = {
   icon: overriddenAppIcon,
   userInterfaceStyle: "automatic",
   updates: {
-    // The update URL is upstream's Expo project, so fork identities opt in with "1".
-    enabled:
-      repoEnv.T3CODE_MOBILE_UPDATES_ENABLED === undefined
-        ? !isForkIdentityBuild
-        : repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    checkAutomatically: "ON_LOAD",
-    fallbackToCacheTimeout: 0,
+    enabled: false,
   },
   ios: {
     icon: overriddenAppIcon,
@@ -550,11 +542,7 @@ const config: ExpoConfig = {
     EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID,
     EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID,
     EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME,
-    eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    },
   },
-  owner: "pingdotgg",
   experiments: {
     // Metro only runs babel-plugin-react-compiler when this is set; see src/reactCompilerCoverage.test.ts.
     reactCompiler: true,

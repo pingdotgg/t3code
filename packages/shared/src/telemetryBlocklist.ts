@@ -1,5 +1,5 @@
-/** Hosts upstream T3 Code sends usage analytics and traces to. PseudoCode refuses them at runtime. */
-const BLOCKED_TELEMETRY_DOMAINS = ["ingest.t3.codes", "posthog.com", "axiom.co"] as const;
+/** Upstream T3 Code's own domain and its analytics vendors. PseudoCode refuses them at runtime. */
+const BLOCKED_TELEMETRY_DOMAINS = ["t3.codes", "posthog.com", "axiom.co"] as const;
 
 /** True for a blocked domain or any of its subdomains. */
 export function isBlockedTelemetryHost(hostname: string): boolean {
