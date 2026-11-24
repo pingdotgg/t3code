@@ -27,6 +27,11 @@ describe("deriveSubagentElapsedMs", () => {
       expect(deriveSubagentElapsedMs({ status, startedAt, completedAt }, now)).toBe(10_000);
     },
   );
+  it("does not count a pending task, which has not started", () => {
+    expect(
+      deriveSubagentElapsedMs({ status: "pending", startedAt, completedAt: null }, now),
+    ).toBeNull();
+  });
   it("counts a resumed activation despite a stale previous completion timestamp", () => {
     expect(deriveSubagentElapsedMs({ status: "running", startedAt, completedAt }, now)).toBe(
       3_600_000,

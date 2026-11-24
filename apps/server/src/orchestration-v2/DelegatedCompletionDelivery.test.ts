@@ -2437,9 +2437,9 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           threadId: child.childThreadId,
           commandId: CommandId.make("command:held-followup:resume"),
         });
-        yield* waitForStatus(resumeSequence, "running");
+        yield* waitForStatus(resumeSequence, "pending");
         const resumed = yield* orchestrator.getThreadProjection(parentThreadId);
-        assert.equal(resumed.subagents.find((row) => row.id === task.id)?.status, "running");
+        assert.equal(resumed.subagents.find((row) => row.id === task.id)?.status, "pending");
         assert.isNull(resumed.subagents.find((row) => row.id === task.id)?.result);
 
         const started = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
@@ -3088,7 +3088,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           heldFollowup?.result ?? null,
           "the follow-up closed while the child's own subagent was still running",
         );
-        assert.equal(heldFollowup?.status, "running");
+        assert.equal(heldFollowup?.status, "pending");
         assert.equal(
           waiting.contextTransfers.filter(
             (transfer) =>
@@ -3335,7 +3335,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             held?.result ?? null,
             "the follow-up closed with its interim reply while the awaited command still ran",
           );
-          assert.equal(held?.status, "running");
+          assert.equal(held?.status, "pending");
 
           if (ending === "cancelled") {
             yield* orchestrator.cancelDelegatedTask({
@@ -3830,7 +3830,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
             (task) => task.id === runA.delegatedTaskId,
           )?.status,
-          "running",
+          "pending",
         );
 
         // Build a ends; the roster still holds b, and no run update follows.

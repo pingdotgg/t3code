@@ -1004,6 +1004,23 @@ function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]
   );
 }
 
+/** A task has started once its child's run is running; a run still opening its session has not. */
+function delegatedTaskLiveStatus(
+  run: Pick<OrchestrationV2Run, "status" | "queueHeld">,
+): OrchestrationV2Subagent["status"] {
+  switch (run.status) {
+    case "queued":
+      return run.queueHeld === true ? "idle" : "pending";
+    case "preparing":
+    case "starting":
+      return "pending";
+    case "waiting":
+      return "waiting";
+    default:
+      return "running";
+  }
+}
+
 function delegatedTaskTerminalStatus(
   status: OrchestrationV2Run["status"],
 ): OrchestrationV2Subagent["status"] | null {
@@ -10157,7 +10174,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         model: command.modelSelection.model,
         modelSelection: command.modelSelection,
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
-        status: "running",
+        status: "pending",
         result: null,
         startedAt: now,
         completedAt: null,
@@ -10170,7 +10187,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         parentNodeId: command.parentNodeId,
         rootNodeId: parentRun.rootNodeId,
         kind: "subagent",
-        status: "running",
+        status: "pending",
         countsForRun: false,
         providerThreadId: null,
         providerTurnId: null,
@@ -10191,7 +10208,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         nativeItemRef: null,
         parentItemId: null,
         ordinal: yield* nextTurnItemOrdinal(parentProjection),
-        status: "running",
+        status: "pending",
         title: command.title ?? taskTitle,
         startedAt: now,
         completedAt: null,
@@ -10430,7 +10447,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       title: child.title,
       completionWake: "always",
       completionDelivery: { state: "pending", observedByRunId: null },
-      status: run.status === "queued" ? (run.queueHeld === true ? "idle" : "pending") : "running",
+      status: delegatedTaskLiveStatus(run),
       progress: undefined,
       cancelledRunId: undefined,
       result: null,
@@ -15332,6 +15349,63 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /** Callers must hold the parent thread's dispatch lock, as for `finalizeAppOwnedSubagentTask`. */
+  const syncDelegatedTaskStatus = Effect.fn("Orchestrator.syncDelegatedTaskStatus")(function* (
+    parentThreadId: ThreadId,
+    task: OrchestrationV2Subagent,
+    childRun: OrchestrationV2Run,
+  ) {
+    const status = delegatedTaskLiveStatus(childRun);
+    if (task.result !== null || task.status === status) return;
+    const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["nodes", "turnItems"], {
+      nodeIds: [task.id],
+      turnItemNodeIds: [task.id],
+      turnItemTypes: ["subagent"],
+    });
+    const now = yield* DateTime.now;
+    const scope = {
+      threadId: parent.thread.id,
+      ...(task.runId === null ? {} : { runId: task.runId }),
+      nodeId: task.id,
+      providerInstanceId: task.providerInstanceId,
+      occurredAt: now,
+    };
+    const node = parent.nodes.find((row) => row.id === task.id);
+    const item = parent.turnItems.find(
+      (row) => row.type === "subagent" && row.subagentId === task.id,
+    );
+    // Until its run starts, the record carries the time it was asked for, which orders it.
+    const startedAt =
+      task.status === "pending" || task.status === "idle"
+        ? (childRun.startedAt ?? task.startedAt)
+        : task.startedAt;
+    yield* writeSystemEvents([
+      {
+        ...scope,
+        type: "subagent.updated",
+        payload: { ...task, status, startedAt, completedAt: null, updatedAt: now },
+      },
+      ...(node === undefined
+        ? []
+        : [
+            {
+              ...scope,
+              type: "node.updated" as const,
+              payload: { ...node, status, startedAt, completedAt: null },
+            },
+          ]),
+      ...(item === undefined
+        ? []
+        : [
+            {
+              ...scope,
+              type: "turn-item.updated" as const,
+              payload: { ...item, status, startedAt, completedAt: null, updatedAt: now },
+            },
+          ]),
+    ]);
+  });
+
   /**
    * Callers must hold the parent thread's dispatch lock: wake-policy updates the same
    * subagent row with full-row payloads, so unserialized writers clobber policy or terminal status.
@@ -15367,58 +15441,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       let terminalStatus = delegatedTaskTerminalStatus(outcome);
       if (terminalStatus === null) {
         if (childRun.delegatedTaskId === undefined || childRun.id !== options.syncRunId) return;
-        const task = options.task;
-        const status: OrchestrationV2Subagent["status"] =
-          childRun.status === "queued"
-            ? childRun.queueHeld === true
-              ? "idle"
-              : "pending"
-            : childRun.status === "waiting"
-              ? "waiting"
-              : "running";
-        if (task.result !== null || task.status === status) return;
-        const parent = yield* projectionStore.getThreadRecords(
+        yield* syncDelegatedTaskStatus(
           childControls.thread.lineage.parentThreadId,
-          ["nodes", "turnItems"],
-          { nodeIds: [task.id], turnItemNodeIds: [task.id], turnItemTypes: ["subagent"] },
+          options.task,
+          childRun,
         );
-        const now = yield* DateTime.now;
-        const scope = {
-          threadId: parent.thread.id,
-          ...(task.runId === null ? {} : { runId: task.runId }),
-          nodeId: task.id,
-          providerInstanceId: task.providerInstanceId,
-          occurredAt: now,
-        };
-        const node = parent.nodes.find((row) => row.id === task.id);
-        const item = parent.turnItems.find(
-          (row) => row.type === "subagent" && row.subagentId === task.id,
-        );
-        yield* writeSystemEvents([
-          {
-            ...scope,
-            type: "subagent.updated",
-            payload: { ...task, status, completedAt: null, updatedAt: now },
-          },
-          ...(node === undefined
-            ? []
-            : [
-                {
-                  ...scope,
-                  type: "node.updated" as const,
-                  payload: { ...node, status, completedAt: null },
-                },
-              ]),
-          ...(item === undefined
-            ? []
-            : [
-                {
-                  ...scope,
-                  type: "turn-item.updated" as const,
-                  payload: { ...item, status, completedAt: null, updatedAt: now },
-                },
-              ]),
-        ]);
         return;
       }
       // A follow-up ends with the work it awaits, as the original task does. A cancelled task
@@ -15714,8 +15741,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         task.id === forkedFrom.nodeId &&
         (cancelled ? cancelAwaitsWork : progress.state !== "result_available")
-      )
+      ) {
+        // The original task's runs carry no task id: while it is pending, the run that started is its own.
+        const started =
+          task.status === "pending" && !cancelled
+            ? childControls.runs.find(
+                (run) =>
+                  run.delegatedTaskId === undefined &&
+                  (run.status === "running" || run.status === "waiting"),
+              )
+            : undefined;
+        if (started !== undefined) yield* syncDelegatedTaskStatus(parentThreadId, task, started);
         continue;
+      }
       yield* finalizeAppOwnedSubagentTask(childControls, {
         ...options,
         task,
@@ -17015,6 +17053,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (stored.event.payload.status === "queued" ||
               stored.event.payload.status === "starting" ||
               stored.event.payload.status === "waiting")) ||
+            // The one update that starts a run: its delegated task has started with it.
+            (stored.event.payload.status === "running" &&
+              stored.event.payload.startedAt !== null &&
+              DateTime.toEpochMillis(stored.event.payload.startedAt) ===
+                DateTime.toEpochMillis(stored.event.occurredAt)) ||
             stored.event.payload.status === "completed" ||
             stored.event.payload.status === "interrupted" ||
             stored.event.payload.status === "failed" ||

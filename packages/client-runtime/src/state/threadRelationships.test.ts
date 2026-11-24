@@ -120,6 +120,7 @@ describe("thread relationships", () => {
   });
 
   it.each([
+    ["pending", "starting", "pending"],
     ["running", "starting", "running"],
     ["running", "preparing", "running"],
     ["running", "waiting", "waiting"],

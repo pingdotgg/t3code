@@ -8694,7 +8694,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const task = parent.subagents[0]!;
       assert.equal(parent.runs[0]?.status, "completed");
       assert.equal(task.origin, "app_owned");
-      assert.equal(task.status, "running");
+      assert.equal(task.status, "pending");
       assert.isNotNull(task.childThreadId);
 
       // Archive must preserve the idle parent's path for receiving this child's result.
@@ -8713,7 +8713,36 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
 
       const childThreadId = task.childThreadId!;
-      const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+      const dispatchedRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+      assert.equal(dispatchedRun.status, "starting");
+
+      // The task starts with its child's run, not when it was asked for.
+      const sessionOpenedAt = DateTime.add(now, { seconds: 30 });
+      const childRun = { ...dispatchedRun, status: "running" as const, startedAt: sessionOpenedAt };
+      const beforeStart = yield* sink.latestSequence();
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("archive-delegated-child-run-started"),
+            type: "run.updated",
+            threadId: childThreadId,
+            runId: childRun.id,
+            occurredAt: sessionOpenedAt,
+            payload: childRun,
+          },
+        ],
+      });
+      yield* sink.stream({ afterSequence: beforeStart, eventType: "subagent.updated" }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "subagent.updated" && stored.event.payload.status === "running",
+        ),
+        Stream.runHead,
+      );
+      const startedTask = (yield* orchestrator.getThreadProjection(threadId)).subagents[0]!;
+      assert.equal(startedTask.status, "running");
+      assert.deepEqual(startedTask.startedAt, sessionOpenedAt);
+
       yield* sink.write({
         events: [
           {

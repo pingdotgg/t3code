@@ -8,7 +8,8 @@ export function deriveSubagentElapsedMs(
   },
   nowMs: number,
 ): number | null {
-  if (agent.startedAt === null) return null;
+  // A pending task has not started; its `startedAt` is when it was asked for.
+  if (agent.startedAt === null || agent.status === "pending") return null;
   const end = isOrchestrationV2WorkActive(agent.status)
     ? nowMs
     : agent.completedAt === null

@@ -3634,7 +3634,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           yield* Fiber.interrupt(call);
           const parent = yield* orchestrator.getThreadProjection(parentThreadId);
           const task = parent.subagents.find((subagent) => subagent.origin === "app_owned");
-          assert.equal(task?.status, "running");
+          assert.equal(task?.status, placement === "remote" ? "running" : "pending");
           assert.equal(
             task?.completionWake,
             "always",

@@ -2059,7 +2059,7 @@ it.effect(
       yield* orchestrator.recoverDelegatedTasks;
       assert.equal(
         (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]?.status,
-        "running",
+        "pending",
       );
       const statuses = Effect.gen(function* () {
         const nativeAfter = yield* orchestrator.getThreadProjection(nativeThreadId);
