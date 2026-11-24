@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
   holdingRows: false,
   failedAction: null as string | null,
   failureMessage: "Server rejected action",
+  unsettleResult: undefined as unknown,
   forgotten: [] as { environmentId: string; threadId: string }[],
   titleOutcome: null as ThreadTitleRegenerationOutcome | null,
   archivedRefreshes: [] as string[],
@@ -69,6 +70,8 @@ vi.mock("../archive/useArchivedThreadSnapshots", () => ({
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,
+  readEnvironmentScopeDenied: (environmentId: string, scope: string) =>
+    state.scopes.get(environmentId)?.has(scope) !== true,
 }));
 vi.mock("../../state/forgotten-threads", () => ({
   forgetThread: (environmentId: string, threadId: string) =>
@@ -95,7 +98,7 @@ vi.mock("../../state/atom-registry", async () => {
             ? state.holdingRows
             : atom === "thread-shells"
               ? state.shells
-              : atom === "queued-thread-keys"
+              : atom === "queued-thread-keys" || atom === "pending-sync"
                 ? new Set<string>()
                 : new Map(
                     [...state.scopes.keys()].map((environmentId) => [
@@ -152,39 +155,48 @@ vi.mock("../../state/threads", () => ({
   environmentThreadShells: { threadShellsAtom: "thread-shells" },
   steadyNavigationThreadShellsAtom: "thread-shells",
   steadyShellsHoldingAtom: "steady-shells-holding",
-  threadEnvironment: Object.fromEntries(
-    [
-      "archive",
-      "unarchive",
-      "delete",
-      "settle",
-      "unsettle",
-      "snooze",
-      "unsnooze",
-      "pin",
-      "unpin",
-      "reorderPin",
-      "reorderActive",
-      "updateMetadata",
-      "regenerateTitle",
-    ].map((action) => [
-      action,
-      async (request: {
-        environmentId: string;
-        input: { threadId: string; orderKey?: string };
-      }) => {
-        state.requests.push({ action, ...request });
-        await state.heldActions.get(action);
-        if (!state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope)) {
-          return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
-        }
-        if (action === state.failedAction)
-          return AsyncResult.failure(Cause.fail(new Error(state.failureMessage)));
-        state.afterRequest?.();
-        return AsyncResult.success(action === "regenerateTitle" ? state.titleOutcome : undefined);
-      },
-    ]),
-  ),
+  threadEnvironment: {
+    pendingSyncAtom: () => "pending-sync",
+    ...Object.fromEntries(
+      [
+        "archive",
+        "unarchive",
+        "delete",
+        "settle",
+        "unsettle",
+        "snooze",
+        "unsnooze",
+        "pin",
+        "unpin",
+        "reorderPin",
+        "reorderActive",
+        "updateMetadata",
+        "regenerateTitle",
+      ].map((action) => [
+        action,
+        async (request: {
+          environmentId: string;
+          input: { threadId: string; orderKey?: string };
+        }) => {
+          state.requests.push({ action, ...request });
+          await state.heldActions.get(action);
+          if (!state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope)) {
+            return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
+          }
+          if (action === state.failedAction)
+            return AsyncResult.failure(Cause.fail(new Error(state.failureMessage)));
+          state.afterRequest?.();
+          return AsyncResult.success(
+            action === "regenerateTitle"
+              ? state.titleOutcome
+              : action === "unsettle"
+                ? state.unsettleResult
+                : undefined,
+          );
+        },
+      ]),
+    ),
+  },
 }));
 
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -222,6 +234,7 @@ beforeEach(() => {
   state.connectedEnvironmentIds = [primaryEnvironmentId, otherEnvironmentId];
   state.failedAction = null;
   state.failureMessage = "Server rejected action";
+  state.unsettleResult = undefined;
   state.forgotten = [];
   state.titleOutcome = null;
   state.archivedRefreshes = [];
@@ -361,37 +374,46 @@ describe("pinned thread operation permissions", () => {
 });
 
 describe("thread reorder connection availability", () => {
-  it.each(["active", "pinned"] as const)(
-    "rejects %s materialization involving a cached capable offline neighbor",
-    async (section) => {
-      const moved = makeThread({
-        pinnedAt: section === "pinned" ? "2026-09-02T00:00:00.000Z" : null,
-      });
-      state.shells = [
-        moved,
-        makeThread({
-          id: ThreadId.make("offline-neighbor"),
-          environmentId: otherEnvironmentId,
-          createdAt: "2026-09-02T00:00:00.000Z",
-          pinnedAt: moved.pinnedAt,
-        }),
-      ];
-      state.scopes.get(otherEnvironmentId)?.add(AuthOrchestrationOperateScope);
-      state.connectedEnvironmentIds = [primaryEnvironmentId];
+  const offlineNeighborCase = (pinnedAt: string | null) => {
+    const moved = makeThread({ pinnedAt });
+    state.shells = [
+      moved,
+      makeThread({
+        id: ThreadId.make("offline-neighbor"),
+        environmentId: otherEnvironmentId,
+        createdAt: "2026-09-02T00:00:00.000Z",
+        pinnedAt,
+      }),
+    ];
+    state.scopes.get(otherEnvironmentId)?.add(AuthOrchestrationOperateScope);
+    state.connectedEnvironmentIds = [primaryEnvironmentId];
+    return moved;
+  };
 
-      const { moveThread } = useThreadListActions();
-      expect(await moveThread(moved, "up")).toBe(false);
-      expect(state.requests).toEqual([]);
+  it("rejects pinned materialization involving a cached capable offline neighbor", async () => {
+    const moved = offlineNeighborCase("2026-09-02T00:00:00.000Z");
 
-      state.connectedEnvironmentIds = [primaryEnvironmentId, otherEnvironmentId];
+    const { moveThread } = useThreadListActions();
+    expect(await moveThread(moved, "up")).toBe(false);
+    expect(state.requests).toEqual([]);
 
-      expect(await moveThread(moved, "up")).toBe(true);
-      expect(state.requests).toHaveLength(2);
-      expect(new Set(state.requests.map(({ environmentId }) => environmentId))).toEqual(
-        new Set([primaryEnvironmentId, otherEnvironmentId]),
-      );
-    },
-  );
+    state.connectedEnvironmentIds = [primaryEnvironmentId, otherEnvironmentId];
+
+    expect(await moveThread(moved, "up")).toBe(true);
+    expect(state.requests).toHaveLength(2);
+    expect(new Set(state.requests.map(({ environmentId }) => environmentId))).toEqual(
+      new Set([primaryEnvironmentId, otherEnvironmentId]),
+    );
+  });
+
+  it("moves an active thread past a cached offline neighbor by writing only itself", async () => {
+    const moved = offlineNeighborCase(null);
+
+    expect(await useThreadListActions().moveThread(moved, "up")).toBe(true);
+    expect(state.requests).toEqual([
+      expect.objectContaining({ action: "reorderActive", environmentId: primaryEnvironmentId }),
+    ]);
+  });
 
   it.each(["active", "pinned"] as const)(
     "uses the latest connection state in a retained %s move callback",
@@ -487,6 +509,22 @@ describe("thread action undo", () => {
 
     expect(await Promise.all(pending)).toEqual([true, true, true]);
     expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle", "settle"]);
+  });
+
+  it("skips server restores when Undo cancels an offline settle on this device", async () => {
+    const thread = makeThread({
+      pinnedAt: "2026-09-02T00:00:00.000Z",
+      pinOrderKey: "m",
+      snoozedUntil: "2099-01-01T09:00:00.000Z",
+    });
+    expect(await useThreadListActions().settleThread(thread)).toBe(true);
+    state.unsettleResult = { sequence: 0, cancelledOnDevice: true };
+
+    await readThreadUndoNotice()!.undo();
+
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle"]);
+    expect(state.alerts).toEqual([]);
+    expect(readThreadUndoNotice()).toBeNull();
   });
 
   it("restores pin placement and snooze after settling, only once", async () => {
