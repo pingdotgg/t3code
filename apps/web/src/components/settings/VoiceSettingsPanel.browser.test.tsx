@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
 import { readBrowserClientSettings } from "../../clientPersistenceStorage";
 import { chooseRecordingMicrophone } from "../../speech/browserMicrophones";
@@ -736,6 +736,105 @@ it("cancels an alias draft on Esc without closing Settings", async () => {
   await userEvent.keyboard("{Escape}");
 
   await expect.element(settings).not.toBeInTheDocument();
+});
+
+it("clears the transcription model search on Esc without closing Settings", async () => {
+  const target = new PrimaryConnectionTarget({
+    environmentId: EnvironmentId.make("voice-search-escape"),
+    label: "Test environment",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = { ...target, target, socketUrl: target.wsBaseUrl, httpAuthorization: null };
+  const model: EnvironmentSpeechModel = {
+    id: "tiny",
+    name: "Tiny",
+    description: "",
+    size: 100,
+    languages: ["en"],
+    accuracy: 1,
+    speed: 1,
+    recommended: true,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    supportsLanguageDetection: false,
+    active: false,
+    state: "downloadable",
+  };
+  const status = {
+    supported: true,
+    state: "missing-model",
+    modelId: model.id,
+    model: model.name,
+    size: model.size,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    acceleration: "cpu",
+    benchmarkTier: "cpu",
+    modelUnloadTimeout: "never",
+    gpuDevices: [],
+  } satisfies EnvironmentSpeechStatus;
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+    if (url.pathname === "/api/voice/status") return Promise.resolve(Response.json(status));
+    if (url.pathname === "/api/voice/models")
+      return Promise.resolve(Response.json({ models: [model] }));
+    return fetch(input, init);
+  });
+  await vi.mocked(useVoiceTranscriptionDestination).withImplementation(
+    () => ({ environmentId: target.environmentId, label: target.label, grantId: "test", prepared }),
+    async () => {
+      await using screen = await render(
+        <AppRouteModal label="Settings">
+          <SettingsScopeProvider search={{}} onChange={() => {}}>
+            <VoiceSettingsPanel />
+          </SettingsScopeProvider>
+        </AppRouteModal>,
+        { router: "/settings/voice" },
+      );
+      const settings = screen.getByRole("dialog", { name: "Settings" });
+      const search = screen.getByRole("searchbox", { name: "Search transcription models" });
+      await expect.element(search).toBeVisible();
+
+      await userEvent.fill(search, "tiny");
+      for (const composition of [
+        { key: "Escape", isComposing: true, keyCode: 27 },
+        { key: "Escape", isComposing: false, keyCode: 229 },
+      ]) {
+        // Safari ends the composition just before the Escape keydown.
+        await act(() => {
+          search.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+          search
+            .element()
+            .dispatchEvent(
+              new KeyboardEvent("keydown", { ...composition, bubbles: true, cancelable: true }),
+            );
+        });
+        await expect.element(search).toHaveValue("tiny");
+        await expect.element(settings).toHaveAttribute("data-open");
+      }
+
+      await userEvent.keyboard("{Escape}");
+      await expect.element(search).toHaveValue("");
+      await expect.element(search).toHaveFocus();
+      // Holding Escape repeats the keydown, which must not also close Settings.
+      await act(() => {
+        search.element().dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Escape",
+            repeat: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await expect.element(settings).toHaveAttribute("data-open");
+
+      await userEvent.keyboard("{Escape}");
+      await expect.element(settings).not.toBeInTheDocument();
+    },
+  );
 });
 
 it("records from the first connected microphone in the saved order", async () => {
