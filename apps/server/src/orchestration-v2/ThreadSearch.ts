@@ -40,6 +40,7 @@ import {
   nonPlaceholderMessageCondition,
 } from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
+import { withoutWebhookUrlToken } from "../scheduledTasks/webhookUrlToken.ts";
 
 // When the user last wrote in the thread aliased `threads`, as the clients
 // rank recency; agent notices in the user role do not count.
@@ -200,7 +201,8 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
   // Cut between characters, not inside an emoji's surrogate pair.
   if (isLowSurrogate(text.charCodeAt(start))) start++;
   // Collapsing whitespace shortens the text, so read more of it.
-  const rawEnd = Math.min(text.length, start + SNIPPET_LENGTH * 2);
+  let rawEnd = Math.min(text.length, start + SNIPPET_LENGTH * 2);
+  if (isLowSurrogate(text.charCodeAt(rawEnd))) rawEnd++;
   // Emphasis and code marks do not show in a thread either.
   const shown = text
     .slice(start, rawEnd)
@@ -291,8 +293,13 @@ export const messageHitsQuery = (
               runs.status = 'cancelled'
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items AS items
-                WHERE items.run_id = runs.run_id
-                  AND json_extract(items.payload_json, '$.messageId') = messages.message_id
+                -- Seeks migration 94's message index rather than reading every item of
+                -- the run; + drops the column's affinity, which would stop the seek.
+                WHERE items.thread_id = messages.thread_id
+                  AND items.type IN ('user_message', 'assistant_message')
+                  AND json_valid(items.payload_json)
+                  AND json_extract(items.payload_json, '$.messageId') = +messages.message_id
+                  AND items.run_id = runs.run_id
                   AND (
                     json_extract(items.payload_json, '$.inputIntent') IS NOT 'queued_turn'
                     OR json_extract(runs.payload_json, '$.startedAt') IS NOT NULL
@@ -551,7 +558,8 @@ export const make = Effect.gen(function* () {
     const hitCount = (threadId: ThreadId) => hitCounts.get(threadId) ?? 1;
     const matchMessage = messageMatcher(input.query);
     for (const row of rows) {
-      const text = row.text.replace(MARKDOWN_LINK, "$1");
+      // Webhook URL tokens are withheld before matching, so a snippet cut inside the URL has none.
+      const text = withoutWebhookUrlToken(row.text.replace(MARKDOWN_LINK, "$1"));
       const match = matchMessage(text);
       if (match === null) continue;
       const hit = { row, text, ...match };

@@ -67,10 +67,10 @@ function parseBody(request: WebhookRequest): unknown {
 const WILDCARD = /^(.*)\[\]$/;
 
 /**
- * Walks `segments` from `root`. A segment ending in `[]` names an array and
- * the rest of the path applies to each element, so `labels[].name` resolves
- * to the list of every label's name. Elements without the rest of the path
- * are dropped; a wildcard on a non-array resolves to undefined.
+ * Walks `segments` from `root`; a `[]` segment applies the rest of the path to
+ * each array element, dropping elements that lack it. A wildcard on null is an
+ * empty list, as Go senders such as Forgejo encode one, and on any other
+ * non-array it is undefined.
  */
 function lookup(root: unknown, segments: ReadonlyArray<string>): unknown {
   let current = root;
@@ -81,6 +81,7 @@ function lookup(root: unknown, segments: ReadonlyArray<string>): unknown {
     if (!Object.hasOwn(current, key)) return undefined;
     current = (current as Record<string, unknown>)[key];
     if (!wildcard) continue;
+    if (current === null) return [];
     if (!Array.isArray(current)) return undefined;
     const rest = segments.slice(index + 1);
     return current.flatMap((element) => {
