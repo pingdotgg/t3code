@@ -90,6 +90,19 @@ const compact = (schema: Json, optional: boolean): Json => {
           )
         : compact(value, false);
   }
+  // Gemini function declarations require `items` even for fixed-length tuples.
+  const { prefixItems, items, maxItems } = result;
+  if (
+    result.type === "array" &&
+    items === undefined &&
+    Array.isArray(prefixItems) &&
+    prefixItems.length > 0 &&
+    maxItems === prefixItems.length &&
+    prefixItems.every((item) => JSON.stringify(item) === JSON.stringify(prefixItems[0]))
+  ) {
+    delete result.prefixItems;
+    result.items = prefixItems[0];
+  }
   if (Array.isArray(result.anyOf)) {
     const branches = result.anyOf
       .flatMap((branch) => (isBareAnyOf(branch) ? branch.anyOf : [branch]))
