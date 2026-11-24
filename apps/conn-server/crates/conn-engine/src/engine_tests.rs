@@ -12509,13 +12509,14 @@ async fn a_fork_transcript_inherits_the_source_history_through_the_fork_run() {
     );
     assert_eq!(nested.last().unwrap()["item"]["id"], "turn-item:fork:t4");
 
-    // Deleting the source keeps the fork's inherited history, as in T3.
+    // Deleting the source keeps the fork's inherited history, as in T3. Its side chat goes
+    // with it.
     dispatch(
         &engine,
         json!({"type": "thread.delete", "commandId": "d1", "threadId": "t1"}),
     )
     .await;
-    assert_eq!(body(read("t3").await.unwrap())["items"], json!([]));
+    assert_eq!(read("t3").await.unwrap(), crate::ThreadTranscript::NotFound);
     assert_eq!(view("t2", false).await, json!(t2_rows));
     let t2_transcript = body(read("t2").await.unwrap())["items"].clone();
     assert_eq!(t2_transcript, json!(t2_rows));

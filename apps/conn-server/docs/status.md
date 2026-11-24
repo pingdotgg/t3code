@@ -34,6 +34,15 @@ retries (a planned follow-up).
 `conn-support/src/input.rs` and the generator walk `tools/schema-rules.mjs`. Proof:
 `tools/check.sh` 46/46, no skips; touched-crate tests pass; the original cases are unchanged.
 
+**Side chats follow their parent (2026-11-23):** as T3's `Orchestrator.ts`, `thread.delete`
+with `onlyIfUnused` keeps a thread that has a message or a run. Archive refuses a thread that is
+already archived or has running delegated tasks, then takes the parent's active side chats (found
+by lineage, so one with no fork run too), except one waiting on delegated tasks. Each archived
+thread cancels its queued and preparing runs and detaches its live provider sessions. Unarchive
+refuses a thread that is not archived and restores only the side chats archived with or after
+the parent. Delete takes them all. Proof: five `checkpoint_tests.rs` tests and
+`t3_import::tests::an_imported_side_chat_without_a_fork_run_follows_its_parent`.
+
 **Undo of a settle and thread times (2026-11-23):** `thread.unsettle` reads
 `restoreUnsettledAt`, as T3's `Orchestrator.ts`: a time restores the Active anchor the settle
 cleared, `null` restores no anchor, a time that does not parse refuses the command, and a

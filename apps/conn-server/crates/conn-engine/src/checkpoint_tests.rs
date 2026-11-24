@@ -597,8 +597,29 @@ async fn with_turns(
     thread: Value,
     texts: &[&str],
 ) -> (SqliteEngine, Arc<FakeProvider>) {
+    with_turns_on(
+        db,
+        repo,
+        provider,
+        thread,
+        texts,
+        Arc::new(crate::SystemClock),
+    )
+    .await
+}
+
+/// [`with_turns`] on a given clock, so a test can order timestamps.
+async fn with_turns_on(
+    db: &TempDb,
+    repo: &Repo,
+    provider: FakeProvider,
+    thread: Value,
+    texts: &[&str],
+    clock: Arc<dyn crate::Clock>,
+) -> (SqliteEngine, Arc<FakeProvider>) {
     let provider = Arc::new(provider);
     let mut config = EngineConfig::new(db.path());
+    config.clock = clock;
     config.projects = vec![ProjectConfig {
         title: "Project".into(),
         workspace_root: repo.root(),
@@ -1677,6 +1698,280 @@ async fn a_rollback_session_gets_the_runtime_policy_override() {
     let policies = provider.opened_policies.lock().unwrap().clone();
     assert_eq!(policies.len(), 1, "{policies:?}");
     assert_eq!(policies[0]["approvalPolicy"], "never", "{policies:?}");
+}
+
+fn fork_to(command: &str, target: &str) -> Value {
+    let mut c = fork(command, json!({"type": "latest_stable"}));
+    c["targetThreadId"] = json!(target);
+    c
+}
+
+fn side_chat(command: &str, target: &str) -> Value {
+    let mut c = fork_to(command, target);
+    c["sideChat"] = json!(true);
+    c
+}
+
+/// T3 `Orchestrator.ts` `thread.delete` with `onlyIfUnused`: the clients close a side chat this
+/// way, and a side chat that holds a conversation stays. An unused one goes.
+#[tokio::test(flavor = "current_thread")]
+async fn closing_a_side_chat_keeps_it_once_used() {
+    let db = TempDb::new("side-chat-close");
+    let repo = Repo::new("side-chat-close");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c"),
+        &["one"],
+    )
+    .await;
+    dispatch(&engine, side_chat("f", "t2")).await;
+    dispatch(&engine, side_chat("f2", "t3")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t2"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    dispatch(&engine, message("t2", "m", "a real side conversation")).await;
+    until_run_ends(&mut stream).await;
+    for (id, target) in [("close", "t2"), ("close-unused", "t3")] {
+        dispatch(
+            &engine,
+            json!({"type":"thread.delete","commandId":id,"threadId":target,"onlyIfUnused":true}),
+        )
+        .await;
+    }
+    assert!(projection(&engine, "t2").await["thread"]["deletedAt"].is_null());
+    assert!(engine.get_thread_projection("t3".into()).await.is_err());
+
+    // A first send racing the close: whichever commits first decides, and an accepted send
+    // always keeps its chat.
+    dispatch(&engine, side_chat("f3", "t4")).await;
+    let send = engine.dispatch(from_json(message("t4", "race", "first words")).unwrap());
+    let close = engine.dispatch(
+        from_json(
+            json!({"type": "thread.delete", "commandId": "close-race", "threadId": "t4",
+            "onlyIfUnused": true}),
+        )
+        .unwrap(),
+    );
+    let (sent, closed) = tokio::join!(send, close);
+    assert!(closed.is_ok());
+    let kept = engine.get_thread_projection("t4".into()).await.is_ok();
+    assert_eq!(sent.is_ok(), kept, "an accepted send keeps the chat");
+}
+
+/// T3 `Orchestrator.ts` `thread.archive`/`unarchive`/`delete`: side chats live inside their
+/// parent. Archive takes the active ones, except one waiting on delegated tasks; unarchive
+/// restores only those it took; delete takes all.
+#[tokio::test(flavor = "current_thread")]
+async fn side_chats_follow_their_parent() {
+    let db = TempDb::new("side-chat-parent");
+    let repo = Repo::new("side-chat-parent");
+    let clock = Arc::new(crate::ManualClock::at(1_800_000_000_000));
+    let (engine, _) = with_turns_on(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c"),
+        &["one"],
+        clock.clone(),
+    )
+    .await;
+    let tick = || clock.advance(std::time::Duration::from_secs(1));
+    dispatch(&engine, side_chat("f", "t2")).await;
+    dispatch(&engine, side_chat("f2", "t3")).await;
+    dispatch(&engine, fork_to("f3", "t4")).await;
+    // A side chat whose own turn waits on a running delegated task.
+    dispatch(&engine, side_chat("f5", "t5")).await;
+    dispatch(&engine, message("t5", "busy", "hang")).await;
+    let mut task = super::delegate("task", "hang", None);
+    task["parentThreadId"] = json!("t5");
+    task["parentRunId"] = json!("run:t5:1");
+    task["parentNodeId"] = json!("node:run:t5:1:root");
+    dispatch(&engine, task).await;
+    // A delegated child of the parent: not a side chat, so the cascade leaves it alone.
+    dispatch(&engine, message("t1", "busy-parent", "hang")).await;
+    let mut child_task = super::delegate("parent-task", "child work", None);
+    child_task["parentRunId"] = json!("run:t1:2");
+    child_task["parentNodeId"] = json!("node:run:t1:2:root");
+    dispatch(&engine, child_task).await;
+    let child = "thread:delegated-task:parent-task";
+    super::run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    // A client with the side chat open hears each transition.
+    let mut view = engine
+        .subscribe_thread(from_json(json!({"threadId": "t2"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut view).await;
+    let archive = |id: &str, thread: &str, kind: &str| json!({"type": kind, "commandId": id, "threadId": thread});
+    dispatch(&engine, archive("early", "t3", "thread.archive")).await;
+    tick();
+    dispatch(&engine, archive("archive", "t1", "thread.archive")).await;
+    let archived = |p: Value| p["thread"]["archivedAt"].is_string();
+    assert!(archived(projection(&engine, "t2").await));
+    until_event(&mut view, "thread.archived").await;
+    assert!(
+        !archived(projection(&engine, child).await),
+        "a delegated child stays"
+    );
+    assert!(
+        !archived(projection(&engine, "t4").await),
+        "a plain fork stays"
+    );
+    assert!(
+        !archived(projection(&engine, "t5").await),
+        "a side chat waiting on delegated tasks stays"
+    );
+    tick();
+    dispatch(&engine, archive("restore", "t1", "thread.unarchive")).await;
+    assert!(!archived(projection(&engine, "t2").await));
+    until_event(&mut view, "thread.unarchived").await;
+    assert!(
+        archived(projection(&engine, "t3").await),
+        "archived before its parent"
+    );
+    tick();
+    dispatch(&engine, archive("delete", "t1", "thread.delete")).await;
+    for gone in ["t1", "t2", "t3", "t5"] {
+        assert!(
+            engine.get_thread_projection(gone.into()).await.is_err(),
+            "{gone}"
+        );
+    }
+    until_event(&mut view, "thread.deleted").await;
+    assert!(projection(&engine, "t4").await["thread"]["deletedAt"].is_null());
+    assert!(projection(&engine, child).await["thread"]["deletedAt"].is_null());
+}
+
+/// Reads a thread view until an event of `kind` for that thread arrives.
+async fn until_event<T: serde::Serialize, E: serde::Serialize>(
+    view: &mut Subscription<T, E>,
+    kind: &str,
+) {
+    loop {
+        let item = next(view).await;
+        if item["kind"] == "event" && item["event"]["type"] == kind {
+            return;
+        }
+    }
+}
+
+/// T3 refuses to archive an archived thread (`Orchestrator.ts` "is already archived") before
+/// either thread changes, so a restore still brings the side chat back. Unarchiving a thread
+/// that is not archived is refused the same way.
+#[tokio::test(flavor = "current_thread")]
+async fn archiving_an_archived_parent_is_refused_and_restore_brings_its_side_chat_back() {
+    let db = TempDb::new("side-chat-archive-twice");
+    let repo = Repo::new("side-chat-archive-twice");
+    let clock = Arc::new(crate::ManualClock::at(1_800_000_000_000));
+    let (engine, _) = with_turns_on(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c"),
+        &["one"],
+        clock.clone(),
+    )
+    .await;
+    dispatch(&engine, side_chat("f", "t2")).await;
+    let command = |id: &str, kind: &str| json!({"type": kind, "commandId": id, "threadId": "t1"});
+    dispatch(&engine, command("a1", "thread.archive")).await;
+    clock.advance(std::time::Duration::from_secs(1));
+    let refusal = |result: Result<
+        _,
+        EngineError<conn_contract::OrchestrationV2DispatchCommandError>,
+    >| match result {
+        Err(EngineError::Rejected(e)) => to_json(&e).to_string(),
+        _ => panic!("expected a refusal"),
+    };
+    let again = engine
+        .dispatch(from_json(command("a2", "thread.archive")).unwrap())
+        .await;
+    assert!(refusal(again).contains("Thread t1 is already archived."));
+    dispatch(&engine, command("u1", "thread.unarchive")).await;
+    assert!(projection(&engine, "t2").await["thread"]["archivedAt"].is_null());
+    let again = engine
+        .dispatch(from_json(command("u2", "thread.unarchive")).unwrap())
+        .await;
+    assert!(refusal(again).contains("Thread t1 is not archived."));
+}
+
+/// T3's archive (`Orchestrator.ts` `thread.archive`): each archived thread, a side chat too,
+/// cancels its queued work and detaches its live provider session.
+#[tokio::test(flavor = "current_thread")]
+async fn archiving_ends_a_side_chats_queued_work_and_session() {
+    let db = TempDb::new("side-chat-archive-busy");
+    let repo = Repo::new("side-chat-archive-busy");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c"),
+        &["one"],
+    )
+    .await;
+    dispatch(&engine, side_chat("f", "t2")).await;
+    let mut view = engine
+        .subscribe_thread(from_json(json!({"threadId": "t2"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut view).await;
+    dispatch(&engine, message("t2", "busy", "hang")).await;
+    until_event(&mut view, "provider-session.updated").await;
+    dispatch(&engine, message("t2", "later", "waits in the queue")).await;
+    let busy = projection(&engine, "t2").await;
+    assert_eq!(busy["runs"][1]["status"], "queued");
+    assert!(!busy["providerSessions"].as_array().unwrap().is_empty());
+    dispatch(
+        &engine,
+        json!({"type": "thread.archive", "commandId": "archive", "threadId": "t1"}),
+    )
+    .await;
+    let archived = projection(&engine, "t2").await;
+    assert!(archived["thread"]["archivedAt"].is_string());
+    assert_eq!(archived["runs"][1]["status"], "cancelled");
+    assert!(
+        archived["providerSessions"].as_array().unwrap().is_empty(),
+        "the live session is detached: {}",
+        archived["providerSessions"]
+    );
+}
+
+/// T3 refuses to archive a thread with running delegated tasks, before any side chat moves.
+#[tokio::test(flavor = "current_thread")]
+async fn a_parent_with_a_running_delegate_is_not_archived() {
+    let db = TempDb::new("side-chat-busy-parent");
+    let repo = Repo::new("side-chat-busy-parent");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c"),
+        &["one"],
+    )
+    .await;
+    dispatch(&engine, side_chat("f", "t2")).await;
+    dispatch(&engine, message("t1", "busy", "hang")).await;
+    let mut task = super::delegate("task", "hang", None);
+    task["parentRunId"] = json!("run:t1:2");
+    task["parentNodeId"] = json!("node:run:t1:2:root");
+    dispatch(&engine, task).await;
+    let refused = engine
+        .dispatch(
+            from_json(json!({"type": "thread.archive", "commandId": "archive", "threadId": "t1"}))
+                .unwrap(),
+        )
+        .await;
+    assert!(
+        matches!(&refused, Err(EngineError::Rejected(e)) if to_json(e).to_string()
+            .contains("Thread t1 has running delegated tasks. Wait for them or cancel them before archiving.")),
+        "{refused:?}"
+    );
+    for thread in ["t1", "t2"] {
+        assert!(projection(&engine, thread).await["thread"]["archivedAt"].is_null());
+    }
 }
 
 /// A thread in worktree `repo` that ran `first` there, then moved to a sibling worktree of the
