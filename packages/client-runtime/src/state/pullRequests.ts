@@ -1132,7 +1132,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             detail: cause instanceof Error ? cause.message : "Could not choose a merge method.",
           }),
       });
-      preparedInput = { ...actionInput, mergeMethod };
+      // Without a head the caller showed, pin to the one this read judged mergeable.
+      preparedInput = {
+        ...actionInput,
+        mergeMethod,
+        ...(actionInput.expectedHeadSha === undefined && detail.headSha !== undefined
+          ? { expectedHeadSha: detail.headSha }
+          : {}),
+      };
     }
     return yield* routedRequest(WS_METHODS.pullRequestsRunAction, {
       ...preparedInput,

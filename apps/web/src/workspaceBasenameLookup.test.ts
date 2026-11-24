@@ -129,6 +129,21 @@ describe("chat file links into another project", () => {
     ).toBeNull();
   });
 
+  it("opens nothing when a project left ambiguous by case also has the name", () => {
+    expect(
+      pickProjectLinkMatch("handoff.txt", [
+        { root: "/reports", entries: [{ path: "notes/HANDOFF.txt", kind: "file" }] },
+        {
+          root: "/support",
+          entries: [
+            { path: "current/Handoff.txt", kind: "file" },
+            { path: "archive/HANDOFF.txt", kind: "file" },
+          ],
+        },
+      ]),
+    ).toBeNull();
+  });
+
   it("opens nothing when overlapping projects also list a second suffix match", () => {
     expect(
       pickProjectLinkMatch("docs/handoff.txt", [
@@ -206,6 +221,15 @@ describe("agentWorkingDirectories", () => {
         "cd /work/e\\ f && cd `pwd`/x",
       ),
     ).toEqual(["/work/d"]);
+  });
+
+  it("leaves network shares out of the search roots", () => {
+    expect(
+      directories(
+        "cd //files.example/share",
+        String.raw`cd '\\files.example\share'; cd C:\work\repo`,
+      ),
+    ).toEqual([String.raw`C:\work\repo`]);
   });
 });
 

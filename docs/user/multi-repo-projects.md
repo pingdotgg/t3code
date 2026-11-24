@@ -143,6 +143,10 @@ What the commands can rely on, and what they must do:
 - **One command runs at a time per project**, so a command can update a shared file in the project
   folder without its own locking.
 - **Each command has ten minutes.**
+- **The commands run only for requests that may run commands on the host.** A client paired
+  without `orchestration:operate` and `terminal:operate`, and a thread started through a
+  [linked environment](remote-access.md#link-another-environment) paired below full access, get no worktree in a project
+  that declares a layout, and their cleanup leaves `remove` out.
 
 A project with no other repository can declare a layout too. This example gives each thread
 a worktree with its submodules checked out. The command runs in `sh`, and in `cmd.exe` on Windows,

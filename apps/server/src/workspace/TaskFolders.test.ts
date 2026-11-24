@@ -82,6 +82,7 @@ const create = Effect.fnUntraced(function* (
     projectStart: { refName: "main", baseRefName: "main" },
     baseBranch,
     startFromOrigin: false,
+    projectCommands: true,
   });
 });
 
@@ -161,7 +162,7 @@ it.live("lays a plain wrapper out as links around its repositories' worktrees", 
 
       // A file of the thread's own keeps the folder, and a folder that stays keeps its links.
       yield* fileSystem.writeFileString(path.join(root, "draft.md"), "mine\n");
-      yield* taskFolders.remove({ root, force: false, forget: true });
+      yield* taskFolders.remove({ root, force: false, forget: true, projectCommands: true });
       assert.equal(
         yield* fileSystem.readLink(path.join(root, "AGENTS.md")),
         path.join(shop, "AGENTS.md"),
@@ -218,13 +219,23 @@ it.live("keeps a Git project and its sibling repository side by side", () =>
       const taskFolders = yield* TaskFolders.TaskFolders;
       const { root } = taskFolder;
       yield* fileSystem.writeFileString(path.join(root, "notes.md"), "mine\n");
-      const first = yield* taskFolders.remove({ root, force: false, forget: true });
+      const first = yield* taskFolders.remove({
+        root,
+        force: false,
+        forget: true,
+        projectCommands: true,
+      });
       assert.deepEqual(
         first.kept.map((entry) => entry.path),
         [root],
       );
       assert.isNotNull(yield* taskFolders.find(root));
-      const second = yield* taskFolders.remove({ root, force: true, forget: true });
+      const second = yield* taskFolders.remove({
+        root,
+        force: true,
+        forget: true,
+        projectCommands: true,
+      });
       assert.deepEqual(second.kept, []);
       assert.isFalse(yield* fileSystem.exists(root));
       assert.isNull(yield* taskFolders.find(root));
@@ -248,32 +259,35 @@ it.effect("finds no common folder for two Windows drives instead of climbing for
   }).pipe(Effect.provide(NodePath.layerWin32)),
 );
 
-it.live("gives two creations on one branch a folder each", () =>
-  withState((state) =>
-    Effect.gen(function* () {
-      const { fileSystem, path, tmp, repository } = yield* fixture;
-      const api = yield* repository("shop/api");
-      state.workspaceRoot = path.join(tmp, "shop");
-      state.trackedFolders = tracked(api);
+it.live.each([{ projectIsRepository: false }, { projectIsRepository: true }])(
+  "gives two creations on one branch a folder each, project is a repository=$projectIsRepository",
+  ({ projectIsRepository }) =>
+    withState((state) =>
+      Effect.gen(function* () {
+        const { fileSystem, path, tmp, repository } = yield* fixture;
+        const shop = projectIsRepository ? yield* repository("shop") : path.join(tmp, "shop");
+        const api = yield* repository("shop/api");
+        state.workspaceRoot = shop;
+        state.trackedFolders = tracked(api);
 
-      // Git gives the branch to one of them; the other's rollback must leave that one's folder.
-      const exits = yield* Effect.all(
-        [Effect.exit(create("feature")), Effect.exit(create("feature"))],
-        {
-          concurrency: 2,
-        },
-      );
+        // Git gives the branch to one of them; the other's rollback must leave that one's folder.
+        const exits = yield* Effect.all(
+          [Effect.exit(create("feature")), Effect.exit(create("feature"))],
+          {
+            concurrency: 2,
+          },
+        );
 
-      const created = exits.flatMap((exit) =>
-        Exit.isSuccess(exit) ? [exit.value.taskFolder] : [],
-      );
-      assert.isAtLeast(created.length, 1);
-      assert.equal(new Set(created.map((taskFolder) => taskFolder.root)).size, created.length);
-      for (const taskFolder of created) {
-        assert.isTrue(yield* fileSystem.exists(path.join(taskFolder.root, "api", "README.md")));
-      }
-    }),
-  ),
+        const created = exits.flatMap((exit) =>
+          Exit.isSuccess(exit) ? [exit.value.taskFolder] : [],
+        );
+        assert.isAtLeast(created.length, 1);
+        assert.equal(new Set(created.map((taskFolder) => taskFolder.root)).size, created.length);
+        for (const taskFolder of created) {
+          assert.isTrue(yield* fileSystem.exists(path.join(taskFolder.root, "api", "README.md")));
+        }
+      }),
+    ),
 );
 
 it.live.each([{ projectIsRepository: true }, { projectIsRepository: false }])(
@@ -290,7 +304,9 @@ it.live.each([{ projectIsRepository: true }, { projectIsRepository: false }])(
         const taskFolders = yield* TaskFolders.TaskFolders;
         const request = { cwd: shop, refName: "main", newRefName: "feature", path: null };
 
-        const created = yield* taskFolders.createForProjectFolder(request);
+        const created = yield* taskFolders.createForProjectFolder(request, {
+          projectCommands: true,
+        });
 
         const taskFolder = yield* taskFolders.find(created!.worktree.path);
         assert.deepEqual(created, {
@@ -313,7 +329,9 @@ it.live.each([{ projectIsRepository: true }, { projectIsRepository: false }])(
           { cwd: shop, refName: "main", path: null },
           { ...request, cwd: web },
         ]) {
-          assert.isNull(yield* taskFolders.createForProjectFolder(single));
+          assert.isNull(
+            yield* taskFolders.createForProjectFolder(single, { projectCommands: true }),
+          );
         }
       }),
     ),
@@ -343,6 +361,64 @@ it.live("puts a clone the project ignores inside the project's worktree", () =>
         "feature",
       );
       assert.equal(yield* run(taskFolder.root, "status", "--porcelain"), "");
+    }),
+  ),
+);
+
+it.live("creates the task folder when the project's checkout hook already linked a clone", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run, repository } = yield* fixture;
+      const project = yield* repository("p");
+      yield* fileSystem.writeFileString(path.join(project, ".gitignore"), "vendor/\n");
+      yield* run(project, "add", ".");
+      yield* run(project, "commit", "-m", "ignore vendor");
+      const lib = yield* repository("p/vendor/lib");
+      // Like many projects with vendored clones, a new worktree links them back to the checkout.
+      const hooks = path.join(tmp, "hooks");
+      yield* fileSystem.makeDirectory(hooks);
+      yield* fileSystem.writeFileString(
+        path.join(hooks, "post-checkout"),
+        `#!/bin/sh\nmkdir -p vendor && ln -s "${lib}" vendor/lib\n`,
+        { mode: 0o755 },
+      );
+      yield* run(project, "config", "core.hooksPath", hooks);
+      state.workspaceRoot = project;
+      state.trackedFolders = tracked(lib);
+
+      const created = yield* create("feature").pipe(Effect.exit);
+
+      assert.isTrue(Exit.isSuccess(created), String(Exit.isFailure(created) && created.cause));
+    }),
+  ),
+);
+
+it.live("leaves a hook's link to an empty folder alone", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run, repository } = yield* fixture;
+      const project = yield* repository("p");
+      yield* fileSystem.writeFileString(path.join(project, ".gitignore"), "vendor/\n");
+      yield* run(project, "add", ".");
+      yield* run(project, "commit", "-m", "ignore vendor");
+      const lib = yield* repository("p/vendor/lib");
+      const target = path.join(tmp, "empty");
+      yield* fileSystem.makeDirectory(target);
+      const hooks = path.join(tmp, "hooks");
+      yield* fileSystem.makeDirectory(hooks);
+      yield* fileSystem.writeFileString(
+        path.join(hooks, "post-checkout"),
+        `#!/bin/sh\nmkdir -p vendor && ln -s "${target}" vendor/lib\n`,
+        { mode: 0o755 },
+      );
+      yield* run(project, "config", "core.hooksPath", hooks);
+      state.workspaceRoot = project;
+      state.trackedFolders = tracked(lib);
+
+      const created = yield* create("feature").pipe(Effect.exit);
+
+      assert.isTrue(Exit.isSuccess(created), String(Exit.isFailure(created) && created.cause));
+      assert.deepStrictEqual(yield* fileSystem.readDirectory(target), []);
     }),
   ),
 );
@@ -420,11 +496,69 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
         root: taskFolder.root,
         force: true,
         forget: true,
+        projectCommands: true,
         inspect: () => Effect.succeed({ keep: null, force: true }),
       });
       assert.isTrue(yield* fileSystem.exists(path.join(shop, "torn-down")));
       // What the teardown left is removed as usual.
       assert.equal(yield* worktreeCount(api), 1);
+      assert.isFalse(yield* fileSystem.exists(taskFolder.root));
+    }),
+  ),
+);
+
+it.live("leaves a project's layout commands out for a request that may not run them", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run, repository, worktreeCount } = yield* fixture;
+      const shop = path.join(tmp, "shop");
+      const api = yield* repository("shop/api");
+      const ran = path.join(tmp, "ran");
+      yield* fileSystem.writeFileString(
+        path.join(shop, "t3.json"),
+        JSON.stringify({
+          worktreeLayout: {
+            create: `echo create >> "${ran}" && mkdir -p "$T3_WORKTREE_PROJECT_PATH" && git -C "$T3_PROJECT_ROOT/api" worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH/api"`,
+            remove: `echo remove >> "${ran}"`,
+          },
+        }),
+      );
+      state.workspaceRoot = shop;
+      state.trackedFolders = tracked(api);
+      const taskFolders = yield* TaskFolders.TaskFolders;
+
+      const refused = yield* taskFolders
+        .createForProjectFolder(
+          { cwd: shop, refName: "main", newRefName: "feature", path: null },
+          { projectCommands: false },
+        )
+        .pipe(Effect.flip);
+      assert.include(refused.detail, "not permitted to run");
+      assert.isFalse(yield* fileSystem.exists(ran));
+      assert.equal(yield* worktreeCount(api), 1);
+      assert.equal(yield* run(api, "branch", "--list", "feature"), "");
+
+      const { taskFolder } = yield* create("feature");
+      assert.equal(yield* fileSystem.readFileString(ran), "create\n");
+      // A missing checkout comes back plain, and the folder goes without the project's teardown.
+      yield* fileSystem.remove(path.join(taskFolder.root, "api"), { recursive: true });
+      yield* run(api, "worktree", "prune");
+      yield* taskFolders.restore({
+        taskFolder,
+        branch: "feature",
+        projectCommands: false,
+        recreate: (checkout) =>
+          run(checkout.repositoryPath, "worktree", "add", "-q", checkout.worktreePath, "feature"),
+      });
+      assert.equal(yield* worktreeCount(api), 2);
+      assert.isTrue(
+        yield* taskFolders.removeIfTaskFolder({
+          path: taskFolder.root,
+          force: true,
+          projectCommands: false,
+        }),
+      );
+      assert.equal(yield* fileSystem.readFileString(ran), "create\n");
       assert.isFalse(yield* fileSystem.exists(taskFolder.root));
     }),
   ),
@@ -455,6 +589,7 @@ it.live(
               branch: "feature",
               projectStart: { refName: "main", baseRefName: "main" },
               startFromOrigin: false,
+              projectCommands: true,
             })
             .pipe(Effect.flip);
         });
@@ -530,11 +665,17 @@ it.live.each([{ linked: false }, { linked: true }])(
         yield* taskFolders.restore({
           taskFolder,
           branch: "feature",
+          projectCommands: true,
           recreate: () => Effect.die("the layout command rebuilds the folder"),
         });
         assert.isTrue(yield* fileSystem.exists(prepared));
 
-        yield* taskFolders.remove({ root: taskFolder.root, force: true, forget: true });
+        yield* taskFolders.remove({
+          root: taskFolder.root,
+          force: true,
+          forget: true,
+          projectCommands: true,
+        });
         assert.equal(yield* worktreeCount(mono), linked ? 2 : 1);
       }),
     ),
@@ -564,12 +705,10 @@ it.live("starts each repository from the base branch where it has one", () =>
         yield* head(web, "main"),
       );
       // A worktree an existing thread asks for starts its repositories from the chosen base too.
-      const requested = yield* (yield* TaskFolders.TaskFolders).createForProjectFolder({
-        cwd: state.workspaceRoot,
-        refName: "release",
-        newRefName: "later",
-        path: null,
-      });
+      const requested = yield* (yield* TaskFolders.TaskFolders).createForProjectFolder(
+        { cwd: state.workspaceRoot, refName: "release", newRefName: "later", path: null },
+        { projectCommands: true },
+      );
       assert.equal(
         yield* head(path.join(requested!.worktree.path, "api"), "HEAD"),
         yield* head(api, "release"),
@@ -791,6 +930,7 @@ it.live("adds a repository to an existing task folder on the thread's branch", (
         .restore({
           taskFolder: (yield* taskFolders.find(root))!,
           branch: "feature",
+          projectCommands: true,
           recreate: () => Effect.die("an existing checkout is never recreated"),
         })
         .pipe(Effect.flip);
@@ -814,7 +954,12 @@ it.live("keeps a repository git will not remove and removes the rest", () =>
       const root = taskFolder.root;
       yield* fileSystem.writeFileString(path.join(root, "api", "README.md"), "uncommitted\n");
 
-      const first = yield* taskFolders.remove({ root, force: false, forget: true });
+      const first = yield* taskFolders.remove({
+        root,
+        force: false,
+        forget: true,
+        projectCommands: true,
+      });
 
       assert.deepEqual(first.removed, [path.join(root, "web")]);
       assert.deepEqual(
@@ -837,7 +982,12 @@ it.live("keeps a repository git will not remove and removes the rest", () =>
         [api],
       );
 
-      const second = yield* taskFolders.remove({ root, force: true, forget: true });
+      const second = yield* taskFolders.remove({
+        root,
+        force: true,
+        forget: true,
+        projectCommands: true,
+      });
 
       assert.deepEqual(second.kept, []);
       assert.isFalse(yield* fileSystem.exists(root));
@@ -868,6 +1018,7 @@ it.live("restores a recorded repository the project stopped tracking as its work
       yield* (yield* TaskFolders.TaskFolders).restore({
         taskFolder,
         branch: "feature",
+        projectCommands: true,
         recreate: ({ repositoryPath, worktreePath }) =>
           run(repositoryPath, "worktree", "prune").pipe(
             Effect.andThen(run(repositoryPath, "worktree", "add", "-q", worktreePath, "feature")),
@@ -881,6 +1032,41 @@ it.live("restores a recorded repository the project stopped tracking as its work
         assert.equal(yield* run(worktree, "symbolic-ref", "--short", "HEAD"), "feature");
       }
       assert.isTrue(yield* isLink(path.join(root, "t3.json")));
+    }),
+  ),
+);
+
+it.live("resumes once an excluded dependency's worktree is replaced by a clone", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, run, repository } = yield* fixture;
+      const project = yield* repository("phoenix");
+      const dependency = yield* repository("phoenix/deps/heroicons");
+      state.workspaceRoot = project;
+      const { taskFolder } = yield* create("feature");
+      const clone = path.join(taskFolder.projectPath, "deps", "heroicons");
+      yield* fileSystem.remove(clone, { recursive: true });
+      yield* run(taskFolder.projectPath, "clone", "-q", "--local", dependency, clone);
+      yield* fileSystem.writeFileString(
+        path.join(project, "t3.json"),
+        JSON.stringify({ ignoreRepositories: ["deps"] }),
+      );
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      const restore = taskFolders.restore({
+        taskFolder,
+        branch: "feature",
+        projectCommands: true,
+        recreate: () => Effect.die("nothing is missing"),
+      });
+
+      // Tracked by hand, the clone is still not the thread's worktree.
+      state.trackedFolders = tracked(dependency);
+      assert.include((yield* Effect.flip(restore)).detail, "is not a worktree of");
+
+      state.trackedFolders = [];
+      yield* restore;
+      assert.equal(yield* run(clone, "rev-parse", "--git-dir"), ".git");
+      assert.deepEqual((yield* taskFolders.find(taskFolder.root))?.repositories, []);
     }),
   ),
 );
