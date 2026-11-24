@@ -36,6 +36,11 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import {
+  formatTeamThreadTitle,
+  resolveTeamThreadCreatorPseudo,
+} from "@t3tools/client-runtime/team";
+import { useTeamStatesByEnvironment } from "../state/team";
 import { buildThreadActionItems, ITEM_ICON_CLASS } from "./CommandPalette.logic";
 import { useEnvironmentLookups, useProjectLookups } from "./CommandPaletteLookups";
 import { ThreadCommandSubtitle } from "./ThreadCommandSubtitle";
@@ -113,10 +118,20 @@ export function useCommandPaletteThreadItems(input: {
   const [now] = useState(() => Date.now());
 
   const { environments } = useEnvironments();
+  const teamStatesByEnvironment = useTeamStatesByEnvironment();
   const threadItems = buildThreadActionItems(
     {
       threads,
       delegatedUnderParent,
+      titleOf: (thread) =>
+        formatTeamThreadTitle(
+          thread.title,
+          resolveTeamThreadCreatorPseudo({
+            environmentId: thread.environmentId,
+            threadId: thread.id,
+            teamStates: teamStatesByEnvironment,
+          }),
+        ),
       ...(environments.length > 1
         ? {
             environmentLabelOf: (thread: (typeof threads)[number]) =>

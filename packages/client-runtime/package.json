@@ -666,6 +666,10 @@
     "./pull-request-references": {
       "types": "./src/pullRequestReferences.ts",
       "default": "./src/pullRequestReferences.ts"
+    },
+    "./team": {
+      "types": "./src/team/index.ts",
+      "default": "./src/team/index.ts"
     }
   },
   "scripts": {

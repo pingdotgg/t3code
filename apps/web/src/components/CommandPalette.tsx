@@ -83,8 +83,15 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
+  UsersIcon,
   WorkflowIcon,
 } from "lucide-react";
+import { hasActiveTeamEnvironment } from "@t3tools/client-runtime/team";
+import {
+  toggleShowColleaguesThreads,
+  useShowColleaguesThreads,
+  useTeamStatesByEnvironment,
+} from "../state/team";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { previewBridge } from "./preview/previewBridge";
@@ -1856,6 +1863,24 @@ function OpenCommandPaletteDialog(props: {
           to: "/projects/$projectKey",
           params: { projectKey: contextualProjectGroup.projectKey },
         });
+      },
+    });
+  }
+
+  const teamStatesByEnvironment = useTeamStatesByEnvironment();
+  const showColleaguesThreads = useShowColleaguesThreads();
+  if (hasActiveTeamEnvironment(teamStatesByEnvironment)) {
+    actionItems.push({
+      kind: "action",
+      value: "action:team-toggle-colleagues",
+      searchTerms: ["team", "colleagues", "members", "filter", "sidebar", "threads", "pseudo"],
+      title: showColleaguesThreads
+        ? gt("Hide colleagues' threads")
+        : gt("Show colleagues' threads"),
+      shortcutCommand: "team.toggleColleagues",
+      icon: <UsersIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        toggleShowColleaguesThreads();
       },
     });
   }
