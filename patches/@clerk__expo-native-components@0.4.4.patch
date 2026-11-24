@@ -130,3 +130,34 @@ diff --git a/ios/ClerkNativeViewHost.swift b/ios/ClerkNativeViewHost.swift
 +  }
 +  return nil
 +}
+diff --git a/ios/ClerkNativeBridge.swift b/ios/ClerkNativeBridge.swift
+--- a/ios/ClerkNativeBridge.swift
++++ b/ios/ClerkNativeBridge.swift
+@@ -673,9 +673,15 @@
+   private static func makeClerkOptions(proxyUrl: String?) -> Clerk.Options {
+     let middleware = Clerk.Options.MiddlewareConfig(request: [ClerkExpoHeaderMiddleware()])
+     guard let service = keychainService else {
+-      return .init(proxyUrl: proxyUrl, middleware: middleware, updateRequiredViewEnabled: updateRequiredViewEnabled)
++      return .init(
++        telemetryEnabled: false,
++        proxyUrl: proxyUrl,
++        middleware: middleware,
++        updateRequiredViewEnabled: updateRequiredViewEnabled
++      )
+     }
+     return .init(
++      telemetryEnabled: false,
+       keychainConfig: .init(service: service),
+       proxyUrl: proxyUrl,
+       middleware: middleware,
+diff --git a/android/src/main/java/expo/modules/clerk/ClerkExpoModule.kt b/android/src/main/java/expo/modules/clerk/ClerkExpoModule.kt
+--- a/android/src/main/java/expo/modules/clerk/ClerkExpoModule.kt
++++ b/android/src/main/java/expo/modules/clerk/ClerkExpoModule.kt
+@@ -117,5 +117,6 @@
+         // JS owns client state. The native foreground refresh races SSO completion and mints duplicate clients (#9217).
+-        val options = ClerkConfigurationOptions(proxyUrl = proxyUrl).withForegroundRefreshDisabled()
++        val options = ClerkConfigurationOptions(proxyUrl = proxyUrl, telemetryEnabled = false)
++            .withForegroundRefreshDisabled()
+         return (if (updateRequiredViewEnabled) options else options.withUpdateRequiredViewDisabled())
+             .withCustomHeaders(customHeaders)
+     }

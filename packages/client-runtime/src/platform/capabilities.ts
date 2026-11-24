@@ -40,17 +40,6 @@ export class RelayDeviceIdentity extends Context.Service<
   }
 >()("@t3tools/client-runtime/platform/capabilities/RelayDeviceIdentity") {}
 
-/**
- * A random id this client keeps across launches. Environments it connects to
- * record its hash, so two environments opened from one device share an owner
- * in analytics even when nobody is signed in.
- */
-export class AnalyticsDevice extends Context.Reference<{
-  readonly id: Effect.Effect<Option.Option<string>>;
-}>("@t3tools/client-runtime/platform/capabilities/AnalyticsDevice", {
-  defaultValue: () => ({ id: Effect.succeedNone }),
-}) {}
-
 export class ClientPresentation extends Context.Service<
   ClientPresentation,
   {

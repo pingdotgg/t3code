@@ -25,11 +25,6 @@ describe("resolveCloudPublicConfig", () => {
       relay: {
         url: null,
       },
-      observability: {
-        tracesUrl: null,
-        tracesDataset: null,
-        tracesToken: null,
-      },
     });
   });
 });

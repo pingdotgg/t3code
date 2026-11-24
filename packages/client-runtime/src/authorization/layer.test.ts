@@ -635,7 +635,6 @@ describe("RemoteEnvironmentAuthorization", () => {
       }).pipe(Effect.provide(harness.layer));
 
       expect(authorized.socketUrl).toContain("wsTicket=cached-ticket");
-      expect(authorized.socketUrl).toContain("connectionMethod=relay");
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
       // The descriptor is read beside the ticket, so the connect needs no later read.
       expect(authorized.descriptor).toMatchObject({ environmentId: ENVIRONMENT_ID });

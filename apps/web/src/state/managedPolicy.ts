@@ -33,20 +33,6 @@ export function firstManagedDenial(
   return undefined;
 }
 
-/** What usage-data notices say when the policy turns product analytics off. */
-export function managedTelemetryOffMessage(
-  policy: ManagedPolicySummary | undefined,
-  resolve: MessageResolver = m,
-): string | undefined {
-  return policy?.limits?.telemetry === false
-    ? resolve(
-        msg("{organization} turned off anonymous usage data.", {
-          organization: policy.organization,
-        }),
-      )
-    : undefined;
-}
-
 export interface ManagedInstanceLocks {
   /** Keys inside the instance's `config` users cannot change. */
   readonly configKeys: ReadonlySet<string>;

@@ -337,5 +337,3 @@ export const getServerOwnersForHome = Effect.fn("getServerOwnersForHome")(functi
       : [],
   );
 });
-
-export const getServerOwners = Effect.flatMap(HostProcess.HomeDirectory, getServerOwnersForHome);

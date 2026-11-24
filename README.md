@@ -54,6 +54,12 @@ make pull
 
 In PowerShell, `.\make-pull.ps1` does the same.
 
+## Telemetry
+
+Fork builds have product analytics, T3 Connect tracing, and mobile crash and startup uploads
+disabled. See [Telemetry and diagnostics](./docs/user/telemetry.md) for local diagnostics, optional
+OpenTelemetry export, and T3 Connect notification settings.
+
 ## Developing the fork
 
 [`agents/dev`](./agents/dev) is an agentctl Agent for working on this fork. Start at

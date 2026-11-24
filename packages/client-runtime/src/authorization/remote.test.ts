@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
-import { hashTelemetryId } from "@t3tools/shared/telemetryId";
 import {
   bootstrapRemoteBearerSession,
   exchangeRemoteDpopAccessToken,
@@ -12,7 +11,6 @@ import {
   resolveRemoteDpopWebSocketConnectionUrl,
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
-import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RpcHttp from "../rpc/http.ts";
 
 const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
@@ -196,20 +194,9 @@ describe("remote environment authorization", () => {
         wsBaseUrl: "wss://remote.example.com/",
         httpBaseUrl: "https://remote.example.com/",
         bearerToken: "bearer-token",
-        clientMetadata: {
-          surface: "mobile",
-          appVersion: "1.2.3",
-          deviceType: "mobile",
-          os: "Android",
-          osMajorVersion: 15,
-          deviceModel: "Pixel 9",
-        },
-        connectionMethod: "relay",
       }).pipe(provideRemoteHttp(fetch.fetchFn));
 
-      expect(url).toBe(
-        "wss://remote.example.com/ws?wsTicket=ws-ticket&clientSurface=mobile&clientAppVersion=1.2.3&clientDeviceType=phone&clientOs=Android&clientOsMajorVersion=15&clientDeviceModel=Pixel+9&connectionMethod=relay",
-      );
+      expect(url).toBe("wss://remote.example.com/ws?wsTicket=ws-ticket");
     }),
   );
 
@@ -249,7 +236,6 @@ describe("remote environment authorization", () => {
           proofs.push(input);
           return Effect.succeed(`proof-${proofs.length}`);
         },
-        connectionMethod: "relay",
       }).pipe(provideRemoteHttp(fetch.fetchFn));
 
       expectFetchCall(fetch.calls, 1, {
@@ -265,9 +251,7 @@ describe("remote environment authorization", () => {
         },
         { method: "GET", url: "https://remote.example.com/ws", accessToken: "ws-ticket" },
       ]);
-      expect(url).toBe(
-        "wss://remote.example.com/ws?wsTicket=ws-ticket&dpop=proof-2&connectionMethod=relay",
-      );
+      expect(url).toBe("wss://remote.example.com/ws?wsTicket=ws-ticket&dpop=proof-2");
     }),
   );
 
@@ -330,41 +314,7 @@ describe("remote environment authorization", () => {
         method: "POST",
         headers: { dpop: "proof-2" },
       });
-      expect(new URL(url).searchParams.get("wsTicket")).toBe("old-ticket");
-      expect(new URL(url).searchParams.get("dpop")).toBe("proof-3");
-    }),
-  );
-
-  it.effect("names the signed-in Connect account and this device by hash only", () =>
-    Effect.gen(function* () {
-      const fetch = recordedFetch(
-        Response.json({ ticket: "ws-ticket", expiresAt: "2026-05-01T12:05:00.000Z" }),
-      );
-
-      const url = new URL(
-        yield* resolveRemoteWebSocketConnectionUrl({
-          wsBaseUrl: "wss://remote.example.com/",
-          httpBaseUrl: "https://remote.example.com/",
-          bearerToken: "bearer-token",
-        }).pipe(
-          provideRemoteHttp(fetch.fetchFn),
-          Effect.provideService(
-            ClientCapabilities.CloudSession,
-            ClientCapabilities.CloudSession.of({
-              identity: Effect.succeedSome({ accountId: "user_connect" }),
-              clerkToken: Effect.succeed("clerk-token"),
-            }),
-          ),
-          Effect.provideService(ClientCapabilities.AnalyticsDevice, {
-            id: Effect.succeedSome("device-1"),
-          }),
-        ),
-      );
-
-      expect(url.searchParams.get("clientOwner")).toBe(hashTelemetryId("user_connect"));
-      expect(url.searchParams.get("clientDevice")).toBe(hashTelemetryId("device-1"));
-      expect(url.toString()).not.toContain("user_connect");
-      expect(url.toString()).not.toContain("device-1");
+      expect(url).toBe("wss://remote.example.com/ws?wsTicket=old-ticket&dpop=proof-3");
     }),
   );
 });
