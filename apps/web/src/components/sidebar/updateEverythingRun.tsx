@@ -90,11 +90,13 @@ export function retryFailedUpdateRunServers(
   const failed = (appAtomRegistry.get(updateEverythingRunAtom)?.machines ?? []).flatMap(
     (machine) => {
       const target = machine.server ?? restored.get(machine.environmentId);
-      return machine.result === "failed" && target !== undefined
+      const targetVersion = target === "current" ? machine.handedOffVersion : target?.targetVersion;
+      return machine.result === "failed" && target !== undefined && targetVersion
         ? [
             {
               environmentId: machine.environmentId,
               target,
+              targetVersion,
               providerFailure: machine.providerFailure,
             },
           ]
@@ -102,17 +104,16 @@ export function retryFailedUpdateRunServers(
     },
   );
   const pending: Array<{ target: ServerUpdateTarget; providerFailure: string | null }> = [];
-  for (const { environmentId, target, providerFailure } of failed) {
+  for (const { environmentId, target, targetVersion, providerFailure } of failed) {
     // The host rejects a same-version update; a server that came back on the target is done.
     if (
-      target === "current" ||
       runsVersion(
         appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId)),
-        target.targetVersion,
+        targetVersion,
       )
     ) {
       settleUpdateRunMachine(environmentId, providerFailure, { serverUpdated: true });
-    } else {
+    } else if (target !== "current") {
       pending.push({ target, providerFailure });
     }
   }
