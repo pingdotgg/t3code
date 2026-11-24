@@ -5,6 +5,7 @@ import "./PickPreload.ts";
 
 const ipcListeners = vi.hoisted(() => new Map<string, Array<(...args: unknown[]) => void>>());
 const ipcSend = vi.hoisted(() => ({ calls: [] as unknown[][] }));
+const pageElementContext = vi.hoisted(() => vi.fn(async (): Promise<unknown> => null));
 
 vi.mock("electron", () => ({
   ipcRenderer: {
@@ -19,7 +20,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-vi.mock("react-grab/primitives", () => ({ getElementContext: async () => null }));
+vi.mock("./PageWorldBridge.ts", () => ({ pageWorld: { elementContext: pageElementContext } }));
 
 const startAnnotation = (): ShadowRoot => {
   vi.stubGlobal(
@@ -29,6 +30,9 @@ const startAnnotation = (): ShadowRoot => {
       disconnect() {}
     },
   );
+  // jsdom has no popover API.
+  HTMLElement.prototype.showPopover ??= () => {};
+  HTMLElement.prototype.hidePopover ??= () => {};
   using attachShadow = vi.spyOn(Element.prototype, "attachShadow");
   for (const listener of ipcListeners.get(START_PICK_CHANNEL) ?? []) listener({}, undefined, false);
   const shadowRoot = attachShadow.mock.results[0]?.value;
@@ -124,6 +128,7 @@ it.each([
       .spyOn(card, "getBoundingClientRect")
       .mockImplementation(() => (card.isConnected ? pickedRect : new DOMRect()));
     document.elementsFromPoint = () => [card];
+    using listeners = vi.spyOn(HTMLButtonElement.prototype, "addEventListener");
     const shadowRoot = startAnnotation();
 
     card.dispatchEvent(
@@ -137,6 +142,15 @@ it.each([
     );
     if (!attach) throw new Error("Attach button not found");
     attach.click();
+    expect(attach.disabled).toBe(false);
+    expect(ipcSend.calls.some(([channel]) => channel === ELEMENT_PICKED_CHANNEL)).toBe(false);
+    const listenerIndex = listeners.mock.contexts.findIndex(
+      (target, index) => target === attach && listeners.mock.calls[index]?.[0] === "click",
+    );
+    const listener = listeners.mock.calls[listenerIndex]?.[1];
+    if (typeof listener !== "function") throw new Error("Attach click listener not found");
+    // The DOM test environment has no native input source.
+    listener.call(attach, { isTrusted: true } as MouseEvent);
 
     await vi.waitFor(() =>
       expect(ipcSend.calls.some(([channel]) => channel === ELEMENT_PICKED_CHANNEL)).toBe(true),
@@ -146,3 +160,48 @@ it.each([
     expect((annotation as { elements: Array<{ rect: unknown }> }).elements[0]?.rect).toEqual(rect);
   },
 );
+
+it("keeps only the well-typed fields of what the page reports about an element", async () => {
+  ipcSend.calls.length = 0;
+  pageElementContext.mockResolvedValueOnce({
+    selector: { toString: () => "#object" },
+    htmlPreview: "<button>Pay</button>",
+    componentName: 7,
+    styles: null,
+    stack: [{ functionName: "Checkout", fileName: ["x"], lineNumber: "12", columnNumber: 4 }, 3],
+  });
+  const card = document.body.appendChild(document.createElement("div"));
+  document.elementsFromPoint = () => [card];
+  using listeners = vi.spyOn(HTMLButtonElement.prototype, "addEventListener");
+  const shadowRoot = startAnnotation();
+  card.dispatchEvent(
+    new PointerEvent("pointerdown", { button: 0, clientX: 100, clientY: 100, bubbles: true }),
+  );
+  const attach = Array.from(shadowRoot.querySelectorAll("button")).find(
+    (button) => button.textContent === "Attach",
+  );
+  const listenerIndex = listeners.mock.contexts.findIndex(
+    (target, index) => target === attach && listeners.mock.calls[index]?.[0] === "click",
+  );
+  const listener = listeners.mock.calls[listenerIndex]?.[1];
+  if (!attach || typeof listener !== "function") throw new Error("Attach listener not found");
+  // The DOM test environment has no native input source.
+  listener.call(attach, { isTrusted: true } as MouseEvent);
+
+  await vi.waitFor(() =>
+    expect(ipcSend.calls.some(([channel]) => channel === ELEMENT_PICKED_CHANNEL)).toBe(true),
+  );
+  const [, annotation] =
+    ipcSend.calls.find(([channel]) => channel === ELEMENT_PICKED_CHANNEL) ?? [];
+  const frame = { functionName: "Checkout", fileName: null, lineNumber: null, columnNumber: 4 };
+  expect(
+    (annotation as { elements: Array<{ element: unknown }> }).elements[0]?.element,
+  ).toMatchObject({
+    selector: null,
+    htmlPreview: "<button>Pay</button>",
+    componentName: null,
+    styles: "",
+    source: frame,
+    stack: [frame, { functionName: null, fileName: null, lineNumber: null, columnNumber: null }],
+  });
+});
