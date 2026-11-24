@@ -389,28 +389,23 @@ interface DraftAnchor {
   readonly range: SelectedLineRange;
 }
 
-interface SavedDraftText {
-  readonly draft: DraftAnchor | null;
-  readonly text: string;
-}
+// The viewer remounts a file's annotations when a refresh re-keys it, so draft text lives outside.
+const draftCommentTexts = new WeakMap<DraftAnchor, string>();
 
-// Text is kept outside the viewer, which remounts the box when a refresh re-keys its file.
 function PullRequestDraftCommentAnnotation({
-  restoreText,
-  saveText,
+  draft,
   ...props
 }: Omit<ComponentProps<typeof DiffCommentAnnotation>, "text" | "onTextChange"> & {
-  readonly restoreText: () => string;
-  readonly saveText: (text: string) => void;
+  readonly draft: DraftAnchor;
 }) {
-  const [text, setText] = useState(restoreText);
+  const [text, setText] = useState(() => draftCommentTexts.get(draft) ?? "");
   return (
     <DiffCommentAnnotation
       {...props}
       text={text}
       onTextChange={(next) => {
         setText(next);
-        saveText(next);
+        draftCommentTexts.set(draft, next);
       }}
     />
   );
@@ -519,7 +514,6 @@ function PullRequestCodeTab({
     range: SelectedLineRange;
   } | null>(null);
   const [draft, setDraft] = useState<DraftAnchor | null>(null);
-  const savedDraftText = useRef<SavedDraftText>({ draft: null, text: "" });
   const [threadPending, setThreadPending] = useState(false);
   const [orphansOpen, setOrphansOpen] = useState(false);
   // Scope slices before reset to prevent using a previous pull request's data or cursor.
@@ -815,6 +809,7 @@ function PullRequestCodeTab({
       })
     : loadedFiles;
   const hiddenTestFileCount = loadedFiles.length - files.length;
+  const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
   const draftFile =
     draft === null
       ? undefined
@@ -824,9 +819,8 @@ function PullRequestCodeTab({
       ? buildFileDiffRenderKey(draftFile)
       : null;
   if (draft !== null && draftFileKey === null) {
-    const diffLoaded = loadedSlices.length > 0 && loadedSlices.at(-1)?.nextCursor === null;
     // Never attach the draft to lines of a changed file; one missing mid-refresh may come back.
-    if (draftFile !== undefined || diffLoaded) {
+    if (draftFile !== undefined || (loadedSlices.length > 0 && nextCursor === null)) {
       setDraft(null);
       setSelectedLines(null);
     }
@@ -975,7 +969,6 @@ function PullRequestCodeTab({
     };
   });
 
-  const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
   const withheldFilesReadable = loadedSlices[0]?.source.withheldFilesReadable === true;
   const withheldContent =
     loadedSlices.some((slice) => slice.truncated) ||
@@ -1404,12 +1397,7 @@ function PullRequestCodeTab({
       ))}
       {annotation.metadata.draft && draft && canSelectLines ? (
         <PullRequestDraftCommentAnnotation
-          restoreText={() =>
-            savedDraftText.current.draft === draft ? savedDraftText.current.text : ""
-          }
-          saveText={(text) => {
-            savedDraftText.current = { draft, text };
-          }}
+          draft={draft}
           environmentId={environmentId}
           projectId={reference.projectId}
           ownerKey={JSON.stringify([environmentId, reviewKey, draft])}
