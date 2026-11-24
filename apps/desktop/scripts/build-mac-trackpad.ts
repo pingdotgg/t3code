@@ -50,7 +50,7 @@ export const buildMacTrackpad = Effect.fn("buildMacTrackpad")(function* (input: 
   );
   const inputsModifiedAt = Math.max(
     yield* modifiedAt(fs, source),
-    yield* modifiedAt(fs, yield* path.fromFileUrl(import.meta.url)),
+    yield* modifiedAt(fs, yield* path.fromFileUrl(new URL(import.meta.url))),
   );
   if ((yield* modifiedAt(fs, output)) >= inputsModifiedAt) return;
 
