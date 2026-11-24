@@ -93,7 +93,7 @@ pub fn is_native_image(attachment: &Value) -> bool {
 }
 
 /// `DocumentText.resolveExtractedTextPath`: `<path>.txt` for a document whose text exists.
-fn extracted_text_path(path: &Path) -> Option<PathBuf> {
+pub fn extracted_text_path(path: &Path) -> Option<PathBuf> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     if !EXTRACTED_TEXT_EXTENSIONS.contains(&extension.as_str()) {
         return None;

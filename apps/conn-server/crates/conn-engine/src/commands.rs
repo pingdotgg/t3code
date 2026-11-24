@@ -57,11 +57,15 @@ pub(crate) enum Effect {
     ApplyModelSelection { thread_id: String, selection: Value },
     /// Its outbox row outlives a server update, so each field a later build adds takes
     /// `#[serde(default)]`: a row stored before the field existed still decodes.
+    /// `ids`: HTML renders as (owner thread, id). `attachment_ids`: files a queued edit
+    /// dropped, removed unless the thread still names them (T3's `skipReferenced`).
     #[serde(rename = "attachment.cleanup")]
-    CleanupHtmlAttachments {
+    CleanupAttachments {
         thread_id: String,
         #[serde(default)]
         ids: Vec<(String, String)>,
+        #[serde(default)]
+        attachment_ids: Vec<String>,
     },
     /// Tells the host a remote task of `thread_id` now owes its thread there a stop, so its
     /// follower runs again (T3's `RemoteDelegation.start` stream of `subagent.updated`).
@@ -1801,26 +1805,24 @@ fn start_next_queued_as(
     }
     if let Some(message) = message {
         let item_id = format!("turn-item:{message_id}");
-        let mut item = tx
-            .entity(thread_id, "turnItems", &item_id)?
-            .unwrap_or_else(|| {
-                json!({
-                    "id": item_id,
-                    "threadId": thread_id,
-                    "providerTurnId": null,
-                    "nativeItemRef": null,
-                    "parentItemId": null,
-                    "ordinal": 0,
-                    "title": null,
-                    "startedAt": now,
-                    "createdBy": message["createdBy"],
-                    "creationSource": message["creationSource"],
-                    "type": "user_message",
-                    "messageId": message_id,
-                    "text": message["text"],
-                    "attachments": message["attachments"],
-                })
-            });
+        let mut item = message_turn_item(tx, thread_id, &message_id)?.unwrap_or_else(|| {
+            json!({
+                "id": item_id,
+                "threadId": thread_id,
+                "providerTurnId": null,
+                "nativeItemRef": null,
+                "parentItemId": null,
+                "ordinal": 0,
+                "title": null,
+                "startedAt": now,
+                "createdBy": message["createdBy"],
+                "creationSource": message["creationSource"],
+                "type": "user_message",
+                "messageId": message_id,
+                "text": message["text"],
+                "attachments": message["attachments"],
+            })
+        });
         if message["context"].is_object() {
             item["context"] = message["context"].clone();
         }
@@ -1990,6 +1992,14 @@ fn queued_run_edit(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let Some(mut message) = tx.entity(&c.thread_id, "messages", message_id)? else {
         return reject(format!("Message {message_id} does not exist."));
     };
+    let ids = |list: &Value| -> Vec<String> {
+        list.as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|a| a["id"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let before = ids(&message["attachments"]);
     message["text"] = json!(c.text);
     if let Some(attachments) = c.attachments {
         message["attachments"] = json!(attachments);
@@ -1998,8 +2008,88 @@ fn queued_run_edit(tx: &mut Tx<'_>, command: Value) -> Outcome {
         message["context"] = context;
     }
     message["updatedAt"] = json!(tx.now());
+    let kept = ids(&message["attachments"]);
+    // A declined steer already has its timeline item; the run reuses it when it starts.
+    if let Some(mut item) = message_turn_item(tx, &c.thread_id, message_id)? {
+        item["text"] = message["text"].clone();
+        item["attachments"] = message["attachments"].clone();
+        if message["context"].is_object() {
+            item["context"] = message["context"].clone();
+        }
+        item["updatedAt"] = message["updatedAt"].clone();
+        tx.append(Draft::new(&c.thread_id, "turn-item.updated", item).run(Some(&c.run_id)))?;
+    }
     tx.append(Draft::new(&c.thread_id, "message.updated", message).run(Some(&c.run_id)))?;
-    Ok(vec![])
+    let dropped: Vec<String> = before.into_iter().filter(|id| !kept.contains(id)).collect();
+    if dropped.is_empty() {
+        return Ok(vec![]);
+    }
+    Ok(vec![Effect::CleanupAttachments {
+        thread_id: c.thread_id,
+        ids: vec![],
+        attachment_ids: dropped,
+    }])
+}
+
+/// A message's `user_message` timeline item, found by its `messageId` as T3 finds it: a
+/// thread imported from the TypeScript server keeps that server's item ids.
+fn message_turn_item(tx: &Tx<'_>, thread_id: &str, message_id: &str) -> StoreResult<Option<Value>> {
+    Ok(tx
+        .entities_where(thread_id, "turnItems", "messageId", message_id)?
+        .into_iter()
+        .find(|item| item["type"] == "user_message"))
+}
+
+/// `getThreadAttachmentIds` with `includeShownByLiveFork`: every file a message, a question's
+/// answer, a tool result (an `html_render` page, an MCP App snapshot, a preview recording) or a
+/// waiting guest
+/// message of the thread names.
+pub(crate) fn referenced_attachment_ids(
+    tx: &Tx<'_>,
+    thread_id: &str,
+) -> StoreResult<std::collections::HashSet<String>> {
+    let mut referenced = std::collections::HashSet::new();
+    for item in tx.entities_where(thread_id, "turnItems", "type", "dynamic_tool")? {
+        let shown = crate::tool_output::html_render_from_tool_item(&item)
+            .or_else(|| crate::tool_output::mcp_app_from_tool_item(&item));
+        if let Some(id) = shown.as_ref().and_then(|r| r["attachmentId"].as_str()) {
+            referenced.insert(id.to_owned());
+        }
+        if let Some(id) = crate::tool_output::preview_recording_id_from_tool_item(&item) {
+            referenced.insert(id);
+        }
+    }
+    let mut add = |list: &Value| {
+        for attachment in list.as_array().into_iter().flatten() {
+            if let Some(id) = attachment["id"].as_str() {
+                referenced.insert(id.to_owned());
+            }
+        }
+    };
+    for message in tx.entities(thread_id, "messages")? {
+        add(&message["attachments"]);
+    }
+    for item in tx.entities_where(thread_id, "turnItems", "type", "user_input_request")? {
+        for list in item["questionAnswer"]["attachmentsByQuestionId"]
+            .as_object()
+            .into_iter()
+            .flat_map(|by_question| by_question.values())
+        {
+            add(list);
+        }
+    }
+    if let Some(thread) = tx.thread(thread_id)? {
+        for message in thread["guestShare"]["messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            if message["status"] == "pending" {
+                add(&message["attachments"]);
+            }
+        }
+    }
+    Ok(referenced)
 }
 
 #[derive(Deserialize)]
@@ -3083,9 +3173,10 @@ fn delete_one(tx: &mut Tx<'_>, thread_id: &str) -> Outcome {
         Effect::CloseThreadSessions {
             thread_id: thread_id.to_owned(),
         },
-        Effect::CleanupHtmlAttachments {
+        Effect::CleanupAttachments {
             thread_id: thread_id.to_owned(),
             ids: crate::html_cleanup::plan(tx, thread_id)?,
+            attachment_ids: vec![],
         },
         Effect::ThreadClosed {
             thread_id: thread_id.to_owned(),
@@ -4517,7 +4608,7 @@ mod html_deletion_tests {
         let ids: Vec<_> = effects
             .into_iter()
             .filter_map(|effect| match effect {
-                Effect::CleanupHtmlAttachments { ids, .. } => Some(ids),
+                Effect::CleanupAttachments { ids, .. } => Some(ids),
                 _ => None,
             })
             .flatten()

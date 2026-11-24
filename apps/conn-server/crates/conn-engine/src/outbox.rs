@@ -112,7 +112,7 @@ impl Effect {
             Self::CloseSession { .. } => "provider-session.detach",
             Self::CloseThreadSessions { .. } => "provider-session.detach-thread",
             Self::ApplyModelSelection { .. } => "provider-session.apply-model-selection",
-            Self::CleanupHtmlAttachments { .. } => "attachment.cleanup",
+            Self::CleanupAttachments { .. } => "attachment.cleanup",
             Self::RemoteTaskChanged { .. } => "delegated-task.remote-changed",
             Self::ThreadClosed { .. } => "thread.closed",
             Self::GenerateTitle { .. } => "thread-title.generate",
@@ -132,7 +132,7 @@ impl Effect {
             | Self::CloseSession { thread_id }
             | Self::CloseThreadSessions { thread_id }
             | Self::ApplyModelSelection { thread_id, .. }
-            | Self::CleanupHtmlAttachments { thread_id, .. }
+            | Self::CleanupAttachments { thread_id, .. }
             | Self::RemoteTaskChanged { thread_id, .. }
             | Self::ThreadClosed { thread_id, .. }
             | Self::GenerateTitle { thread_id, .. } => thread_id,

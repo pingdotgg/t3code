@@ -353,6 +353,79 @@ impl EngineHost for Host {
         })
     }
 
+    fn check_retained_attachments(&self, attachments: Value) -> BoxFuture<'_, Result<(), String>> {
+        let files = self.files.clone();
+        Box::pin(async move {
+            let Some(files) = files else {
+                return Ok(());
+            };
+            let list: Vec<ChatAttachment> = from_json(attachments).map_err(|e| e.to_string())?;
+            tokio::task::spawn_blocking(move || {
+                for attachment in &list {
+                    let (id, name) = match attachment {
+                        ChatAttachment::Image(a) => (&a.id, &a.name),
+                        ChatAttachment::File(a) => (&a.id, &a.name),
+                        ChatAttachment::Unknown(_) => continue,
+                    };
+                    let pending = conn_files::attachments::parse_id(id)
+                        .is_some_and(|p| p.segment == conn_files::attachments::PENDING_SEGMENT);
+                    if !pending && files.attachments.resolve(id).is_none() {
+                        return Err(format!(
+                            "Attachment '{name}' cannot be sent: attachment not found."
+                        ));
+                    }
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        })
+    }
+
+    fn attachment_references(
+        &self,
+        attachments: Value,
+    ) -> BoxFuture<'_, Result<Vec<String>, String>> {
+        let files = self.files.clone();
+        Box::pin(async move {
+            let Some(files) = files else {
+                return Ok(Vec::new());
+            };
+            let list: Vec<ChatAttachment> = from_json(attachments).map_err(|e| e.to_string())?;
+            tokio::task::spawn_blocking(move || {
+                list.iter()
+                    .filter_map(|attachment| match attachment {
+                        ChatAttachment::Image(a) => Some(("image", &a.id, &a.name)),
+                        ChatAttachment::File(a) => Some(("file", &a.id, &a.name)),
+                        ChatAttachment::Unknown(_) => None,
+                    })
+                    .map(|(kind, id, name)| {
+                        let file = files.attachments.resolve(id).ok_or_else(|| {
+                            format!("Attachment '{name}' is no longer available. Attach it again.")
+                        })?;
+                        let quote = |text: &str| serde_json::to_string(text).unwrap_or_default();
+                        let extracted =
+                            conn_provider_support::attachments::extracted_text_path(&file.path)
+                                .map(|text| {
+                                    format!(
+                                        " (text extracted to: {})",
+                                        quote(&text.to_string_lossy())
+                                    )
+                                })
+                                .unwrap_or_default();
+                        Ok(format!(
+                            "Attached {kind} {}: {}{extracted}",
+                            quote(name),
+                            quote(&file.path.to_string_lossy())
+                        ))
+                    })
+                    .collect()
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        })
+    }
+
     fn release_attachments(&self, attachments: Value) -> BoxFuture<'_, ()> {
         let files = self.files.clone();
         Box::pin(async move {
@@ -361,6 +434,23 @@ impl EngineHost for Host {
                 return;
             };
             let _ = tokio::task::spawn_blocking(move || files.attachments.release(&list)).await;
+        })
+    }
+
+    fn check_attachment_limits(&self, attachments: Value) -> BoxFuture<'_, Result<(), String>> {
+        let checked = from_json::<Vec<ChatAttachment>>(attachments)
+            .map_err(|e| e.to_string())
+            .and_then(|list| conn_files::attachments::validate_limits(&list));
+        Box::pin(std::future::ready(checked))
+    }
+
+    fn delete_attachments(&self, ids: Vec<String>) -> BoxFuture<'_, ()> {
+        let files = self.files.clone();
+        Box::pin(async move {
+            let Some(files) = files else {
+                return;
+            };
+            let _ = tokio::task::spawn_blocking(move || files.attachments.delete(&ids)).await;
         })
     }
 

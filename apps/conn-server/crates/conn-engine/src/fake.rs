@@ -69,6 +69,8 @@ pub struct FakeProvider {
     pub opened_policies: Arc<Mutex<Vec<Value>>>,
     /// Model selections sent to a running turn (`apply_model_selection`), as JSON.
     pub applied_selections: Arc<Mutex<Vec<Value>>>,
+    /// Answers to questions a session received (`respond_to_runtime_request`), as JSON.
+    pub answers: Arc<Mutex<Vec<Value>>>,
     /// Rollback targets asked for: `start` or `turn <app run ordinal>`.
     pub rollbacks: Arc<Mutex<Vec<String>>>,
     /// The native conversation head each turn started from (`""` for none).
@@ -145,6 +147,7 @@ impl FakeProvider {
             closed: Arc::new(AtomicUsize::new(0)),
             opened_policies: Arc::default(),
             applied_selections: Arc::new(Mutex::new(vec![])),
+            answers: Arc::default(),
             rollbacks: Arc::new(Mutex::new(vec![])),
             heads: Arc::default(),
             forks: Arc::new(Mutex::new(vec![])),
@@ -303,6 +306,7 @@ struct FakeSession {
     mcp_servers: Arc<Mutex<Vec<McpServer>>>,
     closed: Arc<AtomicUsize>,
     applied_selections: Arc<Mutex<Vec<Value>>>,
+    answers: Arc<Mutex<Vec<Value>>>,
     rollbacks: Arc<Mutex<Vec<String>>>,
     heads: Arc<Mutex<Vec<String>>>,
     forks: Arc<Mutex<Vec<String>>>,
@@ -429,6 +433,7 @@ impl Provider for FakeProvider {
                     mcp_servers: self.mcp_servers.clone(),
                     closed: self.closed.clone(),
                     applied_selections: self.applied_selections.clone(),
+                    answers: self.answers.clone(),
                     rollbacks: self.rollbacks.clone(),
                     heads: self.heads.clone(),
                     forks: self.forks.clone(),
@@ -1181,6 +1186,9 @@ impl Session for FakeSession {
         input: RuntimeRequestResponse,
     ) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
+            if let Some(answers) = &input.answers {
+                crate::lock(&self.answers).push(conn_contract::to_json(answers));
+            }
             let events = {
                 let turn = crate::lock(&self.turn);
                 let turn = turn.as_ref().ok_or(ProviderError::SessionStopped)?;

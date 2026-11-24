@@ -112,9 +112,10 @@ fn every_effect_round_trips_under_its_effect_type() {
             thread_id: "t".into(),
             selection: json!({"model": "m"}),
         },
-        Effect::CleanupHtmlAttachments {
+        Effect::CleanupAttachments {
             thread_id: "t".into(),
             ids: vec![("a".into(), "b".into())],
+            attachment_ids: vec!["c".into()],
         },
         Effect::RemoteTaskChanged {
             thread_id: "t".into(),
@@ -143,7 +144,8 @@ fn a_cleanup_row_without_its_newer_fields_decodes() {
         serde_json::from_value(json!({"type": "attachment.cleanup", "threadId": "t"})).unwrap();
     assert!(matches!(
         effect,
-        Effect::CleanupHtmlAttachments { ids, .. } if ids.is_empty()
+        Effect::CleanupAttachments { ids, attachment_ids, .. }
+            if ids.is_empty() && attachment_ids.is_empty()
     ));
 }
 

@@ -14,14 +14,14 @@ use std::{
 };
 
 use conn_contract::{
-    AssetResource, AssetsCreateUrlError, ChatAttachment, ChatImageAttachment,
+    AssetResource, AssetsCreateUrlError, ChatAttachment, ChatFileAttachment, ChatImageAttachment,
     FilesystemBrowseInput, PersistChatAttachmentsInput, ProjectEntryKind,
     ProjectReadFileErrorFailure as Failure, ProjectReadFileInput, ProjectSearchContentsInput,
     ProjectSearchEntriesInput, ProjectWriteFileInput, UploadChatImageAttachment, from_json, lit,
 };
 use conn_files::{
     AssetContext, Files, KnownWorkspaces, Served,
-    attachments::{UploadOutcome, UploadRequest, now_ms},
+    attachments::{UploadOutcome, UploadRequest, now_ms, validate_claims, validate_limits},
     entries, search, workspace,
 };
 use serde_json::json;
@@ -1016,6 +1016,77 @@ fn upload(f: &Fixture, kind: Option<&str>, name: &str, mime: &str, bytes: &[u8])
     assert_eq!(outcome, UploadOutcome::Stored, "the upload is published");
     assert!(!part.exists(), "the part file is gone after publish");
     issued.attachment_id
+}
+
+/// `AttachmentClaims.claimPendingAttachments`: a document's extracted text (`<path>.txt`) goes
+/// with its claimed copy; a release and a cleanup remove both, and only for thread files.
+#[test]
+fn a_claim_carries_its_documents_extracted_text() {
+    let f = fixture("attach-text");
+    let store = &f.files.attachments;
+    let mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    let id = upload(&f, Some("file"), "brief.docx", mime, b"docx");
+    let pending = store.resolve(&id).unwrap().path;
+    let sidecar = |path: &Path| PathBuf::from(format!("{}.txt", path.display()));
+    fs::write(sidecar(&pending), "brief text").unwrap();
+    let attachment = ChatAttachment::File(ChatFileAttachment {
+        r#type: lit::File,
+        id: id.clone(),
+        name: "brief.docx".into(),
+        mime_type: mime.into(),
+        size_bytes: 4,
+        source: None,
+    });
+    let claim = || {
+        let ChatAttachment::File(claimed) = store.claim("Thread 1", &attachment).unwrap() else {
+            panic!()
+        };
+        claimed
+    };
+    let first = claim();
+    let path = store.resolve(&first.id).unwrap().path;
+    assert_eq!(fs::read_to_string(sidecar(&path)).unwrap(), "brief text");
+    store.release(&[ChatAttachment::File(first)]);
+    assert!(!path.exists() && !sidecar(&path).exists());
+
+    let second = claim();
+    let path = store.resolve(&second.id).unwrap().path;
+    store.delete(&[id, second.id]);
+    assert!(!path.exists() && !sidecar(&path).exists());
+    assert!(
+        pending.exists(),
+        "a cleanup leaves pending uploads to the sweep"
+    );
+}
+
+/// `getProviderAttachmentLimitError`: at most 100 files per message or question response, and
+/// duplicates are a single message's or question's check.
+#[test]
+fn a_response_holds_at_most_100_files() {
+    let files: Vec<ChatAttachment> = (0..101)
+        .map(|n| {
+            ChatAttachment::File(ChatFileAttachment {
+                r#type: lit::File,
+                id: format!("thread-{n}"),
+                name: "a.txt".into(),
+                mime_type: "text/plain".into(),
+                size_bytes: 1,
+                source: None,
+            })
+        })
+        .collect();
+    assert_eq!(
+        validate_claims(&files).unwrap_err(),
+        "You can attach up to 100 files per message or question response."
+    );
+    assert!(validate_claims(&files[..100]).is_ok());
+    // A whole question response may share one upload between questions; one question may not.
+    let shared = [files[0].clone(), files[0].clone()];
+    assert!(validate_limits(&shared).is_ok());
+    assert_eq!(
+        validate_claims(&shared).unwrap_err(),
+        "Duplicate attachment ids are not allowed."
+    );
 }
 
 #[test]

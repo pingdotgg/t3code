@@ -9326,6 +9326,13 @@ struct RecordingHost {
     sessions: Mutex<Vec<crate::AgentSession>>,
     revoked: Mutex<Vec<String>>,
     released: Mutex<Vec<Value>>,
+    /// Attachments each claim was asked for, in order.
+    claims: Mutex<Vec<Value>>,
+    /// Attachments each whole-response limit check saw, in order.
+    limit_checks: Mutex<Vec<Value>>,
+    /// Ids each attachment cleanup removed, in order.
+    deleted: Mutex<Vec<Vec<String>>>,
+    deleted_event: tokio::sync::Notify,
     closed: Mutex<Vec<(String, crate::ThreadClose)>>,
     html_cleanup: Mutex<Vec<(String, String)>>,
     closed_event: tokio::sync::Notify,
@@ -9363,7 +9370,12 @@ impl crate::EngineHost for RecordingHost {
         thread_id: String,
         attachments: Value,
     ) -> crate::BoxFuture<'_, Result<Value, String>> {
+        self.claims.lock().unwrap().push(attachments.clone());
         Box::pin(async move {
+            let list = attachments.as_array().unwrap();
+            if (1..list.len()).any(|i| list[..i].iter().any(|a| a["id"] == list[i]["id"])) {
+                return Err("Duplicate attachment ids are not allowed.".into());
+            }
             let claimed: Vec<Value> = attachments
                 .as_array()
                 .unwrap()
@@ -9381,6 +9393,48 @@ impl crate::EngineHost for RecordingHost {
     fn release_attachments(&self, attachments: Value) -> crate::BoxFuture<'_, ()> {
         self.released.lock().unwrap().push(attachments);
         Box::pin(async {})
+    }
+    fn check_attachment_limits(
+        &self,
+        attachments: Value,
+    ) -> crate::BoxFuture<'_, Result<(), String>> {
+        self.limit_checks.lock().unwrap().push(attachments);
+        Box::pin(async { Ok(()) })
+    }
+    fn delete_attachments(&self, ids: Vec<String>) -> crate::BoxFuture<'_, ()> {
+        self.deleted.lock().unwrap().push(ids);
+        self.deleted_event.notify_one();
+        Box::pin(async {})
+    }
+    /// A saved file whose id starts with `gone` was removed.
+    fn check_retained_attachments(
+        &self,
+        attachments: Value,
+    ) -> crate::BoxFuture<'_, Result<(), String>> {
+        let gone = attachments
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["id"].as_str().unwrap().starts_with("gone"));
+        Box::pin(async move {
+            if gone {
+                Err("Attachment 'old.txt' cannot be sent: attachment not found.".into())
+            } else {
+                Ok(())
+            }
+        })
+    }
+    fn attachment_references(
+        &self,
+        attachments: Value,
+    ) -> crate::BoxFuture<'_, Result<Vec<String>, String>> {
+        let lines = attachments
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| format!("saved at /files/{}", a["id"].as_str().unwrap()))
+            .collect();
+        Box::pin(async move { Ok(lines) })
     }
     fn cleanup_html_attachments(&self, ids: Vec<(String, String)>) -> crate::BoxFuture<'_, ()> {
         self.html_cleanup.lock().unwrap().extend(ids);
@@ -15045,4 +15099,463 @@ async fn an_idle_compaction_waits_for_an_undelivered_delegated_result() {
             .any(|m| m["id"] == "idle-compact:t1:2"),
         "the compaction runs"
     );
+}
+
+/// A composer context with one inline file chip per id.
+fn chips(ids: &[&str]) -> Value {
+    let records: Vec<Value> = ids
+        .iter()
+        .map(|id| {
+            json!({"kind": "file", "label": "notes.txt", "attachmentId": id, "name": "notes.txt",
+                "mimeType": "text/plain", "sizeBytes": 3})
+        })
+        .collect();
+    json!({"version": 1, "records": records})
+}
+
+fn text_file(id: &str) -> Value {
+    json!({"type": "file", "id": id, "name": "notes.txt", "mimeType": "text/plain",
+        "sizeBytes": 3})
+}
+
+/// `ThreadMessageIntake.test.ts`, "shared intake preserves durable attachment bytes": a queued
+/// message's edit claims its new upload and keeps its saved file, once; a stale edit that keeps
+/// a removed file is refused.
+#[tokio::test(flavor = "current_thread")]
+async fn a_queued_edit_claims_its_new_upload_once() {
+    let db = TempDb::new("edit-claim");
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let mut later = message_with(
+        "t1",
+        "c3",
+        "later",
+        json!({"type": "queue_after_active"}),
+        None,
+    );
+    later["attachments"] = json!([text_file("pending-1")]);
+    later["context"] = chips(&["pending-1"]);
+    dispatch(&engine, later).await;
+    let edit = json!({"type": "queued-run.edit", "commandId": "c4", "threadId": "t1",
+        "runId": "run:t1:2", "text": "edited",
+        "attachments": [text_file("t1-1"), text_file("pending-2")],
+        "context": chips(&["t1-1", "pending-2"])});
+    dispatch(&engine, edit.clone()).await;
+    let ids = |p: &Value| -> Vec<Value> {
+        p["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["id"] == "message:c3")
+            .unwrap()["attachments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["id"].clone())
+            .collect()
+    };
+    assert_eq!(
+        ids(&projection(&engine, "t1").await),
+        [json!("t1-1"), json!("t1-2")]
+    );
+    // The inline chips name the claimed files, so the client can match them
+    // (`remapComposerContextAttachments`).
+    let chip_ids: Vec<Value> = projection(&engine, "t1").await["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == "message:c3")
+        .unwrap()["context"]["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["attachmentId"].clone())
+        .collect();
+    assert_eq!(chip_ids, [json!("t1-1"), json!("t1-2")]);
+    // A retry replays its receipt before any file is looked up or claimed again.
+    let claims = host.claims.lock().unwrap().len();
+    dispatch(&engine, edit).await;
+    assert_eq!(host.claims.lock().unwrap().len(), claims);
+    // A stale view that keeps a file another client removed is refused, and changes nothing.
+    let stale = json!({"type": "queued-run.edit", "commandId": "c5", "threadId": "t1",
+        "runId": "run:t1:2", "text": "stale", "attachments": [text_file("gone-1")]});
+    assert!(engine.dispatch(from_json(stale).unwrap()).await.is_err());
+    assert_eq!(
+        ids(&projection(&engine, "t1").await),
+        [json!("t1-1"), json!("t1-2")]
+    );
+    // A refused edit releases only the copy it made, never the file it kept.
+    let refused = json!({"type": "queued-run.edit", "commandId": "c6", "threadId": "t1",
+        "runId": "run:t1:9", "text": "no such run",
+        "attachments": [text_file("t1-1"), text_file("pending-3")]});
+    assert!(engine.dispatch(from_json(refused).unwrap()).await.is_err());
+    assert_eq!(
+        host.released.lock().unwrap().last().unwrap(),
+        &json!([text_file("t1-3")])
+    );
+}
+
+const RECORDING: &str = "t1-0b9f6c1e-3c1d-4f7a-9d2e-5a6b7c8d9e0f-webm";
+
+/// `Orchestrator.ts`, `queued-run.edit`: a file an edit drops is removed after the edit commits
+/// (`attachment.cleanup` with `skipReferenced`), unless another message of the thread still
+/// names it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_queued_edit_removes_the_files_it_drops() {
+    let db = TempDb::new("edit-drop");
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    // An `html_render` page the thread shows, which a queued message also names.
+    let page = "t1-00000000-0000-4000-8000-000000000001-html";
+    engine
+        .inner()
+        .db(move |store| {
+            let mut tx = store.tx()?;
+            tx.append(crate::store::Draft::new("t1", "turn-item.updated", json!({
+                "id": "render", "threadId": "t1", "runId": "run:t1:1", "type": "dynamic_tool",
+                "toolName": "html_render", "status": "completed", "ordinal": 1,
+                "output": {"htmlRender": {"attachmentId": page, "title": "Page", "height": 100}},
+            })))?;
+            // `TurnStartReads.test.ts`: a `preview_recording_stop` result names its WebM.
+            tx.append(crate::store::Draft::new("t1", "turn-item.updated", json!({
+                "id": "recording", "threadId": "t1", "runId": "run:t1:1", "type": "dynamic_tool",
+                "toolName": "mcp__conn__preview_recording_stop", "status": "completed",
+                "ordinal": 2, "input": {},
+                "output": [{"type": "text", "text": json!({"id": RECORDING, "mimeType": "video/webm"}).to_string()}],
+            })))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    let queue = json!({"type": "queue_after_active"});
+    let mut first = message_with("t1", "c3", "first", queue.clone(), None);
+    first["attachments"] = json!([
+        text_file("pending-1"),
+        text_file(page),
+        text_file(RECORDING)
+    ]);
+    dispatch(&engine, first).await;
+    let mut second = message_with("t1", "c4", "second", queue, None);
+    second["attachments"] = json!([text_file("t1-1")]);
+    dispatch(&engine, second).await;
+    // The second message still names the file, and the timeline shows the page and the
+    // recording: all stay.
+    let edit = |command: &str, run: &str, attachments: Value| {
+        json!({"type": "queued-run.edit", "commandId": command, "threadId": "t1", "runId": run,
+            "text": "edited", "attachments": attachments})
+    };
+    dispatch(&engine, edit("c5", "run:t1:2", json!([]))).await;
+    // Now nothing names it: it goes. The new upload stays.
+    dispatch(
+        &engine,
+        edit("c6", "run:t1:3", json!([text_file("pending-2")])),
+    )
+    .await;
+    timeout(Duration::from_secs(5), async {
+        while host.deleted.lock().unwrap().is_empty() {
+            host.deleted_event.notified().await;
+        }
+    })
+    .await
+    .expect("the dropped file is cleaned up");
+    assert_eq!(*host.deleted.lock().unwrap(), [vec!["t1-1".to_owned()]]);
+}
+
+/// `Orchestrator.ts`, `queued-run.edit`: a steer the provider declined waits in the queue with
+/// its timeline item already made; an edit updates that item with its message, so the run
+/// starts with the files the edit kept.
+#[tokio::test(flavor = "current_thread")]
+async fn editing_a_declined_steer_updates_its_timeline_item() {
+    let db = TempDb::new("edit-declined-steer");
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(
+        FakeProvider::new("claudeAgent").without_steering(),
+    )];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let mut steer = message_with(
+        "t1",
+        "c3",
+        "steer me",
+        json!({"type": "steer_active", "targetRunId": "run:t1:1"}),
+        None,
+    );
+    steer["attachments"] = json!([text_file("pending-a")]);
+    dispatch(&engine, steer).await;
+    let run = loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "run.created"
+            && item["event"]["payload"]["userMessageId"] == "message:c3"
+        {
+            break item["event"]["payload"]["id"].clone();
+        }
+    };
+    dispatch(
+        &engine,
+        json!({"type": "queued-run.edit", "commandId": "c4", "threadId": "t1", "runId": run,
+            "text": "steered", "attachments": [text_file("pending-b")]}),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let ids = |row: &Value| -> Vec<Value> {
+        row["attachments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["id"].clone())
+            .collect()
+    };
+    let message = p["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == "message:c3")
+        .unwrap();
+    let item = p["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["type"] == "user_message" && i["messageId"] == "message:c3")
+        .unwrap();
+    assert_eq!(ids(message), [json!("t1-b")]);
+    assert_eq!(ids(item), [json!("t1-b")]);
+    assert_eq!(item["text"], "steered");
+}
+
+/// `Orchestrator.ts`, `queued-run.edit` and the queued run's start: a queued message's
+/// `user_message` item is the one with its `messageId`, whatever its id. A thread imported from
+/// the TypeScript server keeps that server's item ids.
+#[tokio::test(flavor = "current_thread")]
+async fn an_imported_queued_items_edit_and_start_find_it_by_message() {
+    let db = TempDb::new("edit-imported-item");
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let mut queued = message_with(
+        "t1",
+        "c3",
+        "later",
+        json!({"type": "queue_after_active"}),
+        None,
+    );
+    queued["attachments"] = json!([text_file("pending-a")]);
+    dispatch(&engine, queued).await;
+    // The item as the importer keeps it, under the TypeScript server's id.
+    let imported = "turn-item:message:imported-c3";
+    engine
+        .inner()
+        .db(move |store| {
+            let mut tx = store.tx()?;
+            tx.append(crate::store::Draft::new(
+                "t1",
+                "turn-item.updated",
+                json!({
+                    "id": imported, "threadId": "t1", "runId": "run:t1:2", "type": "user_message",
+                    "messageId": "message:c3", "text": "later", "ordinal": 0, "status": "completed",
+                    "attachments": [text_file("t1-a")],
+                }),
+            ))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    dispatch(
+        &engine,
+        json!({"type": "queued-run.edit", "commandId": "c4", "threadId": "t1",
+            "runId": "run:t1:2", "text": "edited", "attachments": [text_file("pending-b")]}),
+    )
+    .await;
+    let items = |p: &Value| -> Vec<(Value, Value)> {
+        p["turnItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["type"] == "user_message" && i["messageId"] == "message:c3")
+            .map(|i| (i["id"].clone(), i["attachments"][0]["id"].clone()))
+            .collect()
+    };
+    let p = projection(&engine, "t1").await;
+    assert_eq!(items(&p), [(json!(imported), json!("t1-b"))]);
+    // The run starts with that same item, not a second one under the Conn Server's id.
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "c5", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
+    for _ in 0..2 {
+        until_run_ends(&mut thread).await;
+    }
+    assert_eq!(
+        items(&projection(&engine, "t1").await),
+        [(json!(imported), json!("t1-b"))]
+    );
+}
+
+/// `ThreadMessageIntake.test.ts`, "claims question uploads and passes readable paths": each
+/// question's files are claimed for it, its answer reaches the provider with their paths, and a
+/// retry delivers neither again.
+#[tokio::test(flavor = "current_thread")]
+async fn question_answers_claim_their_files_and_pass_their_paths() {
+    let db = TempDb::new("answer-claim");
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "question")).await;
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "runtime-request.updated" {
+            break;
+        }
+    }
+    // The question as a provider adapter records it, so the answer has its history row.
+    let request = projection(&engine, "t1").await["runtimeRequests"][0].clone();
+    engine
+        .inner()
+        .db(move |store| {
+            let mut tx = store.tx()?;
+            tx.append(crate::store::Draft::new("t1", "turn-item.updated", json!({
+                "id": "question-item", "threadId": "t1", "runId": "run:t1:1",
+                "nodeId": request["nodeId"], "type": "user_input_request", "ordinal": 1,
+                "status": "running", "requestId": "question:run:t1:1",
+                "questions": [{"id": "q", "question": "Which file?"}, {"id": "r", "question": "Other?"},
+                    {"id": "s", "question": "Wrapped?"}],
+            })))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    let answer = json!({"type": "runtime-request.respond", "commandId": "c3", "threadId": "t1",
+        "requestId": "question:run:t1:1",
+        "answers": {"q": ["See file"], "r": "Other", "s": {"answers": ["A"]}},
+        "attachmentsByQuestionId": {"q": [text_file("pending-a")], "r": [text_file("pending-b")],
+            "s": [text_file("pending-a")]}});
+    // A duplicate within one question is refused.
+    let mut duplicate = answer.clone();
+    duplicate["commandId"] = json!("c-dup");
+    duplicate["attachmentsByQuestionId"] =
+        json!({"q": [text_file("pending-a"), text_file("pending-a")]});
+    assert!(
+        engine
+            .dispatch(from_json(duplicate).unwrap())
+            .await
+            .is_err()
+    );
+    let before = host.claims.lock().unwrap().len();
+    dispatch(&engine, answer.clone()).await;
+    // The limits see the whole response once (`validateAttachmentLimits`); each question's
+    // files are claimed on their own, so two questions may share one upload.
+    assert_eq!(
+        host.limit_checks.lock().unwrap().last().unwrap(),
+        &json!([
+            text_file("pending-a"),
+            text_file("pending-b"),
+            text_file("pending-a")
+        ])
+    );
+    assert_eq!(
+        host.claims.lock().unwrap()[before..],
+        [
+            json!([text_file("pending-a")]),
+            json!([text_file("pending-b")]),
+            json!([text_file("pending-a")]),
+        ]
+    );
+    until_run_ends(&mut thread).await;
+    // A wrapped answer becomes the paths alone, as T3's `appendUserInputAttachmentPaths`
+    // makes it: every adapter reads a text.
+    assert_eq!(
+        *provider.answers.lock().unwrap(),
+        [json!({
+            "q": ["See file", "saved at /files/t1-a"],
+            "r": "Other\n\nsaved at /files/t1-b",
+            "s": "saved at /files/t1-a",
+        })]
+    );
+    let p = projection(&engine, "t1").await;
+    let item = p["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["type"] == "user_input_request")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        item["questionAnswer"]["attachmentsByQuestionId"],
+        json!({"q": [text_file("t1-a")], "r": [text_file("t1-b")], "s": [text_file("t1-a")]})
+    );
+    let claims = host.claims.lock().unwrap().len();
+    dispatch(&engine, answer).await;
+    assert_eq!(host.claims.lock().unwrap().len(), claims);
+    assert_eq!(provider.answers.lock().unwrap().len(), 1);
 }

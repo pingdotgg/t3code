@@ -128,7 +128,13 @@ struct Envelope {
     failed: bool,
 }
 
-fn read(value: &Value, budget: &mut Budget, depth: usize) -> Envelope {
+/// `readResult`: the result an envelope carries; `leaf` turns its object into data.
+fn read(
+    value: &Value,
+    budget: &mut Budget,
+    depth: usize,
+    leaf: fn(&Value) -> Map<String, Value>,
+) -> Envelope {
     let empty = || Envelope {
         data: None,
         failed: false,
@@ -147,7 +153,7 @@ fn read(value: &Value, budget: &mut Budget, depth: usize) -> Envelope {
             }
             serde_json::from_str(text)
                 .ok()
-                .map_or_else(empty, |value| read(&value, budget, depth + 1))
+                .map_or_else(empty, |value| read(&value, budget, depth + 1, leaf))
         }
         Value::Array(blocks) => {
             if blocks.len() > MAX_CONTENT_BLOCKS {
@@ -157,7 +163,7 @@ fn read(value: &Value, budget: &mut Budget, depth: usize) -> Envelope {
             let mut result = empty();
             for block in blocks {
                 let text = block.get("text").unwrap_or(&Value::Null);
-                let next = read(text.get("text").unwrap_or(text), budget, depth + 1);
+                let next = read(text.get("text").unwrap_or(text), budget, depth + 1, leaf);
                 result.data = result.data.or(next.data);
                 result.failed |= next.failed;
                 if budget.exceeded {
@@ -176,14 +182,14 @@ fn read(value: &Value, budget: &mut Budget, depth: usize) -> Envelope {
                 .filter(|v| !v.is_null())
                 .or_else(|| object.get("content"));
             if let Some(content) = content {
-                let next = read(content, budget, depth + 1);
+                let next = read(content, budget, depth + 1, leaf);
                 Envelope {
                     data: next.data,
                     failed: failed || next.failed,
                 }
             } else {
                 Envelope {
-                    data: Some(compact_metadata(value)),
+                    data: Some(leaf(value)),
                     failed,
                 }
             }
@@ -283,7 +289,7 @@ fn compact_metadata(data: &Value) -> Map<String, Value> {
 
 pub fn compact_dynamic_tool_output(value: &Value) -> Option<Map<String, Value>> {
     let mut budget = Budget::default();
-    let result = read(value, &mut budget, 0);
+    let result = read(value, &mut budget, 0, compact_metadata);
     let mut output = if budget.exceeded {
         Map::new()
     } else {
@@ -489,6 +495,22 @@ pub fn html_render_from_tool_item(item: &Value) -> Option<Value> {
         return None;
     }
     output.remove("htmlRender")
+}
+
+/// `previewRecordingIdFromToolItem`: the thread-owned file `preview_recording_stop` stored
+/// for the agent.
+pub fn preview_recording_id_from_tool_item(item: &Value) -> Option<String> {
+    let name = item.get("toolName")?.as_str()?;
+    if resolve_t3_mcp_tool_id(name) != Some("preview_recording_stop") {
+        return None;
+    }
+    let mut budget = Budget::default();
+    let raw = |value: &Value| value.as_object().cloned().unwrap_or_default();
+    let result = read(item.get("output")?, &mut budget, 0, raw);
+    if result.failed || budget.exceeded {
+        return None;
+    }
+    bounded_id(result.data?.get("id")?).map(str::to_owned)
 }
 
 pub fn mcp_app_from_tool_item(item: &Value) -> Option<Value> {
