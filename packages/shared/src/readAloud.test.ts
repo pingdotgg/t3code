@@ -2,6 +2,8 @@ import { expect, it } from "vite-plus/test";
 import {
   readAloudPosition,
   readAloudShownText,
+  readAloudSourceAtShown,
+  readAloudBlockFrom,
   readAloudSpeech,
   readAloudText,
   splitReadAloudSpans,
@@ -136,6 +138,38 @@ it("finds the block and word being read in text a renderer shows", () => {
   const first = speech.text.indexOf("First");
   const elsewhere = readAloudPosition(speech, first, first + 5);
   expect(elsewhere && tail(elsewhere)).toEqual({ block: null, word: null });
+});
+
+it("maps a place in the text a renderer shows to the block reading starts from", () => {
+  const markdown = [
+    "# Plan",
+    "Use **readAloud** here.",
+    "- First item\n- Second item",
+    "```ts\ncode();\n```",
+    "Yes.",
+    "Yes.",
+  ].join("\n\n");
+  const shown = "Plan\nUse readAloud here.\n• First item\n• Second item\ncode();\nYes.\nYes.";
+  const speech = readAloudSpeech(markdown, true);
+  const startsAt = (offset: number) => {
+    const source = readAloudSourceAtShown(markdown, shown, offset);
+    const block = source === null ? undefined : readAloudBlockFrom(speech, source);
+    return block && speech.text.slice(block.spokenStart, block.spokenEnd);
+  };
+  expect(startsAt(shown.indexOf("readAloud"))).toBe("Use readAloud here.");
+  // The bullet is not spoken, so it starts the item it marks.
+  expect(startsAt(shown.indexOf("• Second"))).toBe("Second item.");
+  // Repeated paragraphs keep their own place.
+  expect(startsAt(shown.lastIndexOf("Yes."))).toBe("Yes.");
+  expect(readAloudSourceAtShown(markdown, shown, shown.lastIndexOf("Yes."))).toBe(
+    markdown.lastIndexOf("Yes."),
+  );
+  // A skipped code block starts the next block read.
+  expect(readAloudBlockFrom(speech, markdown.indexOf("code();"))?.sourceStart).toBe(
+    markdown.indexOf("Yes."),
+  );
+  expect(readAloudSourceAtShown(markdown, shown, shown.length)).toBeNull();
+  expect(readAloudBlockFrom(speech, markdown.length)).toBeUndefined();
 });
 
 it("splits long replies without losing content or cutting surrogate pairs", () => {

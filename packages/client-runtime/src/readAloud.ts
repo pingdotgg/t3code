@@ -7,6 +7,7 @@ import {
   type SpeechSynthesisWord,
 } from "@t3tools/contracts";
 import {
+  readAloudBlockFrom,
   readAloudPosition,
   readAloudSpeech,
   splitReadAloudSpans,
@@ -212,7 +213,14 @@ export function createReadAloudController(
     unfollow = null;
     publishHighlight(null);
   };
+  // What `start` reads, so a jump within the same reply reads it again with the same settings.
+  let reading: {
+    readonly id: string;
+    readonly markdown: string;
+    readonly settings: ReadAloudSettings;
+  } | null = null;
   const stop = () => {
+    reading = null;
     stopFollowing();
     active?.abort();
     active = null;
@@ -224,6 +232,83 @@ export function createReadAloudController(
     playback = null;
     publish({ id: null, status: "idle" });
   };
+  /**
+   * Reads `markdown` aloud from the top, or from the first block that ends after markdown offset
+   * `from`, such as the paragraph a user picks.
+   * Speech is made only from that block on, so a jump does not wait for what comes before it.
+   */
+  const start = async (
+    id: string,
+    markdown: string,
+    settings: ReadAloudSettings,
+    from?: number,
+  ) => {
+    const speech = readAloudSpeech(markdown, settings.skipCodeBlocks);
+    const offset = from === undefined ? 0 : readAloudBlockFrom(speech, from)?.spokenStart;
+    // Nothing is read after `from`, such as in a skipped closing code block: keep reading.
+    if (offset === undefined) return;
+    stop();
+    if (settings.provider === "off") return;
+    reading = { id, markdown, settings };
+    // Platform speech engines cap utterance length; environments stream a whole reply.
+    const chunks = splitReadAloudSpans(
+      speech.text.slice(offset),
+      settings.provider === "system" ? undefined : SPEECH_SYNTHESIS_MAX_TEXT,
+    ).map((chunk) => ({ ...chunk, start: offset + chunk.start }));
+    if (!chunks.length) return;
+    const owner = new AbortController();
+    active = owner;
+    try {
+      for (const chunk of chunks) {
+        publish({ id, status: paused ? "paused" : "loading" });
+        const next = await prepare(chunk.text, settings, owner.signal);
+        if (active !== owner) {
+          dispose(next);
+          return;
+        }
+        playback = next;
+        if (settings.highlightWords && next.words)
+          unfollow = next.words((word) => {
+            const position =
+              word && readAloudPosition(speech, chunk.start + word.start, chunk.start + word.end);
+            publishHighlight(position ? { id, ...position } : null);
+          });
+        // Playback can fail while the platform is still activating its audio session.
+        void next.finished.catch(() => {});
+        await waitForResume();
+        if (active !== owner) return;
+        do {
+          starting = true;
+          await next.play();
+          if (active !== owner) return;
+          starting = false;
+          if (paused) {
+            next.pause();
+            await waitForResume();
+            if (active !== owner) return;
+          } else break;
+        } while (active === owner);
+        publish({ id, status: "playing" });
+        await next.finished;
+        if (active !== owner) return;
+        stopFollowing();
+        dispose(next);
+        playback = null;
+      }
+      if (active === owner) stop();
+    } catch (error) {
+      if (active !== owner) return;
+      stop();
+      publish({
+        id,
+        status: "error",
+        error:
+          error instanceof Error ? error.message : resolve(msg("Could not read this response.")),
+      });
+    }
+  };
+  const isReading = (id: string) =>
+    reading?.id === id && state.status !== "idle" && state.status !== "error";
   return {
     getSnapshot: () => state,
     subscribe: (listener: () => void) => {
@@ -279,66 +364,15 @@ export function createReadAloudController(
         }
       }
     },
-    async start(id: string, markdown: string, settings: ReadAloudSettings) {
-      stop();
-      if (settings.provider === "off") return;
-      const speech = readAloudSpeech(markdown, settings.skipCodeBlocks);
-      // Platform speech engines cap utterance length; environments stream a whole reply.
-      const chunks = splitReadAloudSpans(
-        speech.text,
-        settings.provider === "system" ? undefined : SPEECH_SYNTHESIS_MAX_TEXT,
-      );
-      if (!chunks.length) return;
-      const owner = new AbortController();
-      active = owner;
-      try {
-        for (const chunk of chunks) {
-          publish({ id, status: paused ? "paused" : "loading" });
-          const next = await prepare(chunk.text, settings, owner.signal);
-          if (active !== owner) {
-            dispose(next);
-            return;
-          }
-          playback = next;
-          if (settings.highlightWords && next.words)
-            unfollow = next.words((word) => {
-              const position =
-                word && readAloudPosition(speech, chunk.start + word.start, chunk.start + word.end);
-              publishHighlight(position ? { id, ...position } : null);
-            });
-          // Playback can fail while the platform is still activating its audio session.
-          void next.finished.catch(() => {});
-          await waitForResume();
-          if (active !== owner) return;
-          do {
-            starting = true;
-            await next.play();
-            if (active !== owner) return;
-            starting = false;
-            if (paused) {
-              next.pause();
-              await waitForResume();
-              if (active !== owner) return;
-            } else break;
-          } while (active === owner);
-          publish({ id, status: "playing" });
-          await next.finished;
-          if (active !== owner) return;
-          stopFollowing();
-          dispose(next);
-          playback = null;
-        }
-        if (active === owner) stop();
-      } catch (error) {
-        if (active !== owner) return;
-        stop();
-        publish({
-          id,
-          status: "error",
-          error:
-            error instanceof Error ? error.message : resolve(msg("Could not read this response.")),
-        });
-      }
+    start,
+    /** Whether message `id` is being read, paused, or made into speech. */
+    isReading,
+    /**
+     * While message `id` is being read, reads it again from markdown offset `from` with the same
+     * settings; null when it is not being read.
+     */
+    jump(id: string, from: number) {
+      return reading && isReading(id) ? start(id, reading.markdown, reading.settings, from) : null;
     },
   };
 }

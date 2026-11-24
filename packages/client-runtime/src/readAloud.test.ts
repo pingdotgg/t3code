@@ -293,6 +293,56 @@ it("highlights the spoken word by its markdown range, across chunks, while highl
   expect(emit.filter(Boolean)).toHaveLength(0);
 });
 
+it("starts at the block a user picks, keeps its markdown offsets, and ignores a place after the last block", async () => {
+  const markdown = "First paragraph.\n\nSecond **bold** one.\n\n```sh\nls\n```";
+  const texts: string[] = [];
+  let emit: ((word: SpokenWord | null) => void) | undefined;
+  const playing = deferred<void>();
+  const finished = deferred<void>();
+  const controller = createReadAloudController(async (text) => {
+    texts.push(text);
+    return {
+      play: async () => playing.resolve(),
+      pause: () => {},
+      stop: () => finished.resolve(),
+      finished: finished.promise,
+      words: (listener) => {
+        emit = listener;
+        return () => {
+          emit = undefined;
+        };
+      },
+    };
+  });
+  const settings = { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "system" as const };
+  const run = controller.start("1", markdown, settings, markdown.indexOf("bold"));
+  await playing.promise;
+  expect(texts).toEqual(["Second bold one."]);
+  emit?.({ start: 7, end: 11 });
+  expect(controller.getHighlight()).toMatchObject({
+    word: { start: markdown.indexOf("bold"), end: markdown.indexOf("bold") + 4 },
+    block: { start: markdown.indexOf("Second"), first: { text: "Second" } },
+  });
+
+  // Only the reply being read jumps, and a skipped code block holds nothing to read.
+  expect(controller.isReading("1")).toBe(true);
+  expect(controller.jump("2", 0)).toBeNull();
+  await controller.jump("1", markdown.indexOf("ls"));
+  expect(texts).toHaveLength(1);
+  expect(controller.getSnapshot()).toMatchObject({ id: "1", status: "playing" });
+
+  // A jump reads the same reply again with the same settings, from the block picked.
+  const jumped = controller.jump("1", 0);
+  await run;
+  await vi.waitFor(() =>
+    expect(texts).toEqual(["Second bold one.", "First paragraph.\nSecond bold one."]),
+  );
+  controller.stop();
+  await jumped;
+  expect(controller.isReading("1")).toBe(false);
+  expect(controller.jump("1", 0)).toBeNull();
+});
+
 it("follows provider word timings on the audio clock and estimates them when there are none", async () => {
   vi.useFakeTimers();
   try {

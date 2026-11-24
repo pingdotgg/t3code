@@ -302,19 +302,24 @@ function alignWords(spoken: ReadonlyArray<ComparedWord>, shown: ReadonlyArray<Co
   return anchors;
 }
 
-/**
- * Finds what read aloud is reading in a renderer's own text, such as a native view that reports
- * the text it shows but not where it came from in the markdown. The reply's words are matched to
- * the shown words in order; a word without a safe match is left unhighlighted.
- */
-export function readAloudShownText(markdown: string, shown: string) {
+/** The reply's spoken words, the words `shown` holds, and the shown word each spoken one matched. */
+function alignShown(markdown: string, shown: string) {
   const speech = readAloudSpeech(markdown, false);
   const spoken = comparedWords(speech.text).map((word) => {
     const sources = speech.sources.slice(word.start, word.end).filter((at) => at !== ADDED);
     return { ...word, sourceStart: Math.min(...sources), sourceEnd: Math.max(...sources) + 1 };
   });
   const shownWords = comparedWords(shown);
-  const anchors = alignWords(spoken, shownWords);
+  return { spoken, shownWords, anchors: alignWords(spoken, shownWords) };
+}
+
+/**
+ * Finds what read aloud is reading in a renderer's own text, such as a native view that reports
+ * the text it shows but not where it came from in the markdown. The reply's words are matched to
+ * the shown words in order; a word without a safe match is left unhighlighted.
+ */
+export function readAloudShownText(markdown: string, shown: string) {
+  const { spoken, shownWords, anchors } = alignShown(markdown, shown);
   const span = (inside: (word: (typeof spoken)[number]) => boolean): ReadAloudTextRange | null => {
     let start = Infinity;
     let end = -Infinity;
@@ -334,4 +339,22 @@ export function readAloudShownText(markdown: string, shown: string) {
       (word) => word.sourceStart < position.word.end && word.sourceEnd > position.word.start,
     ),
   });
+}
+
+/**
+ * The markdown offset of the first word a renderer shows at or after `offset` of its text `shown`,
+ * such as the place a user taps, or null when no later word matches the reply.
+ */
+export function readAloudSourceAtShown(markdown: string, shown: string, offset: number) {
+  const { spoken, shownWords, anchors } = alignShown(markdown, shown);
+  for (const [index, word] of spoken.entries()) {
+    const match = shownWords[anchors[index] ?? -1];
+    if (match && match.end > offset) return word.sourceStart;
+  }
+  return null;
+}
+
+/** The first spoken block that ends after markdown offset `from`: where reading from it starts. */
+export function readAloudBlockFrom(speech: ReadAloudSpeech, from: number) {
+  return speech.blocks.find((block) => block.sourceEnd > from);
 }
