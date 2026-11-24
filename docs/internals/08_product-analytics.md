@@ -6,9 +6,8 @@ outside sinks, and the fork disables each at one point so callers and settings s
 - Server product events (PostHog through `ingest.t3.codes`): `AnalyticsService.layer` in
   [`apps/server/src/telemetry/AnalyticsService.ts`](../../apps/server/src/telemetry/AnalyticsService.ts)
   is a no-op.
-- T3 Connect relay traces (Axiom) from server, web, and mobile: `layer` in
-  [`packages/shared/src/relayTracing.ts`](../../packages/shared/src/relayTracing.ts) never builds an
-  exporter, whatever credentials a build carries.
+- T3 Connect relay traces (Axiom) from server, web, and mobile: removed. The fork carries no relay
+  tracing code or build-time trace credentials.
 - Mobile crash reports and launch timings (expo-observe): the native endpoint in
   `apps/mobile/app.config.ts` is `https://observe.invalid`, and
   [`observe.ts`](../../apps/mobile/src/features/observability/observe.ts) turns dispatching off.

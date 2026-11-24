@@ -1,6 +1,5 @@
 import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
-import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -591,7 +590,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }).pipe(
       Effect.map((lease) => ({ attemptSpan, lease })),
       Effect.mapError((error): TracedAttemptFailure => ({ error, attemptSpan })),
-      withRelayClientTracing,
     );
   };
 
