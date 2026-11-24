@@ -30,6 +30,10 @@ export interface UpdateEverythingMachine {
     readonly managedPolicy?: ServerConfig["managedPolicy"];
   } | null;
   readonly connected: boolean;
+  /** Why the connection is down, when it says, in the active language. */
+  readonly connectionError?: string | null;
+  /** The saved connection is switched off in Settings, so it never connects. */
+  readonly turnedOff?: boolean;
   readonly hostedByThisApp: boolean;
   readonly canMaintain: boolean;
   readonly updateState: ServerUpdateState;
@@ -149,7 +153,20 @@ function unavailableReason(
   machine: UpdateEverythingMachine,
   resolve: MessageResolver,
 ): string | null {
-  if (machine.serverConfig === null || !machine.connected) return resolve(msg("not connected"));
+  if (machine.turnedOff === true) {
+    return resolve(
+      msg("turned off", {
+        $context: "why a server update was skipped: its saved connection is off",
+      }),
+    );
+  }
+  if (!machine.connected) return machine.connectionError ?? resolve(msg("not connected"));
+  if (machine.serverConfig === null)
+    return resolve(
+      msg("still loading", {
+        $context: "why a server update was skipped: its settings have not arrived yet",
+      }),
+    );
   if (!machine.canMaintain) return resolve(msg("no permission"));
   if (machine.updateState.status === "running") return resolve(msg("already updating"));
   return null;
