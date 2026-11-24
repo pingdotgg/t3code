@@ -144,9 +144,11 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
   user on their own device, or a principal reaching the same outcome via a
   documented route, no boundary is crossed unless data goes somewhere they did
   not send it. It may still be a bug; report it as one.
-- Read tests and comments beside the code before calling a behaviour a defect. A
-  test asserting it by name or a comment explaining why makes it a decision;
-  report it only if it breaks a documented promise or crosses a boundary above.
+- Read tests and comments beside the code before calling a behaviour a defect.
+  They show what the author meant and are evidence, not a decision: a test can
+  pin a behaviour nobody chose, and a comment can be out of date. Only this file
+  and the docs say what is intended. If a test or comment is all that supports
+  a behaviour, report it and say so.
 - Follow the claim to its effect. A guard in a caller, a schema, or a version
   check elsewhere often means the cited lines cannot do what the report says.
 - Rate severity by what the actor must already hold, not by the worst outcome
