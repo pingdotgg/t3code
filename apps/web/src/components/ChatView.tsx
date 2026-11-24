@@ -2,6 +2,7 @@ import { m } from "../i18n/messages";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useGT, useMessages } from "gt-react";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
+import { draftSupportedRuntimeModes } from "./chat/runtimeModeConfig";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -4035,9 +4036,11 @@ export default function ChatView(props: ChatViewProps) {
                                           <ComposerContextPermissions
                                             environmentId={environmentId}
                                             runtimeMode={runtimeMode}
-                                            supportedRuntimeModes={
-                                              activeProviderStatus?.supportedRuntimeModes
-                                            }
+                                            supportedRuntimeModes={draftSupportedRuntimeModes(
+                                              activeProviderStatus?.supportedRuntimeModes,
+                                              multipleModelSelections,
+                                              providerStatuses,
+                                            )}
                                             onRuntimeModeChange={handleRuntimeModeChangeStable}
                                           />
                                         ),
