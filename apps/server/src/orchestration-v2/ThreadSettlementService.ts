@@ -53,7 +53,6 @@ export interface SettlementPullRequest {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
-const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
@@ -146,7 +145,7 @@ export function threadHasQueuedTurnStart(
   const messageAtMs = toMillis(thread.latestUserMessageAt);
   if (messageAtMs === null || thread.status === "failed") return false;
   const age = nowMs - messageAtMs;
-  if (Number.isNaN(age) || Math.abs(age) > QUEUED_TURN_START_GRACE_MS) return false;
+  if (Number.isNaN(age) || Math.abs(age) > Orchestrator.QUEUED_TURN_START_GRACE_MS) return false;
   if (thread.latestRunId === null) return true;
   return [
     toMillis(thread.latestRunRequestedAt),
@@ -158,7 +157,7 @@ export function threadHasQueuedTurnStart(
 function pullRequestSettles(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
-    "createdAt" | "latestUserAuthoredMessageAt"
+    "createdAt" | "latestResumingMessageAt"
   >,
   pullRequest: SettlementPullRequest,
   autoSettleOnMerge: boolean,
@@ -170,7 +169,7 @@ function pullRequestSettles(
   if (terminalAt == null) return false;
   const userAnchorMs = latestMillis([
     toMillis(thread.createdAt),
-    toMillis(thread.latestUserAuthoredMessageAt),
+    toMillis(thread.latestResumingMessageAt),
   ]);
   if (userAnchorMs === null) return false;
   const pullRequestAtMs = Date.parse(terminalAt);
@@ -179,7 +178,7 @@ function pullRequestSettles(
 }
 
 export function isAutoSettlementCandidate(
-  thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
+  thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestResumingMessageAt">,
   nowMs: number,
 ): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
@@ -442,6 +441,7 @@ export const make = Effect.gen(function* () {
         ),
     );
 
+    const deferred = new Set<ThreadId>();
     const lookupCandidates = (yield* Effect.forEach(
       candidates,
       (thread) => {
@@ -456,7 +456,17 @@ export const make = Effect.gen(function* () {
           autoSettleOnMerge: projectSettings.sidebarAutoSettleOnMerge,
           autoSettleKeepPullRequests: projectSettings.sidebarAutoSettleKeepPullRequests,
         });
-        return settledAt === null ? Effect.succeed(thread) : settleThread(thread, null);
+        if (settledAt === null) return Effect.succeed(thread);
+        if (
+          projectSettings.sidebarAutoSettleKeepPullRequests &&
+          thread.branch !== null &&
+          visibleThreadPullRequests(thread.pullRequests ?? []).length === 0
+        ) {
+          // Retention needs the branch lookup to see whether an open PR keeps this thread.
+          deferred.add(thread.id);
+          return Effect.succeed(thread);
+        }
+        return settleThread(thread, null);
       },
       { concurrency: 8 },
     ))
@@ -636,7 +646,10 @@ export const make = Effect.gen(function* () {
       }
       const refresh = group.filter((member) => shellClosedThreads.delete(member.id)).length > 0;
       const key = lookupKey(thread);
-      if (scheduledLookups !== null && !refresh && !scheduledLookups.has(key)) return undefined;
+      const hasDeferred = group.some((member) => deferred.has(member.id));
+      if (scheduledLookups !== null && !refresh && !hasDeferred && !scheduledLookups.has(key)) {
+        return undefined;
+      }
       // Remembered git state is enough to rule a thread out; only an answer
       // that would settle it is confirmed against fresh git state.
       const remembered = yield* git.branchPullRequest(
@@ -644,9 +657,16 @@ export const make = Effect.gen(function* () {
         { refresh, confirmTerminal: false },
       );
       noPullRequestRechecks.record(key, nowMs, remembered !== null);
-      if (ownedByAnotherThread(remembered)) return undefined;
-      if (refresh || remembered === null || remembered.state === "open") return remembered;
-      if (!(yield* wouldSettle(group, remembered))) return undefined;
+      if (refresh || remembered === null || remembered.state === "open") {
+        return ownedByAnotherThread(remembered) ? undefined : remembered;
+      }
+      // A deferred thread confirms first: a reused branch can have a new open PR.
+      if (
+        !hasDeferred &&
+        (ownedByAnotherThread(remembered) || !(yield* wouldSettle(group, remembered)))
+      ) {
+        return undefined;
+      }
       const fresh = yield* git.branchPullRequest(
         { cwd, branch: thread.branch },
         { freshGitState: true },
@@ -661,12 +681,22 @@ export const make = Effect.gen(function* () {
         : noPullRequestRechecks.select(
             nowMs,
             [...groups]
-              .filter(([key]) => key.startsWith('["branch",'))
+              .filter(
+                ([key, group]) =>
+                  key.startsWith('["branch",') && !group.some((member) => deferred.has(member.id)),
+              )
               .map(([key, group]) => ({
                 key,
                 activityAtMs: Math.max(...group.map(threadActivityAtMs)),
               })),
           );
+
+    const settleDeferred = (group: ReadonlyArray<(typeof lookupCandidates)[number]>) =>
+      Effect.forEach(
+        group.filter((thread) => deferred.has(thread.id)),
+        (thread) => settleThread(thread, null),
+        { discard: true },
+      );
 
     yield* Effect.forEach(
       groups.values(),
@@ -679,10 +709,16 @@ export const make = Effect.gen(function* () {
               () => Effect.void,
             ),
           );
-          if (pullRequest === undefined) return;
-          yield* Effect.forEach(group, (thread) => settleThread(thread, pullRequest), {
-            discard: true,
-          });
+          if (pullRequest === undefined) return yield* settleDeferred(group);
+          yield* Effect.forEach(
+            group,
+            (thread) =>
+              settleThread(
+                thread,
+                deferred.has(thread.id) && pullRequest?.state !== "open" ? null : pullRequest,
+              ),
+            { discard: true },
+          );
         }).pipe(
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
@@ -690,7 +726,7 @@ export const make = Effect.gen(function* () {
               Effect.logWarning("automatic thread settlement skipped", {
                 threadIds: group.map((thread) => thread.id),
                 cause: Cause.pretty(cause),
-              }),
+              }).pipe(Effect.andThen(settleDeferred(group))),
           ),
         ),
       { concurrency: 8, discard: true },

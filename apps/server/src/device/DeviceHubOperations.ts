@@ -14,6 +14,9 @@ import type { DeviceHostReady, DeviceOperations, HostDevice } from "./DeviceHost
 
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
+// The hub's Android shutdown waits up to 30 s for the emulator to leave adb after the kill.
+const ANDROID_SHUTDOWN_TIMEOUT = Duration.seconds(45);
+const ADB_DEVICES_TIMEOUT = Duration.seconds(10);
 // Let the hub's 30 s simctl timeout report its cause first.
 const LIST_TIMEOUT_SECONDS = 40;
 // expo-device-hub 0.19.1 reports a failed simulator listing only as text; its error ids are hashes.
@@ -75,13 +78,19 @@ const vendorPrefix = (platform: DevicePlatform) =>
 export const makeDeviceHubOperations = (options: {
   readonly hostId: DeviceHostId;
   readonly origin: string;
+  readonly token?: string | undefined;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
   /** Android gates listing AVDs, which the hub does not report until they boot. */
   readonly platformAvailable: (platform: DevicePlatform) => Effect.Effect<boolean>;
 }): DeviceOperations => {
   const { hostId, origin, run } = options;
-  const httpClient = options.http.pipe(HttpClient.withScope);
+  const { token } = options;
+  const httpClient = (
+    token === undefined
+      ? options.http
+      : options.http.pipe(HttpClient.mapRequest(HttpClientRequest.bearerToken(token)))
+  ).pipe(HttpClient.withScope);
 
   const fetchJson = Effect.fn("DeviceHubOperations.fetchJson")(function* <A, I>(
     request: HttpClientRequest.HttpClientRequest,
@@ -290,11 +299,26 @@ export const makeDeviceHubOperations = (options: {
       ? attachIosStream(device.id, "open").pipe(Effect.asVoid)
       : Effect.void;
 
+  // The hub rejects a shutdown once `adb emu kill` has no serial left, as on a retry after an
+  // exit that outlasted the request. Like the hub, count an emulator as off once adb no longer
+  // lists its serial in any state.
+  const emulatorExited = (serial: string) =>
+    /^emulator-\d+$/.test(serial)
+      ? run("adb", ["devices"], { timeoutMs: Duration.toMillis(ADB_DEVICES_TIMEOUT) }).pipe(
+          Effect.map(
+            ({ code, stdout }) =>
+              code === 0 &&
+              !stdout.split(/\r?\n/).some((line) => line.trim().split(/\s+/)[0] === serial),
+          ),
+          Effect.orElseSucceed(() => false),
+        )
+      : Effect.succeed(false);
+
   const shutdown: DeviceOperations["shutdown"] = Effect.fn("DeviceHubOperations.shutdown")(
     function* (device) {
-      const postShutdown = (path: string, body: Record<string, string>) =>
+      const postShutdown = (path: string, body: Record<string, string>, timeout?: Duration.Input) =>
         postJson(path, body, "shutdown").pipe(
-          Effect.flatMap((request) => hubJson(request, HubActionResult, "shutdown")),
+          Effect.flatMap((request) => hubJson(request, HubActionResult, "shutdown", timeout)),
           Effect.flatMap((result) =>
             result.ok
               ? Effect.void
@@ -323,7 +347,23 @@ export const makeDeviceHubOperations = (options: {
               ),
             ),
           )
-        : postShutdown("/api/devices/shutdown", { platform: device.platform, id: device.id });
+        : postShutdown(
+            "/api/devices/shutdown",
+            { platform: device.platform, id: device.id },
+            ANDROID_SHUTDOWN_TIMEOUT,
+          ).pipe(
+            Effect.catch((cause) =>
+              emulatorExited(device.id).pipe(
+                Effect.flatMap((exited) =>
+                  exited
+                    ? Effect.logInfo("Android emulator has exited", {
+                        deviceId: device.id,
+                      })
+                    : Effect.fail(cause),
+                ),
+              ),
+            ),
+          );
     },
   );
 

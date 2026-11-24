@@ -1,4 +1,5 @@
 import {
+  GitCommandError,
   type ProjectId,
   type ProjectTrackedFolder,
   TASK_FOLDER_DEFAULT_REPOSITORIES_MAX,
@@ -13,8 +14,10 @@ import {
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { flattenTemporaryWorktreeBranchName, isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
@@ -224,6 +227,8 @@ export const layoutAnchor = (
   return { anchor, unreachable };
 };
 
+const isGitCommandError = Schema.is(GitCommandError);
+
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -285,11 +290,13 @@ const make = Effect.gen(function* () {
       new TaskFolderError({ operation, detail: `${prefix}: ${failureDetail(cause)}`, cause });
 
   // A project that lays its own thread folder out says so in its `t3.json`.
-  const worktreeLayout = (projectRoot: string) =>
+  const projectFile = (projectRoot: string) =>
     fileSystem.readFileString(path.join(projectRoot, T3_PROJECT_FILE_NAME)).pipe(
-      Effect.map((contents) => parseT3ProjectFile(contents)?.worktreeLayout ?? null),
+      Effect.map(parseT3ProjectFile),
       Effect.orElseSucceed(() => null),
     );
+  const worktreeLayout = (projectRoot: string) =>
+    projectFile(projectRoot).pipe(Effect.map((config) => config?.worktreeLayout ?? null));
   // One at a time per project: the commands share the project folder, and its workspace files.
   const layoutLocks = yield* KeyedLock.make<string>();
   const runLayoutCommand = (
@@ -305,7 +312,7 @@ const make = Effect.gen(function* () {
       processes
         .run({
           operation: "TaskFolders.worktreeLayout",
-          command: onWindows ? "cmd.exe" : "sh",
+          command: onWindows ? windowsSystem32Path(hostEnvironment, "cmd.exe") : "sh",
           args: onWindows ? ["/d", "/s", "/c", command] : ["-c", command],
           cwd: taskFolder.projectRoot,
           env: {
@@ -863,6 +870,7 @@ const make = Effect.gen(function* () {
     branch: string,
     startFromOrigin: boolean,
     baseBranch: string | undefined,
+    recordBranch: <A, E>(exit: Exit.Exit<A, E>) => Effect.Effect<void>,
   ) {
     const worktreePath = mapped(taskFolder, repository.path);
     // The project's own checkout (a post-checkout hook, say) already provided this repository.
@@ -874,13 +882,15 @@ const make = Effect.gen(function* () {
       return null;
     yield* fileSystem.makeDirectory(path.dirname(worktreePath), { recursive: true });
     const start = yield* repositoryStart(repository.path, startFromOrigin, baseBranch);
-    yield* git.createWorktree({
-      cwd: repository.path,
-      refName: start.refName,
-      newRefName: branch,
-      baseRefName: start.baseRefName,
-      path: worktreePath,
-    });
+    yield* git
+      .createWorktree({
+        cwd: repository.path,
+        refName: start.refName,
+        newRefName: branch,
+        baseRefName: start.baseRefName,
+        path: worktreePath,
+      })
+      .pipe(Effect.onExit(recordBranch));
     return {
       repository: {
         repositoryPath: repository.path,
@@ -933,15 +943,32 @@ const make = Effect.gen(function* () {
       // A layout command may check out a branch that was already there; a rollback leaves it.
       const hadBranch = new Set<string>();
       let layoutStarted = false;
-      // Where this attempt makes the branch: a checkout that fails halfway leaves it behind.
-      let branchMadeIn = [
+      // Where this attempt may make the branch: none of them had it when listed.
+      const branchMissingIn = new Set([
         ...taskPlan.repositories
           .filter((_, index) => !names[index]!.includes(branch))
           .map((repository) => repository.path),
         ...(taskPlan.projectIsRepository && !projectNames.includes(branch)
           ? [taskPlan.projectRoot]
           : []),
-      ];
+      ]);
+      // Where this attempt made the branch: a checkout that fails halfway leaves it behind. Only
+      // a checkout it ran counts, and not one Git refused because another creation made it first.
+      let branchMadeIn: string[] = [];
+      const recordBranch =
+        (cwd: string) =>
+        <A, E>(exit: Exit.Exit<A, E>) =>
+          Effect.sync(() => {
+            const refused =
+              Exit.isFailure(exit) &&
+              exit.cause.reasons.some(
+                (reason) =>
+                  Cause.isFailReason(reason) &&
+                  isGitCommandError(reason.error) &&
+                  reason.error.operation === "GitVcsDriver.createWorktree.createBranch",
+              );
+            if (branchMissingIn.has(cwd) && !refused) branchMadeIn.push(cwd);
+          });
       return yield* Effect.gen(function* () {
         yield* fileSystem.makeDirectory(root, { recursive: true });
         // Recorded before any checkout, so an interrupted creation is still found and removed.
@@ -1010,16 +1037,18 @@ const make = Effect.gen(function* () {
         }
         if (taskPlan.projectIsRepository) {
           yield* fileSystem.makeDirectory(path.dirname(empty.projectPath), { recursive: true });
-          yield* git.createWorktree(
-            {
-              cwd: taskPlan.projectRoot,
-              refName: input.projectStart.refName,
-              newRefName: branch,
-              baseRefName: input.projectStart.baseRefName,
-              path: empty.projectPath,
-            },
-            input.projectProgress === undefined ? {} : { progress: input.projectProgress },
-          );
+          yield* git
+            .createWorktree(
+              {
+                cwd: taskPlan.projectRoot,
+                refName: input.projectStart.refName,
+                newRefName: branch,
+                baseRefName: input.projectStart.baseRefName,
+                path: empty.projectPath,
+              },
+              input.projectProgress === undefined ? {} : { progress: input.projectProgress },
+            )
+            .pipe(Effect.onExit(recordBranch(taskPlan.projectRoot)));
         } else {
           yield* linkFolder(taskPlan.projectRoot, empty.projectPath, taskPlan.trackedRepositories);
         }
@@ -1049,6 +1078,7 @@ const make = Effect.gen(function* () {
                     branch,
                     input.startFromOrigin,
                     input.baseBranch,
+                    recordBranch(repository.path),
                   )
               ).pipe(
                 Effect.tap((worktree) =>
@@ -1355,9 +1385,41 @@ const make = Effect.gen(function* () {
     const restoreFailed = fail("create", "Could not restore the worktrees");
     // A project that lays its own folder out rebuilds it; whatever is still missing after that
     // comes back as a plain checkout below.
-    const layout = yield* worktreeLayout(taskFolder.projectRoot);
+    const config = yield* projectFile(taskFolder.projectRoot);
+    const layout = config?.worktreeLayout ?? null;
+    // A package manager may replace an excluded dependency's worktree with its own clone. The
+    // thread resumes without it instead of refusing the clone, unless the project tracks it by hand.
+    const ignored = (config?.ignoreRepositories ?? []).map((entry) =>
+      path.resolve(taskFolder.projectRoot, entry),
+    );
+    const cloned = yield* Effect.filter(taskFolder.repositories, (repository) =>
+      ignored.some((root) => isWithinRoot(path, repository.repositoryPath, root)) &&
+      isWithinRoot(path, repository.repositoryPath, taskFolder.projectRoot) &&
+      isWithinRoot(path, repository.worktreePath, taskFolder.projectPath)
+        ? fileSystem.lstat(path.join(repository.worktreePath, ".git")).pipe(
+            Effect.map((stat) => stat.type === "Directory"),
+            Effect.orElseSucceed(() => false),
+          )
+        : Effect.succeed(false),
+    );
+    let repositories = taskFolder.repositories;
+    if (cloned.length > 0) {
+      const project = yield* readProject("create", taskFolder.projectId);
+      const explicit = new Set(
+        project.trackedFolders
+          .filter((folder) => !folder.discovered)
+          .map((folder) => path.resolve(folder.path)),
+      );
+      const stale = cloned.filter(
+        (repository) => !explicit.has(path.resolve(repository.repositoryPath)),
+      );
+      if (stale.length > 0) {
+        repositories = repositories.filter((repository) => !stale.includes(repository));
+        yield* store.put({ ...taskFolder, repositories });
+      }
+    }
     const present = yield* Effect.forEach(
-      [taskFolder.projectPath, ...taskFolder.repositories.map((entry) => entry.worktreePath)],
+      [taskFolder.projectPath, ...repositories.map((entry) => entry.worktreePath)],
       exists,
     );
     if (layout !== null && present.includes(false)) {
@@ -1370,7 +1432,7 @@ const make = Effect.gen(function* () {
         taskFolder,
         branch,
         undefined,
-        taskFolder.repositories.map((repository) => repository.repositoryPath),
+        repositories.map((repository) => repository.repositoryPath),
       ).pipe(Effect.ignoreCause({ log: true }));
     }
     const recreateMissing = Effect.fnUntraced(function* (checkout: TaskFolderCheckout) {
@@ -1401,10 +1463,10 @@ const make = Effect.gen(function* () {
       // A recorded repository the project no longer tracks still gets its worktree, never a link.
       yield* linkFolder(taskFolder.projectRoot, taskFolder.projectPath, [
         ...tracked,
-        ...taskFolder.repositories.map((repository) => repository.repositoryPath),
+        ...repositories.map((repository) => repository.repositoryPath),
       ]).pipe(Effect.mapError(restoreFailed));
     }
-    for (const repository of taskFolder.repositories.toSorted(
+    for (const repository of repositories.toSorted(
       (left, right) => depth(left.worktreePath) - depth(right.worktreePath),
     )) {
       yield* recreateMissing(repository);
