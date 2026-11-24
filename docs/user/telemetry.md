@@ -1,16 +1,16 @@
 # Product usage data
 
 The T3 Code server sends product usage events to T3 Code's own endpoint at `ingest.t3.codes`,
-associated with a hashed account or installation identifier. To count how many installations one person
-uses, the server also sends hashed account identifiers: your T3 Connect account, your OpenAI and
-Claude accounts when you are signed in, and a random identifier for each device that connects. The endpoint keeps a copy of each
+associated with a hashed random identifier for the installation. To count how many installations one person
+uses, the server also sends a hashed identifier for your T3 Connect account when you are signed in
+to one, and a random identifier for each device that connects. The endpoint keeps a copy of each
 event and forwards events to PostHog. Events include the provider, model, reasoning effort,
 permission mode, turn and request results, duration, release channel, and token counts when
 available. Child-agent token counts are reported separately from the main agent's. Events include
 the model ID the provider used, including custom models and models served by a custom endpoint.
 
 Product events do not include prompts, responses, file contents, authentication tokens, conversation IDs,
-raw provider events, or child-agent output. The one exception is [agent feedback](#agent-feedback),
+raw provider events, child-agent output, or identifiers from your provider accounts. The one exception is [agent feedback](#agent-feedback),
 which is off unless you turn it on.
 
 ## Agent feedback
@@ -23,8 +23,9 @@ do what they expected, a confusing instruction, or a missing capability. Choose 
   message pointing to Labs.
 - **When I ask**: agents send a report only when you ask them to, about anything in T3 Code.
 - **Automatic**: agents also report T3 Code problems they hit on their own, such as a T3 tool that
-  failed and made them find another way. These reports carry no outline and no message text, and
-  go out without asking you. `t3 feedback --kind bug --subject "t3 thread send" --expected "…" --actual "…"`
+  failed and made them find another way. These go out without asking you, so they carry only the
+  kind of problem and the tool or command it concerns, with no agent-written text, outline, or
+  conversation. `t3 feedback --kind bug --subject "t3 thread send" --expected "…" --actual "…"`
   sends one the same way, so it works only in this mode.
 
 When you ask your agent for a report, in either mode, T3 Code shows it in the thread as a card
@@ -34,9 +35,9 @@ even after the turn ends or the server restarts; **Don't send** sends nothing, a
 told not to send it another way. Only someone who can run agents on that machine can answer the
 card; people on a guest link cannot.
 
-Each report has the kind of problem, the T3 tool or command it concerns (or `general`), and up to
-300 characters each of expected behavior, actual behavior, and workaround, written by the agent,
-which is told not to quote your messages or code. The agent also says how many recent turns the
+Each report has the kind of problem, the T3 tool or command it concerns (or `general`), and, when
+you send it from a card, up to 300 characters each of expected behavior, actual behavior, and
+workaround, written by the agent, which is told not to quote your messages or code. The agent also says how many recent turns the
 problem spans. A report you approved carries an outline of those turns, and of at least the last 5,
 from when the agent asked: who spoke, how long each message was, and which tools ran, whether they
 worked, and how long they took. The outline has no text. Tools from your other MCP servers appear
@@ -53,7 +54,8 @@ goes with it), your user name, machine name, project title, branch, and git remo
 that looks like a key, token, email address, or URL with a password. It cannot recognise your code
 or a name written in a sentence, so only include the conversation when it holds nothing you would
 not send. Reports from agents also name the provider and the model. No thread IDs or project IDs
-are sent.
+are sent, and each report goes out under its own random ID, so reports cannot be tied to your
+installation or to each other.
 
 Reports are saved on your machine first, and a declined one is not saved at all; its card keeps
 only what you would have sent without the conversation. When product usage
@@ -64,9 +66,9 @@ exactly what each one holds.
 ## Relay connection diagnostics
 
 T3 Code sends relay connection traces to Axiom to diagnose T3 Connect connectivity. These are
-separate from product events. Depending on the client version, traces can include connection
-timings, environment identifiers and the connected machine's name. Failed spans can include error
-messages and stack traces; error text can quote a value the app was handling.
+separate from product events. Traces carry connection timings, request paths, environment and
+thread identifiers, and error types. They omit machine addresses, query strings, log lines,
+error messages, and stack frames.
 
 To disable product events and relay tracing from the server, set
 `T3CODE_TELEMETRY_ENABLED=false` in its environment before starting it. Relay tracing also stops
@@ -74,14 +76,13 @@ when `T3CODE_OTEL_SDK_DISABLED` or `OTEL_SDK_DISABLED` turns OpenTelemetry expor
 
 An administrator can turn product events and relay tracing off in the server and desktop app with
 a [managed policy](./managed-policy.md#other-capabilities). This does not control traces sent by
-separate browser or mobile clients.
+the hosted web app or mobile clients.
 
 The desktop app reads `T3CODE_TELEMETRY_ENABLED` from your shell profile (for example `~/.zshrc`) on macOS and
 Linux, so export it there and restart the app. On Windows, set it as a user environment variable.
 
-The web app in a browser, including one the `t3` CLI opens, does not read these environment
-variables. When its build has relay tracing configured, it sends its own connection traces even
-if the server has opted out. The browser app has no relay tracing toggle.
+A browser opened from a T3 Code server sends relay traces only while connected and allowed by that
+server's policy. The hosted web app sends relay traces when configured and has no tracing toggle.
 
 ## Mobile app diagnostics
 
@@ -94,9 +95,10 @@ but an error message can quote a value the app was handling.
 To stop sending them, turn off **Send crash reports** in **Settings > About T3 Code > Diagnostics**.
 
 The mobile app also sends relay connection traces when its build has tracing configured. These
-carry an identifier for the current app session. **Send crash reports** does not control these
-traces, and the mobile app has no separate relay tracing toggle. Server environment variables and
-managed policy do not disable mobile tracing.
+carry an identifier for the current app session. To stop them, turn off **Send connection traces**
+in **Settings > About T3 Code > Diagnostics**, or on the T3 Connect setup sheet shown after you
+sign in. This is separate from crash reports. Server environment variables and managed policy do
+not disable mobile tracing.
 
 ## Agent activity for mobile notifications
 

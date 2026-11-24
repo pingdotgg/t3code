@@ -246,6 +246,8 @@ describe("the list of runs", () => {
     expect(workflowChip("nightly-report").letters).toBe("NR");
     expect(workflowChip("issue").letters).toBe("IS");
     expect(workflowChip("issue")).toEqual(workflowChip("issue"));
+    expect(workflowChip("𠮷野-report").letters).toBe("𠮷R");
+    expect(workflowChip("a𝒜b").letters).toBe("A𝒜");
   });
 });
 
@@ -509,6 +511,8 @@ describe("workflowStepTime", () => {
     expect(workflowStepTime(9_700)).toBe("9.7s");
     expect(workflowStepTime(4_000)).toBe("4s");
     expect(workflowStepTime(12_400)).toBe("12s");
+    expect(workflowStepTime(59_499)).toBe("59s");
+    expect(workflowStepTime(59_500)).toBe("1m 0s");
   });
 });
 

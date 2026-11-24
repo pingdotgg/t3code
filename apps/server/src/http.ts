@@ -5,8 +5,18 @@ import {
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
-import { injectMcpAppCookieBootstrap, injectMcpAppThemeBootstrap } from "@t3tools/shared/mcpApp";
+import {
+  injectMcpAppCookieBootstrap,
+  injectMcpAppDocumentBootstrap,
+  injectMcpAppThemeBootstrap,
+} from "@t3tools/shared/mcpApp";
 import { FILE_PREVIEW_SCROLL_SCRIPT } from "@t3tools/shared/htmlRender";
+import {
+  DESKTOP_READINESS_CHALLENGE_MAX_LENGTH,
+  DESKTOP_READINESS_CHALLENGE_PARAM,
+  DESKTOP_READINESS_PROOF_PATH,
+  desktopReadinessProof,
+} from "@t3tools/shared/desktopReadinessProof";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as ByteSize from "effect/ByteSize";
 import * as Context from "effect/Context";
@@ -29,6 +39,7 @@ import {
   HttpServerRequest,
   HttpServerRespondable,
 } from "effect/http";
+import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
@@ -76,6 +87,13 @@ const isSafeInlineMediaMimeType = (mimeType: string): boolean =>
   DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) && /^(?:audio|video)\//i.test(mimeType);
 const isSafeInlineDocumentMimeType = (mimeType: string): boolean =>
   mimeType.toLowerCase() === "application/pdf" || mimeType.toLowerCase() === "text/html";
+
+// XML types render as documents, so they get the same policy as SVG.
+const isScriptableXmlPath = (filePath: string): boolean =>
+  Option.match(Mime.getType(filePath), {
+    onNone: () => false,
+    onSome: (mimeType) => /(?:\/xml(?:$|-)|\+xml$)/.test(mimeType),
+  });
 
 export function downloadContentDisposition(fileName?: string): string {
   if (fileName === undefined) {
@@ -134,7 +152,7 @@ export function assetResponseHeaders(
                 "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
               }
             : {}),
-    ...(!options?.download && lowerPath.endsWith(".svg")
+    ...(!options?.download && isScriptableXmlPath(lowerPath)
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
   };
@@ -189,6 +207,8 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
       new TextDecoder().decode(bytes),
       injectMcpAppThemeBootstrap,
       injectMcpAppCookieBootstrap,
+      // Applied last so it is the document's first script.
+      injectMcpAppDocumentBootstrap,
       (html) => new TextEncoder().encode(html),
     );
     headers["Content-Length"] = String(body.byteLength);
@@ -270,6 +290,12 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   }
   return yield* HttpServerResponse.file(asset.path, { status, offset, bytesToRead, headers });
 });
+
+// The default body limit for API routes. Routes that take more set their own limit.
+export const API_MAX_BODY_BYTES = 1024 * 1024;
+export const layerApiBodyLimit = HttpRouter.middleware(
+  Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(API_MAX_BODY_BYTES)),
+).layer;
 
 export const layerHttpCompression = HttpRouter.middleware(HttpMiddleware.compression(), {
   global: true,
@@ -384,6 +410,29 @@ export const layerServerEnvironmentHttpApi = HttpApiBuilder.group(
         return yield* serverEnvironment.getDescriptor;
       }, traceRelayRequest),
     );
+  }),
+);
+
+// Answers only for a launch that was handed a readiness secret, so the desktop app can tell the
+// backend it started from any other listener at the same address.
+export const layerDesktopReadinessProofRoute = HttpRouter.add(
+  "GET",
+  DESKTOP_READINESS_PROOF_PATH,
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const secret = config.desktopReadinessSecret;
+    const challenge = Option.getOrUndefined(requestUrl(request))?.searchParams.get(
+      DESKTOP_READINESS_CHALLENGE_PARAM,
+    );
+    if (
+      secret === undefined ||
+      !challenge ||
+      challenge.length > DESKTOP_READINESS_CHALLENGE_MAX_LENGTH
+    ) {
+      return HttpServerResponse.empty({ status: 404 });
+    }
+    return HttpServerResponse.text(yield* desktopReadinessProof(secret, challenge));
   }),
 );
 

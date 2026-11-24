@@ -63,12 +63,14 @@ Every start needs a `--key`: starting twice with the same key returns the same r
 ## Triggers
 
 - **Schedules:** `every` runs on an interval, starting one interval after the workflow loads; `daily` runs at a local time of day (a time missed by more than 10 minutes while the server is down is skipped).
-- **Webhooks:** `t3 workflow hooks` prints each hook's path; prepend your server's address. The path contains the hook's secret, so share it only with the sender. A sender's retry that repeats its delivery header (such as GitHub's `X-GitHub-Delivery`) starts no second run, and bodies over 1 MiB are refused. Organization policies blocking webhook tasks block workflow webhooks too.
+- **Webhooks:** `t3 workflow hooks` prints each hook's path; prepend your server's address. The path contains the hook's secret, so share it only with the sender. A sender's retry that repeats its delivery header (such as GitHub's `X-GitHub-Delivery`) starts no second run, and bodies over 1 MiB are refused. A hook starts at most 60 runs a minute; requests past that get `429` and can be sent again a minute later. Organization policies blocking webhook tasks block workflow webhooks too.
 - **Issues and pull requests:** workflows can start on new issues or pull requests and read, comment on, or update them via **Settings → Source control & issues** — no webhook needed. T3 Code checks roughly once a minute, and only items opened after the workflow was first loaded start runs.
 
 ## Follow runs in the app
 
 Open the Workflows page with **Open workflows** in the command palette of the web or desktop app; the entry shows once a connected server has workflows on. Filter by **Needs you**, **Running**, or **All** (skipped runs stay hidden unless toggled on), open child runs from their parent, and answer questions, resume paused runs, or cancel active runs (requires permission to operate threads). The issues and pull requests a run touched show as chips under its title and on the steps that touched them; a chip opens the item beside the run, in a tab next to any agent transcripts you opened.
+
+Top-level skipped runs, such as webhook deliveries a workflow chose to ignore, do not keep the payload they started with. Each workflow keeps its latest 500 of them and deletes older ones about an hour after they end; change the number in **Settings → Labs → Skipped runs kept** (0 keeps none), or set `"workflowSkippedRunsKept"` in `userdata/settings.json`. Runs that did anything else are never deleted. Once a skipped run is deleted, a start with its key or a webhook retry with its delivery header starts a new run.
 
 ### Agent threads
 
