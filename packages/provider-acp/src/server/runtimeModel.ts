@@ -1400,7 +1400,10 @@ function splitShellCommandSegments(command: string): Array<Array<ShellToken>> {
   return segments;
 }
 
+const BARE_REDIRECTION_OPERATOR = /^(?:\d+|\*)?(?:>>?|<<?)$/u;
+
 function unwrapShellWrapper(
+  command: string,
   tokens: ReadonlyArray<ShellToken>,
   index: number,
   depth: number,
@@ -1410,9 +1413,6 @@ function unwrapShellWrapper(
   | { readonly kind: "stop" }
   | undefined {
   const token = tokens[index]!;
-  const isTrailingCommandArg = (argIndex: number) =>
-    argIndex === tokens.length - 1 ||
-    (argIndex < tokens.length - 1 && tokens[argIndex + 1]!.redirection);
   if (CMD_EXE_NAME.test(token.value)) {
     let next = index + 1;
     let sawCommandFlag = false;
@@ -1429,8 +1429,26 @@ function unwrapShellWrapper(
       }
     }
     if (!sawCommandFlag) return undefined;
-    if (depth === 0 && next < tokens.length && tokens[next]!.quoted && isTrailingCommandArg(next)) {
-      return { kind: "nested", command: tokens[next]!.value };
+    if (depth === 0 && next < tokens.length) {
+      let lastCmdIndex = next - 1;
+      for (let cursor = next; cursor < tokens.length; cursor += 1) {
+        if (tokens[cursor]!.redirection) break;
+        lastCmdIndex = cursor;
+      }
+      if (lastCmdIndex === next && tokens[next]!.quoted) {
+        return { kind: "nested", command: tokens[next]!.value };
+      }
+      if (
+        lastCmdIndex > next &&
+        command[tokens[next]!.start] === '"' &&
+        command[tokens[lastCmdIndex]!.end - 1] === '"' &&
+        (!tokens[next]!.raw.endsWith('"') || tokens[next]!.raw.startsWith('""'))
+      ) {
+        return {
+          kind: "nested",
+          command: command.slice(tokens[next]!.start + 1, tokens[lastCmdIndex]!.end - 1),
+        };
+      }
     }
     return { kind: "advance", index: next };
   }
@@ -1440,12 +1458,21 @@ function unwrapShellWrapper(
       const flag = tokens[next]!.value.toLowerCase();
       next += 1;
       if (flag === "-c" || flag === "-command") {
-        if (depth === 0 && next < tokens.length && isTrailingCommandArg(next)) {
-          const arg = tokens[next]!;
-          const nested = arg.singleQuoted
-            ? (decodePowerShellSingleQuoted(arg.raw) ?? arg.value)
-            : arg.value;
-          return { kind: "nested", command: nested };
+        if (depth === 0 && next < tokens.length && tokens[next]!.quoted) {
+          const parts: Array<string> = [];
+          for (let cursor = next; cursor < tokens.length; cursor += 1) {
+            const arg = tokens[cursor]!;
+            if (arg.redirection) {
+              if (BARE_REDIRECTION_OPERATOR.test(arg.raw)) cursor += 1;
+              continue;
+            }
+            parts.push(
+              arg.singleQuoted ? (decodePowerShellSingleQuoted(arg.raw) ?? arg.value) : arg.value,
+            );
+          }
+          if (parts.length > 0) {
+            return { kind: "nested", command: parts.join(" ") };
+          }
         }
         return { kind: "advance", index: next };
       }
@@ -1500,7 +1527,7 @@ function extractWindowsAcpMcpFallbackCall(
         index += 2;
         continue;
       }
-      const unwrapped = unwrapShellWrapper(tokens, index, depth);
+      const unwrapped = unwrapShellWrapper(command, tokens, index, depth);
       if (unwrapped !== undefined) {
         if (unwrapped.kind === "nested") {
           const nested = extractWindowsAcpMcpFallbackCall(unwrapped.command, depth + 1);

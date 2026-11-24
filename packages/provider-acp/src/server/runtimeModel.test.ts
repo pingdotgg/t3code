@@ -1528,6 +1528,14 @@ describe("extractMcpToolCallIdentity", () => {
         `pwsh -Command 'Get-Content a.json | & $env:T3_ACP_MCP_CALL html_render -' 2>"err log"`,
         { server: "t3-code", tool: "html_render" },
       ],
+      [
+        `pwsh -Command 'Get-Content a.json | & $env:T3_ACP_MCP_CALL html_render -' '2>err.log'`,
+        { server: "t3-code", tool: "html_render" },
+      ],
+      [
+        `cmd /s /c ""C:\\Users\\Alice Smith\\.t3\\userdata\\acp\\acp-mcp-call.cmd" html_render -"`,
+        { server: "t3-code", tool: "html_render" },
+      ],
       [`"$T3_ACP_MCP_CALL" html_render>out.txt '{}'`, { server: "t3-code", tool: "html_render" }],
       [
         `cat <<< EOF\n"$T3_ACP_MCP_CALL" html_render '{}'`,
@@ -1571,7 +1579,7 @@ describe("extractMcpToolCallIdentity", () => {
       `cat <<'123'\n"$T3_ACP_MCP_CALL" html_render -\n123`,
       `echo\u00A0"$T3_ACP_MCP_CALL"\u00A0html_render\u00A0-`,
       `echo ^& "%T3_ACP_MCP_CALL%" html_render -`,
-      `pwsh -Command 'Get-Content a.json | & $env:T3_ACP_MCP_CALL html_render -' '2>err.log'`,
+      `cmd /s /c ""echo" "%T3_ACP_MCP_CALL%" html_render -"`,
       `& '$env:T3_ACP_MCP_CALL' html_render -`,
       `& $env:T3_ACP_MCP_CALL unknown_tool_name -`,
       `& "C:\\temp\\my-acp-mcp-call.cmd" html_render -`,
