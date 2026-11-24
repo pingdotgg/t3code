@@ -9,6 +9,7 @@ import {
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
+  workEntryViewedImagePath,
 } from "./presentation.js";
 
 function commandItem(
@@ -202,5 +203,40 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "another-server", tool: "preview_click" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("workEntryViewedImagePath", () => {
+  const read = (path: string, detail?: string): WorkLogPresentationEntry => ({
+    id: "read",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    label: `Read ${path}`,
+    tone: "tool",
+    itemType: "dynamic_tool",
+    toolData: { toolName: "Read", input: { path } },
+    ...(detail === undefined ? {} : { detail }),
+  });
+
+  it("previews a read whose file path is an image", () => {
+    expect(workEntryViewedImagePath(read("/repo/qa/turn_4.jpg"))).toBe("/repo/qa/turn_4.jpg");
+    expect(workEntryViewedImagePath(read("qa/fruit_4.PNG"))).toBe("qa/fruit_4.PNG");
+  });
+
+  it("leaves a text read and a search of an image path as text", () => {
+    expect(workEntryViewedImagePath(read("src/env.ts"))).toBeNull();
+    expect(
+      workEntryViewedImagePath({
+        id: "grep",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        label: "Searched",
+        tone: "tool",
+        itemType: "dynamic_tool",
+        toolData: { toolName: "grep", input: { path: "qa/turn_4.jpg", pattern: "red" } },
+      }),
+    ).toBeNull();
+  });
+
+  it("previews a read whose detail is only the image path", () => {
+    expect(workEntryViewedImagePath(read("notes.txt", " qa/turn_4.jpg "))).toBe("qa/turn_4.jpg");
   });
 });

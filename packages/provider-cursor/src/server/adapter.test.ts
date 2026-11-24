@@ -1596,6 +1596,19 @@ describe("CursorAdapterV2", () => {
         {
           type: "tool-call-completed",
           modelCallId: "native-model-call",
+          callId: "read-image",
+          toolCall: {
+            type: "read",
+            args: { path: "qa/turn_4.jpg" },
+            result: {
+              status: "success",
+              value: { fileSize: 4, content: "", totalLines: 0 },
+            },
+          },
+        },
+        {
+          type: "tool-call-completed",
+          modelCallId: "native-model-call",
           callId: "ls-nested",
           toolCall: {
             type: "ls",
@@ -1935,8 +1948,23 @@ describe("CursorAdapterV2", () => {
           : [],
       );
       assert.deepEqual(
-        readItems.map((item) => ({ title: item.title, input: item.input })),
-        [{ title: "Read src/env.ts", input: { path: "src/env.ts" } }],
+        readItems.map((item) => ({
+          title: item.title,
+          input: item.input,
+          viewedImagePath: item.viewedImagePath,
+        })),
+        [
+          {
+            title: "Read src/env.ts",
+            input: { path: "src/env.ts" },
+            viewedImagePath: undefined,
+          },
+          {
+            title: "Read qa/turn_4.jpg",
+            input: { path: "qa/turn_4.jpg" },
+            viewedImagePath: "qa/turn_4.jpg",
+          },
+        ],
       );
       assert.deepEqual(
         fileSearchItems.map((item) => ({
