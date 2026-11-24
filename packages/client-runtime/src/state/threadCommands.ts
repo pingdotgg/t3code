@@ -602,7 +602,11 @@ export function createThreadEnvironmentAtoms<R, E>(
     snapshotAtom: optimistic.snapshotAtom,
     pendingThreadIdsAtom: optimistic.pendingThreadIdsAtom,
     pendingSyncAtom: triage.pendingSyncAtom,
-    settle: triage.queueWhenOffline(settle, () => ({ type: "settle" as const })),
+    // Queued inside the optimistic update, so it stays shown until the queued entry replaces it.
+    settle: optimistic.wrap(
+      triage.queueWhenOffline(commands.settle, () => ({ type: "settle" as const })),
+      (thread, _input, now, accepted) => applySettle(thread, now, accepted),
+    ),
     unsettle: triage.cancelQueued(
       optimistic.wrap(commands.unsettle, (thread, input, now) => ({
         ...thread,
@@ -619,10 +623,13 @@ export function createThreadEnvironmentAtoms<R, E>(
       })),
       "settle",
     ),
-    snooze: triage.queueWhenOffline(snooze, (input) => ({
-      type: "snooze" as const,
-      snoozedUntil: input.snoozedUntil,
-    })),
+    snooze: optimistic.wrap(
+      triage.queueWhenOffline(commands.snooze, (input) => ({
+        type: "snooze" as const,
+        snoozedUntil: input.snoozedUntil,
+      })),
+      (thread, input, now, accepted) => applySnooze(thread, input.snoozedUntil, now, accepted),
+    ),
     unsnooze: triage.cancelQueued(
       optimistic.wrap(commands.unsnooze, (thread) => ({
         ...thread,
