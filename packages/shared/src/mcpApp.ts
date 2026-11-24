@@ -251,6 +251,23 @@ export function injectMcpAppCookieBootstrap(html: string): string {
   return `${prefix}${bootstrap}${html.slice(prefix.length)}`;
 }
 
+export const MCP_APP_DOCUMENT_MESSAGE = "t3-mcp-app-document";
+
+/**
+ * Binds the host bridge to this document rather than to the frame's window, which outlives it.
+ * The document's first script hands the host a private port: the host answers only over it, and
+ * acts on a message only once this document confirms it is alive.
+ */
+export function injectMcpAppDocumentBootstrap(html: string): string {
+  const bootstrap = `<script>(function(){var host=window.parent,port=new MessageChannel(),own=port.port1;own.onmessage=function(event){var data=event.data;if(!data)return;if("alive" in data)own.postMessage({alive:data.alive});else window.dispatchEvent(new MessageEvent("message",{data:data.message,origin:data.origin,source:host}));};host.postMessage({t3:${JSON.stringify(MCP_APP_DOCUMENT_MESSAGE)}},"*",[port.port2]);})();</script>`;
+  // Preserve captured CSP ahead of executable code, including this bootstrap.
+  const prefix =
+    /^(?:\uFEFF?\s*<!doctype[^>]*>\s*)?(?:<meta http-equiv="Content-Security-Policy" content="[^"]*">)?/i.exec(
+      html,
+    )![0];
+  return `${prefix}${bootstrap}${html.slice(prefix.length)}`;
+}
+
 export function mcpAppAllowAttribute(permissions: McpAppPermissions | undefined): string {
   const features: Array<string> = [];
   if (permissions?.camera) features.push("camera");

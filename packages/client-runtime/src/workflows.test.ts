@@ -298,6 +298,9 @@ describe("workflowSaidStart", () => {
     expect(workflowSaidStart(said, 200)).toBeNull();
     expect(workflowSaidStart(said, 40)).toBe("It is a real bug.\n\n**Where:** line 5.");
     expect(workflowSaidStart(said, 10)).toBe("It is a real bug.");
+    const unspaced = "这个问题出现在解析器中。".repeat(60);
+    expect(workflowSaidStart(unspaced, 10)).toBe("这个问题出现在解析器…");
+    expect(workflowSaidStart("😀".repeat(30), 9)).toBe(`${"😀".repeat(4)}…`);
   });
 });
 

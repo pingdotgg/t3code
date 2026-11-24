@@ -4,13 +4,17 @@ import type {
   UserInputQuestion,
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
-import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
+import {
+  extractMcpToolCallIdentity,
+  type AcpToolCallState,
+} from "@t3tools/provider-acp/server/runtimeModel";
 
 import {
   ANTIGRAVITY_EDIT_DIFF_OMITTED,
@@ -376,6 +380,54 @@ export function makeAntigravityReadRepair() {
   };
 }
 
+function stripAntigravityToolSummary(value: unknown): unknown {
+  if (!Predicate.isObject(value) || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  let next: Record<string, unknown> = record;
+  if ("toolSummary" in next) {
+    const { toolSummary: _toolSummary, ...rest } = next;
+    next = rest;
+  }
+  if (Predicate.isObject(next.Arguments) && "toolSummary" in next.Arguments) {
+    const { toolSummary: _toolSummary, ...args } = next.Arguments;
+    next = { ...next, Arguments: args };
+  }
+  return next;
+}
+
+/**
+ * agy adds its own `toolSummary` to MCP call arguments. T3 records its MCP results under the
+ * arguments it received, so the summary is dropped before the shared adapter matches them.
+ * Untitled updates cannot be identified and are stripped too; titled non-T3 calls keep it.
+ */
+function withoutT3McpToolSummary(
+  update: Extract<
+    EffectAcpSchema.SessionNotification["update"],
+    { readonly sessionUpdate: "tool_call" | "tool_call_update" }
+  >,
+): unknown {
+  const rawInput = update.rawInput;
+  if (!Predicate.isObject(rawInput) || Array.isArray(rawInput)) return rawInput;
+  if (typeof update.title === "string") {
+    const identity = extractMcpToolCallIdentity({
+      toolCallId: update.toolCallId,
+      title: update.title,
+      data: {
+        title: update.title,
+        rawInput,
+        ...(Predicate.isObject(update._meta) ? { meta: update._meta } : {}),
+      },
+    });
+    if (
+      identity === undefined ||
+      resolveT3McpToolId(`${identity.server}.${identity.tool}`) === null
+    ) {
+      return rawInput;
+    }
+  }
+  return stripAntigravityToolSummary(rawInput);
+}
+
 export function normalizeAntigravitySessionUpdate(
   notification: EffectAcpSchema.SessionNotification,
 ): EffectAcpSchema.SessionNotification {
@@ -397,7 +449,7 @@ export function normalizeAntigravitySessionUpdate(
       ...update,
       ...(typeof update.title === "string" ? { title: boundText(update.title) } : {}),
       ...(update.rawInput !== undefined
-        ? { rawInput: sanitizeAntigravityToolPayload(update.rawInput) }
+        ? { rawInput: sanitizeAntigravityToolPayload(withoutT3McpToolSummary(update)) }
         : {}),
       ...(update.rawOutput !== undefined
         ? { rawOutput: sanitizeAntigravityToolPayload(update.rawOutput) }
@@ -405,6 +457,60 @@ export function normalizeAntigravitySessionUpdate(
       ...(update.content !== undefined ? { content: content ?? [] } : {}),
       ...(update._meta !== undefined ? { _meta: isJsonRecord(meta) ? meta : null } : {}),
     },
+  };
+}
+
+function antigravityUpdateSteps(
+  rawInput: unknown,
+):
+  | Extract<EffectAcpSchema.SessionUpdate, { readonly sessionUpdate: "plan" }>["entries"]
+  | undefined {
+  if (!Predicate.isObject(rawInput) || !Array.isArray(rawInput.steps)) return undefined;
+  const steps: ReadonlyArray<unknown> = rawInput.steps;
+  return steps.flatMap((step) =>
+    Predicate.isObject(step) && typeof step.title === "string"
+      ? [
+          {
+            content: step.title,
+            priority: "medium",
+            status:
+              step.status === "done"
+                ? "completed"
+                : typeof step.status === "string"
+                  ? step.status
+                  : "pending",
+          },
+        ]
+      : [],
+  );
+}
+
+/**
+ * agy reports its update_steps checklist only as tool calls, never as ACP `plan` updates. Each
+ * call carrying steps becomes a plan update; its other updates name it by id only and are dropped.
+ */
+export function makeAntigravityUpdateStepsPlans() {
+  const calls = new Set<string>();
+  return (
+    notification: EffectAcpSchema.SessionNotification,
+  ): EffectAcpSchema.SessionNotification | undefined => {
+    const update = notification.update;
+    if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
+      return notification;
+    }
+    const key = `${notification.sessionId}\u0000${update.toolCallId}`;
+    if (
+      update.title === "Run update_steps" &&
+      (update.kind === undefined || update.kind === null || update.kind === "other")
+    ) {
+      calls.add(key);
+    }
+    if (!calls.has(key)) return notification;
+    if (update.status === "completed" || update.status === "failed") calls.delete(key);
+    const entries = antigravityUpdateSteps(update.rawInput);
+    return entries === undefined
+      ? undefined
+      : { ...notification, update: { sessionUpdate: "plan", entries } };
   };
 }
 
