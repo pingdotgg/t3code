@@ -4,36 +4,39 @@ const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
 
+// Embeds the staged Apple Intents framework and extension before signing, when packaging staged them.
+function embedAppleIntents(appOutDir, packager) {
+  const product = packager?.appInfo?.productFilename;
+  const projectDir = packager?.projectDir;
+  if (typeof product !== "string" || typeof projectDir !== "string") return;
+  const stagedBundles = path.join(
+    projectDir,
+    "apps",
+    "desktop",
+    "prod-resources",
+    "apple-intents",
+    "bundles",
+  );
+  const stagedFramework = path.join(stagedBundles, "T3IntentsCore.framework");
+  const stagedExtension = path.join(stagedBundles, "T3AppIntentsExtension.appex");
+  if (!fs.existsSync(stagedFramework) || !fs.existsSync(stagedExtension)) return;
+  const appContents = path.join(appOutDir, `${product}.app`, "Contents");
+  const targetFramework = path.join(appContents, "Frameworks", "T3IntentsCore.framework");
+  const targetExtension = path.join(appContents, "Extensions", "T3AppIntentsExtension.appex");
+  for (const [source, target] of [
+    [stagedFramework, targetFramework],
+    [stagedExtension, targetExtension],
+  ]) {
+    fs.rmSync(target, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.cpSync(source, target, { recursive: true, verbatimSymlinks: true });
+  }
+  console.log("[apple-intents] Embedded T3IntentsCore.framework and T3AppIntentsExtension.appex");
+}
+
 // afterPack runs before signing and installer creation, against the final ASAR layout.
 module.exports = async ({ appOutDir, electronPlatformName, arch, packager }) => {
-  if (electronPlatformName === "darwin") {
-    const product = packager.appInfo.productFilename;
-    const projectDir = packager.projectDir;
-    const stagedBundles = path.join(
-      projectDir,
-      "apps",
-      "desktop",
-      "prod-resources",
-      "apple-intents",
-      "bundles",
-    );
-    const stagedFramework = path.join(stagedBundles, "T3IntentsCore.framework");
-    const stagedExtension = path.join(stagedBundles, "T3AppIntentsExtension.appex");
-    if (fs.existsSync(stagedFramework) && fs.existsSync(stagedExtension)) {
-      const appContents = path.join(appOutDir, `${product}.app`, "Contents");
-      const targetFramework = path.join(appContents, "Frameworks", "T3IntentsCore.framework");
-      const targetExtension = path.join(appContents, "Extensions", "T3AppIntentsExtension.appex");
-      fs.rmSync(targetFramework, { recursive: true, force: true });
-      fs.rmSync(targetExtension, { recursive: true, force: true });
-      fs.mkdirSync(path.dirname(targetFramework), { recursive: true });
-      fs.mkdirSync(path.dirname(targetExtension), { recursive: true });
-      fs.cpSync(stagedFramework, targetFramework, { recursive: true, verbatimSymlinks: true });
-      fs.cpSync(stagedExtension, targetExtension, { recursive: true, verbatimSymlinks: true });
-      console.log(
-        "[apple-intents] Embedded T3IntentsCore.framework and T3AppIntentsExtension.appex",
-      );
-    }
-  }
+  if (electronPlatformName === "darwin") embedAppleIntents(appOutDir, packager);
 
   if (!["darwin", "win32", "linux"].includes(electronPlatformName)) {
     console.log(`[server-compile-cache] Skipping unsupported target ${electronPlatformName}`);
