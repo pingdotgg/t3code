@@ -24,7 +24,6 @@ mod instructions;
 mod mapper;
 mod ordered;
 mod policy;
-mod probe;
 mod prompt;
 mod protocol;
 mod session;

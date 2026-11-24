@@ -348,6 +348,49 @@ pub fn signal_group(pgid: u32, signal: rustix::process::Signal) {
     let _ = rustix::process::kill_process_group(pgid, signal);
 }
 
+/// How often [`wait_exit_unreaped`] looks again without a SIGCHLD, which a masked signal or
+/// another thread's handler can keep from it.
+#[cfg(unix)]
+const EXIT_POLL: Duration = Duration::from_millis(50);
+
+/// Waits until the child `pid` exits, without reaping it, so its owner can still signal the
+/// pid and its group before the reap. Wakes on SIGCHLD and on a 50 ms timer.
+///
+/// Only the child's owner reaps it, so while the owner has not, its pid and group id stay its
+/// own. `ECHILD` (not our child) comes back as an error.
+#[cfg(unix)]
+pub async fn wait_exit_unreaped(pid: u32) -> io::Result<()> {
+    use rustix::io::Errno;
+    use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+    use tokio::signal::unix::{SignalKind, signal};
+    let pid = i32::try_from(pid)
+        .ok()
+        .and_then(Pid::from_raw)
+        .ok_or(io::ErrorKind::InvalidInput)?;
+    let options = WaitIdOptions::EXITED | WaitIdOptions::NOWAIT | WaitIdOptions::NOHANG;
+    // Registered before the first look, so no exit goes unnoticed.
+    let mut sigchld = signal(SignalKind::child()).ok();
+    loop {
+        match waitid(WaitId::Pid(pid), options) {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) | Err(Errno::INTR) => {}
+            Err(error) => return Err(error.into()),
+        }
+        let tick = tokio::time::sleep(EXIT_POLL);
+        let Some(stream) = sigchld.as_mut() else {
+            tick.await;
+            continue;
+        };
+        let open = tokio::select! {
+            woke = stream.recv() => woke.is_some(),
+            () = tick => true,
+        };
+        if !open {
+            sigchld = None;
+        }
+    }
+}
+
 /// Whether a process with this pid still runs. Signal 0 succeeds on a zombie too, and on Linux
 /// a killed orphan stays a zombie until its new parent reaps it, so there a `Z` (or `X`) state
 /// in `/proc/<pid>/stat` counts as ended.

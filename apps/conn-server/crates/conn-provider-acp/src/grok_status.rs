@@ -17,8 +17,8 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
-use crate::probe::{CommandError, CommandOutput, spawn_and_collect};
 use conn_provider_support::instance::{InstanceEnv, InstanceEnvelope, trimmed};
+use conn_provider_support::probe::{CommandError, CommandOutput, spawn_and_collect};
 
 pub(crate) const DRIVER: &str = "grok";
 const DISPLAY_NAME: &str = "Grok";

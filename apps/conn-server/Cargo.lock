@@ -393,6 +393,7 @@ version = "0.4.2"
 dependencies = [
  "conn-provider",
  "conn-support",
+ "nix 0.31.3",
  "rustix",
  "serde_json",
  "tokio",

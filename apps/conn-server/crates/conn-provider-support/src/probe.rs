@@ -1,12 +1,15 @@
-//! Runs a provider CLI for a status probe (shared copy of `conn-provider-acp`'s `probe.rs`,
-//! which that crate can switch to), as T3's `spawnAndCollect` does
-//! (`packages/provider-core/src/server/snapshotProbe.ts` on Effect's Node spawner): its own
+//! Runs a provider CLI for a status probe (Grok's status and Antigravity's health check), as
+//! T3's `spawnAndCollect` does (`packages/provider-core/src/server/snapshotProbe.ts` on Effect's Node spawner): its own
 //! process group, the given environment and nothing else, stdin a pipe that stays open, stdout
 //! and stderr collected, and on a timeout SIGTERM to the group, then SIGKILL after 1 s
-//! (`PROBE_FORCE_KILL_AFTER`).
+//! (`PROBE_FORCE_KILL_AFTER`) unless the CLI and every pipe holder have ended. The CLI is
+//! reaped only after the last group signal, so a reused group id never gets one.
 
+use std::future::Future;
+use std::io;
 use std::path::Path;
-use std::process::Stdio;
+use std::pin::{Pin, pin};
+use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -30,8 +33,14 @@ pub struct CommandOutput {
 pub enum CommandError {
     /// `isCommandMissingCause`: the executable does not exist.
     NotFound,
-    /// Any other spawn or read failure (permission denied, not an executable, …).
+    /// Any other spawn, read or wait failure (permission denied, not an executable, …).
     Failed(String),
+}
+
+impl From<io::Error> for CommandError {
+    fn from(error: io::Error) -> Self {
+        CommandError::Failed(error.to_string())
+    }
 }
 
 /// `spawnAndCollect` under `Effect.timeoutOption`: `Ok(None)` when the timeout passed first.
@@ -62,25 +71,30 @@ pub async fn run_collect(
         .envs(environment.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .stderr(Stdio::piped());
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
     #[cfg(unix)]
     command.process_group(0);
     conn_support::spawn_guard::check(command.as_std());
-    let mut child = command.spawn().map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => CommandError::NotFound,
-        _ => CommandError::Failed(error.to_string()),
+    let child = command.spawn().map_err(|error| match error.kind() {
+        io::ErrorKind::NotFound => CommandError::NotFound,
+        _ => CommandError::from(error),
     })?;
-    let pid = child.id();
+    // `cli` alone reaps and signals the CLI; nothing else in the server waits for a child it
+    // does not own. Until `Cli::reap`, the pid and the group id are the CLI's.
+    let mut cli = Cli(child);
+    let pid = cli
+        .0
+        .id()
+        .ok_or_else(|| CommandError::Failed("the spawned CLI has no pid".into()))?;
     // Without input, held open until the child ends, as Effect's spawner leaves an unused
     // stdin pipe; with input, written and closed.
     let input = stdin.map(str::to_owned);
     let (held, fed) = match input {
-        Some(_) => (None, child.stdin.take()),
-        None => (child.stdin.take(), None),
+        Some(_) => (None, cli.0.stdin.take()),
+        None => (cli.0.stdin.take(), None),
     };
     let feed = async move {
         if let (Some(text), Some(mut pipe)) = (input, fed) {
@@ -89,44 +103,115 @@ pub async fn run_collect(
             let _ = pipe.shutdown().await;
         }
     };
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let collect = async {
-        let (_, out, err, status) =
-            tokio::join!(feed, read_capped(stdout), read_capped(stderr), child.wait());
-        (out, err, status)
+    let stdout = cli.0.stdout.take();
+    let stderr = cli.0.stderr.take();
+    let mut seen = Seen::default();
+    let in_time = {
+        let mut output = pin!(async move {
+            let ((), stdout, stderr) = tokio::join!(feed, read_capped(stdout), read_capped(stderr));
+            (stdout, stderr)
+        });
+        #[cfg(unix)]
+        let mut exit = pin!(crate::process::wait_exit_unreaped(pid));
+        #[cfg(not(unix))]
+        let mut exit = pin!(async { cli.0.wait().await.map(drop) });
+        let in_time = tokio::time::timeout(timeout, seen.settle(output.as_mut(), exit.as_mut()))
+            .await
+            .is_ok();
+        drop(held);
+        // Past the timeout the same two futures go on: what finished stays in `seen`.
+        #[cfg(unix)]
+        if !in_time {
+            crate::process::signal_group(pid, rustix::process::Signal::TERM);
+            let _ = tokio::time::timeout(
+                FORCE_KILL_AFTER,
+                seen.settle(output.as_mut(), exit.as_mut()),
+            )
+            .await;
+            if !seen.ended() {
+                crate::process::signal_group(pid, rustix::process::Signal::KILL);
+            }
+        }
+        in_time
     };
-    let result = tokio::time::timeout(timeout, collect).await;
-    drop(held);
-    match result {
-        Ok((stdout, stderr, status)) => {
-            let status = status.map_err(|e| CommandError::Failed(e.to_string()))?;
-            // A referenced detached child: the scope's release signals the group once more,
-            // which ends any helper the CLI left behind.
-            #[cfg(unix)]
-            if let Some(pid) = pid {
-                crate::process::signal_group(pid, rustix::process::Signal::TERM);
+    if let Some(Err(error)) = &seen.exit {
+        return Err(CommandError::Failed(error.to_string()));
+    }
+    if !in_time {
+        let _ = cli.0.start_kill();
+        return cli.reap(pid).await.map(|_| None);
+    }
+    // A referenced detached child: the scope's release signals the group once more, which
+    // ends any helper the CLI left behind.
+    #[cfg(unix)]
+    crate::process::signal_group(pid, rustix::process::Signal::TERM);
+    let status = cli.reap(pid).await?;
+    let (stdout, stderr) = seen.output.unwrap_or_default();
+    Ok(Some(CommandOutput {
+        stdout,
+        stderr,
+        code: exit_code(status),
+    }))
+}
+
+/// The spawned CLI. Dropped unreaped, it gets SIGKILL, as `kill_on_drop` does.
+#[derive(Debug)]
+struct Cli(tokio::process::Child);
+
+impl Cli {
+    /// Reaps the CLI once it has exited. The exit is seen as in
+    /// [`crate::process::wait_exit_unreaped`], so a missed SIGCHLD only costs a poll; `wait`
+    /// then returns at once.
+    #[cfg(unix)]
+    async fn reap(&mut self, pid: u32) -> Result<ExitStatus, CommandError> {
+        crate::process::wait_exit_unreaped(pid).await?;
+        Ok(self.0.wait().await?)
+    }
+
+    #[cfg(not(unix))]
+    async fn reap(&mut self, _pid: u32) -> Result<ExitStatus, CommandError> {
+        Ok(self.0.wait().await?)
+    }
+}
+
+impl Drop for Cli {
+    fn drop(&mut self) {
+        // After the reap tokio sends nothing and returns an error, so a reused pid is safe.
+        let _ = self.0.start_kill();
+    }
+}
+
+/// What a probe has seen of its CLI: both pipes closed, and the exit.
+#[derive(Debug, Default)]
+struct Seen {
+    output: Option<(String, String)>,
+    exit: Option<io::Result<()>>,
+}
+
+impl Seen {
+    /// Drives the output and the exit until both are in, or the exit wait fails. Cancel-safe:
+    /// a finished future is never polled again.
+    async fn settle(
+        &mut self,
+        mut output: Pin<&mut impl Future<Output = (String, String)>>,
+        mut exit: Pin<&mut impl Future<Output = io::Result<()>>>,
+    ) {
+        loop {
+            match (&self.output, &self.exit) {
+                (_, Some(Err(_))) | (Some(_), Some(_)) => return,
+                _ => {}
             }
-            Ok(Some(CommandOutput {
-                stdout,
-                stderr,
-                code: exit_code(status),
-            }))
-        }
-        Err(_) => {
-            #[cfg(unix)]
-            if let Some(pid) = pid {
-                use crate::process::{signal_group, wait_gone};
-                use rustix::process::Signal;
-                signal_group(pid, Signal::TERM);
-                if !wait_gone(pid, FORCE_KILL_AFTER).await {
-                    signal_group(pid, Signal::KILL);
-                }
+            tokio::select! {
+                out = output.as_mut(), if self.output.is_none() => self.output = Some(out),
+                exit = exit.as_mut(), if self.exit.is_none() => self.exit = Some(exit),
             }
-            let _ = child.start_kill();
-            let _ = child.wait().await;
-            Ok(None)
         }
+    }
+
+    /// The CLI has exited and every pipe holder has closed its end.
+    #[cfg(unix)]
+    fn ended(&self) -> bool {
+        self.output.is_some() && matches!(self.exit, Some(Ok(())))
     }
 }
 
@@ -214,5 +299,51 @@ mod tests {
         .unwrap();
         assert_eq!(out, None);
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// Both pipes reach EOF while the CLI still runs, so the output finishes before the
+    /// timeout and the exit never does.
+    #[tokio::test]
+    async fn a_cli_that_closes_its_pipes_and_hangs_times_out() {
+        let out = spawn_and_collect(
+            "sh",
+            &["-c", "exec >&- 2>&-; sleep 30"],
+            &path_env(),
+            None,
+            Duration::from_millis(200),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, None);
+    }
+
+    /// The CLI exits at once and leaves a helper that holds stdout, so the probe times out.
+    /// When the group SIGTERM reaches the helper, it records the CLI's state: still an
+    /// unreaped zombie (`Z`), so the group id could not have been reused.
+    #[tokio::test]
+    async fn the_group_is_signalled_before_the_cli_is_reaped() {
+        let dir = std::env::temp_dir().join(format!("conn-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = dir.join("leader-state");
+        let script = format!(
+            "( trap \"ps -o stat= -p $$ > '{}'; exit 0\" TERM; while :; do sleep 0.05; done ) & exit 0",
+            state.display()
+        );
+        let out = spawn_and_collect(
+            "sh",
+            &["-c", &script],
+            &path_env(),
+            None,
+            Duration::from_millis(300),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, None);
+        let seen = std::fs::read_to_string(&state).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            seen.trim_start().starts_with('Z'),
+            "the CLI was already reaped when its group was signalled: {seen:?}"
+        );
     }
 }
