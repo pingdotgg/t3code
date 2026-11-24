@@ -11,6 +11,13 @@ import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { FILE_LINK_REVEAL_UNSAFE_CSS } from "./fileSurfaceChrome";
 import { SourceSelection } from "./sourceSelection";
 
+// The diff surface fades a file in as it mounts; a preview appears at once, as the editable view does.
+const READ_ONLY_SOURCE_UNSAFE_CSS = `${FILE_LINK_REVEAL_UNSAFE_CSS}
+[data-file] {
+  transition: none;
+}
+`;
+
 export default function ReadOnlySourcePreview(props: {
   readonly name: string;
   readonly text: string;
@@ -110,9 +117,9 @@ export default function ReadOnlySourcePreview(props: {
       <StyledDiffCodeView<unknown>
         // Not keyed on the text: a file that grows or finishes downloading keeps its scroll position.
         key={`${props.name}:${resolvedTheme}`}
-        className="file-preview-virtualizer min-h-0 flex-1 overflow-auto [--diffs-search-panel-inset-top:16px]"
+        className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
         items={items}
-        unsafeCSSExtra={FILE_LINK_REVEAL_UNSAFE_CSS}
+        unsafeCSSExtra={READ_ONLY_SOURCE_UNSAFE_CSS}
         options={{
           disableFileHeader: true,
           overflow: wordWrap ? "wrap" : "scroll",
