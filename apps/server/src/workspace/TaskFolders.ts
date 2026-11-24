@@ -1,9 +1,14 @@
 import {
   GitCommandError,
+  isRuntimeModeAbove,
   linkOriginIsFenced,
+  managedPolicyDeniedMessage,
+  managedRuntimeModeDenial,
   type OrchestrationV2LinkOrigin,
   type ProjectId,
   type ProjectTrackedFolder,
+  type ProviderInteractionMode,
+  type RuntimeMode,
   TASK_FOLDER_DEFAULT_REPOSITORIES_MAX,
   type TaskFolder,
   TaskFolderError,
@@ -11,6 +16,8 @@ import {
   type ThreadId,
   type VcsCreateWorktreeInput,
   type VcsCreateWorktreeResult,
+  type WorkspaceLayoutCommandsResult,
+  type WorktreeLayoutCommandKind,
   T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -36,6 +43,7 @@ import * as ServerConfig from "../config.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -45,6 +53,7 @@ import {
 } from "../vcs/removeEmptyDirectory.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
+import * as LayoutCommandApprovals from "./LayoutCommandApprovals.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
 import { projectFolders, parseGitmodulesPaths } from "./WorkspaceFolders.ts";
 import { withWorkspaceLease } from "./workspaceLease.ts";
@@ -110,7 +119,7 @@ export class TaskFolders extends Context.Service<
        * Whether the project's own layout command may run for whoever asks. A project that
        * declares one gets no worktree without it: the default layout is not what it asked for.
        */
-      readonly projectCommands: boolean;
+      readonly projectCommands: ProjectCommandsNow;
       readonly projectProgress?: GitVcsDriver.CreateWorktreeProgress;
       /** As soon as the folder is recorded, so a cancelled caller knows what to remove. */
       readonly onClaimed?: (taskFolder: TaskFolder, branch: string) => Effect.Effect<void>;
@@ -137,7 +146,7 @@ export class TaskFolders extends Context.Service<
      */
     readonly createForProjectFolder: (
       input: VcsCreateWorktreeInput,
-      options: { readonly projectCommands: boolean },
+      options: { readonly projectCommands: ProjectCommandsNow },
     ) => Effect.Effect<VcsCreateWorktreeResult | null, TaskFolderError>;
     /**
      * Gives a tracked Git folder its worktree in a thread's task folder, on the thread's branch.
@@ -160,8 +169,8 @@ export class TaskFolders extends Context.Service<
       readonly root: string;
       readonly force: boolean;
       readonly forget: boolean;
-      /** False leaves the project's teardown command out. */
-      readonly projectCommands: boolean;
+      /** Anything but permitted leaves the project's teardown command out. */
+      readonly projectCommands: ProjectCommandsNow;
       readonly deleteBranch?: string | undefined;
       readonly inspect?: (
         checkout: TaskFolderCheckout,
@@ -174,7 +183,7 @@ export class TaskFolders extends Context.Service<
     readonly removeIfTaskFolder: (input: {
       readonly path: string;
       readonly force: boolean;
-      readonly projectCommands: boolean;
+      readonly projectCommands: ProjectCommandsNow;
     }) => Effect.Effect<boolean, TaskFolderError>;
     /** Renames the branch in every checkout to one name free in all of them. */
     readonly renameBranch: (input: {
@@ -184,27 +193,82 @@ export class TaskFolders extends Context.Service<
       readonly exactName?: boolean;
     }) => Effect.Effect<{ readonly branch: string }, TaskFolderError>;
     /**
-     * Puts back whatever is missing; `recreate` checks a branch out again at a path. Without
-     * `projectCommands` every missing checkout comes back plain.
+     * Puts back whatever is missing; `recreate` checks a branch out again at a path. When the
+     * project's layout command may not run, every missing checkout comes back plain.
      */
     readonly restore: <E>(input: {
       readonly taskFolder: TaskFolder;
-      readonly projectCommands: boolean;
+      readonly projectCommands: ProjectCommandsNow;
       /** The thread's branch, for a project that lays its folder out with its own command. */
       readonly branch: string;
       readonly recreate: (checkout: TaskFolderCheckout) => Effect.Effect<void, E>;
     }) => Effect.Effect<void, TaskFolderError | E>;
+    /** The project's layout commands as its `t3.json` holds them now, and whether each is approved. */
+    readonly layoutCommands: (
+      projectId: ProjectId,
+    ) => Effect.Effect<WorkspaceLayoutCommandsResult, TaskFolderError>;
   }
 >()("t3/workspace/TaskFolders") {}
 
 const isTaskFolderError = Schema.is(TaskFolderError);
 
 /**
+ * A caller's answer for who asked. Whether a person approved the command's text and whether
+ * policy allows it are not the caller's to answer: this service checks both at every run.
+ */
+export type ProjectCommands = "permitted" | "request-not-permitted" | "agent-below-full-access";
+
+/**
+ * The answer as a caller hands it over: settled when it cannot change while the request lasts,
+ * or one to ask again each time a command's turn comes, as for a thread whose modes can change.
+ */
+export type ProjectCommandsNow = ProjectCommands | Effect.Effect<ProjectCommands>;
+
+/**
  * A layout command is the project owner's own code. A link paired below full access grants T3's
  * tools only (see `mcp/linkOrigin.ts`), so work it started never runs one.
  */
-export const linkRunsProjectCommands = (origin: OrchestrationV2LinkOrigin | undefined) =>
-  origin === undefined || !linkOriginIsFenced(origin);
+export const projectCommandsForLink = (
+  origin: OrchestrationV2LinkOrigin | undefined,
+): ProjectCommands =>
+  origin === undefined || !linkOriginIsFenced(origin) ? "permitted" : "request-not-permitted";
+
+/**
+ * For a worktree an agent asked for. Below Full access the agent's own commands wait for a
+ * person, so the project's do not run for it either, approved or not. `maxRuntimeMode` is the
+ * administrator's limit: a thread recorded above it starts no work in that mode, so it is not in
+ * Full access here whatever it records.
+ */
+export const projectCommandsForAgent = (
+  origin: OrchestrationV2LinkOrigin | undefined,
+  modes: {
+    readonly runtimeMode: RuntimeMode;
+    readonly interactionMode: ProviderInteractionMode;
+  },
+  maxRuntimeMode: RuntimeMode | undefined,
+): ProjectCommands => {
+  const link = projectCommandsForLink(origin);
+  if (link !== "permitted") return link;
+  return modes.runtimeMode === "full-access" &&
+    !isRuntimeModeAbove(modes.runtimeMode, maxRuntimeMode) &&
+    modes.interactionMode === "default"
+    ? "permitted"
+    : "agent-below-full-access";
+};
+
+/** Only `layoutCommand` makes one, so nothing runs that was not checked there. */
+const cleared: unique symbol = Symbol("t3/workspace/TaskFolders/cleared");
+interface ClearedLayoutCommand {
+  readonly [cleared]: true;
+  readonly text: string;
+  /** The same check again, for the moment the command's turn comes. */
+  readonly recheck: Effect.Effect<
+    { readonly command: ClearedLayoutCommand } | { readonly refusal: string } | null
+  >;
+}
+
+const layoutRefusedDetail = (refusal: string) =>
+  `This project lays out its worktrees with its own command (worktreeLayout in ${T3_PROJECT_FILE_NAME}), ${refusal}`;
 
 const failureDetail = (cause: unknown) =>
   typeof cause === "object" &&
@@ -266,6 +330,11 @@ const make = Effect.gen(function* () {
   const hostPlatform = yield* HostProcess.Platform;
   const onWindows = yield* HostProcess.isWindows;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const approvals = yield* LayoutCommandApprovals.LayoutCommandApprovals;
+  const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
+  const layoutCommandsOffBy = ManagedPolicy.deniedBy(managedPolicy, "worktreeLayoutCommands");
+  // Set when the administrator's limit leaves no thread in Full access: "Example Corp limits…".
+  const fullAccessOff = managedRuntimeModeDenial(managedPolicy.summary, "full-access");
 
   const exists = (target: string) =>
     fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false));
@@ -319,38 +388,113 @@ const make = Effect.gen(function* () {
     );
   const worktreeLayout = (projectRoot: string) =>
     projectFile(projectRoot).pipe(Effect.map((config) => config?.worktreeLayout ?? null));
+  /**
+   * The project's command for `kind` as its file holds it now: cleared to run, or the reason it
+   * stays unrun, worded to end a sentence about the command. Null when the project declares none.
+   * The text checked is the text run, so a file that changes in between changes nothing.
+   * Untraced: every caller is a traced operation, and its span covers these reads.
+   */
+  const layoutCommand: (
+    project: { readonly projectId: ProjectId; readonly projectRoot: string },
+    kind: WorktreeLayoutCommandKind,
+    projectCommands: ProjectCommandsNow,
+  ) => ClearedLayoutCommand["recheck"] = Effect.fnUntraced(
+    function* (project, kind, projectCommands) {
+      const text = (yield* worktreeLayout(project.projectRoot))?.[kind];
+      if (text === undefined) return null;
+      const refuse = (refusal: string) => ({ refusal }) as const;
+      const asked = typeof projectCommands === "string" ? projectCommands : yield* projectCommands;
+      if (asked === "request-not-permitted")
+        return refuse("which this request is not permitted to run.");
+      if (asked === "agent-below-full-access")
+        return refuse(
+          `which an agent can only have run from a thread in Full access. ${
+            fullAccessOff === undefined
+              ? "Switch the calling thread to Full access, or start the worktree thread yourself."
+              : `${fullAccessOff} Start the worktree thread yourself.`
+          }`,
+        );
+      if (layoutCommandsOffBy !== undefined)
+        return refuse(
+          `and ${managedPolicyDeniedMessage(layoutCommandsOffBy, "project worktree layout commands")}`,
+        );
+      const approved = yield* approvals
+        .isApproved({ projectId: project.projectId, kind, command: text })
+        // An approval that cannot be read is not one.
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning(cause.detail, { cause }).pipe(Effect.as(false)),
+          ),
+        );
+      if (!approved)
+        return refuse(
+          "which nobody has approved as it is written now. Review and approve it in the web or desktop app, under Worktree layout in the project's settings or when starting a worktree thread there.",
+        );
+      const command: ClearedLayoutCommand = {
+        [cleared]: true,
+        text,
+        recheck: Effect.suspend(() => layoutCommand(project, kind, projectCommands)),
+      };
+      return { command } as const;
+    },
+  );
   // One at a time per project: the commands share the project folder, and its workspace files.
   const layoutLocks = yield* KeyedLock.make<string>();
   const runLayoutCommand = (
     operation: TaskFolderError["operation"],
-    command: string,
+    command: ClearedLayoutCommand,
     taskFolder: Pick<TaskFolder, "root" | "projectRoot" | "projectPath">,
     branch: string,
     baseBranch: string | undefined,
     repositories: ReadonlyArray<string>,
+    /**
+     * What the caller does once the command's turn has come, before the check below. It answers
+     * with what to note when the command is cleared to start, or null when the command is no
+     * longer wanted: it is then left unrun.
+     */
+    inItsTurn: Effect.Effect<(() => void) | null, TaskFolderError> = Effect.succeed(() => {}),
   ) =>
     layoutLocks.withLock(
       taskFolder.projectRoot,
-      processes
-        .run({
-          operation: "TaskFolders.worktreeLayout",
-          command: onWindows ? windowsSystem32Path(hostEnvironment, "cmd.exe") : "sh",
-          args: onWindows ? ["/d", "/s", "/c", command] : ["-c", command],
-          cwd: taskFolder.projectRoot,
-          env: {
-            ...hostEnvironment,
-            // A `GIT_DIR` the server inherited would point the command's Git at another repository.
-            ...VcsProcess.unsetInheritedRepositoryEnv(hostEnvironment, hostPlatform),
-            T3_PROJECT_ROOT: taskFolder.projectRoot,
-            T3_WORKTREE_ROOT: taskFolder.root,
-            T3_WORKTREE_PROJECT_PATH: taskFolder.projectPath,
-            T3_WORKTREE_BRANCH: branch,
-            T3_WORKTREE_BASE: baseBranch ?? "",
-            T3_WORKTREE_REPOSITORIES: repositories.join("\n"),
-          },
-          timeoutMs: LAYOUT_COMMAND_TIMEOUT_MS,
-        })
-        .pipe(Effect.mapError(fail(operation, "The project's worktree layout command failed"))),
+      Effect.gen(function* () {
+        const noteStart = yield* inItsTurn;
+        if (noteStart === null) return null;
+        // The wait for a turn can be long: who asked, the file and the approval are read again
+        // once it comes, and only the text that passes then is run. Nothing else comes between
+        // this check and the command's start, so no other work can outlast what it read.
+        const now = yield* command.recheck;
+        if (now === null || !("command" in now) || now.command.text !== command.text) {
+          return yield* new TaskFolderError({
+            operation,
+            detail: layoutRefusedDetail(
+              now !== null && "refusal" in now
+                ? now.refusal
+                : "which changed while this request waited for its turn. Try again.",
+            ),
+          });
+        }
+        noteStart();
+        return yield* processes
+          .run({
+            operation: "TaskFolders.worktreeLayout",
+            command: onWindows ? windowsSystem32Path(hostEnvironment, "cmd.exe") : "sh",
+            args: onWindows ? ["/d", "/s", "/c", now.command.text] : ["-c", now.command.text],
+            cwd: taskFolder.projectRoot,
+            env: {
+              ...hostEnvironment,
+              // A `GIT_DIR` the server inherited would point the command's Git at another repository.
+              ...VcsProcess.unsetInheritedRepositoryEnv(hostEnvironment, hostPlatform),
+              T3_PROJECT_ROOT: taskFolder.projectRoot,
+              T3_WORKTREE_ROOT: taskFolder.root,
+              T3_WORKTREE_PROJECT_PATH: taskFolder.projectPath,
+              T3_WORKTREE_BRANCH: branch,
+              T3_WORKTREE_BASE: baseBranch ?? "",
+              T3_WORKTREE_REPOSITORIES: repositories.join("\n"),
+            },
+            timeoutMs: LAYOUT_COMMAND_TIMEOUT_MS,
+          })
+          .pipe(Effect.mapError(fail(operation, "The project's worktree layout command failed")));
+      }),
     );
 
   /** Where a folder's `.git` file points, or null when `.git` is a directory or absent. */
@@ -728,13 +872,17 @@ const make = Effect.gen(function* () {
     }
   });
 
+  // Folders whose creation ended before the project's layout command started, while their
+  // record is still there: a later removal has nothing of the project's to tear down either.
+  const neverLaidOut = new Set<string>();
+
   const removeLocked = Effect.fn("TaskFolders.remove")(function* (
     taskFolder: TaskFolder,
     input: Omit<Parameters<TaskFolders["Service"]["remove"]>[0], "root">,
     /** Repositories whose `deleteBranch` is not this folder's to delete. */
     keepBranchIn: ReadonlySet<string> = new Set(),
-    /** False when the folder never got as far as its layout command: nothing to tear down. */
-    laidOut = true,
+    /** False when the folder's layout command never started: nothing to tear down. */
+    laidOut = !neverLaidOut.has(taskFolder.root),
   ) {
     const removed: string[] = [];
     const kept: Array<{ path: string; reason: string }> = [];
@@ -752,30 +900,42 @@ const make = Effect.gen(function* () {
     });
     // The project's own teardown goes first; what it leaves is removed below as usual. Only when
     // every checkout may go: the command cannot be told which ones to keep.
-    const layout =
-      laidOut && input.projectCommands ? yield* worktreeLayout(taskFolder.projectRoot) : null;
-    if (layout?.remove !== undefined) {
+    const layout = laidOut
+      ? yield* layoutCommand(taskFolder, "remove", input.projectCommands)
+      : null;
+    if (layout !== null && "refusal" in layout) {
+      yield* Effect.logInfo("The project's worktree layout remove command was left out", {
+        root: taskFolder.root,
+        reason: layout.refusal,
+      });
+    } else if (layout !== null) {
       const checkouts = [
         ...taskFolder.repositories,
         ...(taskFolder.projectIsWorktree
           ? [{ worktreePath: taskFolder.projectPath, repositoryPath: taskFolder.projectRoot }]
           : []),
       ];
-      let allGo = true;
-      for (const checkout of checkouts) {
-        if (!(yield* exists(checkout.worktreePath))) continue;
-        if ((yield* verdict(checkout)).keep === null) continue;
-        allGo = false;
-        break;
-      }
-      if (allGo) {
+      const allGo = Effect.gen(function* () {
+        for (const checkout of checkouts) {
+          if (!(yield* exists(checkout.worktreePath))) continue;
+          if ((yield* verdict(checkout)).keep !== null) return false;
+        }
+        return true;
+      });
+      if (yield* allGo) {
         yield* runLayoutCommand(
           "remove",
-          layout.remove,
+          layout.command,
           taskFolder,
           input.deleteBranch ?? "",
           undefined,
           taskFolder.repositories.map((repository) => repository.repositoryPath),
+          // The wait for a turn can be long: a checkout that gained work during it is looked at
+          // again, and the command stays unrun when one is now kept.
+          Effect.suspend(() => {
+            verdicts.clear();
+            return Effect.map(allGo, (go) => (go ? () => {} : null));
+          }),
         ).pipe(Effect.ignoreCause({ log: true }));
         // The command took its time: what it left is looked at again before it is removed.
         verdicts.clear();
@@ -865,7 +1025,10 @@ const make = Effect.gen(function* () {
       }
       if (!rootGone) {
         kept.push({ path: taskFolder.root, reason: "has files that exist only in this folder" });
-      } else if (input.forget) yield* store.remove(taskFolder.root);
+      } else if (input.forget) {
+        yield* store.remove(taskFolder.root);
+        neverLaidOut.delete(taskFolder.root);
+      }
     }
     return { removed, kept } satisfies TaskFolderRemoval;
   });
@@ -997,28 +1160,37 @@ const make = Effect.gen(function* () {
         // Recorded before any checkout, so an interrupted creation is still found and removed.
         yield* store.put(empty);
         if (input.onClaimed !== undefined) yield* input.onClaimed(empty, branch);
-        const layout = yield* worktreeLayout(taskPlan.projectRoot);
-        if (layout !== null && !input.projectCommands) {
+        const layout = yield* layoutCommand(taskPlan, "create", input.projectCommands);
+        if (layout !== null && "refusal" in layout) {
           return yield* new TaskFolderError({
             operation: "create",
-            detail: `This project lays out its worktrees with its own command (worktreeLayout in ${T3_PROJECT_FILE_NAME}), which this request is not permitted to run.`,
+            detail: layoutRefusedDetail(layout.refusal),
           });
         }
         if (layout !== null) {
-          const before = yield* branchNames(checkedOutFrom).pipe(Effect.mapError(listFailed));
-          for (const [index, repositoryPath] of checkedOutFrom.entries()) {
-            if (before[index]!.includes(branch)) hadBranch.add(repositoryPath);
-          }
-          branchMadeIn = checkedOutFrom.filter((repositoryPath) => !hadBranch.has(repositoryPath));
-          layoutStarted = true;
           const ran = yield* Effect.exit(
             runLayoutCommand(
               "create",
-              layout.create,
+              layout.command,
               empty,
               branch,
               input.baseBranch,
               taskPlan.repositories.map((repository) => repository.path),
+              // Listed only now: a branch that appeared during the wait is not this attempt's to
+              // delete. Noted only once the command is cleared: one refused after its wait made
+              // nothing to roll back.
+              branchNames(checkedOutFrom).pipe(
+                Effect.mapError(listFailed),
+                Effect.map((before) => () => {
+                  for (const [index, repositoryPath] of checkedOutFrom.entries()) {
+                    if (before[index]!.includes(branch)) hadBranch.add(repositoryPath);
+                  }
+                  branchMadeIn = checkedOutFrom.filter(
+                    (repositoryPath) => !hadBranch.has(repositoryPath),
+                  );
+                  layoutStarted = true;
+                }),
+              ),
             ),
           );
           // Whatever the command checked out where a repository belongs is the thread's. Adopted
@@ -1141,7 +1313,11 @@ const make = Effect.gen(function* () {
       }).pipe(
         Effect.onError(() =>
           // Recorded first: a checkout the rollback cannot remove must still be known afterwards.
-          store.put(current()).pipe(
+          Effect.sync(() => {
+            // So is whether the layout command started, for whoever removes what stays recorded.
+            if (!layoutStarted) neverLaidOut.add(root);
+          }).pipe(
+            Effect.andThen(store.put(current())),
             Effect.ignoreCause({ log: true }),
             Effect.andThen(
               removeLocked(
@@ -1426,7 +1602,6 @@ const make = Effect.gen(function* () {
     // A project that lays its own folder out rebuilds it; whatever is still missing after that
     // comes back as a plain checkout below.
     const config = yield* projectFile(taskFolder.projectRoot);
-    const layout = config?.worktreeLayout ?? null;
     // A package manager may replace an excluded dependency's worktree with its own clone. The
     // thread resumes without it instead of refusing the clone, unless the project tracks it by hand.
     const ignored = (config?.ignoreRepositories ?? []).map((entry) =>
@@ -1462,13 +1637,21 @@ const make = Effect.gen(function* () {
       [taskFolder.projectPath, ...repositories.map((entry) => entry.worktreePath)],
       exists,
     );
-    if (layout !== null && projectCommands && present.includes(false)) {
+    const layout = present.includes(false)
+      ? yield* layoutCommand(taskFolder, "create", projectCommands)
+      : null;
+    if (layout !== null && "refusal" in layout) {
+      yield* Effect.logInfo("Restoring plain checkouts in place of the project's worktree layout", {
+        root: taskFolder.root,
+        reason: layout.refusal,
+      });
+    } else if (layout !== null) {
       yield* fileSystem
         .makeDirectory(taskFolder.root, { recursive: true })
         .pipe(Effect.mapError(restoreFailed));
       yield* runLayoutCommand(
         "create",
-        layout.create,
+        layout.command,
         taskFolder,
         branch,
         undefined,
@@ -1513,6 +1696,24 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const layoutCommands: TaskFolders["Service"]["layoutCommands"] = Effect.fn(
+    "TaskFolders.layoutCommands",
+  )(function* (projectId) {
+    const project = yield* readProject("read", projectId);
+    const layout = yield* worktreeLayout(path.resolve(project.workspaceRoot));
+    const declared = (["create", "remove"] as const).flatMap((kind) => {
+      const command = layout?.[kind];
+      return command === undefined ? [] : [{ kind, command }];
+    });
+    return {
+      commands: yield* Effect.forEach(declared, ({ kind, command }) =>
+        approvals
+          .isApproved({ projectId, kind, command })
+          .pipe(Effect.map((approved) => ({ kind, command, approved }))),
+      ),
+    };
+  });
+
   return TaskFolders.of({
     plan,
     create,
@@ -1523,6 +1724,7 @@ const make = Effect.gen(function* () {
     removeIfTaskFolder,
     renameBranch,
     restore,
+    layoutCommands,
   });
 });
 

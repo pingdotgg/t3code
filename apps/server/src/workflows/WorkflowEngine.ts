@@ -147,19 +147,19 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       .toSorted(([left], [right]) => right.version - left.version)[0];
 
   /** When the sweep resumes a paused run; undefined once it has used up its tries. */
-  const resumesAt = (row: WorkflowStore.RunRow) => {
+  const resumesAt = (row: WorkflowStore.RunSummaryRow) => {
     if (row.status !== "paused" || Number(row.held) === 1) return undefined;
     const rest = definitionByTag.get(row.engine_tag)?.resumeAfter[Number(row.pauses) - 1];
     return rest === undefined
       ? undefined
       : DateTime.addDuration(DateTime.makeUnsafe(row.updated_at), Duration.fromInputUnsafe(rest));
   };
-  const toRun = (row: WorkflowStore.RunRow): WorkflowStore.WorkflowRun => {
+  const toRun = (row: WorkflowStore.RunSummaryRow): WorkflowStore.WorkflowRun => {
     const resumes = resumesAt(row);
     return toRunAt(row, resumes === undefined ? null : DateTime.formatIso(resumes));
   };
   const toRunAt = (
-    row: WorkflowStore.RunRow,
+    row: WorkflowStore.RunSummaryRow,
     resumes: string | null,
   ): WorkflowStore.WorkflowRun => ({
     runId: row.run_id,
