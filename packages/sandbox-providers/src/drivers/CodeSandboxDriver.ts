@@ -77,16 +77,18 @@ export function makeCodeSandboxDriver(
 ): SandboxProvider["Service"] {
   const sdk = options.sdk ?? defaultCodeSandboxSdk(options.apiKey);
 
-  const withSession = <A>(
+  const withConnectedHandle = <A>(
     operation: "exec" | "getPublicUrl",
     providerSandboxId: string,
-    env: Readonly<Record<string, string>> | undefined,
+    getHandle: () => Promise<CodeSandboxHandleLike>,
     run: (session: CodeSandboxSessionLike) => Promise<A>,
   ) =>
     Effect.tryPromise({
       try: async () => {
-        const sandbox = await sdk.sandboxes.resume(providerSandboxId);
-        const session = await sandbox.connect(env !== undefined ? { env: { ...env } } : undefined);
+        const sandbox = await getHandle();
+        // Do not pass env into sandbox.connect(); @codesandbox/sdk appends connect({ env })
+        // unescaped into $HOME/.private/.env on every connection.
+        const session = await sandbox.connect();
         session.keepActiveWhileConnected(false);
         try {
           return await run(session);
@@ -104,6 +106,18 @@ export function makeCodeSandboxDriver(
         }),
     });
 
+  const withSession = <A>(
+    operation: "exec" | "getPublicUrl",
+    providerSandboxId: string,
+    run: (session: CodeSandboxSessionLike) => Promise<A>,
+  ) =>
+    withConnectedHandle(
+      operation,
+      providerSandboxId,
+      () => sdk.sandboxes.resume(providerSandboxId),
+      run,
+    );
+
   return SandboxProvider.of({
     kind: "codesandbox",
 
@@ -113,7 +127,8 @@ export function makeCodeSandboxDriver(
           sdk.sandboxes.create({
             ...(input.snapshotId !== undefined ? { id: input.snapshotId } : {}),
             title: input.name,
-            privacy: "private",
+            // Keep sandbox code private while exposing preview ports (guarded by KBCode pairing/DPoP auth).
+            privacy: "public-hosts",
             vmTier: VMTier.Nano,
             hibernationTimeoutSeconds: input.idleTimeoutMinutes * 60,
             automaticWakeupConfig: { http: true, websocket: true },
@@ -126,10 +141,10 @@ export function makeCodeSandboxDriver(
           }),
       });
 
-      const connectionUrl = yield* withSession(
+      const connectionUrl = yield* withConnectedHandle(
         "getPublicUrl",
         sandbox.id,
-        input.env,
+        async () => sandbox,
         async (session) => session.hosts.getUrl(input.port, "https"),
       ).pipe(Effect.orElseSucceed(() => undefined));
 
@@ -142,7 +157,7 @@ export function makeCodeSandboxDriver(
     }),
 
     exec: Effect.fn("CodeSandboxDriver.exec")(function* (input) {
-      return yield* withSession("exec", input.providerSandboxId, input.env, async (session) => {
+      return yield* withSession("exec", input.providerSandboxId, async (session) => {
         const runOpts = {
           ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
           ...(input.env !== undefined ? { env: { ...input.env } } : {}),
@@ -216,8 +231,11 @@ export function makeCodeSandboxDriver(
 
       const connectionUrl =
         options?.port !== undefined
-          ? yield* withSession("getPublicUrl", sandbox.id, undefined, async (session) =>
-              session.hosts.getUrl(options.port!, "https"),
+          ? yield* withConnectedHandle(
+              "getPublicUrl",
+              sandbox.id,
+              async () => sandbox,
+              async (session) => session.hosts.getUrl(options.port!, "https"),
             ).pipe(Effect.orElseSucceed(() => undefined))
           : undefined;
 
@@ -261,7 +279,7 @@ export function makeCodeSandboxDriver(
     }),
 
     getPublicUrl: Effect.fn("CodeSandboxDriver.getPublicUrl")(function* (providerSandboxId, port) {
-      return yield* withSession("getPublicUrl", providerSandboxId, undefined, async (session) =>
+      return yield* withSession("getPublicUrl", providerSandboxId, async (session) =>
         session.hosts.getUrl(port, "https"),
       );
     }),

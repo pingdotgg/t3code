@@ -64,7 +64,7 @@ import {
   BRAND_BUNDLE_ID,
   BRAND_URL_SCHEME,
   BRAND_URL_SCHEME_DEV,
-} from "../packages/shared/src/brand.ts";
+} from "@t3tools/shared/brand";
 import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 

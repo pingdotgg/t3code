@@ -66,12 +66,10 @@ function formatShellCommand(input: {
     parts.push(`cd ${shellSingleQuote(input.cwd)}`);
   }
   if (input.detached) {
-    parts.push(
-      `nohup sh -lc ${shellSingleQuote(input.command)} >/tmp/kbcode-bg.log 2>&1 </dev/null &`,
-    );
-  } else {
-    parts.push(input.command);
+    const innerParts = [...parts, input.command];
+    return `nohup sh -lc ${shellSingleQuote(innerParts.join(" && "))} >/tmp/kbcode-bg.log 2>&1 </dev/null &`;
   }
+  parts.push(input.command);
   return parts.join(" && ");
 }
 
@@ -170,9 +168,10 @@ export function makeUpstashBoxDriver(options: UpstashBoxDriverOptions): SandboxP
           }),
       });
 
+      const exitCode = run.exitCode ?? 0;
       return {
-        exitCode: run.exitCode ?? 0,
-        stdout: run.stdout || run.result || "",
+        exitCode,
+        stdout: run.stdout || (exitCode === 0 ? run.result || "" : ""),
         stderr: run.stderr || "",
       };
     }),
@@ -245,7 +244,17 @@ export function makeUpstashBoxDriver(options: UpstashBoxDriverOptions): SandboxP
       });
 
       yield* Effect.tryPromise({
-        try: () => box.resume(),
+        try: async () => {
+          try {
+            await box.resume();
+          } catch (cause) {
+            const status = await box.getStatus().catch(() => null);
+            if (status && normalizeUpstashStatus(status.status) === "running") {
+              return;
+            }
+            throw cause;
+          }
+        },
         catch: (cause) =>
           toSandboxError({
             provider: "upstash-box",

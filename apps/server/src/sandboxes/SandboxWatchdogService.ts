@@ -16,15 +16,16 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
-import * as SqlClient from "effect/sql/SqlClient";
 
 import { forkParked } from "../serverActivation.ts";
 import { SandboxNotifier } from "./SandboxNotificationHook.ts";
 import { SandboxOrchestratorService } from "./SandboxOrchestratorService.ts";
 import { SandboxRepository } from "./SandboxRepository.ts";
 
-const SANDBOX_WATCHDOG_INTERVAL = Duration.minutes(2);
+// 1-minute cadence ensures Vercel's 43-min auto-snapshot always fires well before the 45-min ceiling.
+const SANDBOX_WATCHDOG_INTERVAL = Duration.minutes(1);
 const ACTIVITY_PROBE_TIMEOUT = Duration.seconds(5);
+const STALE_TRANSITIONAL_STATE_MS = 15 * 60_000;
 
 export interface SandboxActivityProbeResult {
   readonly activeRunCount: number;
@@ -63,53 +64,35 @@ function parseEpochMillis(iso: string | null | undefined): number | null {
 
 const makeHttpActivityProbe = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
-  const sql = yield* SqlClient.SqlClient;
-
-  const queryLocalActiveRuns = Effect.fn("SandboxActivityProbe.queryLocalActiveRuns")(function* () {
-    const rows = yield* sql<{
-      readonly activeCount: number;
-      readonly lastActivity: string | null;
-    }>`
-      SELECT
-        SUM(CASE WHEN status IN ('preparing', 'starting', 'running', 'waiting') THEN 1 ELSE 0 END) AS activeCount,
-        MAX(COALESCE(completed_at, requested_at)) AS lastActivity
-      FROM orchestration_v2_projection_runs
-    `.pipe(Effect.orElseSucceed(() => []));
-    const row = rows[0];
-    return {
-      activeRunCount: Number(row?.activeCount ?? 0),
-      lastRunActivityAt: row?.lastActivity ?? null,
-    };
-  });
 
   return SandboxActivityProbe.of({
     probe: Effect.fn("SandboxActivityProbe.probe")(function* (sandbox) {
-      if (sandbox.connectionUrl !== null) {
-        const endpoint = `${sandbox.connectionUrl.replace(/\/+$/u, "")}/api/sandboxes/activity`;
-        const remote = yield* httpClient
-          .execute(HttpClientRequest.get(endpoint))
-          .pipe(
-            Effect.flatMap(HttpClientResponse.schemaBodyJson(SandboxActivityReport)),
-            Effect.timeout(ACTIVITY_PROBE_TIMEOUT),
-            Effect.option,
-          );
-        if (Option.isSome(remote)) {
-          return {
-            activeRunCount: remote.value.activeRunCount,
-            lastRunActivityAt: remote.value.lastRunActivityAt,
-            reachable: true,
-          };
-        }
+      if (sandbox.connectionUrl === null) {
         return {
           activeRunCount: 0,
           lastRunActivityAt: null,
           reachable: false,
         };
       }
-      const local = yield* queryLocalActiveRuns();
+      const endpoint = `${sandbox.connectionUrl.replace(/\/+$/u, "")}/api/sandboxes/activity`;
+      const remote = yield* httpClient
+        .execute(HttpClientRequest.get(endpoint))
+        .pipe(
+          Effect.flatMap(HttpClientResponse.schemaBodyJson(SandboxActivityReport)),
+          Effect.timeout(ACTIVITY_PROBE_TIMEOUT),
+          Effect.option,
+        );
+      if (Option.isSome(remote)) {
+        return {
+          activeRunCount: remote.value.activeRunCount,
+          lastRunActivityAt: remote.value.lastRunActivityAt,
+          reachable: true,
+        };
+      }
       return {
-        ...local,
-        reachable: true,
+        activeRunCount: 0,
+        lastRunActivityAt: null,
+        reachable: false,
       };
     }),
   });
@@ -302,6 +285,46 @@ const make = Effect.gen(function* () {
         case "skipped":
           break;
       }
+    }
+
+    // Reconcile sandboxes left in transitional states after a host restart/crash.
+    const allSandboxes = yield* repository
+      .listAll()
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<CloudSandboxRecord> => []));
+    for (const sandbox of allSandboxes) {
+      if (
+        sandbox.state !== "creating" &&
+        sandbox.state !== "bootstrapping" &&
+        sandbox.state !== "snapshotting" &&
+        sandbox.state !== "destroying"
+      ) {
+        continue;
+      }
+      const updatedMs = parseEpochMillis(sandbox.updatedAt);
+      if (updatedMs === null || nowMs - updatedMs < STALE_TRANSITIONAL_STATE_MS) {
+        continue;
+      }
+      const driver = yield* registry.get(sandbox.provider).pipe(Effect.option);
+      if (Option.isNone(driver)) continue;
+      const status = yield* driver.value.getStatus(sandbox.providerSandboxId).pipe(Effect.option);
+      const nextState = Option.isSome(status) ? status.value.state : ("error" as const);
+      yield* repository
+        .update(sandbox.id, {
+          state: nextState,
+          ...(Option.isSome(status) && status.value.snapshotId !== undefined
+            ? { snapshotId: status.value.snapshotId }
+            : {}),
+          ...(nextState === "paused" || nextState === "stopped" ? { pausedAt: nowIso } : {}),
+          ...(nextState === "error"
+            ? { lastError: `Reconciled stale '${sandbox.state}' state after timeout.` }
+            : {}),
+          updatedAt: nowIso,
+        })
+        .pipe(Effect.ignore);
+      if (nextState === "paused" || nextState === "stopped") {
+        reconciledStopped += 1;
+      }
+      anyChanged = true;
     }
 
     if (anyChanged) {

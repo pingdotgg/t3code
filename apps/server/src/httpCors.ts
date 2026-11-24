@@ -1,7 +1,7 @@
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
 import { BRAND_DESKTOP_PROTOCOLS } from "@t3tools/shared/brand";
 
-export const browserApiCorsAllowedMethods = ["GET", "POST", "OPTIONS"] as const;
+export const browserApiCorsAllowedMethods = ["GET", "POST", "DELETE", "OPTIONS"] as const;
 export const browserApiCorsAllowedHeaders = [
   "authorization",
   "b3",

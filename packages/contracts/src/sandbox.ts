@@ -106,6 +106,7 @@ export const SandboxSpawnInput = Schema.Struct({
   agentHarness: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
   snapshotId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
   createBaseSnapshot: Schema.optional(Schema.Boolean),
+  forwardHostOAuth: Schema.optional(Schema.Boolean),
   idleTimeoutMinutes: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1440 })),
   ),

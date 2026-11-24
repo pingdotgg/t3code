@@ -19,4 +19,20 @@ describe("provider auth return destinations", () => {
     "t3code://app/welcome/../evil",
     "https://attacker.example/welcome",
   ])("rejects %s", (url) => expect(providerAuthReturnUrl(url)).toBeUndefined());
+
+  it("accepts self-hosted web origin configured via HOSTED_APP_URL", () => {
+    const previous = process.env.HOSTED_APP_URL;
+    process.env.HOSTED_APP_URL = "https://app.kbcode.dev";
+    try {
+      expect(
+        providerAuthReturnUrl("https://app.kbcode.dev/settings/providers?instanceId=work"),
+      ).toBe("https://app.kbcode.dev/settings/providers?instanceId=work");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOSTED_APP_URL;
+      } else {
+        process.env.HOSTED_APP_URL = previous;
+      }
+    }
+  });
 });

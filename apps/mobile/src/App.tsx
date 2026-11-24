@@ -2,6 +2,7 @@ import { installPermissionUpdateNotice } from "./features/connection/permissionU
 import { installComposerAttachmentUploads } from "./state/composer-attachment-uploads";
 import { installThreadOutboxDelivery } from "./state/threadOutboxDelivery";
 import * as Linking from "expo-linking";
+import Constants from "expo-constants";
 import * as SplashScreen from "expo-splash-screen";
 import { requireNativeModule } from "expo";
 import { useLocale } from "gt-react-native";
@@ -142,6 +143,12 @@ function getAppStateFromPath(path: string, options: Parameters<typeof getStateFr
   );
 }
 
+const configuredHostedAppUrl =
+  typeof Constants.expoConfig?.extra?.hostedAppUrl === "string" &&
+  Constants.expoConfig.extra.hostedAppUrl.trim().length > 0
+    ? Constants.expoConfig.extra.hostedAppUrl.trim()
+    : null;
+
 const appLinking = {
   prefixes: [
     Linking.createURL("/"),
@@ -151,6 +158,9 @@ const appLinking = {
     "t3code://",
     "t3code-dev://",
     "t3code-preview://",
+    ...(configuredHostedAppUrl && configuredHostedAppUrl !== DEFAULT_HOSTED_APP_URL
+      ? [configuredHostedAppUrl]
+      : []),
     DEFAULT_HOSTED_APP_URL,
   ],
   config: { initialRouteName: "Home" },

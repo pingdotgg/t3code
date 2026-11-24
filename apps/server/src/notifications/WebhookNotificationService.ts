@@ -107,6 +107,8 @@ function shouldEvaluateWebhookEvent(event: Pick<OrchestrationV2DomainEvent, "typ
   switch (event.type) {
     case "run.updated":
     case "runtime-request.updated":
+    case "turn-item.updated":
+    case "subagent.updated":
     case "thread.settled":
     case "thread.archived":
     case "thread.deleted":
@@ -288,12 +290,13 @@ const make = Effect.gen(function* () {
     ) {
       return;
     }
-    if (
-      awareness.phase === "completed" &&
-      thread.latestRunCompletedAt != null &&
-      isSnoozed(thread, DateTime.toEpochMillis(thread.latestRunCompletedAt))
-    ) {
-      return;
+    if (awareness.phase === "completed" && thread.latestRunCompletedAt != null) {
+      const completedAtMs = DateTime.toEpochMillis(thread.latestRunCompletedAt);
+      const snoozedBeforeCompletion =
+        thread.snoozedAt == null || completedAtMs >= DateTime.toEpochMillis(thread.snoozedAt);
+      if (snoozedBeforeCompletion && isSnoozed(thread, completedAtMs)) {
+        return;
+      }
     }
 
     const dedupeId = thread.pendingRuntimeRequest?.id ?? thread.latestRunId ?? awareness.updatedAt;

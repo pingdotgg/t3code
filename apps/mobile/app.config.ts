@@ -491,6 +491,7 @@ const config: ExpoConfig = {
   extra: {
     appVariant: APP_VARIANT,
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
+    hostedAppUrl: configuredHostedAppUrl ?? null,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
     },

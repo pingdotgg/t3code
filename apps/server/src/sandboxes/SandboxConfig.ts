@@ -30,6 +30,8 @@ export interface SandboxRuntimeConfig {
     readonly vercelSandbox: string | null;
   };
   readonly passthroughSecrets: Readonly<Record<string, Redacted.Redacted<string>>>;
+  readonly cliPackageSpec?: string | undefined;
+  readonly forwardHostOAuth?: boolean | undefined;
 }
 
 export class SandboxConfig extends Context.Service<SandboxConfig, SandboxRuntimeConfig>()(
@@ -99,12 +101,33 @@ const readSandboxConfig = Effect.fn("SandboxConfig.read")(function* () {
 
   const secretEnvNames = [
     "PRIME_API_KEY",
+    "RLM_MAX_DEPTH",
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+    "DEEPSEEK_API_KEY",
     "GITHUB_TOKEN",
     "T3_CONNECT_BOOTSTRAP_TOKEN",
     "TAILSCALE_AUTHKEY",
+    "RELAY_PUBLIC_URL",
+    "T3CODE_RELAY_URL",
+    "HOSTED_APP_URL",
+    "T3CODE_HOSTED_APP_URL",
+    "CLERK_PUBLISHABLE_KEY",
+    "T3CODE_CLERK_PUBLISHABLE_KEY",
+    "CLERK_JWT_TEMPLATE",
+    "T3CODE_CLERK_JWT_TEMPLATE",
+    "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID",
   ] as const;
+
+  const cliPackageSpec = yield* optionalTrimmedString("SANDBOX_CLI_PACKAGE").pipe(
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+  const forwardHostOAuth = yield* Config.Boolean("SANDBOX_FORWARD_HOST_OAUTH").pipe(
+    Config.withDefault(false),
+    Effect.orElseSucceed(() => false),
+  );
 
   const passthroughSecrets: Record<string, Redacted.Redacted<string>> = {};
   for (const envName of secretEnvNames) {
@@ -130,6 +153,8 @@ const readSandboxConfig = Effect.fn("SandboxConfig.read")(function* () {
       vercelSandbox: Option.getOrNull(defaultSnapshotVercel),
     },
     passthroughSecrets,
+    cliPackageSpec: Option.getOrUndefined(cliPackageSpec),
+    forwardHostOAuth,
   });
 });
 

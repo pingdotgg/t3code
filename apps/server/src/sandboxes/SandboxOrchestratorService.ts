@@ -26,8 +26,10 @@ import * as Stream from "effect/Stream";
 
 import {
   bootstrapSandbox,
+  buildEnvironmentIdCommand,
   buildHeadlessServerStartCommand,
   buildPairingCommand,
+  extractEnvironmentId,
   extractPairingUrl,
   rewritePairingUrlForPublicOrigin,
 } from "./SandboxBootstrap.ts";
@@ -142,7 +144,7 @@ const make = Effect.gen(function* () {
 
   const subscribeSandboxes: Stream.Stream<SandboxListResult> = Stream.unwrap(
     Effect.gen(function* () {
-      const live = Stream.fromPubSub(updates);
+      const subscription = yield* PubSub.subscribe(updates);
       const initial = yield* buildListResult().pipe(
         Effect.orElseSucceed((): SandboxListResult => ({
           sandboxes: [],
@@ -150,7 +152,7 @@ const make = Effect.gen(function* () {
           defaultIdleTimeoutMinutes: config.defaultIdleTimeoutMinutes,
         })),
       );
-      return Stream.concat(Stream.succeed(initial), live);
+      return Stream.concat(Stream.succeed(initial), Stream.fromSubscription(subscription));
     }),
   );
 
@@ -221,6 +223,8 @@ const make = Effect.gen(function* () {
         repoUrl: input.repoUrl,
         branch: input.branch,
         agentHarness: input.agentHarness,
+        cliPackageSpec: config.cliPackageSpec,
+        forwardHostOAuth: input.forwardHostOAuth ?? config.forwardHostOAuth,
         env,
         connectionUrlHint: created.connectionUrl,
       }).pipe(
@@ -313,6 +317,7 @@ const make = Effect.gen(function* () {
         .exec({
           providerSandboxId: resumed.providerSandboxId,
           command: buildPairingCommand(SANDBOX_SERVER_PORT),
+          env: { ...env, T3CODE_ENVIRONMENT_MACHINE_KIND: "cloud" },
         })
         .pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
       const pairingUrl =
@@ -320,11 +325,23 @@ const make = Effect.gen(function* () {
           ? rewritePairingUrlForPublicOrigin(extractPairingUrl(pairExec.stdout), connectionUrl)
           : undefined;
 
+      const resolvedEnvironmentId =
+        existing.environmentId ??
+        extractEnvironmentId(
+          (yield* driver
+            .exec({
+              providerSandboxId: resumed.providerSandboxId,
+              command: buildEnvironmentIdCommand(SANDBOX_SERVER_PORT),
+            })
+            .pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })))).stdout,
+        );
+
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       const updatedOption = yield* repository
         .update(existing.id, {
           providerSandboxId: resumed.providerSandboxId,
           connectionUrl,
+          ...(resolvedEnvironmentId !== null ? { environmentId: resolvedEnvironmentId } : {}),
           state: "running",
           startedAt: nowIso,
           lastActivityAt: nowIso,

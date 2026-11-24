@@ -93,7 +93,7 @@ const activityRoute = HttpRouter.add(
       readonly lastActivity: string | null;
     }>`
       SELECT
-        SUM(CASE WHEN status IN ('preparing', 'starting', 'running', 'waiting') THEN 1 ELSE 0 END) AS activeCount,
+        SUM(CASE WHEN status IN ('queued', 'preparing', 'starting', 'running', 'waiting') THEN 1 ELSE 0 END) AS activeCount,
         MAX(COALESCE(completed_at, requested_at)) AS lastActivity
       FROM orchestration_v2_projection_runs
     `.pipe(Effect.orElseSucceed(() => []));
@@ -145,7 +145,13 @@ const spawnRoute = HttpRouter.add(
 
 function parsePathSandboxId(request: HttpServerRequest.HttpServerRequest) {
   const match = request.url.match(/^\/api\/sandboxes\/([^/?#]+)/u);
-  const raw = match?.[1] ? decodeURIComponent(match[1]) : "";
+  if (!match?.[1]) return Effect.succeed(Option.none<SandboxId>());
+  let raw: string;
+  try {
+    raw = decodeURIComponent(match[1]);
+  } catch {
+    return Effect.succeed(Option.none<SandboxId>());
+  }
   return decodeSandboxId(raw).pipe(Effect.option);
 }
 

@@ -84,6 +84,42 @@ function normalizeVercelStatus(status: VercelSandboxHandleLike["status"]): Sandb
   }
 }
 
+function isNoActiveSessionError(cause: unknown): boolean {
+  return cause instanceof Error && cause.message.toLowerCase().includes("no active session");
+}
+
+function normalizeVercelSandboxName(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/gu, "-")
+    .replace(/^-+|-+$/gu, "")
+    .slice(0, 63);
+  return slug.length > 0 ? slug : "kbcode-sandbox";
+}
+
+function safeVercelState(sandbox: VercelSandboxHandleLike): SandboxState {
+  try {
+    return normalizeVercelStatus(sandbox.status);
+  } catch (cause) {
+    if (isNoActiveSessionError(cause)) {
+      return "paused";
+    }
+    throw cause;
+  }
+}
+
+function safeExpiresAt(sandbox: VercelSandboxHandleLike): string | undefined {
+  try {
+    return sandbox.expiresAt?.toISOString();
+  } catch (cause) {
+    if (isNoActiveSessionError(cause)) {
+      return undefined;
+    }
+    throw cause;
+  }
+}
+
 function safeDomain(sandbox: VercelSandboxHandleLike, port: number): string | undefined {
   try {
     return sandbox.domain(port);
@@ -111,7 +147,7 @@ export function makeVercelSandboxDriver(
     create: Effect.fn("VercelSandboxDriver.create")(function* (input) {
       const baseParams: Record<string, unknown> = {
         ...credentials,
-        name: input.name,
+        name: normalizeVercelSandboxName(input.name),
         ports: [input.port],
         timeout: VERCEL_HOBBY_CEILING_MINUTES * 60_000,
         resources: { vcpus: 2 },
@@ -142,7 +178,7 @@ export function makeVercelSandboxDriver(
       const connectionUrl = safeDomain(sandbox, input.port);
       return {
         providerSandboxId: sandbox.name,
-        state: normalizeVercelStatus(sandbox.status),
+        state: safeVercelState(sandbox),
         ...(connectionUrl !== undefined ? { connectionUrl } : {}),
         ...(sandbox.currentSnapshotId !== undefined
           ? { snapshotId: sandbox.currentSnapshotId }
@@ -247,7 +283,16 @@ export function makeVercelSandboxDriver(
       });
 
       const stopped = yield* Effect.tryPromise({
-        try: () => sandbox.stop(),
+        try: async () => {
+          try {
+            return await sandbox.stop();
+          } catch (cause) {
+            if (isNoActiveSessionError(cause)) {
+              return { snapshot: undefined };
+            }
+            throw cause;
+          }
+        },
         catch: (cause) =>
           toSandboxError({
             provider: "vercel-sandbox",
@@ -307,13 +352,24 @@ export function makeVercelSandboxDriver(
           }),
       });
 
+      const state = yield* Effect.try({
+        try: () => safeVercelState(sandbox),
+        catch: (cause) =>
+          toSandboxError({
+            provider: "vercel-sandbox",
+            operation: "getStatus",
+            sandboxId: providerSandboxId,
+            cause,
+          }),
+      });
+      const expiresAt = safeExpiresAt(sandbox);
       return {
         providerSandboxId: sandbox.name,
-        state: normalizeVercelStatus(sandbox.status),
+        state,
         ...(sandbox.currentSnapshotId !== undefined
           ? { snapshotId: sandbox.currentSnapshotId }
           : {}),
-        ...(sandbox.expiresAt !== undefined ? { expiresAt: sandbox.expiresAt.toISOString() } : {}),
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
       };
     }),
 

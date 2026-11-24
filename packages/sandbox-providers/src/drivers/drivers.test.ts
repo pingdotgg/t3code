@@ -90,6 +90,7 @@ describe("sandbox provider drivers", () => {
         });
         expect(created.providerSandboxId).toBe("csb-1");
         expect(created.connectionUrl).toBe("https://csb-1-3773.csb.app");
+        expect(createOpts?.privacy).toBe("public-hosts");
         expect(createOpts?.vmTier).toBe(VMTier.Nano);
         expect(createOpts?.hibernationTimeoutSeconds).toBe(480);
 
@@ -273,6 +274,65 @@ describe("sandbox provider drivers", () => {
           .pipe(Effect.flip);
         expect(failure._tag).toBe("SandboxError");
         expect(failure.category).toBe("auth");
+      }),
+  );
+
+  it.effect(
+    "VercelSandboxDriver handles stopped sandboxes with no active session without throwing defects and normalizes names",
+    () =>
+      Effect.gen(function* () {
+        let createdName: unknown;
+        const stoppedHandle: VercelSandboxHandleLike = {
+          name: "my-box-1",
+          get status(): VercelSandboxHandleLike["status"] {
+            throw new Error("No active session. Run a command or call resume first.");
+          },
+          get expiresAt(): Date | undefined {
+            throw new Error("No active session. Run a command or call resume first.");
+          },
+          currentSnapshotId: "vsnap-paused",
+          runCommand: async () => ({
+            exitCode: 0,
+            stdout: async () => "",
+            stderr: async () => "",
+          }),
+          domain: (port) => `https://my-box-1-${port}.vercel.run`,
+          snapshot: async () => ({ snapshotId: "vsnap-new" }),
+          stop: async () => {
+            throw new Error("No active session to stop.");
+          },
+          delete: async () => undefined,
+        };
+
+        const sdk: VercelSandboxSdkLike = {
+          create: async (params) => {
+            createdName = params.name;
+            return stoppedHandle;
+          },
+          get: async () => stoppedHandle,
+        };
+
+        const driver = makeVercelSandboxDriver({ sdk });
+        const created = yield* driver.create({
+          name: "My Box #1!",
+          idleTimeoutMinutes: 8,
+          port: 3773,
+        });
+        expect(createdName).toBe("my-box-1");
+        expect(created.state).toBe("paused");
+
+        const statusRes = yield* driver.getStatus("my-box-1");
+        expect(statusRes).toEqual({
+          providerSandboxId: "my-box-1",
+          state: "paused",
+          snapshotId: "vsnap-paused",
+        });
+
+        const stopRes = yield* driver.pauseOrStop("my-box-1");
+        expect(stopRes).toEqual({
+          state: "paused",
+          snapshotId: "vsnap-paused",
+        });
       }),
   );
 });
