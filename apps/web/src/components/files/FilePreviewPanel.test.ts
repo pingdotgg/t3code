@@ -517,6 +517,22 @@ Third}`;
     expect(result.sheets[0]!.rows[0]![0]).toBe("Research & design");
   });
 
+  it("hides ODS values kept in cells a merge covers", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="Merged">' +
+        '<table:table-row><table:table-cell table:number-columns-spanned="4" table:number-rows-spanned="2"><text:p>Total</text:p></table:table-cell><table:covered-table-cell office:value-type="float" office:value="2"><text:p>2</text:p></table:covered-table-cell><table:covered-table-cell table:number-columns-repeated="2"/><table:table-cell><text:p>Lead</text:p></table:table-cell></table:table-row>' +
+        '<table:table-row><table:covered-table-cell office:value-type="string" office:string-value="Below"/><table:covered-table-cell table:number-columns-repeated="3"/><table:table-cell><text:p>Q2</text:p></table:table-cell></table:table-row>' +
+        "</table:table></office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets[0]!.rows).toEqual([
+      ["Total", "", "", "", "Lead"],
+      ["", "", "", "", "Q2"],
+    ]);
+  });
+
   it("reads an ODS time cell that has no display paragraph", async () => {
     const archive = new JSZip().file(
       "content.xml",
