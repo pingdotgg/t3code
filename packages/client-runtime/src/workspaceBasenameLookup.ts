@@ -1,6 +1,7 @@
 import { FILESYSTEM_METADATA_BATCH_LIMIT } from "@t3tools/contracts";
 import {
   isAbsolutePath,
+  isNetworkPath,
   isWindowsAbsolutePath,
   resolveWorkspaceFilePath,
 } from "@t3tools/shared/path";
@@ -229,6 +230,8 @@ function literalDirectory(operand: string): string | null {
   const path = /^["']/.test(operand) ? operand.slice(1, -1) : operand;
   // The shell would expand these, and only it knows to what.
   if (!isAbsolutePath(path) || /[$`*?[\]{}"']/.test(path)) return null;
+  // Search roots are local directories; the server stats each one.
+  if (isNetworkPath(path)) return null;
   return path.includes("\\") && !isWindowsAbsolutePath(path) ? null : path;
 }
 

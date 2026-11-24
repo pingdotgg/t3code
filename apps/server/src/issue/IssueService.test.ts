@@ -349,6 +349,27 @@ describe("IssueService", () => {
     }),
   );
 
+  it.effect(
+    "does not call a GitHub issue URL unbrowsable when no project is a GitHub checkout",
+    () =>
+      Effect.gen(function* () {
+        // A plain folder project, while GitHub itself is a supported tracker.
+        const service = yield* makeService({
+          projects: [project({ id: "folder" })],
+          trackers: [fakeTracker()],
+        });
+        const resolved = yield* service
+          .resolveUrl("https://github.com/acme/web/issues/1", "folder" as ProjectId)
+          .pipe(Effect.result);
+        if (resolved._tag === "Failure") {
+          expect(resolved.failure).not.toMatchObject({
+            _tag: "IssueUnavailableError",
+            reason: "tracker-unsupported",
+          });
+        }
+      }),
+  );
+
   it.effect("resolves both legacy Azure work item URLs through the bound project", () =>
     Effect.gen(function* () {
       const tracker = IssueTrackerKind.make("azure-devops");

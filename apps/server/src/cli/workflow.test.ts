@@ -166,21 +166,25 @@ it.effect("reports what the server refused instead of calling it unreachable", (
   }),
 );
 
-it.effect("signal refuses both addresses at once before reaching the server", () =>
+it.effect("signal sends only one complete address to the server", () =>
   Effect.gen(function* () {
-    const { error, calls } = yield* runCli([
-      "signal",
-      "{}",
-      "--run",
-      "run-1",
-      "--wait",
-      "approve",
-      "--workflow",
-      "review",
-      "--channel",
-      "pr-1",
-    ]);
-    assert.strictEqual(error?._tag, "ThreadUsageError");
-    assert.lengthOf(calls, 0);
+    const byRun = ["--run", "run-1", "--wait", "approve"];
+    const byChannel = ["--workflow", "review", "--channel", "pr-1"];
+    for (const [address, sent] of [
+      [byRun, true],
+      [byChannel, true],
+      [[...byRun, ...byChannel], false],
+      [[], false],
+      [["--run", "run-1"], false],
+      [["--wait", "approve"], false],
+      [["--workflow", "review"], false],
+      [["--channel", "pr-1"], false],
+    ] as const) {
+      const { error, calls } = yield* runCli(["signal", "{}", ...address], () =>
+        Effect.succeed({ structuredContent: { delivery: "delivered" } }),
+      );
+      assert.strictEqual(error?._tag, sent ? undefined : "ThreadUsageError");
+      assert.lengthOf(calls, sent ? 1 : 0);
+    }
   }),
 );
