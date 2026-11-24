@@ -625,7 +625,6 @@ const make = Effect.gen(function* () {
 
     const reused = input.reusedWorktree;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;
-    const agentStage = runId === null ? [] : (["agent"] as const);
     let createdWorktreePath: string | null = null;
     let createdBranch: string | null = null;
     let createdTaskFolder: string | null = null;
@@ -640,8 +639,7 @@ const make = Effect.gen(function* () {
         threadId,
         branch: input.workspaceStrategy.branch ?? null,
         baseRef: input.workspaceStrategy.baseRef,
-        // A launch with no first message hands no run to an agent, so nothing waits on one.
-        stages: ["fetch", "checkout", "submodules", "setup-script", ...agentStage],
+        stages: ["fetch", "checkout", "submodules", "setup-script", "agent"],
         fiber: yield* Effect.fiber,
       });
     } else if (reused !== undefined) {
@@ -649,7 +647,7 @@ const make = Effect.gen(function* () {
         threadId,
         branch: input.workspaceStrategy.branch ?? null,
         baseRef: reused.baseRef,
-        stages: ["setup-script", ...agentStage],
+        stages: ["setup-script", "agent"],
         fiber: yield* Effect.fiber,
       });
     }

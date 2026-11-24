@@ -4015,6 +4015,33 @@ it.effect.each([0, 1])("releases an async setup before its completion with exit 
   }),
 );
 
+it.effect("finishes a worktree launch with no first message without waiting on an agent", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:no-message",
+          thread: "thread:launch:no-message",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      const settled = yield* tracker.stream(launched.threadId).pipe(
+        Stream.filter((snapshot) => snapshot?.phase === "done"),
+        Stream.runHead,
+      );
+      assert.equal(
+        Option.getOrNull(settled)?.stages.find((stage) => stage.id === "agent")?.status,
+        "skipped",
+      );
+      assert.deepEqual((yield* threads.getThreadProjection(launched.threadId)).runs, []);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("shows an async setup as done while the agent still waits for its branch name", () =>
   Effect.gen(function* () {
     const branchNameStarted = yield* Deferred.make<void>();

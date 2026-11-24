@@ -3,7 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { resolveVisibleWorktreeSetup } from "./worktreeSetup.ts";
 
-const done = (stageIds: ReadonlyArray<"checkout" | "agent">): WorktreeSetupSnapshot => ({
+const done = (
+  agentStatus: WorktreeSetupSnapshot["stages"][number]["status"],
+): WorktreeSetupSnapshot => ({
   threadId: ThreadId.make("thread"),
   phase: "done",
   startedAt: "2026-11-24T00:00:00.000Z",
@@ -12,9 +14,9 @@ const done = (stageIds: ReadonlyArray<"checkout" | "agent">): WorktreeSetupSnaps
   baseRef: null,
   worktreePath: "/home/user/worktrees/app",
   setupScript: null,
-  stages: stageIds.map((id) => ({
+  stages: (["checkout", "agent"] as const).map((id) => ({
     id,
-    status: "done",
+    status: id === "agent" ? agentStatus : "done",
     startedAt: null,
     endedAt: null,
     percent: null,
@@ -27,7 +29,7 @@ const done = (stageIds: ReadonlyArray<"checkout" | "agent">): WorktreeSetupSnaps
 
 describe("resolveVisibleWorktreeSetup", () => {
   it("keeps a finished setup in view until the agent's run starts", () => {
-    const snapshot = done(["checkout", "agent"]);
+    const snapshot = done("done");
     expect(
       resolveVisibleWorktreeSetup({
         live: snapshot,
@@ -41,7 +43,7 @@ describe("resolveVisibleWorktreeSetup", () => {
   it("drops a finished setup that hands off to no run, such as a moved thread's", () => {
     expect(
       resolveVisibleWorktreeSetup({
-        live: done(["checkout"]),
+        live: done("skipped"),
         recorded: null,
         runs: [],
         followUpSent: false,
