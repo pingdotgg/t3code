@@ -1592,10 +1592,11 @@ export function ExistingThreadSettingsRouteScreen({
   const reportedModelSelection = useThreadReportedModelSelection(selectedThreadDetailRef);
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata);
   const threadKey = scopedThreadKey(route.params.environmentId, route.params.threadId);
-  const draftSettings = useComposerDraftSettings(threadKey);
   const queuedRunEdit = useQueuedRunEdit(threadKey);
   // A queued edit can end while the sheet is open; the prompt then belongs to the thread's draft.
   const draftKey = activeComposerDraftKey(threadKey, route.params.draftKey, queuedRunEdit);
+  const draftSettings = useComposerDraftSettings(draftKey);
+  const threadDraftSettings = useComposerDraftSettings(threadKey);
   const prompt = useComposerDraft(draftKey).text;
 
   if (!selectedThread) {
@@ -1657,7 +1658,7 @@ export function ExistingThreadSettingsRouteScreen({
         rememberModelOptions(modelSelection.instanceId, modelSelection.model, options ?? []);
         updateModelSelection({ ...modelSelection, options });
       }}
-      runtimeMode={draftSettings.runtimeMode ?? selectedThread.runtimeMode}
+      runtimeMode={threadDraftSettings.runtimeMode ?? selectedThread.runtimeMode}
       onUpdateRuntimeMode={(runtimeMode) => updateComposerDraftSettings(threadKey, { runtimeMode })}
       requestTags={{
         value: selectedThread.requestTags,

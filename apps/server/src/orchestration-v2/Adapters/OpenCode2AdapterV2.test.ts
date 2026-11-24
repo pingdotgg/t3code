@@ -43,7 +43,7 @@ import { TestClock } from "effect/testing";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
-import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import { htmlRenderFromToolItem, sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -1540,16 +1540,26 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         reply("session.interrupt", { interrupted: true }),
         event("session.execution.interrupted", { sessionID: SESSION }),
       ]);
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
       const watch = yield* watchBackgroundTurn(runtime);
       yield* runtime.startTurn(withLineage(thread));
       yield* watch.attached;
+      // The child's nested T3 MCP results live under the root thread and outlive its turn.
+      const childResult = { message: "Child note" };
+      yield* mcpSessions.recordToolResult(threadId, "send_to_user", childResult, {
+        sentMessage: childResult.message,
+      });
       yield* runtime.interruptTurn({
         providerThread: thread,
         providerTurnId: yield* providerTurnId,
       });
       assert.equal((yield* watch.terminal)?.status, "interrupted");
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
-    }),
+      assert.deepEqual(yield* mcpSessions.takeToolResult(threadId, "send_to_user", childResult), {
+        sentMessage: childResult.message,
+      });
+    }).pipe(Effect.scoped),
   );
 
   it.effect("stops background subagents on a user Stop", () =>
@@ -5321,6 +5331,188 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("shows send_to_user messages a Code Mode script sends without returning them", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      const server = "t3-code-thread_opencode2-adapter";
+      const messages = ["First mid-turn note", "Second mid-turn note"];
+      yield* Effect.forEach(messages, (message) =>
+        mcpSessions.recordToolResult(
+          threadId,
+          "send_to_user",
+          { message },
+          { sentMessage: message },
+        ),
+      );
+      const tool = {
+        sessionID: SESSION,
+        assistantMessageID: "msg_assistant",
+        id: "call-execute-send",
+      };
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.tool.input.started", { ...tool, name: "execute" }),
+        event("session.tool.called", { ...tool, input: { code: "<script>" }, executed: true }),
+        event(
+          "session.tool.success",
+          {
+            ...tool,
+            // The script sends messages[0], sends messages[1], and returns messages[1] inside an
+            // MCP content text block alongside a sibling field and an image.
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  content: [
+                    {
+                      type: "text",
+                      text: JSON.stringify({ sentMessage: messages[1], note: "keep" }),
+                    },
+                  ],
+                  structuredContent: { sentMessage: messages[1] },
+                }),
+              },
+              { type: "file", uri: "data:image/png;base64,iVBORw0KGgo=", mime: "image/png" },
+            ],
+            metadata: {
+              toolCalls: [
+                {
+                  tool: `${server}.send_to_user`,
+                  status: "completed",
+                  input: { message: messages[0] },
+                },
+                {
+                  tool: `${server}.send_to_user`,
+                  status: "completed",
+                  input: { message: messages[1] },
+                },
+              ],
+              truncated: false,
+            },
+            executed: true,
+          },
+          undefined,
+          2,
+        ),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const collected = Array.from(yield* Fiber.join(events));
+      const shown = collected.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [sentMessageFromToolItem(event.turnItem)].filter((msg) => msg !== undefined)
+          : [],
+      );
+      assert.deepEqual(shown, messages);
+      const executeItem = collected.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "dynamic_tool" &&
+          event.turnItem.toolName === "execute",
+      );
+      assert.deepEqual(
+        executeItem?.type === "turn_item.updated" && executeItem.turnItem.type === "dynamic_tool"
+          ? toolOutputImages(executeItem.turnItem.output)
+          : [],
+        [{ mimeType: "image/png", data: "iVBORw0KGgo=" }],
+      );
+      assert.include(
+        JSON.stringify(
+          executeItem?.type === "turn_item.updated" && executeItem.turnItem.type === "dynamic_tool"
+            ? executeItem.turnItem.output
+            : null,
+        ),
+        "keep",
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("shows send_to_user messages a subagent's Code Mode script sends", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      // Subagent sessions call the root thread's server, which records under the root thread.
+      const server = "t3-code-thread_opencode2-adapter";
+      const message = "Subagent mid-turn note";
+      yield* mcpSessions.recordToolResult(
+        threadId,
+        "send_to_user",
+        { message },
+        { sentMessage: message },
+      );
+      const script = toolOf(MIDDLE, "call-execute-child");
+      const { runtime, thread } = yield* resumed([
+        ...nestedLaunch.slice(0, 7),
+        event("session.execution.started", { sessionID: MIDDLE }),
+        event("session.tool.input.started", { ...script, name: "execute" }),
+        event("session.tool.called", { ...script, input: { code: "<script>" }, executed: true }),
+        event(
+          "session.tool.success",
+          {
+            ...script,
+            // The script also returns the message in a JSON-string envelope, which must not show twice.
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ content: JSON.stringify({ sentMessage: message }) }),
+              },
+            ],
+            metadata: {
+              toolCalls: [
+                { tool: `${server}.send_to_user`, status: "completed", input: { message } },
+              ],
+              truncated: false,
+            },
+            executed: true,
+          },
+          undefined,
+          2,
+        ),
+        event("session.execution.succeeded", { sessionID: MIDDLE }),
+        event("session.tool.success", {
+          ...toolOf(SESSION, "call-middle"),
+          content: [{ type: "text", text: `<subagent sessionID="${MIDDLE}" state="completed">` }],
+          metadata: { sessionID: MIDDLE, status: "completed", truncated: false },
+          executed: false,
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      const collected = Array.from(yield* Fiber.join(events));
+      const subagentEvent = collected.find(
+        (event) => event.type === "subagent.updated" && event.subagent.childThreadId !== null,
+      );
+      const childThreadId =
+        subagentEvent?.type === "subagent.updated" ? subagentEvent.subagent.childThreadId : null;
+      assert.isNotNull(childThreadId);
+      const shown = collected.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "dynamic_tool" &&
+        sentMessageFromToolItem(event.turnItem) !== undefined
+          ? [
+              {
+                threadId: event.turnItem.threadId,
+                message: sentMessageFromToolItem(event.turnItem),
+              },
+            ]
+          : [],
+      );
+      assert.deepEqual(shown, [{ threadId: childThreadId!, message }]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps a script replayed after a reconnect from taking a later script's page", () =>
     Effect.gen(function* () {
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -6873,7 +7065,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect("drops the turns a rollback cut from the snapshot it returns", () =>
+  it.effect("reverts OpenCode at the prompt of the first turn a rollback cuts", () =>
     Effect.gen(function* () {
       const kept = `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`;
       const dropped = `msg_t3_turn_${SESSION}:attempt:opencode2-adapter:2`;
@@ -6925,7 +7117,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* runtime.startTurn(secondTurn(thread));
       yield* Deferred.await(bothEnded);
       const [first, second] = turns;
-      const snapshot = yield* runtime.rollbackThread({
+      yield* runtime.rollbackThread({
         providerThread: thread,
         target: {
           type: "provider_turn",
@@ -6935,10 +7127,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         },
         providerThreadTurns: [first!, second!],
       });
-      assert.deepEqual(
-        snapshot.providerTurns.map((turn) => turn.id),
-        [first!.id],
-      );
     }),
   );
 
@@ -6994,10 +7182,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   );
 
   it.effect.each([
-    [
-      "keeps the recorded turns before the target when rolling back a session not loaded yet",
-      false,
-    ],
+    ["reverts a session not loaded yet at the first recorded turn after the target", false],
   ] as const)("%s", ([, running]) =>
     Effect.gen(function* () {
       const first = `msg_t3_turn_${SESSION}:attempt:first`;
@@ -7069,10 +7254,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         );
       } else {
         assert.isTrue(Exit.isSuccess(rollback));
-        assert.deepEqual(
-          Exit.isSuccess(rollback) ? rollback.value.providerTurns.map((turn) => turn.id) : [],
-          [kept.id],
-        );
       }
     }),
   );
@@ -7360,7 +7541,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ],
           "msg_external",
         );
-        const snapshot = yield* runtime.rollbackThread({
+        yield* runtime.rollbackThread({
           providerThread: thread,
           target: {
             type: "provider_turn",
@@ -7370,10 +7551,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           },
           providerThreadTurns: [first, second],
         });
-        assert.deepEqual(
-          snapshot.providerTurns.map((turn) => turn.id),
-          [first.id],
-        );
       }),
   );
 
@@ -7872,7 +8049,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         yield* runtime.startTurn(continuationTurn(thread, offers[1]!));
         yield* Deferred.await(bothEnded);
         const [first, continuation] = turns;
-        const snapshot = yield* runtime.rollbackThread({
+        yield* runtime.rollbackThread({
           providerThread: thread,
           target: {
             type: "provider_turn",
@@ -7882,10 +8059,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           },
           providerThreadTurns: [first!, continuation!],
         });
-        assert.deepEqual(
-          snapshot.providerTurns.map((turn) => turn.id),
-          [first!.id],
-        );
       }),
   );
 
@@ -7994,7 +8167,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         yield* runtime.startTurn(continuationTurn(thread, yield* Deferred.await(offered)));
         yield* Deferred.await(bothEnded);
         const [first, continuation] = turns;
-        const snapshot = yield* runtime.rollbackThread({
+        yield* runtime.rollbackThread({
           providerThread: thread,
           target: {
             type: "provider_turn",
@@ -8004,10 +8177,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           },
           providerThreadTurns: [first!, continuation!],
         });
-        assert.deepEqual(
-          snapshot.providerTurns.map((turn) => turn.id),
-          [first!.id],
-        );
       }),
   );
 

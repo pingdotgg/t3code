@@ -25,7 +25,7 @@ function validateTiffMetadata(bytes: ArrayBuffer) {
       const tag = view.getUint16(entry, littleEndian);
       const type = view.getUint16(entry + 2, littleEndian);
       const values = view.getUint32(entry + 4, littleEndian);
-      const width = [0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8][type];
+      const width = [0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8, 4][type];
       if (!width) throw new PreviewError({ code: "tiff-metadata-type" });
       const length = values * width;
       const start = length > 4 ? view.getUint32(entry + 8, littleEndian) : entry + 8;
@@ -34,7 +34,8 @@ function validateTiffMetadata(bytes: ArrayBuffer) {
       if (start + length > bytes.byteLength || allocation > 8 * 1024 * 1024)
         throw new PreviewError({ code: "tiff-metadata-truncated" });
       if (tag === 0x8769 || tag === 0x8825) {
-        if (type !== 4 || values !== 1) throw new PreviewError({ code: "tiff-metadata-pointer" });
+        if ((type !== 4 && type !== 13) || values !== 1)
+          throw new PreviewError({ code: "tiff-metadata-pointer" });
         inspect(view.getUint32(entry + 8, littleEndian), depth + 1);
       }
     }

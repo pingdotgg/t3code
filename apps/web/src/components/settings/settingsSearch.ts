@@ -381,6 +381,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("wide full width column layout messages composer monitor")],
   },
   {
+    id: "html-preview-width",
+    title: msg("HTML preview width"),
+    to: "/settings/appearance",
+    searchTerms: [msg("wide full width inline page render chart dashboard artifact centered")],
+  },
+  {
     id: "thread-details-items",
     title: msg("Thread details"),
     to: "/settings/appearance",

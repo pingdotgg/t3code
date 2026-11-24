@@ -42,6 +42,7 @@ import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRun
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import {
   compactDynamicToolOutput,
+  compactT3McpToolOutput,
   htmlRenderFromToolItem,
   mcpToolResultOutput,
 } from "@t3tools/shared/toolOutput";
@@ -80,6 +81,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import {
   applyAcpAgentTerminalUpdate,
+  MAX_AGENT_TERMINAL_OUTPUT_CHARS,
   acpContentBlockDisplayText,
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
@@ -161,6 +163,34 @@ function isAgentBusyPromptError(error: EffectAcpErrors.AcpError): boolean {
   return (
     error._tag === "AcpRequestError" && error.errorMessage.startsWith("Agent is already processing")
   );
+}
+
+type AcpAppContextEntry = NonNullable<
+  ProviderAdapter.ProviderAdapterV2TurnInput["appContext"]
+>[number];
+
+function formatAcpAppContextEntry(entry: AcpAppContextEntry): string {
+  return `<external_${entry.key}>${entry.text}</external_${entry.key}>`;
+}
+
+function unsentAcpAppContext(
+  appContext: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"],
+  seen: ReadonlyMap<string, string> | undefined,
+  isNativeSlashCommand: boolean,
+): ReadonlyArray<AcpAppContextEntry> {
+  if (isNativeSlashCommand || appContext === undefined || appContext.length === 0) return [];
+  return appContext.filter((entry) => seen?.get(entry.key) !== entry.text);
+}
+
+function mergeAcpAppContext(
+  base: ReadonlyMap<string, string> | undefined,
+  entries: ReadonlyArray<AcpAppContextEntry>,
+): ReadonlyMap<string, string> {
+  const merged = new Map(base);
+  for (const entry of entries) {
+    merged.set(entry.key, entry.text);
+  }
+  return merged;
 }
 
 function sendPromptWhenIdle<A>(
@@ -306,6 +336,19 @@ class AcpModelSelectionError extends Schema.TaggedError<AcpModelSelectionError>(
     return `The agent did not accept the model "${this.model}". Choose another model for this provider, then retry.`;
   }
 }
+
+const isAcpModelSelectionError = Schema.is(AcpModelSelectionError);
+const isProviderCompactionUnsupportedError = Schema.is(
+  ProviderAdapter.ProviderCompactionUnsupportedError,
+);
+
+/**
+ * Turn-start refusals that leave the session usable. Other start failures, such as a session that
+ * cannot be reopened or a setup step that fails, can mean the agent lost the session, so the
+ * server keeps its recovery for them.
+ */
+const refusedWithSessionIntact = (cause: unknown) =>
+  isAcpModelSelectionError(cause) || isProviderCompactionUnsupportedError(cause);
 
 /** A prompt-steered turn spans several prompts, each reporting its own usage. */
 function addAcpUsage(
@@ -1666,6 +1709,9 @@ interface ActiveAcpTurn {
   readonly completed: Deferred.Deferred<void, never>;
   readonly itemOrdinals: Map<string, number>;
   readonly outgoingPrompt?: ReadonlyArray<EffectAcpSchema.ContentBlock> | undefined;
+  appContextOffered?: ReadonlyMap<string, string> | undefined;
+  readonly appContextCommittedSequence: Map<string, number>;
+  appContextSequence: number;
   consumedPromptMessageId?: string;
   readonly user: ActiveTextStream;
   readonly assistant: ActiveTextStream;
@@ -1681,6 +1727,14 @@ interface ActiveAcpTurn {
   contextUsage: ThreadTokenUsageSnapshot | null;
   nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
   readonly tools: Map<string, AcpToolCallState & { readonly backgroundCommandTaskId?: string }>;
+  /** Confirmed T3 MCP tool outputs keyed by `${toolCallId}\0${tool}\0${inputHash}`. */
+  readonly claimedToolResults: Map<string, unknown>;
+  /** `${toolCallId}\0${tool}\0${inputHash}` keys that already drained a recorded MCP result. */
+  readonly drainedToolResultKeys: Set<string>;
+  /** `${toolCallId}\0${tool}\0${inputHash}` keys that reached terminal failure and must never do input-only recovery. */
+  readonly blockedInputRecoveryKeys: Set<string>;
+  /** `${toolCallId}\0${tool}\0${inputHash}` keys already tried for input-only recovery. */
+  readonly attemptedInputRecoveryKeys: Set<string>;
   /** Tools the agent failed after Stop; later updates keep them interrupted. */
   readonly stoppedToolCallIds: Set<string>;
   readonly toolUpdatesSkipped: Map<string, number>;
@@ -2007,9 +2061,6 @@ const emptySnapshotState = (): SnapshotMessageState => ({
 /** How long a Stop waits for the agent to confirm before the user is offered Force stop. */
 const ACP_STOP_CONFIRM_TIMEOUT_MS = 10_000;
 const TOOL_UPDATE_PERSIST_EVERY = 10;
-
-// CommandOutputHub reads the last 256 KiB; retain more so its display cut stays unchanged.
-const MAX_AGENT_TERMINAL_OUTPUT_CHARS = 320 * 1024;
 
 // Agents can resend whole calls while streaming arguments.
 function shouldPersistToolUpdate(
@@ -2345,6 +2396,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         >(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
+        const deliveredAppContext = yield* Ref.make(new Map<string, ReadonlyMap<string, string>>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
         // ACP may patch a completed compaction again; each compaction id marks its session once.
@@ -2367,6 +2419,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.update(compactionMarkers, (current) =>
             new Map(current).set(sessionId, Symbol()),
           );
+          yield* Ref.update(deliveredAppContext, (current) => {
+            if (!current.has(sessionId)) return current;
+            const updated = new Map(current);
+            updated.delete(sessionId);
+            return updated;
+          });
+          const currentTurn = yield* Ref.get(activeTurn);
+          if (currentTurn !== null && currentTurn.nativeThreadId === sessionId) {
+            currentTurn.appContextOffered = undefined;
+            currentTurn.appContextCommittedSequence.clear();
+          }
         });
         const advertisedCommandNames = yield* SubscriptionRef.make(
           new Map<string, ReadonlySet<string>>(),
@@ -2401,7 +2464,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const emitNativeResponseLifecycle =
           options.testHooks?.onNativeResponseLifecycle ?? (() => Effect.void);
         const nextElicitationOrdinal = yield* Ref.make(0);
-        const providerTurns = yield* Ref.make(new Map<string, OrchestrationV2ProviderTurn>());
         const snapshot = yield* Ref.make(emptySnapshotState());
 
         const awaitRuntimeTeardown = Effect.fnUntraced(function* () {
@@ -4759,22 +4821,73 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const input =
               mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
             let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
-            const isHtmlRender = resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME;
+            const resolvedT3Tool = resolveT3McpToolId(toolName);
+            const isHtmlRender = resolvedT3Tool === HTML_RENDER_TOOL_NAME;
             const isError =
               compactDynamicToolOutput(output)?.isError === true ||
               compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
+            const callInputKey =
+              resolvedT3Tool !== null && !isHtmlRender
+                ? `${toolCall.toolCallId}\0${resolvedT3Tool}\0${McpProviderSessions.hashToolInput(input)}`
+                : undefined;
             if (
-              isHtmlRender &&
-              (status === "failed" || (status === "completed" && isError)) &&
-              previous?.status !== "failed" &&
-              previous?.status !== "completed"
+              status === "completed" &&
+              resolvedT3Tool !== null &&
+              callInputKey !== undefined &&
+              isError
             ) {
-              // A failed call may have published before the provider lost its result.
-              yield* mcpSessions.takeHtmlRender(
-                context.input.threadId,
-                input,
-                htmlRenderFromToolItem({ toolName, output }),
-              );
+              // Unwrapping `{ result: { isError: true, content/structuredContent } }` drops the
+              // error flag (and diagnostic content when structuredContent is also present);
+              // preserve the diagnostic error envelope and remember it across summary replays.
+              const rawResult = unknownRecord(rawOutputRecord?.result);
+              if (compactDynamicToolOutput(output)?.isError !== true) {
+                output =
+                  rawResult !== undefined && compactDynamicToolOutput(rawResult)?.isError === true
+                    ? rawResult
+                    : output === undefined
+                      ? { isError: true }
+                      : Array.isArray(output)
+                        ? { isError: true, content: output }
+                        : typeof output === "object" && output !== null
+                          ? { ...(output as Record<string, unknown>), isError: true }
+                          : { isError: true, content: [{ type: "text", text: String(output) }] };
+              }
+              context.blockedInputRecoveryKeys.add(callInputKey);
+              context.claimedToolResults.set(callInputKey, output);
+            }
+            if (
+              resolvedT3Tool !== null &&
+              (status === "failed" || (status === "completed" && isError))
+            ) {
+              // A failed call may have completed on T3's MCP server before the provider lost its result.
+              if (isHtmlRender) {
+                if (previous?.status !== "failed" && previous?.status !== "completed") {
+                  yield* mcpSessions.takeHtmlRender(
+                    context.input.threadId,
+                    input,
+                    htmlRenderFromToolItem({ toolName, output }),
+                  );
+                }
+              } else if (callInputKey !== undefined) {
+                const reportedError = compactT3McpToolOutput(resolvedT3Tool, output);
+                context.blockedInputRecoveryKeys.add(callInputKey);
+                // Only drain when the failed call reported an explicit output to match;
+                // a bare failure without output must not consume a sibling's cached record.
+                if (
+                  !context.drainedToolResultKeys.has(callInputKey) &&
+                  reportedError !== undefined
+                ) {
+                  const drained = yield* mcpSessions.takeToolResult(
+                    context.input.threadId,
+                    resolvedT3Tool,
+                    input,
+                    reportedError,
+                  );
+                  if (drained !== undefined) {
+                    context.drainedToolResultKeys.add(callInputKey);
+                  }
+                }
+              }
             }
             if (status === "completed" && isHtmlRender && !isError) {
               const reportedPage = htmlRenderFromToolItem({ toolName, output });
@@ -4793,6 +4906,54 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ...toolCall,
                   data: { ...toolCall.data, rawOutput: output },
                 });
+              }
+            }
+            if (
+              status === "completed" &&
+              resolvedT3Tool !== null &&
+              callInputKey !== undefined &&
+              !isError
+            ) {
+              const reportedOutput = compactT3McpToolOutput(resolvedT3Tool, output);
+              // ACP runtimes may omit or summarize MCP results, including across repeated or
+              // interleaved in_progress updates. Claims are keyed by (callId, tool, inputHash).
+              const claimedOutput = context.claimedToolResults.get(callInputKey);
+              if (reportedOutput !== undefined) {
+                context.claimedToolResults.set(callInputKey, reportedOutput);
+                if (!context.drainedToolResultKeys.has(callInputKey)) {
+                  const drained = yield* mcpSessions.takeToolResult(
+                    context.input.threadId,
+                    resolvedT3Tool,
+                    input,
+                    reportedOutput,
+                  );
+                  if (drained !== undefined) {
+                    context.drainedToolResultKeys.add(callInputKey);
+                  }
+                }
+              } else {
+                let recoveredOutput = claimedOutput;
+                if (
+                  recoveredOutput === undefined &&
+                  projectedStatus === undefined &&
+                  !context.blockedInputRecoveryKeys.has(callInputKey) &&
+                  !context.attemptedInputRecoveryKeys.has(callInputKey)
+                ) {
+                  context.attemptedInputRecoveryKeys.add(callInputKey);
+                  recoveredOutput = yield* mcpSessions.takeToolResult(
+                    context.input.threadId,
+                    resolvedT3Tool,
+                    input,
+                    undefined,
+                  );
+                  if (recoveredOutput !== undefined) {
+                    context.drainedToolResultKeys.add(callInputKey);
+                  }
+                }
+                if (recoveredOutput !== undefined) {
+                  context.claimedToolResults.set(callInputKey, recoveredOutput);
+                  output = recoveredOutput;
+                }
               }
             }
             turnItem = {
@@ -8006,9 +8167,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(activeInteractionMode, null);
             yield* Ref.set(promptInstructionStates, new Map());
             yield* Ref.set(promptRuntimeInstructions, new Map());
+            yield* Ref.set(deliveredAppContext, new Map());
             yield* Ref.set(compactionMarkers, new Map());
             yield* Ref.set(completedCompactionIds, new Set());
-            yield* Ref.set(providerTurns, new Map());
             yield* Ref.set(snapshot, emptySnapshotState());
             yield* continuationPermit.withPermit(
               Effect.gen(function* () {
@@ -8664,6 +8825,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               terminalizeSubagents: directStopQuarantine,
             });
           }
+          yield* mcpSessions.clearToolResults(context.input.threadId);
           yield* closeTextStreams(context);
           // Ingestion may stop at turn.terminal, before a delayed flush would run.
           yield* textEmissionPermit.withPermit(
@@ -8720,11 +8882,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           yield* reportAgentModeChanges(context.input.threadId);
           const turn = providerTurnPayload(context, settledStatus, now);
-          yield* Ref.update(providerTurns, (current) => {
-            const updated = new Map(current);
-            updated.set(String(turn.id), turn);
-            return updated;
-          });
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver,
@@ -9110,6 +9267,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // while the prompt is prepared still resends the notes in this prompt.
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
           const compactionMarker = (yield* Ref.get(compactionMarkers)).get(sessionId);
+          const deliveredContext = (yield* Ref.get(deliveredAppContext)).get(sessionId);
+          const appContextEntries = unsentAcpAppContext(
+            turnInput.appContext,
+            deliveredContext,
+            isNativeSlashCommand,
+          );
           const text = t3AcpPromptWithInstructions({
             prompt: messageText,
             state: instructionState,
@@ -9142,6 +9305,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               detail: "ACP turn requires non-empty text or attachments",
             });
           }
+          if (appContextEntries.length > 0) {
+            prompt.unshift(
+              ...appContextEntries.map((entry) => ({
+                type: "text" as const,
+                text: formatAcpAppContextEntry(entry),
+              })),
+            );
+          }
           if (sendRuntimeInstructions) {
             prompt.push({ type: "text", text: runtimeInstructions });
           }
@@ -9149,6 +9320,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             prompt,
             instructionState: text === messageText ? undefined : instructionState,
             runtimeInstructions: sendRuntimeInstructions ? runtimeInstructions : undefined,
+            appContextEntries,
             compactionMarker,
           };
         });
@@ -9167,10 +9339,42 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // A failed prompt may have been dropped, so the fresh runtime sends T3's notes again.
           yield* Ref.set(promptInstructionStates, new Map());
           yield* Ref.set(promptRuntimeInstructions, new Map());
+          yield* Ref.set(deliveredAppContext, new Map());
           yield* Ref.set(compactionMarkers, new Map());
           yield* Ref.set(completedCompactionIds, new Set());
           yield* Ref.set(snapshot, emptySnapshotState());
           return true;
+        });
+
+        const commitAcpAppContext = Effect.fnUntraced(function* (input: {
+          readonly context: ActiveAcpTurn;
+          readonly entries: ReadonlyArray<AcpAppContextEntry>;
+          readonly compactionMarker: symbol | undefined;
+          readonly sequence: number;
+        }) {
+          if (input.entries.length === 0) return;
+          if (
+            (yield* Ref.get(compactionMarkers)).get(input.context.nativeThreadId) !==
+            input.compactionMarker
+          ) {
+            return;
+          }
+          const freshEntries = input.entries.filter(
+            (entry) =>
+              (input.context.appContextCommittedSequence.get(entry.key) ?? 0) < input.sequence,
+          );
+          if (freshEntries.length === 0) return;
+          for (const entry of freshEntries) {
+            input.context.appContextCommittedSequence.set(entry.key, input.sequence);
+          }
+          yield* Ref.update(deliveredAppContext, (current) => {
+            const updated = new Map(current);
+            updated.set(
+              input.context.nativeThreadId,
+              mergeAcpAppContext(current.get(input.context.nativeThreadId), freshEntries),
+            );
+            return updated;
+          });
         });
 
         /** Follows a turn's `session/prompt`; a prompt-steer's prompt supersedes the one before. */
@@ -9185,11 +9389,28 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               | Effect.Success<ReturnType<NonNullable<AcpAdapterV2Flavor["watchPromptOutcome"]>>>
               | undefined;
             readonly promptParts: Effect.Success<ReturnType<typeof resolvePromptParts>> | null;
+            readonly appContext?:
+              | {
+                  readonly entries: ReadonlyArray<AcpAppContextEntry>;
+                  readonly offered: ReadonlyMap<string, string> | undefined;
+                  readonly before: ReadonlyMap<string, string> | undefined;
+                  readonly compactionMarker: symbol | undefined;
+                  readonly sequence: number;
+                }
+              | undefined;
             readonly compactSession: AcpAdapterV2Flavor["compactSession"];
           },
         ): Effect.Effect<void> => {
           const sequence = ++context.promptSequence;
           const superseded = () => context.promptSequence !== sequence;
+          const rollbackOfferedAppContext = () => {
+            if (
+              settle.appContext?.offered !== undefined &&
+              context.appContextOffered === settle.appContext.offered
+            ) {
+              context.appContextOffered = settle.appContext.before;
+            }
+          };
           return prompt(superseded).pipe(
             // Settle the wire before the completion callback's permit so a settled-soft
             // Stop sees the native return. Capture usage only before finalize: a late
@@ -9232,6 +9453,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       updated.set(context.nativeThreadId, promptParts.runtimeInstructions);
                       return updated;
                     });
+                    if (
+                      !context.interrupted &&
+                      !(context.finalized && context.finalizedStatus !== "completed")
+                    ) {
+                      if (settle.appContext !== undefined) {
+                        yield* commitAcpAppContext({
+                          context,
+                          entries: settle.appContext.entries,
+                          compactionMarker: settle.appContext.compactionMarker,
+                          sequence: settle.appContext.sequence,
+                        });
+                      }
+                    } else {
+                      rollbackOfferedAppContext();
+                    }
                     yield* Ref.update(compactionMarkers, (current) => {
                       if (promptParts?.instructionState === undefined) return current;
                       const observedMarker = promptParts.compactionMarker;
@@ -9244,6 +9480,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       updated.delete(context.nativeThreadId);
                       return updated;
                     });
+                  } else {
+                    rollbackOfferedAppContext();
                   }
                   if (context.finalized || followsAgentWorkState || superseded()) return;
                   // ACP v2 reports a failed prompt through its idle stop reason, not an RPC error.
@@ -9365,6 +9603,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               runRuntimeCallbackAtGeneration(
                 settle.generation,
                 Effect.gen(function* () {
+                  rollbackOfferedAppContext();
                   if (context.finalized || superseded()) return;
                   const error = Cause.findError(cause);
                   // Native close rejects prompts cancelled before insertion with -32800.
@@ -9568,12 +9807,28 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 (yield* Ref.get(activeSessionSetup))?.initializeResult.protocolVersion === 2
                   ? promptParts?.prompt
                   : undefined,
+              appContextOffered:
+                promptParts !== null &&
+                promptParts.appContextEntries.length > 0 &&
+                (yield* Ref.get(compactionMarkers)).get(requestedSessionId) ===
+                  promptParts.compactionMarker
+                  ? mergeAcpAppContext(
+                      (yield* Ref.get(deliveredAppContext)).get(requestedSessionId),
+                      promptParts.appContextEntries,
+                    )
+                  : undefined,
+              appContextCommittedSequence: new Map(),
+              appContextSequence: 0,
               user: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
               assistant: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
               reasoning: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
+              claimedToolResults: new Map(),
+              drainedToolResultKeys: new Set(),
+              blockedInputRecoveryKeys: new Set(),
+              attemptedInputRecoveryKeys: new Set(),
               stoppedToolCallIds: new Set(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
@@ -9624,11 +9879,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(activeTurn, context);
             yield* Ref.set(stoppedRunQuarantine, false);
             const runningTurn = providerTurnPayload(context, "running", null);
-            yield* Ref.update(providerTurns, (current) => {
-              const updated = new Map(current);
-              updated.set(String(runningTurn.id), runningTurn);
-              return updated;
-            });
             yield* emitProviderEvent({
               type: "provider_turn.updated",
               driver,
@@ -9775,6 +10025,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const compactSession = isCompactionMessage(turnInput.message)
               ? flavor.compactSession
               : undefined;
+            const initialAppContext =
+              promptParts !== null && promptParts.appContextEntries.length > 0
+                ? {
+                    entries: promptParts.appContextEntries,
+                    offered: context.appContextOffered,
+                    before: undefined,
+                    compactionMarker: promptParts.compactionMarker,
+                    sequence: ++context.appContextSequence,
+                  }
+                : undefined;
             yield* followPrompt(
               context,
               (superseded) =>
@@ -9790,7 +10050,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         stopReason: "end_turn",
                       } satisfies EffectAcpSchema.PromptResponse),
                     ),
-              { generation: promptGeneration, checkPromptOutcome, promptParts, compactSession },
+              {
+                generation: promptGeneration,
+                checkPromptOutcome,
+                promptParts,
+                appContext: initialAppContext,
+                compactSession,
+              },
             ).pipe(Effect.forkIn(sessionScope));
           },
           (effect, turnInput) =>
@@ -9803,6 +10069,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     providerThreadId: turnInput.providerThread.id,
                     runId: turnInput.runId,
                     cause,
+                    // The prompt is sent from a forked fiber, and its failures settle the turn
+                    // instead of reaching here, so no prompt was sent when this fails.
+                    ...(refusedWithSessionIntact(cause) ? { refusedBeforePrompt: true } : {}),
                   }),
               ),
             ),
@@ -9817,6 +10086,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const steerWithPrompt = Effect.fn("AcpAdapterV2.steerWithPrompt")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2SteerInput,
         ) {
+          const isNativeSlashCommand = turnInput.message.text.trimStart().startsWith("/");
           const text = yield* providerMessageTextWithAttachmentPaths({
             text: turnInput.message.text,
             attachments: turnInput.message.attachments,
@@ -9851,6 +10121,43 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 generation,
                 Effect.gen(function* () {
                   if (context.finalized || context.interrupted) return false;
+                  const compactionMarker = (yield* Ref.get(compactionMarkers)).get(
+                    context.nativeThreadId,
+                  );
+                  const seenAppContext =
+                    context.appContextOffered ??
+                    (yield* Ref.get(deliveredAppContext)).get(context.nativeThreadId);
+                  const appContextEntries = unsentAcpAppContext(
+                    turnInput.appContext,
+                    seenAppContext,
+                    isNativeSlashCommand,
+                  );
+                  const appContextBefore = context.appContextOffered;
+                  const appContextOffered =
+                    appContextEntries.length === 0
+                      ? undefined
+                      : mergeAcpAppContext(seenAppContext, appContextEntries);
+                  const steerAppContext =
+                    appContextOffered === undefined
+                      ? undefined
+                      : {
+                          entries: appContextEntries,
+                          offered: appContextOffered,
+                          before: appContextBefore,
+                          compactionMarker,
+                          sequence: ++context.appContextSequence,
+                        };
+                  if (appContextOffered !== undefined) {
+                    context.appContextOffered = appContextOffered;
+                  }
+                  const steerPrompt: Array<EffectAcpSchema.ContentBlock> = [
+                    ...appContextEntries.map((entry) => ({
+                      type: "text" as const,
+                      text: formatAcpAppContextEntry(entry),
+                    })),
+                    { type: "text", text },
+                    ...attachmentBlocks,
+                  ];
                   // The steer prompt carries the turn on, also past a prompt that already settled.
                   const released = context.foregroundIdle;
                   context.foregroundIdle = yield* Deferred.make<void>();
@@ -9883,7 +10190,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         context,
                         () =>
                           runtime.prompt(
-                            { prompt: [{ type: "text", text }, ...attachmentBlocks] },
+                            { prompt: steerPrompt },
                             { dispatched, released: releasedForSteer },
                           ),
                         superseded,
@@ -9892,6 +10199,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       generation,
                       checkPromptOutcome,
                       promptParts: null,
+                      appContext: steerAppContext,
                       compactSession: undefined,
                     },
                   ).pipe(Effect.forkIn(sessionScope));
@@ -10224,26 +10532,69 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 resolveAttachmentPath: host.resolveAttachmentPath,
                 resolveExtractedTextPath: host.resolveExtractedTextPath,
               });
+              const images = yield* imageAttachmentBlocks(turnInput.message.attachments);
+              const isNativeSlashCommand = turnInput.message.text.trimStart().startsWith("/");
+              const compactionMarker = (yield* Ref.get(compactionMarkers)).get(
+                context.nativeThreadId,
+              );
+              const seenAppContext =
+                context.appContextOffered ??
+                (yield* Ref.get(deliveredAppContext)).get(context.nativeThreadId);
+              const appContextEntries = unsentAcpAppContext(
+                turnInput.appContext,
+                seenAppContext,
+                isNativeSlashCommand,
+              );
+              const steerText =
+                appContextEntries.length === 0
+                  ? text
+                  : text.length > 0
+                    ? `${appContextEntries.map(formatAcpAppContextEntry).join("\n")}\n\n${text}`
+                    : appContextEntries.map(formatAcpAppContextEntry).join("\n");
+              const appContextSequence =
+                appContextEntries.length === 0 ? 0 : ++context.appContextSequence;
               const steerId = yield* steering.send(
                 runtime,
                 context.nativeThreadId,
-                text,
-                yield* imageAttachmentBlocks(turnInput.message.attachments),
+                steerText,
+                images,
               );
-              if (steerId === undefined) return;
-              const injected = steerInjection(steerId);
-              // The agent reads a steer at its next step. One that lands after the last
-              // step is dropped, and the turn settles right after; the orchestrator then
-              // sends it as a follow-up. The bound keeps Stop from queueing behind a tool.
-              const outcome = yield* Effect.raceFirst(
-                Deferred.await(injected).pipe(Effect.as("injected" as const)),
-                Deferred.await(context.promptWireSettled).pipe(Effect.as("settled" as const)),
-              ).pipe(Effect.timeoutOption(STEER_DELIVERY_BOUND));
-              steerInjections.delete(steerId);
-              if (Option.contains(outcome, "settled") && !(yield* Deferred.isDone(injected))) {
-                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                  driver,
-                  detail: `Provider turn ${turnInput.providerTurnId} ended before it read the steering message.`,
+              let steerConfirmed = true;
+              if (steerId !== undefined) {
+                const injected = steerInjection(steerId);
+                // The agent reads a steer at its next step. One that lands after the last
+                // step is dropped, and the turn settles right after; the orchestrator then
+                // sends it as a follow-up. The bound keeps Stop from queueing behind a tool.
+                const outcome = yield* Effect.raceFirst(
+                  Deferred.await(injected).pipe(Effect.as("injected" as const)),
+                  Deferred.await(context.promptWireSettled).pipe(Effect.as("settled" as const)),
+                ).pipe(Effect.timeoutOption(STEER_DELIVERY_BOUND));
+                steerInjections.delete(steerId);
+                if (Option.contains(outcome, "settled") && !(yield* Deferred.isDone(injected))) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver,
+                    detail: `Provider turn ${turnInput.providerTurnId} ended before it read the steering message.`,
+                  });
+                }
+                // A steer still unread at the bound may yet be dropped, so its notes stay unsent.
+                steerConfirmed = yield* Deferred.isDone(injected);
+              }
+              if (
+                steerConfirmed &&
+                appContextEntries.length > 0 &&
+                !context.interrupted &&
+                (yield* Ref.get(compactionMarkers)).get(context.nativeThreadId) === compactionMarker
+              ) {
+                context.appContextOffered = mergeAcpAppContext(
+                  context.appContextOffered ??
+                    (yield* Ref.get(deliveredAppContext)).get(context.nativeThreadId),
+                  appContextEntries,
+                );
+                yield* commitAcpAppContext({
+                  context,
+                  entries: appContextEntries,
+                  compactionMarker,
+                  sequence: appContextSequence,
                 });
               }
             },
@@ -10709,7 +11060,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       status: "idle" as const,
                       updatedAt: now,
                     },
-                    providerTurns: [...(yield* Ref.get(providerTurns)).values()],
+                    // Imports read only the transcript; turns reach orchestration as events.
                     messages,
                     reasoningMessageIds: [...state.reasoningIds],
                     runtimeRequests: [],
@@ -10768,7 +11119,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       status: "idle" as const,
                       updatedAt: now,
                     },
-                    providerTurns: [],
                     messages: [],
                     runtimeRequests: [],
                   };
