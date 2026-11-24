@@ -394,6 +394,52 @@ layer("GitLabCli.layer", (it) => {
   );
 
   it.effect.each([
+    {
+      repository: "git.example.com/group/project",
+      authStatus: Effect.succeed(
+        processOutput("git.example.com\n  ✓ Logged in to git.example.com as someone\n"),
+      ),
+      args: ["api", "--hostname", "git.example.com", "projects/group%2Fproject"],
+    },
+    {
+      // A dotted group name is a namespace when glab has no login for it.
+      repository: "my.group/sub/project",
+      authStatus: Effect.fail(
+        new VcsProcessExitError({
+          operation: "GitLabCli.execute",
+          command: "glab",
+          cwd: "/repo",
+          exitCode: 1,
+          detail: "my.group has not been authenticated with glab",
+        }),
+      ),
+      args: ["api", "projects/my.group%2Fsub%2Fproject"],
+    },
+  ])("looks up scheme-less $repository", ({ repository, authStatus, args }) =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(authStatus).mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            JSON.stringify({
+              path_with_namespace: "group/project",
+              web_url: "https://git.example.com/group/project",
+              http_url_to_repo: "https://git.example.com/group/project.git",
+              ssh_url_to_repo: "git@git.example.com:group/project.git",
+            }),
+          ),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.getRepositoryCloneUrls({ cwd: "/repo", repository });
+
+      expect(mockedRun).toHaveBeenLastCalledWith(
+        expect.objectContaining({ command: "glab", args }),
+      );
+    }),
+  );
+
+  it.effect.each([
     { host: "gitlab.com", withheld: {} },
     {
       host: "gitlab.example.com",
