@@ -343,10 +343,14 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
             AND task.status IN ('pending', 'running', 'waiting')
             AND parent.deleted_at IS NULL
         )
-        AND (${sql.or([
-          sql`thread.title <> ${DELETED_THREAD_TITLE}`,
-          // A thread renamed to the placeholder still has its first title in thread.created.
-          sql`EXISTS (
+        -- The delete's own purge always runs; the sweep only takes threads with something left.
+        AND ${
+          deletedThreadId !== undefined
+            ? sql`1 = 1`
+            : sql.or([
+                sql`thread.title <> ${DELETED_THREAD_TITLE}`,
+                // A thread renamed to the placeholder still has its first title in thread.created.
+                sql`EXISTS (
             SELECT 1 FROM orchestration_events
               INDEXED BY idx_orchestration_events_agent_stream_sequence
             WHERE application_event_version = 2
@@ -355,11 +359,13 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
               AND event_type IN ('thread.created', 'thread.deleted')
               AND json_extract(payload_json, '$.title') IS NOT ${DELETED_THREAD_TITLE}
           )`,
-          sql`json_type(thread.payload_json, '$.guestShare') IS NOT NULL`,
-          ...DELETED_THREAD_CONTENT_TABLES.map(
-            (table) => sql`EXISTS (SELECT 1 FROM ${sql(table)} WHERE thread_id = thread.thread_id)`,
-          ),
-        ])})
+                sql`json_type(thread.payload_json, '$.guestShare') IS NOT NULL`,
+                ...DELETED_THREAD_CONTENT_TABLES.map(
+                  (table) =>
+                    sql`EXISTS (SELECT 1 FROM ${sql(table)} WHERE thread_id = thread.thread_id)`,
+                ),
+              ])
+        }
     `.pipe(NodeSqliteClient.readOnly);
 
     const purgeThreads = Effect.fnUntraced(function* (

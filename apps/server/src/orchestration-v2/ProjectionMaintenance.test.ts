@@ -587,3 +587,36 @@ it.effect("the maintenance pass purges threads deleted before purging existed", 
     assert.equal((yield* maintenance.pruneEventStore()).purgedRowCount, 0);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("a delete purges its thread even when nothing marks it as unpurged", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const thread = {
+      ...makeThread(ThreadId.make("thread:purge-placeholder"), now),
+      title: ProjectionMaintenance.DELETED_THREAD_TITLE,
+    };
+    yield* Effect.flatMap(EventSink.EventSinkV2, (sink) =>
+      sink.write({
+        events: [{ ...threadCreated(thread, now), id: EventId.make("event:purge:placeholder") }],
+      }),
+    );
+    // A rename in between left its private title in a settled request.
+    yield* sql`
+      INSERT INTO orchestration_v2_effect_outbox (
+        effect_id, command_id, thread_id, effect_type, payload_json, status,
+        available_at, created_at, updated_at
+      ) VALUES (
+        'effect:purge-placeholder', 'command:purge-placeholder', ${thread.id},
+        'provider-session.apply-thread-title',
+        '{"type":"provider-session.apply-thread-title","title":"private rename"}', 'succeeded',
+        '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'
+      )
+    `;
+    yield* deleteThread(thread, now);
+
+    yield* maintenance.purgeDeletedThread(thread.id);
+    assert.deepEqual(yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox`, []);
+  }).pipe(Effect.provide(layerTest)),
+);
