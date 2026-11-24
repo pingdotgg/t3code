@@ -548,6 +548,12 @@ const readPageMetrics = async (cdp: CDPSession) => {
   );
 };
 
+const NOT_PAINTING_MESSAGE =
+  "The browser is not producing screenshot frames. For a desktop tab, show or restore the T3 Code window and try again.";
+
+export const isNotPainting = (cause: unknown) =>
+  isServerBrowserOperationError(cause) && cause.message === NOT_PAINTING_MESSAGE;
+
 // Never pass a clip scale: Chromium mirrors the top-left of the page into a `backdrop-filter`
 // in any capture it shrinks.
 export const captureViewport = async (
@@ -565,8 +571,7 @@ export const captureViewport = async (
         reject(
           new ServerBrowserOperationError({
             tag: "PreviewAutomationExecutionError",
-            message:
-              "The browser is not producing screenshot frames. For a desktop tab, show or restore the T3 Code window and try again.",
+            message: NOT_PAINTING_MESSAGE,
           }),
         ),
       SCREENSHOT_TIMEOUT_MS,
