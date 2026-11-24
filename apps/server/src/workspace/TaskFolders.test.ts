@@ -2,13 +2,21 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { type ProjectTrackedFolder, ThreadId } from "@t3tools/contracts";
+import {
+  type ManagedPolicyDocument,
+  type ProjectTrackedFolder,
+  TaskFolderError,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../config.ts";
@@ -16,15 +24,17 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as TaskFolders from "./TaskFolders.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
 import {
+  approveLayoutCommands,
   layerTaskFoldersWithGit,
+  revokeCreateCommand,
   taskFoldersTestProjectId as projectId,
   type TaskFoldersTestState,
 } from "./TaskFolders.testkit.ts";
 
 const threadId = ThreadId.make("thread:task-folders");
 
-const layerFor = (state: TaskFoldersTestState) =>
-  layerTaskFoldersWithGit(state).pipe(
+const layerFor = (state: TaskFoldersTestState, policy?: ManagedPolicyDocument) =>
+  layerTaskFoldersWithGit(state, policy).pipe(
     Layer.provideMerge(
       GitVcsDriver.layer.pipe(
         Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-task-folders-" })),
@@ -82,7 +92,7 @@ const create = Effect.fnUntraced(function* (
     projectStart: { refName: "main", baseRefName: "main" },
     baseBranch,
     startFromOrigin: false,
-    projectCommands: true,
+    projectCommands: "permitted",
   });
 });
 
@@ -90,9 +100,10 @@ const withState = <A, E>(
   test: (
     state: TaskFoldersTestState,
   ) => Effect.Effect<A, E, Layer.Success<ReturnType<typeof layerFor>> | Scope.Scope>,
+  policy?: ManagedPolicyDocument,
 ) => {
   const state: TaskFoldersTestState = { workspaceRoot: "/unset", trackedFolders: [], thread: null };
-  return test(state).pipe(Effect.provide(layerFor(state)), Effect.scoped);
+  return test(state).pipe(Effect.provide(layerFor(state, policy)), Effect.scoped);
 };
 
 it.live("lays a plain wrapper out as links around its repositories' worktrees", () =>
@@ -162,7 +173,7 @@ it.live("lays a plain wrapper out as links around its repositories' worktrees", 
 
       // A file of the thread's own keeps the folder, and a folder that stays keeps its links.
       yield* fileSystem.writeFileString(path.join(root, "draft.md"), "mine\n");
-      yield* taskFolders.remove({ root, force: false, forget: true, projectCommands: true });
+      yield* taskFolders.remove({ root, force: false, forget: true, projectCommands: "permitted" });
       assert.equal(
         yield* fileSystem.readLink(path.join(root, "AGENTS.md")),
         path.join(shop, "AGENTS.md"),
@@ -223,7 +234,7 @@ it.live("keeps a Git project and its sibling repository side by side", () =>
         root,
         force: false,
         forget: true,
-        projectCommands: true,
+        projectCommands: "permitted",
       });
       assert.deepEqual(
         first.kept.map((entry) => entry.path),
@@ -234,7 +245,7 @@ it.live("keeps a Git project and its sibling repository side by side", () =>
         root,
         force: true,
         forget: true,
-        projectCommands: true,
+        projectCommands: "permitted",
       });
       assert.deepEqual(second.kept, []);
       assert.isFalse(yield* fileSystem.exists(root));
@@ -305,7 +316,7 @@ it.live.each([{ projectIsRepository: true }, { projectIsRepository: false }])(
         const request = { cwd: shop, refName: "main", newRefName: "feature", path: null };
 
         const created = yield* taskFolders.createForProjectFolder(request, {
-          projectCommands: true,
+          projectCommands: "permitted",
         });
 
         const taskFolder = yield* taskFolders.find(created!.worktree.path);
@@ -330,7 +341,7 @@ it.live.each([{ projectIsRepository: true }, { projectIsRepository: false }])(
           { ...request, cwd: web },
         ]) {
           assert.isNull(
-            yield* taskFolders.createForProjectFolder(single, { projectCommands: true }),
+            yield* taskFolders.createForProjectFolder(single, { projectCommands: "permitted" }),
           );
         }
       }),
@@ -473,6 +484,7 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
       );
       state.workspaceRoot = shop;
       state.trackedFolders = tracked(api, web);
+      yield* approveLayoutCommands;
 
       const { taskFolder } = yield* create("feature", undefined, "main");
 
@@ -496,7 +508,7 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
         root: taskFolder.root,
         force: true,
         forget: true,
-        projectCommands: true,
+        projectCommands: "permitted",
         inspect: () => Effect.succeed({ keep: null, force: true }),
       });
       assert.isTrue(yield* fileSystem.exists(path.join(shop, "torn-down")));
@@ -525,12 +537,13 @@ it.live("leaves a project's layout commands out for a request that may not run t
       );
       state.workspaceRoot = shop;
       state.trackedFolders = tracked(api);
+      yield* approveLayoutCommands;
       const taskFolders = yield* TaskFolders.TaskFolders;
 
       const refused = yield* taskFolders
         .createForProjectFolder(
           { cwd: shop, refName: "main", newRefName: "feature", path: null },
-          { projectCommands: false },
+          { projectCommands: "request-not-permitted" },
         )
         .pipe(Effect.flip);
       assert.include(refused.detail, "not permitted to run");
@@ -546,7 +559,7 @@ it.live("leaves a project's layout commands out for a request that may not run t
       yield* taskFolders.restore({
         taskFolder,
         branch: "feature",
-        projectCommands: false,
+        projectCommands: "request-not-permitted",
         recreate: (checkout) =>
           run(checkout.repositoryPath, "worktree", "add", "-q", checkout.worktreePath, "feature"),
       });
@@ -555,7 +568,7 @@ it.live("leaves a project's layout commands out for a request that may not run t
         yield* taskFolders.removeIfTaskFolder({
           path: taskFolder.root,
           force: true,
-          projectCommands: false,
+          projectCommands: "request-not-permitted",
         }),
       );
       assert.equal(yield* fileSystem.readFileString(ran), "create\n");
@@ -582,6 +595,7 @@ it.live(
             path.join(shop, "t3.json"),
             JSON.stringify({ worktreeLayout: { create: command } }),
           );
+          yield* approveLayoutCommands;
           const plan = yield* taskFolders.plan({ projectId, repositories: [{ path: api }] });
           return yield* taskFolders
             .create({
@@ -589,7 +603,7 @@ it.live(
               branch: "feature",
               projectStart: { refName: "main", baseRefName: "main" },
               startFromOrigin: false,
-              projectCommands: true,
+              projectCommands: "permitted",
             })
             .pipe(Effect.flip);
         });
@@ -646,6 +660,7 @@ it.live.each([{ linked: false }, { linked: true }])(
         );
         state.workspaceRoot = mono;
         state.trackedFolders = [];
+        yield* approveLayoutCommands;
 
         const { taskFolder } = yield* create("feature");
 
@@ -665,7 +680,7 @@ it.live.each([{ linked: false }, { linked: true }])(
         yield* taskFolders.restore({
           taskFolder,
           branch: "feature",
-          projectCommands: true,
+          projectCommands: "permitted",
           recreate: () => Effect.die("the layout command rebuilds the folder"),
         });
         assert.isTrue(yield* fileSystem.exists(prepared));
@@ -674,7 +689,7 @@ it.live.each([{ linked: false }, { linked: true }])(
           root: taskFolder.root,
           force: true,
           forget: true,
-          projectCommands: true,
+          projectCommands: "permitted",
         });
         assert.equal(yield* worktreeCount(mono), linked ? 2 : 1);
       }),
@@ -707,7 +722,7 @@ it.live("starts each repository from the base branch where it has one", () =>
       // A worktree an existing thread asks for starts its repositories from the chosen base too.
       const requested = yield* (yield* TaskFolders.TaskFolders).createForProjectFolder(
         { cwd: state.workspaceRoot, refName: "release", newRefName: "later", path: null },
-        { projectCommands: true },
+        { projectCommands: "permitted" },
       );
       assert.equal(
         yield* head(path.join(requested!.worktree.path, "api"), "HEAD"),
@@ -930,7 +945,7 @@ it.live("adds a repository to an existing task folder on the thread's branch", (
         .restore({
           taskFolder: (yield* taskFolders.find(root))!,
           branch: "feature",
-          projectCommands: true,
+          projectCommands: "permitted",
           recreate: () => Effect.die("an existing checkout is never recreated"),
         })
         .pipe(Effect.flip);
@@ -958,7 +973,7 @@ it.live("keeps a repository git will not remove and removes the rest", () =>
         root,
         force: false,
         forget: true,
-        projectCommands: true,
+        projectCommands: "permitted",
       });
 
       assert.deepEqual(first.removed, [path.join(root, "web")]);
@@ -986,7 +1001,7 @@ it.live("keeps a repository git will not remove and removes the rest", () =>
         root,
         force: true,
         forget: true,
-        projectCommands: true,
+        projectCommands: "permitted",
       });
 
       assert.deepEqual(second.kept, []);
@@ -1018,7 +1033,7 @@ it.live("restores a recorded repository the project stopped tracking as its work
       yield* (yield* TaskFolders.TaskFolders).restore({
         taskFolder,
         branch: "feature",
-        projectCommands: true,
+        projectCommands: "permitted",
         recreate: ({ repositoryPath, worktreePath }) =>
           run(repositoryPath, "worktree", "prune").pipe(
             Effect.andThen(run(repositoryPath, "worktree", "add", "-q", worktreePath, "feature")),
@@ -1055,7 +1070,7 @@ it.live("resumes once an excluded dependency's worktree is replaced by a clone",
       const restore = taskFolders.restore({
         taskFolder,
         branch: "feature",
-        projectCommands: true,
+        projectCommands: "permitted",
         recreate: () => Effect.die("nothing is missing"),
       });
 
@@ -1068,5 +1083,365 @@ it.live("resumes once an excluded dependency's worktree is replaced by a clone",
       assert.equal(yield* run(clone, "rev-parse", "--git-dir"), ".git");
       assert.deepEqual((yield* taskFolders.find(taskFolder.root))?.repositories, []);
     }),
+  ),
+);
+
+// A project whose `t3.json` lays its own folder out, with a marker file per command that ran.
+const layoutProject = Effect.gen(function* () {
+  const { fileSystem, path, tmp, run, repository } = yield* fixture;
+  const project = yield* repository("project");
+  const ran = (name: string) => fileSystem.exists(path.join(tmp, name));
+  const writeLayout = (create: string, remove: string) =>
+    fileSystem.writeFileString(
+      path.join(project, "t3.json"),
+      JSON.stringify({
+        worktreeLayout: {
+          // Restore runs it again, when the branch is already there.
+          create: `touch "${path.join(tmp, create)}" && (git worktree add -q "$T3_WORKTREE_PROJECT_PATH" "$T3_WORKTREE_BRANCH" 2>/dev/null || git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH")`,
+          remove: `touch "${path.join(tmp, remove)}"`,
+        },
+      }),
+    );
+  const createFor = (
+    branch: string,
+    projectCommands: TaskFolders.ProjectCommandsNow = "permitted",
+  ) =>
+    Effect.flatMap(TaskFolders.TaskFolders, (taskFolders) =>
+      taskFolders.createForProjectFolder(
+        { cwd: project, refName: "main", newRefName: branch, path: null },
+        { projectCommands },
+      ),
+    );
+  const approved = Effect.flatMap(TaskFolders.TaskFolders, (taskFolders) =>
+    taskFolders
+      .layoutCommands(projectId)
+      .pipe(Effect.map(({ commands }) => commands.map((command) => command.approved))),
+  );
+  return { fileSystem, path, run, project, ran, writeLayout, createFor, approved };
+});
+
+it.live("runs a project's layout command only once its exact text is approved", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { run, project, ran, writeLayout, createFor, approved } = yield* layoutProject;
+      yield* writeLayout("create-1", "remove-1");
+      state.workspaceRoot = project;
+
+      const unapproved = yield* createFor("one").pipe(Effect.flip);
+      assert.include(unapproved.detail, "nobody has approved as it is written now");
+      assert.include(unapproved.detail, "Worktree layout in the project's settings");
+      assert.isFalse(yield* ran("create-1"));
+      assert.equal(yield* run(project, "branch", "--list", "one"), "");
+      assert.deepEqual(yield* approved, [false, false]);
+
+      yield* approveLayoutCommands;
+      assert.deepEqual(yield* approved, [true, true]);
+      assert.isNotNull(yield* createFor("one"));
+      assert.isTrue(yield* ran("create-1"));
+
+      // New text is a new command: the approval of the old one does not carry over.
+      yield* writeLayout("create-2", "remove-2");
+      assert.deepEqual(yield* approved, [false, false]);
+      const changed = yield* createFor("two").pipe(Effect.flip);
+      assert.include(changed.detail, "nobody has approved as it is written now");
+      assert.isFalse(yield* ran("create-2"));
+
+      // The old text coming back is the approved text again.
+      yield* writeLayout("create-1", "remove-1");
+      assert.deepEqual(yield* approved, [true, true]);
+    }),
+  ),
+);
+
+it.live("removes and restores a thread folder without layout commands nobody approved", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, run, project, ran, writeLayout, createFor } = yield* layoutProject;
+      yield* writeLayout("create-1", "remove-1");
+      state.workspaceRoot = project;
+      yield* approveLayoutCommands;
+      const kept = yield* createFor("kept");
+      const gone = yield* createFor("gone");
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      const keptFolder = (yield* taskFolders.find(kept!.worktree.path))!;
+      yield* writeLayout("create-2", "remove-2");
+
+      // A missing checkout comes back plain.
+      yield* fileSystem.remove(kept!.worktree.path, { recursive: true });
+      yield* run(project, "worktree", "prune");
+      yield* taskFolders.restore({
+        taskFolder: keptFolder,
+        branch: "kept",
+        projectCommands: "permitted",
+        recreate: (checkout) =>
+          run(checkout.repositoryPath, "worktree", "add", "-q", checkout.worktreePath, "kept"),
+      });
+      assert.isFalse(yield* ran("create-2"));
+      assert.equal(yield* run(kept!.worktree.path, "symbolic-ref", "--short", "HEAD"), "kept");
+
+      // The folder goes, its checkouts with it, and the project's teardown stays unrun.
+      assert.isTrue(
+        yield* taskFolders.removeIfTaskFolder({
+          path: gone!.worktree.path,
+          force: true,
+          projectCommands: "permitted",
+        }),
+      );
+      assert.isFalse(yield* ran("remove-1"));
+      assert.isFalse(yield* ran("remove-2"));
+      assert.isFalse(yield* fileSystem.exists(gone!.worktree.path));
+
+      // Approved as written now, both run again.
+      yield* approveLayoutCommands;
+      yield* fileSystem.remove(kept!.worktree.path, { recursive: true });
+      yield* run(project, "worktree", "prune");
+      yield* taskFolders.restore({
+        taskFolder: keptFolder,
+        branch: "kept",
+        projectCommands: "permitted",
+        recreate: () => Effect.die("the layout command rebuilds the folder"),
+      });
+      assert.isTrue(yield* ran("create-2"));
+      yield* taskFolders.remove({
+        root: keptFolder.root,
+        force: true,
+        forget: true,
+        projectCommands: "permitted",
+      });
+      assert.isTrue(yield* ran("remove-2"));
+    }),
+  ),
+);
+
+it.live("leaves an approved layout command unrun for an agent below Full access", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { project, ran, writeLayout, createFor } = yield* layoutProject;
+      yield* writeLayout("create-1", "remove-1");
+      state.workspaceRoot = project;
+      yield* approveLayoutCommands;
+
+      const refused = yield* createFor("one", "agent-below-full-access").pipe(Effect.flip);
+      assert.include(refused.detail, "only have run from a thread in Full access");
+      assert.isFalse(yield* ran("create-1"));
+    }),
+  ),
+);
+
+it.live(
+  "leaves the remove command unrun for a folder whose create command never started, when its record outlives the failed creation",
+  () =>
+    withState((state) =>
+      Effect.gen(function* () {
+        const { project, ran, writeLayout, createFor } = yield* layoutProject;
+        yield* writeLayout("create-1", "remove-1");
+        state.workspaceRoot = project;
+        yield* approveLayoutCommands;
+        const taskFolders = yield* TaskFolders.TaskFolders;
+        const store = yield* TaskFolderStore.TaskFolderStore;
+
+        state.onForget = Effect.fail(
+          new TaskFolderError({ operation: "read", detail: "Could not read task folders." }),
+        );
+        yield* createFor("one", "agent-below-full-access").pipe(Effect.flip);
+        delete state.onForget;
+        const [left] = yield* store.list;
+        assert.isDefined(left);
+
+        // Whoever cleans up after the failed creation may run the project's commands by now.
+        yield* taskFolders.remove({
+          root: left!.root,
+          force: true,
+          forget: true,
+          projectCommands: "permitted",
+        });
+        assert.isFalse(yield* ran("remove-1"));
+        assert.isFalse(yield* ran("create-1"));
+      }),
+    ),
+);
+
+/**
+ * The first request's command holds the project's turn; `second` is cleared when it asks, then
+ * waits, and `meanwhile` runs during that wait. The second request's outcome.
+ */
+const afterWaitingItsTurn = <A, E, R, E1, E2, R2>(
+  state: TaskFoldersTestState,
+  first: Effect.Effect<unknown, E1, R>,
+  second: Effect.Effect<A, E, R>,
+  meanwhile: Effect.Effect<unknown, E2, R2>,
+) =>
+  Effect.gen(function* () {
+    const started = yield* Queue.unbounded<void>();
+    const approvalRead = yield* Queue.unbounded<void>();
+    const finish = yield* Deferred.make<void>();
+    state.onLayoutCommand = Queue.offer(started, undefined).pipe(
+      Effect.andThen(Deferred.await(finish)),
+    );
+    state.onApprovalRead = Queue.offer(approvalRead, undefined);
+
+    const holding = yield* first.pipe(Effect.forkScoped);
+    yield* Queue.take(started);
+    yield* Queue.clear(approvalRead);
+    const waiting = yield* second.pipe(Effect.forkScoped);
+    yield* Queue.take(approvalRead);
+    yield* meanwhile;
+    yield* Deferred.succeed(finish, undefined);
+
+    assert.isNotNull(yield* Fiber.join(holding));
+    return yield* Fiber.await(waiting);
+  });
+
+it.live(
+  "leaves a layout command unrun when its approval is withdrawn while it waits its turn",
+  () =>
+    withState((state) =>
+      Effect.gen(function* () {
+        const { run, project, ran, writeLayout, createFor } = yield* layoutProject;
+        yield* writeLayout("create-1", "remove-1");
+        state.workspaceRoot = project;
+        yield* approveLayoutCommands;
+
+        const second = yield* afterWaitingItsTurn(
+          state,
+          createFor("one"),
+          createFor("two"),
+          revokeCreateCommand,
+        );
+
+        const refused = yield* Effect.flip(second);
+        assert.include(refused.detail, "nobody has approved as it is written now");
+        // Only the first one's command ran: the second made no branch.
+        assert.equal(yield* run(project, "branch", "--list", "two"), "");
+        // Nothing was laid out for the second, so the project's teardown has nothing to undo.
+        assert.isFalse(yield* ran("remove-1"));
+      }),
+    ),
+);
+
+it.live(
+  "leaves a layout command unrun when the thread that asked leaves Full access while it waits its turn",
+  () =>
+    withState((state) =>
+      Effect.gen(function* () {
+        const { run, project, writeLayout, createFor } = yield* layoutProject;
+        yield* writeLayout("create-1", "remove-1");
+        state.workspaceRoot = project;
+        yield* approveLayoutCommands;
+        let asker: TaskFolders.ProjectCommands = "permitted";
+
+        const second = yield* afterWaitingItsTurn(
+          state,
+          createFor("one"),
+          createFor(
+            "two",
+            Effect.sync(() => asker),
+          ),
+          Effect.sync(() => {
+            asker = "agent-below-full-access";
+          }),
+        );
+
+        const refused = yield* Effect.flip(second);
+        assert.include(refused.detail, "only have run from a thread in Full access");
+        assert.equal(yield* run(project, "branch", "--list", "two"), "");
+      }),
+    ),
+);
+
+it.live(
+  "keeps a branch that appeared while a layout command waited its turn when the command fails",
+  () =>
+    withState((state) =>
+      Effect.gen(function* () {
+        const { fileSystem, path, run, project, createFor } = yield* layoutProject;
+        // Lays out the first request's folder and fails for any other branch.
+        yield* fileSystem.writeFileString(
+          path.join(project, "t3.json"),
+          JSON.stringify({
+            worktreeLayout: {
+              create: `[ "$T3_WORKTREE_BRANCH" = one ] && git worktree add -q -b one "$T3_WORKTREE_PROJECT_PATH"`,
+            },
+          }),
+        );
+        state.workspaceRoot = project;
+        yield* approveLayoutCommands;
+
+        const second = yield* afterWaitingItsTurn(
+          state,
+          createFor("one"),
+          createFor("two"),
+          run(project, "branch", "two"),
+        );
+
+        const failed = yield* Effect.flip(second);
+        assert.include(failed.detail, "worktree layout command failed");
+        assert.include(yield* run(project, "branch", "--list", "two"), "two");
+      }),
+    ),
+);
+
+it.live.each([
+  { change: "its approval is withdrawn", detail: "nobody has approved as it is written now" },
+  {
+    change: "the thread that asked leaves Full access",
+    detail: "only have run from a thread in Full access",
+  },
+])("leaves a layout command unrun when $change while its branches are listed", ({ detail }) =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { run, project, ran, writeLayout, createFor } = yield* layoutProject;
+      yield* writeLayout("create-1", "remove-1");
+      state.workspaceRoot = project;
+      yield* approveLayoutCommands;
+      let asker: TaskFolders.ProjectCommands = "permitted";
+      const change = detail.includes("Full access")
+        ? Effect.sync(() => {
+            asker = "agent-below-full-access";
+          })
+        : revokeCreateCommand.pipe(Effect.orDie);
+      const writes = yield* Effect.context<Effect.Services<typeof revokeCreateCommand>>();
+      // The second listing is the one made when the command's turn has come.
+      let listings = 0;
+      state.onBranchListing = Effect.suspend(() =>
+        ++listings === 2 ? change.pipe(Effect.provide(writes)) : Effect.void,
+      );
+
+      const refused = yield* createFor(
+        "one",
+        Effect.sync(() => asker),
+      ).pipe(Effect.flip);
+
+      assert.equal(listings, 2);
+      assert.include(refused.detail, detail);
+      assert.isFalse(yield* ran("create-1"));
+      // Nothing was laid out, so the project's teardown has nothing to undo.
+      assert.isFalse(yield* ran("remove-1"));
+      assert.equal(yield* run(project, "branch", "--list", "one"), "");
+    }),
+  ),
+);
+
+it.live("leaves an approved layout command unrun when policy turns layout commands off", () =>
+  withState(
+    (state) =>
+      Effect.gen(function* () {
+        const { project, ran, writeLayout, createFor } = yield* layoutProject;
+        yield* writeLayout("create-1", "remove-1");
+        state.workspaceRoot = project;
+        yield* approveLayoutCommands;
+
+        const refused = yield* createFor("one").pipe(Effect.flip);
+        assert.include(
+          refused.detail,
+          "Example Corp's policy does not allow project worktree layout commands.",
+        );
+        assert.isFalse(yield* ran("create-1"));
+      }),
+    {
+      schemaVersion: 1,
+      organization: "Example Corp",
+      limits: { worktreeLayoutCommands: false },
+    },
   ),
 );
