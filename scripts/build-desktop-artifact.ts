@@ -2518,7 +2518,7 @@ export const stageMacTrackpad = Effect.fn("stageMacTrackpad")(function* (input: 
     ChildProcess.make(
       "node",
       [
-        path.join(input.repoRoot, "apps/desktop/scripts/build-mac-trackpad.mjs"),
+        path.join(input.repoRoot, "apps/desktop/scripts/build-mac-trackpad.ts"),
         "--arch",
         input.arch,
         "--output",
