@@ -8,9 +8,10 @@ import { environmentCatalog } from "~/connection/catalog";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { serverEnvironment } from "~/state/server";
 import type { ServerUpdateOutcome, ServerUpdateTarget } from "../ServerUpdateAction";
-import type { UpdateEverythingRun } from "./updateEverything.logic";
+import type { RestoredRetry, UpdateEverythingRun } from "./updateEverything.logic";
 import {
   retryFailedUpdateRunServers,
+  saveUpdateEverythingResult,
   setUpdateEverythingRun,
   startDesktopUpdateLaunchNotice,
 } from "./updateEverythingRun";
@@ -44,6 +45,58 @@ describe("startDesktopUpdateLaunchNotice", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps a restored track switch out of the capsule's retry", async () => {
+    const environmentId = EnvironmentId.make("switching-machine");
+    const now = 1_800_000_000_000;
+    vi.useFakeTimers({ now });
+    const store = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => store.set(key, value),
+        removeItem: (key: string) => store.delete(key),
+      },
+    });
+    setUpdateEverythingRun(() => ({
+      trackSwitch: true,
+      localVersion: "9.9.9",
+      phase: "installing",
+      restartAt: null,
+      machines: [
+        {
+          environmentId,
+          label: "Switching",
+          updatesProviders: false,
+          server: null,
+          handedOffVersion: "9.9.9",
+          startedAt: now,
+          result: null,
+          failure: null,
+          providerFailure: null,
+        },
+      ],
+    }));
+    saveUpdateEverythingResult({
+      localVersion: "9.9.9",
+      updatedServers: 0,
+      updatedProviders: 0,
+      failures: [],
+      restarting: [],
+    });
+    setUpdateEverythingRun(() => null);
+
+    const stop = startDesktopUpdateLaunchNotice();
+    let run: UpdateEverythingRun | null = null;
+    setUpdateEverythingRun((current) => (run = current));
+    try {
+      expect(run).toMatchObject({ trackSwitch: true, machines: [{ environmentId }] });
+    } finally {
+      await vi.advanceTimersByTimeAsync(32 * 60 * 1000);
+      stop();
+      setUpdateEverythingRun(() => null);
+    }
   });
 
   it("keeps a server that is still restarting from looking idle after the app relaunches", async () => {
@@ -162,6 +215,7 @@ describe("retryFailedUpdateRunServers", () => {
 
   it("retries a row restored after a relaunch with the target it is given", () => {
     const environmentId = EnvironmentId.make("restored");
+    const currentId = EnvironmentId.make("restored-current");
     using _config = vi
       .spyOn(serverEnvironment, "configValueAtom")
       .mockImplementation(() =>
@@ -183,6 +237,17 @@ describe("retryFailedUpdateRunServers", () => {
           failure: "Not back after 32 minutes",
           providerFailure: null,
         },
+        {
+          environmentId: currentId,
+          label: "restored-current",
+          updatesProviders: false,
+          server: null,
+          handedOffVersion: "9.9.9",
+          startedAt: 0,
+          result: "failed",
+          failure: "Not back after 32 minutes",
+          providerFailure: null,
+        },
       ],
     }));
     const target: ServerUpdateTarget = {
@@ -195,7 +260,13 @@ describe("retryFailedUpdateRunServers", () => {
       (_target: ServerUpdateTarget) => new Promise<ServerUpdateOutcome>(() => {}),
     );
 
-    retryFailedUpdateRunServers(update, new Map([[environmentId, target]]));
+    retryFailedUpdateRunServers(
+      update,
+      new Map<EnvironmentId, RestoredRetry>([
+        [environmentId, target],
+        [currentId, "current"],
+      ]),
+    );
 
     let run: UpdateEverythingRun | null = null;
     setUpdateEverythingRun((current) => {
@@ -204,10 +275,9 @@ describe("retryFailedUpdateRunServers", () => {
     });
     expect(update.mock.calls.map(([called]) => called)).toEqual([target]);
     // Downloading again, not "restarting" from the old handoff, and retryable if it fails again.
-    expect((run as UpdateEverythingRun | null)?.machines[0]).toMatchObject({
-      result: null,
-      server: target,
-      handedOffVersion: null,
-    });
+    expect((run as UpdateEverythingRun | null)?.machines).toMatchObject([
+      { result: null, server: target, handedOffVersion: null },
+      { result: "done", failure: null },
+    ]);
   });
 });

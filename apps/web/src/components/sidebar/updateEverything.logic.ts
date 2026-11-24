@@ -523,10 +523,11 @@ export type RestoredRetry = ServerUpdateTarget | "current";
  * rebuilt from the server as it is now, as the dialog would. Null when there is nothing to retry. */
 export function resolveRestoredRetry(
   machine: UpdateRunMachine,
-  current: UpdateEverythingMachine | undefined,
+  machines: ReadonlyArray<UpdateEverythingMachine>,
 ): RestoredRetry | null {
   const targetVersion = machine.handedOffVersion;
   if (machine.result !== "failed" || machine.server !== null || targetVersion === null) return null;
+  const current = machines.find(({ environmentId }) => environmentId === machine.environmentId);
   if (current === undefined) return null;
   const config = current.serverConfig;
   if (

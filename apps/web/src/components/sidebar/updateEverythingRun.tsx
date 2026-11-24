@@ -221,6 +221,8 @@ const SavedResult = Schema.Struct({
   updatedProviders: Schema.Number,
   failures: Schema.Array(Schema.String),
   handedOff: Schema.optional(Schema.Array(HandedOffServer)),
+  // Restored track switches retry through their planner, not the capsule.
+  trackSwitch: Schema.optionalKey(Schema.Boolean),
 });
 const decodeSavedResult = Schema.decodeUnknownOption(Schema.fromJsonString(SavedResult));
 
@@ -253,6 +255,7 @@ export function saveUpdateEverythingResult(result: UpdateEverythingResult): void
         updatedProviders: result.updatedProviders,
         failures: result.failures,
         handedOff,
+        ...(run?.trackSwitch ? { trackSwitch: true } : {}),
       } satisfies typeof SavedResult.Type),
     );
   } catch {}
@@ -294,9 +297,13 @@ export function showUpdateEverythingResult(result: UpdateEverythingResult): void
   );
 }
 
-function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
+function followHandedOffServers(
+  servers: ReadonlyArray<HandedOffServer>,
+  trackSwitch: boolean,
+): void {
   if (servers.length === 0) return;
   setUpdateEverythingRun(() => ({
+    ...(trackSwitch ? { trackSwitch: true } : {}),
     localVersion: null,
     phase: "servers",
     restartAt: null,
@@ -392,7 +399,7 @@ export function startDesktopUpdateLaunchNotice(): () => void {
   if (saved) {
     const handedOff = saved.handedOff ?? [];
     showUpdateEverythingResult({ ...saved, restarting: handedOff.map((server) => server.label) });
-    followHandedOffServers(handedOff);
+    followHandedOffServers(handedOff, saved.trackSwitch === true);
   }
 
   let notifiedNotAppliedVersion: string | null = null;

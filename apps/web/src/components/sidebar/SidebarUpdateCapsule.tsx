@@ -48,10 +48,7 @@ function useUpdateRunMachineViews(
   return run.machines.map((machine, index) => ({
     machine,
     status: resolveUpdateRunMachineStatus(machine, run.phase, updateStates[index]!),
-    restoredRetry: resolveRestoredRetry(
-      machine,
-      current.find(({ environmentId }) => environmentId === machine.environmentId),
-    ),
+    restoredRetry: resolveRestoredRetry(machine, current),
   }));
 }
 

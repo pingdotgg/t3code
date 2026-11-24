@@ -505,10 +505,10 @@ describe("resolveRestoredRetry", () => {
   });
 
   it("rebuilds the target from the server as it is now, so the capsule offers Retry", () => {
-    const retry = resolveRestoredRetry(
-      restored("remote"),
+    const retry = resolveRestoredRetry(restored("remote"), [
+      machine("other", "0.1.10", "boot-service"),
       machine("remote", "0.1.10", "boot-service"),
-    );
+    ]);
     expect(retry).toEqual({
       environmentId: "remote",
       serverLabel: "remote",
@@ -525,22 +525,20 @@ describe("resolveRestoredRetry", () => {
     );
   });
 
-  it("settles a server that came back on the target and offers nothing for one that cannot update now", () => {
+  it("marks a server already on the target and offers nothing for one that cannot update now", () => {
     expect(
-      resolveRestoredRetry(restored("remote"), machine("remote", "0.1.12", "boot-service")),
+      resolveRestoredRetry(restored("remote"), [machine("remote", "0.1.12", "boot-service")]),
     ).toBe("current");
     expect(
-      resolveRestoredRetry(
-        restored("remote"),
+      resolveRestoredRetry(restored("remote"), [
         machine("remote", "0.1.10", "boot-service", { connected: false }),
-      ),
+      ]),
     ).toBeNull();
     expect(
-      resolveRestoredRetry(
-        restored("remote"),
+      resolveRestoredRetry(restored("remote"), [
         machine("remote", "0.1.10", "boot-service", { canMaintain: false }),
-      ),
+      ]),
     ).toBeNull();
-    expect(resolveRestoredRetry(restored("remote"), undefined)).toBeNull();
+    expect(resolveRestoredRetry(restored("remote"), [])).toBeNull();
   });
 });
