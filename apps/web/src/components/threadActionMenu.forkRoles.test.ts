@@ -66,7 +66,10 @@ describe("Role menu item", () => {
   });
 
   it("is absent when the caller supplies no role state", () => {
-    expect(roleItem({ forkRoles: undefined })).toBeUndefined();
+    const { forkRoles: _, ...withoutRoles } = state;
+    expect(
+      buildThreadActionMenuItems(withoutRoles).find((item) => item.id === "role"),
+    ).toBeUndefined();
   });
 });
 

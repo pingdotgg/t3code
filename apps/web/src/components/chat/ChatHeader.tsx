@@ -44,6 +44,7 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
+import { RoleBreadcrumb } from "./ChatHeader.forkRoles"; // fork: roles
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -295,6 +296,8 @@ export const ChatHeader = memo(function ChatHeader({
             </WorkspaceBreadcrumbSeparator>
           </>
         ) : null}
+        {isServerThread ? <RoleBreadcrumb threadRef={activeThreadRef} /> : null}
+        {/* fork: roles */}
         {parentThreadLink ? (
           <>
             <WorkspaceBreadcrumbItem>
