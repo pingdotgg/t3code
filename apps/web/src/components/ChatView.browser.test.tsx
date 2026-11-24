@@ -517,9 +517,28 @@ it.each(["new", "existing"] as const)(
     await expect.element(page.getByText("Sending once image is ready")).not.toBeInTheDocument();
     await expect.element(editor).toHaveTextContent("check image now");
 
-    // Enter arms again; Esc cancels cleanly.
+    // Enter arms again; an IME's Esc only closes its candidates, in the editor or the form.
     await userEvent.keyboard("{Enter}");
     await expect.element(page.getByText("Sending once image is ready")).toBeVisible();
+    for (const target of [editor.element(), editor.element().closest("form")!]) {
+      for (const composition of [
+        { isComposing: true, keyCode: 27 },
+        { isComposing: false, keyCode: 229 },
+      ]) {
+        const event = new KeyboardEvent("keydown", {
+          key: "Escape",
+          ...composition,
+          bubbles: true,
+          cancelable: true,
+        });
+        await act(() => target.dispatchEvent(event));
+        expect(
+          page.getByText("Sending once image is ready").query(),
+          `${target.tagName} ${JSON.stringify(composition)}`,
+        ).not.toBeNull();
+      }
+    }
+    // A plain Esc cancels cleanly.
     await userEvent.keyboard("{Escape}");
     await expect.element(page.getByText("Sending once image is ready")).not.toBeInTheDocument();
 

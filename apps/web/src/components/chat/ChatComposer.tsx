@@ -2565,7 +2565,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : null;
 
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) => {
-    if (key === "Escape" && composerSendHeld && !event.isComposing) {
+    if (key === "Escape" && composerSendHeld && !event.isComposing && event.keyCode !== 229) {
       cancelHeldSend();
       return true;
     }
@@ -3634,7 +3634,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           event.key === "Escape" &&
           composerSendHeld &&
           !event.defaultPrevented &&
-          !event.nativeEvent.isComposing
+          !event.nativeEvent.isComposing &&
+          event.keyCode !== 229
         ) {
           event.preventDefault();
           cancelHeldSend();
