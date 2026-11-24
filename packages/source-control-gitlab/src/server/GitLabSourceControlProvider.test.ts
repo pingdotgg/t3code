@@ -269,6 +269,40 @@ it.effect.each(["merge_requests", "issues"])(
     }),
 );
 
+it.effect("resolves merge request subjects on a self-managed host glab is signed in to", () =>
+  Effect.gen(function* () {
+    const ok = (stdout: string) =>
+      Effect.succeed({
+        exitCode: ChildProcessSpawner.ExitCode(0),
+        stdout,
+        stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      });
+    const provider = yield* makeProvider({
+      execute: (input) =>
+        input.args[0] === "auth"
+          ? ok(`gitlab.example.test
+  ✓ Logged in to gitlab.example.test as gitlab-user
+  ✓ Token found: ******
+`)
+          : (assert.deepStrictEqual(input.args, [
+              "api",
+              "--hostname",
+              "gitlab.example.test",
+              "projects/group%2Fproject/merge_requests/1",
+            ]),
+            ok(JSON.stringify({ title: "Self-managed MR", description: "Body" }))),
+    });
+    const lookup = provider.resolveLink?.({
+      cwd: "/unrelated",
+      url: new URL("https://gitlab.example.test/group/project/-/merge_requests/1"),
+    });
+    assert.ok(lookup);
+    assert.deepStrictEqual(yield* lookup, { title: "Self-managed MR", body: "Body" });
+  }),
+);
+
 it.effect.each(["read", "decode"] as const)(
   "retains the %s failure without exposing its raw contents",
   (stage) =>
