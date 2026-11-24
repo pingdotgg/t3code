@@ -122,6 +122,29 @@ async function editorElement(selector: string) {
   return query()!;
 }
 
+async function imeEscape(target: HTMLElement) {
+  await act(() => {
+    target.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Escape",
+        isComposing: true,
+      }),
+    );
+    // Safari ends the composition just before the Escape keydown.
+    target.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    target.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Escape",
+        keyCode: 229,
+      }),
+    );
+  });
+}
+
 describe("ThemeEditorPanel", () => {
   it("keeps its left edge when resized after the window shrank", async () => {
     await using view = await renderPanel();
@@ -232,19 +255,25 @@ describe("ThemeEditorPanel", () => {
       .toHaveValue("#aabbcc");
   });
 
-  it("closes on Escape without closing Settings", async () => {
+  it("closes on Escape, but not an IME Escape, without closing Settings", async () => {
     await using view = await renderBesideSettings();
-    (await editorElement("input")).focus();
+    const input = await editorElement("input");
+    input.focus();
+    await imeEscape(input);
+    expect(view.onEditorOpenChange).not.toHaveBeenCalled();
+
     await userEvent.keyboard("{Escape}");
 
     expect(view.onEditorOpenChange).toHaveBeenCalledWith(false);
     expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
   });
 
-  it("leaves inspection on Escape without closing the editor or Settings", async () => {
+  it("leaves inspection on Escape, but not an IME Escape, without closing the editor or Settings", async () => {
     await using view = await renderBesideSettings();
     (await editorElement('[aria-label="Inspect app colors"]')).click();
     await editorElement('[aria-label="Cancel inspecting app colors"]');
+    await imeEscape(await editorElement("input"));
+    expect(document.querySelector('[aria-label="Cancel inspecting app colors"]')).not.toBeNull();
     await userEvent.keyboard("{Escape}");
 
     await editorElement('[aria-label="Inspect app colors"]');
@@ -265,6 +294,7 @@ describe("ThemeEditorPanel", () => {
 
     const editor = await editorElement('textarea[aria-label="Custom CSS"]');
     editor.focus();
+    await imeEscape(editor);
     await userEvent.keyboard("{Escape}");
     editor.dispatchEvent(
       new KeyboardEvent("keydown", {

@@ -709,7 +709,7 @@ export function ThemeEditorPanel({
       shouldDisarmAfterClick = false;
     };
     const cancelInspection = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229) return;
       // Esc leaves inspection only; Settings must not see it and close too.
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -1183,6 +1183,7 @@ export function ThemeEditorPanel({
       onKeyDown={(event) => {
         // Popups opened from the editor are portaled outside it and handle their own Esc.
         if (event.key !== "Escape" || event.defaultPrevented) return;
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
         if (!event.currentTarget.contains(event.target as Node)) return;
         event.stopPropagation();
         onOpenChange(false);
