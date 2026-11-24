@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -3832,6 +3832,59 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
     }),
   );
+
+  // regression: #41735 a review thread id from another pull request must not receive a write
+  describe("review thread from a different pull request", () => {
+    const foreignThread = {
+      data: {
+        repository: { pullRequest: { id: "PR_thisOne" } },
+        node: {
+          __typename: "PullRequestReviewThread",
+          id: "PRRT_other",
+          pullRequest: { id: "PR_someOtherOne" },
+        },
+      },
+    };
+    const target = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
+    const threadMutations = () =>
+      mockedExecute.mock.calls.filter(
+        ([call]) =>
+          call.kind === "graphql" &&
+          /addPullRequestReviewThreadReply|resolveReviewThread|unresolveReviewThread/.test(
+            call.query,
+          ),
+      );
+
+    it.effect("refuses to reply to it", () =>
+      Effect.gen(function* () {
+        route([SUBJECT_SCOPE_QUERY, foreignThread]);
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const input = { ...target, threadId: "PRRT_other", body: "hello" };
+
+        const result = yield* Effect.result(cli.replyToReviewThread(input));
+
+        expect(threadMutations()).toEqual([]);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result))
+          assert.strictEqual(result.failure._tag, "GitHubSubjectScopeError");
+      }),
+    );
+
+    it.effect.each([true, false])("refuses to set it resolved=%s", (resolved) =>
+      Effect.gen(function* () {
+        route([SUBJECT_SCOPE_QUERY, foreignThread]);
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const input = { ...target, threadId: "PRRT_other", resolved };
+
+        const result = yield* Effect.result(cli.setReviewThreadResolution(input));
+
+        expect(threadMutations()).toEqual([]);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result))
+          assert.strictEqual(result.failure._tag, "GitHubSubjectScopeError");
+      }),
+    );
+  });
 
   // regression: #19564 only a refused reviewer path is retried; other failures surface as-is
   it.effect.each([
