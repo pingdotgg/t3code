@@ -188,7 +188,7 @@ pub(crate) async fn subscribe_thread(
             if !store.thread_exists(&id)? {
                 return Ok(None);
             }
-            if bounded && let Some(window) = store.bounded_thread(&id, high)? {
+            if bounded && let Some(window) = store.bounded_thread(&id)? {
                 let mut item = snapshot_item(window.projection, high, dedupe, false);
                 item["historyCursor"] = json!(window.history_cursor);
                 item["hasMoreHistory"] = json!(window.has_more_history);

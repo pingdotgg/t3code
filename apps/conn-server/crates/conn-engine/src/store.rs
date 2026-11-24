@@ -1150,7 +1150,6 @@ impl Store {
     pub(crate) fn bounded_thread(
         &self,
         thread_id: &str,
-        sequence: u64,
     ) -> StoreResult<Option<crate::history::Bounded>> {
         use crate::history;
         let Some((control, index)) = self.timeline_index(thread_id)? else {
@@ -1168,6 +1167,9 @@ impl Store {
             .into_iter()
             .filter(|item| history::is_retained_dependency(item, &pending))
             .collect();
+        // The cursor identifies a version of this timeline. Activity elsewhere advances
+        // the stream watermark, but does not invalidate this cached history prefix.
+        let sequence = self.history_revision(&control["thread"])?;
         let window = history::select_window(&control, &index, &dependencies, sequence);
         drop(index);
         let mut control = control;
@@ -1243,6 +1245,24 @@ impl Store {
             has_more_history: window.has_more_history,
             latest_local_turn_ordinal,
         }))
+    }
+
+    fn history_revision(&self, thread: &Value) -> StoreResult<u64> {
+        let id = thread["id"].as_str().unwrap_or_default();
+        let mut revision = latest_sequence(&self.conn, ReceiptOwner::Thread(id))?;
+        let mut ancestor = inherited_run_fork(thread);
+        let mut seen = std::collections::HashSet::from([id.to_owned()]);
+        while let Some((id, _)) = ancestor {
+            if !seen.insert(id.clone()) {
+                break;
+            }
+            revision = revision.max(latest_sequence(&self.conn, ReceiptOwner::Thread(&id))?);
+            ancestor = self
+                .stored_thread(&id)?
+                .as_ref()
+                .and_then(inherited_run_fork);
+        }
+        Ok(revision)
     }
 
     /// `getThreadHistoryPage` on indexed reads: only the page's bodies are read. `None` for an

@@ -14757,6 +14757,16 @@ async fn a_bounded_snapshot_holds_ten_turns_and_pages_back() {
         );
     }
     assert_eq!(view["hasMoreHistory"], true);
+    dispatch(&engine, create("unrelated", "unrelated-create")).await;
+    let mut reconnected = engine.subscribe_thread(
+        from_json(json!({"threadId":"t1", "acceptBoundedSnapshot":true, "acceptCompactTurnItems":true, "acceptDedupedBodies":true})).unwrap()
+    ).await.unwrap();
+    let warm = next(&mut reconnected).await;
+    assert!(warm["snapshotSequence"].as_u64() > view["snapshotSequence"].as_u64());
+    assert_eq!(
+        warm["historyCursor"], view["historyCursor"],
+        "an unrelated thread does not invalidate cached bodies"
+    );
     // Turns appended while the view is open do not move the cursor: the page still ends
     // right before the window, so window, page and new turns cover every turn once.
     for i in 16..19 {
