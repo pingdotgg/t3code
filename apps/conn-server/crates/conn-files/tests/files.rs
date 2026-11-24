@@ -469,6 +469,68 @@ fn writes_only_inside_known_workspaces_and_outside_git() {
         save(&nested_worktree, &linked_known).unwrap_err(),
         Failure::WorkspacePathOutsideRoot
     );
+    // A linked project of a bare repository: its managed checkouts save, a sibling bare
+    // repository's do not.
+    let bare = f.outside.join("bare/app.git");
+    let sibling = f.outside.join("bare/other.git");
+    for repo in [&bare, &sibling] {
+        git(
+            &f.outside,
+            &[
+                "clone",
+                "-q",
+                "--bare",
+                &f.project.to_string_lossy(),
+                &repo.to_string_lossy(),
+            ],
+        );
+    }
+    let bare_linked = f.outside.join("bare-linked");
+    git(
+        &bare,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "bl",
+            &bare_linked.to_string_lossy(),
+        ],
+    );
+    let from_bare = managed.join("bare-linked/probe-cdef");
+    git(
+        &bare,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "fb",
+            &from_bare.to_string_lossy(),
+        ],
+    );
+    let from_sibling = managed.join("bare-linked/probe-sib");
+    git(
+        &sibling,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "fs",
+            &from_sibling.to_string_lossy(),
+        ],
+    );
+    let bare_known = KnownWorkspaces::new(&[bare_linked.to_string_lossy().into_owned()], &[])
+        .with_managed(std::slice::from_ref(&managed));
+    assert_eq!(
+        save(&from_bare, &bare_known).unwrap().relative_path,
+        "audit.txt"
+    );
+    assert_eq!(
+        save(&from_sibling, &bare_known).unwrap_err(),
+        Failure::WorkspacePathOutsideRoot
+    );
     for elsewhere in [managed.join("project/plain"), foreign] {
         assert_eq!(
             save(&elsewhere, &with_managed).unwrap_err(),

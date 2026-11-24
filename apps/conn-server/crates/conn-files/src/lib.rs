@@ -127,18 +127,20 @@ impl KnownWorkspaces {
         }) else {
             return false;
         };
-        let Some(repository) = worktree_repository(&checkout) else {
+        let Some(common) = git_common_dir(&checkout) else {
             return false;
         };
         // The repository lies in a project, or is the one a linked-worktree project belongs to.
-        self.projects.iter().any(|p| {
-            repository.starts_with(p) || worktree_repository(p).as_ref() == Some(&repository)
-        }) && git_worktrees(&repository).contains(&checkout)
+        // Comparing common dirs, not their parents, keeps a bare `app.git` apart from its siblings.
+        self.projects
+            .iter()
+            .any(|p| common.starts_with(p) || git_common_dir(p).as_ref() == Some(&common))
+            && git_worktrees(&checkout).contains(&checkout)
     }
 }
 
-/// The main worktree of the repository a checkout belongs to (`--git-common-dir`'s parent).
-fn worktree_repository(checkout: &Path) -> Option<PathBuf> {
+/// The canonical `--git-common-dir` of the repository a checkout belongs to.
+fn git_common_dir(checkout: &Path) -> Option<PathBuf> {
     let output = git::run(
         checkout,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -149,8 +151,7 @@ fn worktree_repository(checkout: &Path) -> Option<PathBuf> {
     if output.code != Some(0) {
         return None;
     }
-    let common = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    std::fs::canonicalize(common.parent()?).ok()
+    std::fs::canonicalize(String::from_utf8_lossy(&output.stdout).trim()).ok()
 }
 
 /// A canonical, absolute folder that is not a filesystem root.
