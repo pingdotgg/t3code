@@ -2,26 +2,37 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import { useEffect, useRef } from "react";
-import { CheckIcon, CircleDashedIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, CircleDashedIcon } from "lucide-react";
 
 import { cn } from "../../lib/utils";
-import { type ThreadTodoList, useThreadLatestTodoList } from "../../state/entities";
+import { type ThreadTodoListEntry, useThreadTodoLists } from "../../state/entities";
 import { Spinner } from "../ui/spinner";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { outlineTodoSteps, type TodoStatus, type TodoStep } from "./ThreadDetailsTasks.logic";
+import {
+  outlineTodoSteps,
+  type TodoOutline,
+  type TodoStatus,
+  type TodoStep,
+} from "./ThreadDetailsTasks.logic";
 
-/** The agent's newest task checklist, live while it runs and kept after it ends. */
+/** The agent's task lists for this thread, newest last, live while it runs and kept after. */
 export function ThreadDetailsTasks(props: { environmentId: EnvironmentId; threadId: ThreadId }) {
-  const plan = useThreadLatestTodoList(scopeThreadRef(props.environmentId, props.threadId));
-  if (plan === null) return null;
-  return <ThreadDetailsTasksList steps={plan.steps} />;
+  const lists = useThreadTodoLists(scopeThreadRef(props.environmentId, props.threadId));
+  if (lists.length === 0) return null;
+  return <ThreadDetailsTasksLists lists={lists} />;
 }
 
-function ThreadDetailsTasksList(props: { steps: ThreadTodoList["steps"] }) {
+function ThreadDetailsTasksLists(props: { lists: ReadonlyArray<ThreadTodoListEntry> }) {
   const gt = useGT();
-  const outline = outlineTodoSteps(props.steps);
-  const listRef = useRef<HTMLUListElement>(null);
-  const runningId = props.steps.find((step) => step.status === "running")?.id;
+  const outlines = props.lists.map((list) => ({
+    id: list.id,
+    outline: outlineTodoSteps(list.steps),
+  }));
+  const done = outlines.reduce((sum, { outline }) => sum + outline.done, 0);
+  const total = outlines.reduce((sum, { outline }) => sum + outline.total, 0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const latestSteps = props.lists.at(-1)!.steps;
+  const runningId = latestSteps.find((step) => step.status === "running")?.id;
   // Long plans scroll inside the card; keep the step in progress in view, without moving the panel.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the list's DOM scroll position on the running step
   useEffect(() => {
@@ -36,6 +47,8 @@ function ThreadDetailsTasksList(props: { steps: ThreadTodoList["steps"] }) {
       list.scrollTop = Math.max(0, top - (list.clientHeight - rowBox.height) / 2);
     }
   }, [runningId]);
+  const earlier = outlines.slice(0, -1);
+  const latest = outlines.at(-1)!;
   return (
     <ThreadDetailsSection
       headingId="thread-details-tasks-heading"
@@ -44,54 +57,83 @@ function ThreadDetailsTasksList(props: { steps: ThreadTodoList["steps"] }) {
       actions={
         <>
           <span aria-hidden className="text-2xs text-muted-foreground tabular-nums">
-            {outline.done}/{outline.total}
+            {done}/{total}
           </span>
-          <span className="sr-only">
-            {gt("{done} of {total} tasks complete", { done: outline.done, total: outline.total })}
-          </span>
+          <span className="sr-only">{gt("{done} of {total} tasks complete", { done, total })}</span>
         </>
       }
     >
-      <ul
+      <div
         ref={listRef}
         data-thread-details-tasks-list
-        className="m-0 max-h-[min(22rem,45dvh)] list-none overflow-y-auto p-0"
+        className="max-h-[min(22rem,45dvh)] overflow-y-auto"
       >
-        {outline.loose.map((step) => (
-          <TaskRow key={step.id} step={step} />
-        ))}
-        {outline.phases.map((phase) => (
-          <li key={phase.id} data-task-phase={phase.status} className="pt-1 first:pt-0">
-            <div className="flex items-start gap-2.5 px-2.5 py-1 text-xs leading-5">
-              <TaskIcon status={phase.status} />
-              <span
-                className={cn(
-                  "min-w-0 flex-1 break-words font-medium [overflow-wrap:anywhere]",
-                  phase.status === "pending" ? "text-muted-foreground" : "text-foreground",
-                )}
-              >
-                <span className="sr-only">
-                  <StatusLabel status={phase.status} />{" "}
-                </span>
-                {phase.title}
+        {earlier.map(({ id, outline }, index) => (
+          <details key={id} data-task-list="earlier" className="group border-b border-border/60">
+            <summary className="flex cursor-pointer list-none items-center gap-2.5 px-2.5 py-1 text-xs leading-5 text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <ChevronRightIcon
+                aria-hidden
+                className="size-3.5 shrink-0 transition-transform motion-reduce:transition-none group-open:rotate-90"
+              />
+              <span className="min-w-0 flex-1">
+                {gt("Earlier list {number}", {
+                  number: index + 1,
+                  $context: "task checklist: a folded task list from an earlier request",
+                })}
               </span>
-              {phase.steps.length > 0 ? (
-                <span aria-hidden className="text-2xs leading-5 text-muted-foreground tabular-nums">
-                  {phase.done}/{phase.steps.length}
-                </span>
-              ) : null}
-            </div>
-            {phase.steps.length > 0 ? (
-              <ul className="m-0 list-none p-0 pl-4">
-                {phase.steps.map((step) => (
-                  <TaskRow key={step.id} step={step} />
-                ))}
-              </ul>
-            ) : null}
-          </li>
+              <span className="text-2xs tabular-nums">
+                {outline.done}/{outline.total}
+              </span>
+            </summary>
+            <TodoOutlineList outline={outline} />
+          </details>
         ))}
-      </ul>
+        <div data-task-list="latest" className={earlier.length > 0 ? "pt-1" : undefined}>
+          <TodoOutlineList key={latest.id} outline={latest.outline} />
+        </div>
+      </div>
     </ThreadDetailsSection>
+  );
+}
+
+function TodoOutlineList(props: { outline: TodoOutline }) {
+  const { outline } = props;
+  return (
+    <ul className="m-0 list-none p-0">
+      {outline.loose.map((step) => (
+        <TaskRow key={step.id} step={step} />
+      ))}
+      {outline.phases.map((phase) => (
+        <li key={phase.id} data-task-phase={phase.status} className="pt-1 first:pt-0">
+          <div className="flex items-start gap-2.5 px-2.5 py-1 text-xs leading-5">
+            <TaskIcon status={phase.status} />
+            <span
+              className={cn(
+                "min-w-0 flex-1 break-words font-medium [overflow-wrap:anywhere]",
+                phase.status === "pending" ? "text-muted-foreground" : "text-foreground",
+              )}
+            >
+              <span className="sr-only">
+                <StatusLabel status={phase.status} />{" "}
+              </span>
+              {phase.title}
+            </span>
+            {phase.steps.length > 0 ? (
+              <span aria-hidden className="text-2xs leading-5 text-muted-foreground tabular-nums">
+                {phase.done}/{phase.steps.length}
+              </span>
+            ) : null}
+          </div>
+          {phase.steps.length > 0 ? (
+            <ul className="m-0 list-none p-0 pl-4">
+              {phase.steps.map((step) => (
+                <TaskRow key={step.id} step={step} />
+              ))}
+            </ul>
+          ) : null}
+        </li>
+      ))}
+    </ul>
   );
 }
 

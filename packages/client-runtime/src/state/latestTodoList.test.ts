@@ -18,7 +18,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
-import { selectLatestTodoList } from "./latestTodoList.ts";
+import { selectLatestTodoList, selectThreadTodoLists } from "./latestTodoList.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { v2Now, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import { createEnvironmentThreadDetailAtoms } from "./threadDetail.ts";
@@ -308,5 +308,86 @@ describe("latestTodoListAtom", () => {
     expect(registry.get(xAtom)).toBe(xPlan);
     expect(registry.get(yAtom)).toBeNull();
     registry.dispose();
+  });
+});
+
+function named(plan: OrchestrationV2PlanArtifact, prefix: string) {
+  return asTodo({
+    ...plan,
+    steps: asTodo(plan).steps.map((step) => ({ ...step, text: `${prefix} ${step.text}` })),
+  } as OrchestrationV2PlanArtifact);
+}
+
+describe("selectThreadTodoLists", () => {
+  const texts = (lists: ReturnType<typeof selectThreadTodoLists>) =>
+    lists.map((list) => list.steps.map((step) => `${step.text}:${step.status}`));
+
+  it("keeps each earlier request's final list and puts the newest last", () => {
+    const first = named(todo("p1", 1, ["completed", "completed"]), "A");
+    const firstEarly = named(todo("p1", 1, ["completed", "running"]), "A");
+    const second = named(todo("p2", 2, ["running", "pending"]), "B");
+    const lists = selectThreadTodoLists(
+      projection({
+        runs: [run(1), run(2)],
+        // The server snapshot only keeps the newest plan; earlier ones come from their items.
+        plans: [second],
+        turnItems: [todoItem(firstEarly, 1), todoItem(first, 2), todoItem(second, 3)],
+      }),
+    );
+    expect(texts(lists)).toEqual([
+      ["A Step 0:completed", "A Step 1:completed"],
+      ["B Step 0:running", "B Step 1:pending"],
+    ]);
+  });
+
+  it("lets a list that continues the previous one replace it", () => {
+    // Written by /splan, never started, then run by /go in the next turn with new wording.
+    const planned = named(todo("p1", 1, ["pending", "pending"]), "Long");
+    const running = named(todo("p2", 2, ["completed", "running"]), "Short");
+    expect(
+      texts(
+        selectThreadTodoLists(
+          projection({
+            runs: [run(1), run(2)],
+            plans: [running],
+            turnItems: [todoItem(planned, 1), todoItem(running, 2)],
+          }),
+        ),
+      ),
+    ).toEqual([["Short Step 0:completed", "Short Step 1:running"]]);
+
+    // The same steps carried into a new turn, plus one more.
+    const done = named(todo("p3", 1, ["completed", "running"]), "A");
+    const extended = asTodo({
+      ...named(todo("p4", 2, ["completed", "completed", "pending"]), "A"),
+    });
+    expect(
+      selectThreadTodoLists(
+        projection({
+          runs: [run(1), run(2)],
+          plans: [extended],
+          turnItems: [todoItem(done, 1), todoItem(extended, 2)],
+        }),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("skips superseded and empty lists and returns nothing without lists", () => {
+    const gone = named(todo("p1", 1, ["completed"], "superseded"), "Gone");
+    const empty = asTodo({ ...todo("p2", 2, []), steps: [] } as OrchestrationV2PlanArtifact);
+    const last = named(todo("p3", 3, ["running"]), "C");
+    expect(
+      texts(
+        selectThreadTodoLists(
+          projection({
+            runs: [run(1), run(2), run(3)],
+            plans: [gone, last],
+            turnItems: [todoItem(gone, 1), todoItem(empty, 2), todoItem(last, 3)],
+          }),
+        ),
+      ),
+    ).toEqual([["C Step 0:running"]]);
+    expect(selectThreadTodoLists(projection({ runs: [run(1)] }))).toEqual([]);
+    expect(selectThreadTodoLists(null)).toEqual([]);
   });
 });

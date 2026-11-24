@@ -64,8 +64,12 @@ const EMPTY_THREAD_PROJECTION_ATOM = Atom.make<EnvironmentThread | null>(null).p
 );
 
 export type ThreadTodoList = Extract<OrchestrationV2PlanArtifact, { readonly kind: "todo_list" }>;
-const EMPTY_LATEST_TODO_LIST_ATOM = Atom.make<ThreadTodoList | null>(null).pipe(
-  Atom.withLabel("web-thread-latest-todo-list:empty"),
+export interface ThreadTodoListEntry {
+  readonly id: string;
+  readonly steps: ThreadTodoList["steps"];
+}
+const EMPTY_THREAD_TODO_LISTS_ATOM = Atom.make<ReadonlyArray<ThreadTodoListEntry>>([]).pipe(
+  Atom.withLabel("web-thread-todo-lists:empty"),
 );
 const EMPTY_THREAD_STATUS_ATOM = Atom.make<EnvironmentThreadStatus>("empty").pipe(
   Atom.withLabel("web-thread-status:empty"),
@@ -200,10 +204,12 @@ export function useQuietThreadProjection(
   );
 }
 
-/** The thread's newest task checklist, kept until a later run publishes one. */
-export function useThreadLatestTodoList(ref: ScopedThreadRef | null): ThreadTodoList | null {
+/** Every task list of the thread in run order, newest last. */
+export function useThreadTodoLists(
+  ref: ScopedThreadRef | null,
+): ReadonlyArray<ThreadTodoListEntry> {
   return useAtomValue(
-    ref === null ? EMPTY_LATEST_TODO_LIST_ATOM : environmentThreadDetails.latestTodoListAtom(ref),
+    ref === null ? EMPTY_THREAD_TODO_LISTS_ATOM : environmentThreadDetails.threadTodoListsAtom(ref),
   );
 }
 

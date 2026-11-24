@@ -31,7 +31,7 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
           scripts: [],
         }) as never,
   useProjects: (() => []) as never,
-  useThreadLatestTodoList: (() => null) as never,
+  useThreadTodoLists: (() => []) as never,
   useQuietThreadShell: ((ref: unknown) =>
     ref === null
       ? null

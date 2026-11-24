@@ -14,7 +14,12 @@ import {
   getUserQueuedThreadRuns,
   type ThreadQueueWorkflowState,
 } from "./threadWorkflows.ts";
-import { selectLatestTodoList, type TodoListPlan } from "./latestTodoList.ts";
+import {
+  selectLatestTodoList,
+  selectThreadTodoLists,
+  type ThreadTodoListEntry,
+  type TodoListPlan,
+} from "./latestTodoList.ts";
 import { deriveThreadTurnSubagents, type ThreadTurnSubagents } from "./threadSubagents.ts";
 import {
   deriveUsageLimitNoticeRows,
@@ -369,6 +374,20 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-latest-todo-list:${key}`));
   });
 
+  // Every task list of the thread, newest last, for the stacked checklist.
+  const threadTodoListsAtomFamily = Atom.family((key: string) => {
+    let previous: EnvironmentThreadStructure | null = null;
+    let value: ReadonlyArray<ThreadTodoListEntry> = [];
+    return Atom.make((get) => {
+      const thread = get(quietThreadAtomFamily(key));
+      if (thread !== previous) {
+        previous = thread;
+        value = thread === null ? [] : selectThreadTodoLists(thread.projection);
+      }
+      return value;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-todo-lists:${key}`));
+  });
+
   // Presentation only: the projection keeps every row for other readers.
   const visibleTurnItemsAtomFamily = Atom.family((key: string) => {
     const projectQuestionHistory = createQuestionHistoryProjector();
@@ -656,6 +675,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     threadAtom: (ref: ScopedThreadRef) => threadAtomFamily(threadKey(ref)),
     quietThreadAtom: (ref: ScopedThreadRef) => quietThreadAtomFamily(threadKey(ref)),
     latestTodoListAtom: (ref: ScopedThreadRef) => latestTodoListAtomFamily(threadKey(ref)),
+    threadTodoListsAtom: (ref: ScopedThreadRef) => threadTodoListsAtomFamily(threadKey(ref)),
     visibleTurnItemsAtom: (ref: ScopedThreadRef) => visibleTurnItemsAtomFamily(threadKey(ref)),
     quietVisibleTurnItemsAtom: (ref: ScopedThreadRef) =>
       quietVisibleTurnItemsAtomFamily(threadKey(ref)),

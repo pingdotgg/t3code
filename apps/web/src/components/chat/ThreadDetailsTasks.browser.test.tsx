@@ -10,8 +10,8 @@ const lists = vi.hoisted(() => new Map<string, unknown>());
 
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useThreadLatestTodoList: ((ref: { threadId: string } | null) =>
-    ref === null ? null : (lists.get(ref.threadId) ?? null)) as never,
+  useThreadTodoLists: ((ref: { threadId: string } | null) =>
+    ref === null ? [] : (lists.get(ref.threadId) ?? [])) as never,
 }));
 
 const environmentId = EnvironmentId.make("environment");
@@ -19,9 +19,13 @@ const LONG =
   "Run the unit tests (python -m unittest discover -s tests -v) and confirm every case passes, including the edge cases for empty names and unicode input (check the output carefully)";
 
 function list(...steps: ReadonlyArray<[string, "pending" | "running" | "completed"]>) {
+  return [entry("plan", ...steps)];
+}
+
+function entry(id: string, ...steps: ReadonlyArray<[string, "pending" | "running" | "completed"]>) {
   return {
-    kind: "todo_list",
-    steps: steps.map(([text, status], index) => ({ id: `step-${index}`, text, status })),
+    id,
+    steps: steps.map(([text, status], index) => ({ id: `${id}-step-${index}`, text, status })),
   };
 }
 
@@ -124,4 +128,28 @@ it("groups phases with their own counts and keeps the total on steps", async () 
   expect(phases[1]!.querySelectorAll("[data-task-status]")).toHaveLength(2);
   expect(phases[1]!.textContent).toContain("In progress: Phase 2: API");
   expect(phases[1]!.textContent).toContain("0/2");
+});
+
+it("stacks earlier lists above the newest one, folded, and counts every step", async () => {
+  lists.set("thread-stack", [
+    entry("first", ["Write hello()", "completed"], ["Add tests", "completed"]),
+    entry("second", ["Add --version", "running"], ["Document it", "pending"]),
+  ]);
+  await using screen = await render(
+    <ThreadDetailsTasks environmentId={environmentId} threadId={ThreadId.make("thread-stack")} />,
+  );
+
+  await expect.element(screen.getByText("2/4")).toBeVisible();
+  const earlier = screen.container.querySelector<HTMLDetailsElement>('[data-task-list="earlier"]')!;
+  expect(earlier.open).toBe(false);
+  expect(earlier.querySelector("summary")!.textContent).toContain("Earlier list 1");
+  expect(earlier.querySelector("summary")!.textContent).toContain("2/2");
+  const latest = screen.container.querySelector('[data-task-list="latest"]')!;
+  expect([...latest.querySelectorAll("li")].map((row) => row.textContent)).toEqual([
+    "In progress: Add --version",
+    "Pending: Document it",
+  ]);
+  await screen.getByText("Earlier list 1").click();
+  expect(earlier.open).toBe(true);
+  await expect.element(screen.getByText(/Write hello/)).toBeVisible();
 });
