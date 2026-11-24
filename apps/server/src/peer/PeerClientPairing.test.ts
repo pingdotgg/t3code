@@ -43,7 +43,10 @@ import {
 } from "./PeerLinks.testkit.ts";
 
 const laptop = descriptorOf("environment-laptop", "Laptop");
-const box = descriptorOf("environment-box", "Box", { linkClientPairing: true });
+const box = descriptorOf("environment-box", "Box", {
+  linkClientPairing: true,
+  linkPairingForLink: true,
+});
 const NoTools = Toolkit.make();
 
 const serveBox = (descriptor: ExecutionEnvironmentDescriptor = box) =>
@@ -250,6 +253,28 @@ it.effect("pairs no client while Linked environments is off on either side", () 
         .pipe(Effect.flip);
       expect(off.reason).toBe("disabled");
       expect(yield* b.auth.listPairingLinks()).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a linked environment from before link pairing is never asked for one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveBox(
+        descriptorOf("environment-box", "Box", { linkClientPairing: true }),
+      );
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b, "full-access");
+      const phone = yield* a.client([AuthAccessWriteScope]);
+
+      // It would read the request as a client's and hand back a client pairing.
+      expect(
+        yield* a.pairing.requestForLink(
+          { environmentId: box.environmentId, access: "auto" },
+          phone,
+        ),
+      ).toMatchObject({ type: "unsupported", reason: "version" });
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

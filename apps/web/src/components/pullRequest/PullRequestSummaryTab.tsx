@@ -87,7 +87,7 @@ import {
   startDescriptionSave,
   type DescriptionDraft,
 } from "@t3tools/client-runtime/pull-request-editing";
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
@@ -871,7 +871,9 @@ export function PullRequestSummaryTab({
         scrollRef.current = node;
         scrollerRef(node);
       }}
-      className="h-full overflow-y-auto"
+      tabIndex={-1}
+      data-workspace-focus-default
+      className="h-full overflow-y-auto outline-none"
       data-pull-request-summary-scroll
     >
       <section className="px-4 pt-2.5 pb-1">

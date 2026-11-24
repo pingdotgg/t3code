@@ -111,7 +111,8 @@ export function linkableMachines(input: {
   readonly environments: ReadonlyArray<
     EnvironmentPresentation & { readonly environmentId: EnvironmentId }
   >;
-  readonly threadEnvironmentId: EnvironmentId;
+  /** Null lists every machine, for a view that is not about one environment. */
+  readonly threadEnvironmentId: EnvironmentId | null;
   readonly links: ReadonlyArray<Pick<PeerLinkSummary, "environmentId" | "status">>;
   readonly connect: ReadonlyMap<string, RelayDiscoveredEnvironment>;
 }): ReadonlyArray<LinkableMachine> {

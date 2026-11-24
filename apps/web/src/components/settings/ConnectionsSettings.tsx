@@ -49,8 +49,11 @@ import { useSearchableSetting } from "./settingsSearch";
 import { ConnectDeviceApprovalSettings } from "./ConnectDeviceApprovalSettings";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { EnvironmentsMap } from "./EnvironmentsMap";
 import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
 import { addEnvironmentPrefillAtom } from "~/state/linkedThreadView";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { usePeerLinkHosts } from "~/state/peerLinks";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
@@ -356,6 +359,8 @@ function ConnectionsSettingsContent({
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
   const [routeTarget, setRouteTarget] = useState<EnvironmentPresentation | null>(null);
+  // An address the map already knows for the machine being added; remounts the dialog with it.
+  const [addBackendHost, setAddBackendHost] = useState("");
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
   // Set by a read-only linked thread whose machine this client is about to pair with.
   const [addPrefill, setAddPrefill] = useAtom(addEnvironmentPrefillAtom);
@@ -363,11 +368,28 @@ function ConnectionsSettingsContent({
     setAddBackendDialogOpen(open);
     if (open) {
       setRouteTarget(null);
+      setAddBackendHost("");
     } else {
       setSavedBackendError(null);
       setAddPrefill(null);
     }
   };
+  const openAddRoute = (target: EnvironmentPresentation) => {
+    setRouteTarget(target);
+    setAddBackendHost("");
+    setSavedBackendError(null);
+    setAddBackendDialogOpen(true);
+  };
+  const openAddEnvironment = (host = "") => {
+    setRouteTarget(null);
+    setAddBackendHost(host);
+    setSavedBackendError(null);
+    setAddBackendDialogOpen(true);
+  };
+  // The map is the page's main view where there is room; the list is its equivalent everywhere.
+  const roomForMap = useMediaQuery("md");
+  const [pickedEnvironmentsView, setPickedEnvironmentsView] = useState<"map" | "list" | null>(null);
+  const environmentsView = roomForMap ? (pickedEnvironmentsView ?? "map") : "list";
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
@@ -1812,16 +1834,37 @@ function ConnectionsSettingsContent({
       <SettingsSection
         {...searchableSetting("remote-environments")}
         title={gt("Environments")}
+        titleAction={
+          roomForMap ? (
+            <ToggleGroup
+              aria-label={gt("Show environments as")}
+              value={[environmentsView]}
+              onValueChange={(next) => {
+                const value = next[0];
+                if (value === "map" || value === "list") setPickedEnvironmentsView(value);
+              }}
+            >
+              <Toggle value="map">
+                {gt("Map", { $context: "view switch: show machines as a diagram" })}
+              </Toggle>
+              <Toggle value="list">
+                {gt("List", { $context: "view switch: show items as a list" })}
+              </Toggle>
+            </ToggleGroup>
+          ) : null
+        }
         headerAction={
           <div className="flex items-center gap-1">
             {savedServerUpdateTargets.length > 0 ? (
               <ServerUpdatesAction targets={savedServerUpdateTargets} variant="ghost-muted" />
             ) : null}
+            {/* Actions on several machines at once, such as linking several, go here. */}
             <AddEnvironmentDialog
-              key={addPrefill?.environmentId ?? "any"}
+              key={`${addPrefill?.environmentId ?? "any"}:${addBackendHost}`}
               open={addBackendDialogOpen || addPrefill !== null}
               prefill={addPrefill}
               routeTarget={routeTarget}
+              initialHost={addBackendHost}
               error={savedBackendError}
               savedEnvironments={savedEnvironments}
               onOpenChange={handleAddBackendDialogOpenChange}
@@ -1830,24 +1873,51 @@ function ConnectionsSettingsContent({
           </div>
         }
       >
-        {listedEnvironments.map((environment) => (
-          <SavedBackendListRow
-            key={environment.environmentId}
-            environment={environment}
-            removingEnvironmentId={removingSavedEnvironmentId}
-            onSetEnabled={handleSetSavedBackendEnabled}
-            onRemove={handleRemoveSavedBackend}
-            onAddRoute={(target) => {
-              setRouteTarget(target);
-              setSavedBackendError(null);
-              setAddBackendDialogOpen(true);
-            }}
+        {environmentsView === "map" ? (
+          <EnvironmentsMap
+            footerId={searchableSetting("linked-environments").id}
+            onAddEnvironment={openAddEnvironment}
+            renderSavedEnvironment={(environment) =>
+              listedEnvironments.some(
+                (listed) => listed.environmentId === environment.environmentId,
+              ) ? (
+                <SavedBackendListRow
+                  key={environment.environmentId}
+                  environment={environment}
+                  initialRoutesOpen
+                  removingEnvironmentId={removingSavedEnvironmentId}
+                  onSetEnabled={handleSetSavedBackendEnabled}
+                  onRemove={handleRemoveSavedBackend}
+                  onAddRoute={openAddRoute}
+                />
+              ) : null
+            }
+            renderConnectMachine={(environmentId) => (
+              <CloudRemoteEnvironmentRows
+                only={environmentId}
+                primaryEnvironmentId={primaryEnvironmentId}
+                savedEnvironments={savedEnvironments}
+              />
+            )}
           />
-        ))}
-        <CloudRemoteEnvironmentRows
-          primaryEnvironmentId={primaryEnvironmentId}
-          savedEnvironments={savedEnvironments}
-        />
+        ) : (
+          <>
+            {listedEnvironments.map((environment) => (
+              <SavedBackendListRow
+                key={environment.environmentId}
+                environment={environment}
+                removingEnvironmentId={removingSavedEnvironmentId}
+                onSetEnabled={handleSetSavedBackendEnabled}
+                onRemove={handleRemoveSavedBackend}
+                onAddRoute={openAddRoute}
+              />
+            ))}
+            <CloudRemoteEnvironmentRows
+              primaryEnvironmentId={primaryEnvironmentId}
+              savedEnvironments={savedEnvironments}
+            />
+          </>
+        )}
       </SettingsSection>
       {hasCloudPublicConfig() ? (
         <RemoveT3ConnectEnvironmentDialog
@@ -1861,14 +1931,16 @@ function ConnectionsSettingsContent({
           }}
         />
       ) : null}
-      {peerLinkHosts.map((environment, index) => (
-        <LinkedEnvironmentsSettings
-          key={environment.environmentId}
-          environmentId={environment.environmentId}
-          environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
-          isSearchTarget={index === 0}
-        />
-      ))}
+      {environmentsView === "list"
+        ? peerLinkHosts.map((environment, index) => (
+            <LinkedEnvironmentsSettings
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
+              isSearchTarget={index === 0}
+            />
+          ))
+        : null}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <PullRequestRoutingSettings environments={loadBalancingEnvironments} />
     </SettingsPageContainer>

@@ -1,4 +1,9 @@
-import { ThreadId, type ProjectId, type TerminalCwdNotFoundError } from "@t3tools/contracts";
+import {
+  ThreadId,
+  type Project,
+  type ProjectId,
+  type TerminalCwdNotFoundError,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -14,6 +19,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
 import { withWorkspaceLease } from "./workspaceLease.ts";
+import * as TaskFolders from "./TaskFolders.ts";
 import { TerminalCwdRecovery } from "../terminal/Manager.ts";
 
 export class WorktreeRecreateError extends Schema.TaggedError<WorktreeRecreateError>()(
@@ -40,6 +46,11 @@ class WorktreeRecreateNoBaseError extends Schema.TaggedError<WorktreeRecreateNoB
 
 // `git worktree remove` skips pnpm junctions on Windows, leaving these behind without a checkout.
 const LEFTOVER_WORKTREE_ENTRIES = new Set(["node_modules", ".next"]);
+
+export interface RecreatedWorktree {
+  readonly project: Project;
+  readonly worktreePath: string;
+}
 
 interface WorktreeThread {
   readonly id: ThreadId;
@@ -98,6 +109,21 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
       ),
       Effect.orElseSucceed(() => false),
     );
+  // `git worktree add` refuses a non-empty target but accepts an empty one. Keep the folder
+  // itself: Windows cannot remove a folder that is still a terminal's or provider's cwd.
+  const clearLeftovers = (worktreePath: string) =>
+    fileSystem
+      .readDirectory(worktreePath)
+      .pipe(
+        Effect.flatMap((entries) =>
+          Effect.forEach(
+            entries,
+            (entry) => fileSystem.remove(path.join(worktreePath, entry), { recursive: true }),
+            { discard: true },
+          ),
+        ),
+      );
+  const taskFolders = yield* TaskFolders.TaskFolders;
 
   const resolveRecreateBase = Effect.fn("restoreMissingWorktree.resolveRecreateBase")(function* (
     cwd: string,
@@ -169,6 +195,40 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     const { worktreePath, branch } = thread;
     if (worktreePath === null) return;
     if (branch === null) return yield* recreateScratchFolder(thread, worktreePath);
+    // A task folder can miss one repository's worktree while the thread's own folder is there.
+    const taskFolder = yield* taskFolders.find(worktreePath).pipe(Effect.orElseSucceed(() => null));
+    if (taskFolder !== null) {
+      return yield* taskFolders
+        .restore({
+          taskFolder,
+          branch,
+          recreate: (checkout) =>
+            Effect.logWarning("recreating missing worktree", {
+              threadId: thread.id,
+              worktreePath: checkout.worktreePath,
+              branch,
+            }).pipe(
+              Effect.andThen(isLeftoverFolder(checkout.worktreePath)),
+              Effect.flatMap((leftover) =>
+                leftover ? clearLeftovers(checkout.worktreePath) : Effect.void,
+              ),
+              Effect.andThen(
+                recreateMissingWorktree({
+                  cwd: checkout.repositoryPath,
+                  worktreePath: checkout.worktreePath,
+                  branch,
+                }),
+              ),
+            ),
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            cause._tag === "WorktreeRecreateNoBaseError"
+              ? cause
+              : new WorktreeRecreateError({ worktreePath, branch, cause }),
+          ),
+        );
+    }
     const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
     const leftover = exists && (yield* isLeftoverFolder(worktreePath));
     if ((exists && !leftover) || !(yield* isManagedWorktreePath(worktreePath))) return;
@@ -182,18 +242,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
       worktreePath,
       branch,
     });
-    // `git worktree add` refuses a non-empty target but accepts an empty one. Keep the folder
-    // itself: Windows cannot remove a folder that is still a terminal's or provider's cwd.
-    const clearLeftovers = Effect.suspend(() => fileSystem.readDirectory(worktreePath)).pipe(
-      Effect.flatMap((entries) =>
-        Effect.forEach(
-          entries,
-          (entry) => fileSystem.remove(path.join(worktreePath, entry), { recursive: true }),
-          { discard: true },
-        ),
-      ),
-    );
-    yield* (leftover ? clearLeftovers : Effect.void).pipe(
+    yield* (leftover ? clearLeftovers(worktreePath) : Effect.void).pipe(
       Effect.andThen(recreateMissingWorktree({ cwd: project.workspaceRoot, worktreePath, branch })),
       Effect.mapError((cause) =>
         cause._tag === "WorktreeRecreateNoBaseError"
@@ -201,6 +250,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
           : new WorktreeRecreateError({ worktreePath, branch, cause }),
       ),
     );
+    return { project, worktreePath };
   });
 });
 
@@ -210,6 +260,8 @@ export class ThreadWorktreeRestore extends Context.Service<
     readonly restore: (
       thread: WorktreeThread,
     ) => Effect.Effect<void, WorktreeRecreateError | WorktreeRecreateNoBaseError>;
+    /** A checkout this service recreated for the thread whose setup has not run yet. */
+    readonly takeRecreated: (threadId: ThreadId) => Effect.Effect<RecreatedWorktree | undefined>;
   }
 >()("t3/workspace/restoreMissingWorktree/ThreadWorktreeRestore") {}
 
@@ -219,11 +271,21 @@ export const layerThreadWorktreeRestore = Layer.effect(
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const restore = yield* makeRestoreMissingWorktree;
+    // Sends restore before dispatch, so turn start finds the checkout present and runs setup from here.
+    const recreated = new Map<ThreadId, RecreatedWorktree>();
     return {
       restore: Effect.fn("ThreadWorktreeRestore.restore")(function* (thread: WorktreeThread) {
-        return yield* thread.worktreePath === null
+        const result = yield* thread.worktreePath === null
           ? restore(thread)
           : withWorkspaceLease(path.resolve(thread.worktreePath), restore(thread));
+        if (result !== undefined) recreated.set(thread.id, result);
+      }),
+      takeRecreated: Effect.fn("ThreadWorktreeRestore.takeRecreated")(function* (
+        threadId: ThreadId,
+      ) {
+        const result = recreated.get(threadId);
+        recreated.delete(threadId);
+        return result;
       }),
     };
   }),
@@ -257,6 +319,7 @@ export const makePrepareTerminalLaunch = Effect.fn(
     }
     const recover = (error: TerminalCwdNotFoundError) =>
       restoreMissingWorktree(thread).pipe(
+        Effect.asVoid,
         Effect.catch((cause) =>
           Effect.logWarning("failed to recreate missing worktree", {
             threadId: thread.id,

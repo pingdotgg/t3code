@@ -82,6 +82,7 @@ export function AddEnvironmentDialog({
   routeTarget,
   error,
   savedEnvironments,
+  initialHost = "",
   onOpenChange,
   onErrorChange,
 }: {
@@ -89,6 +90,8 @@ export function AddEnvironmentDialog({
   /** A machine the user chose elsewhere to pair with; they supply only the pairing code. */
   readonly prefill?: AddEnvironmentPrefill | null;
   readonly routeTarget: EnvironmentPresentation | null;
+  /** An address already known for the machine being added, such as one a link uses. */
+  readonly initialHost?: string;
   readonly error: string | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
   readonly onOpenChange: (open: boolean) => void;
@@ -123,7 +126,7 @@ export function AddEnvironmentDialog({
     return keys;
   })();
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
-  const [savedBackendHost, setSavedBackendHost] = useState(prefill?.host ?? "");
+  const [savedBackendHost, setSavedBackendHost] = useState(prefill?.host ?? initialHost);
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
@@ -165,7 +168,7 @@ export function AddEnvironmentDialog({
     if (!nextOpen) {
       savedBackendSessionRef.current += 1;
       setSavedBackendMode("remote");
-      setSavedBackendHost("");
+      setSavedBackendHost(initialHost);
       setSavedBackendPairingCode("");
       setSavedBackendSshHost("");
       setSavedBackendSshUsername("");
