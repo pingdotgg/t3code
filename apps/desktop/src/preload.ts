@@ -76,6 +76,11 @@ try {
     ipcRenderer.sendSync(IpcChannels.GET_PRIMARY_PASTE_ENABLED_CHANNEL) !== false;
 } catch {}
 
+let pageCanMoveWindow = false;
+try {
+  pageCanMoveWindow = ipcRenderer.sendSync(IpcChannels.GET_PAGE_CAN_MOVE_WINDOW_CHANNEL) === true;
+} catch {}
+
 if (!primaryPasteEnabled) {
   // Blink pastes the PRIMARY selection on a middle-click mouseup unless it is default-prevented.
   window.addEventListener(
@@ -320,6 +325,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
   getWindowZoomFactor: () => webFrame.getZoomFactor(),
+  ...(pageCanMoveWindow
+    ? {
+        dragWindow: (phase: "start" | "move") =>
+          ipcRenderer.invoke(IpcChannels.DRAG_WINDOW_CHANNEL, phase),
+      }
+    : {}),
   onWindowFullscreenStateChange: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, fullscreen: unknown) => {
       if (typeof fullscreen !== "boolean") return;
