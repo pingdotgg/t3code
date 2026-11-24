@@ -3578,7 +3578,7 @@ const writeHtmlRenderRun = Effect.fn("test.writeHtmlRenderRun")(function* (input
 });
 
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
-  it.effect("moves a settled thread to another project", () =>
+  it.effect("moves an idle thread to another project, but not a running one", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const threadId = ThreadId.make("runtime-layer-move-thread");
@@ -3608,11 +3608,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         worktreePath: "/workspace/move-from-worktree",
       });
       yield* orchestrator.dispatch({
-        type: "thread.settle",
-        commandId: CommandId.make("runtime-layer-move-settle"),
-        threadId,
-      });
-      yield* orchestrator.dispatch({
         type: "thread.metadata.update",
         commandId: CommandId.make("runtime-layer-move-to"),
         threadId,
@@ -3632,21 +3627,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         commandId: CommandId.make("runtime-layer-move-message"),
         threadId,
         messageId: MessageId.make("runtime-layer-move-message"),
-        text: "Unsettle this thread.",
+        text: "Start a run.",
         attachments: [],
         modelSelection,
         dispatchMode: { type: "start_immediately" },
       });
-      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.settledAt);
-      const unsettled = yield* orchestrator
+      const running = yield* orchestrator
         .dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make("runtime-layer-move-unsettled"),
+          commandId: CommandId.make("runtime-layer-move-running"),
           threadId,
           projectId: fromProjectId,
         })
         .pipe(Effect.flip);
-      assert.instanceOf(unsettled, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(running, Orchestrator.OrchestratorDispatchError);
     }),
   );
 

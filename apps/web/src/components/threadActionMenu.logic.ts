@@ -125,7 +125,7 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
-  /** Other projects in this environment. The server only moves settled top-level threads. */
+  /** Other projects in this environment. The server only moves idle top-level threads. */
   readonly moveProjectTargets?: ReadonlyArray<{ readonly id: string; readonly label: string }>;
   readonly canMoveProject?: boolean;
 }
@@ -255,7 +255,7 @@ export function buildThreadActionMenuItems(
             id: "move-project" as const,
             label: resolve(msg("Move to project")),
             icon: "folder",
-            disabled: !state.canMoveProject,
+            disabled: state.isRunning || !state.canMoveProject,
             children: state.moveProjectTargets.map((target) => ({
               id: `${MOVE_PROJECT_PREFIX}${target.id}` as const,
               label: target.label,
@@ -348,7 +348,6 @@ export function moveProjectMenuState(
   thread: {
     readonly environmentId: string;
     readonly projectId: string;
-    readonly settledAt: string | null;
     readonly lineage: { readonly relationshipToParent?: string | null };
   },
   projects: ReadonlyArray<{
@@ -372,6 +371,6 @@ export function moveProjectMenuState(
         id: project.id,
         label: project.isScratch ? resolve(msg("No project")) : project.title,
       })),
-    canMoveProject: thread.settledAt != null && thread.lineage.relationshipToParent !== "subagent",
+    canMoveProject: thread.lineage.relationshipToParent !== "subagent",
   };
 }

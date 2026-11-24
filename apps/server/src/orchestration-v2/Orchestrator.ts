@@ -4519,20 +4519,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : undefined;
     if (targetProjectId !== undefined) {
       const project = yield* projects.get(targetProjectId).pipe(mapDispatchError(command));
-      const { subagents } = yield* projectionStore
-        .getThreadRecords(command.threadId, ["subagents"])
+      const { runs, subagents } = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs", "subagents"])
         .pipe(mapDispatchError(command));
       if (
         Option.isNone(project) ||
         project.value.deletedAt !== null ||
-        thread.settledAt === null ||
+        runs.some(isActiveRun) ||
         thread.lineage.relationshipToParent === "subagent" ||
         subagents.some((task) => task.childThreadId !== null)
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Only a settled top-level thread without child threads can move to an existing project.`,
+          cause: `Only an idle top-level thread without child threads can move to an existing project.`,
         });
       }
     }

@@ -73,7 +73,13 @@ import { useThreadPr } from "../../state/use-thread-pr";
 import { useSwipeRowDormant } from "../home/swipe-row-activation";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
+import {
+  MOVE_PROJECT_PREFIX,
+  moveProjectTargets,
+  moveThreadToProject,
+} from "./moveThreadToProject";
 import { canTurnThreadIntoProject, turnThreadIntoProject } from "./turnThreadIntoProject";
+import { useProjects } from "../../state/entities";
 import { threadCanArchive } from "../home/threadArchive";
 import { useCanShareWithGuest } from "./useCanShareWithGuest";
 import {
@@ -1056,6 +1062,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [gt, props.autoSettleOptOutSupported, thread.autoSettleDisabledAt],
   );
   const canTurnIntoProject = canTurnThreadIntoProject(thread);
+  const projects = useProjects();
+  const moveTargets = useMemo(() => moveProjectTargets(thread, projects), [thread, projects]);
   const titleMenuItems = useMemo<MenuAction[]>(
     () => [
       {
@@ -1080,9 +1088,24 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             } satisfies MenuAction,
           ]
         : []),
+      ...(moveTargets.length > 0
+        ? [
+            {
+              id: "move-project",
+              title: gt("Move to project"),
+              image: "folder",
+              attributes: { disabled: !threadCanArchive(thread.runtime) },
+              subactions: moveTargets.map((target) => ({
+                id: `${MOVE_PROJECT_PREFIX}${target.id}`,
+                title: target.title,
+              })),
+            } satisfies MenuAction,
+          ]
+        : []),
     ],
     [
       canTurnIntoProject,
+      moveTargets,
       gt,
       m,
       props.titleRegenerationSupported,
@@ -1218,6 +1241,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "rename") handleRename();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
       if (nativeEvent.event === "turn-into-project") void turnThreadIntoProject(thread);
+      if (nativeEvent.event.startsWith(MOVE_PROJECT_PREFIX)) {
+        void moveThreadToProject(thread, nativeEvent.event.slice(MOVE_PROJECT_PREFIX.length));
+      }
       if (nativeEvent.event === "mark-unread") {
         void markThreadUnread({
           environmentId: thread.environmentId,
