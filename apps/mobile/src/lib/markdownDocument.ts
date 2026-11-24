@@ -3,7 +3,13 @@ import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
+import {
+  absoluteFilePathMatches,
+  inlineCodeFilePathCandidate,
+  parseMarkdownFileLink,
+} from "@t3tools/shared/markdownLinks";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { hasRightToLeftLetter, textDirection } from "@t3tools/shared/textDirection";
 
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
 export type MarkdownNode = Root | RootContent;
@@ -225,12 +231,13 @@ function htmlTagMarkdown(
     const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
     return `![${alt}](${markdownDestination(src)})`;
   }
+  // A raw newline would end the table row; both parsers decode this reference to one inside the cell.
+  const cellBreak = "&#10;";
   // A blank line inside an open link label would end the paragraph before its "]".
-  const blockBreak = anchors.open === 0 ? "\n\n" : " ";
+  const blockBreak = anchors.open > 0 ? " " : options.inTableCell ? cellBreak : "\n\n";
   if (/^<summary\b/i.test(tag)) return `${blockBreak}**`;
   if (/^<\/summary\s*>/i.test(tag)) return `**${blockBreak}`;
-  // A raw newline would end the table row; both parsers decode this reference to one inside the cell.
-  if (/^<br\b/i.test(tag)) return options.inTableCell ? "&#10;" : "  \n";
+  if (/^<br\b/i.test(tag)) return options.inTableCell ? cellBreak : "  \n";
   if (/^<\/?(?:p|div|details)\b/i.test(tag)) return blockBreak;
   return "";
 }
@@ -282,8 +289,48 @@ export function markdownWithHtml(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+/** Reference definitions as authored, one line each, so a Windows destination keeps its backslashes. */
+export function markdownReferenceDefinitions(markdown: string): string[] {
+  if (!markdown.includes("]:")) return [];
+  // Flattened as the renderer does it: a raw HTML block hides the definitions inside it.
+  const flattened = markdownWithHtml(markdown);
+  const definitions: string[] = [];
+  const visit = (node: MarkdownNode, quotes: number) => {
+    if (node.type === "definition") {
+      // A wrapped definition drops its indent and the enclosing quotes' markers, not a literal ">".
+      const wrap = new RegExp(`(?:\\r\\n|\\r|\\n)(?:[ \\t]*>){0,${quotes}}[ \\t]*`, "g");
+      definitions.push(
+        flattened.slice(node.position?.start.offset, node.position?.end.offset).replace(wrap, " "),
+      );
+    }
+    if (!("children" in node)) return;
+    for (const child of node.children) visit(child, quotes + (node.type === "blockquote" ? 1 : 0));
+  };
+  visit(parser.parse(flattened), 0);
+  return definitions;
+}
+
+/**
+ * A reply split into folds and cards renders each fragment as its own document, so each one
+ * carries the reply's definitions. The first definition of a label wins, so the fragment's own
+ * lead: the renderer then prefers them by its own label matching, with none reimplemented here.
+ */
+export function withReferenceDefinitions(
+  fragment: string,
+  replyDefinitions: ReadonlyArray<string>,
+): string {
+  if (replyDefinitions.length === 0 || !fragment.includes("[")) return fragment;
+  const definitions = new Set([...markdownReferenceDefinitions(fragment), ...replyDefinitions]);
+  return `${[...definitions].join("\n")}\n\n${fragment}`;
+}
+
 // Start only at the beginning of a backtick run to avoid retrying every suffix.
 const INLINE_CODE_SPAN = /(?<!`)`+([^`\r\n]+)`+/g;
+
+// The native regex stops at whitespace; the shared classifier decides paths with spaces.
+function isInlineCodeFileLink(code: string, fileLink: RegExp): boolean {
+  return fileLink.test(code) || (/\s/.test(code) && inlineCodeFilePathCandidate(code) !== null);
+}
 
 export function markdownWithInlineFileLinks(markdown: string, fileLink: RegExp): string {
   return transformNativeMarkdown(markdown, fileLink, false);
@@ -298,13 +345,14 @@ function transformNativeMarkdown(
   let linkFiles = false;
   if (fileLink) {
     for (const [, code] of markdown.matchAll(INLINE_CODE_SPAN)) {
-      if (fileLink.test(code!.trim())) {
+      if (isInlineCodeFileLink(code!.trim(), fileLink)) {
         linkFiles = true;
         break;
       }
     }
   }
-  if (!linkFiles && !breakTables) return markdown;
+  const linkProseFiles = fileLink !== undefined && absoluteFilePathMatches(markdown).length > 0;
+  if (!linkFiles && !linkProseFiles && !breakTables) return markdown;
   const edits: MarkdownEdit[] = [];
   const fileEdits: MarkdownEdit[] = [];
   let rewritesPipe = false;
@@ -316,7 +364,9 @@ function transformNativeMarkdown(
       if (
         start !== undefined &&
         end !== undefined &&
-        fileLink?.test(node.value) &&
+        fileLink !== undefined &&
+        isInlineCodeFileLink(node.value, fileLink) &&
+        parseMarkdownFileLink(node.value) !== null &&
         !/[<>]/.test(node.value)
       ) {
         const edit = {
@@ -327,6 +377,25 @@ function transformNativeMarkdown(
         edits.push(edit);
         fileEdits.push(edit);
         if (node.value.includes("|")) rewritesPipe = true;
+      }
+    } else if (
+      linkProseFiles &&
+      node.type === "text" &&
+      node.position?.start.offset !== undefined
+    ) {
+      const start = node.position.start.offset;
+      const raw = markdown.slice(start, node.position.end.offset);
+      for (const { index, path } of absoluteFilePathMatches(raw)) {
+        // Source offsets stay valid for paths whose own text needs no Markdown decoding.
+        if (raw !== node.value && /[\\&]/.test(path)) continue;
+        const escaped = path.replace(/[\\[\]&]/g, "\\$&");
+        const edit = {
+          start: start + index,
+          end: start + index + path.length,
+          content: `[${escaped}](<${escaped}>)`,
+        };
+        edits.push(edit);
+        fileEdits.push(edit);
       }
     } else if (node.type !== "link" && node.type !== "linkReference" && "children" in node)
       node.children.forEach((child, index) => {
@@ -429,13 +498,44 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+const isImage = (node: MarkdownNode) => node.type === "image" || node.type === "imageReference";
+const isSpace = (node: MarkdownNode) =>
+  node.type === "break" || (node.type === "text" && node.value.trim() === "");
+
+// Native Markdown sizes an image as a block only when it is its paragraph's only child.
+function markdownWithImageParagraphs(markdown: string): string {
+  // Skips the extra parse unless a line ending sits between two images.
+  if (!/[\])][ \t]*\\?(?:\r\n?|\n)[ \t]*!\[/.test(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  for (const block of parser.parse(markdown).children) {
+    if (
+      block.type !== "paragraph" ||
+      !block.children.every((child) => isImage(child) || isSpace(child))
+    )
+      continue;
+    const images = block.children.filter(isImage);
+    for (const [index, image] of images.slice(1).entries()) {
+      const start = images[index]!.position?.end.offset;
+      const end = image.position?.start.offset;
+      if (start === undefined || end === undefined) continue;
+      const ending = /\r\n?|\n/.exec(markdown.slice(start, end));
+      if (ending) edits.push({ start, end, content: ending[0].repeat(2) });
+    }
+  }
+  return applyMarkdownEdits(markdown, edits);
+}
+
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
-export function markdownForNativeParsing(markdown: string): string {
+function normalizedMarkdown(markdown: string): string {
   return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
 }
 
+export function markdownForNativeParsing(markdown: string): string {
+  return markdownWithImageParagraphs(normalizedMarkdown(markdown));
+}
+
 export function parseMarkdownDocument(markdown: string): Root {
-  return parser.parse(markdownForNativeParsing(markdown));
+  return parser.parse(normalizedMarkdown(markdown));
 }
 
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
@@ -493,4 +593,65 @@ export function markdownWithFileEmbeds(
   }
   parts.push(markdown.slice(offset));
   return { markdown: parts.join(""), fileHrefs };
+}
+
+const DIRECTION_MARK = { ltr: "‎", rtl: "‏" } as const;
+
+function proseText(node: MarkdownNode): string {
+  if (node.type === "text") return node.value;
+  if (node.type === "inlineCode" || node.type === "code") return " ";
+  if (!("children" in node)) return "";
+  const text = node.children.map(proseText).join("");
+  return node.type === "paragraph" || node.type === "heading" || node.type === "tableCell"
+    ? ` ${text} `
+    : text;
+}
+
+// The native renderer scans inline code too when it picks a paragraph's direction.
+function renderedText(node: MarkdownNode): string {
+  if (node.type === "text" || node.type === "inlineCode") return node.value;
+  if (!("children" in node)) return "";
+  return node.children.map(renderedText).join("");
+}
+
+// A mark inside `[label]` or `<url>` would break the reference or autolink.
+function firstLeafOffset(node: MarkdownNode): number | undefined {
+  if (
+    !("children" in node) ||
+    node.children.length === 0 ||
+    node.type === "link" ||
+    node.type === "linkReference"
+  ) {
+    return node.position?.start.offset;
+  }
+  return firstLeafOffset(node.children[0]!);
+}
+
+/**
+ * The native renderer gives each paragraph the direction of its first letter, so an Arabic
+ * line that opens with an English name renders left to right. Like the web's
+ * `rehypeTextDirection`, each top-level block follows the majority of its words, and a
+ * paragraph whose first letter disagrees gets a direction mark that the renderer reads first.
+ */
+export function markdownWithTextDirection(markdown: string): string {
+  if (!hasRightToLeftLetter(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  for (const block of parser.parse(markdown).children) {
+    if (block.type === "code" || block.type === "html") continue;
+    const direction = textDirection(proseText(block));
+    if (!direction) continue;
+    const mark = (node: MarkdownNode) => {
+      if (node.type === "paragraph" || node.type === "heading" || node.type === "tableCell") {
+        const offset = firstLeafOffset(node);
+        const first = renderedText(node).match(/\p{L}/u)?.[0];
+        if (offset !== undefined && first && textDirection(first) !== direction) {
+          edits.push({ start: offset, end: offset, content: DIRECTION_MARK[direction] });
+        }
+        return;
+      }
+      if ("children" in node) node.children.forEach(mark);
+    };
+    mark(block);
+  }
+  return applyMarkdownEdits(markdown, edits);
 }
