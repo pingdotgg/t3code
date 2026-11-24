@@ -3103,7 +3103,7 @@ describe("AntigravityAdapterV2 update_steps checklist", () => {
           ? [event.turnItem.toolName]
           : [],
       );
-      assert.notInclude(toolRows, "Run update_steps");
+      assert.deepEqual(toolRows, []);
       const plans = events.flatMap((event) =>
         event.type === "plan.updated" && event.plan.kind === "todo_list"
           ? [event.plan.steps.map((step) => [step.text, step.status])]
