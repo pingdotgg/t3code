@@ -89,6 +89,7 @@ export function useAssistantCitationTarget({
         setSettlement({ target, dismissed: true });
       };
       const onKeyDown = (event: KeyboardEvent) => {
+        if (event.isComposing || event.keyCode === 229) return;
         if (event.key === "Escape") {
           dismiss(false);
         } else if (

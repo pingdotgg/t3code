@@ -10,7 +10,10 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
-import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import {
+  formatProviderUpdateRequiredNotice,
+  providerUpdateChannelLags,
+} from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
 import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -244,7 +247,7 @@ function ModelPickerProviderNotices({
       ) : (
         <ComboboxEmpty className="empty:h-0">{emptyLabel}</ComboboxEmpty>
       )}
-      {updateRequiredNotices.map(({ notice, instanceNames }) => (
+      {updateRequiredNotices.map(({ notice, instanceNames, canUpdateInSettings }) => (
         <p
           key={notice}
           className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
@@ -257,15 +260,20 @@ function ModelPickerProviderNotices({
                 notice,
                 $context: "provider instance names, then the update notice that applies to them",
               })
-            : notice}{" "}
-          <InlineButton
-            onClick={() => {
-              onRequestClose?.();
-              void navigate({ to: "/settings/providers" });
-            }}
-          >
-            <T>Provider settings</T>
-          </InlineButton>
+            : notice}
+          {canUpdateInSettings ? (
+            <>
+              {" "}
+              <InlineButton
+                onClick={() => {
+                  onRequestClose?.();
+                  void navigate({ to: "/settings/providers" });
+                }}
+              >
+                <T>Provider settings</T>
+              </InlineButton>
+            </>
+          ) : null}
         </p>
       ))}
     </>
@@ -830,9 +838,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ? formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery, messages, locale)
         : null;
       if (!notice) return [];
-      // A search spans instances, so the notice names them when a model row would badge one.
-      const named = isSearching && shouldShowInstanceBadge(entry, instanceEntries);
-      return [{ notice, instanceName: entry.displayName, named }];
+      return [
+        {
+          notice,
+          instanceName: entry.displayName,
+          // A search spans instances, so the notice names them when a model row would badge one.
+          named: isSearching && shouldShowInstanceBadge(entry, instanceEntries),
+          canUpdateInSettings: !providerUpdateChannelLags(entry.snapshot, searchQuery),
+        },
+      ];
     }),
   );
 

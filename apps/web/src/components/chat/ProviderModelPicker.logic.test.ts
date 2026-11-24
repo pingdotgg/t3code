@@ -29,13 +29,13 @@ describe("groupUpdateRequiredNotices", () => {
     expect(
       groupUpdateRequiredNotices([
         // An enabled instance beside one the project turned off is not badged; the other is.
-        { notice: fable, instanceName: "Work", named: false },
-        { notice: sol, instanceName: "Codex", named: false },
-        { notice: fable, instanceName: "Personal", named: true },
+        { notice: fable, instanceName: "Work", named: false, canUpdateInSettings: false },
+        { notice: sol, instanceName: "Codex", named: false, canUpdateInSettings: true },
+        { notice: fable, instanceName: "Personal", named: true, canUpdateInSettings: true },
       ]),
     ).toEqual([
-      { notice: fable, instanceNames: ["Work", "Personal"] },
-      { notice: sol, instanceNames: [] },
+      { notice: fable, instanceNames: ["Work", "Personal"], canUpdateInSettings: true },
+      { notice: sol, instanceNames: [], canUpdateInSettings: true },
     ]);
   });
 });

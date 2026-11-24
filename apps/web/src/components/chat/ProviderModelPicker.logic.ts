@@ -19,24 +19,31 @@ export function retainedModelWhileProviderLocked(
 
 /**
  * Shows a notice once however many instances raise it. When any of them is `named`, the notice
- * lists every instance that raised it, so it never names only some of the ones it covers.
+ * lists every instance that raised it, so it never names only some of the ones it covers. It links
+ * to Provider settings when any of them can be updated there.
  */
 export function groupUpdateRequiredNotices(
   notices: ReadonlyArray<{
     readonly notice: string;
     readonly instanceName: string;
     readonly named: boolean;
+    readonly canUpdateInSettings: boolean;
   }>,
-): ReadonlyArray<{ readonly notice: string; readonly instanceNames: ReadonlyArray<string> }> {
-  const groups = new Map<string, { readonly names: string[]; named: boolean }>();
-  for (const { notice, instanceName, named } of notices) {
-    const group = groups.get(notice) ?? { names: [], named: false };
+) {
+  const groups = new Map<
+    string,
+    { readonly names: string[]; named: boolean; canUpdateInSettings: boolean }
+  >();
+  for (const { notice, instanceName, named, canUpdateInSettings } of notices) {
+    const group = groups.get(notice) ?? { names: [], named: false, canUpdateInSettings: false };
     group.names.push(instanceName);
     group.named ||= named;
+    group.canUpdateInSettings ||= canUpdateInSettings;
     groups.set(notice, group);
   }
-  return Array.from(groups, ([notice, { names, named }]) => ({
+  return Array.from(groups, ([notice, { names, named, canUpdateInSettings }]) => ({
     notice,
     instanceNames: named ? names : [],
+    canUpdateInSettings,
   }));
 }
