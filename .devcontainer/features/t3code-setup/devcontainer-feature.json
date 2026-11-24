@@ -1,0 +1,10 @@
+{
+  "id": "t3code-setup",
+  "version": "1.0.0",
+  "name": "T3 Code setup",
+  "description": "Installs the Vite+ CLI (vp) for the remote user and prepares ~/.cache ownership.",
+  "installsAfter": [
+    "ghcr.io/devcontainers/features/common-utils",
+    "ghcr.io/devcontainers/features/node"
+  ]
+}

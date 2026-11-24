@@ -13,7 +13,9 @@
     // native/resource-monitor (edition 2024, needs stable >= 1.85). The server
     // degrades gracefully without the binary, but CI checks cargo fmt + test.
     "ghcr.io/devcontainers/features/rust:1": {},
-    "ghcr.io/devcontainers/features/github-cli:1": {}
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    // Installs vp and prepares ~/.cache ownership.
+    "./features/t3code-setup": {}
   },
   "hostRequirements": {
     "cpus": 4,
@@ -37,7 +39,6 @@
     // if prebuilt codespaces become the primary workflow.
     "source=t3code-node-modules-${devcontainerId},target=${containerWorkspaceFolder}/node_modules,type=volume"
   ],
-  "onCreateCommand": "bash .devcontainer/on-create.sh",
   "updateContentCommand": "bash .devcontainer/update-content.sh",
   "forwardPorts": [5733, 13773],
   "portsAttributes": {
@@ -55,7 +56,7 @@
       "openFiles": ["docs/operations/01_devcontainer.md"]
     },
     "vscode": {
-      "extensions": ["oxc.oxc-vscode", "rust-lang.rust-analyzer"],
+      "extensions": ["oxc.oxc-vscode", "rust-lang.rust-analyzer", "TypeScriptTeam.native-preview"],
       "settings": {
         // .repos is a large vendored read-only reference tree; watching it
         // burns CPU and file handles.
