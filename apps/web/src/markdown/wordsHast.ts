@@ -22,6 +22,7 @@ import {
 
 import { rehypeChipPunctuation } from "../components/chat/markdownChipPunctuation";
 import { rehypeHeadingIds } from "../components/chat/markdownFragments";
+import { rehypeWrapLongTableTokens } from "../components/chat/markdownTableTokens";
 import { rehypeTextDirection } from "../components/chat/markdownTextDirection";
 
 /** What a kind of message adds to chat Markdown. Pass a stable object: renderers cache by it. */
@@ -908,6 +909,7 @@ const addTextDirection = rehypeTextDirection();
 const preserveImageSourceMeta = rehypePreserveImageSourceMeta();
 const normalizeLocalEditorLinks = rehypeNormalizeLocalEditorLinks();
 const groupChipPunctuation = rehypeChipPunctuation();
+const wrapLongTableTokens = rehypeWrapLongTableTokens();
 
 const INSIGHT_OPENING = /^( {0,3})(`?)★ Insight[ \t]+─{3,}\2[ \t]*$/u;
 const INSIGHT_CLOSING = /^( {0,3})(`?)─{3,}\2[ \t]*$/u;
@@ -1187,6 +1189,7 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   addHeadingIds(hast);
   addTextDirection(hast as never);
   groupChipPunctuation(hast as never);
+  wrapLongTableTokens(hast as never);
   return hast;
 }
 
