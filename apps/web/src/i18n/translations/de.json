@@ -1552,6 +1552,7 @@
   "6848f5bbb2bd9eec": "PDF-Dokument",
   "7873a79df0cf6d0e": "Browserseite",
   "0b55696e27387e4e": "Drücke Shift+Escape, um die Browserseite zu verlassen.",
+  "90dfebe26eb86b2d": "Auswahloptionen der Seite",
   "737d3c6bec93f9e6": "Dateien für die Seite auswählen",
   "e6a3fa7cfc14f86a": "Browserdialog",
   "61a552a67e9e3eac": "Antwort auf Dialog",
@@ -12282,10 +12283,26 @@
   "a16b48709357a5a7": "Nutzung verwalten",
   "a00e74aaa421c524": "übrig",
   "0e34c3076c08feb2": [
-    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    {
+      "t": "span",
+      "i": 1,
+      "c": [
+        "↻ +",
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        "%"
+      ]
+    },
     " ",
     "in ",
-    { "i": 3, "k": "_gt_value_3", "v": "v" }
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    }
   ],
   "8bd6f07136317c8f": "Kein Anbieter in den ausgewählten Umgebungen meldet Abo-Limits.",
   "87f5d0c61b335f38": "Nutzung in ChatGPT mit deinem verbundenen Konto ansehen.",
@@ -12893,6 +12910,68 @@
   "c92657bb7f2293ff": "Genehmigung nötig",
   "f1e5c1be1ac92361": "Genehmigen",
   "fcb5f3c4d4753326": "Über diese Verbindung lassen sich keine Befehle genehmigen. Verwende einen Client, der das Terminal verwenden darf.",
+  "4e96712d839ccbff": "{who} hat {choice} gesagt",
+  "19097cfb8f5a79cf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " hat",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    " gesagt."
+  ],
+  "e7bbf693910057bf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " hat",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    " gesagt: ",
+    {
+      "i": 4,
+      "k": "_gt_value_4",
+      "v": "v"
+    }
+  ],
+  "3759768c5d342c22": [
+    "beantwortet",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " braucht eine Begründung."
+  ],
+  "91aadfc843c600de": "Google-Konto bestätigen",
   "2c8f841a78699887": "Der Host hat die Änderung abgelehnt. Aktualisiere und versuche es erneut.",
   "7c5a90bf39328351": "Diese Beschreibung wurde woanders geändert, seit du mit der Bearbeitung begonnen hast. Dein Entwurf bleibt unten erhalten.",
   "8fc15cfdaa9abfc6": "Aktuelle Beschreibung anzeigen",

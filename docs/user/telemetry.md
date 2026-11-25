@@ -75,6 +75,11 @@ To disable product events and relay tracing from the server, set
 `T3CODE_TELEMETRY_ENABLED=false` in its environment before starting it. Relay tracing also stops
 when `T3CODE_OTEL_SDK_DISABLED` or `OTEL_SDK_DISABLED` turns OpenTelemetry export off.
 
+On a CI runner, the server sends no product events or relay traces by default. It treats a run as
+CI when a common CI variable is set, such as `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, or `JENKINS_URL`.
+`CI=false` and `CI=0` do not count. To send them from CI anyway, set
+`T3CODE_TELEMETRY_ENABLED=true`.
+
 An administrator can turn product events and relay tracing off in the server and desktop app with
 a [managed policy](./managed-policy.md#other-capabilities). This does not control traces sent by
 the hosted web app or mobile clients.

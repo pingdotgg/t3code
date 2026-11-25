@@ -2957,14 +2957,21 @@ const makeWorkflowClient = Effect.fn("test.makeWorkflowClient")(function* (
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
     Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
     Layer.mock(ServerEnvironment.ServerEnvironment)({}),
-    Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+      // Another client's session beside this one: the answer names only the one that sent it.
+      listClientSessions: () =>
+        Effect.succeed([
+          { current: false, client: { label: "Desktop", deviceType: "desktop" } },
+          { current: true, client: { label: "Pixel 9", deviceType: "mobile" } },
+        ] as never),
+    }),
     Layer.mock(Workflows.Workflows)({
       get: (runId) =>
         runId === workflowRun.runId
           ? Effect.succeed({ run: workflowRun, steps: [workflowStep], references: [] })
           : Effect.fail(new Workflows.WorkflowRunNotFoundError({ runId })),
-      answer: (runId, name, value) =>
-        Effect.sync(() => calls.push({ answer: [runId, name], value })),
+      answer: (runId, name, value, answeredBy) =>
+        Effect.sync(() => calls.push({ answer: [runId, name], value, answeredBy })),
       resume: (runId) => Effect.sync(() => calls.push({ resume: runId })),
       cancel: (runId, reason) => Effect.sync(() => calls.push({ cancel: runId, reason })),
     }),
@@ -3144,8 +3151,16 @@ it.effect("workflow RPCs read a run and pass an answer, a resume and a cancel to
     yield* client[WS_METHODS.workflowsCancel]({ runId: "run-1", reason: "Wrong branch" });
 
     assert.deepEqual(calls, [
-      { answer: ["run-1", "approve"], value: { choice: "yes", reason: "Looks good" } },
-      { answer: ["run-1", "approve"], value: { choice: "no" } },
+      {
+        answer: ["run-1", "approve"],
+        value: { choice: "yes", reason: "Looks good" },
+        answeredBy: { label: "Pixel 9", sessionId: "workflow-test" },
+      },
+      {
+        answer: ["run-1", "approve"],
+        value: { choice: "no" },
+        answeredBy: { label: "Pixel 9", sessionId: "workflow-test" },
+      },
       { resume: "run-1" },
       { cancel: "run-1", reason: undefined },
       { cancel: "run-1", reason: "Wrong branch" },

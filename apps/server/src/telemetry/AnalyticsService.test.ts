@@ -114,7 +114,13 @@ const recordTwentyEvents = Effect.gen(function* () {
   }
 });
 
-const analyticsLayerWith = (client: HttpClient.HttpClient, policy?: ManagedPolicyDocument) =>
+const analyticsLayerWith = (
+  client: HttpClient.HttpClient,
+  policy?: ManagedPolicyDocument,
+  telemetryEnv: { readonly T3CODE_TELEMETRY_ENABLED?: boolean } = {
+    T3CODE_TELEMETRY_ENABLED: true,
+  },
+) =>
   AnalyticsService.layer.pipe(
     Layer.provideMerge(
       ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
@@ -122,7 +128,7 @@ const analyticsLayerWith = (client: HttpClient.HttpClient, policy?: ManagedPolic
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          T3CODE_TELEMETRY_ENABLED: true,
+          ...telemetryEnv,
           T3CODE_POSTHOG_KEY: "phc_test_key",
           T3CODE_POSTHOG_HOST: "http://localhost",
         }),
@@ -152,6 +158,7 @@ const sendFor = (
     AnalyticsService.AnalyticsService | Effect.Services<typeof getTelemetryIdentity>
   > = recordTwentyEvents,
   policy?: ManagedPolicyDocument,
+  telemetryEnv?: Parameters<typeof analyticsLayerWith>[2],
 ) =>
   Effect.gen(function* () {
     const batches: Array<ReadonlyArray<SentEvent>> = [];
@@ -166,7 +173,7 @@ const sendFor = (
         return yield* respond(request);
       }),
     );
-    const runtimeLayer = analyticsLayerWith(client, policy);
+    const runtimeLayer = analyticsLayerWith(client, policy, telemetryEnv);
 
     yield* Effect.gen(function* () {
       yield* record;
@@ -293,6 +300,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
         });
         assert.deepEqual(denied, []);
       }),
+  );
+
+  it.effect("sends nothing on a CI runner unless the environment opts in", () =>
+    Effect.gen(function* () {
+      const onCi = (telemetryEnv: Parameters<typeof analyticsLayerWith>[2]) =>
+        sendFor(1, respondWithStatus(204), recordTwentyEvents, undefined, telemetryEnv).pipe(
+          Effect.provideService(HostProcess.Environment, { GITHUB_ACTIONS: "true" }),
+        );
+      assert.deepEqual(yield* onCi({}), []);
+      assert.equal((yield* onCi({ T3CODE_TELEMETRY_ENABLED: true })).length, 1);
+    }),
   );
 
   it.effect("drops a batch the endpoint rejects without sending it again", () =>
