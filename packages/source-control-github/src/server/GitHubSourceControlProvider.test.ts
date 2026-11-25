@@ -793,7 +793,7 @@ describe("GitHubSourceControlProvider writes", () => {
       const gh = yield* makeProvider({
         rest: (input) =>
           input.path === "user"
-            ? Effect.succeed(restResponse({ login: "me" }))
+            ? Effect.succeed(restResponse({ id: 123, login: "me" }))
             : input.path === "repos/me/private"
               ? Effect.fail(
                   new GitHubRequestPolicy.GitHubApiAuthenticationError({
