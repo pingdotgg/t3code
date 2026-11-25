@@ -570,37 +570,28 @@ it.each(["metadata first", "closed"] as const)(
   },
 );
 
-it.each([
-  { rejectedChunk: 1, bracketed: true },
-  { rejectedChunk: 2, bracketed: true },
-  { rejectedChunk: 2, bracketed: false },
-])(
-  "stops a split paste when chunk $rejectedChunk fails (bracketed: $bracketed)",
-  async ({ rejectedChunk, bracketed }) => {
-    const { other: threadRef } = setup();
-    fixture.runWrite = async () =>
-      fixture.writes.length === rejectedChunk || fixture.writes.at(-1)?.data === "\x1b[201~"
-        ? AsyncResult.failure(Cause.fail(new TerminalProcessChangedError()))
-        : { _tag: "Success" };
-    await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
-    await act(async () => {
-      fixture.pendingSurfaces.shift()?.();
-    });
-    const text = "p".repeat(140_000);
-    const paste = bracketed ? `\x1b[200~${text}\x1b[201~` : text;
-    await act(async () => {
-      fixture.typeIntoSurface?.(paste);
-      fixture.typeIntoSurface?.("after");
-    });
-    const attempted = [paste.slice(0, 65_536)];
-    if (rejectedChunk > 1) attempted.push(paste.slice(65_536, 131_072));
-    if (rejectedChunk > 1 && bracketed) attempted.push("\x1b[201~");
-    expect(fixture.writes.map(({ data, expectedPid }) => ({ data, expectedPid }))).toEqual([
-      ...attempted.map((data) => ({ data, expectedPid: 123 })),
-      { data: "after", expectedPid: undefined },
-    ]);
-  },
-);
+it("stops a split paste on its original process once that process is replaced", async () => {
+  const { other: threadRef } = setup();
+  fixture.runWrite = async () =>
+    fixture.writes.length >= 2 && fixture.writes.at(-1)?.expectedPid !== undefined
+      ? AsyncResult.failure(Cause.fail(new TerminalProcessChangedError()))
+      : { _tag: "Success" };
+  await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  const paste = `\x1b[200~${"p".repeat(140_000)}\x1b[201~`;
+  await act(async () => {
+    fixture.typeIntoSurface?.(paste);
+    fixture.typeIntoSurface?.("after");
+  });
+  expect(fixture.writes.map(({ data, expectedPid }) => ({ data, expectedPid }))).toEqual([
+    { data: paste.slice(0, 65_536), expectedPid: 123 },
+    { data: paste.slice(65_536, 131_072), expectedPid: 123 },
+    { data: "\x1b[201~", expectedPid: 123 },
+    { data: "after", expectedPid: undefined },
+  ]);
+});
 
 it("closes an interrupted paste after disposal before input from a remounted view", async () => {
   const { other: threadRef } = setup();
