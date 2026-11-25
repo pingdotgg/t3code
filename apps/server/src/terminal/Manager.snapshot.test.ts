@@ -24,6 +24,16 @@ it.layer(Layer.mergeAll(nodeLayer, ProcessRunner.layer.pipe(Layer.provide(nodeLa
     { name: "non-ASCII padding", body: "31" + "é".repeat(4_096) + "\r", replay: "31\r" },
     { name: "over-budget parameters", body: "1".repeat(5_000) + "\r", replay: "\r" },
     { name: "repeated carriage returns", body: "31" + "\r".repeat(4_094), replay: "31\r" },
+    {
+      name: "over-budget line feeds",
+      body: "31" + "\n".repeat(4_094),
+      replay: "31" + "\n".repeat(4_092),
+    },
+    {
+      name: "parameters filling the budget",
+      body: "1".repeat(4_094) + "\r",
+      replay: "1".repeat(4_094),
+    },
   ])("replays a split CSI with $name", ({ body, replay }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
