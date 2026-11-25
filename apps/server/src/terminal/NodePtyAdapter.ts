@@ -294,10 +294,7 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
           if (platform === "win32") {
             yield* restore(waitForWindowsPid(native, process, input.shell));
           }
-          if (takeOwnership !== undefined) {
-            takeOwnership(process);
-            nativeProcess = undefined;
-          }
+          takeOwnership?.(process);
           return process;
         }),
       ).pipe(
