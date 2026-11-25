@@ -125,6 +125,7 @@ owner (4) > admin (3) > modo (2) > regular (1)
 | Create locked thread / lock & unlock threads   | No           | No                | Yes                        | Yes          |
 | Interrupt another user's ongoing turn          | No           | No                | Yes*                       | Yes*         |
 | `Send now` (steer queued message/note)         | Creator only | Creator only      | Creator only               | Creator only |
+| Manage team skills & pre-prompts               | No           | Yes               | Yes                        | Yes          |
 | Configure team providers & remote environments | No           | No                | Yes                        | Yes          |
 | Configure per-environment ACLs                 | No           | No                | Yes                        | Yes          |
 | Delete team / transfer last owner              | No           | No                | No                         | Yes          |
@@ -290,6 +291,25 @@ This solves the real-world case where a developer has a personal subscription (e
        - **Revocation handling:** If the Team Server responds `403` during renewal or auto-resume (member revoked/suspended), the local `t3server` purges the ephemeral token, skips auto-resume, and surfaces a clear team-access-revoked error.
    - **Safe fallback (`remote-only`):** If a specific CLI driver cannot be proxied or leased without exposing a long-lived `refresh_token`, the Team Server marks it `remote-only` and the UI clearly explains it runs only on remote team environments—never falling back to personal subscriptions.
 
+### Team Skills & Pre-Prompts (Auto-Synced to Local & Remote Environments)
+
+`owner`, `admin`, and `modo` members can define shared **Skills** and **Pre-prompts** in **Settings → Teams → \<Team\> → Skills & Pre-prompts**, scoped either to **all providers (`"*"`)** or to a **specific provider driver** (e.g., `"antigravity"`, `"codex"`, `"claudeAgent"`). Any teammate running a local thread (or remote team thread) on a team-assigned project automatically uses them with zero local setup:
+
+1. **Pure Markdown skills only (security boundary):**
+   - Team skills consist strictly of **pure Markdown** (`SKILL.md` with YAML frontmatter + optional text/Markdown reference files)—never executable scripts or binaries distributed from the Team Server to teammates' laptops (executable tooling belongs in the project's git repository under normal PR review).
+   - Every create/update records `updated_by_member_id`, `updated_at`, `revision`, and `content_hash` for auditability.
+2. **Materialization into isolated `team:<teamId>:*` profiles (personal config untouched):**
+   - Teammates' personal config directories (`~/.gemini`, `~/.codex`, `~/.claude`) are **never modified or overwritten**.
+   - Team skills and pre-prompts are materialized exclusively inside the isolated `team:<teamId>:<providerInstanceId>` profile directory (and purged cleanly if the member leaves or is revoked from the team):
+     - **Antigravity (`GEMINI_HOME`):** Team skills (`"*"` + `"antigravity"`) are written atomically to `<teamProfile>/team-skills/<slug>/SKILL.md` (+ references). `<teamProfile>/config/skills.json` registers `<teamProfile>/team-skills` **first** and keeps the user's personal skills directory (`~/.gemini/config/skills`) accessible alongside it, with **team skills taking precedence on slug/name collision**. Team pre-prompts (`"*"` + `"antigravity"`) are written to `<teamProfile>/GEMINI.md` (alongside repo-level `AGENTS.md`/`GEMINI.md` loaded natively by the harness).
+     - **Codex (`CODEX_HOME`):** Materialized into `<teamProfile>/skills/` (team slugs overriding personal symlinks on collision) + `<teamProfile>/AGENTS.md` (and/or `buildCodexAdditionalContext` within its 4,000-byte entry cap).
+     - **Claude Code (`CLAUDE_CONFIG_DIR`):** Materialized into `<teamProfile>/skills/` (team precedence on collision) + `<teamProfile>/CLAUDE.md` / `--append-system-prompt`.
+     - **Generic / ACP agents:** Pre-prompts are injected via the orchestrator's `<team_instructions>` block.
+3. **Real-time & pre-turn sync:**
+   - Any create/update/delete on the Team Server increments the team asset revision and broadcasts a lightweight `team.assets.updated { revision }` WebSocket event.
+   - Connected local `t3server` instances and remote runners fetch deltas via `GET /api/team/assets?since=<revision>`, update their isolated `team:<teamId>:*` profile atomically, and refresh the provider's skill catalog so new skills appear immediately in the `/` picker.
+   - A revision check also runs right before starting or resuming a turn so offline laptops catch up transparently on reconnect.
+
 ---
 
 ## 5. UI, Filtering, and Notifications
@@ -413,6 +433,8 @@ To avoid SQLite migration number collisions and `ALTER TABLE` conflicts with ups
 - `team_views` (`id`, `team_id`, `name`, `is_default`, `read_roles_json`, `read_member_ids_json`, `post_roles_json`, `post_member_ids_json`, `created_at`, `updated_at`)
 - `team_environments` (`id`, `team_id`, `environment_id`, `name`, `is_default`, `peer_link_id`, `access_roles_json`, `access_member_ids_json`, `created_at`, `updated_at`)
 - `team_providers` (`id`, `team_id`, `provider_instance_id`, `config_json`, `proxy_enabled`, `created_at`, `updated_at`)
+- `team_skills` (`id`, `team_id`, `slug`, `provider_driver`, `skill_md`, `references_json`, `enabled`, `revision`, `content_hash`, `updated_by_member_id`, `updated_at`)
+- `team_preprompts` (`id`, `team_id`, `provider_driver`, `content`, `enabled`, `revision`, `updated_by_member_id`, `updated_at`)
 - `team_thread_follows` (`thread_id`, `member_id`, `created_at`)
 - `team_thread_notes` (`id`, `thread_id`, `team_id`, `author_member_id`, `original_body`, `original_content_hash`, `edited_body`, `edited_content_hash`, `status`, `anchor_turn_id`, `anchor_seq`, `included_in_turn_id`, `resolved_by_member_id`, `resolved_at`, `created_at`)
 
@@ -469,3 +491,4 @@ The following decisions are locked in for implementation:
 7. **Admin-only Team Provider auth & zero-config local execution** — team providers are authenticated solely by `owner`/`admin` on the owning Team Server; teammates never configure provider auth locally. Local team threads automatically provision isolated `team:<teamId>:*` instances (never touching or falling back to personal subscriptions), fed transparently by the Team Server via `proxy` (API/gateway) or ephemeral `token-lease` (OAuth access tokens without `refresh_token`), with `remote-only` fallback for drivers that cannot safely lease/proxy.
 8. **Agent privilege containment (Member-bound MCP + Hub/Runner OS split)** — injected T3 MCP tokens are bound to `actingMemberId = turnAuthorMemberId` (inherited immutably by subagents/delegates) so agents obey the exact same RBAC/View/Lock/Env permissions as the triggering member; for OS-level containment on a shared server, the Team Server supports `--team-hub-only` mode under a dedicated OS user (`t3hub`, `0700` data dir) while an unprivileged `t3runner` user attached over loopback runs the Default Team Environment (with optional Linux `bwrap` worktree sandboxing).
 9. **Mid-turn queueing, `Send now`, and explicit `Interrupt`** — messages from non-creators (and approved Notes) arriving during an active turn are appended to the queue with a **dashed border/style** (`en pointillé`); **`Send now`** (mid-turn steering) is strictly restricted to the **thread creator only** (not even `owner`/`admin`), while `owner`/`admin` have an explicit **`Interrupt`** control that stops the active turn and immediately revokes its GitHub credential lease.
+10. **Team Skills & Pre-Prompts (Pure Markdown, Team Precedence)** — `owner`, `admin`, and `modo` manage team-wide (`"*"`) or provider-specific (e.g., `"antigravity"`) pure-Markdown skills (`SKILL.md` + text references, no executable scripts) and pre-prompts on the Team Server; they auto-sync into isolated `team:<teamId>:*` profiles on local and remote environments, keeping teammates' personal skills accessible while giving **team skills precedence on name collision**.
