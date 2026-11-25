@@ -124,6 +124,7 @@ import { countPreparingComposerImages, holdComposerSend } from "./preparingCompo
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
+import { ensureWorktreeLayoutApproved } from "../../worktreeLayoutApproval";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -845,6 +846,7 @@ export function useComposerSend(input: ComposerSendInput) {
       // in place instead of dispatching a new turn.
       await queuedRunEdit.saveEdit(
         {
+          modelSelection: ctxSelectedModelSelection,
           prompt: promptForSend,
           images: composerImages,
           files: composerFiles,
@@ -1035,6 +1037,39 @@ export function useComposerSend(input: ComposerSendInput) {
         m(msg("Select a base branch before sending in New worktree mode.")),
       );
       return;
+    }
+    // A project may set its worktrees up with its own commands, which run only once a person
+    // has approved their text. Asking takes as long as the user does, so the draft is compared
+    // across it like any other wait before a send.
+    if (baseBranchForWorktree || multipleModelSelections !== null) {
+      const draftBeforeApproval = useComposerDraftStore
+        .getState()
+        .getComposerDraft(composerDraftTarget);
+      sendInFlightRef.current = true;
+      const layoutApproval = await ensureWorktreeLayoutApproved({
+        environmentId,
+        projectId: activeProject.id,
+        projectTitle: activeProject.title,
+      }).finally(() => {
+        sendInFlightRef.current = false;
+      });
+      if (layoutApproval.status === "cancelled") return;
+      if (layoutApproval.status === "blocked") {
+        setThreadError(threadIdForSend, layoutApproval.message);
+        return;
+      }
+      if (
+        composerDraftContentChanged(
+          draftBeforeApproval,
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+        )
+      ) {
+        setThreadError(
+          threadIdForSend,
+          m(msg("Draft changed while preparing this message. Review it and send again.")),
+        );
+        return;
+      }
     }
     // Records bind attachments by the id each side knows: the local id for the optimistic
     // row, the upload id (or local id on the data-URL path) on the wire; the server

@@ -42,6 +42,7 @@ import {
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { stripAppImageRuntimeEnv } from "@t3tools/shared/appImageRuntimeEnv";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution, mergePathEntries } from "@t3tools/shared/shell";
 
@@ -112,6 +113,8 @@ const PROCESS_TABLE_QUERY_TIMEOUT = "15 seconds";
 const CLOSE_IDLE_QUERY_TIMEOUT = { posix: "1 second", win32: "1500 millis" } as const;
 // Discover children started without terminal input or output.
 const QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS = 30;
+// Bounds how late a steady command's silent exit or new child is seen.
+const STEADY_SUBPROCESS_SNAPSHOT_EVERY_TICKS = 5;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
@@ -505,6 +508,7 @@ function terminalActivityMark(session: TerminalSessionState): number {
 interface QuietTerminalSession {
   readonly process: PtyAdapter.PtyProcess | null;
   readonly mark: number;
+  readonly processKey: string | null;
   readonly idleSnapshots: number;
 }
 
@@ -918,11 +922,12 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
   ProcessRunner.ProcessRunner
 > {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const powershell = windowsPowerShellPath(yield* HostProcess.Environment);
   const command =
     '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
   const result = yield* processRunner
     .run({
-      command: "powershell.exe",
+      command: powershell,
       args: ["-NoProfile", "-NonInteractive", "-Command", command],
       timeout,
       maxOutputBytes: 262_144,
@@ -1270,8 +1275,12 @@ function shouldStripDcsSequence(content: string): boolean {
   return /^[01]?[$+][qr]/.test(content);
 }
 
+// Ghostty reports colours as `rgb:rrrr/gggg/bbbb`; a lone shorter `rgb:` value only sets one.
+const LONE_SHORT_RGB_SETTER =
+  /^\d+;rgb:(?![\da-f]{4}\/[\da-f]{4}\/[\da-f]{4}$)[\da-f]{1,4}\/[\da-f]{1,4}\/[\da-f]{1,4}$/i;
+
 function shouldStripOscSequence(content: string): boolean {
-  return /^(10|11|12);(?:\?|rgb:)/.test(content);
+  return /^(10|11|12);(?:\?|rgb:)/.test(content) && !LONE_SHORT_RGB_SETTER.test(content);
 }
 
 // An OSC 4 whose every colour is "?" reports palette entries and sets none. Ghostty skips C0
@@ -1636,46 +1645,6 @@ function shouldExcludeTerminalEnvKey(key: string): boolean {
     return true;
   }
   return TERMINAL_ENV_BLOCKLIST.has(normalizedKey);
-}
-
-const APPIMAGE_RUNTIME_ENV_KEYS = ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] as const;
-const APPIMAGE_PATH_LIKE_ENV_KEYS = [
-  "PATH",
-  "LD_LIBRARY_PATH",
-  "XDG_DATA_DIRS",
-  "GSETTINGS_SCHEMA_DIR",
-] as const;
-
-function isPathSegmentUnderAppDir(segment: string, appDir: string): boolean {
-  return segment === appDir || segment.startsWith(`${appDir}/`);
-}
-
-// AppImage mount paths would make PTY tools resolve against the mount instead of the user's system.
-function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  if (env.APPIMAGE === undefined && env.APPDIR === undefined) return env;
-
-  const scrubbed: NodeJS.ProcessEnv = { ...env };
-  for (const key of APPIMAGE_RUNTIME_ENV_KEYS) {
-    delete scrubbed[key];
-  }
-
-  const appDir = env.APPDIR?.replace(/\/+$/, "");
-  if (appDir) {
-    for (const key of APPIMAGE_PATH_LIKE_ENV_KEYS) {
-      const value = scrubbed[key];
-      if (value === undefined) continue;
-      const kept = value
-        .split(":")
-        .filter((segment) => segment.length > 0 && !isPathSegmentUnderAppDir(segment, appDir));
-      if (kept.length > 0) {
-        scrubbed[key] = kept.join(":");
-      } else {
-        delete scrubbed[key];
-      }
-    }
-  }
-
-  return scrubbed;
 }
 
 function createTerminalSpawnEnv(
@@ -2821,10 +2790,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (!candidate) {
       return yield* (
         lastError ??
-          new PtyAdapter.PtySpawnError({
-            adapter: "terminal-manager",
-            attemptedShells: [],
-          })
+        new PtyAdapter.PtySpawnError({
+          adapter: "terminal-manager",
+          attemptedShells: [],
+        })
       );
     }
 
@@ -3118,15 +3087,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   // Process identity prevents a restarted shell from inheriting quiet state.
   let quietSessions = new WeakMap<TerminalSessionState, QuietTerminalSession>();
   let skippedQuietTicks = 0;
-  const isQuiet = (session: TerminalSessionState & { pid: number }) => {
+  const quietSnapshotEveryTicks = (session: TerminalSessionState & { pid: number }) => {
     const quiet = quietSessions.get(session);
-    return (
-      quiet !== undefined &&
-      quiet.idleSnapshots === 2 &&
-      quiet.process === session.process &&
-      quiet.mark === terminalActivityMark(session) &&
-      !session.hasRunningSubprocess
-    );
+    if (
+      quiet === undefined ||
+      quiet.idleSnapshots < 2 ||
+      quiet.process !== session.process ||
+      quiet.mark !== terminalActivityMark(session)
+    ) {
+      return 1;
+    }
+    return quiet.processKey === null
+      ? QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS
+      : STEADY_SUBPROCESS_SNAPSHOT_EVERY_TICKS;
   };
 
   const pollSubprocessActivity = Effect.fn("terminal.pollSubprocessActivity")(function* () {
@@ -3146,10 +3119,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (runningSessions.length === 0) {
       return { snapshotSucceeded: true, queryElapsedMs: 0 };
     }
-    if (
-      runningSessions.every(({ session }) => isQuiet(session)) &&
-      skippedQuietTicks < QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS - 1
-    ) {
+    const snapshotEveryTicks = Math.min(
+      ...runningSessions.map(({ session }) => quietSnapshotEveryTicks(session)),
+    );
+    if (skippedQuietTicks < snapshotEveryTicks - 1) {
       skippedQuietTicks += 1;
       return { snapshotSucceeded: true, queryElapsedMs: 0 };
     }
@@ -3241,9 +3214,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         yield* publishEvent(event.value);
       }
 
+      const processKey = next.hasRunningSubprocess
+        ? `${nextChildLabel}:${next.processIds.toSorted((a, b) => a - b).join(",")}`
+        : null;
       if (
         snapshotSucceeded &&
-        !next.hasRunningSubprocess &&
         session.status === "running" &&
         session.pid === terminalPid &&
         session.process === process &&
@@ -3252,7 +3227,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         quietSessions.set(session, {
           process,
           mark,
-          idleSnapshots: previous?.process === process && previous.mark === mark ? 2 : 1,
+          processKey,
+          idleSnapshots:
+            previous?.process === process &&
+            previous.mark === mark &&
+            previous.processKey === processKey
+              ? 2
+              : 1,
         });
       }
     });

@@ -10,7 +10,7 @@ import {
   type WorkflowBeat,
   type WorkflowRunNode,
 } from "@t3tools/client-runtime/workflows";
-import { EnvironmentId, ThreadId, type WorkflowQuestion } from "@t3tools/contracts";
+import { EnvironmentId, type WorkflowQuestion } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { T, Var, useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
@@ -33,7 +33,7 @@ import {
   Facts,
   plain,
   reportFailure,
-  useCanOpenThread,
+  useWorkflowThreadOpener,
   workflowRunFeedOf,
 } from "./WorkflowStepCard";
 import { WORKFLOW_TONE_CLASS, WorkflowChip } from "./WorkflowsScreen";
@@ -183,14 +183,9 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
           ),
         ),
     );
-  const canOpenThread = useCanOpenThread(environmentId);
-  const openThread = (thread: NonNullable<WorkflowBeat["thread"]>) =>
-    navigation.dispatch(
-      StackActions.push("Thread", {
-        environmentId: thread.environmentId ?? environmentId,
-        threadId: ThreadId.make(thread.threadId),
-      }),
-    );
+  const threadOpener = useWorkflowThreadOpener(environmentId, (thread) =>
+    navigation.dispatch(StackActions.push("Thread", thread)),
+  );
   const openStep = (step: string) =>
     navigation.dispatch(
       StackActions.push("WorkflowStep", { environmentId, runId: run.runId, step }),
@@ -216,7 +211,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
       environmentId={environmentId}
       question={asked}
       canAnswer={canOperate}
-      onOpenThread={asked.thread !== null && canOpenThread(asked.thread) ? openThread : null}
+      onOpenThread={asked.thread === null ? null : threadOpener(asked.thread)}
     />
   );
   const pausedAt = feed === null ? null : workflowPausedBeat(feed, run.status);

@@ -159,6 +159,9 @@ process.once("SIGINT", () => {
 });
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+  if (process.env.T3_ACP_OMIT_MODEL_OPTIONS === "1") {
+    return [];
+  }
   if (antigravityProfile) {
     return [
       {
@@ -1344,6 +1347,15 @@ const program = Effect.gen(function* () {
             status: "completed",
             rawInput: { query: "TODO" },
             rawOutput: "src/a.ts: TODO",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-grep-output",
+            title: "Grep",
+            kind: "search",
+            status: "completed",
+            rawInput: { pattern: "needle", path: "src" },
+            rawOutput: "src/a.ts:3:const needle = 1;\nsrc/b.ts:9:needle();",
           },
           {
             sessionUpdate: "tool_call_update",
