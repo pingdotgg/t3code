@@ -51,22 +51,44 @@ heap, and first-request latency against a fake Anthropic API and the real `claud
 ## Client switch metrics
 
 [`scripts/client-metrics.ts`](../../scripts/client-metrics.ts) (`vp run report:client`) builds
-the web app for production, seeds a server with replayed threads (no paid model), and switches
-threads in headless Chromium by real sidebar clicks:
+the web app for production, seeds a server with replayed threads (no paid model), a 40-file
+diff, a pull request on a fake GitHub and a local page, and drives headless Chromium like a
+person. `--cases` picks cases (or the groups `switches` and `interactions`).
 
 - `run` measures one checkout; `ab <checkoutA> <checkoutB>` alternates them (A B, then B A) and
-  `compare` gates the result. Isolated runs on a loaded machine say nothing; trust only `ab`.
-- Each case is a thread switched to from a small hub thread. `short`/`long` cost the timeline,
-  `working` and `approval` are live threads, and `medium` is the panel-closed baseline for
-  `diff`, `pull-request` (fake GitHub with body, files and activity), `browser` (a local page)
-  and `device` (empty state only, so it is light). First visits and revisits are reported apart.
-- Per switch: click to next paint (Event Timing), whether the first painted frame already had
-  timeline rows, and long-animation-frame time in the 1.5 s after the click. `--trace` adds an
-  extra traced round with forced style/layout per click and its top call sites, mapped through
-  the build's sourcemaps.
-- Per run: heap and DOM nodes after GC on load, after first visits and after every switch (a
-  leak shows as growth between the last two), and renderer CPU over 10 s while a thread streams,
-  on that thread and elsewhere.
+  `compare` gates the result. Isolated runs on a loaded machine say nothing; trust only `ab`. The
+  harness, seed and replay agent come from the script, so an older checkout works as A; a case it
+  cannot run is skipped and named.
+- **Switches** are sidebar clicks from a small hub thread: `short`/`long` cost the timeline,
+  `working` streams and `approval` waits, and `medium` is the panel-closed baseline for `diff`,
+  `pull-request`, `browser` and `device`. Each records click to next paint (Event Timing),
+  whether the first new frame already had timeline rows, and LoAF in the 1.5 s after.
+- **Interactions** are steps inside one thread, each recording its slowest input-to-paint, LoAF
+  and the share of 60 Hz frames missed: composer keys (`type-short`, `type-long`), a fixed wheel
+  distance up the long timeline (`scroll-long`, frames only: wheels have no Event Timing), the
+  command palette and a query, PR panel tabs, switching two panel surfaces, the terminal drawer,
+  and Settings and back.
+- Per run: the open panel's DOM size (deterministic; `*.census.json` in the artifacts says what
+  dominates it), heap and DOM after GC, and renderer CPU while a thread streams. `--soak <n>`
+  repeats every case n times and fits heap, DOM and listener growth per iteration past warm-up.
+
+`--renders` counts React commits and component renders per step, the subtrees React bailed out
+of not counted, with the top components and a cause per render (`mount`, `state#<hook slot>`,
+`props:<changed keys>`, `parent-same-props<-Parent`, `context`). Counts barely move between runs,
+so `compare` gates on them and they catch what timing noise hides. The probe slows commits, so
+compare renders runs with renders runs. Names need `--unminified`; `--slot-diff A,B` diffs those
+components' changed hook slots into `renders.ndjson`.
+
+`--trace` traces one extra round with a CPU profile and maps it through the build's sourcemaps.
+Per step, the task that ran its input splits into forced style and layout (top call sites at the
+end) and JS: self time by package, then inclusive time by source file and by library, each counted
+once per sample, since summing nested frames counts a library many times. Long tasks before the
+step settled follow with their top sources. A keyboard shortcut usually renders in a later task,
+so read its long tasks, not its input task.
+
+`noise <ab dirs of one checkout against itself> --out floors.json` measures each metric's A/A
+spread and writes a floor per metric, and which are too noisy to gate on; pass it to `compare` or
+`ab` with `--floors`. Calibrate per machine; without floors, defaults apply.
 
 ## Persistence and background work invariants
 

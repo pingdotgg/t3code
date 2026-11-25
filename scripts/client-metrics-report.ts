@@ -343,7 +343,7 @@ export function summaryTable(metrics: ClientMetrics) {
   if (stepKeys.length > 0) {
     lines.push(
       "",
-      "| interaction | step | n | paint p50 | paint p90 | slow paints | LoAF p50 | LoAF p90 | dropped frames p50 |",
+      "| interaction | step | n | paint p50 | paint p90 | paints ≥16 ms | LoAF p50 | LoAF p90 | dropped frames p50 |",
       "| :-- | :-- | --: | --: | --: | --: | --: | --: | --: |",
     );
     for (const key of stepKeys) {
