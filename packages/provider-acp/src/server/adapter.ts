@@ -2415,7 +2415,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           agentRequests.clear();
           nativeChildren.clear();
           yield* Ref.set(activeSessionSetup, setup);
-          yield* Ref.set(installedInitializeResult, setup.initializeResult);
           yield* resetPublishedCatalogKey;
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
