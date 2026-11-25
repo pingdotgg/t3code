@@ -373,9 +373,10 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
 
     // Refresh revalidates the folders behind the rows on screen: the open one and the root.
+    // The tree can render its rows again at any time, so compare folders, not calls.
     revalidate.mockClear();
     await userEvent.click(page.getByRole("button", { name: "Refresh workspace files" }));
-    expect(revalidate.mock.calls).toEqual([["src"], [""]]);
+    expect(new Set(revalidate.mock.calls.flat())).toEqual(new Set(["src", ""]));
   });
   describe("revealing a folder while folders above it are still loading", () => {
     const roots = Array.from({ length: 12 }, (_, index): ProjectEntry => {
