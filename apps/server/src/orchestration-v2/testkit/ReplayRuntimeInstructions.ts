@@ -6,6 +6,32 @@ export function materializeReplayTranscriptRuntimeInstructions(
   transcript: ProviderReplayTranscript,
   runtime: { readonly driver: ProviderDriverKind; readonly model: string },
 ): ProviderReplayTranscript {
+  if (runtime.driver === "muse") {
+    return {
+      ...transcript,
+      entries: transcript.entries.map((entry) => {
+        if (entry.type !== "expect_outbound") return entry;
+        const frame = asFrame(entry.frame);
+        if (frame?.method !== "turn/start" || !isRecord(frame.params)) return entry;
+        const { input, reasoningEffort } = frame.params;
+        if (!Array.isArray(input) || !promptPartText(input[0])?.startsWith("<runtime_info>")) {
+          return entry;
+        }
+        const text = buildRuntimeInstructions({
+          harness: "Muse Code",
+          model: runtime.model,
+          reasoningEffort: typeof reasoningEffort === "string" ? reasoningEffort : undefined,
+        });
+        return {
+          ...entry,
+          frame: {
+            ...frame,
+            params: { ...frame.params, input: [{ type: "text", text }, ...input.slice(1)] },
+          },
+        };
+      }),
+    };
+  }
   const harness =
     runtime.driver === "cursor"
       ? "Cursor"
@@ -301,27 +327,26 @@ export function materializeReplayTranscriptRuntimeInstructions(
         }
         const lastText = promptPartText(prompt.at(-1));
         const expected = notesFor(promptSessionId);
-        // A recording that switched models mid-thread already carries the
-        // instructions for the model each prompt ran on.
-        const recordedNotes =
-          lastText === expected || lastText?.startsWith("<runtime_info>") === true
-            ? lastText
-            : undefined;
-        const resend =
-          recordedNotes === undefined && deliveredNotes.get(promptSessionId) !== expected;
+        const recordedNotes = lastText?.startsWith("<runtime_info>") === true;
+        const sendsNotes = recordedNotes || deliveredNotes.get(promptSessionId) !== expected;
         pendingPrompt = {
           sessionId: promptSessionId,
-          // Recorders normalize the notes they keep, so a recorded block stands for this model's.
-          notes: recordedNotes !== undefined || resend ? expected : undefined,
+          notes: sendsNotes ? expected : undefined,
           compact: false,
           compactionsAtSend: compactionCounts.get(promptSessionId) ?? 0,
         };
-        if (!resend) return entry;
+        if (!sendsNotes || lastText === expected) return entry;
         return {
           ...entry,
           frame: {
             ...frame,
-            params: { ...frame.params, prompt: [...prompt, { type: "text", text: expected }] },
+            params: {
+              ...frame.params,
+              prompt: [
+                ...(recordedNotes ? prompt.slice(0, -1) : prompt),
+                { type: "text", text: expected },
+              ],
+            },
           },
         };
       }
