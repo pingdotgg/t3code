@@ -3461,6 +3461,36 @@ it.effect(
   },
 );
 
+it.effect(
+  "a launch from a link below Full access says the project's setup script did not run, and why",
+  () => {
+    const harness = makeHarness({
+      runSetup: () => Effect.succeed({ status: "skipped-for-link" as const }),
+    });
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const launched = yield* launches.launch({
+        ...launchInput({
+          command: "launch:fenced-setup",
+          thread: "thread:fenced-setup",
+          message: "Start",
+          workspace: { type: "worktree", baseRef: "main", branch: "feature/fenced-setup" },
+        }),
+        createdBy: "agent",
+        creationSource: "mcp",
+        linkOrigin: { sessionId: "mcp-session:linked", label: "Linked laptop", access: "auto" },
+      });
+      yield* preparationSettled(launched.threadId);
+      const stage = (yield* tracker.get(launched.threadId))?.stages.find(
+        (candidate) => candidate.id === "setup-script",
+      );
+      assert.equal(stage?.status, "skipped");
+      assert.match(stage?.detail ?? "", /Full access/);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
 it.live("launches into a task folder and leaves nothing behind when its setup is cancelled", () => {
   const state: TaskFoldersTestState = { workspaceRoot: "/unset", trackedFolders: [], thread: null };
   const layerGit = GitVcsDriver.layer.pipe(
