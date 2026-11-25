@@ -301,7 +301,7 @@ const layerUsageTest = TestProviderHost.layer().pipe(
 
 it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
   it.effect.skipIf(windowsHost)(
-    "re-reads usage limits on the refresh interval without restarting a ready Grok CLI",
+    "re-reads usage limits on the refresh interval and starts the CLI only to renew a rejected key",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -340,18 +340,25 @@ it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
             `await import(pathToFileURL(${JSON.stringify(agentPath)}).href);`,
           ].join("\n"),
         });
-        const billedPercents = [97, 9];
-        // Only Grok's billing endpoint answers; version advisories see an unknown latest version.
-        const httpClient = HttpClient.make((request) =>
-          Effect.succeed(
-            request.url === GROK_USAGE_URL
-              ? HttpClientResponse.fromWeb(
-                  request,
-                  Response.json({ config: { creditUsagePercent: billedPercents.shift() } }),
-                )
-              : HttpClientResponse.fromWeb(request, new Response(null, { status: 404 })),
-          ),
-        );
+        // Each billing request takes the next answer: a used percent, or 401 for a rejected key.
+        const billing: Array<number | 401> = [97, 9, 401, 12, 401, 30];
+        const httpClient = HttpClient.make((request) => {
+          // Only Grok's billing endpoint answers; version advisories see an unknown latest version.
+          if (request.url !== GROK_USAGE_URL) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: 404 })),
+            );
+          }
+          const answer = billing.shift();
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              answer === 401
+                ? Response.json({ error: "unauthorized" }, { status: 401 })
+                : Response.json({ config: { creditUsagePercent: answer } }),
+            ),
+          );
+        });
 
         const instance = yield* GrokDriver.create({
           instanceId: ProviderInstanceId.make("grok-usage"),
@@ -363,28 +370,43 @@ it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
           ],
           config: { ...GrokDriver.defaultConfig(), binaryPath },
         }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
-        const usedPercent = (percent: number) =>
-          instance.snapshot.streamChanges.pipe(
-            Stream.filter(
-              (snapshot) =>
-                snapshot.status === "ready" &&
-                snapshot.usageLimits?.windows[0]?.usedPercent === percent,
-            ),
-            Stream.runHead,
-            Effect.forkChild,
-          );
+        const launchCount = fs.readFileString(launches).pipe(Effect.map((text) => text.length));
+        // Waits on the real clock, so a reading that never comes fails on the stale value.
+        const readingAfter = (adjust: Effect.Effect<void>, percent: number) =>
+          Effect.gen(function* () {
+            const reading = yield* instance.snapshot.streamChanges.pipe(
+              Stream.filter(
+                (snapshot) =>
+                  snapshot.status === "ready" &&
+                  snapshot.usageLimits?.windows[0]?.usedPercent === percent,
+              ),
+              Stream.runHead,
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
+            yield* adjust;
+            yield* TestClock.withLive(Fiber.join(reading).pipe(Effect.timeoutOption("10 seconds")));
+            const snapshot = yield* instance.snapshot.getSnapshot;
+            return snapshot.usageLimits?.windows[0]?.usedPercent;
+          });
+        const nextInterval = TestClock.adjust("5 minutes");
 
-        const firstCheck = yield* usedPercent(97);
-        yield* Effect.yieldNow;
-        yield* Fiber.join(firstCheck);
-        const launchesAfterCheck = (yield* fs.readFileString(launches)).length;
+        expect(yield* readingAfter(Effect.void, 97)).toBe(97);
+        const launchesAfterCheck = yield* launchCount;
 
-        const nextReading = yield* usedPercent(9);
-        yield* Effect.yieldNow;
-        yield* TestClock.adjust("5 minutes");
-        yield* Fiber.join(nextReading);
+        expect(yield* readingAfter(nextInterval, 9)).toBe(9);
+        expect(yield* launchCount).toBe(launchesAfterCheck);
 
-        expect((yield* fs.readFileString(launches)).length).toBe(launchesAfterCheck);
+        // A rejected key runs the full check once, which starts the CLI to renew it.
+        expect(yield* readingAfter(nextInterval, 12)).toBe(12);
+        const launchesAfterRenewal = yield* launchCount;
+        expect(launchesAfterRenewal).toBeGreaterThan(launchesAfterCheck);
+
+        // A second rejection in a row keeps the last reading and does not start the CLI again.
+        expect(yield* readingAfter(nextInterval, 12)).toBe(12);
+        expect(yield* readingAfter(nextInterval, 30)).toBe(30);
+        expect(yield* launchCount).toBe(launchesAfterRenewal);
+        expect(billing).toEqual([]);
       }),
   );
 });

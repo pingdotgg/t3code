@@ -63,7 +63,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly initialSnapshot: (settings: Settings) => Effect.Effect<ServerProvider>;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
   readonly checkUsageLimits?: Effect.Effect<ServerProvider["usageLimits"]>;
-  /** Re-read usage with `checkUsageLimits` on every interval, not only after a failed probe. */
+  /**
+   * Re-read usage with `checkUsageLimits` on every interval, not only after a failed probe.
+   * The first failed read in a row runs the full check instead.
+   */
   readonly pollUsageLimits?: boolean;
   readonly invalidateUsageCache?: Effect.Effect<void>;
   readonly enrichSnapshot?: (input: {
@@ -83,6 +86,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const host = yield* ProviderHost.ProviderHost;
   const refreshSemaphore = yield* Semaphore.make(1);
   const usageRefreshQueued = yield* Ref.make<symbol | null>(null);
+  const usagePollFailed = yield* Ref.make(false);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),
     PubSub.shutdown,
@@ -359,6 +363,16 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return;
     }
     const probed = yield* input.checkUsageLimits;
+    if (input.pollUsageLimits === true) {
+      // A failed read can mean the stored session expired or was revoked, which only the full
+      // check can renew or detect. Run it once per run of failed reads, not on every interval.
+      const failed = probed?.unavailable?.reason === "probeFailed";
+      const failedBefore = yield* Ref.getAndSet(usagePollFailed, failed);
+      if (failed && !failedBefore) {
+        yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true, deferFailure });
+        return;
+      }
+    }
     const next = yield* Ref.modify(snapshotStateRef, (state) => {
       const usageLimits = resolveUsageLimitsAfterProbe({
         published: state.snapshot.usageLimits,
