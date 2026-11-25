@@ -26,6 +26,12 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))), {
       afterClear: "progress\u0007ready\r\n",
     },
     {
+      part: "CSI",
+      publishing: "old output\r\n",
+      queued: "\u001b[\n",
+      afterClear: "mready\r\n",
+    },
+    {
       part: "terminator",
       publishing: "old output\r\n\u001b]0;Build ",
       queued: "progress\u0007",
@@ -104,13 +110,17 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))), {
       if (row.part === "opener") {
         expect(cleared).toMatchObject({ pendingControlSequence: row.queued });
       }
+      if (row.part === "CSI") {
+        expect(cleared).toMatchObject({ pendingControlSequence: "\u001b[" });
+      }
       emitData(row.afterClear);
       yield* Deferred.await(printed);
 
       const reopened = yield* Stream.toPull(manager.attachOutputStream(input, "reopened"));
       const [event] = yield* reopened;
       if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
-      expect(event.snapshot.history.replace(/\u001b\]0;[^\u0007]*\u0007/g, "")).toBe("ready\r\n");
+      const visible = event.snapshot.history.replace(/\u001b\]0;[^\u0007]*\u0007|\u001b\[m/g, "");
+      expect(visible).toBe("ready\r\n");
     }),
   );
 });
