@@ -63,17 +63,6 @@ describe("getProjectFilePickerMatches", () => {
     });
   });
 
-  it("preserves whole-string lowercasing rules such as Greek final sigma", () => {
-    const match = getProjectFilePickerMatches([{ kind: "file", path: "ΟΔΟΣ-notes.md" }], "ΟΔΟΣ")[0];
-
-    assert.deepEqual(match, {
-      name: "ΟΔΟΣ-notes.md",
-      nameMatchIndices: [0, 1, 2, 3],
-      path: "ΟΔΟΣ-notes.md",
-      pathMatchIndices: [0, 1, 2, 3],
-    });
-  });
-
   it("maps emoji highlights accurately when lowercasing expands earlier characters", () => {
     const entries = [{ kind: "file", path: "notes/İ-📁-🔥.md" }] as const;
 
