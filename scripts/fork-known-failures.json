@@ -20,16 +20,6 @@
     "reason": "fails on upstream v0.1.11 too"
   },
   {
-    "file": "apps/web/src/components/ChatMarkdown.permissions.browser.test.tsx",
-    "test": "tells the native menu for [Docs](https://example.com/docs) whether the keyboard opened it",
-    "reason": "fails on upstream v0.1.11 too"
-  },
-  {
-    "file": "apps/web/src/components/ChatMarkdown.permissions.browser.test.tsx",
-    "test": "tells the native menu for [Readme](docs/readme.md) whether the keyboard opened it",
-    "reason": "fails on upstream v0.1.11 too"
-  },
-  {
     "file": "packages/provider-fx/src/server/skills.test.ts",
     "test": "lists nothing from a linked ~/.fx/skills",
     "reason": "fails on upstream v0.1.11 too"
@@ -46,27 +36,12 @@
   },
   {
     "file": "packages/ssh/src/tunnel.test.ts",
-    "test": "a newer client still replaces an older managed server",
-    "reason": "fails on upstream v0.1.11 too"
-  },
-  {
-    "file": "packages/ssh/src/tunnel.test.ts",
-    "test": "a reconnect from an older client keeps a newer managed server running",
-    "reason": "fails on upstream v0.1.11 too"
-  },
-  {
-    "file": "packages/ssh/src/tunnel.test.ts",
     "test": "names missing gzip after verifying with sha256sum",
     "reason": "fails on upstream v0.1.11 too"
   },
   {
     "file": "packages/ssh/src/tunnel.test.ts",
     "test": "names missing gzip after verifying with shasum",
-    "reason": "fails on upstream v0.1.11 too"
-  },
-  {
-    "file": "scripts/build-npm-launcher.test.ts",
-    "test": "publishes a launcher that downloads, verifies, caches, and runs the release executable",
     "reason": "fails on upstream v0.1.11 too"
   },
   {
@@ -105,23 +80,8 @@
     "reason": "fails on upstream v0.1.11 too"
   },
   {
-    "file": "apps/server/src/environment/ServerEnvironment.test.ts",
-    "test": "publishes proven install ownership only for manually updated servers",
-    "reason": "fails on upstream v0.1.11 too"
-  },
-  {
-    "file": "apps/server/src/preview/PortScanner.test.ts",
-    "test": "stops an agent's server through its job's group, and only a listed server",
-    "reason": "fails on upstream v0.1.11 too"
-  },
-  {
     "file": "apps/server/src/process/SpawnWorker.test.ts",
     "test": "preserves stdin, large output, env, cwd, literal args and additional descriptors",
-    "reason": "fails on upstream v0.1.11 too"
-  },
-  {
-    "file": "apps/server/src/project/AgentSessionScanner.test.ts",
-    "test": "excludes sandboxes reached through a symlink into the worktrees dir",
     "reason": "fails on upstream v0.1.11 too"
   },
   {
@@ -162,11 +122,6 @@
   {
     "file": "apps/server/src/vcs/GitVcsDriver.test.ts",
     "test": "checkpoint bulk staging cleans operation-owned packs after timeout and can retry",
-    "reason": "fails on upstream v0.1.11 too"
-  },
-  {
-    "file": "apps/server/src/vcs/GitVcsDriverCore.test.ts",
-    "test": "keeps generated worktree folders short without changing long branch names",
     "reason": "fails on upstream v0.1.11 too"
   },
   {
@@ -212,6 +167,16 @@
   {
     "file": "apps/server/src/watchDirectoryReplacements.test.ts",
     "test": "backs off stopped watches for an unchanged plain directory",
-    "reason": "Clean v0.1.12 also observes probes and refreshes in a different order on this macOS runner."
+    "reason": "Clean v0.1.12 also fails this file's timing-dependent watch tests on this macOS runner, a different test on each run."
+  },
+  {
+    "file": "apps/server/src/watchDirectoryReplacements.test.ts",
+    "test": "backs off stopped watches for an unchanged linked directory",
+    "reason": "Clean v0.1.12 also fails this file's timing-dependent watch tests on this macOS runner, a different test on each run."
+  },
+  {
+    "file": "apps/server/src/watchDirectoryReplacements.test.ts",
+    "test": "rebuilds when a probe sees a tree other than the one the watches were acquired on",
+    "reason": "Clean v0.1.12 also fails this file's timing-dependent watch tests on this macOS runner, a different test on each run."
   }
 ]
