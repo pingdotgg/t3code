@@ -6,6 +6,7 @@ import "vite-plus/test/config";
 const reactTests = [
   "src/features/browser/LocalPreviewRouteScreen.test.tsx",
   "src/features/threads/LinkedThreadSheet.test.tsx",
+  "src/features/workflows/WorkflowStepCard.test.tsx",
   "src/features/threads/ThreadGuestShareSheet.test.tsx",
   "src/features/threads/useSubmitAfterNativeImages.test.tsx",
   "src/features/threads/git/GitBranchesSheet.test.tsx",
@@ -55,6 +56,7 @@ const reactTests = [
   "src/features/threads/use-thread-list-now.test.tsx",
   "src/features/threads/use-composer-command-menu.select.test.tsx",
   "src/features/threads/useSidebarRowThreadKey.test.tsx",
+  "src/features/threads/ThreadScreenHost.test.tsx",
   "src/features/threads/useThreadListV2.test.tsx",
   "src/features/home/home-list-options.test.tsx",
   "src/features/home/home-route-visibility.test.tsx",

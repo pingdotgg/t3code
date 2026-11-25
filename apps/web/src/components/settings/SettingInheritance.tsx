@@ -19,11 +19,11 @@ import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDeta
 import { Button, InlineButton } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import type { ProjectOverrideEntry, ScopedSettingsTarget } from "./scopedSettings";
 import { isProjectScopedSettingKey } from "./scopedSettings";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface InheritanceLayer {
   readonly key: "project" | "environment" | "t3.json" | "built-in";
@@ -280,32 +280,30 @@ export function SettingInheritance({
   }
   return (
     <Popover>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <PopoverTrigger
-              render={
-                <Button
-                  size="icon-micro"
-                  variant="ghost-muted"
-                  aria-label={gt("{overrideSummary}. Show where this value comes from", {
-                    overrideSummary,
-                  })}
-                />
-              }
-            />
-          }
-        >
-          <LayersIcon
-            className={cn(
-              "size-3",
-              state === "overridden" && "text-primary",
-              state === "mixed" && "text-warning",
-            )}
+      <SharedTooltipTrigger
+        render={
+          <PopoverTrigger
+            render={
+              <Button
+                size="icon-micro"
+                variant="ghost-muted"
+                aria-label={gt("{overrideSummary}. Show where this value comes from", {
+                  overrideSummary,
+                })}
+              />
+            }
           />
-        </TooltipTrigger>
-        <TooltipPopup side="top">{overrideSummary}</TooltipPopup>
-      </Tooltip>
+        }
+        label={overrideSummary}
+      >
+        <LayersIcon
+          className={cn(
+            "size-3",
+            state === "overridden" && "text-primary",
+            state === "mixed" && "text-warning",
+          )}
+        />
+      </SharedTooltipTrigger>
       <PopoverPopup align="start" width="md" padding="none">
         <div className="divide-y divide-border/60">
           {groups.map((members) => {

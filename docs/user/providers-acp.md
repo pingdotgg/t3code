@@ -51,6 +51,10 @@ version published by the Registry. Their commands are available in a new server 
 sign-in and direct use. Removing an agent's last provider instance removes T3-managed binary files
 but keeps package installs. To use an existing local binary, set **Executable override** explicitly.
 
+T3 Code checks the Registry for new versions in the background and installs them for T3-managed
+agents on the next provider check; a check is skipped while that agent is starting a session.
+Refreshing providers in Settings checks the Registry right away.
+
 ## Signing in
 
 Open the agent's account section in **Settings → Providers** on web or desktop. Choose
@@ -114,8 +118,8 @@ so use its sandbox and permission controls when that matters.
 
 When a registry agent asks for approval, T3 Code answers by the thread's
 [permission mode](./permission-modes.md): **Supervised** shows the request in the conversation,
-**Auto-accept edits** approves edits and shows the rest, and **Auto** and **Full access** approve
-automatically. File reads and searches never wait for approval.
+**Auto-accept edits** approves edits inside the thread's folders and shows the rest, and **Auto**
+and **Full access** approve automatically. File reads and searches never wait for approval.
 
 Devin runs its commands through T3 Code's terminals, and those commands follow the thread's
 permission mode. For other agents, T3 Code shows the command, output, and exit status the agent

@@ -18,6 +18,9 @@ run these commands on the machine that will host T3 Code:
 | Restart                               | `t3 service restart`   |
 | Stop and remove from startup          | `t3 service uninstall` |
 
+The service never writes a pairing code to its log. To connect a device, run
+`t3 pair` on the host, or `t3 up` to set up access from your other devices.
+
 Uninstalling the service leaves your projects, threads, and settings intact.
 Running `t3 service install` again repairs a service that `t3 service status`
 reports as broken.
