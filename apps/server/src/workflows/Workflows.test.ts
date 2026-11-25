@@ -2081,6 +2081,11 @@ it("hooks of different workflows never share an id", () => {
   assert.equal(Workflows.hookId("inbound", "push"), "wf-inbound.push");
 });
 
+it("every accepts bigint nanoseconds and names short ones in its error", () => {
+  assert.deepStrictEqual(every(60_000_000_000n), every("1 minute"));
+  assert.throws(() => every(1_000n), /^every\(1000n\) is shorter than the shortest, one minute\.$/);
+});
+
 it.effect("the sweep deletes skipped runs past the number the settings keep", () =>
   Effect.gen(function* () {
     const exposed = exposedStore();
