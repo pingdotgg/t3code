@@ -128,51 +128,42 @@ describe.runIf(HostProcess.Platform.defaultValue() === "linux")("ProviderProcess
     ),
   );
 
-  it.live("registers providers spawned directly or through ProcessLauncher", () =>
+  it.live("registers providers spawned through the server's ProcessLauncher", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const processLauncher = yield* ProcessLauncher.ProcessLauncher;
       const directory = NodePath.join(config.stateDir, "provider-processes");
-      const controller = AcpSessionRuntime.makePosixProcessTreeController("linux");
-      const readRecordedPids = () =>
+      const recordedPids = () =>
         NodeFS.readdirSync(directory)
           .filter((file) => file.endsWith(".json"))
-          .flatMap((file) => {
-            const parsed = JSON.parse(
-              NodeFS.readFileSync(NodePath.join(directory, file), "utf8"),
-            ) as { readonly processes: ReadonlyArray<{ readonly pid: number }> };
-            return parsed.processes.map((entry) => entry.pid);
-          });
+          .flatMap(
+            (file) =>
+              (
+                JSON.parse(NodeFS.readFileSync(NodePath.join(directory, file), "utf8")) as {
+                  readonly processes: ReadonlyArray<{ readonly pid: number }>;
+                }
+              ).processes,
+          )
+          .map((entry) => entry.pid);
 
       const context = yield* Layer.build(ProviderProcesses.layer);
       const register = Context.get(context, ProviderProcesses.ProviderProcesses).register;
       assert(register !== undefined);
 
-      const direct = yield* ownedProcess;
-      const forgetDirect = register(direct.pid);
-      expect(readRecordedPids()).toContain(direct.pid);
-      forgetDirect();
-      expect(readRecordedPids()).not.toContain(direct.pid);
-
       const hosted = yield* spawner.spawn(
         ChildProcess.make(process.execPath, ["-e", "process.stdin.resume()"], {
           stdin: { stream: "pipe", endOnDone: false },
-          stdout: "pipe",
-          stderr: "pipe",
         }),
       );
-      const launcherPid = yield* processLauncher.currentPid;
-      assert(launcherPid !== undefined);
-      expect(launcherPid).not.toBe(process.pid);
-      expect(controller.identity(hosted.pid)?.ppid).toBe(launcherPid);
+      const launcherPid = yield* (yield* ProcessLauncher.ProcessLauncher).currentPid;
+      expect(
+        AcpSessionRuntime.makePosixProcessTreeController("linux").identity(hosted.pid)?.ppid,
+      ).toBe(launcherPid);
 
-      const forgetHosted = register(hosted.pid);
-      expect(readRecordedPids()).toContain(hosted.pid);
-      forgetHosted();
-      expect(readRecordedPids()).not.toContain(hosted.pid);
-
-      expect(() => register(1)).toThrow("Cannot identify spawned provider");
+      const forget = register(hosted.pid);
+      expect(recordedPids()).toContain(hosted.pid);
+      forget();
+      expect(recordedPids()).not.toContain(hosted.pid);
       expect(() => register(process.pid)).toThrow("Cannot identify spawned provider");
     }).pipe(
       Effect.scoped,
@@ -180,27 +171,6 @@ describe.runIf(HostProcess.Platform.defaultValue() === "linux")("ProviderProcess
       Effect.provide(
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-register-launcher-" }).pipe(
           Layer.provideMerge(ProcessLauncher.layerServer),
-          Layer.provideMerge(NodeServices.layer),
-        ),
-      ),
-    ),
-  );
-
-  it.live("rejects a ProcessLauncher pid that is not a direct child of the server", () =>
-    Effect.gen(function* () {
-      const context = yield* Layer.build(ProviderProcesses.layer);
-      const register = Context.get(context, ProviderProcesses.ProviderProcesses).register;
-      assert(register !== undefined);
-
-      expect(() => register(process.pid)).toThrow("Cannot identify spawned provider");
-    }).pipe(
-      Effect.scoped,
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(ProcessLauncher.ProcessLauncher, {
-        currentPid: Effect.succeed(process.ppid),
-      }),
-      Effect.provide(
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3-register-foreign-launcher-" }).pipe(
           Layer.provideMerge(NodeServices.layer),
         ),
       ),

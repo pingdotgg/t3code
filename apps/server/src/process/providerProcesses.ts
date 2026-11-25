@@ -126,15 +126,10 @@ const make = Effect.gen(function* () {
     NodeFS.rmSync(recordPath, { force: true });
   }
 
-  const isOwnedParent = (ppid: number) => {
-    if (ppid === process.pid) return true;
-    const launcherPid = runSync(processLauncher.currentPid);
-    return (
-      launcherPid !== undefined &&
-      ppid === launcherPid &&
-      identity(launcherPid)?.ppid === process.pid
-    );
-  };
+  // The launcher's own parent is checked so a reused PID of a dead launcher is not trusted.
+  const isOwnedParent = (ppid: number) =>
+    ppid === process.pid ||
+    (ppid === runSync(processLauncher.currentPid) && identity(ppid)?.ppid === process.pid);
 
   return {
     hasOtherLiveOwner,
