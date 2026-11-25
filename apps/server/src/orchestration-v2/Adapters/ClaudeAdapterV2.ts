@@ -13865,16 +13865,41 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             signInOnly: turnInput.appThread === undefined,
           };
           // One step, so the replaced process cannot exit between the install and the handoff.
-          yield* Ref.update(queryContext, (replaced) => {
-            if (replaced !== null) {
-              replaced.handedOffSubagents = new Set(
-                [...context.subagentsFromEarlierProcesses].filter(
-                  (subagent) => !replaced.subagentsFromEarlierProcesses.has(subagent),
-                ),
-              );
-            }
-            return context;
-          });
+          const install = yield* Ref.modify(
+            queryContext,
+            (
+              replaced,
+            ): readonly [
+              {
+                readonly kept: ClaudeLiveQueryContext | null;
+                readonly closes: ClaudeLiveQueryContext | null;
+              },
+              ClaudeLiveQueryContext | null,
+            ] => {
+              // A sign-in and a turn can each open a process; a turn's process is never displaced.
+              const openedMeanwhile =
+                replaced !== null && replaced !== existing && !replaced.stopping ? replaced : null;
+              if (context.signInOnly && openedMeanwhile !== null) {
+                return [{ kept: openedMeanwhile, closes: null }, replaced];
+              }
+              if (replaced !== null) {
+                replaced.handedOffSubagents = new Set(
+                  [...context.subagentsFromEarlierProcesses].filter(
+                    (subagent) => !replaced.subagentsFromEarlierProcesses.has(subagent),
+                  ),
+                );
+              }
+              const closes = openedMeanwhile?.signInOnly === true ? openedMeanwhile : null;
+              if (closes !== null) closes.stopping = true;
+              return [{ kept: null, closes }, context];
+            },
+          );
+          if (install.kept !== null) {
+            context.stopping = true;
+            yield* querySession.close.pipe(Effect.ignore);
+            return install.kept;
+          }
+          if (install.closes !== null) yield* install.closes.query.close.pipe(Effect.ignore);
           yield* querySession.messages.pipe(
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
