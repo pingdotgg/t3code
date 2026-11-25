@@ -18,6 +18,7 @@ import {
   syntheticLoadSessionResponseFromInitialize,
   toolCallProgressLength,
   toolCallVisibleOutputChanged,
+  withKnownPermissionLocations,
   withTrackedPermissionToolCall,
   type AcpToolCallState,
 } from "./runtimeModel.ts";
@@ -577,6 +578,38 @@ describe("AcpRuntimeModel", () => {
     );
 
     expect(parsePermissionRequest(request).kind).toBe("unknown");
+  });
+
+  it("names every path of a permission request and its tracked tool call as a location", () => {
+    const options = [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" as const }];
+    const tracked: AcpToolCallState = {
+      toolCallId: "tool-1",
+      kind: "edit",
+      data: { toolCallId: "tool-1", locations: [{ path: "/work/a.ts", line: 3 }] },
+    };
+    expect(
+      withKnownPermissionLocations(
+        { sessionId: "session-1", options, toolCall: { toolCallId: "tool-1" } },
+        tracked,
+      ).toolCall.locations,
+    ).toEqual([{ path: "/work/a.ts" }]);
+    expect(
+      withKnownPermissionLocations(
+        {
+          sessionId: "session-1",
+          options,
+          toolCall: {
+            toolCallId: "tool-1",
+            locations: [{ path: "/work/a.ts" }],
+            content: [{ type: "diff", path: "/elsewhere/b.ts", newText: "b" }],
+            rawInput: { file_path: "/elsewhere/c.ts" },
+          },
+        },
+        tracked,
+      ).toolCall.locations,
+    ).toEqual([{ path: "/work/a.ts" }, { path: "/elsewhere/b.ts" }, { path: "/elsewhere/c.ts" }]);
+    const bare = { sessionId: "session-1", options, toolCall: { toolCallId: "tool-2" } };
+    expect(withKnownPermissionLocations(bare, undefined)).toBe(bare);
   });
 
   it("bounds an oversized cumulative tool_call_update content buffer to a tail window", () => {

@@ -7553,6 +7553,135 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("auto-accepts an edit inside the thread's folder and asks about one outside it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-edit-cwd-" });
+      const elsewhere = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-edit-out-" });
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
+      let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
+      const makeRuntime = makeMockRuntime({
+        childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        mockAgentPath: yield* bundledMockAgentPath,
+        environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+        wrapRuntime: (runtime) => ({
+          ...runtime,
+          handleRequestPermission: (handler) =>
+            Effect.sync(() => {
+              requestPermission = handler;
+            }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
+        }),
+      });
+      const instanceId = ProviderInstanceId.make("acp-test-edit-folder");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          interruptPromptOnCancel: true,
+          makeRuntime: (input) =>
+            Effect.sync(() => {
+              runtimeInput = input;
+            }).pipe(Effect.andThen(makeRuntime(input))),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+        clientTerminals: {},
+      });
+      const threadId = ThreadId.make("thread-acp-edit-folder");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "auto-accept-edits",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-edit-folder"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const turnFiber = yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      const acknowledge = runtimeInput?.onOutgoingResponse;
+      if (requestPermission === undefined || acknowledge === undefined) {
+        return yield* Effect.die("ACP runtime must register a permission handler");
+      }
+      const options = [
+        { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ] as const;
+      const edit = (toolCallId: string, target: string) =>
+        requestPermission!(
+          {
+            sessionId: "mock-session-1",
+            toolCall: {
+              toolCallId,
+              title: "Edit file",
+              kind: "edit",
+              locations: [{ path: target }],
+            },
+            options,
+          },
+          { requestId: `${toolCallId}-request`, method: "session/request_permission" },
+        );
+
+      const inside = yield* edit("edit-inside", path.join(workspace, "src", "a.ts")).pipe(
+        Effect.forkScoped,
+        Effect.flatMap(Fiber.join),
+      );
+      yield* acknowledge("edit-inside-request");
+      assert.deepEqual(inside.outcome, { outcome: "selected", optionId: "allow-once" });
+
+      const outsideFiber = yield* edit("edit-outside", path.join(elsewhere, "b.ts")).pipe(
+        Effect.forkScoped,
+      );
+      const pending = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (
+        pending.type !== "runtime_request.updated" ||
+        pending.runtimeRequest.providerTurnId === null
+      ) {
+        return yield* Effect.die("Expected an ACP approval request");
+      }
+      const responseFiber = yield* runtime
+        .respondToRuntimeRequest({ requestId: pending.runtimeRequest.id, decision: "decline" })
+        .pipe(Effect.forkScoped);
+      const outside = yield* Fiber.join(outsideFiber);
+      yield* acknowledge("edit-outside-request");
+      yield* Fiber.join(responseFiber);
+      assert.deepEqual(outside.outcome, { outcome: "selected", optionId: "reject-once" });
+
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: pending.runtimeRequest.providerTurnId,
+      });
+      yield* Fiber.join(turnFiber);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("replaces the ACP session and clears conversation state on rollback", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

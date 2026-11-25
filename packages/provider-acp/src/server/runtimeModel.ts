@@ -1290,6 +1290,31 @@ export function withTrackedPermissionToolCall(
   };
 }
 
+/**
+ * The request with every file path it or its tracked tool call names as `locations`, so policy
+ * can check where a change lands when the request itself carries only a diff, raw input or an ID.
+ */
+export function withKnownPermissionLocations(
+  params: EffectAcpSchema.RequestPermissionRequest,
+  tracked: AcpToolCallState | undefined,
+): EffectAcpSchema.RequestPermissionRequest {
+  const { locations, content, rawInput } = params.toolCall;
+  const known = new Map<string, EffectAcpSchema.ToolCallLocation>();
+  const trackedLocations: ReadonlyArray<unknown> = Array.isArray(tracked?.data.locations)
+    ? tracked.data.locations
+    : [];
+  for (const location of [
+    ...(locationsFromToolCallInput({ locations: locations ?? undefined, content, rawInput }) ?? []),
+    ...trackedLocations,
+  ]) {
+    const path = isRecord(location) ? filePathFromToolValue(location.path) : undefined;
+    if (path !== undefined && !known.has(path)) known.set(path, { path });
+  }
+  return known.size === 0
+    ? params
+    : { ...params, toolCall: { ...params.toolCall, locations: [...known.values()] } };
+}
+
 export function parsePermissionRequest(
   params: EffectAcpSchema.RequestPermissionRequest,
 ): AcpPermissionRequest {

@@ -98,7 +98,8 @@ function acpReadDisposition(runtimePolicy: AcpRuntimePolicy): "allow" | "deny" {
   }
 }
 
-function acpWorkspaceWriteAllowsMutation(
+/** True when every location is inside `cwd`, a sandbox writable root or one of the thread's other folders. */
+function acpMutationStaysInWorkspace(
   runtimePolicy: AcpRuntimePolicy,
   sandboxPolicy: Record<string, unknown>,
   locations: AcpPolicyOperation["locations"],
@@ -160,11 +161,7 @@ function acpOperationDisposition(
       return "deny";
     case "workspaceWrite":
       if (isAcpMutationKind(toolKind)) {
-        return acpWorkspaceWriteAllowsMutation(
-          runtimePolicy,
-          sandboxPolicy ?? {},
-          operation.locations,
-        )
+        return acpMutationStaysInWorkspace(runtimePolicy, sandboxPolicy ?? {}, operation.locations)
           ? "allow"
           : "deny";
       }
@@ -176,10 +173,13 @@ function acpOperationDisposition(
       if (runtimePolicy.runtimeMode === "approval-required") return "deny";
       if (
         runtimePolicy.runtimeMode === "auto-accept-edits" &&
-        runtimePolicy.approvalPolicy === undefined &&
-        !isAcpMutationKind(toolKind)
+        runtimePolicy.approvalPolicy === undefined
       ) {
-        return "ask";
+        // Auto-accept covers file changes in the thread's own folders; the user decides the rest.
+        return isAcpMutationKind(toolKind) &&
+          acpMutationStaysInWorkspace(runtimePolicy, {}, operation.locations)
+          ? "allow"
+          : "ask";
       }
       return "allow";
     default:

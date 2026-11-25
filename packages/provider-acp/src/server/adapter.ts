@@ -96,6 +96,7 @@ import {
   parseSessionUpdateEvent,
   sessionUpdateIsReplay,
   toolCallVisibleOutputChanged,
+  withKnownPermissionLocations,
   withTrackedPermissionToolCall,
   type AcpPlanUpdate,
   type AcpAgentTerminalState,
@@ -7652,12 +7653,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   // off the permission request for that call; take it from the
                   // tool already seen under the same id so policy can tell a
                   // read from a write.
-                  const knownKind = context?.tools.get(params.toolCall.toolCallId)?.kind;
+                  const knownTool = context?.tools.get(params.toolCall.toolCallId);
+                  const knownKind = knownTool?.kind;
                   const disposition = dispositionFor(
                     context?.input.runtimePolicy ?? latestRuntimePolicy,
-                    params.toolCall.kind == null && knownKind !== undefined
-                      ? { ...params, toolCall: { ...params.toolCall, kind: knownKind } }
-                      : params,
+                    withKnownPermissionLocations(
+                      params.toolCall.kind == null && knownKind !== undefined
+                        ? { ...params, toolCall: { ...params.toolCall, kind: knownKind } }
+                        : params,
+                      knownTool,
+                    ),
                   );
                   if (disposition === "allow") {
                     const optionId = selectAutoApprovedPermissionOption(answerableParams);

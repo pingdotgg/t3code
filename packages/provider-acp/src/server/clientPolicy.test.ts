@@ -99,11 +99,40 @@ describe("acpPermissionDisposition", () => {
     assert.equal(acpPermissionDisposition(policy, permissionRequest("execute")), "deny");
   });
 
-  it("auto-accept-edits approves file changes without locations and asks for the rest", () => {
+  it("auto-accept-edits approves file changes inside the thread's folders and asks for the rest", () => {
     const autoAcceptEdits: AcpRuntimePolicy = { runtimeMode: "auto-accept-edits", cwd };
+    const outside = NodePath.resolve(process.cwd(), "outside-acp-permission-workspace", "file.ts");
     for (const kind of ["edit", "delete", "move"] as const) {
-      assert.equal(acpPermissionDisposition(autoAcceptEdits, permissionRequest(kind)), "allow");
+      assert.equal(
+        acpPermissionDisposition(autoAcceptEdits, permissionRequest(kind, [{ path: "src/a.ts" }])),
+        "allow",
+      );
+      assert.equal(
+        acpPermissionDisposition(autoAcceptEdits, permissionRequest(kind, [{ path: outside }])),
+        "ask",
+      );
+      assert.equal(
+        acpPermissionDisposition(
+          autoAcceptEdits,
+          permissionRequest(kind, [{ path: NodePath.join(cwd, "inside.ts") }, { path: outside }]),
+        ),
+        "ask",
+      );
+      assert.equal(
+        acpPermissionDisposition(autoAcceptEdits, permissionRequest(kind, [{ path: "../up.ts" }])),
+        "ask",
+      );
+      // Without a location there is no folder to check, so the user decides.
+      assert.equal(acpPermissionDisposition(autoAcceptEdits, permissionRequest(kind)), "ask");
     }
+    // A multi-folder thread's other folders count as its own.
+    assert.equal(
+      acpPermissionDisposition(
+        { ...autoAcceptEdits, workspace: { extraRoots: [writableRoot] } },
+        permissionRequest("edit", [{ path: NodePath.join(writableRoot, "generated.ts") }]),
+      ),
+      "allow",
+    );
     for (const kind of ["execute", "fetch", "other"] as const) {
       assert.equal(acpPermissionDisposition(autoAcceptEdits, permissionRequest(kind)), "ask");
     }
@@ -111,11 +140,46 @@ describe("acpPermissionDisposition", () => {
     assert.equal(
       acpPermissionDisposition(
         { ...autoAcceptEdits, approvalPolicy: "on-request" },
-        permissionRequest("edit"),
+        permissionRequest("edit", [{ path: "src/a.ts" }]),
       ),
       "ask",
     );
+    // Full access and Auto are not narrowed.
+    for (const runtimeMode of ["full-access", "auto"] as const) {
+      assert.equal(
+        acpPermissionDisposition(
+          { runtimeMode, cwd },
+          permissionRequest("edit", [{ path: outside }]),
+        ),
+        "allow",
+      );
+    }
   });
+
+  it.effect("auto-accept-edits asks for edits that leave the folder through a link", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-permission-workspace-",
+      });
+      const outside = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-permission-outside-",
+      });
+      yield* fileSystem.symlink(outside, path.join(workspace, "linked-directory"));
+      yield* fileSystem.makeDirectory(path.join(workspace, "src"));
+      const autoAcceptEdits: AcpRuntimePolicy = {
+        runtimeMode: "auto-accept-edits",
+        cwd: workspace,
+      };
+      const edit = (target: string) =>
+        acpPermissionDisposition(autoAcceptEdits, permissionRequest("edit", [{ path: target }]));
+
+      assert.equal(edit("src/new-file.ts"), "allow");
+      assert.equal(edit("linked-directory/new-file.ts"), "ask");
+      assert.equal(edit(path.join(outside, "new-file.ts")), "ask");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it("auto-allows read-kind permission requests under on-request approval", () => {
     for (const runtimePolicy of [
