@@ -19,6 +19,7 @@ import {
 } from "@t3tools/shared/desktopReadinessProof";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as ByteSize from "effect/ByteSize";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -44,7 +45,12 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
-import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  ASSET_TOKEN_TTL_MS,
+  readMcpAppHtml,
+  resolveAsset,
+} from "./assets/AssetAccess.ts";
 import { sourceControlMediaResponse } from "./assets/sourceControlMediaResponse.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
@@ -188,12 +194,21 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     readonly mimeType?: string;
     readonly file?: OpenMediaFile;
     readonly renderIntent?: "mcp-app" | "file-preview";
+    readonly expiresAt?: number;
   },
   rangeHeader?: string,
   ifRangeHeader?: string,
   method: "GET" | "HEAD" = "GET",
 ) {
   const headers = assetResponseHeaders(asset.path, asset);
+  // Shared attachment URLs must not stay fresh in the browser past their token, so the lifetime
+  // is counted after this response's own file reads.
+  const boundFreshness = Effect.gen(function* () {
+    if (asset.expiresAt === undefined || headers["Cache-Control"] === "private, no-store") return;
+    const secondsLeft = Math.floor((asset.expiresAt - (yield* Clock.currentTimeMillis)) / 1000);
+    headers["Cache-Control"] =
+      `private, max-age=${Math.max(0, Math.min(ASSET_TOKEN_TTL_MS / 1000, secondsLeft))}`;
+  });
   if (
     asset.renderIntent === "mcp-app" &&
     !asset.download &&
@@ -212,6 +227,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
       (html) => new TextEncoder().encode(html),
     );
     headers["Content-Length"] = String(body.byteLength);
+    yield* boundFreshness;
     return method === "HEAD"
       ? HttpServerResponse.empty({ status: 200, headers })
       : HttpServerResponse.uint8Array(body, { headers });
@@ -229,6 +245,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
       body.set(bytes);
       body.set(script, bytes.byteLength);
       headers["Content-Length"] = String(body.byteLength);
+      yield* boundFreshness;
       return method === "HEAD"
         ? HttpServerResponse.empty({ status: 200, headers })
         : HttpServerResponse.uint8Array(body, { headers });
@@ -252,6 +269,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
       const info = mediaInfo ?? (yield* fs.stat(asset.path));
       const range = assetByteRange(rangeHeader, info.size);
       if (range?._tag === "Unsatisfiable") {
+        yield* boundFreshness;
         return HttpServerResponse.empty({
           status: 416,
           headers: { ...headers, "Content-Range": `bytes */${info.size}` },
@@ -265,6 +283,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
       }
     }
   }
+  yield* boundFreshness;
   if (mediaFile && mediaInfo) {
     const size = bytesToRead ?? mediaInfo.size;
     headers["Content-Type"] ??= Option.getOrElse(
