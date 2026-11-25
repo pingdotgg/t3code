@@ -1916,6 +1916,7 @@
   "69c659d8b6e271cc": "A página está pedindo um arquivo.",
   "a6efeb99b479990a": "Escolher arquivos",
   "59c87648d44b958c": "Escolher arquivo",
+  "6f321f153b8711bb": "Escolha uma opção",
   "61a552a67e9e3eac": "Resposta da caixa de diálogo",
   "1d9bd868fafea18a": "Dispensar",
   "1d0a7acef4a95536": "Aceitar",
@@ -4334,6 +4335,21 @@
     },
     " saiu da página e foi interrompido"
   ],
+  "796b81c4875c4feb": [
+    "O app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " precisa de um servidor ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " mais recente neste ambiente. Atualize o servidor para usá-lo."
+  ],
   "5ef18e4d39b398bf": [
     "Não foi possível carregar o app ",
     {
@@ -4895,6 +4911,7 @@
   "306a6f95ad9d52f7": "Não enviadas",
   "11276ab6c58b7a25": "Abre o rascunho no editor de nova tarefa. Deslize para a esquerda para descartar.",
   "99950f3a28d425fa": "Envia quando o ambiente se reconectar. Abre a tarefa para edição. Deslize para a esquerda para excluir.",
+  "d71048f4fb9cf44a": "Aguardando sincronização",
   "0a260c7744afd0be": "Aguardando",
   "ad78fae7d373cf21": "Trabalhando",
   "be451f475c514b37": "Dispensar notificação de despertar",
@@ -5323,6 +5340,9 @@
   "744127f8dfad7d22": "Conecte um ambiente para ver as execuções de workflow dele.",
   "b9aae2f7cdb1a379": "Nenhuma execução de workflow ainda",
   "ace8fc1c643cf9f6": "Um workflow reúne agentes, código, agendamentos e perguntas para você em uma única execução que sobrevive a reinicializações. Escreva um no seu computador, em Workflows e depois Definições.",
+  "fc9c3a00cfc18b55": "Todos os tipos",
+  "e4d1316c85ed7066": "Nenhuma pergunta desse tipo aguarda você.",
+  "45a94c724845ec1d": "Outras",
   "86798f07ba2d7f4d": "Pesquisar issues",
   "484cd83bb303bab8": "Pesquisar pull requests",
   "75ed31fcea4f741a": "Filtrar issues",
@@ -5613,5 +5633,59 @@
   "892f08d21b8e48a9": "Mesclar {layers} em {base} usando {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} quando os requisitos forem atendidos. Isso pode acontecer imediatamente.",
   "89bf40eb2503b6c5": "Novo dispositivo conectado a {environment}",
   "c94b5fe9ef372bc0": "{device} se conectou pelo {product}. Se não foi você, remova-o em Configurações → Acesso no T3 Code desse computador.",
-  "bec67d0ed485f885": "{count, plural, one {{count} dispositivo se conectou} other {{count} dispositivos se conectaram}} pelo {product}. Se não foi você, remova-os em Configurações → Acesso no T3 Code desse computador."
+  "bec67d0ed485f885": "{count, plural, one {{count} dispositivo se conectou} other {{count} dispositivos se conectaram}} pelo {product}. Se não foi você, remova-os em Configurações → Acesso no T3 Code desse computador.",
+  "18c30aa94d0a807f": "Diagnóstico de conexão",
+  "eb287395a09cd288": "Enviar traces de conexão",
+  "6787f93bbf6ce0b6": "Ajuda a equipe do T3 Code a corrigir problemas de conexão. Os traces incluem tempos, tipos de erro, um ID desta sessão do app e a versão do app, nunca suas conversas, prompts ou código. Você pode mudar isso em Configurações > Sobre o T3 Code > Diagnóstico.",
+  "0b1e4aecbd38e0cf": "Quando o app se conecta a um computador pelo {product}, ele envia à equipe do T3 Code quanto tempo cada etapa levou, o tipo de erro, um ID desta sessão do app e a versão do app. Os traces nunca incluem suas conversas, prompts ou código.",
+  "e0856d6a402ad821": "A política de {organization} não permite comandos de layout de worktree de projetos.",
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " precisa de um motivo."
+  ],
+  "7e1fd2eb570a372b": "{who} respondeu {choice}",
+  "a3c43735e1a81498": "Motivo para {title}",
+  "bfad234f016cfa3f": "O motivo, em uma frase. Ele acompanha a resposta que você escolher.",
+  "3759768c5d342c22": [
+    "respondida",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "por ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "0f93532dd76391fc": "Você respondeu {choice}",
+  "235902a19e95833b": [
+    "por você,",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1a1beecff68a6e61": "Verificar conta Google",
+  "99451a5d2d40440f": "Retirada por {by}.",
+  "3ee30a50b70fffab": "Retirada por {by}: {reason}",
+  "201490988858b511": "retirada por {by}"
 }

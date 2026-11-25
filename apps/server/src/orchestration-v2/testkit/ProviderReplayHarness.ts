@@ -42,6 +42,7 @@ import * as ThreadViewers from "../ThreadViewers.ts";
 import * as EventStore from "../EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
+import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -604,6 +605,7 @@ export function layerWithRegistry<Error>(
         layerServerSettings,
         layerThreadManagementProvided,
         layerStores,
+        ProjectionMaintenance.layer.pipe(Layer.provide(layerDatabase)),
       ),
     ),
   );

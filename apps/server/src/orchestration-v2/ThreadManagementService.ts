@@ -393,7 +393,7 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
       case "failed":
         return "Failed to update the awaited background work.";
       case "unmatched":
-        return "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and delegate_task IDs don't go here.";
+        return "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and Workflow runs already keep the thread working until they finish, and delegate_task IDs don't go here either.";
     }
   }
 }

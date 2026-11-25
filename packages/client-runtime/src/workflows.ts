@@ -17,10 +17,24 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
+export interface WorkflowQuestionChoice {
+  readonly value: string;
+  /** What picking it does. */
+  readonly description: string | null;
+  /** The server refuses it without a reason. */
+  readonly requireReason: boolean;
+}
+
+export interface WorkflowQuestionLink {
+  readonly label: string;
+  readonly url: string;
+}
+
 export interface WorkflowQuestionView {
   readonly title: string;
-  readonly choices: ReadonlyArray<string>;
+  readonly choices: ReadonlyArray<WorkflowQuestionChoice>;
   readonly body: string | null;
+  readonly links: ReadonlyArray<WorkflowQuestionLink>;
 }
 
 function field(value: unknown, key: string): unknown {
@@ -29,20 +43,46 @@ function field(value: unknown, key: string): unknown {
     : undefined;
 }
 
+const text = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() !== "" ? value : null;
+
+const isWebUrl = (url: string) => {
+  const protocol = URL.parse(url)?.protocol;
+  return protocol === "https:" || protocol === "http:";
+};
+
 /**
  * What a question shows. `request` is whatever the workflow handed `ask`, so a part that is
  * missing or of another shape is left out instead of failing the whole list.
  */
 export function readWorkflowQuestion(question: WorkflowQuestion): WorkflowQuestionView {
-  const title = field(question.request, "title");
   const choices = field(question.request, "choices");
-  const body = field(field(question.request, "data"), "body");
+  const details = field(question.request, "choiceDetails");
+  const links = field(question.request, "links");
+  const detailOf = (value: string) =>
+    Array.isArray(details) ? details.find((detail) => field(detail, "value") === value) : undefined;
   return {
-    title: typeof title === "string" && title.trim() !== "" ? title : question.name,
+    title: text(field(question.request, "title")) ?? question.name,
     choices: Array.isArray(choices)
-      ? choices.filter((choice): choice is string => typeof choice === "string")
+      ? choices
+          .filter((choice): choice is string => typeof choice === "string")
+          .map((value) => {
+            const detail = detailOf(value);
+            return {
+              value,
+              description: text(field(detail, "description")),
+              requireReason: field(detail, "requireReason") === true,
+            };
+          })
       : [],
-    body: typeof body === "string" && body.trim() !== "" ? body : null,
+    body: text(field(field(question.request, "data"), "body")),
+    links: Array.isArray(links)
+      ? links.flatMap((link) => {
+          const label = text(field(link, "label"));
+          const url = field(link, "url");
+          return label !== null && typeof url === "string" && isWebUrl(url) ? [{ label, url }] : [];
+        })
+      : [],
   };
 }
 
@@ -246,6 +286,99 @@ export function workflowRunInvolves(node: WorkflowRunNode, workflow: string): bo
   );
 }
 
+/**
+ * The filter value for the questions listed as Other: asked with no kind, or with one their
+ * workflow does not declare. A workflow cannot declare a blank kind.
+ */
+export const WORKFLOW_OTHER_KIND = "";
+
+export interface WorkflowQuestionKind {
+  /** The kind as its workflow declares it, or `WORKFLOW_OTHER_KIND`. */
+  readonly kind: string;
+  /** What its workflow calls it. Null for Other, which the caller words. */
+  readonly label: string | null;
+  /** How many open questions in these runs are listed under it. */
+  readonly count: number;
+}
+
+/**
+ * The kind a question of this run is listed under: its own when the run's workflow declares it,
+ * else `WORKFLOW_OTHER_KIND`. The question keeps the kind it was asked with either way.
+ */
+function workflowListedKind(
+  workflows: ReadonlyArray<WorkflowSummary>,
+  node: WorkflowRunNode,
+  question: WorkflowQuestion,
+): string {
+  const declared = workflows.find((workflow) => workflow.name === node.run.workflow)?.asks ?? [];
+  return question.kind !== undefined && declared.some(({ kind }) => kind === question.kind)
+    ? question.kind
+    : WORKFLOW_OTHER_KIND;
+}
+
+/** The first run among these, or the runs they invoked, that itself asks a question listed under this kind. */
+export function workflowRunAskingKind(
+  workflows: ReadonlyArray<WorkflowSummary>,
+  nodes: ReadonlyArray<WorkflowRunNode>,
+  kind: string,
+): WorkflowRunNode | null {
+  return (
+    flattenWorkflowRunNodes(nodes).find((node) =>
+      node.questions.some((question) => workflowListedKind(workflows, node, question) === kind),
+    ) ?? null
+  );
+}
+
+/**
+ * The declared kinds of the open questions, in declared order, then Other. `sources` is one per
+ * environment, counted together. `picked` stays listed at zero, so a filter with nothing left
+ * can be undone. Empty when no question is of a declared kind and none is picked.
+ */
+export function workflowQuestionKinds(
+  sources: ReadonlyArray<{
+    readonly workflows: ReadonlyArray<WorkflowSummary>;
+    readonly nodes: ReadonlyArray<WorkflowRunNode>;
+  }>,
+  picked: string | null = null,
+): ReadonlyArray<WorkflowQuestionKind> {
+  const counts = new Map<string, number>();
+  const labels = new Map<string, string>();
+  for (const { workflows, nodes } of sources) {
+    for (const node of flattenWorkflowRunNodes(nodes)) {
+      for (const question of node.questions) {
+        const kind = workflowListedKind(workflows, node, question);
+        counts.set(kind, (counts.get(kind) ?? 0) + 1);
+      }
+    }
+    for (const workflow of workflows) {
+      for (const { kind, label } of workflow.asks ?? []) {
+        if (!labels.has(kind)) labels.set(kind, label);
+      }
+    }
+  }
+  if (picked !== null && !counts.has(picked)) counts.set(picked, 0);
+  const other = counts.get(WORKFLOW_OTHER_KIND);
+  counts.delete(WORKFLOW_OTHER_KIND);
+  if (counts.size === 0 && picked === null) return [];
+  const order = [...new Set([...labels.keys(), ...counts.keys()])];
+  return [
+    ...order.flatMap((kind) => {
+      const count = counts.get(kind);
+      return count === undefined ? [] : [{ kind, label: labels.get(kind) ?? kind, count }];
+    }),
+    ...(other === undefined ? [] : [{ kind: WORKFLOW_OTHER_KIND, label: null, count: other }]),
+  ];
+}
+
+/** Whether a run, or one it invoked, has an open question listed under this kind. */
+export function workflowRunAsksKind(
+  workflows: ReadonlyArray<WorkflowSummary>,
+  node: WorkflowRunNode,
+  kind: string,
+): boolean {
+  return workflowRunAskingKind(workflows, [node], kind) !== null;
+}
+
 /** The list to open on: what waits on a person, else what is under way, else everything. */
 export function defaultWorkflowListTab(groups: WorkflowRunGroups): WorkflowListTab {
   if (groups.needsYou.length > 0) return "needs-you";
@@ -258,7 +391,9 @@ const CHIP_TONES = 5;
 export function workflowChip(name: string): { readonly letters: string; readonly tone: number } {
   const parts = name.split(/[^\p{L}\p{N}]+/u).filter((part) => part !== "");
   const letters =
-    parts.length > 1 ? `${parts[0]![0]}${parts[1]![0]}` : (parts[0] ?? name).slice(0, 2);
+    parts.length > 1
+      ? `${[...parts[0]!][0]}${[...parts[1]!][0]}`
+      : [...(parts[0] ?? name)].slice(0, 2).join("");
   let hash = 0;
   for (const char of name) hash = (hash * 31 + char.codePointAt(0)!) % 9973;
   return { letters: letters.toUpperCase(), tone: hash % CHIP_TONES };
@@ -521,15 +656,47 @@ const openEnd = (beat: WorkflowBeat) =>
   beat.status === "running" ? Number.POSITIVE_INFINITY : beat.endMs;
 
 /** What a person answered a question with, when a step's result is such an answer. */
-export function workflowAnswer(
-  result: WorkflowStep["result"],
-): { readonly choice: string; readonly reason: string | null } | null {
+export function workflowAnswer(result: WorkflowStep["result"]): {
+  readonly choice: string;
+  readonly reason: string | null;
+  /** The client, tool or agent thread that answered, by name; null on an answer kept before this. */
+  readonly answeredBy: string | null;
+  /** The client session that answered; null for a tool, an agent, or an answer kept before this. */
+  readonly answeredBySession: string | null;
+  readonly answeredAt: string | null;
+} | null {
   const choice = field(result, "choice");
-  const reason = field(result, "reason");
   return typeof choice === "string"
-    ? { choice, reason: typeof reason === "string" && reason.trim() !== "" ? reason : null }
+    ? {
+        choice,
+        reason: text(field(result, "reason")),
+        answeredBy: text(field(result, "answeredBy")),
+        answeredBySession: text(field(result, "answeredBySession")),
+        answeredAt: text(field(result, "answeredAt")),
+      }
     : null;
 }
+
+/** Who withdrew a question unanswered, and why, when a step's result says so. */
+export function workflowWithdrawal(
+  result: WorkflowStep["result"],
+): { readonly by: string; readonly reason: string | null } | null {
+  const withdrawn = field(result, "withdrawn");
+  const by = field(withdrawn, "by");
+  const reason = field(withdrawn, "reason");
+  return typeof by === "string"
+    ? { by, reason: typeof reason === "string" && reason.trim() !== "" ? reason : null }
+    : null;
+}
+
+/**
+ * Whether the client whose session on the run's environment is `sessionId` gave `answer`. Decided
+ * by session, never by name: two browsers share "Chrome on Linux" and every phone its app's name.
+ */
+export const isOwnWorkflowAnswer = (
+  answer: { readonly answeredBySession: string | null },
+  sessionId: string | null | undefined,
+): boolean => answer.answeredBySession !== null && answer.answeredBySession === sessionId;
 
 /** Steps that were under way at the same time, shown side by side. */
 export interface WorkflowTogether {
@@ -753,7 +920,7 @@ export function workflowStepReferences(
 
 /** A step's time in one shape down a column: 0.3s, 9.7s, 12s, then minutes. */
 export function workflowStepTime(ms: number): string {
-  if (ms < 10_000 && ms % 1000 !== 0) return `${(Math.max(ms, 100) / 1000).toFixed(1)}s`;
+  if (ms < 9_950 && ms % 1000 !== 0) return `${(Math.max(ms, 100) / 1000).toFixed(1)}s`;
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
   return formatDuration(ms);

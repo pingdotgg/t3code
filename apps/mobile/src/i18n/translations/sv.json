@@ -1916,6 +1916,7 @@
   "69c659d8b6e271cc": "Sidan ber om en fil.",
   "a6efeb99b479990a": "Välj filer",
   "59c87648d44b958c": "Välj fil",
+  "6f321f153b8711bb": "Välj ett alternativ",
   "61a552a67e9e3eac": "Dialogsvar",
   "1d9bd868fafea18a": "Avvisa",
   "1d0a7acef4a95536": "Godkänn",
@@ -4340,6 +4341,21 @@
     },
     " lämnade sin sida och stoppades"
   ],
+  "796b81c4875c4feb": [
+    "Appen ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " behöver en nyare ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "-server i den här miljön. Uppdatera servern för att använda den."
+  ],
   "5ef18e4d39b398bf": [
     "Det gick inte att läsa in appen ",
     {
@@ -4901,6 +4917,7 @@
   "306a6f95ad9d52f7": "Ej skickade",
   "11276ab6c58b7a25": "Öppnar utkastet i inmatningsfältet för ny uppgift. Svep åt vänster för att kasta.",
   "99950f3a28d425fa": "Skickas när miljön återansluter. Öppnar uppgiften för redigering. Svep åt vänster för att ta bort.",
+  "d71048f4fb9cf44a": "Väntar på synkronisering",
   "0a260c7744afd0be": "Väntar",
   "ad78fae7d373cf21": "Arbetar",
   "be451f475c514b37": "Stäng aviseringen Väckt",
@@ -5329,6 +5346,9 @@
   "744127f8dfad7d22": "Anslut en miljö för att se dess arbetsflödeskörningar.",
   "b9aae2f7cdb1a379": "Inga arbetsflödeskörningar än",
   "ace8fc1c643cf9f6": "Ett arbetsflöde knyter ihop agenter, kod, scheman och frågor till dig i en enda körning som överlever omstarter. Skriv ett på din dator, under Arbetsflöden och sedan Definitioner.",
+  "fc9c3a00cfc18b55": "Alla typer",
+  "e4d1316c85ed7066": "Inga frågor av den här typen väntar på dig.",
+  "45a94c724845ec1d": "Övrigt",
   "86798f07ba2d7f4d": "Sök ärenden",
   "484cd83bb303bab8": "Sök pull requests",
   "75ed31fcea4f741a": "Filtrera ärenden",
@@ -5619,5 +5639,59 @@
   "892f08d21b8e48a9": "Merga {layers} in i {base} med {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} när kraven är uppfyllda. Det kan ske direkt.",
   "89bf40eb2503b6c5": "Ny enhet inloggad på {environment}",
   "c94b5fe9ef372bc0": "{device} anslöt via {product}. Om det inte var du, ta bort den under Inställningar → Åtkomst i T3 Code på den datorn.",
-  "bec67d0ed485f885": "{count, plural, one {{count} enhet} other {{count} enheter}} anslöt via {product}. Om det inte var du, ta bort dem under Inställningar → Åtkomst i T3 Code på den datorn."
+  "bec67d0ed485f885": "{count, plural, one {{count} enhet} other {{count} enheter}} anslöt via {product}. Om det inte var du, ta bort dem under Inställningar → Åtkomst i T3 Code på den datorn.",
+  "18c30aa94d0a807f": "Anslutningsdiagnostik",
+  "eb287395a09cd288": "Skicka anslutningsspårningar",
+  "6787f93bbf6ce0b6": "Hjälper T3 Code-teamet att åtgärda anslutningsproblem. Spårningar innehåller tider, feltyper, ett ID för den här appsessionen och appversionen, aldrig dina trådar, prompter eller din kod. Du kan ändra det under Inställningar > Om T3 Code > Diagnostik.",
+  "0b1e4aecbd38e0cf": "När appen ansluter till en dator via {product} skickar den hur lång tid varje steg tog, feltypen, ett ID för den här appsessionen och appversionen till T3 Code-teamet. Spårningar innehåller aldrig dina trådar, prompter eller din kod.",
+  "e0856d6a402ad821": "Policyn för {organization} tillåter inte projekts layoutkommandon för worktrees.",
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " kräver en anledning."
+  ],
+  "7e1fd2eb570a372b": "{who} svarade {choice}",
+  "a3c43735e1a81498": "Skäl för {title}",
+  "bfad234f016cfa3f": "Varför, i en mening. Det följer med vilket svar du än väljer.",
+  "3759768c5d342c22": [
+    "besvarad",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "av ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "0f93532dd76391fc": "Du svarade {choice}",
+  "235902a19e95833b": [
+    "av dig,",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1a1beecff68a6e61": "Verifiera Google-konto",
+  "99451a5d2d40440f": "Återkallad av {by}.",
+  "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
+  "201490988858b511": "återkallad av {by}"
 }
