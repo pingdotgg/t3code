@@ -254,7 +254,7 @@ export type TimelineFollow =
 export type TimelineFollowEvent =
   | { readonly type: "navigated" }
   | { readonly type: "followEnd" }
-  | { readonly type: "reachedEnd"; readonly scrolledDown: boolean }
+  | { readonly type: "reachedEnd" }
   | { readonly type: "leftEnd" };
 
 export const FOLLOWING: TimelineFollow = { mode: "following" };
@@ -275,9 +275,7 @@ export function transitionTimelineFollow(
     case "reachedEnd":
       // Navigating away while still at the end stays released until the list
       // reports leaving and returning, so a scroll key at the end cannot re-arm.
-      // Content shrinking under the reader (a turn folding) also lands in the end
-      // band, but without the reader scrolling down.
-      return state.mode === "released" && !state.atEnd && event.scrolledDown ? FOLLOWING : state;
+      return state.mode === "released" && !state.atEnd ? FOLLOWING : state;
     case "leftEnd":
       // While following, the list leaves the end band for a frame on every
       // streamed chunk before the follow scroll catches up.

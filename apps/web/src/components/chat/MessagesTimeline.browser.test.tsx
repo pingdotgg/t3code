@@ -1392,9 +1392,40 @@ describe("MessagesTimeline follow", () => {
       }
       expect(distanceFromEnd()).toBeGreaterThanOrEqual(1500);
     }, 10_000);
+    // Wheel scrolling animates; read the note once the view has come to rest.
+    let restingScrollTop: number | undefined;
+    await vi.waitFor(() => {
+      const scrollTop = viewport().scrollTop;
+      const resting = scrollTop === restingScrollTop;
+      restingScrollTop = scrollTop;
+      expect(resting).toBe(true);
+    });
     await vi.waitFor(() => expect(follow.current?.showScrollToBottom).toBe(true));
     expect(follow.current?.timelineLiveFollowEnabled).toBe(false);
-    const heightBeforeFold = viewport().scrollHeight;
+    const box2 = viewport().getBoundingClientRect();
+    const readNote = () =>
+      [...viewport().querySelectorAll("p")].find((element) => {
+        const rect = element.getBoundingClientRect();
+        return (
+          element.textContent?.startsWith("Note ") &&
+          rect.top <= box2.top + box2.height / 2 &&
+          rect.bottom >= box2.top + box2.height / 2
+        );
+      });
+    const noteBeforeEnd = readNote()!;
+    expect(noteBeforeEnd).toBeDefined();
+    const noteText = noteBeforeEnd.textContent;
+    const noteTopBeforeEnd = noteBeforeEnd.getBoundingClientRect().top;
+    const expectNoteInPlace = (label: string) =>
+      vi.waitFor(() => {
+        const note = [...viewport().querySelectorAll("p")].find(
+          (element) => element.textContent === noteText,
+        );
+        expect(note, label).toBeDefined();
+        expect(Math.abs(note!.getBoundingClientRect().top - noteTopBeforeEnd), label).toBeLessThan(
+          2,
+        );
+      });
 
     await screen.rerender(
       <Harness
@@ -1408,16 +1439,29 @@ describe("MessagesTimeline follow", () => {
         isWorking={false}
       />,
     );
-    await expect.element(screen.getByRole("button", { name: /^Worked for/ })).toBeInTheDocument();
-    // Settled once the list has measured the fold and caught up with the clamped scroll.
     await vi.waitFor(() => {
-      expect(viewport().scrollHeight).toBeLessThan(heightBeforeFold - 1500);
       const state = listRef.current!.getState();
       expect(state.contentLength).toBe(viewport().scrollHeight);
       expect(Math.abs(state.scroll - viewport().scrollTop)).toBeLessThan(2);
     });
+    await expectNoteInPlace("the note being read after the turn ends");
     expect(follow.current?.timelineLiveFollowEnabled, "follow after the turn ends").toBe(false);
     expect(follow.current?.showScrollToBottom, "Scroll to end after the turn ends").toBe(true);
+
+    const nextRunId = RunId.make("next-run");
+    await screen.rerender(
+      <Harness
+        entries={[
+          ...running,
+          message("Final answer.", { role: "assistant", runId }, "final"),
+          message("Next question", { runId: nextRunId }, "next-prompt"),
+        ]}
+        latestRun={{ ...latestRunning, runId: nextRunId }}
+        isWorking
+      />,
+    );
+    await expectNoteInPlace("the note being read once the next run starts");
+    expect(follow.current?.timelineLiveFollowEnabled).toBe(false);
   });
 });
 
