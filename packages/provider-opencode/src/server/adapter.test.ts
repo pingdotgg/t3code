@@ -933,6 +933,73 @@ describe("OpenCodeAdapterV2", () => {
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
+  it.effect.each([
+    {
+      output: "an empty text part",
+      part: { id: "text-2", type: "text", text: "", time: { start: 3 } },
+    },
+    {
+      output: "a pending tool call",
+      part: {
+        id: "tool",
+        type: "tool",
+        tool: "read",
+        callID: "call_read",
+        state: { status: "pending", input: {}, raw: "" },
+      },
+    },
+  ])("keeps the retry budget when an attempt opens $output", ({ part }) =>
+    Effect.gen(function* () {
+      const aborted: Array<string> = [];
+      const { push, received } = yield* startRetryingTurn({
+        abort: async (input: { sessionID: string }) => {
+          aborted.push(input.sessionID);
+          return { data: true };
+        },
+      });
+      yield* push({
+        type: "message.part.updated",
+        properties: {
+          sessionID: "root",
+          part: { ...part, sessionID: "root", messageID: "assistant" },
+        },
+      } as never);
+      yield* TestClock.adjust(PROVIDER_RETRY_BUDGET_MS);
+      const terminal = (yield* Fiber.join(received)).find(
+        (event) => event.type === "turn.terminal",
+      );
+      assert.equal(terminal?.status, "failed");
+      assert.equal(terminal?.failure?.class, "usage_limit");
+      assert.deepEqual(aborted, ["root"]);
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  it.effect("keeps a broken disposition when a session error lands during retry expiry", () =>
+    Effect.gen(function* () {
+      const expiryReachedAbort = yield* Deferred.make<void>();
+      let abortCalls = 0;
+      const { push, received } = yield* startRetryingTurn({
+        abort: () => {
+          if (abortCalls++ > 0) return Promise.resolve({ data: true });
+          Deferred.doneUnsafe(expiryReachedAbort, Exit.void);
+          return new Promise(() => {});
+        },
+      });
+      yield* TestClock.adjust(PROVIDER_RETRY_BUDGET_MS);
+      yield* Deferred.await(expiryReachedAbort);
+      yield* push({
+        type: "session.error",
+        properties: { error: { name: "UnknownError", data: { message: "server lost" } } },
+      });
+      const terminal = (yield* Fiber.join(received)).find(
+        (event) => event.type === "turn.terminal",
+      );
+      assert.equal(terminal?.status, "failed");
+      assert.equal(terminal?.failure?.class, "usage_limit");
+      assert.equal(terminal?.threadDisposition, "broken");
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
   it.effect("blocks the session when an expired retry cannot be cancelled", () =>
     Effect.gen(function* () {
       const { harness, received } = yield* startRetryingTurn({

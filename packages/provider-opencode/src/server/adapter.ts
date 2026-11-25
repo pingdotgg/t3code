@@ -2323,7 +2323,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               let lastError = sessionEntity.lastError;
               if (nativeStreamFailure === null && turn.retryBudgetFailure !== null) {
                 status = "failed";
-                terminal = { failure: turn.retryBudgetFailure };
+                terminal = { ...terminal, failure: turn.retryBudgetFailure };
                 lastError = turn.retryBudgetFailure.message;
               }
               if (status === "completed" && turn.contextOverflow !== null) {
@@ -2814,7 +2814,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ids.add(part.id);
             turn.partIdsByMessage.set(part.messageID, ids);
           }
-          if (part.type === "text" || part.type === "reasoning" || part.type === "tool")
+          // OpenCode opens empty text and pending tool parts before a request has produced output.
+          if (
+            part.type === "tool"
+              ? part.state.status !== "pending"
+              : (part.type === "text" || part.type === "reasoning") && part.text.length > 0
+          )
             yield* completeRetry(part.sessionID);
           switch (part.type) {
             case "text":
