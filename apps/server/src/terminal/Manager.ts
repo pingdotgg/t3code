@@ -3897,24 +3897,32 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const write: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(
     function* (input, viewerId) {
-      const { threadId, terminalId, bracketedPaste: phase } = input;
-      const session = yield* requireSession(threadId, terminalId);
+      const terminalId = input.terminalId;
+      const phase = input.bracketedPaste;
+      const session = yield* requireSession(input.threadId, terminalId);
       const process = session.process;
       if (!process || session.status !== "running") {
         if (session.status === "exited") return;
-        return yield* new TerminalNotRunningError({ threadId, terminalId });
+        return yield* new TerminalNotRunningError({
+          threadId: input.threadId,
+          terminalId,
+        });
       }
-      if (input.reply && !acceptsQueryReply(toSessionKey(threadId, terminalId), viewerId)) {
+      if (input.reply && !acceptsQueryReply(toSessionKey(input.threadId, terminalId), viewerId)) {
         return;
       }
       const writeError = (cause: unknown) =>
-        new TerminalWriteError({ threadId, terminalId, terminalPid: process.pid, cause });
-      const writeData = (data: string, binary?: boolean, completePaste = false) =>
+        new TerminalWriteError({
+          threadId: input.threadId,
+          terminalId,
+          terminalPid: process.pid,
+          cause,
+        });
+      const writeData = (data: string, binary?: boolean) =>
         Effect.try({
           try: () => {
             session.inputCount += 1;
             process.write(PtyAdapter.ptyInput(data, binary));
-            if (completePaste) releasePaste(process);
           },
           catch: writeError,
         });
@@ -3929,8 +3937,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
         paste.lastWrite = clock.currentTimeMillisUnsafe();
         if (phase === "continue") return yield* writeData(input.data);
-        const data = phase === "abort" ? TERMINAL_BRACKETED_PASTE_END : input.data;
-        return yield* writeData(data, undefined, true);
+        yield* writeData(phase === "abort" ? TERMINAL_BRACKETED_PASTE_END : input.data);
+        return releasePaste(process);
       }
 
       // A write that waits for a paste belongs to the same PTY even if its session restarts.
