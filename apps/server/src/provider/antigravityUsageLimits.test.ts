@@ -691,40 +691,44 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("reads a Gemini Enterprise keyring sign-in and reports when it has expired", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
-      const keyringSecret = (expiry: string) =>
-        JSON.stringify({ token: { access_token: "access-token", refresh_token: "r", expiry } });
-      // Google account instances keep their own sign-in; the shared entry belongs to another app.
-      const personal = yield* fixture({
-        missingToken: true,
-        keyringSecret: keyringSecret("2026-10-09T14:00:00Z"),
-      });
-      expect((yield* personal.probe).unavailable?.message).toBe(
-        "Sign in with Google to see Antigravity limits.",
-      );
-      expect(personal.requests).toEqual([]);
+  it.effect(
+    "reads a keyring sign-in for either Google method and reports when it has expired",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")),
+        );
+        const keyringSecret = (expiry: string) =>
+          JSON.stringify({ token: { access_token: "access-token", refresh_token: "r", expiry } });
+        // Fork: CLI 1.5.13 keeps a Google account sign-in in the keyring, not antigravity-oauth-token.
+        const personal = yield* fixture({
+          missingToken: true,
+          userId: "google-user-1",
+          keyringSecret: keyringSecret("2026-10-09T14:00:00Z"),
+        });
+        const personalLimits = yield* personal.probe;
+        expect(personalLimits.unavailable).toBeUndefined();
+        expect(personalLimits.windows).toHaveLength(4);
 
-      const signedIn = yield* fixture({
-        authMethod: "oauth-business",
-        missingToken: true,
-        userId: "google-user-1",
-        keyringSecret: keyringSecret("2026-10-09T14:00:00.123456789+01:00"),
-      });
-      const limits = yield* signedIn.probe;
-      expect(limits.unavailable).toBeUndefined();
-      expect(limits.windows).toHaveLength(4);
-      expect(signedIn.requests.some((request) => request.url.endsWith("/token"))).toBe(false);
+        const signedIn = yield* fixture({
+          authMethod: "oauth-business",
+          missingToken: true,
+          userId: "google-user-1",
+          keyringSecret: keyringSecret("2026-10-09T14:00:00.123456789+01:00"),
+        });
+        const limits = yield* signedIn.probe;
+        expect(limits.unavailable).toBeUndefined();
+        expect(limits.windows).toHaveLength(4);
+        expect(signedIn.requests.some((request) => request.url.endsWith("/token"))).toBe(false);
 
-      const expired = yield* fixture({
-        authMethod: "oauth-business",
-        missingToken: true,
-        keyringSecret: keyringSecret("2026-10-09T12:00:30Z"),
-      });
-      expect((yield* expired.probe).unavailable?.reason).toBe("probeFailed");
-      expect(expired.requests).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+        const expired = yield* fixture({
+          authMethod: "oauth-business",
+          missingToken: true,
+          keyringSecret: keyringSecret("2026-10-09T12:00:30Z"),
+        });
+        expect((yield* expired.probe).unavailable?.reason).toBe("probeFailed");
+        expect(expired.requests).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(

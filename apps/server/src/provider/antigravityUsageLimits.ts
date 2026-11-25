@@ -359,12 +359,11 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     let projectId: string | undefined;
     if (!(yield* fs.exists(tokenPath))) {
       cached = undefined;
-      // Google account instances bypass the keyring, whose one entry every profile shares.
+      // Fork: CLI 1.5.13 signs Google account instances in through the keyring too
+      // (its log says "authenticated via keyring"), so read it for both sign-in methods.
       const stored = (yield* fs.exists(cliTokenPath))
         ? yield* fs.readFileString(cliTokenPath)
-        : input.authMethod === "oauth-business"
-          ? yield* readKeyringSecret
-          : undefined;
+        : yield* readKeyringSecret;
       if (stored === undefined) {
         return makeUnavailableUsageLimits({
           checkedAt,
