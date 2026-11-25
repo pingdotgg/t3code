@@ -158,8 +158,6 @@ const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 // A model can stay silent this long before the first token of a reply the agent started itself.
 const ACP_OPEN_REPLY_QUIET_LIMIT: Duration.Input = "2 minutes";
 const ACP_BUSY_PROMPT_RETRY_INTERVAL: Duration.Input = "1 second";
-// Bounded retries for a steer refused while the agent's request is still in flight to T3.
-const ACP_AWAITING_ANSWER_UNSEEN_RETRIES = 3;
 // Agents such as omp advertise a loaded session's commands shortly after answering session/load.
 const ACP_LOADED_COMMANDS_WAIT: Duration.Input = "2 seconds";
 const ACP_PROMPT_INACTIVITY_SLICE_MILLIS = 60_000;
@@ -212,37 +210,33 @@ function isAwaitingAnswerPromptError(error: EffectAcpErrors.AcpError): boolean {
 }
 
 function sendPromptWhenIdle<A>(
-  turn: { readonly interrupted: boolean; readonly finalized: boolean },
+  turn: {
+    readonly interrupted: boolean;
+    readonly finalized: boolean;
+    steerAwaitingAnswer?: boolean;
+  },
   prompt: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
   superseded: () => boolean = () => false,
   /** Given for a steer: true while the agent waits on a request T3 has not answered. */
   answerPending?: Effect.Effect<boolean>,
-  unseenAnswerRetries = 0,
 ): Effect.Effect<A, EffectAcpErrors.AcpError> {
   // A Stop or a prompt-steer can land during the wait, so both are rechecked before each resend.
   const stopped = () => turn.interrupted || turn.finalized || superseded();
-  const awaitAnswer = (seenPending: boolean): Effect.Effect<boolean> =>
-    Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
-      Effect.andThen(
-        Effect.suspend(() =>
-          stopped() || answerPending === undefined
-            ? Effect.succeed(seenPending)
-            : answerPending.pipe(
-                Effect.flatMap((pending) =>
-                  pending ? awaitAnswer(true) : Effect.succeed(seenPending),
-                ),
-              ),
-        ),
+  const awaitAnswer: Effect.Effect<void> = Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
+    Effect.andThen(
+      Effect.suspend(() =>
+        stopped() || answerPending === undefined
+          ? Effect.void
+          : answerPending.pipe(Effect.flatMap((pending) => (pending ? awaitAnswer : Effect.void))),
       ),
-    );
+    ),
+  );
   return prompt().pipe(
     Effect.catchIf(
       (error) =>
         !stopped() &&
         (isAgentBusyPromptError(error) ||
-          (answerPending !== undefined &&
-            isAwaitingAnswerPromptError(error) &&
-            unseenAnswerRetries < ACP_AWAITING_ANSWER_UNSEEN_RETRIES)),
+          (answerPending !== undefined && isAwaitingAnswerPromptError(error))),
       (error) =>
         isAgentBusyPromptError(error)
           ? Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
@@ -250,21 +244,25 @@ function sendPromptWhenIdle<A>(
                 Effect.suspend(() =>
                   stopped()
                     ? Effect.fail(error)
-                    : sendPromptWhenIdle(turn, prompt, superseded, answerPending, 0),
+                    : sendPromptWhenIdle(turn, prompt, superseded, answerPending),
                 ),
               ),
             )
-          : awaitAnswer(false).pipe(
-              Effect.flatMap((seenPending) =>
-                stopped()
-                  ? Effect.fail(error)
-                  : sendPromptWhenIdle(
-                      turn,
-                      prompt,
-                      superseded,
-                      answerPending,
-                      seenPending ? 0 : unseenAnswerRetries + 1,
-                    ),
+          : Effect.suspend(() => {
+              turn.steerAwaitingAnswer = true;
+              return awaitAnswer;
+            }).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  turn.steerAwaitingAnswer = false;
+                }),
+              ),
+              Effect.andThen(
+                Effect.suspend(() =>
+                  stopped()
+                    ? Effect.fail(error)
+                    : sendPromptWhenIdle(turn, prompt, superseded, answerPending),
+                ),
               ),
             ),
     ),
@@ -1846,6 +1844,8 @@ interface ActiveAcpTurn {
   foregroundIdle: Deferred.Deferred<void>;
   /** Counts the turn's prompts; only the latest one settles the turn. */
   promptSequence: number;
+  /** True while a prompt-steer refused for a pending answer is waiting to resend. */
+  steerAwaitingAnswer: boolean;
   /** The turn already resent a prompt after a resumable outcome failure. */
   outcomeResumed: boolean;
   /** Clock millis just before `session/prompt` was handed to the runtime. */
@@ -9569,14 +9569,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         /**
          * A new turn's prompt refused because an earlier prompt still waits on an answer T3 no
-         * longer shows: cancel that prompt, let it settle, and resend once. If the agent still
-         * refuses, the next turn starts a fresh runtime.
+         * longer shows: cancel that prompt, let it settle, and resend once. If cancel, settlement,
+         * or the single resend fails, the next turn starts a fresh runtime.
          */
         const recoverOrphanedAnswerWait = <A>(
           context: ActiveAcpTurn,
           generation: number,
           superseded: () => boolean,
           send: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
+          resend: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
         ): Effect.Effect<A, EffectAcpErrors.AcpError> => {
           const stopped = () => context.interrupted || context.finalized || superseded();
           return send().pipe(
@@ -9597,22 +9598,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     providerSessionId: input.providerSessionId,
                     providerTurnId: context.providerTurnId,
                   });
-                  yield* runtime.cancel.pipe(Effect.ignore);
+                  const cancelled = yield* runtime.cancel.pipe(
+                    Effect.as(true),
+                    Effect.orElseSucceed(() => false),
+                  );
+                  if (!cancelled) {
+                    if (!stopped()) yield* Ref.set(runtimeRestartRequired, true);
+                    return yield* error;
+                  }
                   const priorPrompts = [...unsettledPrompts]
                     .filter((entry) => entry.generation === generation)
                     .map((entry) => entry.settled);
                   if (priorPrompts.length > 0) {
-                    yield* Effect.raceFirst(
+                    const settled = yield* Effect.raceFirst(
                       Deferred.await(context.completed),
                       Effect.forEach(priorPrompts, Deferred.await, { discard: true }),
                     ).pipe(Effect.timeoutOption(ACP_STOP_CONFIRM_TIMEOUT_MS));
+                    if (Option.isNone(settled)) {
+                      if (!stopped()) yield* Ref.set(runtimeRestartRequired, true);
+                      return yield* error;
+                    }
                   }
                   if (stopped()) return yield* error;
-                  return yield* send().pipe(
-                    Effect.tapError((retryError) =>
-                      isAwaitingAnswerPromptError(retryError)
-                        ? Ref.set(runtimeRestartRequired, true)
-                        : Effect.void,
+                  return yield* resend().pipe(
+                    Effect.tapError(() =>
+                      stopped() ? Effect.void : Ref.set(runtimeRestartRequired, true),
                     ),
                   );
                 }),
@@ -10099,6 +10109,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptDispatched,
               foregroundIdle: yield* Deferred.make<void>(),
               promptSequence: 0,
+              steerAwaitingAnswer: false,
               outcomeResumed: false,
               promptSentAt: null,
               promptStarted,
@@ -10286,17 +10297,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               context,
               (superseded) =>
                 compactSession === undefined
-                  ? recoverOrphanedAnswerWait(context, promptGeneration, superseded, () =>
-                      sendPromptWhenIdle(
+                  ? (() => {
+                      const runPrompt = () =>
+                        trackPrompt(
+                          promptGeneration,
+                          runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
+                        );
+                      return recoverOrphanedAnswerWait(
                         context,
-                        () =>
-                          trackPrompt(
-                            promptGeneration,
-                            runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
-                          ),
+                        promptGeneration,
                         superseded,
-                      ),
-                    )
+                        () => sendPromptWhenIdle(context, runPrompt, superseded),
+                        runPrompt,
+                      );
+                    })()
                   : Deferred.succeed(context.promptDispatched, undefined).pipe(
                       Effect.andThen(compactSession.compact(runtime, requestedSessionId)),
                       Effect.as({
@@ -10365,7 +10379,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 });
               }
               // The agent refuses a prompt while it waits on an answer, so the message waits too.
-              if (yield* hasPendingRequestForTurn(context.providerTurnId)) {
+              // Decline while a refused steer is waiting to resend so a later steer cannot drop it.
+              if (
+                context.steerAwaitingAnswer ||
+                (yield* hasPendingRequestForTurn(context.providerTurnId))
+              ) {
                 return yield* new ProviderAdapter.ProviderAdapterSteerDeclinedError({
                   driver,
                   providerThreadId: turnInput.providerThread.id,

@@ -6436,7 +6436,6 @@ describe("AcpAdapterV2", () => {
           return Deferred.succeed(resent, undefined).pipe(Effect.andThen(prompt(payload, options)));
         },
       });
-      const turn1Terminal = yield* harness.terminals(1).pipe(Effect.forkScoped);
       yield* harness.startTurn(1);
       const running = Option.getOrThrow(
         yield* harness.runtime.events.pipe(
@@ -6459,10 +6458,9 @@ describe("AcpAdapterV2", () => {
           attachments: [],
         },
       });
-      const [first] = yield* Fiber.join(turn1Terminal);
+      const [first] = yield* harness.terminals(1);
       assert.equal(first?.status, "failed");
 
-      const next = yield* harness.terminals(1).pipe(Effect.forkScoped);
       yield* harness.startTurn(2);
       yield* Deferred.await(cancelled);
       assert.isFalse(
@@ -6471,7 +6469,7 @@ describe("AcpAdapterV2", () => {
       );
       assert.equal(promptCalls, 3);
       yield* Deferred.succeed(orphanedPrompt, { stopReason: "cancelled" });
-      const [terminal] = yield* Fiber.join(next);
+      const [terminal] = yield* harness.terminals(1);
       assert.equal(terminal?.status, "completed");
       assert.isTrue(yield* Deferred.isDone(resent));
       assert.equal(promptCalls, 4);
@@ -6494,14 +6492,12 @@ describe("AcpAdapterV2", () => {
       yield* harness.startTurn(1);
       yield* harness.terminals(1);
 
-      const jammed = yield* harness.terminals(1).pipe(Effect.forkScoped);
       yield* harness.startTurn(2);
-      const [failed] = yield* Fiber.join(jammed);
+      const [failed] = yield* harness.terminals(1);
       assert.equal(failed?.status, "failed");
 
-      const recovered = yield* harness.terminals(1).pipe(Effect.forkScoped);
       yield* harness.startTurn(3);
-      const [terminal] = yield* Fiber.join(recovered);
+      const [terminal] = yield* harness.terminals(1);
       assert.equal(terminal?.status, "completed");
       assert.lengthOf(harness.natives, 2, "the next turn did not get a fresh runtime");
     }).pipe(Effect.provide(layerTest)),
@@ -6519,7 +6515,6 @@ describe("AcpAdapterV2", () => {
           return prompt(payload, options);
         },
       });
-      const terminals = yield* harness.terminals(1).pipe(Effect.forkScoped);
       yield* harness.startTurn(1);
       const asked = Option.getOrThrow(
         yield* harness.runtime.events.pipe(
@@ -6552,7 +6547,7 @@ describe("AcpAdapterV2", () => {
       assert.equal(promptCalls, 1);
 
       yield* harness.runtime.respondToRuntimeRequest({ requestId: asked.turnItem.requestId });
-      const [terminal] = yield* Fiber.join(terminals);
+      const [terminal] = yield* harness.terminals(1);
       assert.equal(terminal?.status, "completed");
     }).pipe(Effect.provide(layerTest)),
   );
@@ -6592,7 +6587,6 @@ describe("AcpAdapterV2", () => {
           return prompt(payload, options);
         },
       });
-      const terminals = yield* harness.terminals(1).pipe(Effect.forkScoped);
       yield* harness.startTurn(1);
       const running = Option.getOrThrow(
         yield* harness.runtime.events.pipe(
@@ -6616,63 +6610,31 @@ describe("AcpAdapterV2", () => {
         },
       });
       yield* Deferred.await(refused);
+      yield* TestClock.adjust("500 millis");
+      // A second steer arriving during the retry wait must decline instead of superseding the first.
+      const secondDeclined = yield* harness.runtime
+        .steerTurn({
+          threadId: harness.threadId,
+          runId: RunId.make(`run:${harness.threadId}:1`),
+          providerThread: harness.providerThread,
+          providerTurnId: running.providerTurn.id,
+          message: {
+            createdBy: "agent",
+            creationSource: "server",
+            messageId: MessageId.make("steer-during-retry-wait"),
+            text: "Second steer",
+            attachments: [],
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(secondDeclined._tag, "ProviderAdapterSteerDeclinedError");
+      assert.equal(promptCalls, 2);
       assert.isTrue(yield* harness.nextTurnRejected(2), "the refused steer ended the turn");
-      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust("500 millis");
       yield* Deferred.await(resent);
       assert.equal(promptCalls, 3, "the refused steer was not sent again");
-      const [terminal] = yield* Fiber.join(terminals);
+      const [terminal] = yield* harness.terminals(1);
       assert.equal(terminal?.status, "completed");
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("stops retrying a refused prompt-steer when no pending request appears in T3", () =>
-    Effect.gen(function* () {
-      let promptCalls = 0;
-      const harness = yield* makePromptInactivityHarness({
-        environment: () => ({ T3_ACP_HANG_PROMPT_FOREVER: "1" }),
-        steersWithPrompt: true,
-        wrapPrompt: (prompt) => (payload, options) => {
-          promptCalls += 1;
-          return promptCalls === 1
-            ? prompt(payload, options)
-            : (options?.dispatched === undefined
-                ? Effect.void
-                : Deferred.succeed(options.dispatched, undefined)
-              ).pipe(
-                Effect.andThen(
-                  Effect.fail(EffectAcpErrors.AcpRequestError.internalError(AWAITING_ANSWER_ERROR)),
-                ),
-              );
-        },
-      });
-      const terminals = yield* harness.terminals(1).pipe(Effect.forkScoped);
-      yield* harness.startTurn(1);
-      const running = Option.getOrThrow(
-        yield* harness.runtime.events.pipe(
-          Stream.filter((event) => event.type === "provider_turn.updated"),
-          Stream.runHead,
-        ),
-      );
-      if (running.type !== "provider_turn.updated") return yield* Effect.die("Expected a turn");
-      yield* harness.runtime.steerTurn({
-        threadId: harness.threadId,
-        runId: RunId.make(`run:${harness.threadId}:1`),
-        providerThread: harness.providerThread,
-        providerTurnId: running.providerTurn.id,
-        message: {
-          createdBy: "agent",
-          creationSource: "server",
-          messageId: MessageId.make("steer-refused-forever"),
-          text: "Delegated task completed",
-          attachments: [],
-        },
-      });
-      yield* TestClock.adjust("1 second");
-      yield* TestClock.adjust("1 second");
-      yield* TestClock.adjust("1 second");
-      const [terminal] = yield* Fiber.join(terminals);
-      assert.equal(terminal?.status, "failed");
-      assert.equal(promptCalls, 5);
     }).pipe(Effect.provide(layerTest)),
   );
 
