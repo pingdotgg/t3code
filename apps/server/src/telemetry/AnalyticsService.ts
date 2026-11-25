@@ -13,6 +13,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -24,6 +26,12 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { getTelemetryIdentity, type TelemetryOwner } from "./Identify.ts";
 
+interface OwnerReservation {
+  readonly key: string;
+  readonly observedBy: "server" | "client";
+  queued: boolean;
+}
+
 interface BufferedAnalyticsEvent {
   readonly uuid: string;
   readonly event: string;
@@ -31,6 +39,7 @@ interface BufferedAnalyticsEvent {
   readonly capturedAt: string;
   /** Sent under its own id, without the install id, so it links to nothing else. */
   readonly anonymous?: true;
+  readonly owner?: OwnerReservation;
 }
 
 interface DeliveryState {
@@ -66,6 +75,31 @@ function retryDelayMs(failures: number, random: number): number {
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
 }
 
+// Config.Boolean does not export its codec; launch and late shell flags share this schema.
+const TelemetryTrueLiterals = Schema.Literals(["true", "yes", "on", "1", "y"]);
+const TelemetryFalseLiterals = Schema.Literals(["false", "no", "off", "0", "n"]);
+const TelemetryEnabledFlag = Schema.Union([
+  TelemetryTrueLiterals.pipe(
+    Schema.decodeTo(
+      Schema.Literal(true),
+      SchemaTransformation.transform<true, typeof TelemetryTrueLiterals.Type>({
+        decode: () => true,
+        encode: () => "true",
+      }),
+    ),
+  ),
+  TelemetryFalseLiterals.pipe(
+    Schema.decodeTo(
+      Schema.Literal(false),
+      SchemaTransformation.transform<false, typeof TelemetryFalseLiterals.Type>({
+        decode: () => false,
+        encode: () => "false",
+      }),
+    ),
+  ),
+]);
+const decodeTelemetryEnabledFlag = Schema.decodeUnknownOption(TelemetryEnabledFlag);
+
 const TelemetryEnvConfig = Config.all({
   posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(
     Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
@@ -73,7 +107,7 @@ const TelemetryEnvConfig = Config.all({
   posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(
     Config.withDefault("https://ingest.t3.codes"),
   ),
-  enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.option),
+  enabled: Config.schema(TelemetryEnabledFlag, "T3CODE_TELEMETRY_ENABLED").pipe(Config.option),
   flushBatchSize: Config.Number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
   maxBufferedEvents: Config.Number("T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
     Config.withDefault(1_000),
@@ -95,8 +129,8 @@ export class AnalyticsService extends Context.Service<
 
     /**
      * Records `install.owner_observed` for each owner of this install that the
-     * server read itself or a connecting client reported. Each owner is sent once
-     * per server process, so reconnects and repeated reads are free.
+     * server read itself or a connecting client reported. Once delivery succeeds,
+     * reconnects and repeated reads do not queue that owner again in this process.
      */
     readonly recordOwners: (
       owners: ReadonlyArray<TelemetryOwner>,
@@ -134,10 +168,18 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const identityContext = yield* Effect.context<Effect.Services<typeof getTelemetryIdentity>>();
-  const identity = yield* Effect.cached(getTelemetryIdentity.pipe(Effect.provide(identityContext)));
+  const identity = yield* Effect.cachedWithTTL(
+    getTelemetryIdentity.pipe(Effect.provide(identityContext)),
+    (exit) =>
+      Exit.isSuccess(exit) && exit.value.distinctId !== null ? "Infinity" : FLUSH_INTERVAL_MS,
+  );
   const crypto = yield* SecureRandom.SecureRandom;
   const makeQueue = () => ({
     buffer: [] as ReadonlyArray<BufferedAnalyticsEvent>,
+    owners: {
+      server: new Map<string, OwnerReservation>(),
+      client: new Map<string, OwnerReservation>(),
+    },
     delivery: {
       failedBatch: [],
       batchAttempts: 0,
@@ -149,7 +191,6 @@ export const make = Effect.gen(function* () {
   let queue = makeQueue();
   const recordedOwners = { server: new Set<string>(), client: new Set<string>() };
   let settingsEnabled = true;
-  const enabledPreferences = new Set(["true", "yes", "on", "1", "y"]);
   // A cached PATH does not establish consent from the current login shell.
   const environmentOverride = () => {
     if (!awaitingShellConsent) return telemetryConfig.enabled;
@@ -161,7 +202,7 @@ export const make = Effect.gen(function* () {
     const preference = hostEnvironment.T3CODE_TELEMETRY_ENABLED;
     return preference === undefined || preference === ""
       ? telemetryConfig.enabled
-      : Option.some(enabledPreferences.has(preference));
+      : Option.orElse(decodeTelemetryEnabledFlag(preference), () => Option.some(false));
   };
   let enabled = false;
   const applyEnabled = () => {
@@ -195,17 +236,31 @@ export const make = Effect.gen(function* () {
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
 
+  const releaseOwner = (pending: typeof queue, owner: OwnerReservation) => {
+    const reservations = pending.owners[owner.observedBy];
+    if (reservations.get(owner.key) === owner) reservations.delete(owner.key);
+  };
+
   const enqueueBufferedEvent = (
     pending: typeof queue,
     uuid: string,
     event: string,
     properties: Readonly<Record<string, unknown>> | undefined,
     anonymous: boolean,
+    owner?: OwnerReservation,
   ) =>
     Effect.flatMap(DateTime.now, (now) =>
       Effect.sync(() => {
         applyEnabled();
         if (!enabled || pending !== queue) return { size: 0, dropped: false, queued: false };
+        if (
+          owner &&
+          (pending.owners[owner.observedBy].get(owner.key) !== owner ||
+            recordedOwners[owner.observedBy].has(owner.key) ||
+            recordedOwners[owner.observedBy].size >= MAX_RECORDED_OWNERS)
+        ) {
+          return { size: 0, dropped: false, queued: false };
+        }
         const current = pending.buffer;
         const appended = [
           ...current,
@@ -215,6 +270,7 @@ export const make = Effect.gen(function* () {
             ...(properties ? { properties } : {}),
             capturedAt: DateTime.formatIso(now),
             ...(anonymous ? { anonymous: true as const } : {}),
+            ...(owner ? { owner } : {}),
           } satisfies BufferedAnalyticsEvent,
         ];
 
@@ -224,6 +280,10 @@ export const make = Effect.gen(function* () {
             : appended;
 
         pending.buffer = next;
+        for (const event of appended.slice(0, appended.length - next.length)) {
+          if (event.owner) releaseOwner(pending, event.owner);
+        }
+        if (owner) owner.queued = next.length > 0;
         return { size: next.length, dropped: next.length !== appended.length, queued: true };
       }),
     );
@@ -277,6 +337,14 @@ export const make = Effect.gen(function* () {
           yield* httpClient
             .execute(request)
             .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+          for (const event of events) {
+            if (event.owner) {
+              recordedOwners[event.owner.observedBy].add(event.owner.key);
+              releaseOwner(pending, event.owner);
+              const current = queue.owners[event.owner.observedBy].get(event.owner.key);
+              if (current) releaseOwner(queue, current);
+            }
+          }
         }),
       ),
       Effect.timeout(SEND_TIMEOUT),
@@ -303,9 +371,30 @@ export const make = Effect.gen(function* () {
     while (true) {
       if (!(yield* telemetryEnabled) || pending !== queue) return;
       const delivery = pending.delivery;
-      const batch = delivery.failedBatch.length > 0 ? delivery.failedBatch : takeBatch(pending);
-      if (batch.length === 0) {
+      const buffered = delivery.failedBatch.length > 0 ? delivery.failedBatch : takeBatch(pending);
+      if (buffered.length === 0) {
         return;
+      }
+      const ownerCounts = {
+        server: recordedOwners.server.size,
+        client: recordedOwners.client.size,
+      };
+      const batch = buffered.filter((event) => {
+        const owner = event.owner;
+        if (!owner) return true;
+        if (
+          recordedOwners[owner.observedBy].has(owner.key) ||
+          ownerCounts[owner.observedBy] >= MAX_RECORDED_OWNERS
+        ) {
+          releaseOwner(pending, owner);
+          return false;
+        }
+        ownerCounts[owner.observedBy]++;
+        return true;
+      });
+      if (batch.length === 0) {
+        pending.delivery = { ...delivery, failedBatch: [] };
+        continue;
       }
 
       const sent = yield* Effect.result(sendBatch(batch, pending));
@@ -346,6 +435,9 @@ export const make = Effect.gen(function* () {
         });
         return;
       }
+      for (const event of batch) {
+        if (event.owner) releaseOwner(pending, event.owner);
+      }
       pending.delivery = {
         failedBatch: [],
         batchAttempts: 0,
@@ -370,33 +462,38 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
-    function* (event, properties, options) {
-      const pending = queue;
-      if (!(yield* telemetryEnabled) || pending !== queue) return false;
-      const { distinctId } = yield* identity;
-      if (!distinctId || !(yield* telemetryEnabled) || pending !== queue) return false;
+  const record = Effect.fn("AnalyticsService.record")(function* (
+    event: string,
+    properties?: Readonly<Record<string, unknown>>,
+    options?: { readonly anonymous?: boolean },
+    owner?: OwnerReservation,
+  ) {
+    const pending = queue;
+    if (!(yield* telemetryEnabled) || pending !== queue) return false;
+    if (owner && pending.owners[owner.observedBy].get(owner.key) !== owner) return false;
+    const { distinctId } = yield* identity;
+    if (!distinctId || !(yield* telemetryEnabled) || pending !== queue) return false;
 
-      // Catch Node UUID defects too; best-effort telemetry drops events without UUIDs.
-      const uuid = yield* Effect.exit(crypto.uuidV7());
-      if (Exit.isFailure(uuid)) return false;
+    // Catch Node UUID defects too; best-effort telemetry drops events without UUIDs.
+    const uuid = yield* Effect.exit(crypto.uuidV7());
+    if (Exit.isFailure(uuid)) return false;
 
-      const enqueueResult = yield* enqueueBufferedEvent(
-        pending,
-        uuid.value,
+    const enqueueResult = yield* enqueueBufferedEvent(
+      pending,
+      uuid.value,
+      event,
+      properties,
+      options?.anonymous === true,
+      owner,
+    );
+    if (enqueueResult.dropped) {
+      yield* Effect.logDebug("analytics buffer full; dropping oldest event", {
+        size: enqueueResult.size,
         event,
-        properties,
-        options?.anonymous === true,
-      );
-      if (enqueueResult.dropped) {
-        yield* Effect.logDebug("analytics buffer full; dropping oldest event", {
-          size: enqueueResult.size,
-          event,
-        });
-      }
-      return enqueueResult.queued;
-    },
-  );
+      });
+    }
+    return enqueueResult.queued;
+  });
 
   const recordOwners: AnalyticsService["Service"]["recordOwners"] = Effect.fn(
     "AnalyticsService.recordOwners",
@@ -406,13 +503,27 @@ export const make = Effect.gen(function* () {
     for (const { source, ownerId } of owners) {
       const key = `${source}:${ownerId}`;
       const seen = recordedOwners[observedBy];
-      if (seen.has(key) || seen.size >= MAX_RECORDED_OWNERS) continue;
-      seen.add(key);
+      const reservations = pending.owners[observedBy];
       if (
-        !(yield* record("install.owner_observed", { ownerSource: source, ownerId, observedBy }))
-      ) {
-        seen.delete(key);
-      }
+        seen.has(key) ||
+        reservations.has(key) ||
+        seen.size + reservations.size >= MAX_RECORDED_OWNERS
+      )
+        continue;
+      const owner: OwnerReservation = { key, observedBy, queued: false };
+      reservations.set(key, owner);
+      yield* record(
+        "install.owner_observed",
+        { ownerSource: source, ownerId, observedBy },
+        undefined,
+        owner,
+      ).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (!owner.queued) releaseOwner(pending, owner);
+          }),
+        ),
+      );
       if (pending !== queue) return;
     }
   });

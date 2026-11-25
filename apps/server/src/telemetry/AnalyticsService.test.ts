@@ -238,14 +238,16 @@ it.layer(layerTestDependencies)("AnalyticsService test", (it) => {
           const analytics = yield* AnalyticsService.AnalyticsService;
           const settings = yield* ServerSettings.ServerSettingsService;
           const owner = [{ source: "device", ownerId: "a".repeat(64) }] as const;
+          const queuedOwner = [{ source: "connect", ownerId: "b".repeat(64) }] as const;
           yield* analytics.recordOwners(owner, "client");
           yield* analytics.flush;
+          yield* analytics.recordOwners(queuedOwner, "client");
           yield* analytics.record("test.queued");
           yield* settings.updateSettings({ shareUsageData: false });
           assert.isFalse(yield* analytics.record("test.disabled"));
           yield* settings.updateSettings({ shareUsageData: true });
           fail = false;
-          yield* analytics.recordOwners(owner, "client");
+          yield* analytics.recordOwners([...owner, ...queuedOwner], "client");
           yield* analytics.record("test.after-enable");
           yield* analytics.flush;
         }),
@@ -254,7 +256,14 @@ it.layer(layerTestDependencies)("AnalyticsService test", (it) => {
       );
       assert.deepEqual(
         batches.map((batch) => batch.map((event) => event.event)),
-        [["install.owner_observed"], ["test.after-enable"]],
+        [
+          ["install.owner_observed"],
+          ["install.owner_observed", "install.owner_observed", "test.after-enable"],
+        ],
+      );
+      assert.deepEqual(
+        batches[1]?.map((event) => event.properties.ownerSource),
+        ["device", "connect", undefined],
       );
     }),
   );
@@ -280,12 +289,15 @@ it.layer(layerTestDependencies)("AnalyticsService test", (it) => {
           Effect.gen(function* () {
             const analytics = yield* AnalyticsService.AnalyticsService;
             const settings = yield* ServerSettings.ServerSettingsService;
+            const owner = [{ source: "device", ownerId: "a".repeat(64) }] as const;
+            yield* analytics.recordOwners(owner, "client");
             yield* recordTwentyEvents;
             yield* analytics.record("test.old-pending-batch");
             const flushing = yield* analytics.flush.pipe(Effect.forkChild);
             yield* Deferred.await(started);
             yield* settings.updateSettings({ shareUsageData: false });
             yield* settings.updateSettings({ shareUsageData: true });
+            yield* analytics.recordOwners(owner, "client");
             yield* analytics.record("test.after-enable");
             yield* Deferred.succeed(release, undefined);
             yield* Fiber.join(flushing);
@@ -298,7 +310,7 @@ it.layer(layerTestDependencies)("AnalyticsService test", (it) => {
         assert.equal(batches.length, 2);
         assert.deepEqual(
           batches[1]?.map((event) => event.event),
-          ["test.after-enable"],
+          status === 204 ? ["test.after-enable"] : ["install.owner_observed", "test.after-enable"],
         );
       }),
   );
@@ -345,6 +357,109 @@ it.layer(layerTestDependencies)("AnalyticsService test", (it) => {
         batches.flat().map((event) => event.event),
         ["test.new"],
       );
+    }),
+  );
+
+  it.effect("an old owner recording cannot release a fresh queue's reservation", () =>
+    Effect.gen(function* () {
+      const oldStarted = yield* Deferred.make<void>();
+      const freshStarted = yield* Deferred.make<void>();
+      const duplicateStarted = yield* Deferred.make<void>();
+      const releaseOld = yield* Deferred.make<void>();
+      const releaseFresh = yield* Deferred.make<void>();
+      const crypto = yield* SecureRandom.SecureRandom;
+      let uuidCalls = 0;
+      function uuidV7(options?: { readonly format?: "string" | undefined }): Effect.Effect<string>;
+      function uuidV7<Format extends "string" | "bytes">(options: {
+        readonly format: Format;
+      }): Effect.Effect<Format extends "bytes" ? Uint8Array : string>;
+      function uuidV7(options?: {
+        readonly format?: "string" | "bytes" | undefined;
+      }): Effect.Effect<string | Uint8Array> {
+        const call = ++uuidCalls;
+        const started = call === 1 ? oldStarted : call === 2 ? freshStarted : duplicateStarted;
+        const release = call === 1 ? releaseOld : releaseFresh;
+        const generated: Effect.Effect<string | Uint8Array> =
+          options?.format === "bytes" ? crypto.uuidV7({ format: "bytes" }) : crypto.uuidV7();
+        return Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.andThen(generated),
+        );
+      }
+      const batches = yield* sendFor(
+        0,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          const settings = yield* ServerSettings.ServerSettingsService;
+          const owner = [{ source: "device", ownerId: "a".repeat(64) }] as const;
+          const old = yield* analytics.recordOwners(owner, "client").pipe(Effect.forkChild);
+          yield* Deferred.await(oldStarted);
+          yield* settings.updateSettings({ shareUsageData: false });
+          yield* settings.updateSettings({ shareUsageData: true });
+          const fresh = yield* analytics.recordOwners(owner, "client").pipe(Effect.forkChild);
+          assert.equal(
+            yield* Effect.raceFirst(
+              Deferred.await(freshStarted).pipe(Effect.as("started")),
+              Fiber.await(fresh).pipe(Effect.as("finished")),
+            ),
+            "started",
+          );
+          yield* Deferred.succeed(releaseOld, undefined);
+          yield* Fiber.join(old);
+          const duplicate = yield* analytics.recordOwners(owner, "client").pipe(Effect.forkChild);
+          assert.equal(
+            yield* Effect.raceFirst(
+              Deferred.await(duplicateStarted).pipe(Effect.as("started")),
+              Fiber.await(duplicate).pipe(Effect.as("finished")),
+            ),
+            "finished",
+          );
+          yield* Deferred.succeed(releaseFresh, undefined);
+          yield* Fiber.join(fresh);
+          yield* Fiber.join(duplicate);
+          yield* analytics.flush;
+          yield* analytics.recordOwners(owner, "client");
+          yield* analytics.flush;
+        }),
+        undefined,
+        { enabled: undefined },
+      ).pipe(Effect.provideService(SecureRandom.SecureRandom, { ...crypto, uuidV7 }));
+      assert.deepEqual(
+        batches.flat().map((event) => event.event),
+        ["install.owner_observed"],
+      );
+    }),
+  );
+
+  it.effect("recovers identity after failure while retaining a successful identity", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(
+        0,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.makeDirectory(config.anonymousIdPath, { recursive: true });
+          assert.isFalse(yield* analytics.record("test.identity-failed"));
+          yield* fs.remove(config.anonymousIdPath, { recursive: true });
+          assert.isFalse(yield* analytics.record("test.identity-cooldown"));
+          yield* TestClock.adjust("10 seconds");
+          assert.isTrue(yield* analytics.record("test.identity-recovered"));
+          yield* fs.remove(config.anonymousIdPath);
+          yield* fs.makeDirectory(config.anonymousIdPath);
+          yield* TestClock.adjust("1 minute");
+          assert.isTrue(yield* analytics.record("test.identity-cached"));
+          yield* analytics.flush;
+        }),
+      );
+      const events = batches.flat();
+      assert.deepEqual(
+        events.map((event) => event.event),
+        ["test.identity-recovered", "test.identity-cached"],
+      );
+      assert.equal(new Set(events.map((event) => event.distinct_id)).size, 1);
     }),
   );
 
