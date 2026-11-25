@@ -41,7 +41,7 @@ import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
-import WorkflowPoolsMigration from "../persistence/Migrations/116_WorkflowPools.ts";
+import WorkflowPoolsMigration from "../persistence/Migrations/117_WorkflowPools.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import {
   Issue,

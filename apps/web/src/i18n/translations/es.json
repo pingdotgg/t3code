@@ -3801,6 +3801,21 @@
     },
     " salió de su página y se detuvo"
   ],
+  "796b81c4875c4feb": [
+    "La app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " necesita un servidor de ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " más reciente en este entorno. Actualiza el servidor para usarla."
+  ],
   "5ef18e4d39b398bf": [
     "No se puede cargar la app ",
     {
@@ -12258,6 +12273,12 @@
   "8bcab2ef61de6518": "Límite de 0 $",
   "a16b48709357a5a7": "Gestionar uso",
   "a00e74aaa421c524": "restante",
+  "0e34c3076c08feb2": [
+    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    " ",
+    "en ",
+    { "i": 3, "k": "_gt_value_3", "v": "v" }
+  ],
   "8bd6f07136317c8f": "Ningún proveedor de los entornos seleccionados informa de límites de suscripción.",
   "87f5d0c61b335f38": "Consulta el uso en ChatGPT con tu cuenta conectada.",
   "5b4c71b36b979e80": "Coste",
