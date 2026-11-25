@@ -54,6 +54,9 @@ export interface CommandOutputHubShape {
   readonly append: (input: CommandOutputTarget & { readonly chunk: string }) => Effect.Effect<void>;
   /** Retains the tail briefly for settlements without output; otherwise rows use persisted output. */
   readonly finish: (input: CommandOutputTarget) => Effect.Effect<void>;
+  /** A background command keeps writing after its row settles; its output stays live until release. */
+  readonly hold: (input: CommandOutputTarget) => Effect.Effect<void>;
+  readonly release: (input: CommandOutputTarget) => Effect.Effect<void>;
   readonly subscribe: (
     input: CommandOutputTarget,
   ) => Stream.Stream<OrchestrationV2CommandOutputFrame, OrchestrationV2CommandOutputError>;
@@ -109,6 +112,7 @@ export const make = Effect.gen(function* () {
   const tails = new Map<string, TerminalOutputState>();
   const finished = new Map<string, TerminalOutputState>();
   const subscribers = new Map<string, Set<Subscriber>>();
+  const held = new Set<string>();
 
   const wakeAll = (key: string, chunk: string) =>
     Effect.forEach(
@@ -131,7 +135,8 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => {
       if (chunk.length === 0) return Effect.void;
       const key = commandKey(target);
-      const tail = appendTerminalOutput(tails.get(key) ?? EMPTY_TERMINAL_OUTPUT, chunk);
+      const previous = tails.get(key) ?? (held.has(key) ? finished.get(key) : undefined);
+      const tail = appendTerminalOutput(previous ?? EMPTY_TERMINAL_OUTPUT, chunk);
       setBounded(tails, key, tail, MAX_LIVE_COMMANDS, (oldest) => {
         // Eviction invalidates viewers' state; resync on their next frame.
         for (const subscriber of subscribers.get(oldest) ?? []) {
@@ -145,10 +150,36 @@ export const make = Effect.gen(function* () {
   const finish: CommandOutputHubShape["finish"] = (target) =>
     Effect.sync(() => {
       const key = commandKey(target);
+      if (held.has(key)) return;
       const tail = tails.get(key);
       if (tail === undefined) return;
       tails.delete(key);
       setBounded(finished, key, tail, MAX_FINISHED_COMMANDS);
+    });
+
+  const resync = (key: string) =>
+    Effect.forEach(
+      subscribers.get(key) ?? [],
+      (subscriber) => {
+        subscriber.needsReplace = true;
+        subscriber.pendingAppend = "";
+        return Queue.offer(subscriber.wake, undefined);
+      },
+      { discard: true },
+    );
+
+  const hold: CommandOutputHubShape["hold"] = (target) =>
+    Effect.suspend(() => {
+      const key = commandKey(target);
+      held.add(key);
+      return resync(key);
+    });
+
+  const release: CommandOutputHubShape["release"] = (target) =>
+    Effect.suspend(() => {
+      const key = commandKey(target);
+      if (!held.delete(key)) return Effect.void;
+      return finish(target).pipe(Effect.andThen(resync(key)));
     });
 
   const subscribe: CommandOutputHubShape["subscribe"] = (target) =>
@@ -226,6 +257,8 @@ export const make = Effect.gen(function* () {
 
         let lastFrameAt: number | undefined;
         let throttle = COMMAND_OUTPUT_FRAME_INTERVAL_MS;
+        // A released background command's settled row holds only its launch acknowledgement.
+        let wasHeld = false;
         const nextFrame = Effect.gen(function* (): Effect.fn.Return<
           OrchestrationV2CommandOutputFrame,
           OrchestrationV2CommandOutputError
@@ -245,8 +278,9 @@ export const make = Effect.gen(function* () {
           lastFrameAt = yield* Clock.currentTimeMillis;
           throttle = COMMAND_OUTPUT_FRAME_INTERVAL_MS;
           const tail = tails.get(key) ?? finished.get(key);
-          if (settled !== undefined) {
-            if (settled.output === undefined && tail !== undefined) {
+          if (held.has(key)) wasHeld = true;
+          if (settled !== undefined && !held.has(key)) {
+            if ((settled.output === undefined || wasHeld) && tail !== undefined) {
               return {
                 kind: "replace",
                 text: tail.text,
@@ -297,7 +331,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  return CommandOutputHub.of({ append, finish, subscribe });
+  return CommandOutputHub.of({ append, finish, hold, release, subscribe });
 });
 
 export const layer: Layer.Layer<

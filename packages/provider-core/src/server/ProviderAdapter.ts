@@ -194,6 +194,14 @@ export const ProviderAdapterV2Event = Schema.Union([
     itemId: TurnItemId,
     chunk: Schema.String,
   }),
+  /** Unpersisted: a background command's output keeps streaming after its row settles, until `running` is false. */
+  Schema.Struct({
+    type: Schema.Literal("command_output.background"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    itemId: TurnItemId,
+    running: Schema.Boolean,
+  }),
   /** Unpersisted predicted next prompt; arrives after the run's root terminal. */
   Schema.Struct({
     type: Schema.Literal("prompt_suggestion.updated"),

@@ -4315,6 +4315,9 @@ function claudeFileChangeText(output: ClaudeNativeToolOutput): string {
   return patch.hunks.length === 0 ? "" : formatPatch(patch, FILE_HEADERS_ONLY);
 }
 
+/** Background tails share the tool-call tail map; task ids never collide with `toolu_` ids under this prefix. */
+const backgroundTaskOutputTailKey = (taskId: string) => `task:${taskId}`;
+
 function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   if (typeof value === "object" && value !== null) {
@@ -11001,6 +11004,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_notification") {
+            yield* stopTaskOutputTail(backgroundTaskOutputTailKey(message.task_id));
             yield* endClaudeMonitorTasks((taskId) => taskId === message.task_id);
             yield* Ref.update(toolUseIdsByTaskId, (current) => {
               if (!current.has(message.task_id)) return current;
@@ -11931,18 +11935,33 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 message.tool_use_id === undefined
                   ? undefined
                   : findToolCall(context, message.tool_use_id);
+              // Foreground tails end with the tool result; background ones with the task's notification.
+              const backgrounded = message.is_backgrounded === true;
+              const tailKey = backgrounded
+                ? backgroundTaskOutputTailKey(message.task_id)
+                : tailedCall?.nativeItemId;
               if (
                 liveQuery.taskOutputRoot !== undefined &&
                 message.task_type === "local_bash" &&
-                // Older Claude Code builds omit the flag on foreground calls.
-                message.is_backgrounded !== true &&
                 tailedCall?.classification.itemType === "command_execution" &&
-                !taskOutputTails.has(tailedCall.nativeItemId)
+                tailKey !== undefined &&
+                !taskOutputTails.has(tailKey)
               ) {
-                const itemId = idAllocator.derive.turnItemFromProviderItem({
+                const target = {
                   driver: CLAUDE_PROVIDER,
-                  nativeItemId: tailedCall.nativeItemId,
-                });
+                  threadId: tailedCall.threadId,
+                  itemId: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CLAUDE_PROVIDER,
+                    nativeItemId: tailedCall.nativeItemId,
+                  }),
+                };
+                if (backgrounded) {
+                  yield* emitProviderEvent({
+                    type: "command_output.background",
+                    ...target,
+                    running: true,
+                  });
+                }
                 const stop = yield* Deferred.make<void>();
                 const fiber = yield* tailClaudeTaskOutput({
                   root: liveQuery.taskOutputRoot,
@@ -11950,19 +11969,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   taskId: message.task_id,
                   stop,
                   onChunk: (chunk) =>
-                    emitProviderEvent({
-                      type: "command_output.delta",
-                      driver: CLAUDE_PROVIDER,
-                      threadId: tailedCall.threadId,
-                      itemId,
-                      chunk,
-                    }),
+                    emitProviderEvent({ type: "command_output.delta", ...target, chunk }),
                 }).pipe(
+                  Effect.ensuring(
+                    backgrounded
+                      ? emitProviderEvent({
+                          type: "command_output.background",
+                          ...target,
+                          running: false,
+                        }).pipe(Effect.ignore)
+                      : Effect.void,
+                  ),
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
                   Effect.forkIn(sessionScope),
                 );
-                taskOutputTails.set(tailedCall.nativeItemId, { fiber, stop });
+                taskOutputTails.set(tailKey, { fiber, stop });
               }
               context.ignoredTaskIds.add(message.task_id);
               yield* applyBackgroundTaskRosterMessage({
