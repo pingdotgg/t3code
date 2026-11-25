@@ -11,7 +11,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Duration from "effect/Duration";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import {
   HttpClient,
@@ -42,15 +41,18 @@ const encodeViewportEvent = Schema.encodeEffect(
  */
 export const displayViewportUpdates = <E, R>(
   read: Effect.Effect<DeviceDisplayViewport | null, E, R>,
+  first: ReadonlyArray<DeviceDisplayViewport | null>,
 ) =>
-  Stream.fromEffectSchedule(
-    read.pipe(
-      Effect.map((viewport) => [viewport]),
-      Effect.orElseSucceed(() => []),
+  Stream.fromIterable(first).pipe(
+    Stream.concat(
+      Stream.fromEffectRepeat(
+        read.pipe(
+          Effect.map((viewport) => [viewport]),
+          Effect.orElseSucceed(() => []),
+          Effect.delay(VIEWPORT_READ_INTERVAL),
+        ),
+      ).pipe(Stream.flattenIterable),
     ),
-    Schedule.spaced(VIEWPORT_READ_INTERVAL),
-  ).pipe(
-    Stream.flattenIterable,
     Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
   );
 
@@ -281,14 +283,14 @@ const handler = Effect.gen(function* () {
     if (!requestedDevice) return HttpServerResponse.text("Bad Request", { status: 400 });
     const read = devices.displayViewport({ hostId: ready.hostId, deviceId: requestedDevice });
     // Once the stream starts, an unknown device could only fail every read unseen.
-    const unknown = yield* read.pipe(
-      Effect.as(false),
-      Effect.catchTags({ DeviceNotFoundError: () => Effect.succeed(true) }),
-      Effect.orElseSucceed(() => false),
+    const first = yield* read.pipe(
+      Effect.map((viewport) => [viewport]),
+      Effect.catchTags({ DeviceNotFoundError: () => Effect.succeed(null) }),
+      Effect.orElseSucceed(() => []),
     );
-    if (unknown) return HttpServerResponse.text("Not Found", { status: 404 });
+    if (first === null) return HttpServerResponse.text("Not Found", { status: 404 });
     // Pushing the viewport keeps working after the media ticket expires, like the video socket.
-    const viewports = displayViewportUpdates(read).pipe(Stream.interruptWhen(invalidated));
+    const viewports = displayViewportUpdates(read, first).pipe(Stream.interruptWhen(invalidated));
     return eventStreamResponse(viewports, (viewport) => encodeViewportEvent({ viewport }));
   }
   // Hosts with several upstreams (one per cloud session) route and authenticate requests themselves.

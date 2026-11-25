@@ -36,13 +36,35 @@ it.effect("skips failed viewport reads and repeated viewports", () =>
           )
         : Effect.succeed(next ?? null);
     });
-    const updates = yield* displayViewportUpdates(read).pipe(
+    const updates = yield* displayViewportUpdates(read, []).pipe(
       Stream.take(2),
       Stream.runCollect,
       Effect.forkChild,
     );
-    yield* TestClock.adjust("15 seconds");
+    yield* TestClock.adjust("20 seconds");
     expect(yield* Fiber.join(updates)).toEqual([letterboxed, narrower]);
     expect(index).toBe(4);
   }),
+);
+
+it.effect(
+  "starts from the read that let the stream open and reads again only after the interval",
+  () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const read = Effect.sync(() => {
+        reads += 1;
+        return null;
+      });
+      const updates = yield* displayViewportUpdates(read, [letterboxed]).pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("4 seconds");
+      expect(reads).toBe(0);
+      yield* TestClock.adjust("1 second");
+      expect(yield* Fiber.join(updates)).toEqual([letterboxed, null]);
+      expect(reads).toBe(1);
+    }),
 );
