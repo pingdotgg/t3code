@@ -8,7 +8,11 @@ interface Fiber {
   readonly memoizedProps: Record<string, unknown> | null;
 }
 interface DevToolsHook {
-  onCommitFiberRoot?: (id: unknown, root: { current: Fiber }, ...rest: unknown[]) => unknown;
+  onCommitFiberRoot?: (
+    id: unknown,
+    root: { current: Fiber & { readonly actualDuration?: number } },
+    ...rest: unknown[]
+  ) => unknown;
   __t3BehaviorProbe?: true;
 }
 interface ListState {
@@ -46,9 +50,46 @@ function installCommitHook() {
   const original = hook.onCommitFiberRoot.bind(hook);
   hook.onCommitFiberRoot = (id, next, ...rest) => {
     roots.add(next);
+    // Development builds time each commit's render work on the root fiber.
+    if (perf) perf.commits.push({ at: performance.now(), ms: next.current.actualDuration ?? 0 });
     return original(id, next, ...rest);
   };
 }
+
+/** What one measured interaction did, from `perfStart` to `perfStop`; read by mobile:metrics. */
+interface PerfWindow {
+  readonly startedAt: number;
+  readonly inputs: Array<{ readonly kind: string; readonly at: number }>;
+  readonly commits: Array<{ readonly at: number; readonly ms: number }>;
+  readonly content: Array<{ readonly thread: string; readonly at: number; frameAt: number | null }>;
+  readonly keys: number[];
+}
+let perf: PerfWindow | null = null;
+const perfInput = (kind: string) => perf?.inputs.push({ kind, at: performance.now() });
+
+// The app's input points (see perf-probe-hooks.ts); they record only inside a window.
+Object.assign(globalThis, {
+  __t3PerfProbe: {
+    touchStart: () => perfInput("touch-start"),
+    touchEnd: () => perfInput("touch-end"),
+    key: () => {
+      const window = perf;
+      if (!window) return;
+      const at = performance.now();
+      window.inputs.push({ kind: "key", at });
+      requestAnimationFrame(() => window.keys.push(performance.now() - at));
+    },
+    contentShown: (thread: string) => {
+      const window = perf;
+      if (!window) return;
+      const entry = { thread, at: performance.now(), frameAt: null as number | null };
+      window.content.push(entry);
+      requestAnimationFrame(() => {
+        entry.frameAt = performance.now();
+      });
+    },
+  },
+});
 
 /** Visits every mounted fiber; `enter` returns the context passed to the fiber's children. */
 function walk<C>(fiber: Fiber | null, context: C, enter: (fiber: Fiber, context: C) => C) {
@@ -328,6 +369,53 @@ Object.assign(globalThis, {
       frames.on = false;
       sampled = null;
       return JSON.stringify({ js: frames.js, ui: runOnUISync(uiFramesStop), feed: samples });
+    },
+    /** Opens a perf window: inputs, commits, timeline content and frames until `perfStop`. */
+    perfStart() {
+      perf = { startedAt: performance.now(), inputs: [], commits: [], content: [], keys: [] };
+      const counter = globalThis as { __t3RenderCounterStart?: () => boolean };
+      counter.__t3RenderCounterStart?.();
+      return this.recordStart(false);
+    },
+    /** Cheap progress of the open window, so the harness can wait for quiet without a tree walk. */
+    perfPeek() {
+      const window = perf;
+      const last = Math.max(
+        window?.inputs.at(-1)?.at ?? 0,
+        window?.commits.at(-1)?.at ?? 0,
+        window?.content.at(-1)?.frameAt ?? 0,
+      );
+      return JSON.stringify({
+        now: performance.now(),
+        last,
+        inputs: window?.inputs.length ?? 0,
+        content: window?.content.flatMap((entry) => (entry.frameAt === null ? [] : [entry.thread])),
+      });
+    },
+    perfStop() {
+      const window = perf;
+      perf = null;
+      const counter = globalThis as { __t3RenderCounterStop?: () => unknown };
+      const { js, ui } = JSON.parse(this.recordStop()) as { js: number[]; ui: number[] };
+      const hermes = (
+        globalThis as { HermesInternal?: { getInstrumentedStats?: () => Record<string, number> } }
+      ).HermesInternal?.getInstrumentedStats?.();
+      return JSON.stringify({
+        ...window,
+        js,
+        ui,
+        renders: counter.__t3RenderCounterStop?.() ?? null,
+        heapBytes: hermes?.js_heapSize ?? null,
+      });
+    },
+    /** The Hermes heap after a full collection. */
+    heap() {
+      const internal = globalThis as {
+        gc?: () => void;
+        HermesInternal?: { getInstrumentedStats?: () => Record<string, number> };
+      };
+      internal.gc?.();
+      return internal.HermesInternal?.getInstrumentedStats?.().js_heapSize ?? null;
     },
   },
 });

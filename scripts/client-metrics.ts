@@ -68,7 +68,8 @@ import {
 } from "./client-metrics-trace.ts";
 import { prepareHome, SCENARIO_MACHINE_ENV } from "./scenarios/start-app.ts";
 import { run } from "./scenarios/shell.ts";
-import { serveFakeGitHub, type FakePullRequestDetail } from "./server-metrics-forge.ts";
+import { DIFF_FILES, pullRequestDetail, sourceFile } from "./client-metrics-fixture.ts";
+import { serveFakeGitHub } from "./server-metrics-forge.ts";
 import { describeFailure, loadWarnings } from "./server-metrics-report.ts";
 import {
   descendantsOf,
@@ -110,61 +111,6 @@ const browserPromise = <A>(what: string, evaluate: () => Promise<A>) =>
     try: evaluate,
     catch: (cause) => new MetricsError({ message: `${what}: ${describeFailure(cause)}` }),
   });
-
-/** Many files with many lines, so the Diff panel and the PR's files have real weight. */
-const DIFF_FILES = 40;
-const DIFF_LINES = 60;
-const sourceFile = (index: number, variant: "before" | "after") =>
-  Array.from({ length: DIFF_LINES }, (_, line) =>
-    line % 10 === 0
-      ? `export function helper${index}_${line}(input: ReadonlyArray<number>) {`
-      : line % 10 === 9
-        ? "}"
-        : variant === "after" && line % 3 === 0
-          ? `  const value${line} = input.map((entry) => entry ** ${line}).filter(Boolean); // changed`
-          : `  const value${line} = input.map((entry) => entry * ${line}).filter(Boolean);`,
-  ).join("\n") + "\n";
-
-const pullRequestDetail = (): FakePullRequestDetail => {
-  const files = Array.from({ length: DIFF_FILES }, (_, index) => {
-    const changed = Array.from({ length: DIFF_LINES }, (_, line) => line).filter(
-      (line) => line % 10 !== 0 && line % 10 !== 9 && line % 3 === 0,
-    );
-    const patch = [
-      `@@ -1,${DIFF_LINES} +1,${DIFF_LINES} @@`,
-      ...changed.flatMap((line) => [
-        `-  const value${line} = input.map((entry) => entry * ${line}).filter(Boolean);`,
-        `+  const value${line} = input.map((entry) => entry ** ${line}).filter(Boolean); // changed`,
-      ]),
-    ].join("\n");
-    return {
-      path: `src/module${index}.ts`,
-      additions: changed.length,
-      deletions: changed.length,
-      patch,
-    };
-  });
-  const section = (title: string) =>
-    `## ${title}\n\nThis part of the change moves the helpers behind one entry point. Callers keep their signatures; each module now **squares** its inputs before filtering, and the filters skip falsy values.\n\n- \`src/module0.ts\` through \`src/module9.ts\` read the new helpers\n- the tests cover the empty input and the largest one\n- nothing outside \`src/\` moves\n\n\`\`\`ts\nexport function helper0_0(input: ReadonlyArray<number>) {\n  return input.map((entry) => entry ** 2).filter(Boolean);\n}\n\`\`\`\n`;
-  return {
-    body: [
-      "Squares every helper's input and moves them behind one entry point.",
-      ...["Why", "What changed", "How it was tested", "Follow-ups", "Risks"].map(section),
-      "| module | before | after |\n| :-- | --: | --: |\n" +
-        Array.from(
-          { length: 12 },
-          (_, index) => `| module${index} | ${index * 3} ms | ${index * 2} ms |`,
-        ).join("\n"),
-    ].join("\n\n"),
-    files,
-    comments: Array.from(
-      { length: 12 },
-      (_, index) =>
-        `Comment ${index + 1}: the helper in \`src/module${index}.ts\` reads better now. Could the filter keep zero?\n\n> ${"Quoted context from the review. ".repeat(3)}`,
-    ),
-    commits: 8,
-  };
-};
 
 const FIXTURE_PAGE = `<!doctype html>
 <title>Bench fixture</title>

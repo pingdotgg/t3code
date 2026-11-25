@@ -95,6 +95,28 @@ so read its long tasks, not its input task.
 spread and writes a floor per metric, and which are too noisy to gate on; pass it to `compare` or
 `ab` with `--floors`. Calibrate per machine; without floors, defaults apply.
 
+## Mobile switch metrics
+
+[`scripts/mobile-metrics.ts`](../../scripts/mobile-metrics.ts) (`vp run mobile:metrics`) is the
+mobile counterpart, built on [mobile:behavior](../../scripts/mobile-behavior/README.md)'s stack: a
+Simlock iOS simulator, a server whose only provider is the scripted `evalbot`, a Metro serving the
+checkout with the dev-only behavior probe, and client-metrics' 40-file branch with its pull request
+on the fake GitHub. Every step is a real tap, swipe or typed string through agent-device inside a
+probe window that records the app's touches, React commits, the commit that first shows the target
+thread's rows, composer keys, and JS and UI frames. `mobile-metrics --help` lists the cases.
+
+- It measures a development build, the only client the pool installs. Commit and render counts
+  (`--renders`) and A/B differences are representative; absolute times are dev-mode React on a
+  simulator and say little about a phone. A release build would need its own install pipeline.
+- `run`, `ab <checkoutA> <checkoutB>` and `compare` work like client-metrics' and share its gate:
+  each app launch's median is one sample, so gate only with `--ab-rounds 2` or more, on one
+  simulator model. `noise` calibrates floors from A/A runs.
+- Latency counts from the touch's end as JS sees it, so a JS thread too busy to take the touch
+  hides part of the delay. A native menu item (the Git controls' Review changes, the list
+  switcher's Issues) never reaches JS as a touch, so those steps report commits and frames only.
+- `settled` is the last commit before a second of quiet. Any streaming thread keeps Home
+  committing, so only `switch-working` streams, and it stops its thread when done.
+
 ## Persistence and background work invariants
 
 - Event-store sequence cursors and startup recovery candidate selection must seek indexes rather

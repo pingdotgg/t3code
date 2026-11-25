@@ -547,12 +547,29 @@ export function compareClientMetrics(
   threshold = 10,
   floors?: Floors,
 ) {
-  const a = flatten(before);
-  const b = flatten(after);
+  return compareSeries(
+    flatten(before),
+    flatten(after),
+    [
+      "### Client metrics (lower is better)",
+      "",
+      `before \`${before.meta.commit}\` (${before.runs.length} runs), after \`${after.meta.commit}\` (${after.runs.length} runs)${floors ? `, floors calibrated on ${floors.platform}` : ""}`,
+    ],
+    threshold,
+    floors,
+  );
+}
+
+/** `compareClientMetrics` over any two files' per-run metric values, under `header`. */
+export function compareSeries(
+  a: ReadonlyMap<string, ReadonlyArray<number>>,
+  b: ReadonlyMap<string, ReadonlyArray<number>>,
+  header: ReadonlyArray<string>,
+  threshold = 10,
+  floors?: Floors,
+) {
   const lines = [
-    "### Client metrics (lower is better)",
-    "",
-    `before \`${before.meta.commit}\` (${before.runs.length} runs), after \`${after.meta.commit}\` (${after.runs.length} runs)${floors ? `, floors calibrated on ${floors.platform}` : ""}`,
+    ...header,
     "",
     "| metric | before | after | change | 95% interval | |",
     "| :-- | --: | --: | --: | --: | :-- |",
@@ -618,10 +635,24 @@ export function noiseReport(
   pairs: ReadonlyArray<readonly [ClientMetrics, ClientMetrics]>,
   platform: string,
 ) {
+  return noiseOfSeries(
+    pairs.map(([before, after]) => [flatten(before), flatten(after)] as const),
+    platform,
+  );
+}
+
+/** `noiseReport` over any A/A pairs' per-run metric values. */
+export function noiseOfSeries(
+  pairs: ReadonlyArray<
+    readonly [
+      ReadonlyMap<string, ReadonlyArray<number>>,
+      ReadonlyMap<string, ReadonlyArray<number>>,
+    ]
+  >,
+  platform: string,
+) {
   const found = new Map<string, { medians: number[]; halfWidth: number; aaDifference: number }>();
-  for (const [before, after] of pairs) {
-    const a = flatten(before);
-    const b = flatten(after);
+  for (const [a, b] of pairs) {
     for (const [metric, x] of a) {
       const y = b.get(metric);
       if (!y) continue;
