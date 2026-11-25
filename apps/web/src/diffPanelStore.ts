@@ -39,6 +39,8 @@ interface DiffPanelStoreState {
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
   selectTurnRepository: (ref: ScopedThreadRef, turnId: RunId, repository: string | null) => void;
   selectCommit: (ref: ScopedThreadRef, sha: string) => void;
+  /** A commit or base ref of the repository being left means nothing in the next one. */
+  leaveGitRepository: (ref: ScopedThreadRef) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -157,6 +159,21 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
             branchBaseRefByThreadKey: { ...state.branchBaseRefByThreadKey, [threadKey]: baseRef },
           };
         }),
+      leaveGitRepository: (ref) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const previous = state.byThreadKey[threadKey];
+          if (previous?.kind !== "commit" && branchBaseRef(state, threadKey) === null) {
+            return state;
+          }
+          return {
+            byThreadKey:
+              previous?.kind === "branch" || previous?.kind === "commit"
+                ? { ...state.byThreadKey, [threadKey]: { kind: "branch", baseRef: null } }
+                : state.byThreadKey,
+            branchBaseRefByThreadKey: { ...state.branchBaseRefByThreadKey, [threadKey]: null },
+          };
+        }),
       reconcileTurnSelection: (ref, availableTurnIds) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -212,6 +229,11 @@ interface DiffPanelSessionStoreState {
   // Null follows the diffIgnoreWhitespace setting until the panel toggle is used.
   ignoreWhitespace: boolean | null;
   setIgnoreWhitespace: (ignoreWhitespace: boolean) => void;
+  /**
+   * The repository a thread's Git controls and Git diff act in, by `repositoryPath`; null is
+   * the thread's own folder. Shared so Changes opens on the repository the panel commits to.
+   */
+  gitRepositoryPathByThreadKey: Record<string, string | null>;
 }
 
 // Session-only so folds and the whitespace toggle survive right-panel switches without
@@ -229,7 +251,25 @@ export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((se
     }),
   ignoreWhitespace: null,
   setIgnoreWhitespace: (ignoreWhitespace) => set({ ignoreWhitespace }),
+  gitRepositoryPathByThreadKey: {},
 }));
+
+export function useThreadGitRepositoryPath(ref: ScopedThreadRef | null | undefined): string | null {
+  return useDiffPanelSessionStore((state) =>
+    ref ? (state.gitRepositoryPathByThreadKey[scopedThreadKey(ref)] ?? null) : null,
+  );
+}
+
+export function chooseThreadGitRepository(ref: ScopedThreadRef, repositoryPath: string | null) {
+  const threadKey = scopedThreadKey(ref);
+  useDiffPanelSessionStore.setState((state) => ({
+    gitRepositoryPathByThreadKey: {
+      ...state.gitRepositoryPathByThreadKey,
+      [threadKey]: repositoryPath,
+    },
+  }));
+  useDiffPanelStore.getState().leaveGitRepository(ref);
+}
 
 export function selectThreadDiffPanelSelection(
   byThreadKey: Record<string, DiffPanelSelection>,

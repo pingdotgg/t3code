@@ -4,7 +4,9 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  chooseThreadGitRepository,
   resolveToolCallDiffTarget,
+  selectThreadBranchBaseRef,
   useDiffPanelSessionStore,
   useDiffPanelStore,
 } from "./diffPanelStore";
@@ -15,7 +17,34 @@ describe("diffPanelStore", () => {
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
     });
-    useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
+    useDiffPanelSessionStore.setState({
+      collapsedFileKeysByScopeKey: {},
+      gitRepositoryPathByThreadKey: {},
+    });
+  });
+
+  it("drops a commit and base ref of the repository a thread's Git controls leave", () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    const key = scopedThreadKey(ref);
+    const store = useDiffPanelStore.getState();
+    store.selectBranchBaseRef(ref, "origin/main");
+    store.selectCommit(ref, "abc123");
+    chooseThreadGitRepository(ref, "/work/web");
+    expect(useDiffPanelSessionStore.getState().gitRepositoryPathByThreadKey[key]).toBe("/work/web");
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({
+      kind: "branch",
+      baseRef: null,
+    });
+
+    // Uncommitted changes and a turn read whichever repository is picked, so they stay.
+    store.selectBranchBaseRef(ref, "origin/main");
+    store.selectGitScope(ref, "unstaged");
+    chooseThreadGitRepository(ref, null);
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({ kind: "unstaged" });
+    expect(selectThreadBranchBaseRef(useDiffPanelStore.getState(), ref)).toBeNull();
+    store.selectTurn(ref, RunId.make("run"));
+    chooseThreadGitRepository(ref, "/work/web");
+    expect(useDiffPanelStore.getState().byThreadKey[key]?.kind).toBe("turn");
   });
 
   it("keeps a tool call selection independent of checkpoints and allows returning to Git changes", () => {

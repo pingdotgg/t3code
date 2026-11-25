@@ -37,8 +37,13 @@ const state = vi.hoisted(() => ({
   diffFilesCollapsed: false,
   project: {
     workspaceRoot: "/project",
-    repositoryIdentity: null as { rootPath: string } | null,
+    repositoryIdentity: null,
+  } as {
+    workspaceRoot: string;
+    repositoryIdentity: { rootPath: string } | null;
+    trackedFolders?: ReadonlyArray<unknown>;
   },
+  gitRepositories: [] as ReadonlyArray<{ repositoryPath: string; name: string; cwd: string }>,
   toolCallItem: null as unknown,
   config: null as unknown as Atom.Atom<null>,
   status: null as unknown as ResultAtom<VcsStatusResult>,
@@ -79,6 +84,9 @@ vi.mock("~/state/filesystem", () => ({
   useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
   filesystemEnvironment: {},
 }));
+vi.mock("~/hooks/useThreadGitRepositories", () => ({
+  useThreadGitRepositories: () => state.gitRepositories,
+}));
 vi.mock("~/hooks/useThreadRouteTarget", () => ({ useThreadRouteRef: () => state.threadRef }));
 vi.mock("~/hooks/useSettings", () => ({
   useClientSettings: (select: (settings: ClientSettings) => unknown) =>
@@ -108,7 +116,11 @@ vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 
 import DiffPanel from "./DiffPanel";
-import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
+import {
+  chooseThreadGitRepository,
+  useDiffPanelSessionStore,
+  useDiffPanelStore,
+} from "~/diffPanelStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
 const cwd = "/project-worktree";
@@ -141,12 +153,16 @@ function setup(failedBaseRef: string | null) {
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
     });
-    useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
+    useDiffPanelSessionStore.setState({
+      collapsedFileKeysByScopeKey: {},
+      gitRepositoryPathByThreadKey: {},
+    });
     useRightPanelStore.setState({ byThreadKey: {}, threadPanelVisibilityByThreadKey: {} });
   };
   reset();
   state.diffFilesCollapsed = false;
   state.project = { workspaceRoot: "/project", repositoryIdentity: null };
+  state.gitRepositories = [];
   state.toolCallItem = null;
   state.checkpoints = [];
   state.checkpointDiff = null;
@@ -427,6 +443,63 @@ it("shows a turn's repositories in a folder that is not a Git repository", async
   await userEvent.click(page.getByRole("menuitemradio", { name: "web" }));
   await expect.element(web).toBeVisible();
   await expect.element(api).not.toBeInTheDocument();
+});
+
+it.each([
+  { width: 600, path: "docs/server", fullPath: true },
+  { width: 540, path: "docs/server", fullPath: true },
+  { width: 480, path: "docs/server", fullPath: true },
+  { width: 480, path: "services/billing/api-server", fullPath: false },
+  { width: 390, path: "docs/server", fullPath: false },
+])("shows the repository path $path in a $width px panel", async ({ width, path, fullPath }) => {
+  using context = setup("origin/orphan");
+  // A feature branch against the automatic base, as most threads compare.
+  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, null);
+  const branchPreview = preview();
+  state.previews.set(
+    null,
+    Atom.make(
+      AsyncResult.success({
+        ...branchPreview,
+        sources: branchPreview.sources.map((source) => ({
+          ...source,
+          headRef: "feature/43-nested-repos",
+          baseRef: null,
+        })),
+      } as ReviewDiffPreviewResult),
+    ),
+  );
+  state.project = { ...state.project, trackedFolders: [{ path: "server" }] };
+  state.gitRepositories = ["server", path].map((repositoryPath) => ({
+    repositoryPath: `/project/${repositoryPath}`,
+    name: "server",
+    cwd: `/project/${repositoryPath}`,
+  }));
+  chooseThreadGitRepository(context.threadRef, `/project/${path}`);
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, width, display: "flex", flexDirection: "column" }}>
+        <DiffPanel
+          mode="embedded"
+          composerDraftTarget={context.threadRef}
+          workspaceMutationId={null}
+          visible
+        />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  const picker = screen.getByRole("button", { name: `Repository: ${path}` });
+  const label = picker.getByText(path, { exact: true });
+  await expect.element(label).toBeVisible();
+  await vi.waitFor(() => {
+    // The path, which tells `docs/server` from `server`, is not cut short where it fits.
+    if (fullPath) {
+      expect(label.element().scrollWidth).toBeLessThanOrEqual(label.element().clientWidth);
+    }
+    // At any width the header row still fits the panel.
+    const headerRow = picker.element().parentElement!;
+    expect(headerRow.scrollWidth).toBeLessThanOrEqual(headerRow.clientWidth);
+  });
 });
 
 // Paths as git's numstat reports them; the parsed patch keeps their edge whitespace.

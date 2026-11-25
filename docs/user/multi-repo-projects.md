@@ -69,9 +69,15 @@ hand show up too.
 
 Git actions run in one repository at a time.
 
-- **Web and desktop:** the thread details panel lists the repositories the thread changed, most
-  recent first, each with its branch and uncommitted changes. Expand one to commit, push, or open a
-  pull request there. **Other repositories...** adds any other repository of the project.
+- **Web and desktop:** the repository picker at the top of the thread details panel's Git rows
+  chooses which repository the branch, Git actions, and **Changes** rows act in, and always names
+  it. A repository inside the project folder is named by its path there, such as
+  `docs/server`. When the project folder is not a repository itself, the first one is
+  picked. The choice is per thread, lasts until you reload, and is shared with the Diff pane's
+  repository picker. Another repository's branch is shown next to its name; switch it from a
+  terminal. Below that, the panel lists the repositories the thread changed, most recent first,
+  each with its branch and uncommitted changes. Expand one to commit, push, or open a pull request
+  there. **Other repositories...** adds any other repository of the project.
 - **Mobile:** open **Git controls** in the thread. The sheet lists the repositories under
   **Repositories**; tap one for its own commit, push, and pull request actions.
 
@@ -209,5 +215,5 @@ restored:
 - One Git action runs in one repository. There is no commit or push across several at once.
 - Only the project folder's `t3.json` is read. Setup scripts and actions inside one of its
   repositories are not picked up.
-- The Diff pane's repository picker and the base branch field for a plain folder are on web and
-  desktop only.
+- The repository pickers in the Diff pane and the thread details panel, and the base branch field
+  for a plain folder, are on web and desktop only.
