@@ -48,7 +48,6 @@ import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { stripAppImageRuntimeEnv } from "@t3tools/shared/appImageRuntimeEnv";
-import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution, mergePathEntries } from "@t3tools/shared/shell";
 
@@ -391,12 +390,7 @@ interface TerminalManagerState {
 
 function truncateTerminalWireLabel(value: string): string {
   if (value.length <= MAX_TERMINAL_LABEL_LENGTH) return value;
-  return value.slice(
-    0,
-    splitsSurrogatePair(value, MAX_TERMINAL_LABEL_LENGTH)
-      ? MAX_TERMINAL_LABEL_LENGTH - 1
-      : MAX_TERMINAL_LABEL_LENGTH,
-  );
+  return value.slice(0, MAX_TERMINAL_LABEL_LENGTH).replace(/\p{Surrogate}$/u, "");
 }
 
 function normalizeChildCommandName(raw: string, platform: NodeJS.Platform): string | null {
