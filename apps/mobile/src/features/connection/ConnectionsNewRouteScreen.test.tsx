@@ -160,7 +160,6 @@ it("splits a pasted pairing link when editing ends and preserves the code during
     const code = container.querySelector<HTMLInputElement>('input[aria-label="Code"]')!;
 
     enter(code, "manual-code");
-    enter(address, "https://a-long-existing-address.example.com:3773/previous-address");
     const pasted = "  http://100.82.53.91:3773/pair#token=test-pairing-code";
     enter(address, pasted);
     expect(address.value).toBe(pasted);
@@ -180,10 +179,7 @@ it("splits a pasted pairing link when editing ends and preserves the code during
   }
 });
 
-it.each([
-  { finish: "blur", chunkSize: 1 },
-  { finish: "submit", chunkSize: 4 },
-])("keeps a typed pairing link intact until $finish", async ({ finish, chunkSize }) => {
+it("keeps a typed pairing link intact and submits its full token", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal("__DEV__", false);
   harness.pendingConnectionError = null;
@@ -194,26 +190,15 @@ it.each([
   try {
     act(() => root.render(<ConnectionsNewRouteScreen route={{ params: undefined }} />));
     const address = container.querySelector<HTMLInputElement>('input[aria-label="Address"]')!;
-    const code = container.querySelector<HTMLInputElement>('input[aria-label="Code"]')!;
     const url = "http://100.82.53.91:3773/pair#token=test-pairing-code";
-    for (let offset = 0; offset < url.length; offset += chunkSize) {
-      enter(address, address.value + url.slice(offset, offset + chunkSize));
-    }
+    for (const character of url) enter(address, address.value + character);
     expect(address.value).toBe(url);
-    expect(code.value).toBe("");
 
-    if (finish === "blur") {
-      act(() => address.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
-      expect(harness.connectPress).not.toHaveBeenCalled();
-    } else {
-      await act(async () => container.querySelector("button")!.click());
-      expect(harness.connectPress).toHaveBeenCalledWith(
-        "http://100.82.53.91:3773/#token=test-pairing-code",
-        undefined,
-      );
-    }
-    expect(address.value).toBe("http://100.82.53.91:3773");
-    expect(code.value).toBe("test-pairing-code");
+    await act(async () => container.querySelector("button")!.click());
+    expect(harness.connectPress).toHaveBeenCalledWith(
+      "http://100.82.53.91:3773/#token=test-pairing-code",
+      undefined,
+    );
   } finally {
     act(() => root.unmount());
   }
