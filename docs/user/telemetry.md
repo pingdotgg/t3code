@@ -21,13 +21,15 @@ Select the environment you want to change, or select all connected environments 
 This preference is saved on each selected server and applies to all clients connected to it.
 It is on by default, including for existing installations.
 
-Turning it off stops product events immediately and discards queued events and pending retries.
-A request already sent may finish. Turning it back on collects new events without sending the
-discarded ones.
-
 `T3CODE_TELEMETRY_ENABLED` still overrides this preference when explicitly set to `true` or `false`
-in the server's environment. When it is unset, the server uses the saved preference. An
-administrator's managed policy can still disable telemetry.
+in the server's environment. When it is unset, the server follows the saved preference outside CI.
+CI runners still send no product events by default, even when this preference is on. An
+administrator's managed policy or `DO_NOT_TRACK=1` can still disable telemetry, including when
+`T3CODE_TELEMETRY_ENABLED=true`.
+
+When the saved preference controls telemetry, turning it off stops product events immediately and
+discards queued events and pending retries. A request already sent may finish. Turning it back on
+collects new events without sending the discarded ones.
 
 This setting controls product events, including delivery of agent feedback. It does not control
 relay connection diagnostics or OpenTelemetry export to your own receiver, described below.
