@@ -8,6 +8,7 @@ import java.security.PublicKey
 import java.security.Signature
 import java.security.interfaces.ECPrivateKey
 import java.security.interfaces.ECPublicKey
+import java.security.spec.ECFieldFp
 import java.security.spec.ECGenParameterSpec
 import java.security.spec.ECParameterSpec
 import java.security.spec.ECPoint
@@ -84,18 +85,22 @@ internal object T3DpopKeys {
     return scalar(integer()) + scalar(integer())
   }
 
-  private fun privateKey(bytes: ByteArray): PrivateKey {
+  internal fun privateKey(bytes: ByteArray): PrivateKey {
     require(bytes.size == SCALAR_BYTES) { "A DPoP private key is 32 bytes." }
     return KeyFactory.getInstance("EC")
       .generatePrivate(ECPrivateKeySpec(BigInteger(1, bytes), curve))
   }
 
-  private fun publicKey(bytes: ByteArray): PublicKey {
+  internal fun publicKey(bytes: ByteArray): PublicKey {
     require(bytes.size == 1 + 2 * SCALAR_BYTES && bytes[0] == UNCOMPRESSED) {
       "A DPoP public key is an uncompressed P-256 point."
     }
     val x = BigInteger(1, bytes.copyOfRange(1, 1 + SCALAR_BYTES))
     val y = BigInteger(1, bytes.copyOfRange(1 + SCALAR_BYTES, bytes.size))
+    // Not every provider checks this before ECDH, and an off-curve point leaks the private key.
+    val p = (curve.curve.field as ECFieldFp).p
+    val rhs = x.pow(3).add(curve.curve.a.multiply(x)).add(curve.curve.b).mod(p)
+    require(x < p && y < p && y.multiply(y).mod(p) == rhs) { "The point is not on P-256." }
     return KeyFactory.getInstance("EC").generatePublic(ECPublicKeySpec(ECPoint(x, y), curve))
   }
 

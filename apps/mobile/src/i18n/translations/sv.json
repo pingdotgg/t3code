@@ -5704,5 +5704,9 @@
   "2c10f5e2a843f038": "Kunde inte upprätta en krypterad anslutning till {host}",
   "cd8c60ecfa5238ed": "Om inte kan något mellan den här enheten och {host} avlyssna anslutningen.",
   "0c749dab5288ee9f": "Något mellan den här enheten och {host} kan ändra anslutningen.",
-  "f9f9ed1dc0b45f72": "Kunde inte upprätta den krypterade anslutningen till {host}."
+  "f9f9ed1dc0b45f72": "Kunde inte upprätta den krypterade anslutningen till {host}.",
+  "dcf6f4ea88e6d6f2": "Om T3 Code på {host} har installerats om eller återställts tar du bort {host} från den här enheten och lägger till den igen för att lita på dess nya identitet.",
+  "405ee04d8c932c58": "Identiteten för {host} har ändrats sedan den här enheten anslöt första gången. Om du väntade dig det tar du bort {host} från den här enheten och lägger till den igen för att lita på dess nya identitet.",
+  "5c38b94ac8d96e9d": "Krypterad från ände till ände",
+  "37b578c0868b33dc": "Inte krypterad från ände till ände"
 }

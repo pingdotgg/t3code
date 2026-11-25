@@ -93,7 +93,6 @@ export const layer = Layer.effectContext(
               Effect.mapError((error) => targetPersistenceError("set-connection-enabled", error)),
             ),
       ),
-      // Mobile does not run the secure channel yet; these keep the catalog field intact.
       environmentKey: Effect.fn("Persistence.ConnectionRegistrationStore.environmentKey")(
         (environmentId) =>
           catalog.read.pipe(

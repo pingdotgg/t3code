@@ -47,6 +47,23 @@ class T3NativeControlsModule : Module() {
 
     AsyncFunction("signDpop") { key: ByteArray, input: ByteArray -> T3DpopKeys.sign(key, input) }
 
+    // Synchronous: one call per WebSocket frame on the secure channel.
+    Function("ecdhP256") { privateKey: ByteArray, publicKey: ByteArray ->
+      T3SecureChannelCrypto.ecdhP256(privateKey, publicKey)
+    }
+
+    Function("hkdfSha256") { secret: ByteArray, salt: ByteArray, info: ByteArray, length: Int ->
+      T3SecureChannelCrypto.hkdfSha256(secret, salt, info, length)
+    }
+
+    Function("sealAes256Gcm") { key: ByteArray, nonce: ByteArray, plaintext: ByteArray ->
+      T3SecureChannelCrypto.seal(key, nonce, plaintext)
+    }
+
+    Function("openAes256Gcm") { key: ByteArray, nonce: ByteArray, sealed: ByteArray ->
+      T3SecureChannelCrypto.open(key, nonce, sealed)
+    }
+
     AsyncFunction("openFile") { uri: String, mimeType: String, promise: Promise ->
       check(filePreviewPromise == null) { "A document viewer is already open." }
       val activity = appContext.currentActivity ?: error("The app is not active.")

@@ -68,6 +68,13 @@ export function EnvironmentRoutesSection({
     useAtomValue(environmentPresentations.presentationAtom(environmentId))?.refusedRouteIds ?? [];
   const sessionResult = useAtomValue(environmentSession.sessionStateAtom(environmentId));
   const session = AsyncResult.getOrElse(sessionResult, () => null);
+  const encrypted = Option.exists(
+    AsyncResult.getOrElse(
+      useAtomValue(environmentSession.transportSessionAtom(environmentId)),
+      () => Option.none(),
+    ),
+    (current) => current.secureChannel === true,
+  );
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const reorder = useAtomCommand(environmentCatalog.reorderRoutes, "route reorder");
   const removeRoute = useAtomCommand(environmentCatalog.removeRoute, "route removal");
@@ -209,6 +216,7 @@ export function EnvironmentRoutesSection({
             position={index + 1}
             count={routes.length}
             inUse={id === activeRouteId}
+            encrypted={encrypted}
             refused={refusedRouteIds.includes(id)}
             editing={editing}
             offset={index === dragFrom ? (drag?.translation ?? 0) : shift}
@@ -240,6 +248,7 @@ function RouteRow(props: {
   readonly position: number;
   readonly count: number;
   readonly inUse: boolean;
+  readonly encrypted: boolean;
   readonly refused: boolean;
   readonly editing: boolean;
   readonly offset: number;
@@ -260,6 +269,11 @@ function RouteRow(props: {
     props.refused && address !== null
       ? gt("The host refused this device's sign-in. Pair this address again with Add route.")
       : null;
+  const encryption = !props.inUse
+    ? null
+    : props.encrypted
+      ? gt("Encrypted end to end")
+      : gt("Not encrypted end to end");
   const style = useAnimatedStyle(() => ({
     transform: [
       {
@@ -301,6 +315,7 @@ function RouteRow(props: {
           address,
           isLearned(route) ? gt("Found automatically") : null,
           props.inUse ? gt("In use") : null,
+          encryption,
           props.refused ? gt("Sign-in refused") : null,
           gt("Route {position} of {count}", { position: props.position, count: props.count }),
           refusedHint,
@@ -340,6 +355,9 @@ function RouteRow(props: {
             <Text numberOfLines={1} className="text-sm text-foreground-muted">
               {isLearned(route) ? gt("{address} · found automatically", { address }) : address}
             </Text>
+          ) : null}
+          {encryption !== null ? (
+            <Text className="text-sm text-foreground-muted">{encryption}</Text>
           ) : null}
           {refusedHint !== null ? (
             <Text className="text-sm text-foreground-muted">{refusedHint}</Text>

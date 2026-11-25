@@ -67,6 +67,23 @@ public final class T3NativeControlsModule: Module {
       try T3DpopKeys.sign(privateKey: privateKey, signingInput: signingInput)
     }
 
+    // Synchronous: one call per WebSocket frame, with the frame read in place.
+    Function("ecdhP256") { (privateKey: Data, publicKey: Data) in
+      try T3SecureChannelCrypto.ecdhP256(privateKey: privateKey, publicKey: publicKey)
+    }
+
+    Function("hkdfSha256") { (secret: Data, salt: Data, info: Data, length: Int) in
+      try T3SecureChannelCrypto.hkdfSha256(secret: secret, salt: salt, info: info, length: length)
+    }
+
+    Function("sealAes256Gcm") { (key: Data, nonce: Data, plaintext: Uint8Array) in
+      try T3SecureChannelCrypto.seal(key: key, nonce: nonce, plaintext: plaintext.unownedData)
+    }
+
+    Function("openAes256Gcm") { (key: Data, nonce: Data, sealed: Uint8Array) in
+      try T3SecureChannelCrypto.open(key: key, nonce: nonce, sealed: sealed.unownedData)
+    }
+
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentVideo(
         url: url,
@@ -386,5 +403,12 @@ public final class T3NativeControlsModule: Module {
       presenter: presenter,
       promise: promise
     )
+  }
+}
+
+private extension Uint8Array {
+  /// The array's bytes without a copy, valid only during the synchronous call that received it.
+  var unownedData: Data {
+    byteLength == 0 ? Data() : Data(bytesNoCopy: rawPointer, count: byteLength, deallocator: .none)
   }
 }

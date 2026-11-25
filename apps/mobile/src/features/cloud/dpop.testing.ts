@@ -46,3 +46,37 @@ export function createNodeDpopKeysModule() {
     },
   };
 }
+
+/** The DPoP functions plus the secure channel functions, as a binary that has them. */
+export function createNodeSecureChannelCryptoModule() {
+  return {
+    ...createNodeDpopKeysModule(),
+    ecdhP256: (privateKey: Uint8Array, publicKey: Uint8Array) => {
+      const ecdh = NodeCrypto.createECDH("prime256v1");
+      ecdh.setPrivateKey(privateKey);
+      return new Uint8Array(ecdh.computeSecret(publicKey));
+    },
+    hkdfSha256: (secret: Uint8Array, salt: Uint8Array, info: Uint8Array, length: number) =>
+      new Uint8Array(NodeCrypto.hkdfSync("sha256", secret, salt, info, length)),
+    sealAes256Gcm: (key: Uint8Array, nonce: Uint8Array, plaintext: Uint8Array) => {
+      const cipher = NodeCrypto.createCipheriv("aes-256-gcm", key, nonce);
+      return new Uint8Array(
+        Buffer.concat([cipher.update(plaintext), cipher.final(), cipher.getAuthTag()]),
+      );
+    },
+    openAes256Gcm: (key: Uint8Array, nonce: Uint8Array, sealed: Uint8Array) => {
+      const decipher = NodeCrypto.createDecipheriv("aes-256-gcm", key, nonce);
+      decipher.setAuthTag(sealed.subarray(sealed.length - 16));
+      try {
+        return new Uint8Array(
+          Buffer.concat([
+            decipher.update(sealed.subarray(0, sealed.length - 16)),
+            decipher.final(),
+          ]),
+        );
+      } catch {
+        return null;
+      }
+    },
+  };
+}
