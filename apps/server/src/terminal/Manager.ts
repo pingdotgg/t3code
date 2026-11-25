@@ -576,12 +576,10 @@ const normalizeShellCommand = Effect.fn("terminal.normalizeShellCommand")(functi
 });
 
 function basenameForPlatform(command: string, platform: NodeJS.Platform): string {
-  const normalized =
-    platform === "win32" ? command.replaceAll("/", "\\") : command.replaceAll("\\", "/");
-  const parts = normalized
-    .split(platform === "win32" ? /\\+/ : /\/+/)
+  const parts = command
+    .split(platform === "win32" ? /[\\/]+/ : /\/+/)
     .filter((part) => part.length > 0);
-  return parts.at(-1) ?? normalized;
+  return parts.at(-1) ?? command;
 }
 
 function joinWindowsPath(...parts: ReadonlyArray<string>): string {
