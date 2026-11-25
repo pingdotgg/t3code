@@ -87,6 +87,24 @@ workflow(
 
 Under **Needs you**, a picker then shows each kind with how many questions of it are open, and **Other** for the rest; your pick is remembered on that device. A question whose kind is not in the workflow's own `asks` is asked like any other and shows under **Other**, as do questions asked without a kind. `t3 workflow questions --kind feature` lists the questions asked with exactly that kind from the CLI.
 
+## Choices, reasons and links
+
+A choice can be plain text, or `{ value, description, requireReason }` to say what picking it does or to take it only with a reason. `links` puts what to look at before answering on the question:
+
+```ts
+yield *
+  ask("wanted", {
+    title: "Build this?",
+    links: [{ label: "The request", url: issue.url }],
+    choices: [
+      { value: "Yes", description: "Work starts on it" },
+      { value: "No", description: "It is closed with a note", requireReason: true },
+    ],
+  });
+```
+
+The app asks for the reason before it sends a choice that requires one, and `t3 workflow signal` refuses that choice without a `reason`. Links open in your browser and are part of `t3 workflow questions --json`. The answer also records when it was given and who sent it (`answeredAt`, `answeredBy`): the device's name as **Connections** lists it, the tool that sent it, or for `t3 workflow signal` run by an agent, that agent's thread. What a signal's own value says for these is ignored; a signal sent before its question opens answers it as whoever sent it, at the time it was received. The run shows both on the question's step, and says **You** only in the session that gave the answer; every other session, even another one on the same device, sees that device's name.
+
 `tags([...])` labels a run for `t3 workflow list --tag backlog`, whether or not it waits on anyone.
 
 ## Triggers

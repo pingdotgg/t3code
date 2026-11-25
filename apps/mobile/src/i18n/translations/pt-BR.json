@@ -5637,5 +5637,50 @@
   "eb287395a09cd288": "Enviar traces de conexão",
   "6787f93bbf6ce0b6": "Ajuda a equipe do T3 Code a corrigir problemas de conexão. Os traces incluem tempos, tipos de erro, um ID desta sessão do app e a versão do app, nunca suas conversas, prompts ou código. Você pode mudar isso em Configurações > Sobre o T3 Code > Diagnóstico.",
   "0b1e4aecbd38e0cf": "Quando o app se conecta a um computador pelo {product}, ele envia à equipe do T3 Code quanto tempo cada etapa levou, o tipo de erro, um ID desta sessão do app e a versão do app. Os traces nunca incluem suas conversas, prompts ou código.",
-  "e0856d6a402ad821": "A política de {organization} não permite comandos de layout de worktree de projetos."
+  "e0856d6a402ad821": "A política de {organization} não permite comandos de layout de worktree de projetos.",
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " precisa de um motivo."
+  ],
+  "7e1fd2eb570a372b": "{who} respondeu {choice}",
+  "a3c43735e1a81498": "Motivo para {title}",
+  "bfad234f016cfa3f": "O motivo, em uma frase. Ele acompanha a resposta que você escolher.",
+  "3759768c5d342c22": [
+    "respondida",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "por ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "0f93532dd76391fc": "Você respondeu {choice}",
+  "235902a19e95833b": [
+    "por você,",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ]
 }
