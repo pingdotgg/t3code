@@ -11103,7 +11103,7 @@
   "4889f7885396c26b": "Worktrees",
   "2d96fe39105aae8f": "Logs rotacionados",
   "1214c77f4bf1ee81": "Artefatos do navegador",
-  "9831e9c703b3bdd0": "{omitted, plural, one {{environment}: mais {count} resultado.} other {{environment}: mais {count} resultados.}}",
+  "d9e33a2a8d404a96": "{omitted, plural, one {{environment}: mais {count} resultado.} other {{environment}: mais {count} resultados.}}",
   "c8192b219451a0d0": "{removed} removidos, {kept} mantidos, {failed} falharam",
   "cbd8bf91a856906a": "{removed} removidos, {kept} mantidos",
   "754564dc0b82aff7": "{count, plural, one {Última execução {when}. {bytes} recuperados. {count} item não pôde ser removido.} other {Última execução {when}. {bytes} recuperados. {count} itens não puderam ser removidos.}}",

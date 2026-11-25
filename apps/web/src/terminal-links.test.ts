@@ -173,6 +173,28 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
+  it.each([
+    ["./src/a.js:1:function inner() {", "./src/a.js:1:function", "./src/a.js:1"],
+    ["./src/a.js:4:1:function outer() {", "./src/a.js:4:1:function", "./src/a.js:4:1"],
+    ["/app/top.rb:2:in `f': boom (RuntimeError)", "/app/top.rb:2:in", "/app/top.rb:2"],
+    ["./data.csv:5:2024-01-01 ok", "./data.csv:5:2024-01-01", "./data.csv:5"],
+    [
+      "/var/lib/bluetooth/AA:BB:CC:11:22:DD",
+      "/var/lib/bluetooth/AA:BB:CC:11:22:DD",
+      "/var/lib/bluetooth/AA:BB:CC:11:22",
+    ],
+  ])("keeps %s whole and offers its location as the fallback", (line, text, fallback) => {
+    expect(extractTerminalLinks(line)).toEqual([
+      {
+        kind: "path",
+        text,
+        start: 0,
+        end: text.length,
+        fallback: { text: fallback, end: fallback.length },
+      },
+    ]);
+  });
+
   it("finds Windows absolute paths with forward slashes", () => {
     const line = "see C:/Users/someone/project/src/file.ts:42 for details";
     const path = "C:/Users/someone/project/src/file.ts:42";

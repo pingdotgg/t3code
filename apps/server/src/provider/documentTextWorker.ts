@@ -64,6 +64,7 @@ interface XmlNode {
   hasTextChoice?: boolean;
   markupCompatibility?: boolean;
   hasSelectedChoice?: boolean;
+  epubTable?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -131,6 +132,7 @@ function xml(source: string, extension: string): XmlNode {
       ),
       children: [],
     };
+    if (extension === ".epub" && node.name === "table") node.epubTable = true;
     if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
     stack.at(-1)!.children.push(node);
     stack.push(node);
@@ -381,12 +383,75 @@ function hasCellText(cell: XmlNode): boolean {
     typeof child === "string" ? !!child.trim() : hasCellText(child),
   );
 }
+function epubSpan(value: string | undefined) {
+  const digits = value?.match(/^[\t\n\f\r ]*\+?([0-9]+)/)?.[1];
+  return digits === undefined ? 1 : Number(digits);
+}
+
+function* epubTable(node: XmlNode): Generator<TextPart, void> {
+  const occupiedUntil = new Uint32Array(512);
+  let rowIndex = 0;
+  let rowCount = 0;
+  for (const part of children(node)) {
+    const rowGroup = ["thead", "tbody", "tfoot"].includes(part.name);
+    if (!rowGroup && part.name !== "tr") continue;
+    if (rowGroup) occupiedUntil.fill(0);
+    for (const row of rowGroup ? children(part) : [part]) {
+      if (row.name !== "tr") continue;
+      rowIndex++;
+      const cells = children(row)
+        .filter((cell) => cell.name === "td" || cell.name === "th")
+        .map((cell) => ({ cell, rowSpan: epubSpan(cell.attrs.rowspan) }));
+      const lastText = cells.findLastIndex(({ cell }) => hasCellText(cell));
+      if (lastText >= 0 && ++rowCount > 10_000) throw new Truncation("Row limit");
+      // An empty cell can still reserve columns in later rows.
+      const lastCell = Math.max(
+        lastText,
+        cells.findLastIndex(({ rowSpan }) => rowSpan !== 1),
+      );
+      let column = 0;
+      let lastColumn = 0;
+      for (let index = 0; index <= lastCell; index++) {
+        const { cell, rowSpan } = cells[index]!;
+        while ((occupiedUntil[column] ?? 0) > rowIndex) column++;
+        const width = Math.max(1, Math.min(1000, epubSpan(cell.attrs.colspan)));
+        const endColumn = column + width;
+        const inBounds = column < occupiedUntil.length;
+        if (!inBounds && hasCellText(cell)) throw new Truncation("Column limit");
+        if (rowSpan !== 1) {
+          // A zero row span covers the rest of the row group.
+          const endRow = rowSpan === 0 ? 0xffffffff : rowIndex + Math.min(65_534, rowSpan);
+          const trackedEnd = Math.min(endColumn, occupiedUntil.length);
+          for (let slot = column; slot < trackedEnd; slot++) {
+            occupiedUntil[slot] = Math.max(occupiedUntil[slot]!, endRow);
+          }
+        }
+        if (inBounds && index <= lastText) {
+          if (column > lastColumn) yield "\t".repeat(column - lastColumn);
+          yield CELL_START;
+          yield* paragraphs(cell);
+          yield { fallback: odfValue(cell) };
+          yield CELL_END;
+          lastColumn = column;
+        }
+        column = endColumn;
+      }
+      if (lastText >= 0) yield "\n";
+    }
+    if (rowGroup) occupiedUntil.fill(0);
+  }
+}
+
 function* table(node: XmlNode): Generator<TextPart, void> {
   for (const caption of children(node)) {
     if (caption.name !== "caption") continue;
     yield LINE_START;
     yield* paragraphs(caption);
     yield LINE_START;
+  }
+  if (node.epubTable) {
+    yield* epubTable(node);
+    return;
   }
   let rowCount = 0;
   for (const row of all(node, ["tr", "table-row"], ["caption"])) {

@@ -11104,7 +11104,7 @@
   "4889f7885396c26b": "Рабочие деревья",
   "2d96fe39105aae8f": "Ротированные логи",
   "1214c77f4bf1ee81": "Артефакты браузера",
-  "9831e9c703b3bdd0": "{omitted, plural, one {{environment}: ещё {count} результат.} few {{environment}: ещё {count} результата.} many {{environment}: ещё {count} результатов.} other {{environment}: ещё {count} результата.}}",
+  "d9e33a2a8d404a96": "{omitted, plural, one {{environment}: ещё {count} результат.} few {{environment}: ещё {count} результата.} many {{environment}: ещё {count} результатов.} other {{environment}: ещё {count} результата.}}",
   "c8192b219451a0d0": "Удалено: {removed}, сохранено: {kept}, ошибок: {failed}",
   "cbd8bf91a856906a": "Удалено: {removed}, сохранено: {kept}",
   "754564dc0b82aff7": "{count, plural, one {Последний запуск {when}. Освобождено {bytes}. Не удалось удалить {count} элемент.} few {Последний запуск {when}. Освобождено {bytes}. Не удалось удалить {count} элемента.} many {Последний запуск {when}. Освобождено {bytes}. Не удалось удалить {count} элементов.} other {Последний запуск {when}. Освобождено {bytes}. Не удалось удалить {count} элемента.}}",
