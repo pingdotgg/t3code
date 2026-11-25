@@ -613,17 +613,20 @@ it.effect("a launch keeps the auto stamp of an Auto thread's selection", () =>
       ],
     };
 
-    const result = yield* toolkit
-      .handle("t3_thread_launch", { title: "Auto launch", projectId, modelSelection })
-      .pipe(
-        Stream.unwrap,
-        Stream.runCollect,
-        Effect.map((items) => items.at(-1)?.result),
-        Effect.provide(dependencies),
-      );
-
-    expect(result).not.toMatchObject({ code: "invalid_request" });
-    expect(launched.map((launch) => launch.modelSelection)).toEqual([modelSelection]);
+    for (const model of [modelSelection.model, "retired-auto-model"]) {
+      const selection = { ...modelSelection, model };
+      const result = yield* toolkit
+        .handle("t3_thread_launch", { title: "Auto launch", projectId, modelSelection: selection })
+        .pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.map((items) => items.at(-1)?.result),
+          Effect.provide(dependencies),
+        );
+      expect(result).not.toMatchObject({ code: "invalid_request" });
+      expect(launched.at(-1)?.modelSelection).toEqual(selection);
+    }
+    expect(launched).toHaveLength(2);
   }),
 );
 

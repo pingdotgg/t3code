@@ -341,10 +341,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               (candidate) => candidate.instanceId === instanceId,
             );
             if (provider === undefined) return requestedSelection;
-            yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
             // Fork: Auto routing replaces an Auto selection's model and options when the thread
             // runs, and a routed selection carries the `auto` level stamp that no model declares.
             if (isAutoModelSelection(requestedSelection)) return requestedSelection;
+            yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
             const options = yield* OrchestrationMcp.validateModelOptions(
               provider,
               model,
