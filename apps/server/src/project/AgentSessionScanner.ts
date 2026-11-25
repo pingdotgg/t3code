@@ -2302,7 +2302,6 @@ export const make = Effect.gen(function* () {
           }
           if (
             transcriptsRemaining === 0 ||
-            budget.bytesRemaining === 0 ||
             identity.size > MAX_IMPORTED_TRANSCRIPT_BYTES ||
             identity.size > budget.bytesRemaining
           ) {
