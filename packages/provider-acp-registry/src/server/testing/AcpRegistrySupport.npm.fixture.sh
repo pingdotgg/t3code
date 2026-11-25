@@ -13,6 +13,7 @@ if [ -n "$FAKE_NPM_IGNORE_PREFIX_ENV" ]; then
     previous=$arg
   done
 fi
+[ -n "$FAKE_NPM_IGNORE_PREFIX" ] && prefix="$FAKE_NPM_PREFIX"
 if [ "$1" = "root" ] && [ "$2" = "--global" ]; then
   printf '%s\n' "$prefix/lib/node_modules"
   exit 0

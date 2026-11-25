@@ -650,6 +650,38 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("names the npm shim when npm cannot install into the managed prefix", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-npm-shim-no-prefix-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, FAKE_NPM_IGNORE_PREFIX: "1" };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
+
+      const error = yield* resolver
+        .resolve(settings(), "/workspace", environment)
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("shim");
+      const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
+      expect(npmCommands).not.toMatch(/^install /mu);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   it.effect("gives Windows npm commands only the managed prefix spelling", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
     return Effect.gen(function* () {
