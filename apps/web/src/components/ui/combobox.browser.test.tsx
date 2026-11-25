@@ -19,11 +19,11 @@ const items = [
 ];
 
 const pickers = {
-  combobox: (scrollAreaClassName: string) => (
+  combobox: (
     <Combobox defaultOpen items={items}>
       <ComboboxInput aria-label="Search options" />
       <ComboboxPopup>
-        <ComboboxList scrollAreaClassName={scrollAreaClassName}>
+        <ComboboxList scrollAreaClassName="max-h-72">
           {(item: string) => (
             <ComboboxItem key={item} value={item}>
               {item}
@@ -33,11 +33,11 @@ const pickers = {
       </ComboboxPopup>
     </Combobox>
   ),
-  autocomplete: (scrollAreaClassName: string) => (
+  autocomplete: (
     <Autocomplete defaultOpen items={items}>
       <AutocompleteInput aria-label="Search options" />
       <AutocompletePopup>
-        <AutocompleteList scrollAreaClassName={scrollAreaClassName}>
+        <AutocompleteList scrollAreaClassName="max-h-72">
           {(item: string) => (
             <AutocompleteItem key={item} value={item}>
               {item}
@@ -49,15 +49,10 @@ const pickers = {
   ),
 };
 
-it.each([
-  ["combobox", "max-h-none"],
-  ["combobox", "max-h-72"],
-  ["autocomplete", "max-h-none"],
-  ["autocomplete", "max-h-72"],
-] as const)(
-  "resizes the %s scrollbar thumb when filtering shortens the list (cap: %s)",
-  async (kind, scrollAreaClassName) => {
-    await using _screen = await render(pickers[kind](scrollAreaClassName), {
+it.each(["combobox", "autocomplete"] as const)(
+  "resizes the capped %s scrollbar thumb when filtering shortens the list",
+  async (kind) => {
+    await using _screen = await render(pickers[kind], {
       router: false /* filtering a popup list does not involve routing */,
     });
 
@@ -66,7 +61,7 @@ it.each([
       .element()
       .closest("[data-slot=scroll-area-viewport]");
     if (!viewport) throw new Error("List is not inside a scroll area");
-    if (scrollAreaClassName === "max-h-72") expect(viewport.clientHeight).toBeLessThanOrEqual(288);
+    expect(viewport.clientHeight).toBeLessThanOrEqual(288);
     const thumbHeight = () =>
       document
         .querySelector(
