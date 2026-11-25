@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import { fetch as expoFetch } from "expo/fetch";
 
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 
@@ -20,6 +21,8 @@ function configuredRelayUrl(): string {
 }
 
 const layerHttpClient = layerRemoteHttpClient(fetch);
+// React Native's XMLHttpRequest fetch ignores `redirect`; Expo's native transport honors the exporter's "manual".
+const layerTracingHttpClient = layerRemoteHttpClient(expoFetch);
 
 type RuntimeLayerSource =
   | ReturnType<typeof ManagedRelayLayer.layer>
@@ -35,7 +38,7 @@ const layerRuntime = Layer.merge(
 ).pipe(
   Layer.provideMerge(Dpop.layer),
   Layer.provideMerge(layerHttpClient),
-  Layer.provideMerge(Tracing.layer.pipe(Layer.provide(layerHttpClient))),
+  Layer.provideMerge(Tracing.layer.pipe(Layer.provide(layerTracingHttpClient))),
   Layer.provideMerge(Persistence.layer),
   // These layers read the keychain and the database while they build, and a
   // failed build is kept for the life of the process.
