@@ -196,6 +196,13 @@ export const journaled = <A, I, E>(
 ) => {
   const codec = Schema.toCodecJson(returns);
   const encodable = Schema.encodeEffect(codec);
+  // A wake can preempt the run while a failed step is still finishing, and the engine then
+  // replays the paused run and runs the step again. Only a resume, which unpauses first, may.
+  const unlessPaused = Effect.flatMap(run.store.run(run.runId), (row) =>
+    row?.status === "paused"
+      ? Effect.fail(new StepFailed({ step: name, reason: "The run is paused." }))
+      : Effect.void,
+  );
   return Activity.make({
     name: action,
     success: returns,
@@ -217,6 +224,7 @@ export const journaled = <A, I, E>(
           Effect.andThen(run.store.runPaused(run.runId, error.message, held), run.placesFreed),
         ),
       ),
+      (attempt) => Effect.andThen(unlessPaused, attempt),
     ),
   });
 };
