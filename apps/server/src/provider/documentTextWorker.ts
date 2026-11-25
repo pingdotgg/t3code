@@ -407,6 +407,7 @@ function* epubTable(node: XmlNode): Generator<TextPart, void> {
         .map((cell) => ({ cell, rowSpan: epubSpan(cell.attrs.rowspan) }));
       const lastText = cells.findLastIndex(({ cell }) => hasCellText(cell));
       if (lastText >= 0 && ++rowCount > 10_000) throw new Truncation("Row limit");
+      if (lastText >= 0 && rowCount === 1) yield LINE_START;
       // An empty cell can still reserve columns in later rows.
       const lastCell = Math.max(
         lastText,
