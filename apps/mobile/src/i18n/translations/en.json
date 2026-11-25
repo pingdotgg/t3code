@@ -497,7 +497,7 @@
   "bc24c300d53d61c5": "{host} did not answer on any saved route.",
   "b0dd3cd876937ca8": "Connection profile {connectionId} is unavailable.",
   "5ce46783e79ca9d1": "Connection credential {connectionId} is unavailable.",
-  "0bda0cac7f5acc20": "Connected environment {actual} does not match {expected}.",
+  "b39d1428ec8b23f5": "This address now runs a different T3 Code install ({actual}, not {expected}). Remove this connection and add it again.",
   "ea0d3e4e51d5706f": "The environment credential is invalid.",
   "7283ebfd16d09677": "The environment credential does not grant the required access.",
   "d3e9a9cb543b4b7b": "The environment rejected the authentication request.",
@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Starting {provider} MCP servers",
   "fedaa29ff8815a77": "Loading {provider} hooks",
   "57025ae4de5beb57": "Loading {provider} rules and skills",
+  "1cbfbcad9f0d04fe": "Resuming {provider} session",
   "4729a188600f1501": "Connecting to {provider}",
   "8c8977097681630f": "Starting {provider}",
   "f1d27d127ab27ac6": "Starting",
@@ -1915,6 +1916,7 @@
   "69c659d8b6e271cc": "The page asks for a file.",
   "a6efeb99b479990a": "Choose files",
   "59c87648d44b958c": "Choose file",
+  "6f321f153b8711bb": "Choose an option",
   "61a552a67e9e3eac": "Dialog response",
   "1d9bd868fafea18a": "Dismiss",
   "1d0a7acef4a95536": "Accept",
@@ -4340,6 +4342,21 @@
     },
     " app left its page and was stopped"
   ],
+  "796b81c4875c4feb": [
+    "The ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " app needs a newer ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " server on this environment. Update the server to use it."
+  ],
   "5ef18e4d39b398bf": [
     "Unable to load the ",
     {
@@ -4653,10 +4670,6 @@
   "ccde552cdff4a9e5": "Double tap to show the prompt.",
   "630df4f8b78ab8d3": "Working for {duration}",
   "01deb1ae9f51d3e0": "Couldn't load work. Tap to retry.",
-  "868ed4fea1a3273c": "{count} repos",
-  "c887abfd190d8b40": "this folder",
-  "275b5fe6040f2c1c": "{files, plural, one {Review {files} file changed, {additions} additions, {deletions} deletions} other {Review {files} files changed, {additions} additions, {deletions} deletions}}",
-  "c4a35456c7bdc3a1": "{files, plural, one {Review {files} file changed in {folders}, {additions} additions, {deletions} deletions} other {Review {files} files changed in {folders}, {additions} additions, {deletions} deletions}}",
   "7a13ae3b70a050fb": "{label} (unavailable)",
   "8f033834a0194c33": "Context unavailable",
   "4031ea1541b3ec2b": "Open context",
@@ -4906,6 +4919,7 @@
   "306a6f95ad9d52f7": "Unsent",
   "11276ab6c58b7a25": "Opens the draft in the new task composer. Swipe left to discard.",
   "99950f3a28d425fa": "Sends when the environment reconnects. Opens the task for editing. Swipe left to delete.",
+  "d71048f4fb9cf44a": "Waiting to sync",
   "0a260c7744afd0be": "Waiting",
   "ad78fae7d373cf21": "Working",
   "be451f475c514b37": "Dismiss Woke notification",
@@ -5334,6 +5348,9 @@
   "744127f8dfad7d22": "Connect an environment to see its workflow runs.",
   "b9aae2f7cdb1a379": "No workflow runs yet",
   "ace8fc1c643cf9f6": "A workflow ties agents, code, schedules and questions to you into one run that survives restarts. Write one on your computer, under Workflows, then Definitions.",
+  "fc9c3a00cfc18b55": "All kinds",
+  "e4d1316c85ed7066": "No questions of this kind wait on you.",
+  "45a94c724845ec1d": "Other",
   "86798f07ba2d7f4d": "Search issues",
   "484cd83bb303bab8": "Search pull requests",
   "75ed31fcea4f741a": "Filter issues",
@@ -5620,5 +5637,67 @@
   "856812e7e1fc445e": "Tool calls in chat",
   "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
   "99d51127f573296b": "Another account",
-  "8ec2c57414669b79": "Connect a second {tracker} workspace or user."
+  "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
+  "892f08d21b8e48a9": "Merge {layers} into {base} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} once their requirements are met. This may happen immediately.",
+  "89bf40eb2503b6c5": "New device signed in to {environment}",
+  "c94b5fe9ef372bc0": "{device} connected through {product}. If this was not you, remove it in Settings → Access in T3 Code on that computer.",
+  "bec67d0ed485f885": "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. If this was not you, remove them in Settings → Access in T3 Code on that computer.",
+  "18c30aa94d0a807f": "Connection diagnostics",
+  "eb287395a09cd288": "Send connection traces",
+  "6787f93bbf6ce0b6": "Helps the T3 Code team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About T3 Code > Diagnostics.",
+  "0b1e4aecbd38e0cf": "When the app connects to a computer through {product}, it sends the T3 Code team how long each step took, any error type, an ID for this app session, and the app version. Traces never include your threads, prompts, or code.",
+  "e0856d6a402ad821": "{organization}'s policy does not allow project worktree layout commands.",
+  "7150557773b3818b": "Queued",
+  "efbeb3993ee2c3f5": "Queued for {pool}",
+  "0398ca6c1d24b92d": "queued, next in line",
+  "0af6d5ffd5166214": "{count, plural, one {queued, {count} ahead} other {queued, {count} ahead}}",
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " needs a reason."
+  ],
+  "7e1fd2eb570a372b": "{who} answered {choice}",
+  "a3c43735e1a81498": "Reason for {title}",
+  "bfad234f016cfa3f": "Why, in a sentence. It goes with whichever answer you pick.",
+  "3759768c5d342c22": [
+    "answered",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "by ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "0f93532dd76391fc": "You answered {choice}",
+  "235902a19e95833b": [
+    "by you,",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1a1beecff68a6e61": "Verify Google account",
+  "99451a5d2d40440f": "Withdrawn by {by}.",
+  "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
+  "201490988858b511": "withdrawn by {by}"
 }

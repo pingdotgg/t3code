@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { splitMarkdown } from "./markdownChunks.ts";
+import { LARGE_MARKDOWN_CHUNK_MAX_CHARS, splitMarkdown } from "./markdownChunks.ts";
 
 const splitLargeMarkdown = (text: string, targetChars?: number) =>
   splitMarkdown(text, targetChars).chunks;
@@ -76,9 +76,57 @@ describe("splitMarkdown", () => {
       "# literal",
       "</div>",
       "",
+      "<details>",
+      "<summary>Answer</summary>",
+      "",
+      "Inside details",
+      "",
+      "</details>",
+      "",
+      "<table><tr><td>",
+      "",
+      "```ts",
+      "inside a cell",
+      "```",
+      "",
+      "</td></tr></table>",
+      "",
+      '<ol start="10">',
+      "",
+      "<li>one</li>",
+      "",
+      "<li>two</li>",
+      "",
+      "</ol>",
+      "",
+      "```html",
+      "<details>",
+      "```",
+      "",
       "after",
     ].join("\n");
-    expect(starts(text)).toEqual(["<!--", "after"]);
+    expect(starts(text)).toEqual(["<!--", "```html", "after"]);
+    const multiline = [
+      "<details",
+      '  class="faq"><!-- </details> -->',
+      "",
+      "Inside details",
+      "",
+      "</details>",
+      "",
+      "after",
+    ].join("\n");
+    expect(starts(multiline)).toEqual(["<details", "after"]);
+    const unclosed = ["<details>", "", "x".repeat(32 * 1024), "", "after"].join("\n");
+    expect(starts(unclosed)).toEqual(["<details>", "after"]);
+    const head = ["<details>", "", "a".repeat(8 * 1024), "", ""].join("\n");
+    const longLine = "x".repeat(LARGE_MARKDOWN_CHUNK_MAX_CHARS - head.length);
+    expect(starts(head + longLine)).toEqual(["<details>"]);
+    expect(starts(`${head}${longLine}x`)).toEqual(["<details>", `${longLine}x`]);
+    expect(starts(`${head}\`\`\`json\n${longLine}\n\`\`\`\n\n</details>`)).toEqual([
+      "<details>",
+      "```json",
+    ]);
   });
 
   it("treats an autolink line as a paragraph, so a following fence still opens", () => {
@@ -124,9 +172,38 @@ describe("splitMarkdown", () => {
       "",
       "===",
       "[p]: /paragraph-text",
+      "",
+      "```sh",
+      "npm install",
+      "```",
+      "[fence]: /after-fence",
+      "~~~",
+      "~~~",
+      "Text after a fence",
+      "[q]: /continues-the-paragraph",
+      "",
+      "$$",
+      "x",
+      "$$ trailing",
+      "[math]: /inside-math",
+      "",
+      "<!-->",
+      "```",
+      "-->",
+      "```",
+      "[comment]: /after-a-closed-comment",
+      "```",
+      "[code]: /inside-a-fence-after-a-comment",
+      "```",
+      "",
+      "- ```md",
+      "  ~~~",
+      "  ~~~",
+      "  [list]: /inside-a-list-fence",
+      "  ```",
     ].join("\n");
     expect(splitMarkdown(text).definitions).toBe(
-      "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break",
+      "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break\n[fence]: /after-fence\n[comment]: /after-a-closed-comment",
     );
   });
 });

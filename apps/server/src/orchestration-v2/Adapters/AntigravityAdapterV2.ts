@@ -40,12 +40,15 @@ import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityCli
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
+  antigravitySwarmAddChildSessionId,
+  antigravitySwarmAddModel,
   antigravityToolOutlivesPrompt,
   antigravityCommandOutlivesPrompt,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
   makeAntigravityReadRepair,
+  makeAntigravityUpdateStepsPlans,
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
@@ -129,9 +132,9 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
       toolCall.title ??
       ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
     title: launch?.title ?? ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
-    model: null,
+    model: antigravitySwarmAddModel(toolCall),
     status,
-    childSessionId: null,
+    childSessionId: antigravitySwarmAddChildSessionId(toolCall),
     result: status === "failed" ? (antigravitySubagentOutput(toolCall) ?? null) : null,
   };
 };
@@ -164,6 +167,7 @@ export function makeAntigravityAcpAdapterFlavor(
         .pipe(Effect.provideService(Scope.Scope, scope));
       // Repair keeps state across updates, so each runtime must have one session-update handler.
       const reads = makeAntigravityReadRepair();
+      const plans = makeAntigravityUpdateStepsPlans();
       // Served reads are reported from the read handler, so they take turns with agent updates.
       const updates = yield* Semaphore.make(1);
       let projectUpdate: Parameters<typeof runtime.handleSessionUpdate>[0] | undefined;
@@ -194,9 +198,10 @@ export function makeAntigravityAcpAdapterFlavor(
           Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
         handleSessionUpdate: (handler) => {
           projectUpdate = handler;
-          return runtime.handleSessionUpdate((notification) =>
-            updates.withPermit(handler(reads.repair(notification))),
-          );
+          return runtime.handleSessionUpdate((notification) => {
+            const update = plans(reads.repair(notification));
+            return update === undefined ? Effect.void : updates.withPermit(handler(update));
+          });
         },
         start: () =>
           runtime

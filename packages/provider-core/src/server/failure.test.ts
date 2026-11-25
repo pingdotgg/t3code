@@ -339,6 +339,28 @@ it("does not serialize arbitrary provider causes", () => {
   });
 });
 
+it("keeps only trusted Google account verification URLs on provider failures", () => {
+  const validUrls = [
+    "https://accounts.google.com/v3/signin/continue?plt=fixture&flowName=GlifWebSignIn",
+    "https://accounts.google.com/signin/continue?sarp=1&scc=1&plt=fixture",
+  ];
+  for (const url of validUrls) {
+    assert.equal(makeProviderFailure({ verificationUrl: url }).verificationUrl, url);
+  }
+  for (const invalid of [
+    undefined,
+    "",
+    "http://accounts.google.com/v3/signin/continue?plt=fixture",
+    "https://accounts.google.com/v3/signin/continue?",
+    "https://accounts.google.com/logout?continue=https://example.invalid",
+    "https://accounts.google.com.example.invalid/v3/signin/continue?plt=fixture",
+    "https://accounts.google.com/v3/signin/continue?plt=fixture#frag",
+    "https://accounts.google.com/v3/signin/continue?plt=fixture\u0007",
+  ]) {
+    assert.isUndefined(makeProviderFailure({ verificationUrl: invalid }).verificationUrl);
+  }
+});
+
 it.effect("keys terminal failure items by provider turn across retries and fallback paths", () =>
   Effect.gen(function* () {
     const idAllocator = yield* IdAllocator.IdAllocatorV2;

@@ -46,6 +46,26 @@ export function resolveThreadDetailsLimits(
   return hubPool(provider.driver, model, providers, hubs, now) ?? { kind: "instance", limits: own };
 }
 
+export function resolveThreadHttpQuotas(
+  providerInstanceId: ProviderInstanceId | null,
+  sources: UsageLimitSourceSnapshots,
+) {
+  if (providerInstanceId === null) return [];
+  return sources.flatMap((source) =>
+    source.kind === "http"
+      ? (source.quotaAccounts ?? []).flatMap((account) =>
+          account.providerInstanceId === providerInstanceId
+            ? account.windows.map((window) => ({
+                key: JSON.stringify([source.id, account.id, window.id]),
+                accountLabel: account.label,
+                window,
+              }))
+            : [],
+        )
+      : [],
+  );
+}
+
 export function nextPoolReset(window: LimitPoolWindow, now: number) {
   const pooled = window.members.length > 1;
   return (
