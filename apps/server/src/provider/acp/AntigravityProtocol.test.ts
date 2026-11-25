@@ -74,6 +74,68 @@ describe("native Antigravity subagent tools", () => {
       antigravitySubagentOutput({ toolCallId: "trajectory:4", data: { rawOutput: {} } }),
     ).toBeUndefined();
   });
+
+  it("classifies swarm worker launches and formats legacy swarm board tools cleanly", () => {
+    const addCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-add-1",
+      title: "Run swarm",
+      kind: "other",
+      status: "completed",
+      data: {
+        rawInput: { action: "add", name: "parser", brief: "Audit parser module" },
+        rawOutput: { status: "added", name: "parser", conversation_id: "child-1" },
+      },
+    });
+    expect(addCall.title).toBe("Add swarm worker @parser");
+    expect(classifyAntigravitySubagentToolCall(addCall, {})).toBe("subagent");
+    expect(
+      classifyAntigravitySubagentToolCall(
+        {
+          toolCallId: "swarm-mcp",
+          title: "Run swarm",
+          kind: "other",
+          data: { rawInput: { action: "add", name: "parser" } },
+        },
+        { update: { _meta: { is_mcp_tool_call: true } } },
+      ),
+    ).toBe("mcp");
+
+    const killCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-kill-1",
+      title: "Run swarm",
+      kind: "other",
+      data: { rawInput: { action: "kill", name: "parser" } },
+    });
+    expect(killCall.title).toBe("Stop swarm worker @parser");
+    expect(classifyAntigravitySubagentToolCall(killCall, {})).toBeUndefined();
+
+    const postCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-post-1",
+      title: "Run post_message",
+      kind: "other",
+      data: { rawInput: { channel: "backend", text: "@coordinator done" } },
+    });
+    expect(postCall.title).toBe("Post to #backend");
+    expect(classifyAntigravitySubagentToolCall(postCall, {})).toBeUndefined();
+
+    const readCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-read-1",
+      title: "Run read_board",
+      kind: "other",
+      data: { rawInput: { since: 1 } },
+    });
+    expect(readCall.title).toBe("Read swarm board");
+    expect(readCall.kind).toBe("other");
+
+    const waitCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-wait-1",
+      title: "Run swarm_wait",
+      kind: "other",
+      data: { rawInput: { since: 2, wake_on: "mentions" } },
+    });
+    expect(waitCall.title).toBe("Wait for swarm board");
+    expect(waitCall.kind).toBe("think");
+  });
 });
 
 const questionRequest = {
@@ -253,17 +315,23 @@ describe("Antigravity permissions and questions", () => {
   });
 
   it("bounds question text without changing choice IDs", () => {
+    const title = "Q".repeat(7_994) + "🧪";
+    const label = "O".repeat(506) + "🧪";
     const request = {
       ...questionRequest,
-      toolCall: { ...questionRequest.toolCall, title: "Question ".repeat(2_000) },
+      toolCall: { ...questionRequest.toolCall, title: title + "🚀 continued" },
       options: [
-        { optionId: "stable-choice", name: "Choice ".repeat(2_000), kind: "allow_once" as const },
+        { optionId: "stable-choice", name: label + "🚀 continued", kind: "allow_once" as const },
       ],
     };
     const question = extractAntigravityUserInputQuestion(request);
-    expect(question?.question.length).toBeLessThanOrEqual(8_000);
-    expect(question?.options[0]?.label.length).toBeLessThanOrEqual(512);
-    expect(question?.options[0]?.value).toBe("stable-choice");
+    expect(question?.question).toBe(title + "...");
+    expect(question?.options).toEqual([
+      { value: "stable-choice", label: label + "...", description: label + "..." },
+    ]);
+    expect(
+      makeAntigravityUserInputResponse(request, { interaction_9960062f: label + "..." }),
+    ).toEqual({ outcome: { outcome: "selected", optionId: "stable-choice" } });
   });
 });
 
@@ -725,5 +793,39 @@ describe("Antigravity served reads", () => {
       toolCallId: "call_current",
       status: "completed",
     });
+  });
+
+  it("drops agy's toolSummary from T3 MCP call arguments only", () => {
+    const t3Call = normalizeAntigravityToolCall(
+      parseToolUpdate(
+        normalizeAntigravitySessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_t3_send",
+            title: "Run mcp_t3-code_send_to_user",
+            kind: "other",
+            status: "in_progress",
+            rawInput: { message: "Hello", toolSummary: "Send greeting" },
+          },
+        }),
+      ).toolCall,
+    );
+    expect(t3Call.data.rawInput).toEqual({ message: "Hello" });
+
+    const foreignCall = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call_other",
+          title: "Run mcp_other_send_to_user",
+          kind: "other",
+          status: "in_progress",
+          rawInput: { message: "Hello", toolSummary: "Send greeting" },
+        },
+      }).toolCall,
+    );
+    expect(foreignCall.data.rawInput).toEqual({ message: "Hello", toolSummary: "Send greeting" });
   });
 });

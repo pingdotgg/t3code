@@ -4,6 +4,16 @@ Use a new thread for a separate task. Choose **New worktree** when its code chan
 need a separate branch and working directory. Threads in the same checkout share its
 branch, so T3 Code refuses a branch switch there while one of them is working.
 
+## Resize or hide the sidebar
+
+On web and desktop, drag the sidebar's right edge to resize it. Continue left past its minimum
+width to preview hiding it, then release to keep it hidden. Dragging back right before releasing
+shows it again and continues resizing.
+
+Move the mouse to the middle of the left window edge to find a handle. Drag it right or click
+it to show the sidebar again. Dragging back to the edge before releasing hides the preview
+and leaves it hidden. The sidebar toggle and shortcut still keep it open.
+
 ## Start a thread
 
 On web and desktop, **New thread** opens the project picker when you have more than one
@@ -138,8 +148,8 @@ open.
 
 Threads that are working or waiting on work they will resume from move into a collapsed
 **Working** section below the active list.
-That includes subagents, watched pull requests with checks still running, Claude monitors,
-and background commands or other monitors the agent says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
+That includes subagents, watched pull requests with checks still running, Claude monitors and
+`sleep` timers, and background commands or other monitors the agent says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
 there. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
 answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
 the pinned section.
@@ -177,6 +187,12 @@ when the thread settles** enabled in Settings > Projects > Actions. You can also
 that action so T3 can stop its terminal and child processes. Commands started through an
 agent's own shell tools are managed by the provider.
 
+You can settle or snooze a thread while its environment is offline. The thread shows
+**Pending** (**Waiting to sync** on mobile), and the change is sent when the environment
+reconnects. Undo, Un-settle, or Wake before then cancels it. If the thread changed there in
+the meantime, the environment's state wins and your change is dropped. A thread with a
+pending settle cannot be snoozed until it syncs.
+
 To reclaim disk space from settled work, turn on **Run in the thread's worktree when the
 thread settles** for one of the project's actions, or set `"runOnSettle": true` on a
 `t3.json` script, for example `cargo clean`. It runs each time a thread in its own
@@ -196,8 +212,9 @@ Work in progress, pending questions or approvals, and background work the agent
 is waiting on prevent automatic settlement. An open pull request does not prevent inactivity
 settlement unless you turn on **Keep threads with a PR** in **Settings → Threads**,
 but an old closed or merged pull request does not settle work you
-resumed after it closed. Only your own messages count as resuming. A turn that
-finished background work or a pull request watch starts on its own does not.
+resumed after it closed. Your own messages count as resuming, and so does a
+message an agent sends with `t3_thread_send` or `t3 thread send`. A turn that finished
+background work or a pull request watch starts on its own does not.
 
 To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
 choose **Auto-settle behavior**, and pick **Never**. The current option is checked. Pick
@@ -212,6 +229,19 @@ Mixed values show where the selected environments disagree. Mobile applies these
 rules to connected environments that support shared settings. Offline environments
 and older servers keep their previous values. Changing a rule does not reopen
 already settled threads.
+
+### Settle or archive
+
+Settle is for work that is done for now. A settled thread stays in the sidebar's Settled
+section and in search, and a message to it, from you, an agent, or a scheduled task, makes it
+active again. Archive is for work you want out of the way. An archived thread leaves the
+sidebar and search and shows only in **Settings → Archive**, where you can unarchive or
+delete it. It refuses new messages, including ones from agents and scheduled tasks, until you
+unarchive it. Removing a project deletes its threads either way.
+
+A scheduled task that posts into one thread keeps running after you archive that thread, and
+each run fails. Settle the thread instead, or move or pause the task in **Settings → Scheduled
+tasks**.
 
 ## Link a pull request
 
@@ -233,6 +263,8 @@ you last picked for a query ranks higher when you type that query again.
 Threads whose messages contain all your words appear below, under **In
 messages**, and open at the matching message. Message search needs at least
 one word of three or more letters, or two for Chinese, Japanese, and Korean.
+Put a search in double quotes, such as `"missing position files"`, to find only
+titles and messages that hold those words together, exactly as typed.
 On mobile, the thread list search also lists message matches and opens them at
 the matching message; on an iPad with a keyboard, `Cmd+K` opens the same
 palette.
