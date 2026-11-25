@@ -10,6 +10,7 @@ import {
   type WorkflowRun,
   type WorkflowRunReference,
   type WorkflowRunsSnapshot,
+  type WorkflowRunSubject,
   type WorkflowStep,
   type WorkflowSummary,
 } from "@t3tools/contracts";
@@ -436,6 +437,14 @@ export function workflowRunState(
           tone: "quiet",
         };
       }
+      if (detail.startsWith("queue ")) {
+        return {
+          word: resolve(
+            msg("Queued", { $context: "workflow run status: it waits for a free place" }),
+          ),
+          tone: "quiet",
+        };
+      }
       // Something below it holds it up; say that, not that it idles.
       if (node.children.some(needsPerson)) return input;
       return { word: resolve(msg("Waiting", { $context: "workflow run status" })), tone: "quiet" };
@@ -487,6 +496,9 @@ export function workflowRunNow(node: WorkflowRunNode, resolve: MFunctionType = m
       if (detail.startsWith("sleep ")) {
         return resolve(msg("Sleeping at {step}", { step: detail.slice(6) }));
       }
+      if (detail.startsWith("queue ")) {
+        return resolve(msg("Queued for {pool}", { pool: detail.slice(6) }));
+      }
       if (below.some((child) => child.run.endedAt === null)) {
         const open = below.filter((child) => child.run.endedAt === null);
         return open.length === 1
@@ -537,6 +549,8 @@ export interface WorkflowBeat {
   readonly result: WorkflowStep["result"];
   /** What an agent said in closing, when its result is data. */
   readonly said: string | null;
+  /** For a step queued for a place in a pool, how many are ahead of it. */
+  readonly ahead: number | undefined;
   readonly startMs: number;
   /** When it ended, or `nowMs` while it is under way. */
   readonly endMs: number;
@@ -607,8 +621,9 @@ export function buildWorkflowTimeline(input: {
     const stepStart = Date.parse(step.startedAt);
     const stepEnd = step.endedAt === null ? nowMs : Date.parse(step.endedAt);
     const childRun = step.kind === "wait" ? (childByStep.get(step.name) ?? null) : null;
+    // A place given at once is bookkeeping too; a wait for one is a beat.
     const isBeat =
-      step.kind !== "step" ||
+      (step.kind !== "step" && step.kind !== "queue") ||
       step.status !== "completed" ||
       step.attempts > 1 ||
       stepEnd - stepStart >= QUICK_STEP_MS;
@@ -625,6 +640,7 @@ export function buildWorkflowTimeline(input: {
       detail: step.detail,
       result: step.result,
       said: step.said,
+      ahead: step.ahead,
       startMs: stepStart,
       endMs: Math.max(stepStart, stepEnd),
       thread:
@@ -883,31 +899,39 @@ const decodeIssueAddress = Schema.decodeUnknownOption(WorkflowIssueAddress);
 const decodePullRequestAddress = Schema.decodeUnknownOption(WorkflowPullRequestAddress);
 
 /** A reference's issue, when it is one and its address reads as one. */
-export function workflowReferenceIssue(reference: WorkflowRunReference): IssueRef | null {
+export function workflowReferenceIssue(reference: WorkflowRunSubject): IssueRef | null {
   return reference.kind === WorkflowReferenceKind.issue
     ? Option.getOrNull(decodeIssueAddress(reference.address))
     : null;
 }
 
 /** A reference's pull request, when it is one and its address reads as one. */
-export function workflowReferencePullRequest(
-  reference: WorkflowRunReference,
-): PullRequestRef | null {
+export function workflowReferencePullRequest(reference: WorkflowRunSubject): PullRequestRef | null {
   return reference.kind === WorkflowReferenceKind.pullRequest
     ? Option.getOrNull(decodePullRequestAddress(reference.address))
     : null;
 }
 
+/** A reference's thread, when it is one, in the run's own environment. */
+export function workflowReferenceThreadId(reference: WorkflowRunSubject): string | null {
+  const threadId = field(reference.address, "threadId");
+  return reference.kind === WorkflowReferenceKind.thread && typeof threadId === "string"
+    ? threadId
+    : null;
+}
+
 /**
  * What a reference is called in a chip: `#412` for an issue or pull request on a git host, a
- * tracker's own key such as `ENG-12`, and the title for a kind this client does not know.
+ * tracker's own key such as `ENG-12`, and otherwise the title, or the host of its web address.
  */
-export function workflowReferenceLabel(reference: WorkflowRunReference): string {
+export function workflowReferenceLabel(reference: WorkflowRunSubject): string {
   const pullRequest = workflowReferencePullRequest(reference);
   if (pullRequest !== null) return `#${pullRequest.number}`;
   const issue = workflowReferenceIssue(reference);
   if (issue !== null) return /^\d+$/.test(issue.key) ? `#${issue.key}` : issue.key;
-  return reference.title === "" ? reference.kind : reference.title;
+  if (reference.title !== "") return reference.title;
+  if (reference.url !== null && URL.canParse(reference.url)) return new URL(reference.url).host;
+  return reference.kind;
 }
 
 /** The references a step touched, in the order the run first touched them. */

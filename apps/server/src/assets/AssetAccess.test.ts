@@ -710,6 +710,42 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  // Windows' native realpath fails with ENOENT on some removable drives (an exFAT USB
+  // drive) whose files Node can still stat, open and resolve with the JS realpath.
+  it.effect("previews a readable media file when the native realpath cannot resolve it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-no-native-realpath-" }),
+      );
+      const filePath = path.join(directory, "preview-test.jpg");
+      yield* fs.writeFileString(filePath, "media");
+      const nativeRealPathFails = FileSystem.FileSystem.of({
+        ...fs,
+        realPath: (requestedPath) =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "FileSystem",
+              method: "realPath",
+              pathOrDescriptor: requestedPath,
+            }),
+          ),
+      });
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: filePath },
+      }).pipe(Effect.provideService(FileSystem.FileSystem, nativeRealPathFails));
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      expect(
+        yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)).pipe(
+          Effect.provideService(FileSystem.FileSystem, nativeRealPathFails),
+        ),
+      ).toMatchObject({ kind: "file", path: filePath });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.skipIf(!symlinksSupported)(
     "rejects non-previewable files, disguised targets, and directories",
     () =>
@@ -1709,6 +1745,28 @@ describe("AssetAccess", () => {
       expect(
         yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
       ).toMatchObject({ kind: "file", path: attachmentPath, download: true });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("ignores a client-named document type for image attachments", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const attachmentId = "thread-1-00000000-0000-4000-8000-000000000003";
+      const attachmentPath = path.join(config.attachmentsDir, `${attachmentId}.png`);
+      yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFile(attachmentPath, screenshotPng);
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "attachment", attachmentId, mimeType: "text/html" },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+
+      expect(
+        yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
+      ).toEqual({ kind: "file", path: attachmentPath });
     }).pipe(Effect.provide(layerTest)),
   );
   it.effect("issues project favicon capabilities with a signed fallback", () =>
