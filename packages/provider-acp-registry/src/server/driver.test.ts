@@ -984,12 +984,14 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
-// Reports `effort` levels for its current model only and logs each model switch.
+// Reports `effort` levels (and, like Copilot, an uncategorized `contextTier`) for its
+// current model only and logs each model switch.
 const perModelEffortAgentSource = `
 import { appendFileSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
-const [logPath, modelsPath] = process.argv.slice(2);
+const [logPath, modelsPath, tiersPath] = process.argv.slice(2);
 const levels = JSON.parse(readFileSync(modelsPath, "utf8"));
+const tiers = tiersPath ? JSON.parse(readFileSync(tiersPath, "utf8")) : {};
 const modelIds = Object.keys(levels);
 let current = modelIds[0];
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
@@ -1012,6 +1014,17 @@ const configOptions = () => [
           type: "select",
           currentValue: levels[current][0],
           options: levels[current].map((value) => ({ value, name: value })),
+        },
+      ]),
+  ...(tiers[current] === undefined
+    ? []
+    : [
+        {
+          id: "contextTier",
+          name: "Context",
+          type: "select",
+          currentValue: tiers[current][0],
+          options: tiers[current].map((value) => ({ value, name: value })),
         },
       ]),
 ];
@@ -1281,6 +1294,7 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
 
   const makePerModelEffortAgent = Effect.fn("makePerModelEffortAgent")(function* (
     levels: Readonly<Record<string, ReadonlyArray<string> | null>>,
+    contextTiers: Readonly<Record<string, ReadonlyArray<string>>> = {},
   ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -1290,9 +1304,11 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
     const modelsPath = path.join(directory, "models.json");
     yield* fileSystem.writeFileString(agentPath, perModelEffortAgentSource);
     yield* fileSystem.writeFileString(logPath, "");
+    const tiersPath = path.join(directory, "tiers.json");
     yield* fileSystem.writeFileString(modelsPath, JSON.stringify(levels));
+    yield* fileSystem.writeFileString(tiersPath, JSON.stringify(contextTiers));
     return {
-      spawn: { command: process.execPath, args: [agentPath, logPath, modelsPath] },
+      spawn: { command: process.execPath, args: [agentPath, logPath, modelsPath, tiersPath] },
       modelSwitches: fileSystem
         .readFileString(logPath)
         .pipe(Effect.map((log) => log.split("\n").filter((line) => line.length > 0))),
@@ -1413,6 +1429,27 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         liveSession(models, "default", ["high"]),
       );
       expect(Option.isSome(yield* Fiber.join(live))).toBe(true);
+    }),
+  );
+
+  it.effect("reads an uncategorized option only the discovered model reports", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("acpRegistry_context_tier");
+      const agent = yield* makePerModelEffortAgent(
+        { default: ["medium"], sol: ["low", "high"] },
+        { sol: ["default", "long_context"] },
+      );
+      const instance = yield* createRegistryInstance(instanceId, agent.spawn, "1.0.0");
+
+      yield* refreshUntilEffortLevels(instance, "default:medium,sol:low+high");
+      expect(yield* agent.modelSwitches).toEqual(["sol", "default"]);
+      const contextTiers = (yield* instance.snapshot.getSnapshot).models.map((model) => {
+        const tier = model.capabilities?.optionDescriptors?.find(
+          (option) => option.id === "contextTier",
+        );
+        return `${model.slug}:${tier?.type === "select" ? tier.options.map((option) => option.id).join("+") : ""}`;
+      });
+      expect(contextTiers).toEqual(["default:", "sol:default+long_context"]);
     }),
   );
 
