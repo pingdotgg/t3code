@@ -164,7 +164,7 @@ export function AddEnvironmentDialog({
   };
   const finishAttempt = (attempt: PendingAction) =>
     setPendingAction((current) => (current === attempt ? null : current));
-  // Dismissing the dialog starts a new session; a late result then must not touch the form.
+  // Dismissing the dialog starts a new session; a late result then only shows a toast.
   const isAttemptOnScreen = (attempt: PendingAction) =>
     attempt.session === savedBackendSessionRef.current;
   const isSshDiscoveryActive = desktopBridge !== undefined && open && savedBackendMode === "ssh";
@@ -218,8 +218,18 @@ export function AddEnvironmentDialog({
     });
     finishAttempt(attempt);
     if (result._tag === "Failure") {
-      if (isAttemptOnScreen(attempt) && !isAtomCommandInterrupted(result)) {
-        pipe(squashAtomCommandFailure(result), formatDesktopSshConnectionError, onErrorChange);
+      if (isAtomCommandInterrupted(result)) return;
+      const message = pipe(squashAtomCommandFailure(result), formatDesktopSshConnectionError);
+      if (isAttemptOnScreen(attempt)) {
+        onErrorChange(message);
+      } else {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: gt("Could not add backend"),
+            description: message,
+          }),
+        );
       }
       return;
     }
@@ -408,13 +418,18 @@ export function AddEnvironmentDialog({
     setSavedBackendPairingCode(parsedPairingUrl.pairingCode);
     return true;
   };
-  // Splitting while typing would cut the token after its first character, so a typed URL
-  // is split when the field loses focus; a paste, drop or autofill splits at once.
+  // Splitting while editing would cut the token short, so an edited URL is split when the
+  // field loses focus. A paste, drop or autofill (no inputType in Chrome) splits at once.
   const handleSavedBackendHostChange = (event: ChangeEvent<HTMLInputElement>) => {
     const value = event.target.value;
-    const typed =
-      event.nativeEvent instanceof InputEvent && event.nativeEvent.inputType === "insertText";
-    if (!typed && splitPairingUrl(value)) return;
+    const inputType =
+      event.nativeEvent instanceof InputEvent ? event.nativeEvent.inputType : undefined;
+    const inserted =
+      inputType === undefined ||
+      inputType === "insertFromPaste" ||
+      inputType === "insertFromDrop" ||
+      inputType === "insertReplacementText";
+    if (inserted && splitPairingUrl(value)) return;
     setSavedBackendHost(value);
   };
   const renderConnectionModeCard = (input: {
@@ -517,12 +532,21 @@ export function AddEnvironmentDialog({
     );
     finishAttempt(attempt);
     if (result._tag === "Failure") {
-      if (isAttemptOnScreen(attempt) && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        onErrorChange(
-          error instanceof Error
-            ? (thrownErrorMessage(error, m) ?? error.message)
-            : gt("Could not add the route."),
+      if (isAtomCommandInterrupted(result)) return;
+      const error = squashAtomCommandFailure(result);
+      const message =
+        error instanceof Error
+          ? (thrownErrorMessage(error, m) ?? error.message)
+          : gt("Could not add the route.");
+      if (isAttemptOnScreen(attempt)) {
+        onErrorChange(message);
+      } else {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: gt("Could not add the route."),
+            description: message,
+          }),
         );
       }
       return;

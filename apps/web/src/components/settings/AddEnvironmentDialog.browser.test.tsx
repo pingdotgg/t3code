@@ -16,6 +16,12 @@ const mocks = vi.hoisted(() => ({
     (input: { readonly host: string }) => Promise<AtomCommandResult<void, Error>>
   >(async () => AsyncResult.success(undefined)),
   refresh: () => {},
+  toastAdd: vi.fn(),
+}));
+
+vi.mock(import("../ui/toast"), async (original) => ({
+  ...(await original()),
+  toastManager: { add: mocks.toastAdd } as never,
 }));
 
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
@@ -82,6 +88,7 @@ function Owner() {
 function setup() {
   mocks.connectSshEnvironment.mockClear();
   mocks.connectPairing.mockClear();
+  mocks.toastAdd.mockClear();
   return stubGlobal("desktopBridge", {});
 }
 
@@ -168,24 +175,29 @@ describe("AddEnvironmentDialog", () => {
       .toBeDisabled();
     await expect.element(page.getByText(/^Starting T3 Code on devbox/)).toBeInTheDocument();
     finishConnection(AsyncResult.failure(Cause.fail(new Error("dismissed SSH attempt"))));
+    await expect
+      .poll(() => mocks.toastAdd.mock.calls.at(-1)?.[0]?.description)
+      .toContain("dismissed SSH attempt");
     await userEvent.fill(page.getByPlaceholder("backend.example.com"), "devbox.example.com");
     await userEvent.fill(page.getByPlaceholder("PAIRCODE"), "PAIRCODE");
     await expect
       .element(page.getByRole("dialog").getByRole("button", { name: "Connect & add" }))
       .toBeEnabled();
-    await expect.element(page.getByText(/dismissed SSH attempt/)).not.toBeInTheDocument();
+    await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
   });
 
   describe("a dismissed Remote link attempt", () => {
     function holdPairing() {
       let finish!: (result: AtomCommandResult<void, Error>) => void;
-      mocks.connectPairing.mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            finish = resolve;
-          }),
-      );
-      return (result: AtomCommandResult<void, Error>) => finish(result);
+      const pending = new Promise<AtomCommandResult<void, Error>>((resolve) => {
+        finish = resolve;
+      });
+      mocks.connectPairing.mockImplementationOnce(() => pending);
+      // Resolves after the dialog's own continuation, which awaited the same promise first.
+      return async (result: AtomCommandResult<void, Error>) => {
+        finish(result);
+        await pending;
+      };
     }
 
     async function startPairingAndDismiss() {
@@ -199,7 +211,22 @@ describe("AddEnvironmentDialog", () => {
       await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
     }
 
-    it("keeps its error out of the reopened form", async () => {
+    it("keeps a failure that landed while closed out of the reopened form", async () => {
+      using _bridge = setup();
+      await using _screen = await render(<Owner />);
+      const finish = holdPairing();
+
+      await startPairingAndDismiss();
+      await finish(AsyncResult.failure(Cause.fail(new Error("dismissed pairing timed out"))));
+      await userEvent.click(page.getByRole("button", { name: "Add environment" }));
+
+      await expect
+        .element(page.getByRole("dialog").getByRole("button", { name: "Connect & add" }))
+        .toBeInTheDocument();
+      await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("reports its result in a toast, leaving the reopened form alone", async () => {
       using _bridge = setup();
       await using _screen = await render(<Owner />);
       const finish = holdPairing();
@@ -209,8 +236,11 @@ describe("AddEnvironmentDialog", () => {
       await expect
         .element(page.getByRole("dialog").getByRole("button", { name: /Pairing with/ }))
         .toBeDisabled();
-      finish(AsyncResult.failure(Cause.fail(new Error("dismissed pairing timed out"))));
+      await finish(AsyncResult.failure(Cause.fail(new Error("dismissed pairing timed out"))));
 
+      expect(mocks.toastAdd).toHaveBeenLastCalledWith(
+        expect.objectContaining({ description: "dismissed pairing timed out" }),
+      );
       await expect
         .element(page.getByRole("dialog").getByRole("button", { name: "Connect & add" }))
         .toBeInTheDocument();
@@ -224,12 +254,14 @@ describe("AddEnvironmentDialog", () => {
 
       await startPairingAndDismiss();
       await userEvent.click(page.getByRole("button", { name: "Add environment" }));
-      finish(AsyncResult.success(undefined));
+      await finish(AsyncResult.success(undefined));
 
+      expect(mocks.toastAdd).toHaveBeenLastCalledWith(
+        expect.objectContaining({ title: "Backend added" }),
+      );
       await expect
         .element(page.getByRole("dialog").getByRole("button", { name: "Connect & add" }))
         .toBeInTheDocument();
-      await expect.element(page.getByRole("dialog")).toBeInTheDocument();
     });
 
     it("does not lock a dialog for another machine", async () => {
@@ -241,7 +273,7 @@ describe("AddEnvironmentDialog", () => {
       await userEvent.click(page.getByRole("button", { name: "Add a route to Devbox" }));
       await expect.element(page.getByPlaceholder("backend.example.com")).toBeEnabled();
       await expect.element(page.getByText(/slow\.example\.com/)).not.toBeInTheDocument();
-      finish(AsyncResult.failure(Cause.fail(new Error("dismissed pairing timed out"))));
+      await finish(AsyncResult.failure(Cause.fail(new Error("dismissed pairing timed out"))));
       await expect
         .element(page.getByRole("dialog").getByRole("button", { name: "Add route" }))
         .toBeInTheDocument();
@@ -275,8 +307,12 @@ describe("AddEnvironmentDialog", () => {
     await expect.element(host).toHaveValue("http://devbox.example.com/pair#token=ABC123");
     await expect.element(page.getByPlaceholder("PAIRCODE")).toHaveValue("");
 
+    await userEvent.keyboard("{Backspace}");
+    await expect.element(host).toHaveValue("http://devbox.example.com/pair#token=ABC12");
+    await expect.element(page.getByPlaceholder("PAIRCODE")).toHaveValue("");
+
     await userEvent.tab();
     await expect.element(host).toHaveValue("http://devbox.example.com");
-    await expect.element(page.getByPlaceholder("PAIRCODE")).toHaveValue("ABC123");
+    await expect.element(page.getByPlaceholder("PAIRCODE")).toHaveValue("ABC12");
   });
 });
