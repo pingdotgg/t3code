@@ -21,4 +21,12 @@ describe("terminal snapshot replay", () => {
     const history = pendingDcs + "z".repeat(50) + "\u0085ready";
     expect(retainTerminalSnapshotHistory(history, 10)).toEqual({ history: "\u001bEready" });
   });
+
+  it.each([
+    [8, "\u001bEready"],
+    [10, "\u001bE\ufffdready"],
+  ])("prioritizes the line break with a %i-byte history budget", (budget, replay) => {
+    const history = pendingDcs + "z".repeat(50) + "\u2140ready";
+    expect(retainTerminalSnapshotHistory(history, budget)).toEqual({ history: replay });
+  });
 });
