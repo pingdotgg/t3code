@@ -1125,6 +1125,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             "cursor-sent-prompts",
             `${encodeURIComponent(agent)}.json`,
           );
+        const forgetSentPrompt = (agent: string) =>
+          fileSystem.remove(sentPromptPath(agent), { force: true }).pipe(Effect.ignore);
         const saveSentPrompt = (sent: {
           readonly agent: string;
           readonly runId: string;
@@ -1141,12 +1143,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               ),
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
+              // An older record must not stand in for this prompt after a restart.
               Effect.catchCause((cause) =>
-                Effect.logWarning("orchestration-v2.cursor-sent-prompt-save-failed", { cause }),
+                Effect.logWarning("orchestration-v2.cursor-sent-prompt-save-failed", {
+                  cause,
+                }).pipe(Effect.andThen(forgetSentPrompt(sent.agent))),
               ),
             );
-        const forgetSentPrompt = (agent: string) =>
-          fileSystem.remove(sentPromptPath(agent), { force: true }).pipe(Effect.ignore);
         const readSentPrompt = (agent: string) =>
           fileSystem.readFileString(sentPromptPath(agent)).pipe(
             Effect.flatMap(Schema.decodeEffect(SentPromptJson)),
