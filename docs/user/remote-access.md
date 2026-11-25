@@ -350,9 +350,9 @@ continue. Read-only connections can watch without changing the page.
 
 While you have control, the tab works with your device: text the page copies or
 cuts goes to your clipboard, a file picker on the page opens your device's
-picker, and a finished download is offered for you to save. Popups such as
-sign-in windows open as their own tabs. Downloads stay on the host until the
-tab closes. Audio does not play on your device.
+picker, a dropdown on the page shows its options on your device, and a finished
+download is offered for you to save. Popups such as sign-in windows open as
+their own tabs. Downloads stay on the host until the tab closes. Audio does not play on your device.
 
 On a phone, tap the floating preview's corner dot to show its controls, then
 **Pop into separate window** to keep watching in picture-in-picture over other
@@ -609,7 +609,9 @@ and the agent it runs can use Git however the environment allows. A project
 that [lays out its worktrees with its own command](multi-repo-projects.md#lay-the-folder-out-yourself)
 runs that command on the host, so creating a worktree there from the client also
 needs `orchestration:operate` or `terminal:operate`; without one of them,
-removing a worktree skips the project's `remove` command.
+removing a worktree skips the project's `remove` command. The command also has
+to be [approved](multi-repo-projects.md#approve-the-commands) first, from a
+client with `terminal:operate`.
 
 Settings changes, provider management, environment maintenance, access
 management, and T3 Connect preferences can each be granted separately. Setting

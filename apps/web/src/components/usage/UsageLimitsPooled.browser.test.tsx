@@ -68,6 +68,47 @@ describe("UsageLimitsPooled ChatGPT usage card", () => {
   });
 });
 
+describe("UsageLimitsPooled next account reset", () => {
+  it("shows the next future reset and skips elapsed resets while waiting for refreshed account data", async () => {
+    function account(instanceId: string, usedPercent: number, resetsAt: string): ServerProvider {
+      return {
+        ...managedChatGpt(instanceId, instanceId),
+        usageLimits: {
+          checkedAt,
+          windows: [{ id: "weekly", label: "Weekly", kind: "weekly", usedPercent, resetsAt }],
+        },
+      };
+    }
+    const presentations = new Map([
+      [
+        EnvironmentId.make("desk"),
+        {
+          entry: { target: { label: "Desk" } },
+          serverConfig: {
+            providers: [
+              account("Work", 20, "2026-10-25T17:00:00.000Z"),
+              account("Personal", 60, "2026-10-25T18:00:00.000Z"),
+            ],
+          },
+        },
+      ],
+    ]);
+    await using screen = await render(
+      <AppAtomRegistryProvider>
+        <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-25T17:30:00Z")} />
+      </AppAtomRegistryProvider>,
+    );
+    await expect.element(screen.getByText("Next account reset in 30m")).toBeVisible();
+
+    await screen.rerender(
+      <AppAtomRegistryProvider>
+        <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-25T18:00:00Z")} />
+      </AppAtomRegistryProvider>,
+    );
+    await expect.element(screen.getByText(/^Next account reset/)).not.toBeInTheDocument();
+  });
+});
+
 it("keeps the account label and reset summary on a one-account row of a multi-account provider", async () => {
   const now = Date.parse("2026-10-28T01:00:00.000Z");
   const checkedAt = new Date(now).toISOString();

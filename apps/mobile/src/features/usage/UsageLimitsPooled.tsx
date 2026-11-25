@@ -4,6 +4,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { providerClients } from "@t3tools/client-runtime/provider-clients";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
+  collectHttpQuotaSources,
   collectLimitAccounts,
   collectLimitPools,
   displayLimitWindows,
@@ -174,6 +175,7 @@ function PoolWindowCard({
   pool,
   color,
   now,
+  providerAccountCount,
   environmentIds,
   label,
   description,
@@ -182,6 +184,7 @@ function PoolWindowCard({
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
+  readonly providerAccountCount: number;
   readonly environmentIds: readonly string[] | null;
   readonly label?: string | null;
   readonly description?: string;
@@ -241,7 +244,7 @@ function PoolWindowCard({
         ) : null}
       </View>
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
-      {nextReset ? (
+      {nextReset && providerAccountCount > 1 ? (
         <Text className="text-xs tabular-nums text-foreground-muted">
           {formatResetsIn(nextReset.member.window, now, m, "account")}
         </Text>
@@ -497,6 +500,7 @@ export function UsageLimitsSection({
       ? presentations
       : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
   const pools = collectLimitPools(collectLimitAccounts(selected), now);
+  const quotaSources = collectHttpQuotaSources(selected);
   const m = useMessages();
   const notices = collectLimitNotices(selected, m);
   const externalLinks = collectExternalUsageLinks(selected, m);
@@ -507,13 +511,36 @@ export function UsageLimitsSection({
       {pools.length === 0 &&
       notices.length === 0 &&
       failedLabels.length === 0 &&
-      externalLinks.length === 0 ? (
+      externalLinks.length === 0 &&
+      quotaSources.length === 0 ? (
         <Text className="py-12 text-center text-base text-foreground-muted">
           {selected.size === 0
             ? gt("Select an environment to see limits.")
             : gt("No provider on the selected environments reports subscription limits.")}
         </Text>
       ) : null}
+      {quotaSources.map((source) => (
+        <View key={source.key} className="gap-3 rounded-[24px] bg-grouped-card p-4">
+          <Text className="text-base font-t3-medium text-foreground">{source.label}</Text>
+          {source.quotaAccounts?.map((account) => (
+            <View key={account.id} className="gap-1">
+              <Text className="text-sm font-t3-medium text-foreground">{account.label}</Text>
+              {account.windows.map((window) => {
+                const reset = resetLabels(window, now, m);
+                return (
+                  <View key={window.id} className="flex-row justify-between gap-3">
+                    <Text className="shrink text-sm text-foreground-muted">{window.label}</Text>
+                    <Text className="text-sm text-foreground-muted">
+                      {gt("{remaining}% left", { remaining: remainingPercent(window) })}
+                      {reset ? ` · ${reset.compact}` : ""}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          ))}
+        </View>
+      ))}
       {pools.map((pool) => {
         const windows = displayLimitWindows(pool);
         return (
@@ -536,6 +563,7 @@ export function UsageLimitsSection({
                     pool={window}
                     color={colors[usageProviderKind(pool.driver) ?? "codex"]}
                     now={now}
+                    providerAccountCount={pool.accounts.length}
                     environmentIds={
                       selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds]
                     }
