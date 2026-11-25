@@ -417,8 +417,7 @@ function* epubTable(node: XmlNode): Generator<TextPart, void> {
         const width = Math.max(1, Math.min(1000, epubSpan(cell.attrs.colspan)));
         const endColumn = column + width;
         const inBounds = column < occupiedUntil.length;
-        if (!inBounds && index <= lastText && hasCellText(cell))
-          throw new Truncation("Column limit");
+        if (!inBounds && hasCellText(cell)) throw new Truncation("Column limit");
         if (rowSpan !== 1) {
           // A zero row span covers the rest of the row group.
           const endRow = rowSpan === 0 ? 0xffffffff : rowIndex + Math.min(65_534, rowSpan);
