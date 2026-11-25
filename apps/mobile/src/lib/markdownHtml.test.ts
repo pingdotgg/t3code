@@ -329,10 +329,10 @@ describe("file embeds in native thread and file Markdown", () => {
     );
     expect(
       markdownForNativeParsing(
-        "**Dialog** (native) ![a](./a.png)\n\n**Label**\n![b](./b.png)\nBuilt ![ci](./ci.svg) ok",
+        "**Dialog** (native) ![a](./a.png)\n\n**Label**\n![b](./b.png)\nBuilt ![ci](./ci.svg) ok\n\nCI [![ci](./ci.svg)](https://ci)",
       ),
     ).toBe(
-      "**Dialog** (native)\n\n![a](./a.png)\n\n**Label**\n\n![b](./b.png)\n\nBuilt ![ci](./ci.svg) ok",
+      "**Dialog** (native)\n\n![a](./a.png)\n\n**Label**\n\n![b](./b.png)\n\nBuilt ![ci](./ci.svg) ok\n\nCI [![ci](./ci.svg)](https://ci)",
     );
   });
 

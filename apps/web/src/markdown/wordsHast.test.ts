@@ -333,6 +333,11 @@ describe("wordsHast", () => {
       '<p dir="ltr"><strong>Shot</strong> (dark)<br>\n<img src="https://x.dev/a.png" alt="a"> <img src="https://x.dev/b.png" alt="b"></p>',
     ],
     [
+      "**A favicon ![i](https://x.dev/i.png)** stays inline",
+      '<p dir="ltr"><strong>A favicon <img src="https://x.dev/i.png" alt="i"></strong> stays inline</p>',
+      '<p dir="ltr"><strong>A favicon <img src="https://x.dev/i.png" alt="i"></strong> stays inline</p>',
+    ],
+    [
       'Status\n<img src="https://x.dev/b.png" />\ncontinues',
       '<p dir="ltr">Status\n<img src="https://x.dev/b.png">\ncontinues</p>',
       '<p dir="ltr">Status<br>\n<img src="https://x.dev/b.png"><br>\ncontinues</p>',

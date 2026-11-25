@@ -775,7 +775,11 @@ function trailingImagesStart(items: ElementContent[]): number | undefined {
 
 function breakLines(paragraph: Element, breaks: boolean) {
   const items = paragraph.children;
-  const trailing = trailingImagesStart(items);
+  // Inline elements recurse here under `breaks`; only a paragraph's own end is a caption's end.
+  const trailing =
+    paragraph.tagName === "p" || paragraph.tagName === "li"
+      ? trailingImagesStart(items)
+      : undefined;
   const trailingImage = trailing === undefined ? undefined : items[trailing];
   const beforeTrailing = trailing === undefined ? undefined : items[trailing - 1];
   // A line ending before the images breaks below; kept indentation already starts a line.

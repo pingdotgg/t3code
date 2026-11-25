@@ -498,12 +498,8 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
-const isImage = (node: MarkdownNode): boolean =>
-  node.type === "image" ||
-  node.type === "imageReference" ||
-  ((node.type === "link" || node.type === "linkReference") &&
-    node.children.length === 1 &&
-    isImage(node.children[0]!));
+// Only a bare image paragraph gets a native image slot; a linked one would draw full width.
+const isImage = (node: MarkdownNode) => node.type === "image" || node.type === "imageReference";
 const isSpace = (node: MarkdownNode) =>
   node.type === "break" || (node.type === "text" && node.value.trim() === "");
 
