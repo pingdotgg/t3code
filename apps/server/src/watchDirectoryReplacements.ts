@@ -118,21 +118,30 @@ export const watchDirectoryPath = (
           );
         });
 
+        const statIdentity = fs
+          .stat(entry)
+          .pipe(
+            Effect.map(
+              (info) =>
+                `${info.dev}:${info.ino.valueOrUndefined}:${info.birthtime.valueOrUndefined?.getTime()}`,
+            ),
+          );
         // One probe per second catches replacements the watches cannot see: a link target's
         // ancestors, or the entry becoming a link before macOS has armed the parent watch.
-        // A plain or missing entry probes as null, a link whose target is missing as "", and a
-        // link as its target's identity and its text.
+        // A missing entry probes as null and a link whose target is missing as "".
         const identity = fs.readLink(entry).pipe(
-          Effect.flatMap((link) =>
-            fs.stat(entry).pipe(
-              Effect.map(
-                (info) =>
-                  `${info.dev}:${info.ino.valueOrUndefined}:${info.birthtime.valueOrUndefined?.getTime()}:${link}`,
+          Effect.matchEffect({
+            onSuccess: (link) =>
+              statIdentity.pipe(
+                Effect.map((id) => `link:${id}:${link}`),
+                Effect.orElseSucceed(() => ""),
               ),
-              Effect.orElseSucceed(() => ""),
-            ),
-          ),
-          Effect.orElseSucceed(() => null),
+            onFailure: () =>
+              statIdentity.pipe(
+                Effect.map((id) => `plain:${id}`),
+                Effect.orElseSucceed(() => null),
+              ),
+          }),
         );
         // The identity of the tree the current watches were acquired on.
         let previous: string | null | undefined;
@@ -178,14 +187,9 @@ export const watchDirectoryPath = (
                 }),
               ),
               Effect.andThen(fs.readLink(entry).pipe(Effect.option)),
-              Effect.flatMap((link) => {
-                if (Option.isSome(link)) return resolveLinkedPath(entry, link.value);
-                // Watched as plain, so the next probe that reads a link rebuilds.
-                return Effect.sync(() => {
-                  previous = null;
-                  return entry;
-                });
-              }),
+              Effect.flatMap((link) =>
+                Option.isSome(link) ? resolveLinkedPath(entry, link.value) : Effect.succeed(entry),
+              ),
               Effect.map((target) => {
                 if (target === entry || target === NodePath.dirname(target)) return watchContents;
                 return watchDirectoryReplacements(

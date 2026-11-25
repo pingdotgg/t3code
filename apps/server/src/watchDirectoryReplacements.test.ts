@@ -50,9 +50,9 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...actual, watch, realpath: Object.assign(actual.realpath.bind(undefined), { native }) };
 });
 
-it.live.skipIf(!symlinksSupported)(
-  "backs off stopped watches for an unchanged linked directory",
-  () =>
+it.live.each(["linked", "plain"] as const)(
+  "backs off stopped watches for an unchanged %s directory",
+  (kind) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -62,7 +62,8 @@ it.live.skipIf(!symlinksSupported)(
       const second = path.join(base, "second", "themes");
       yield* fs.makeDirectory(first, { recursive: true });
       yield* fs.makeDirectory(second, { recursive: true });
-      yield* fs.symlink(first, entry);
+      if (kind === "linked" && !symlinksSupported) return;
+      yield* kind === "linked" ? fs.symlink(first, entry) : fs.makeDirectory(entry);
       const firstIdentity = yield* fs.stat(first);
       const secondIdentity = yield* fs.stat(second);
       let identity = firstIdentity;
