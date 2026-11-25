@@ -5,8 +5,10 @@ import { CommandAvailability, WindowsShellEnvironment } from "@t3tools/shared/sh
 import * as Effect from "effect/Effect";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Observe the existing synchronous shell probe without launching the user's login shell.
 import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The fake login shell is a script the real probe spawns.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The fake login shell is a script the real probe spawns.
 import * as NodePath from "node:path";
 import { assert, it, vi } from "vite-plus/test";
 
