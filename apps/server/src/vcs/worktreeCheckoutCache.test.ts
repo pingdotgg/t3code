@@ -26,14 +26,26 @@ const layerTest = ServerConfig.layerTest(process.cwd(), {
 // macOS clones for real; elsewhere `cp -a` stands in, keeping mtimes like a clone does.
 const testCloner = Effect.gen(function* () {
   const native = yield* CheckoutCloner.CheckoutCloner.pipe(Effect.provide(CheckoutCloner.layer));
-  return (
-    native ??
-    ((source: string, destination: string) =>
-      Effect.try({
-        try: () => void NodeChildProcess.execFileSync("cp", ["-a", source, destination]),
-        catch: (cause) => new CheckoutCloner.CheckoutCloneError({ source, destination, cause }),
-      }))
-  );
+  return native?.mode === "clone"
+    ? native
+    : {
+        mode: "clone" as const,
+        transfer: (source: string, destination: string) =>
+          Effect.try({
+            try: () => void NodeChildProcess.execFileSync("cp", ["-a", source, destination]),
+            catch: (cause) => new CheckoutCloner.CheckoutCloneError({ source, destination, cause }),
+          }),
+      };
+});
+
+// What Windows uses, where a folder cannot be cloned.
+const moveCloner = Effect.succeed({
+  mode: "move" as const,
+  transfer: (source: string, destination: string) =>
+    Effect.try({
+      try: () => NodeFS.renameSync(source, destination),
+      catch: (cause) => new CheckoutCloner.CheckoutCloneError({ source, destination, cause }),
+    }),
 });
 
 const sh = (cwd: string, args: ReadonlyArray<string>) =>
@@ -43,7 +55,7 @@ const sh = (cwd: string, args: ReadonlyArray<string>) =>
     env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
   }).trim();
 
-const setup = Effect.gen(function* () {
+const setupWith = Effect.fnUntraced(function* (cloner: typeof testCloner | typeof moveCloner) {
   const fileSystem = yield* FileSystem.FileSystem;
   const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "worktree-checkout-cache-" });
   const repo = NodePath.join(root, "repo");
@@ -71,7 +83,7 @@ const setup = Effect.gen(function* () {
     if (ChildProcess.isStandardCommand(command)) spawned.push(command.args.map(String));
     return delegate.spawn(command);
   });
-  const clone = yield* testCloner;
+  const clone = yield* cloner;
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(CheckoutCloner.CheckoutCloner, clone),
@@ -111,6 +123,7 @@ const setup = Effect.gen(function* () {
     build: (worktreePath: string) => provide(cache.build(worktreePath, 0)),
   };
 });
+const setup = setupWith(testCloner);
 
 // Every tracked file and its type, mode and contents, so two checkouts can be compared.
 const snapshot = (worktreePath: string) =>
@@ -140,7 +153,13 @@ const indexMatchesFiles = (worktreePath: string) => {
   return true;
 };
 
-// The feature is macOS-only; the fixtures need symlinks.
+const cacheEntry = (fixture: { cacheDir: string }) => {
+  const [bucket] = NodeFS.readdirSync(fixture.cacheDir);
+  const [entry] = NodeFS.readdirSync(NodePath.join(fixture.cacheDir, bucket!));
+  return NodePath.join(fixture.cacheDir, bucket!, entry!, "files");
+};
+
+// The fixtures need symlinks.
 describe.skipIf(!symlinksSupported)("worktree checkout cache", () => {
   it.effect("clones a cached checkout that matches what git worktree add writes", () =>
     Effect.gen(function* () {
@@ -175,6 +194,43 @@ describe.skipIf(!symlinksSupported)("worktree checkout cache", () => {
       const stock = yield* fixture.create("stock", "main", false);
       assert.deepStrictEqual(snapshot(fast), snapshot(stock));
       assert.equal(sh(fast, ["status", "--porcelain"]), "");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("hands a cached checkout over whole where it cannot be cloned", () =>
+    Effect.gen(function* () {
+      const fixture = yield* setupWith(moveCloner);
+      yield* fixture.build(yield* fixture.create("base", "main", false));
+      NodeFS.writeFileSync(NodePath.join(fixture.repo, "README.md"), "# newer\n");
+      NodeFS.writeFileSync(NodePath.join(fixture.repo, "added.txt"), "new file\n");
+      sh(fixture.repo, ["add", "-A"]);
+      sh(fixture.repo, ["commit", "-qm", "newer"]);
+      const cached = NodeFS.lstatSync(NodePath.join(cacheEntry(fixture), "src", "tool.sh")).ino;
+
+      const fast = yield* fixture.create("fast");
+      assert.isFalse(fixture.checkedOutWithGit("fast"));
+      assert.equal(NodeFS.lstatSync(NodePath.join(fast, "src", "tool.sh")).ino, cached);
+      const stock = yield* fixture.create("stock", "main", false);
+      assert.deepStrictEqual(snapshot(fast), snapshot(stock));
+      assert.equal(sh(fast, ["status", "--porcelain"]), "");
+      assert.isTrue(indexMatchesFiles(fast));
+      // The checkout that was handed over is not offered again, whether or not its replacement is built.
+      const next = yield* fixture.create("next");
+      assert.deepStrictEqual(snapshot(next), snapshot(stock));
+      assert.equal(sh(next, ["status", "--porcelain"]), "");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("checks out with Git when a file changed in a checkout that would be handed over", () =>
+    Effect.gen(function* () {
+      const fixture = yield* setupWith(moveCloner);
+      yield* fixture.build(yield* fixture.create("base", "main", false));
+      NodeFS.writeFileSync(NodePath.join(cacheEntry(fixture), "README.md"), "tampered with\n");
+
+      const created = yield* fixture.create("fallback");
+      assert.isTrue(fixture.checkedOutWithGit("fallback"));
+      assert.equal(NodeFS.readFileSync(NodePath.join(created, "README.md"), "utf8"), "# test\n");
+      assert.equal(sh(created, ["status", "--porcelain"]), "");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -262,12 +318,6 @@ describe.skipIf(!symlinksSupported)("worktree checkout cache", () => {
       assert.isTrue(fixture.checkedOutWithGit("next"));
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
-
-  const cacheEntry = (fixture: { cacheDir: string }) => {
-    const [bucket] = NodeFS.readdirSync(fixture.cacheDir);
-    const [entry] = NodeFS.readdirSync(NodePath.join(fixture.cacheDir, bucket!));
-    return NodePath.join(fixture.cacheDir, bucket!, entry!, "files");
-  };
 
   it.effect.each([
     {

@@ -15,7 +15,13 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as CheckoutCloner from "./CheckoutCloner.ts";
 import type * as GitVcsDriver from "./GitVcsDriver.ts";
-import { indexEntryStat, parseIndex, restatIndex, type IndexEntryStat } from "./gitIndexStat.ts";
+import {
+  indexEntryStat,
+  indexMatchesStats,
+  parseIndex,
+  restatIndex,
+  type IndexEntryStat,
+} from "./gitIndexStat.ts";
 
 const KEEP_PER_REPOSITORY = 3;
 // Moving a cached checkout costs about 0.1 ms per changed file when a worktree is created, while
@@ -95,15 +101,17 @@ interface CacheEntry {
 
 /**
  * Clones a private, Git-written checkout with APFS copy-on-write, then rewrites the index's stat
- * data so Git trusts the clones without re-reading them. An older cached checkout is moved to the
- * requested tree with `read-tree -m -u`. Undefined where the platform cannot clone a folder.
+ * data so Git trusts the clones. Where the cloner moves instead, the checkout is handed over whole
+ * with the index Git wrote. `read-tree -m -u` moves an older one to the requested tree.
  */
 export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")(function* (input: {
   readonly cacheDir: string;
   readonly execute: GitVcsDriver.GitVcsDriver["Service"]["execute"];
 }) {
-  const clone = yield* CheckoutCloner.CheckoutCloner;
-  if (clone === undefined) return undefined;
+  const cloner = yield* CheckoutCloner.CheckoutCloner;
+  if (cloner === undefined) return undefined;
+  const clone = cloner.transfer;
+  const moves = cloner.mode === "move";
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const scope = yield* Effect.scope;
@@ -314,8 +322,14 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
     if (parsed === null) return null;
     const paths = parsed.entries.map((entry) => entry.path);
     const stats = yield* statEntries(input.root, paths);
-    const restated = restatIndex(parsed, stats, { verify: input.verify });
+    // Moved files are the ones Git wrote, so the index already holds their stat data.
+    const restated = moves
+      ? !input.verify || indexMatchesStats(parsed, stats)
+        ? parsed.bytes
+        : null
+      : restatIndex(parsed, stats, { verify: input.verify });
     if (restated === null) return null;
+    if (moves && input.source === input.target) return { paths, stats };
     const temporary = `${input.target}.t3-${NodeCrypto.randomUUID()}`;
     yield* Effect.uninterruptible(
       fileSystem
@@ -383,14 +397,25 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
   });
 
   const directoriesUnchanged = Effect.fn("WorktreeCheckoutCache.directoriesUnchanged")(
-    function* (entry: CacheEntry) {
+    function* (entry: CacheEntry, movedTo?: string) {
       const recorded = (yield* fileSystem.readFileString(path.join(entry.directory, "directories")))
         .split("\0")
         .slice(0, -1);
       const times = recorded.filter((_, index) => index % 2 === 0);
       const directories = recorded.filter((_, index) => index % 2 === 1);
-      const current = yield* directoryTimes(path.join(entry.directory, "files"), directories);
-      return directories.length > 0 && current.every((time, index) => time === times[index]);
+      const current = yield* directoryTimes(
+        movedTo ?? path.join(entry.directory, "files"),
+        directories,
+      );
+      return (
+        directories.length > 0 &&
+        current.every(
+          (time, index) =>
+            time === times[index] ||
+            // Moving the checkout in changes the time of the folder that receives it.
+            (movedTo !== undefined && directories[index] === ""),
+        )
+      );
     },
     (effect) => Effect.orElseSucceed(effect, () => false),
   );
@@ -530,6 +555,8 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
       return false;
     }
 
+    // A move empties the cached checkout, even one that stops halfway.
+    let emptied: string | undefined;
     const populate = Effect.gen(function* () {
       // What Git checked out, which can differ from `requested` when a tag shares the branch name.
       const target = yield* describe(worktreePath, "HEAD");
@@ -556,6 +583,7 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
       yield* Effect.all([touch(base.directory), touch(requested.bucket)], { discard: true });
 
       const files = path.join(base.directory, "files");
+      if (moves) emptied = base.directory;
       // The worktree folder already holds Git's `.git` file, so its entries are cloned one by one.
       yield* Effect.forEach(
         yield* fileSystem.readDirectory(files),
@@ -563,7 +591,9 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
         { discard: true },
       );
       // Checked again: a file added during the clone would otherwise come along unnoticed.
-      if (!(yield* directoriesUnchanged(base))) return yield* reject(base);
+      if (!(yield* directoriesUnchanged(base, moves ? worktreePath : undefined))) {
+        return yield* reject(base);
+      }
       // A tracked hooks folder only exists once the files do; Git would have run this hook.
       if (yield* fileSystem.exists(target.indexHook)) return null;
       const restated = yield* restate({
@@ -613,7 +643,11 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
       ]);
       if (moved === null || (yield* fileSystem.exists(target.indexHook))) return null;
       return target;
-    });
+    }).pipe(
+      Effect.ensuring(
+        Effect.suspend(() => (emptied === undefined ? Effect.void : discard(emptied))),
+      ),
+    );
     const rollback = (
       input.lockReason
         ? git("unlockRollback", input.cwd, ["worktree", "unlock", "--", worktreePath])
@@ -719,7 +753,8 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
       const changes = yield* changedPaths(worktreePath, entry.tree, target.tree);
       if (changes === null || changes.attributes) continue;
       if (changes.count < REBUILD_AFTER_CHANGED_FILES) return;
-      base ??= entry;
+      // A move would take the cached checkout it starts from.
+      if (!moves) base ??= entry;
     }
     if (yield* usesFilter(worktreePath, target.bucket, target.tree)) return;
 
@@ -791,7 +826,8 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
 
     yield* touch(target.bucket);
     yield* Effect.forEach(
-      (yield* listEntries(target.bucket)).slice(KEEP_PER_REPOSITORY),
+      // A moved checkout shares no blocks, so each one kept costs a full checkout of disk.
+      (yield* listEntries(target.bucket)).slice(moves ? 1 : KEEP_PER_REPOSITORY),
       (entry) => discard(entry.directory),
       { discard: true },
     );

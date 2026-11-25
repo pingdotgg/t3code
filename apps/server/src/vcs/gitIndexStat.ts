@@ -151,6 +151,29 @@ export function restatIndex(
   return bytes;
 }
 
+/**
+ * Whether each entry's recorded mtime and size are those of its file, so a checkout Git wrote
+ * itself is still what the index describes. A missing stat is only allowed for a submodule folder.
+ */
+export function indexMatchesStats(
+  parsed: ParsedIndex,
+  stats: ReadonlyArray<IndexEntryStat | undefined>,
+): boolean {
+  const view = new DataView(parsed.bytes.buffer, parsed.bytes.byteOffset, parsed.bytes.byteLength);
+  return parsed.entries.every(({ offset }, index) => {
+    const stat = stats[index];
+    if (kindForMode(view.getUint32(offset + 24)) === "directory") {
+      return stat === undefined || stat.kind === "directory";
+    }
+    return (
+      stat !== undefined &&
+      view.getUint32(offset + 8) === stat.mtimeSeconds &&
+      view.getUint32(offset + 12) === stat.mtimeNanoseconds &&
+      view.getUint32(offset + 36) === stat.size
+    );
+  });
+}
+
 const U32 = 0xffff_ffffn;
 const BILLION = 1_000_000_000n;
 

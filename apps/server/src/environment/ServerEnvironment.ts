@@ -246,7 +246,9 @@ export const make = Effect.gen(function* () {
       projectWorktreeCleanup: true,
       settledWorktreeCleanup: true,
       worktreesDirectory: true,
-      ...(hostPlatform === "darwin" ? { fastWorktreeCheckout: true } : {}),
+      ...(hostPlatform === "darwin" || hostPlatform === "win32"
+        ? { fastWorktreeCheckout: true }
+        : {}),
       threadAutoSettlementScope: true,
       threadRestartContinuation: true,
       projectSettingsOverrides: true,

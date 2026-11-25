@@ -62,7 +62,7 @@ export function SettingsLabsRouteScreen() {
           capability="fastWorktreeCheckout"
           setting="fastWorktreeCheckout"
           description={gt(
-            "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
+            "Start new worktrees from a checkout kept ready in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
           )}
         />
         <AgentFeedbackSection />
