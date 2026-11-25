@@ -2378,6 +2378,91 @@ it("renders automatic compaction as one live divider that finishes with its reas
   expect(container.textContent).not.toContain("Compacting before");
 });
 
+it("shows T3 Code's push hooks approval as its own question and another server's as before", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture();
+  const sentence =
+    'Push feature/greeting and run this repository\'s hook file .husky/pre-push and its configured hook checks ("pnpm run checks") (contents 7b6cd23a)?';
+  const options = [
+    { decision: "cancel" as const, label: "Cancel" },
+    { decision: "decline" as const, label: "Decline" },
+    { decision: "acceptForSession" as const, label: "Always allow this session" },
+    { decision: "accept" as const, label: "Approve" },
+  ];
+  const ownRequest = RuntimeRequestId.make("own-approval");
+  const otherRequest = RuntimeRequestId.make("other-approval");
+  const approvals: PendingApproval[] = [
+    {
+      requestId: ownRequest,
+      requestKind: "mcp-elicitation",
+      createdAt: fixture.time(6),
+      detail: sentence,
+      pushHooks: {
+        branch: "feature/greeting",
+        files: [".husky/pre-push"],
+        commands: [{ name: "checks", command: "pnpm run checks" }],
+      },
+      options,
+      responseCapability: "live",
+    },
+    {
+      requestId: otherRequest,
+      requestKind: "mcp-elicitation",
+      createdAt: fixture.time(6),
+      detail: "Deploy web to production?",
+      appName: "t3-code",
+      options,
+      responseCapability: "live",
+    },
+  ];
+  const onRespondToApproval = vi.fn(async () => {});
+  await using screen = await renderElement(
+    <MessagesTimeline
+      {...baseProps()}
+      timelineEntries={[]}
+      pendingApprovals={approvals}
+      canOperateThread
+      onRespondToApproval={onRespondToApproval}
+    />,
+  );
+
+  const own = screen.getByRole("group", { name: "Push hooks approval" });
+  await expect.element(own).toBeVisible();
+  await expect
+    .element(own.getByText("Run this repository's push hooks?", { exact: true }))
+    .toBeVisible();
+  // The sentence another client would show, the digest and a server name are not on the card.
+  expect(own.element().textContent).not.toMatch(/contents|7b6cd23a|t3-code|Push feature/);
+  const details = own.element().querySelector('[data-approval-detail="push-hooks"]')!;
+  expect(
+    [...details.querySelectorAll("dt")].map((term, index) => [
+      term.textContent,
+      details.querySelectorAll("dd")[index]!.textContent,
+    ]),
+  ).toEqual([
+    ["Branch", "feature/greeting"],
+    ["Hook file", ".husky/pre-push"],
+    ["Configured hook", "checkspnpm run checks"],
+  ]);
+  expect([...details.querySelectorAll("code")].map((code) => code.textContent)).toEqual([
+    "feature/greeting",
+    ".husky/pre-push",
+    "pnpm run checks",
+  ]);
+  await own.getByRole("button", { name: "Approve", exact: true }).click();
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(ownRequest, "accept");
+
+  // Any other server keeps the whole message in code style and its name beneath.
+  const other = screen.getByRole("group", { name: "App access approval" });
+  await expect
+    .element(other.getByLabelText("App access request", { exact: true }))
+    .toHaveTextContent("Deploy web to production?");
+  await expect.element(other.getByText("t3-code", { exact: true })).toBeVisible();
+  expect(other.element().querySelector('[data-approval-detail="push-hooks"]')).toBeNull();
+  await other.getByRole("button", { name: "Decline", exact: true }).click();
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(otherRequest, "decline");
+});
+
 it("keeps concurrent approvals actionable outside collapsed work and restores settled rows", async () => {
   setup();
   const fixture = makeStreamingTimelineFixture();
