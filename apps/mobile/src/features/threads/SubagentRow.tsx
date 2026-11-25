@@ -111,12 +111,8 @@ export function SubagentRow(props: {
   );
 }
 
-function SubagentMetadata(props: {
-  readonly environmentId: EnvironmentId;
-  readonly subagent: SubagentRowSubagent;
-}) {
-  const { environmentId, subagent } = props;
-  const messages = useMessages();
+/** The provider instance a subagent runs on, as its icon and label show it. */
+function useSubagentProvider(environmentId: EnvironmentId, subagent: SubagentRowSubagent) {
   // A task in a linked environment runs a provider instance of that environment.
   const config = useEnvironmentServerConfig(subagent.remoteChild?.environmentId ?? environmentId);
   const providers = (config?.providers ?? []).map((candidate) => {
@@ -140,6 +136,39 @@ function SubagentMetadata(props: {
   // A remote task's own driver is only a "remote" label.
   const driver =
     provider?.driver ?? (subagent.remoteChild === undefined ? subagent.driver : undefined);
+  return { provider, providers, showBadge, driver };
+}
+
+/** The subagent's provider icon, badged when several instances share a driver. */
+export function SubagentProviderIcon(props: {
+  readonly environmentId: EnvironmentId;
+  readonly subagent: SubagentRowSubagent;
+  readonly size: number;
+}) {
+  const { provider, showBadge, driver } = useSubagentProvider(props.environmentId, props.subagent);
+  return showBadge && provider ? (
+    <ProviderInstanceIcon
+      provider={provider.driver}
+      iconUrl={provider.iconUrl}
+      size={props.size}
+      displayName={resolveProviderInstanceDisplayName(provider)}
+      accentColor={provider.accentColor}
+      showBadge
+    />
+  ) : driver === undefined ? (
+    <SymbolView name="robot" size={props.size - 1} tintColorClassName="accent-icon-muted" />
+  ) : (
+    <ProviderIcon provider={driver} iconUrl={provider?.iconUrl} size={props.size} />
+  );
+}
+
+function SubagentMetadata(props: {
+  readonly environmentId: EnvironmentId;
+  readonly subagent: SubagentRowSubagent;
+}) {
+  const { environmentId, subagent } = props;
+  const messages = useMessages();
+  const { provider } = useSubagentProvider(environmentId, subagent);
   const parent = useThreadShell(scopeThreadRef(environmentId, subagent.threadId))?.source;
   const child = useThreadShell(
     subagent.childThreadId === null ? null : scopeThreadRef(environmentId, subagent.childThreadId),
@@ -165,20 +194,7 @@ function SubagentMetadata(props: {
   const effort = formatSubagentEffort({ modelSlug, modelSelection: selection, provider });
   return (
     <View className="min-w-0 flex-row items-center gap-1.5">
-      {showBadge ? (
-        <ProviderInstanceIcon
-          provider={provider.driver}
-          iconUrl={provider.iconUrl}
-          size={12}
-          displayName={resolveProviderInstanceDisplayName(provider)}
-          accentColor={provider.accentColor}
-          showBadge
-        />
-      ) : driver === undefined ? (
-        <SymbolView name="robot" size={11} tintColorClassName="accent-icon-muted" />
-      ) : (
-        <ProviderIcon provider={driver} iconUrl={provider?.iconUrl} size={12} />
-      )}
+      <SubagentProviderIcon environmentId={environmentId} subagent={subagent} size={12} />
       <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
         {provider ? `${resolveProviderInstanceDisplayName(provider)} · ` : ""}
         {modelLabel}

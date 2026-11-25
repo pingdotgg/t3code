@@ -22,7 +22,8 @@ import { Keyboard, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { environmentThreadDetails } from "../../state/threads";
-import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
+import { SUBAGENT_TONE_TEXT_CLASS } from "./SubagentStatusDot";
+import { SubagentProviderIcon } from "./SubagentRow";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { SubagentStopButton } from "./SubagentStopButton";
 import { ThreadWorkflowGroup } from "./ThreadWorkflowGroup";
@@ -155,10 +156,12 @@ function AgentRow(props: {
 
   const messages = useMessages();
   const presentation = resolveSubagentRowPresentation(subagent, target !== null, messages);
-  const detail = subagentCardDetail(presentation.detail);
+  const cardDetail = subagentCardDetail(presentation.detail);
+  // A task without progress reports its own title as its detail.
+  const detail = cardDetail === presentation.title ? null : cardDetail;
   const row = (
     <View className="min-h-14 flex-row items-center gap-3 py-2.5">
-      <SubagentStatusDot tone={presentation.tone} placement="sheet" />
+      <SubagentProviderIcon environmentId={props.environmentId} subagent={subagent} size={18} />
       <View className="min-w-0 flex-1 gap-0.5">
         <View className="flex-row items-baseline gap-2">
           <Text numberOfLines={1} className="min-w-0 shrink font-t3-medium text-sm text-foreground">
