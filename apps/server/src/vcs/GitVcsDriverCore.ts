@@ -1654,6 +1654,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           fetchCwd,
           ["-c", "fetch.unpackLimit=1", ...fetchArgs("--quiet")],
           options(sealedObjects),
+        ).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              // A fetch may have moved some refs before returning an error.
+              bumpListRefsGeneration(gitCommonDir);
+            }),
+          ),
         );
       }),
       (privateObjects) =>
@@ -2022,8 +2029,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const readRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readRefSnapshot"] = Effect.fn(
     "GitVcsDriver.readRefSnapshot",
   )(
-    function* (cwd) {
-      const localRefs = yield* readBranchPickerRefs(cwd);
+    function* (cwd, refs) {
+      const localRefs = refs ?? (yield* readBranchPickerRefs(cwd));
       if (localRefs === null) return null;
       const gitCommonDir = yield* resolveGitCommonDir(cwd);
       const worktrees = yield* Cache.get(worktreeBranchPathsCache, gitCommonDir).pipe(
@@ -2773,6 +2780,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             "rev-parse",
             "--path-format=absolute",
             "--absolute-git-dir",
+            "--git-common-dir",
             "--show-toplevel",
             "--git-path",
             "shallow",
@@ -2787,20 +2795,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
       const oid = /^(?:[\da-f]{40}|[\da-f]{64})$/;
       const fields = layout.stdout.replace(/\n$/, "").split("\n");
-      const [gitDir, root, shallowPath, graftsPath, detachedOid] = fields;
+      const [gitDir, commonDir, root, shallowPath, graftsPath, detachedOid] = fields;
       if (
         gitDir === undefined ||
+        commonDir === undefined ||
         root === undefined ||
         shallowPath === undefined ||
         graftsPath === undefined ||
         layout.stdoutTruncated ||
-        fields.length !== (branch === null ? 5 : 4) ||
-        !fields.slice(0, 4).every(path.isAbsolute) ||
+        fields.length !== (branch === null ? 6 : 5) ||
+        !fields.slice(0, 5).every(path.isAbsolute) ||
         (branch === null && !oid.test(detachedOid ?? "")) ||
         config.stdoutTruncated ||
         config.stdout.includes("\ufffd")
       )
         return null;
+      const gitCommonDir = yield* fileSystem
+        .realPath(commonDir)
+        .pipe(Effect.orElseSucceed(() => path.normalize(commonDir)));
+      const refsGeneration = currentListRefsGeneration(gitCommonDir);
 
       const branchPrefix = `branch.${branch}.`;
       const isCurrentBranchKey = (key: string) =>
@@ -2817,12 +2830,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const configuredBase =
         configValue(branchBaseConfigKey(branch ?? "")) ||
         configValue(legacyBranchBaseConfigKey(branch ?? ""));
-      // Short and missing overrides can resolve via another branch's upstream. Leave that
-      // selection to the full read unless there is an explicit, existing comparison ref.
       const explicitBase = configuredBaseRef || configuredBase || null;
       const isBranchRef = (ref: string) =>
         /^refs\/(?:heads|remotes)\/[^\s*?[\\\ufffd]+$/u.test(ref);
-      if (explicitBase !== null && !isBranchRef(explicitBase)) return null;
       // A same-named local branch changes the label for an explicitly recorded remote base.
       const explicitBaseAlias = configuredBaseRef?.startsWith("refs/remotes/")
         ? configuredBaseRef.replace(/^refs\/remotes\//, "refs/heads/")
@@ -2894,59 +2904,49 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }),
       );
       if ([...byName.keys()].some((name) => name.startsWith("refs/replace/"))) return null;
+      const exactOids = new Map<string, string | null>();
+      const readRefOid = Effect.fnUntraced(function* (ref: string) {
+        const listed = byName.get(ref);
+        if (listed) return listed.commit;
+        const previous = exactOids.get(ref);
+        if (previous !== undefined) return previous;
+        // Ref filters compare names literally. A loose ref can resolve under another
+        // spelling on a case-insensitive filesystem.
+        const result = yield* executeGit(operation, cwd, ["show-ref", "--verify", "--hash", ref], {
+          allowNonZeroExit: true,
+        });
+        const output = trimAsciiWhitespace(result.stdout);
+        const commit = result.exitCode === 0 && oid.test(output) ? output : null;
+        exactOids.set(ref, commit);
+        return commit;
+      });
+
       const head = headRef === null ? undefined : byName.get(headRef);
       const headOid = detachedOid ?? head?.commit ?? null;
-      if (head?.symref) return null;
+      if (head?.symref || (headRef && !head && (yield* readRefOid(headRef)))) return null;
 
-      const remoteHead = primaryHead === null ? undefined : byName.get(primaryHead);
-      const primaryDefault =
-        primaryRemote === null
-          ? null
-          : parseDefaultBranchFromRemoteHeadRef(remoteHead?.symref ?? "", primaryRemote);
+      const readDefault = Effect.fnUntraced(function* (remote: string) {
+        const row = byName.get(`refs/remotes/${remote}/HEAD`);
+        return row
+          ? parseDefaultBranchFromRemoteHeadRef(row.symref, remote)
+          : yield* resolveDefaultBranchName(cwd, remote);
+      });
+      const primaryDefault = primaryRemote === null ? null : yield* readDefault(primaryRemote);
       if (
         primaryDefault?.startsWith("origin/") ||
         (primaryRemote !== null && primaryDefault?.startsWith(`${primaryRemote}/`))
       )
         return null;
-      const originDefault = parseDefaultBranchFromRemoteHeadRef(
-        byName.get("refs/remotes/origin/HEAD")?.symref ?? "",
-        "origin",
-      );
-      const defaultBranch = primaryRemote === null ? null : (originDefault ?? primaryDefault);
+      const defaultBranch =
+        primaryRemote === null || primaryRemote === "origin"
+          ? primaryDefault
+          : ((yield* readDefault("origin")) ?? primaryDefault);
       const isDefaultBranch =
         branch !== null &&
         (branch === defaultBranch ||
           (defaultBranch === null &&
             DEFAULT_BASE_BRANCH_CANDIDATES.some((name) => name === branch)));
-      const baseFor = (allowCurrent: boolean) => {
-        if (explicitBase !== null) return [explicitBase, byName.get(explicitBase)] as const;
-        if (branch === null) return null;
-        for (const name of [primaryDefault, ...DEFAULT_BASE_BRANCH_CANDIDATES]) {
-          if (name === null || (name === branch && !allowCurrent)) continue;
-          if (name === branch && head?.upstream && head.tracking !== "gone") {
-            if (head.upstream.startsWith("refs/remotes/")) {
-              return [head.upstream, byName.get(head.upstream)] as const;
-            }
-          }
-          if (primaryRemote !== null) {
-            const remote = `refs/remotes/${primaryRemote}/${name}`;
-            const ref = name === primaryDefault ? remoteHead : byName.get(remote);
-            if (ref !== undefined) return [remote, ref] as const;
-          }
-          const local = `refs/heads/${name}`;
-          const ref = byName.get(local);
-          if (name !== branch && ref !== undefined) return [local, ref] as const;
-        }
-        return null;
-      };
-      const localBase = baseFor(true);
-      const remoteBase = baseFor(false);
-      if (
-        (localBase !== null && localBase[1] === undefined) ||
-        (remoteBase !== null && remoteBase[1] === undefined) ||
-        (head?.upstream && head.upstream !== expectedUpstream)
-      )
-        return null;
+      if (head?.upstream && head.upstream !== expectedUpstream) return null;
 
       const upstreamName = head?.upstream ?? "";
       const upstream = head?.tracking === "gone" || !upstreamName ? null : byName.get(upstreamName);
@@ -2958,6 +2958,67 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const tracking = head?.tracking ?? "";
       const counts = /^(?:ahead (\d+))?(?:, )?(?:behind (\d+))?$/.exec(tracking);
       if (upstreamRef !== null && counts === null) return null;
+      const needsRemoteBase = upstreamRef === null || !isDefaultBranch;
+      const baseFor = Effect.fnUntraced(function* (allowCurrent: boolean) {
+        if (branch === null || headOid === null) return null;
+        for (const name of [primaryDefault, ...DEFAULT_BASE_BRANCH_CANDIDATES]) {
+          if (name === null || (name === branch && !allowCurrent)) continue;
+          if (
+            name === branch &&
+            head?.upstream.startsWith("refs/remotes/") &&
+            head.tracking !== "gone"
+          ) {
+            const commit = yield* readRefOid(head.upstream);
+            if (commit !== null) return [head.upstream, commit] as const;
+          }
+          if (primaryRemote !== null) {
+            const remote = `refs/remotes/${primaryRemote}/${name}`;
+            const remoteHead =
+              name === primaryDefault
+                ? byName.get(`refs/remotes/${primaryRemote}/HEAD`)
+                : undefined;
+            const commit = remoteHead?.commit ?? (yield* readRefOid(remote));
+            if (commit !== null) return [remote, commit] as const;
+          }
+          if (name !== branch) {
+            const local = `refs/heads/${name}`;
+            const commit = yield* readRefOid(local);
+            if (commit !== null) return [local, commit] as const;
+          }
+        }
+        return null;
+      });
+
+      let localBase: readonly [ref: string, commit: string, label?: string] | null;
+      let remoteBase: string | null;
+      const explicitOid =
+        explicitBase !== null && isBranchRef(explicitBase) ? yield* readRefOid(explicitBase) : null;
+      if (explicitBase !== null && explicitOid !== null) {
+        localBase = [explicitBase, explicitOid];
+        remoteBase = needsRemoteBase ? explicitBase : null;
+      } else if (branch !== null && headOid !== null && explicitBase !== null) {
+        // Short bases (including ones written by createWorktree) can resolve through
+        // another branch's upstream before the default candidates are considered.
+        const trace = { dependsOnRemoteOfCurrent: false, degraded: false };
+        const selected = yield* findBaseBranchForNoUpstream(
+          cwd,
+          branch,
+          { allowRemoteOfCurrent: true },
+          trace,
+        );
+        const remote =
+          needsRemoteBase && trace.dependsOnRemoteOfCurrent
+            ? yield* findBaseBranchForNoUpstream(cwd, branch, undefined, trace)
+            : selected;
+        const selectedOid = selected === null ? null : yield* readRefOid(selected.comparisonRef);
+        if (trace.degraded || (selected !== null && selectedOid === null)) return null;
+        localBase =
+          selected && selectedOid ? [selected.comparisonRef, selectedOid, selected.baseRef] : null;
+        remoteBase = needsRemoteBase ? (remote?.comparisonRef ?? null) : null;
+      } else {
+        localBase = yield* baseFor(true);
+        remoteBase = needsRemoteBase ? ((yield* baseFor(false))?.[0] ?? null) : null;
+      }
       const stamp = yield* encodeStatusInputs([
         gitDir,
         root,
@@ -2967,13 +3028,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         grafts,
         remoteNames,
         defaultBranch,
-        localBase && [localBase[0], localBase[1]?.commit],
-        explicitBaseAlias !== null && byName.has(explicitBaseAlias),
+        localBase,
+        explicitBaseAlias !== null && (yield* readRefOid(explicitBaseAlias)) !== null,
         configRows.filter(([key]) => !key.startsWith("branch.") || isCurrentBranchKey(key)),
       ]).pipe(Effect.flatMap(sha256Hex));
       return {
         stamp,
-        remoteBase: remoteBase?.[0] ?? null,
+        remoteBase,
+        gitCommonDir,
+        refsGeneration,
         details: {
           isRepo: true,
           branch,
@@ -2987,14 +3050,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           aheadOfDefaultCount: 0,
         } satisfies GitVcsDriver.GitRemoteStatusDetails,
       };
-    },
-    Effect.orElseSucceed(() => null),
-  );
-
-  const readLocalStatusInputStamp = Effect.fn("GitVcsDriver.readLocalStatusInputStamp")(
-    function* (cwd: string) {
-      const branch = yield* readCurrentBranch("GitVcsDriver.readLocalStatusInputStamp", cwd);
-      return (yield* readStatusInputs(cwd, branch))?.stamp ?? null;
     },
     Effect.orElseSucceed(() => null),
   );
@@ -3024,6 +3079,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : 0;
       return {
         inputStamp: inputs.stamp,
+        inputStampAfterLookup: Effect.gen(function* () {
+          if (currentListRefsGeneration(inputs.gitCommonDir) === inputs.refsGeneration) {
+            return inputs.stamp;
+          }
+          return (yield* readStatusInputs(cwd, branch))?.stamp ?? null;
+        }),
         details: {
           ...details,
           aheadCount: details.hasUpstream ? details.aheadCount : baseAheadCount,
@@ -7357,7 +7418,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetailsLocal,
     statusDetailsRemote,
     readStatusPoll,
-    readLocalStatusInputStamp,
+    readStatusRefreshRefs: readBranchPickerRefs,
     readRefSnapshot,
     prepareCommitContext,
     commit: Effect.fnUntraced(function* (cwd, subject, body, options) {

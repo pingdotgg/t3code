@@ -370,18 +370,19 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       options?: GitRemoteStatusOptions,
     ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
-    /** Worktree and Git inputs to the local status refresh. Null when they cannot be narrowed. */
-    readonly readLocalStatusInputStamp: (cwd: string) => Effect.Effect<string | null>;
+    /** Refs used by an explicit refresh and its branch-picker digest. */
+    readonly readStatusRefreshRefs: (cwd: string) => Effect.Effect<string | null>;
     readonly readStatusPoll: (
       cwd: string,
       branch: string | null,
       refreshUpstream: boolean,
     ) => Effect.Effect<{
       readonly inputStamp: string;
+      readonly inputStampAfterLookup: Effect.Effect<string | null>;
       readonly details: GitRemoteStatusDetails;
     } | null>;
     /** Branch-picker digest input, including worktree paths. */
-    readonly readRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
+    readonly readRefSnapshot: (cwd: string, refs?: string) => Effect.Effect<string | null>;
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],

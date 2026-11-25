@@ -662,7 +662,7 @@ export const make = Effect.gen(function* () {
         branch === currentBranch
           ? { branch, value, fingerprint: fingerprintStatusPart(value) }
           : null,
-      inputStamp: branch === currentBranch ? (poll?.inputStamp ?? null) : null,
+      inputStamp: branch === currentBranch && poll ? yield* poll.inputStampAfterLookup : null,
       refreshedLocal,
     };
   });
@@ -763,7 +763,7 @@ export const make = Effect.gen(function* () {
   });
 
   const refreshRemoteAndLocalTotals = Effect.fn("VcsStatusBroadcaster.refreshRemoteAndLocalTotals")(
-    function* (cwd: string, policyCwd: string, inputsBeforeLocalRead: string | null) {
+    function* (cwd: string, policyCwd: string, refsBeforeLocalRead: string | null) {
       return yield* withRemoteWriteLock(
         cwd,
         Effect.gen(function* () {
@@ -776,17 +776,17 @@ export const make = Effect.gen(function* () {
             ? yield* maybeAutoPull(cwd, remoteRead, [policyCwd])
             : null;
           if (pulled !== null) {
-            return mergeGitStatusParts(pulled.local, pulled.remote);
+            return { status: mergeGitStatusParts(pulled.local, pulled.remote), refs: null };
           }
           yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
           // A fetch, ours or not, can move the base used for local Changes totals.
-          const inputStamp =
-            inputsBeforeLocalRead === null ? null : yield* workflow.readLocalStatusInputStamp(cwd);
-          if (inputStamp === null || inputStamp !== inputsBeforeLocalRead) {
+          const refs =
+            refsBeforeLocalRead === null ? null : yield* workflow.readStatusRefreshRefs(cwd);
+          if (refs === null || refs !== refsBeforeLocalRead) {
             yield* refreshLocalStatusCore(cwd);
           }
           const parts = yield* getStatusParts(cwd);
-          return mergeGitStatusParts(parts.local, parts.remote);
+          return { status: mergeGitStatusParts(parts.local, parts.remote), refs };
         }),
       );
     },
@@ -814,10 +814,13 @@ export const make = Effect.gen(function* () {
       const parts = yield* getStatusParts(cwd);
       return withRefsDigest(mergeGitStatusParts(parts.local, parts.remote), refs);
     }
-    const inputsBeforeLocalRead = yield* workflow.readLocalStatusInputStamp(cwd);
+    const refsBeforeLocalRead = yield* workflow.readStatusRefreshRefs(cwd);
     yield* refreshLocalStatusCore(cwd);
-    const status = yield* refreshRemoteAndLocalTotals(cwd, rawCwd, inputsBeforeLocalRead);
-    return withRefsDigest(status, yield* workflow.readRefSnapshot(cwd));
+    const { status, refs } = yield* refreshRemoteAndLocalTotals(cwd, rawCwd, refsBeforeLocalRead);
+    return withRefsDigest(
+      status,
+      refs === null ? null : yield* workflow.readRefSnapshot(cwd, refs),
+    );
   }, Effect.scoped);
 
   const refreshAfterCheckout: VcsStatusBroadcaster["Service"]["refreshAfterCheckout"] = Effect.fn(

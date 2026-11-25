@@ -82,6 +82,8 @@ function layerTestFor(state: {
   localStatusBranchChanges?: Array<boolean>;
   refSnapshot?: string | null;
   worktreeStamp?: string | null;
+  recheckPollStamp?: Effect.Effect<string | null>;
+  digestReads?: Array<string | undefined>;
   remoteStatusError?: GitManagerError;
   backgroundWorkEnabled?: boolean;
   automaticFetchInterval?: Effect.Effect<Duration.Duration>;
@@ -143,7 +145,7 @@ function layerTestFor(state: {
             : (state.beforeCurrentBranch ?? Effect.void).pipe(
                 Effect.andThen(Effect.sync(() => state.currentLocalStatus.refName)),
               ),
-        readLocalStatusInputStamp: () =>
+        readStatusRefreshRefs: () =>
           Effect.sync(() => (state.refSnapshot === undefined ? "refs" : state.refSnapshot)),
         readStatusPoll: (_cwd, branch) =>
           Effect.sync(() =>
@@ -151,6 +153,8 @@ function layerTestFor(state: {
               ? null
               : {
                   inputStamp: state.refSnapshot ?? "refs",
+                  inputStampAfterLookup:
+                    state.recheckPollStamp ?? Effect.succeed(state.refSnapshot ?? "refs"),
                   details: {
                     isRepo: state.currentLocalStatus.isRepo,
                     branch,
@@ -165,9 +169,11 @@ function layerTestFor(state: {
                   },
                 },
           ),
-        readRefSnapshot: () =>
+        readRefSnapshot: (_cwd, refs) =>
           Effect.sync(() => {
-            const localRefs = state.refSnapshot === undefined ? "refs" : state.refSnapshot;
+            state.digestReads?.push(refs);
+            const localRefs =
+              refs ?? (state.refSnapshot === undefined ? "refs" : state.refSnapshot);
             return localRefs === null || state.worktreeStamp === null
               ? null
               : `${localRefs}\0${state.worktreeStamp ?? ""}`;
@@ -993,7 +999,7 @@ describe("VcsStatusBroadcaster", () => {
           Layer.mock(GitWorkflowService.GitWorkflowService)({
             localStatus: () => Effect.succeed(localStatus),
             currentBranch: () => Effect.succeed(localStatus.refName),
-            readLocalStatusInputStamp: () => Effect.succeed("refs"),
+            readStatusRefreshRefs: () => Effect.succeed("refs"),
             readStatusPoll: () => Effect.succeed(null),
             readRefSnapshot: () => Effect.succeed("refs"),
             remoteStatus: () => Effect.succeed(remoteStatus),
@@ -1092,7 +1098,7 @@ describe("VcsStatusBroadcaster", () => {
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           localStatus: () => Effect.succeed(baseLocalStatus),
           currentBranch: () => Effect.succeed(baseLocalStatus.refName),
-          readLocalStatusInputStamp: () => Effect.succeed("refs"),
+          readStatusRefreshRefs: () => Effect.succeed("refs"),
           readStatusPoll: () => Effect.succeed(null),
           readRefSnapshot: () => Effect.succeed("refs"),
           remoteStatus: () =>
@@ -1141,7 +1147,7 @@ describe("VcsStatusBroadcaster", () => {
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           localStatus: () => Effect.succeed(baseLocalStatus),
           currentBranch: () => Effect.succeed(baseLocalStatus.refName),
-          readLocalStatusInputStamp: () => Effect.succeed("refs"),
+          readStatusRefreshRefs: () => Effect.succeed("refs"),
           readStatusPoll: () => Effect.succeed(null),
           readRefSnapshot: () => Effect.succeed("refs"),
           remoteStatus: () =>
@@ -1197,7 +1203,7 @@ describe("VcsStatusBroadcaster", () => {
               return state.currentLocalStatus;
             }),
           currentBranch: () => Effect.succeed(state.currentLocalStatus.refName),
-          readLocalStatusInputStamp: () => Effect.succeed("refs"),
+          readStatusRefreshRefs: () => Effect.succeed("refs"),
           readStatusPoll: () => Effect.succeed(null),
           readRefSnapshot: () => Effect.succeed("refs"),
           remoteStatus: () =>
@@ -1449,6 +1455,29 @@ describe("VcsStatusBroadcaster", () => {
       yield* TestClock.adjust("30 seconds");
       yield* Queue.take(remoteUpdates);
       assert.equal(state.localStatusCalls, localCalls + 1);
+
+      const lookupStarted = yield* Deferred.make<void>();
+      const finishLookup = yield* Deferred.make<void>();
+      state.beforeRemoteStatus = Deferred.succeed(lookupStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(finishLookup)),
+      );
+      state.recheckPollStamp = Effect.sync(() => state.refSnapshot ?? null);
+      state.currentRemoteStatus = baseRemoteStatus;
+      const tick = yield* TestClock.adjust("30 seconds").pipe(Effect.forkScoped);
+      yield* Deferred.await(lookupStarted);
+      state.refSnapshot = "base-moved-during-lookup";
+      state.currentLocalStatus = {
+        ...baseLocalStatus,
+        branchChanges: { baseRef: "origin/main", insertions: 1, deletions: 0 },
+      };
+      yield* Deferred.succeed(finishLookup, undefined);
+      yield* Fiber.join(tick);
+      yield* Queue.take(remoteUpdates);
+      assert.equal(state.localStatusCalls, localCalls + 2);
+      assert.deepStrictEqual(
+        (yield* broadcaster.getStatus({ cwd: "/repo" })).branchChanges,
+        state.currentLocalStatus.branchChanges,
+      );
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
@@ -1589,7 +1618,7 @@ describe("VcsStatusBroadcaster", () => {
               }),
             currentBranch: () => Effect.succeed(baseLocalStatus.refName),
             invalidateRemoteStatus: () => Effect.void,
-            readLocalStatusInputStamp: () => Effect.sync(() => refSnapshot),
+            readStatusRefreshRefs: () => Effect.sync(() => refSnapshot),
             readRefSnapshot: () => Effect.sync(() => refSnapshot),
             remoteStatus: () =>
               Deferred.succeed(fetchStarted, undefined).pipe(
@@ -1629,6 +1658,7 @@ describe("VcsStatusBroadcaster", () => {
       remoteStatusCalls: 0,
       localInvalidationCalls: 0,
       remoteInvalidationCalls: 0,
+      digestReads: [],
     };
     return Effect.gen(function* () {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -1690,6 +1720,7 @@ describe("VcsStatusBroadcaster", () => {
       const unreadable = yield* broadcaster.refreshStatus("/repo");
       assert.equal(state.localStatusCalls, 2);
       assert.isUndefined(unreadable.refsDigest);
+      assert.deepStrictEqual(state.digestReads, ["refs", "refs", "refs", "moved"]);
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
