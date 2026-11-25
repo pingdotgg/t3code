@@ -291,7 +291,6 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-import { isWorkspaceBrowserPreviewPath } from "@t3tools/shared/filePreview";
 import { isNetworkPath } from "@t3tools/shared/path";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
@@ -3208,10 +3207,11 @@ export const layerWsRpc = (
               input.resource._tag === "media-file" &&
               path.isAbsolute(input.resource.path) &&
               !isNetworkPath(input.resource.path);
-            const isInlinePage =
-              input.resource._tag === "media-file" &&
+            // Only a page loads sibling files; other media keep their file-identity grant.
+            const isLocalInlinePage =
+              isLocalMediaFile &&
               input.resource.disposition !== "attachment" &&
-              isWorkspaceBrowserPreviewPath(input.resource.path);
+              /\.html?$/i.test(input.resource.path);
             if (
               input.resource._tag === "attachment" ||
               input.resource._tag === "native-app-icon" ||
@@ -3219,7 +3219,7 @@ export const layerWsRpc = (
               input.resource._tag === "tool-output-image" ||
               input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET ||
               // A network path is served only from the thread's project, looked up below.
-              (isLocalMediaFile && !isInlinePage)
+              (isLocalMediaFile && !isLocalInlinePage)
             ) {
               return yield* issueAssetUrl({ resource: input.resource });
             }
@@ -3279,25 +3279,13 @@ export const layerWsRpc = (
               }
               return thread.thread.worktreePath ?? project.value.workspaceRoot;
             });
-            if (isLocalMediaFile) {
-              // Clients pick media-file by comparing paths as written, so a page in a project
-              // registered through a symlink arrives here. Served as a workspace file it loads
-              // its stylesheets and scripts; any failure serves the page alone, as before.
-              const asWorkspaceFile = yield* threadWorkspaceRoot.pipe(
-                Effect.flatMap((workspaceRoot) =>
-                  issueAssetUrl({
-                    resource: {
-                      _tag: "workspace-file",
-                      threadId: resource.threadId,
-                      path: resource.path,
-                    },
-                    workspaceRoot,
-                  }),
-                ),
-                Effect.option,
-              );
-              if (Option.isSome(asWorkspaceFile)) return asWorkspaceFile.value;
-              return yield* issueAssetUrl({ resource });
+            if (isLocalInlinePage) {
+              // A page whose thread has no project left is still served alone.
+              const workspaceRoot = yield* Effect.option(threadWorkspaceRoot);
+              return yield* issueAssetUrl({
+                resource,
+                ...(Option.isSome(workspaceRoot) ? { workspaceRoot: workspaceRoot.value } : {}),
+              });
             }
             return yield* issueAssetUrl({ resource, workspaceRoot: yield* threadWorkspaceRoot });
           }),

@@ -641,6 +641,36 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         yield* toHostDrivePath(input.resource.path),
         yield* HostProcess.HomeDirectory,
       );
+      // Clients pick media-file by comparing paths as written, so a page in a project registered
+      // through a symlink arrives here. As a workspace file it loads its stylesheets and scripts.
+      if (
+        input.workspaceRoot &&
+        path.isAbsolute(requestedPath) &&
+        !isNetworkPath(requestedPath) &&
+        input.resource.disposition !== "attachment" &&
+        /\.html?$/i.test(requestedPath)
+      ) {
+        const workspaceRoot = input.workspaceRoot;
+        const resource = input.resource;
+        const asWorkspaceFile = yield* workspacePaths.normalizeWorkspaceRoot(workspaceRoot).pipe(
+          Effect.flatMap((normalizedRoot) =>
+            finalizeWorkspaceFileAsset({
+              workspaceRoot: normalizedRoot,
+              requestedPath,
+              resource,
+              expiresAt,
+            }),
+          ),
+          Effect.option,
+        );
+        if (Option.isSome(asWorkspaceFile)) {
+          claims = asWorkspaceFile.value.claims;
+          fileName = asWorkspaceFile.value.fileName;
+          imageDimensions = asWorkspaceFile.value.imageDimensions;
+          fileRevision = asWorkspaceFile.value.fileRevision;
+          break;
+        }
+      }
       if (!path.isAbsolute(requestedPath)) {
         if (!input.workspaceRoot) {
           return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });

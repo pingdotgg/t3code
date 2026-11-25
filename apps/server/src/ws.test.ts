@@ -2069,6 +2069,28 @@ describe.skipIf(!symlinksSupported)("a thread's HTML page linked by its real pat
     }).pipe(Effect.provide(layerAliasedProjectAssets)),
   );
 
+  it.effect("leaves a PDF bound to the file it was issued for", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const project = yield* makeAliasedProject();
+      const pdf = path.join(path.dirname(project.page), "report.pdf");
+      yield* fileSystem.writeFileString(pdf, "%PDF-1.4 original");
+
+      const token = yield* createThreadMediaFileUrl({
+        page: pdf,
+        projectWorkspaceRoot: project.workspaceRoot,
+      });
+      assert.include(yield* resolveAsset(token, "report.pdf"), { kind: "file" });
+
+      const replacement = path.join(path.dirname(project.page), "replacement.pdf");
+      yield* fileSystem.writeFileString(replacement, "%PDF-1.4 replacement");
+      yield* fileSystem.rename(replacement, pdf);
+
+      assert.isNull(yield* resolveAsset(token, "report.pdf"));
+    }).pipe(Effect.provide(layerAliasedProjectAssets)),
+  );
+
   it.effect("is served alone when the thread's project is gone", () =>
     Effect.gen(function* () {
       const project = yield* makeAliasedProject();
