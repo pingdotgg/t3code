@@ -107,6 +107,8 @@ const DEFAULT_PERSIST_DEBOUNCE_MS = 250;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
 const MAX_SUBPROCESS_POLL_INTERVAL_MS = 60_000;
 const SHELL_PREPARATION_TIMEOUT = "15 seconds";
+// A short per-candidate limit bounds the fallback search across the finite candidate list.
+const SHELL_LOOKUP_TIMEOUT = "2 seconds";
 // `ps` and WMI can take seconds on a loaded host and their tables are still
 // valid then; the timeout only ends a query that is truly stuck.
 const PROCESS_TABLE_QUERY_TIMEOUT = "15 seconds";
@@ -660,11 +662,14 @@ function uniqueShellCandidates(candidates: Array<ShellCandidate | null>): ShellC
 }
 
 // Preparation can wait on a stalled filesystem while startup holds the terminal locks.
-const withShellPreparationTimeout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+const withShellPreparationTimeout = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  duration: Duration.Input = SHELL_PREPARATION_TIMEOUT,
+) =>
   effect.pipe(
     Effect.interruptible,
     Effect.timeoutOrElse({
-      duration: SHELL_PREPARATION_TIMEOUT,
+      duration,
       orElse: () => Effect.fail(new Cause.TimeoutError("Terminal shell preparation timed out.")),
     }),
   );
@@ -2824,28 +2829,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     spawnEnv: NodeJS.ProcessEnv,
     session: TerminalSessionState,
     index = 0,
-    lastError: PtyAdapter.PtySpawnError | null = null,
+    lastError: PtyAdapter.PtySpawnError | Cause.TimeoutError | null = null,
   ): Effect.fn.Return<
     { process: PtyAdapter.PtyProcess; shell: string; shellLabel: string },
     PtyAdapter.PtySpawnError | Cause.TimeoutError
   > {
-    if (index >= shellCandidates.length) {
+    const candidate = shellCandidates[index];
+    if (!candidate) {
+      if (Cause.isTimeoutError(lastError)) return yield* lastError;
       return yield* new PtyAdapter.PtySpawnError({
         adapter: "terminal-manager",
         attemptedShells: shellCandidates.map((candidate) => formatShellCandidate(candidate)),
         ...(lastError ? { cause: lastError } : {}),
       });
-    }
-
-    const candidate = shellCandidates[index];
-    if (!candidate) {
-      return yield* (
-        lastError ??
-        new PtyAdapter.PtySpawnError({
-          adapter: "terminal-manager",
-          attemptedShells: [],
-        })
-      );
     }
 
     // PATH lookup must use the child's working directory, not the server's.
@@ -2864,34 +2860,38 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const shellCommand = candidate.shell.includes("/")
       ? path.resolve(session.cwd, candidate.shell)
       : candidate.shell;
-    const launch = yield* withShellPreparationTimeout(
-      Effect.gen(function* () {
-        const executable =
-          platform !== "win32"
-            ? yield* Effect.promise(async () =>
-                resolveExecutable(shellCommand, platform, lookupEnv),
-              )
-            : candidate.shell;
-        if (executable === undefined) return undefined;
-
-        return yield* agentScope.wrap({
-          command: executable,
-          args: candidate.args ?? [],
-          name: "terminal",
-          env: spawnEnv,
-          survivesRestart: true,
-        });
-      }),
-    );
-    if (launch === undefined) {
+    const lookup =
+      platform === "win32"
+        ? Result.succeed(candidate.shell)
+        : yield* withShellPreparationTimeout(
+            Effect.promise(async () => resolveExecutable(shellCommand, platform, lookupEnv)),
+            SHELL_LOOKUP_TIMEOUT,
+          ).pipe(Effect.result);
+    if (Result.isFailure(lookup) || lookup.success === undefined) {
       return yield* trySpawn(
         shellCandidates,
         spawnEnv,
         session,
         index + 1,
-        new PtyAdapter.PtySpawnError({ adapter: "terminal-manager", shell: candidate.shell }),
+        Result.isFailure(lookup)
+          ? lookup.failure
+          : (lastError ??
+              new PtyAdapter.PtySpawnError({
+                adapter: "terminal-manager",
+                shell: candidate.shell,
+              })),
       );
     }
+
+    const launch = yield* agentScope
+      .wrap({
+        command: lookup.success,
+        args: candidate.args ?? [],
+        name: "terminal",
+        env: spawnEnv,
+        survivesRestart: true,
+      })
+      .pipe(withShellPreparationTimeout);
 
     const attempt = yield* Effect.result(
       options.ptyAdapter.spawn({
@@ -2917,7 +2917,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return yield* spawnError;
     }
 
-    return yield* trySpawn(shellCandidates, spawnEnv, session, index + 1, spawnError);
+    return yield* trySpawn(
+      shellCandidates,
+      spawnEnv,
+      session,
+      index + 1,
+      Cause.isTimeoutError(lastError) ? lastError : spawnError,
+    );
   });
 
   const startSession = Effect.fn("terminal.startSession")(function* (
@@ -2990,6 +2996,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
                 withShellPreparationTimeout,
+                Effect.catchTags({ TimeoutError: () => Effect.succeed([]) }),
               );
               if (managedDirectories.length > 0) {
                 const delimiter = platform === "win32" ? ";" : ":";
