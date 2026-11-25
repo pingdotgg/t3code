@@ -194,6 +194,10 @@ export const make = Effect.gen(function* () {
           )
         : undefined;
     const endpoints = [
+      ...(config.advertisedUrls ?? []).map((httpBaseUrl) => ({
+        kind: "configured" as const,
+        httpBaseUrl,
+      })),
       ...resolveBoundEndpoints({
         platform,
         host: config.host,
