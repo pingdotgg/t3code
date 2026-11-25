@@ -2,8 +2,8 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -12,6 +12,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import {
   AntigravityCliUsageError,
+  antigravityAccountFingerprint,
+  antigravityEmailFingerprint,
   antigravitySummaryWindows,
   buildAntigravityCliUsageEnv,
   makeAntigravityUsageProbe,
@@ -121,7 +123,6 @@ describe("parseAntigravityCliUsageOutput", () => {
       "\x1b[5;1HFive Hour Limit Remaining" +
       "\x1b[6;1H[████] 95.00%" +
       "\x1b[7;1HRefreshes in 1d 2h" +
-      // Overwrite only the percentage cell in place without re-emitting the header.
       "\x1b[6;8H50.00%\x1b[K";
     const parsed = parseAntigravityCliUsageOutput(inPlaceRedraw, nowMs);
     expect(parsed?.windows).toEqual([
@@ -136,10 +137,36 @@ describe("parseAntigravityCliUsageOutput", () => {
     ]);
   });
 
+  it("clamps extreme CSI CUP and CHA column parameters so screen memory stays bounded", () => {
+    const nowMs = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-11-24T17:00:00.000Z"));
+    const hostile =
+      "\x1b[1;99999999HX\x1b[99999999GY" +
+      "\x1b[2J\x1b[1;1HModels & Quota  Account: user@example.com" +
+      "\x1b[3;1HGEMINI MODELS\x1b[5;1HFive Hour Limit Remaining\x1b[6;1H[████] 75.00%";
+    const parsed = parseAntigravityCliUsageOutput(hostile, nowMs);
+    expect(parsed?.windows).toHaveLength(1);
+    expect(parsed?.windows[0]?.usedPercent).toBe(25);
+  });
+
   it("returns undefined when output has no quota groups", () => {
     const nowMs = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-11-24T17:00:00.000Z"));
     expect(parseAntigravityCliUsageOutput("Antigravity CLI 1.5.16", nowMs)).toBeUndefined();
   });
+});
+
+describe("antigravityAccountFingerprint / antigravityEmailFingerprint", () => {
+  it.effect("matches local CLI email fingerprint when hub userinfo provides email", () =>
+    Effect.gen(function* () {
+      const cliFp = yield* antigravityEmailFingerprint("user@example.com");
+      const hubFp = yield* antigravityAccountFingerprint({
+        id: "google-42",
+        email: " User@Example.com ",
+      });
+      const idOnlyFp = yield* antigravityAccountFingerprint({ id: "google-42" });
+      expect(hubFp).toBe(cliFp);
+      expect(idOnlyFp).toBe("136d4952771fd67a3600053f37492cbd05828712e0b1c89ebab03d4c22ab6554");
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
 });
 
 describe("buildAntigravityCliUsageEnv", () => {
@@ -154,23 +181,24 @@ describe("buildAntigravityCliUsageEnv", () => {
         GOOGLE_CLOUD_PROJECT: "ambient-project",
         AGY_ADC_AUTH: "true",
         agy_adc_auth: "1",
+        GEMINI_HOME: "/persistent/profile",
         SSH_CONNECTION: "127.0.0.1 0 127.0.0.1 0",
         AGY_ACP_FORCE_FILE_STORAGE: "1",
         AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "1",
         ELECTRON_RUN_AS_NODE: "1",
       },
       {
-        profileDirectory: "/profiles/a",
         isolatedHome: "/tmp/iso-home",
+        isolatedGeminiHome: "/tmp/iso-home/.gemini",
         gcpProject: "configured-project",
         gcpLocation: "us-central1",
       },
     );
     expect(cleaned).toEqual({
       PATH: "/usr/local/bin",
-      GEMINI_HOME: "/profiles/a",
       HOME: "/tmp/iso-home",
       USERPROFILE: "/tmp/iso-home",
+      GEMINI_HOME: "/tmp/iso-home/.gemini",
       GOOGLE_CLOUD_PROJECT: "configured-project",
       GOOGLE_CLOUD_LOCATION: "us-central1",
       TERM: "xterm-256color",
@@ -179,53 +207,66 @@ describe("buildAntigravityCliUsageEnv", () => {
 });
 
 describe("runOfficialAgyUsagePty", () => {
-  it.effect("waits for banner, sends /usage, captures quota output, and tears down the PTY", () =>
-    Effect.gen(function* () {
-      const writes: string[] = [];
-      let killed = false;
-      let onDataHandler: ((chunk: string) => void) | undefined;
+  it.effect(
+    "waits for banner, sends /usage, captures quota output, and awaits exit on teardown",
+    () =>
+      Effect.gen(function* () {
+        const writes: string[] = [];
+        let killed = false;
+        let exitedReported = false;
+        let onDataHandler: ((chunk: string) => void) | undefined;
+        let onExitHandler: (() => void) | undefined;
 
-      const fakePtyModule: AntigravityNodePtyModule = {
-        spawn: () =>
-          ({
-            onData: (cb: (chunk: string) => void) => {
-              onDataHandler = cb;
-              queueMicrotask(() => cb("Antigravity CLI 1.5.16\n"));
-              return { dispose: () => {} };
-            },
-            onExit: () => ({ dispose: () => {} }),
-            write: (data: string) => {
-              writes.push(data);
-              if (data === "\r") {
-                queueMicrotask(() => onDataHandler?.(SAMPLE_CLI_OUTPUT));
-              }
-            },
-            kill: () => {
-              killed = true;
-            },
-          }) as unknown as ReturnType<AntigravityNodePtyModule["spawn"]>,
-      };
+        const fakePtyModule: AntigravityNodePtyModule = {
+          spawn: () =>
+            ({
+              onData: (cb: (chunk: string) => void) => {
+                onDataHandler = cb;
+                queueMicrotask(() => cb("Antigravity CLI 1.5.16\n"));
+                return { dispose: () => {} };
+              },
+              onExit: (cb: () => void) => {
+                onExitHandler = cb;
+                return { dispose: () => {} };
+              },
+              write: (data: string) => {
+                writes.push(data);
+                if (data === "\r") {
+                  queueMicrotask(() => onDataHandler?.(SAMPLE_CLI_OUTPUT));
+                }
+              },
+              kill: () => {
+                killed = true;
+                queueMicrotask(() => {
+                  exitedReported = true;
+                  onExitHandler?.();
+                });
+              },
+            }) as unknown as ReturnType<AntigravityNodePtyModule["spawn"]>,
+        };
 
-      const fiber = yield* runOfficialAgyUsagePty(
-        {
-          executablePath: "/usr/local/bin/agy",
-          env: { PATH: "/usr/local/bin" },
-          cwd: "/tmp",
-        },
-        () => fakePtyModule,
-      ).pipe(Effect.scoped, Effect.forkChild);
+        const fiber = yield* runOfficialAgyUsagePty(
+          {
+            executablePath: "/usr/local/bin/agy",
+            env: { PATH: "/usr/local/bin" },
+            cwd: "/tmp",
+          },
+          () => fakePtyModule,
+        ).pipe(Effect.scoped, Effect.forkChild);
 
-      yield* TestClock.adjust("5 seconds");
-      const output = yield* Fiber.join(fiber);
-      expect(output).toContain("Models & Quota");
-      expect(writes).toEqual(["/usage", "\r", "\x1b", "\x03\x03"]);
-      expect(killed).toBe(true);
-    }),
+        yield* TestClock.adjust("5 seconds");
+        const output = yield* Fiber.join(fiber);
+        expect(output).toContain("Models & Quota");
+        expect(writes).toEqual(["/usage", "\r", "\x1b", "\x03\x03"]);
+        expect(killed).toBe(true);
+        expect(exitedReported).toBe(true);
+      }),
   );
 
   it.effect("completes a single-window quota summary promptly within the outer probe timeout", () =>
     Effect.gen(function* () {
       let onDataHandler: ((chunk: string) => void) | undefined;
+      let onExitHandler: (() => void) | undefined;
       const fakePtyModule: AntigravityNodePtyModule = {
         spawn: () =>
           ({
@@ -234,13 +275,18 @@ describe("runOfficialAgyUsagePty", () => {
               queueMicrotask(() => cb("Antigravity CLI 1.5.16\n"));
               return { dispose: () => {} };
             },
-            onExit: () => ({ dispose: () => {} }),
+            onExit: (cb: () => void) => {
+              onExitHandler = cb;
+              return { dispose: () => {} };
+            },
             write: (data: string) => {
               if (data === "\r") {
                 queueMicrotask(() => onDataHandler?.(SECOND_ACCOUNT_CLI_OUTPUT));
               }
             },
-            kill: () => {},
+            kill: () => {
+              queueMicrotask(() => onExitHandler?.());
+            },
           }) as unknown as ReturnType<AntigravityNodePtyModule["spawn"]>,
       };
 
@@ -253,7 +299,6 @@ describe("runOfficialAgyUsagePty", () => {
         () => fakePtyModule,
       ).pipe(Effect.scoped, Effect.forkChild);
 
-      // Should finish in ~4.2s total (well below 30s) rather than waiting for full timeout.
       yield* TestClock.adjust("6 seconds");
       const output = yield* Fiber.join(fiber);
       const parsed = parseAntigravityCliUsageOutput(output, 0);
@@ -262,44 +307,61 @@ describe("runOfficialAgyUsagePty", () => {
     }),
   );
 
-  it.effect("aborts with output_limit_exceeded when PTY output exceeds 256 KiB", () =>
-    Effect.gen(function* () {
-      let killed = false;
-      const fakePtyModule: AntigravityNodePtyModule = {
-        spawn: () =>
-          ({
-            onData: (cb: (chunk: string) => void) => {
-              queueMicrotask(() => cb("x".repeat(300 * 1024)));
-              return { dispose: () => {} };
-            },
-            onExit: () => ({ dispose: () => {} }),
-            write: () => {},
-            kill: () => {
-              killed = true;
-            },
-          }) as unknown as ReturnType<AntigravityNodePtyModule["spawn"]>,
-      };
+  it.effect(
+    "aborts with AntigravityCliUsageError(output_limit_exceeded) even if a valid frame preceded the overflow",
+    () =>
+      Effect.gen(function* () {
+        let killed = false;
+        let onDataHandler: ((chunk: string) => void) | undefined;
+        let onExitHandler: (() => void) | undefined;
+        const fakePtyModule: AntigravityNodePtyModule = {
+          spawn: () =>
+            ({
+              onData: (cb: (chunk: string) => void) => {
+                onDataHandler = cb;
+                queueMicrotask(() => cb("Antigravity CLI 1.5.16\n"));
+                return { dispose: () => {} };
+              },
+              onExit: (cb: () => void) => {
+                onExitHandler = cb;
+                return { dispose: () => {} };
+              },
+              write: (data: string) => {
+                if (data === "\r") {
+                  queueMicrotask(() => {
+                    onDataHandler?.(SAMPLE_CLI_OUTPUT);
+                    onDataHandler?.("x".repeat(300 * 1024));
+                  });
+                }
+              },
+              kill: () => {
+                killed = true;
+                queueMicrotask(() => onExitHandler?.());
+              },
+            }) as unknown as ReturnType<AntigravityNodePtyModule["spawn"]>,
+        };
 
-      const fiber = yield* runOfficialAgyUsagePty(
-        {
-          executablePath: "/usr/local/bin/agy",
-          env: { PATH: "/usr/local/bin" },
-          cwd: "/tmp",
-        },
-        () => fakePtyModule,
-      ).pipe(Effect.scoped, Effect.exit, Effect.forkChild);
+        const fiber = yield* runOfficialAgyUsagePty(
+          {
+            executablePath: "/usr/local/bin/agy",
+            env: { PATH: "/usr/local/bin" },
+            cwd: "/tmp",
+          },
+          () => fakePtyModule,
+        ).pipe(Effect.scoped, Effect.flip, Effect.forkChild);
 
-      yield* TestClock.adjust("2 seconds");
-      const exit = yield* Fiber.join(fiber);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(killed).toBe(true);
-    }),
+        yield* TestClock.adjust("5 seconds");
+        const error = yield* Fiber.join(fiber);
+        expect(error).toBeInstanceOf(AntigravityCliUsageError);
+        expect(error.reason).toBe("output_limit_exceeded");
+        expect(killed).toBe(true);
+      }),
   );
 });
 
 describe("makeAntigravityUsageProbe (official CLI)", () => {
   it.effect(
-    "caches for 5m while preserving original checkedAt, isolates HOME with empty MCP/hooks, and holds executable lease",
+    "caches for 5m while preserving original checkedAt, isolates HOME/GEMINI_HOME with empty MCP/hooks, and holds executable lease",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -329,16 +391,22 @@ describe("makeAntigravityUsageProbe (official CLI)", () => {
             Effect.gen(function* () {
               invocations.push(args);
               leaseReleasedDuringRun = leaseReleasedAfterRun;
-              // Verify isolated HOME contains empty mcp_config.json and hooks.json while running.
+              const isolatedGemini = args.env.GEMINI_HOME ?? "";
+              expect(isolatedGemini).toBe(path.join(args.cwd, ".gemini"));
               const mcpConfig = yield* fs
-                .readFileString(path.join(args.cwd, ".gemini", "config", "mcp_config.json"))
+                .readFileString(path.join(isolatedGemini, "config", "mcp_config.json"))
+                .pipe(Effect.orElseSucceed(() => ""));
+              const hooksConfig = yield* fs
+                .readFileString(path.join(isolatedGemini, "config", "hooks.json"))
                 .pipe(Effect.orElseSucceed(() => ""));
               expect(mcpConfig).toBe('{"mcpServers":{}}');
+              expect(hooksConfig).toBe("{}");
               return SAMPLE_CLI_OUTPUT;
             }),
         });
 
         const first = yield* usage.probe;
+        const expectedFingerprint = yield* antigravityEmailFingerprint("user@example.com");
         expect(invocations).toHaveLength(1);
         expect(leaseReleasedDuringRun).toBe(false);
         expect(leaseReleasedAfterRun).toBe(true);
@@ -346,11 +414,11 @@ describe("makeAntigravityUsageProbe (official CLI)", () => {
         expect(invocations[0]?.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
         expect(invocations[0]?.env.GEMINI_API_KEY).toBeUndefined();
         expect(invocations[0]?.env.AGY_ADC_AUTH).toBeUndefined();
-        expect(invocations[0]?.env.GEMINI_HOME).toBe(profileDirectory);
         expect(invocations[0]?.env.HOME).toBe(invocations[0]?.cwd);
+        expect(invocations[0]?.env.GEMINI_HOME).not.toBe(profileDirectory);
         expect(first.unavailable).toBeUndefined();
         expect(first.windows).toHaveLength(4);
-        expect(first.credentialFingerprint).toMatch(/^[0-9a-f]{64}$/);
+        expect(first.credentialFingerprint).toBe(expectedFingerprint);
         expect(first.checkedAt).toBe(isoAt(startMs));
 
         // Within 5 minutes: served from cache with original checkedAt preserved.
@@ -367,11 +435,44 @@ describe("makeAntigravityUsageProbe (official CLI)", () => {
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("deduplicates concurrent probe calls so only one CLI process runs", () =>
+    Effect.gen(function* () {
+      const startMs = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-11-24T17:00:00Z"));
+      yield* TestClock.setTime(startMs);
+      const profileDirectory = yield* createProfileWithCliToken();
+      const gate = yield* Deferred.make<void>();
+      let calls = 0;
+
+      const usage = yield* makeAntigravityUsageProbe({
+        profileDirectory,
+        authMethod: "oauth-personal",
+        runCliUsage: () =>
+          Effect.gen(function* () {
+            calls++;
+            yield* Deferred.await(gate);
+            return SAMPLE_CLI_OUTPUT;
+          }),
+      });
+
+      const firstFiber = yield* Effect.forkChild(usage.probe);
+      const secondFiber = yield* Effect.forkChild(usage.probe);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(gate, undefined);
+
+      const [first, second] = yield* Effect.all([Fiber.join(firstFiber), Fiber.join(secondFiber)]);
+      expect(calls).toBe(1);
+      expect(first.unavailable).toBeUndefined();
+      expect(second.unavailable).toBeUndefined();
+      expect(second.checkedAt).toBe(first.checkedAt);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect(
-    "forwards configured GCP project and location for signed-in oauth-business instances",
+    "allows keyring-only oauth-business instances (without plaintext token file) and forwards GCP project/location",
     () =>
       Effect.gen(function* () {
-        const profileDirectory = yield* createProfileWithCliToken();
+        const fs = yield* FileSystem.FileSystem;
+        const profileDirectory = yield* fs.makeTempDirectoryScoped();
         const invocations: AntigravityCliUsageRunInput[] = [];
 
         const usage = yield* makeAntigravityUsageProbe({
@@ -480,28 +581,26 @@ describe("makeAntigravityUsageProbe (official CLI)", () => {
   );
 
   it.effect(
-    "returns unsupported without launching CLI for unsigned-in oauth-personal and oauth-business profiles",
+    "returns unsupported without launching CLI for an unsigned-in oauth-personal profile",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const profileDirectory = yield* fs.makeTempDirectoryScoped();
         let calls = 0;
 
-        for (const authMethod of ["oauth-personal", "oauth-business"] as const) {
-          const usage = yield* makeAntigravityUsageProbe({
-            profileDirectory,
-            authMethod,
-            runCliUsage: () => {
-              calls++;
-              return Effect.succeed(SAMPLE_CLI_OUTPUT);
-            },
-          });
+        const usage = yield* makeAntigravityUsageProbe({
+          profileDirectory,
+          authMethod: "oauth-personal",
+          runCliUsage: () => {
+            calls++;
+            return Effect.succeed(SAMPLE_CLI_OUTPUT);
+          },
+        });
 
-          const limits = yield* usage.probe;
-          expect(calls).toBe(0);
-          expect(limits.unavailable?.reason).toBe("unsupported");
-          expect(limits.windows).toEqual([]);
-        }
+        const limits = yield* usage.probe;
+        expect(calls).toBe(0);
+        expect(limits.unavailable?.reason).toBe("unsupported");
+        expect(limits.windows).toEqual([]);
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

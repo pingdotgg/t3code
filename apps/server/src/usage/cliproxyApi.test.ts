@@ -583,6 +583,40 @@ describe("CLIProxyAPI built-in management API", () => {
     ),
   );
 
+  it.effect(
+    "pools Antigravity hub readings with local CLI readings when userinfo returns email",
+    () =>
+      Effect.gen(function* () {
+        const test = fixture({
+          accounts: [
+            {
+              id: "antigravity-g@example.com.json",
+              auth_index: "g",
+              provider: "antigravity",
+              email: "g@example.com",
+              project_id: "project-7",
+            },
+          ],
+          upstream: (request) => ({
+            status: 200,
+            body: request.url?.endsWith("/userinfo")
+              ? { id: "google-42", email: "G@Example.com" }
+              : antigravitySummary,
+          }),
+        });
+        const [account] = yield* (yield* test.api).readAccounts(config);
+        expect(account?.driver).toBe("antigravity");
+        expect(account?.email).toBeUndefined();
+        // sha256("google-account-email-v1\0g@example.com"), matching the local CLI usage probe.
+        expect(account?.usageLimits.credentialFingerprint).toBe(
+          "3c02aa059056d6000d4ba6ff8d8802178c91e7327325d7a6dbc6a708fe46ab60",
+        );
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Architecture, "x64"),
+      ),
+  );
+
   it.effect("keeps Antigravity limits and listing email when its identity read fails", () =>
     Effect.gen(function* () {
       const test = fixture({
