@@ -3,8 +3,7 @@
 The T3 Code server sends product usage events to T3 Code's own endpoint at `ingest.t3.codes`,
 associated with a hashed random identifier for the installation. To count how many installations one person
 uses, the server also sends a hashed identifier for your T3 Connect account when you are signed in
-to one, and a random identifier for each device that connects. The endpoint keeps a copy of each
-event and forwards events to PostHog. Events include the provider, model, reasoning effort,
+to one, and a random identifier for each device that connects. Events include the provider, model, reasoning effort,
 permission mode, turn and request results, duration, release channel, and token counts when
 available. Child-agent token counts are reported separately from the main agent's. Models from a
 provider's catalog are reported by name, even when a custom endpoint serves them. Any other
