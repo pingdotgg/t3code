@@ -1821,9 +1821,10 @@ const canBind = (port) =>
       for (const version of versions) {
         const runtimeDir = `${home}/.t3/runtime/versions/${version}`;
         yield* fs.makeDirectory(runtimeDir, { recursive: true });
+        // The runner gets only HOME, so `node` would resolve on sh's default PATH, which may not have it.
         yield* fs.writeFileString(
           `${runtimeDir}/t3`,
-          `#!/bin/sh\nexec node '${fakeT3}' '${version}' "$@"\n`,
+          `#!/bin/sh\nexec '${process.execPath}' '${fakeT3}' '${version}' "$@"\n`,
         );
         yield* fs.chmod(`${runtimeDir}/t3`, 0o755);
         yield* fs.writeFileString(`${runtimeDir}/.install-complete`, `${version}\n`);

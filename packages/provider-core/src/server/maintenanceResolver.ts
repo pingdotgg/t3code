@@ -40,6 +40,9 @@ import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
 const PROBE_TIMEOUT_MS = 10_000;
+// npm leaves a killed packument download in its cache's tmp dir, so registry probes are
+// bounded by npm's own fetch-timeout instead of being killed.
+const NPM_REGISTRY_PROBE_TIMEOUT = null;
 const PROBE_MAX_BYTES = 256 * 1_024;
 const WRAPPER_SCRIPT_MAX_BYTES = 16 * 1_024;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
@@ -415,6 +418,7 @@ const runProbe = Effect.fn("runProbe")(function* (
   args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
   okExitCodes: ReadonlyArray<number> = [0],
+  timeoutMs: number | null = PROBE_TIMEOUT_MS,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const collect = Effect.gen(function* () {
@@ -441,8 +445,13 @@ const runProbe = Effect.fn("runProbe")(function* (
   });
   return yield* collect.pipe(
     Effect.scoped,
-    Effect.timeoutOption(Duration.millis(PROBE_TIMEOUT_MS)),
-    Effect.map(Option.getOrNull),
+    (scoped) =>
+      timeoutMs === null
+        ? scoped
+        : scoped.pipe(
+            Effect.timeoutOption(Duration.millis(timeoutMs)),
+            Effect.map(Option.getOrNull),
+          ),
     Effect.catchCause((cause) =>
       Effect.logWarning("Maintenance probe failed", {
         command,
@@ -537,6 +546,7 @@ const runNpmGlobalLatestVersions = Effect.fn("runNpmGlobalLatestVersions")(funct
     env,
     // npm outdated exits 1 when updates are available.
     [0, 1],
+    NPM_REGISTRY_PROBE_TIMEOUT,
   );
   const outdatedEntries = outdated ? Option.getOrUndefined(decodeOutdated(outdated)) : undefined;
   // npm prints failures such as an unreachable registry as `{"error": ...}`, also exiting 1.
@@ -1302,6 +1312,7 @@ function environmentCacheKey(env: NodeJS.ProcessEnv): string {
 
 const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup")(function* (
   capabilities: ProviderMaintenanceCapabilities,
+  npmCacheDir: string | undefined,
 ) {
   const packageName = capabilities.packageName;
   if (!packageName || capabilities.latestVersion !== undefined) {
@@ -1311,11 +1322,32 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
   const npmPath = yield* resolveCommandPath("npm", { env });
   if (!npmPath) return capabilities;
   const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
-  const lookup = runProbe(
-    npmPath,
-    ["view", "--global", "--json", `${packageName}@latest`, "version"],
-    env,
-  ).pipe(
+  const path = yield* Path.Path;
+  // `npm view` downloads the whole packument into its cache's tmp directory and a killed npm
+  // leaves it there. A cache only T3 writes to can drop that directory without touching another
+  // npm run's files, and lasting across lookups lets npm revalidate instead of re-downloading.
+  const cacheDir = npmCacheDir && path.join(npmCacheDir, encodeURIComponent(packageName));
+  const lookup = Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* runProbe(
+      npmPath,
+      ["view", "--global", "--json", `${packageName}@latest`, "version"],
+      cacheDir ? { ...env, npm_config_cache: cacheDir } : env,
+      [0],
+      NPM_REGISTRY_PROBE_TIMEOUT,
+    ).pipe(
+      Effect.onInterrupt(() =>
+        cacheDir
+          ? Effect.ignore(
+              fileSystem.remove(path.join(cacheDir, "_cacache", "tmp"), {
+                recursive: true,
+                force: true,
+              }),
+            )
+          : Effect.void,
+      ),
+    );
+  }).pipe(
     Effect.map((stdout) => {
       const value = stdout ? Option.getOrNull(decodeNpmViewVersion(stdout.trim())) : null;
       return nonEmptyString(typeof value === "string" ? value : value?.[0]);
@@ -1351,39 +1383,47 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
 
 export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   "resolveProviderMaintenanceCapabilitiesEffect",
-)(function* (
-  resolver: ProviderMaintenanceCapabilitiesResolver,
-  options?: {
-    readonly binaryPath?: string | null;
-    readonly env?: NodeJS.ProcessEnv;
+)(
+  function* (
+    resolver: ProviderMaintenanceCapabilitiesResolver,
+    options?: {
+      readonly binaryPath?: string | null;
+      readonly env?: NodeJS.ProcessEnv;
+      /** Where configured npm lookups keep their npm cache, apart from the user's. */
+      readonly npmCacheDir?: string;
+    },
+  ) {
+    const binaryPath = nonEmptyString(options?.binaryPath);
+    if (!binaryPath) {
+      return yield* resolver.resolve(null);
+    }
+
+    const env = options?.env ?? (yield* readCommandLookupEnv);
+    const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env });
+    if (!resolvedCommandPath) {
+      return yield* resolver.resolve(null);
+    }
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    const realCommandPath = yield* fileSystem
+      .realPath(resolvedCommandPath)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (!realCommandPath) {
+      return yield* resolver.resolve(null);
+    }
+    return yield* resolver.resolve({
+      binaryPath,
+      resolvedCommandPath,
+      realCommandPath,
+      env,
+      platform: yield* HostProcess.Platform,
+    });
   },
-) {
-  const binaryPath = nonEmptyString(options?.binaryPath);
-  if (!binaryPath) {
-    return yield* resolver.resolve(null);
-  }
-
-  const env = options?.env ?? (yield* readCommandLookupEnv);
-  const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env });
-  if (!resolvedCommandPath) {
-    return yield* resolver.resolve(null);
-  }
-
-  const fileSystem = yield* FileSystem.FileSystem;
-  const realCommandPath = yield* fileSystem
-    .realPath(resolvedCommandPath)
-    .pipe(Effect.orElseSucceed(() => null));
-  if (!realCommandPath) {
-    return yield* resolver.resolve(null);
-  }
-  return yield* resolver.resolve({
-    binaryPath,
-    resolvedCommandPath,
-    realCommandPath,
-    env,
-    platform: yield* HostProcess.Platform,
-  });
-}, Effect.flatMap(withConfiguredNpmVersionLookup));
+  (effect, _resolver, options) =>
+    Effect.flatMap(effect, (capabilities) =>
+      withConfiguredNpmVersionLookup(capabilities, options?.npmCacheDir),
+    ),
+);
 
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
   "makeCachedProviderMaintenanceResolution",

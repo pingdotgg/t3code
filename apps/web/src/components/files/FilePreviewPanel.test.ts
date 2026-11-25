@@ -389,6 +389,11 @@ Third}`;
                 { data: { "text/html": "", "text/plain": "\u001b[1mstring fallback\u001b[0m" } },
                 { data: { "text/html": "  ", "text/plain": "space fallback" } },
                 { output_type: "stream", text: ["\u001b[", "32m42\u001b[0m\n"] },
+                {
+                  output_type: "stream",
+                  name: "stderr",
+                  text: ["\r 10%|#         |", "\r100%|##########|\n", "done\r\n", "🚀 ready\rX\n"],
+                },
                 { data: { "text/html": ["<b>Results</b>"], "text/plain": ["Results"] } },
               ],
             },
@@ -409,6 +414,7 @@ Third}`;
             { kind: "text", text: "string fallback" },
             { kind: "text", text: "space fallback" },
             { kind: "text", text: "42\n" },
+            { kind: "text", text: "100%|##########|\ndone\nX  ready\n" },
             { kind: "html", text: "<b>Results</b>" },
           ],
         },
@@ -515,6 +521,22 @@ Third}`;
     expect(result.sheets[0]!.rows).toHaveLength(500);
     expect(result.sheets[0]!.rows[0]).toHaveLength(50);
     expect(result.sheets[0]!.rows[0]![0]).toBe("Research & design");
+  });
+
+  it("hides ODS values kept in cells a merge covers", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="Merged">' +
+        '<table:table-row><table:table-cell table:number-columns-spanned="4" table:number-rows-spanned="2"><text:p>Total</text:p></table:table-cell><table:covered-table-cell office:value-type="float" office:value="2"><text:p>2</text:p></table:covered-table-cell><table:covered-table-cell table:number-columns-repeated="2"/><table:table-cell><text:p>Lead</text:p></table:table-cell></table:table-row>' +
+        '<table:table-row><table:covered-table-cell office:value-type="string" office:string-value="Below"/><table:covered-table-cell table:number-columns-repeated="3"/><table:table-cell><text:p>Q2</text:p></table:table-cell></table:table-row>' +
+        "</table:table></office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets[0]!.rows).toEqual([
+      ["Total", "", "", "", "Lead"],
+      ["", "", "", "", "Q2"],
+    ]);
   });
 
   it("reads an ODS time cell that has no display paragraph", async () => {
@@ -672,7 +694,7 @@ Third}`;
       )
       .file(
         "Book/one.xhtml",
-        '<html><head><title>First</title></head><body><h1>First chapter</h1><img src="cover.png" alt="Cover"/><img src="https://example.com/tracker.png"/><script>alert(1)</script><style>@import "https://example.com/style.css";</style></body></html>',
+        `<html><head><title>${"a".repeat(119)}🚀</title></head><body><h1>First chapter</h1><img src="cover.png" alt="Cover"/><img src="https://example.com/tracker.png"/><script>alert(1)</script><style>@import "https://example.com/style.css";</style></body></html>`,
       )
       .file(
         "Book/two&&&.xhtml",
@@ -688,7 +710,7 @@ Third}`;
     const result = await openEpub(archive);
     expect(result.type).toBe("document");
     if (result.type !== "document") throw new Error("Expected document");
-    expect(result.pages.map((page) => page.title)).toEqual(["Second", "First"]);
+    expect(result.pages.map((page) => page.title)).toEqual(["Second", "a".repeat(119)]);
     expect(result.pages[0]!.html).toContain("A\u00a0B © — ≂̸ &amp;lt;");
     expect(result.pages[0]!.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
     expect(result.pages[0]!.html).toContain(

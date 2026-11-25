@@ -20,7 +20,7 @@ const decodeTraceSpanLine = Schema.decodeUnknownOption(
     Schema.Struct({
       name: Schema.String,
       durationMs: Schema.Finite,
-      endTimeUnixNano: Schema.FiniteFromString,
+      endTimeUnixNano: Schema.Union([Schema.BigIntFromString, Schema.FiniteFromString]),
       exit: Schema.optional(Schema.Struct({ _tag: Schema.String })),
       // OTLP errors use code 2; interrupts carry effect.fiber.interrupted, or code 1 with Interrupted before Effect 4.0.2.
       status: Schema.optional(
@@ -36,12 +36,19 @@ const decodeTraceSpanLine = Schema.decodeUnknownOption(
   ),
 );
 
-export function makeTraceSpanSummary(sinceMs = -Infinity) {
+export function makeTraceSpanSummary(window?: { nowMs: number; duration: Duration.Duration }) {
+  const sinceMs = window ? window.nowMs - Duration.toMillis(window.duration) : -Infinity;
+  const sinceNanos =
+    window && Duration.isFinite(window.duration)
+      ? BigInt(window.nowMs) * 1_000_000n - Duration.toNanosUnsafe(window.duration)
+      : undefined;
   const byName = new Map<string, { durations: number[]; interrupted: number; failures: number }>();
   let spanCount = 0;
   let skippedLineCount = 0;
   let firstEndMs = Infinity;
   let lastEndMs = -Infinity;
+  let firstPrintedMs = Infinity;
+  let lastPrintedMs = -Infinity;
 
   const addLine = (line: string) => {
     if (line.trim().length === 0) return;
@@ -50,17 +57,26 @@ export function makeTraceSpanSummary(sinceMs = -Infinity) {
       skippedLineCount += 1;
       return;
     }
-    const endMs = span.endTimeUnixNano / 1_000_000;
+    const endMs = Number(span.endTimeUnixNano) / 1_000_000;
     // The report prints end times as dates, so skip ones outside the Date range.
     if (Option.isNone(DateTime.make(endMs))) {
       skippedLineCount += 1;
       return;
     }
-    if (endMs < sinceMs) return;
+    const beforeWindow =
+      sinceNanos !== undefined && typeof span.endTimeUnixNano === "bigint"
+        ? span.endTimeUnixNano < sinceNanos
+        : endMs < sinceMs;
+    if (beforeWindow) return;
 
     spanCount += 1;
     firstEndMs = Math.min(firstEndMs, endMs);
     lastEndMs = Math.max(lastEndMs, endMs);
+    // Printed dates use the exact value while float bounds feed the rate.
+    const printedMs =
+      typeof span.endTimeUnixNano === "bigint" ? Number(span.endTimeUnixNano / 1_000_000n) : endMs;
+    firstPrintedMs = Math.min(firstPrintedMs, printedMs);
+    lastPrintedMs = Math.max(lastPrintedMs, printedMs);
     const stats = byName.get(span.name) ?? { durations: [], interrupted: 0, failures: 0 };
     stats.durations.push(span.durationMs);
     if (
@@ -93,7 +109,14 @@ export function makeTraceSpanSummary(sinceMs = -Infinity) {
       })
       .toSorted((left, right) => right.count - left.count || left.name.localeCompare(right.name));
 
-    return { spanCount, skippedLineCount, firstEndMs, lastEndMs, minutes, spans };
+    return {
+      spanCount,
+      skippedLineCount,
+      firstEndMs: firstPrintedMs,
+      lastEndMs: lastPrintedMs,
+      minutes,
+      spans,
+    };
   };
 
   return { addLine, finish };
@@ -124,7 +147,9 @@ export function formatTraceSummary(
       String(span.failures),
     ]);
   const table = [header, ...rows];
-  const widths = header.map((_, column) => Math.max(...table.map((row) => row[column]!.length)));
+  const widths = header.map((_, column) =>
+    table.reduce((max, row) => Math.max(max, row[column]!.length), 0),
+  );
   const formatIso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
   return [
     `${summary.spanCount} spans ended from ${formatIso(summary.firstEndMs)} to ${formatIso(summary.lastEndMs)} (${summary.minutes.toFixed(1).replace(/\.0+$/, "")} min).`,
@@ -169,10 +194,10 @@ const traceSummaryCommand = Command.make("summary", {
       const traceFilePath =
         (yield* traceFileConfig) ??
         (yield* ServerConfig.deriveServerPaths(baseDir, undefined)).serverTracePath;
-      const sinceMs = Option.isSome(flags.since)
-        ? (yield* Clock.currentTimeMillis) - Duration.toMillis(flags.since.value)
+      const window = Option.isSome(flags.since)
+        ? { nowMs: yield* Clock.currentTimeMillis, duration: flags.since.value }
         : undefined;
-      const summarizer = makeTraceSpanSummary(sinceMs);
+      const summarizer = makeTraceSpanSummary(window);
       yield* Effect.forEach(
         toRotatedTracePaths(traceFilePath, yield* traceMaxFilesConfig),
         (path) => streamTraceFileLines(fs, path, summarizer.addLine),
@@ -182,7 +207,7 @@ const traceSummaryCommand = Command.make("summary", {
 
       yield* Console.log(
         summary.spanCount === 0
-          ? `No spans found in ${traceFilePath} or its rotated files${sinceMs === undefined ? "" : " in that window"}.${summary.skippedLineCount > 0 ? ` Skipped ${summary.skippedLineCount} lines that are not spans.` : ""}`
+          ? `No spans found in ${traceFilePath} or its rotated files${window === undefined ? "" : " in that window"}.${summary.skippedLineCount > 0 ? ` Skipped ${summary.skippedLineCount} lines that are not spans.` : ""}`
           : formatTraceSummary(summary, flags.limit),
       );
     }),
