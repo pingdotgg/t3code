@@ -3,7 +3,14 @@ import { m } from "~/i18n/messages";
 import { pipe } from "effect/Function";
 import { ChevronsLeftRightEllipsisIcon, PlusIcon, TerminalIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
 import {
   type DesktopDiscoveredSshHost,
@@ -394,13 +401,20 @@ export function AddEnvironmentDialog({
     }
   };
 
-  const handleSavedBackendHostChange = (value: string) => {
+  const splitPairingUrl = (value: string) => {
     const parsedPairingUrl = parsePairingUrlFields(value);
-    if (parsedPairingUrl) {
-      setSavedBackendHost(parsedPairingUrl.host);
-      setSavedBackendPairingCode(parsedPairingUrl.pairingCode);
-      return;
-    }
+    if (!parsedPairingUrl) return false;
+    setSavedBackendHost(parsedPairingUrl.host);
+    setSavedBackendPairingCode(parsedPairingUrl.pairingCode);
+    return true;
+  };
+  // Splitting while typing would cut the token after its first character, so a typed URL
+  // is split when the field loses focus; a paste, drop or autofill splits at once.
+  const handleSavedBackendHostChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    const typed =
+      event.nativeEvent instanceof InputEvent && event.nativeEvent.inputType === "insertText";
+    if (!typed && splitPairingUrl(value)) return;
     setSavedBackendHost(value);
   };
   const renderConnectionModeCard = (input: {
@@ -455,7 +469,8 @@ export function AddEnvironmentDialog({
           </span>
           <Input
             value={savedBackendHost}
-            onChange={(event) => handleSavedBackendHostChange(event.target.value)}
+            onChange={handleSavedBackendHostChange}
+            onBlur={(event) => splitPairingUrl(event.target.value)}
             onKeyDown={handleRemoteFieldKeyDown}
             placeholder="backend.example.com"
             disabled={isAddingSavedBackend}

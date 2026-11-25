@@ -264,4 +264,19 @@ describe("AddEnvironmentDialog", () => {
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
     expect(mocks.connectPairing).toHaveBeenCalledOnce();
   });
+
+  it("splits a typed pairing URL into host and code once the field loses focus", async () => {
+    using _bridge = setup();
+    await using _screen = await render(<Owner />);
+
+    await userEvent.click(page.getByRole("button", { name: "Add environment" }));
+    const host = page.getByPlaceholder("backend.example.com");
+    await userEvent.type(host, "http://devbox.example.com/pair#token=ABC123");
+    await expect.element(host).toHaveValue("http://devbox.example.com/pair#token=ABC123");
+    await expect.element(page.getByPlaceholder("PAIRCODE")).toHaveValue("");
+
+    await userEvent.tab();
+    await expect.element(host).toHaveValue("http://devbox.example.com");
+    await expect.element(page.getByPlaceholder("PAIRCODE")).toHaveValue("ABC123");
+  });
 });

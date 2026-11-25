@@ -534,6 +534,7 @@
   "d0f1961fef6825d2": "Det gick inte att ansluta. Återansluter...",
   "26c3dfb406fb90ad": "Inställningar för routning av pull requests är inte tillgängliga i den här klienten.",
   "1d195c550f6dea22": "Den här miljön har ingen sparad anslutningsslutpunkt.",
+  "5ae9f093b68f3b07": "Den adressen leder till {host}, som den här appen redan är ansluten till.",
   "c0794944a743d980": "Den adressen påstår sig vara {host}, som redan är sparad. Lägg till den som en rutt från den miljöns inställningar i stället.",
   "7eabeed193759388": "Ruttordningen måste ta med varje sparad rutt en gång.",
   "18de69e3b6ac3891": "Anslutningsprofilen {connectionId} är ingen bearer-anslutning.",
