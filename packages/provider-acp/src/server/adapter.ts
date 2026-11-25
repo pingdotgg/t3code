@@ -209,62 +209,84 @@ function isAwaitingAnswerPromptError(error: EffectAcpErrors.AcpError): boolean {
   );
 }
 
+function awaitPromptAnswer(
+  stopped: () => boolean,
+  answerPending: Effect.Effect<boolean>,
+): Effect.Effect<void> {
+  return Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
+    Effect.andThen(
+      Effect.suspend(() =>
+        stopped()
+          ? Effect.void
+          : answerPending.pipe(
+              Effect.flatMap((pending) =>
+                pending ? awaitPromptAnswer(stopped, answerPending) : Effect.void,
+              ),
+            ),
+      ),
+    ),
+  );
+}
+
 function sendPromptWhenIdle<A>(
   turn: {
     readonly interrupted: boolean;
     readonly finalized: boolean;
-    steerAwaitingAnswer?: boolean;
+    promptAwaitingAnswer: number;
   },
   prompt: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
   superseded: () => boolean = () => false,
-  /** Given for a steer: true while the agent waits on a request T3 has not answered. */
-  answerPending?: Effect.Effect<boolean>,
+  /** Given for a steer: holds refused steers until answered and preserves superseded ones. */
+  steerAwaitingAnswer?: {
+    readonly answerPending: Effect.Effect<boolean>;
+    readonly onSupersededRefusal: () => void;
+  },
 ): Effect.Effect<A, EffectAcpErrors.AcpError> {
   // A Stop or a prompt-steer can land during the wait, so both are rechecked before each resend.
-  const stopped = () => turn.interrupted || turn.finalized || superseded();
-  const awaitAnswer: Effect.Effect<void> = Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
-    Effect.andThen(
-      Effect.suspend(() =>
-        stopped() || answerPending === undefined
-          ? Effect.void
-          : answerPending.pipe(Effect.flatMap((pending) => (pending ? awaitAnswer : Effect.void))),
-      ),
-    ),
-  );
+  const ended = () => turn.interrupted || turn.finalized;
+  const stopped = () => ended() || superseded();
   return prompt().pipe(
     Effect.catchIf(
       (error) =>
-        !stopped() &&
-        (isAgentBusyPromptError(error) ||
-          (answerPending !== undefined && isAwaitingAnswerPromptError(error))),
-      (error) =>
-        isAgentBusyPromptError(error)
-          ? Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
-              Effect.andThen(
-                Effect.suspend(() =>
-                  stopped()
-                    ? Effect.fail(error)
-                    : sendPromptWhenIdle(turn, prompt, superseded, answerPending),
-                ),
-              ),
-            )
-          : Effect.suspend(() => {
-              turn.steerAwaitingAnswer = true;
-              return awaitAnswer;
-            }).pipe(
-              Effect.ensuring(
-                Effect.sync(() => {
-                  turn.steerAwaitingAnswer = false;
-                }),
-              ),
-              Effect.andThen(
-                Effect.suspend(() =>
-                  stopped()
-                    ? Effect.fail(error)
-                    : sendPromptWhenIdle(turn, prompt, superseded, answerPending),
-                ),
+        (isAgentBusyPromptError(error) && !stopped()) ||
+        (steerAwaitingAnswer !== undefined && isAwaitingAnswerPromptError(error) && !ended()),
+      (error) => {
+        if (isAgentBusyPromptError(error)) {
+          return Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
+            Effect.andThen(
+              Effect.suspend(() =>
+                stopped()
+                  ? Effect.fail(error)
+                  : sendPromptWhenIdle(turn, prompt, superseded, steerAwaitingAnswer),
               ),
             ),
+          );
+        }
+        if (superseded()) {
+          steerAwaitingAnswer!.onSupersededRefusal();
+          return Effect.fail(error);
+        }
+        return Effect.suspend(() => {
+          turn.promptAwaitingAnswer += 1;
+          return awaitPromptAnswer(stopped, steerAwaitingAnswer!.answerPending);
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              turn.promptAwaitingAnswer -= 1;
+            }),
+          ),
+          Effect.andThen(
+            Effect.suspend(() => {
+              if (ended()) return Effect.fail(error);
+              if (superseded()) {
+                steerAwaitingAnswer!.onSupersededRefusal();
+                return Effect.fail(error);
+              }
+              return sendPromptWhenIdle(turn, prompt, superseded, steerAwaitingAnswer);
+            }),
+          ),
+        );
+      },
     ),
   );
 }
@@ -1844,8 +1866,13 @@ interface ActiveAcpTurn {
   foregroundIdle: Deferred.Deferred<void>;
   /** Counts the turn's prompts; only the latest one settles the turn. */
   promptSequence: number;
-  /** True while a prompt-steer refused for a pending answer is waiting to resend. */
-  steerAwaitingAnswer: boolean;
+  /** Positive while an initial prompt recovery or refused steer wait is blocking new steers. */
+  promptAwaitingAnswer: number;
+  /** Refused steer payloads superseded in flight; delivered ahead of the next steer or turn end. */
+  readonly refusedSteerBlocks: Array<{
+    readonly sequence: number;
+    readonly blocks: ReadonlyArray<EffectAcpSchema.ContentBlock>;
+  }>;
   /** The turn already resent a prompt after a resumable outcome failure. */
   outcomeResumed: boolean;
   /** Clock millis just before `session/prompt` was handed to the runtime. */
@@ -9567,27 +9594,59 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }),
           );
 
+        const drainRefusedSteerBlocks = (
+          context: ActiveAcpTurn,
+        ): Array<EffectAcpSchema.ContentBlock> => {
+          if (context.refusedSteerBlocks.length === 0) return [];
+          const entries = context.refusedSteerBlocks
+            .splice(0, context.refusedSteerBlocks.length)
+            .toSorted((left, right) => left.sequence - right.sequence);
+          return entries.flatMap((entry) => entry.blocks);
+        };
+
         /**
          * A new turn's prompt refused because an earlier prompt still waits on an answer T3 no
-         * longer shows: cancel that prompt, let it settle, and resend once. If cancel, settlement,
-         * or the single resend fails, the next turn starts a fresh runtime.
+         * longer shows: cancel that prompt, let it settle, and resend once. If a live request is
+         * already attached to this turn, wait for the user to answer it instead of cancelling it.
          */
         const recoverOrphanedAnswerWait = <A>(
           context: ActiveAcpTurn,
           generation: number,
           superseded: () => boolean,
           send: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
-          resend: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
+          resend: (
+            dispatched: Deferred.Deferred<void>,
+          ) => Effect.Effect<A, EffectAcpErrors.AcpError>,
         ): Effect.Effect<A, EffectAcpErrors.AcpError> => {
           const stopped = () => context.interrupted || context.finalized || superseded();
           return send().pipe(
             Effect.catchIf(
               (error) => isAwaitingAnswerPromptError(error) && !stopped(),
-              (error) =>
-                Effect.gen(function* () {
-                  // The user can still answer a request T3 shows for this turn, so leave it for them.
+              (error) => {
+                let holding = false;
+                const releaseHold = () => {
+                  if (!holding) return;
+                  holding = false;
+                  context.promptAwaitingAnswer -= 1;
+                };
+                return Effect.gen(function* () {
+                  holding = true;
+                  context.promptAwaitingAnswer += 1;
+                  // A live request already attached to this turn stays answerable; resend once it clears.
                   if (yield* hasPendingRequestForTurn(context.providerTurnId)) {
-                    return yield* error;
+                    yield* awaitPromptAnswer(
+                      stopped,
+                      hasPendingRequestForTurn(context.providerTurnId),
+                    );
+                    releaseHold();
+                    if (stopped()) return yield* error;
+                    return yield* recoverOrphanedAnswerWait(
+                      context,
+                      generation,
+                      superseded,
+                      send,
+                      resend,
+                    );
                   }
                   yield* cancelMatchingPendingRuntimeRequests(
                     (request) => request.runtimeRequest.providerTurnId !== context.providerTurnId,
@@ -9620,13 +9679,58 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     }
                   }
                   if (stopped()) return yield* error;
-                  return yield* resend().pipe(
+                  const retryDispatched = yield* Deferred.make<void>();
+                  const watcher = yield* Deferred.await(retryDispatched).pipe(
+                    Effect.andThen(Effect.sync(releaseHold)),
+                    Effect.forkIn(sessionScope),
+                  );
+                  return yield* resend(retryDispatched).pipe(
+                    Effect.ensuring(Fiber.interrupt(watcher).pipe(Effect.asVoid)),
                     Effect.tapError(() =>
                       stopped() ? Effect.void : Ref.set(runtimeRestartRequired, true),
                     ),
                   );
-                }),
+                }).pipe(Effect.ensuring(Effect.sync(releaseHold)));
+              },
             ),
+          );
+        };
+
+        const sendSteerPrompt = (
+          context: ActiveAcpTurn,
+          generation: number,
+          superseded: () => boolean,
+          sequence: number,
+          initialBlocks: ReadonlyArray<EffectAcpSchema.ContentBlock>,
+          promptOptions: {
+            readonly dispatched?: Deferred.Deferred<void, never>;
+            readonly released: Deferred.Deferred<void>;
+          },
+        ): Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError> => {
+          let pendingBlocks = initialBlocks;
+          return sendPromptWhenIdle(
+            context,
+            () => {
+              const carried = drainRefusedSteerBlocks(context);
+              if (carried.length > 0) {
+                pendingBlocks = [...carried, ...pendingBlocks];
+              }
+              const run = trackPrompt(
+                generation,
+                runtime.prompt({ prompt: pendingBlocks }, promptOptions),
+              );
+              return promptOptions.dispatched === undefined
+                ? run
+                : run.pipe(Effect.ensuring(Deferred.succeed(promptOptions.dispatched, undefined)));
+            },
+            superseded,
+            {
+              // A question that arrived as the steer went out: resend once it is answered.
+              answerPending: hasPendingRequestForTurn(context.providerTurnId),
+              onSupersededRefusal: () => {
+                context.refusedSteerBlocks.push({ sequence, blocks: pendingBlocks });
+              },
+            },
           );
         };
 
@@ -9635,6 +9739,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context: ActiveAcpTurn,
           prompt: (
             superseded: () => boolean,
+            sequence: number,
           ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>,
           settle: {
             readonly generation: number;
@@ -9664,7 +9769,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               context.appContextOffered = settle.appContext.before;
             }
           };
-          return prompt(superseded).pipe(
+          return prompt(superseded, sequence).pipe(
             // Settle the wire before the completion callback's permit so a settled-soft
             // Stop sees the native return. Capture usage only before finalize: a late
             // response must not flip a settled turn.
@@ -9798,6 +9903,40 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           ? "interrupted"
                           : "cancelled"
                         : "completed";
+                  if (
+                    failure === undefined &&
+                    status === "completed" &&
+                    !context.interrupted &&
+                    context.refusedSteerBlocks.length > 0
+                  ) {
+                    const carriedBlocks = drainRefusedSteerBlocks(context);
+                    const released = context.foregroundIdle;
+                    context.foregroundIdle = yield* Deferred.make<void>();
+                    if (yield* Deferred.isDone(context.promptWireSettled)) {
+                      context.promptWireSettled = yield* Deferred.make<void, never>();
+                    }
+                    const releasedForCarry = context.foregroundIdle;
+                    yield* followPrompt(
+                      context,
+                      (nextSuperseded, nextSequence) =>
+                        sendSteerPrompt(
+                          context,
+                          settle.generation,
+                          nextSuperseded,
+                          nextSequence,
+                          carriedBlocks,
+                          { released: releasedForCarry },
+                        ),
+                      {
+                        generation: settle.generation,
+                        checkPromptOutcome: settle.checkPromptOutcome,
+                        promptParts: null,
+                        compactSession: undefined,
+                      },
+                    ).pipe(Effect.forkIn(sessionScope));
+                    yield* Deferred.succeed(released, undefined);
+                    return;
+                  }
                   if (defersFinalizeForBackgroundWork && !context.interrupted) {
                     context.promptSettled = true;
                     context.promptSettledStatus = status;
@@ -10109,7 +10248,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptDispatched,
               foregroundIdle: yield* Deferred.make<void>(),
               promptSequence: 0,
-              steerAwaitingAnswer: false,
+              promptAwaitingAnswer: 0,
+              refusedSteerBlocks: [],
               outcomeResumed: false,
               promptSentAt: null,
               promptStarted,
@@ -10297,20 +10437,29 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               context,
               (superseded) =>
                 compactSession === undefined
-                  ? (() => {
-                      const runPrompt = () =>
+                  ? recoverOrphanedAnswerWait(
+                      context,
+                      promptGeneration,
+                      superseded,
+                      () =>
+                        sendPromptWhenIdle(
+                          context,
+                          () =>
+                            trackPrompt(
+                              promptGeneration,
+                              runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
+                            ),
+                          superseded,
+                        ),
+                      (retryDispatched) =>
                         trackPrompt(
                           promptGeneration,
-                          runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
-                        );
-                      return recoverOrphanedAnswerWait(
-                        context,
-                        promptGeneration,
-                        superseded,
-                        () => sendPromptWhenIdle(context, runPrompt, superseded),
-                        runPrompt,
-                      );
-                    })()
+                          runtime.prompt(
+                            { prompt: promptParts!.prompt },
+                            { dispatched: retryDispatched, released: promptOptions.released },
+                          ),
+                        ),
+                    )
                   : Deferred.succeed(context.promptDispatched, undefined).pipe(
                       Effect.andThen(compactSession.compact(runtime, requestedSessionId)),
                       Effect.as({
@@ -10379,9 +10528,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 });
               }
               // The agent refuses a prompt while it waits on an answer, so the message waits too.
-              // Decline while a refused steer is waiting to resend so a later steer cannot drop it.
+              // Decline during orphan recovery or a held steer wait so a later steer cannot drop it.
               if (
-                context.steerAwaitingAnswer ||
+                context.promptAwaitingAnswer > 0 ||
                 (yield* hasPendingRequestForTurn(context.providerTurnId))
               ) {
                 return yield* new ProviderAdapter.ProviderAdapterSteerDeclinedError({
@@ -10464,21 +10613,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const releasedForSteer = context.foregroundIdle;
                   yield* followPrompt(
                     context,
-                    (superseded) =>
-                      sendPromptWhenIdle(
-                        context,
-                        () =>
-                          trackPrompt(
-                            generation,
-                            runtime.prompt(
-                              { prompt: steerPrompt },
-                              { dispatched, released: releasedForSteer },
-                            ),
-                          ).pipe(Effect.ensuring(Deferred.succeed(dispatched, undefined))),
-                        superseded,
-                        // A question that arrived as the steer went out: resend once it is answered.
-                        hasPendingRequestForTurn(context.providerTurnId),
-                      ),
+                    (superseded, sequence) =>
+                      sendSteerPrompt(context, generation, superseded, sequence, steerPrompt, {
+                        dispatched,
+                        released: releasedForSteer,
+                      }),
                     {
                       generation,
                       checkPromptOutcome,

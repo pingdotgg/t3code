@@ -6462,7 +6462,31 @@ describe("AcpAdapterV2", () => {
       assert.equal(first?.status, "failed");
 
       yield* harness.startTurn(2);
+      const running2 = Option.getOrThrow(
+        yield* harness.runtime.events.pipe(
+          Stream.filter((event) => event.type === "provider_turn.updated"),
+          Stream.runHead,
+        ),
+      );
+      if (running2.type !== "provider_turn.updated") return yield* Effect.die("Expected turn 2");
       yield* Deferred.await(cancelled);
+      // A steer arriving during orphan recovery must decline instead of abandoning turn 2's prompt.
+      const recoverySteerDeclined = yield* harness.runtime
+        .steerTurn({
+          threadId: harness.threadId,
+          runId: RunId.make(`run:${harness.threadId}:2`),
+          providerThread: harness.providerThread,
+          providerTurnId: running2.providerTurn.id,
+          message: {
+            createdBy: "agent",
+            creationSource: "server",
+            messageId: MessageId.make("steer-during-recovery"),
+            text: "Notice during recovery",
+            attachments: [],
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(recoverySteerDeclined._tag, "ProviderAdapterSteerDeclinedError");
       assert.isFalse(
         yield* Deferred.isDone(resent),
         "the retry went out before the cancelled prompt settled",
@@ -6555,26 +6579,32 @@ describe("AcpAdapterV2", () => {
   it.effect("holds a prompt-steer the agent refuses for a pending answer, then resends it", () =>
     Effect.gen(function* () {
       let promptCalls = 0;
-      const refused = yield* Deferred.make<void>();
+      let resentText = "";
+      const refusal1 = yield* Deferred.make<void>();
+      const refusal2 = yield* Deferred.make<void>();
       const resent = yield* Deferred.make<void>();
       const harness = yield* makePromptInactivityHarness({
         environment: () => ({ T3_ACP_HANG_PROMPT_FOREVER: "1" }),
         steersWithPrompt: true,
         wrapPrompt: (prompt) => (payload, options) => {
           promptCalls += 1;
-          if (promptCalls === 2) {
+          if (promptCalls === 2 || promptCalls === 3) {
+            const gate = promptCalls === 2 ? refusal1 : refusal2;
             return (
               options?.dispatched === undefined
                 ? Effect.void
                 : Deferred.succeed(options.dispatched, undefined)
             ).pipe(
-              Effect.andThen(Deferred.succeed(refused, undefined)),
+              Effect.andThen(Deferred.await(gate)),
               Effect.andThen(
                 Effect.fail(EffectAcpErrors.AcpRequestError.internalError(AWAITING_ANSWER_ERROR)),
               ),
             );
           }
-          if (promptCalls === 3) {
+          if (promptCalls === 4) {
+            resentText = payload.prompt
+              .flatMap((block) => (block.type === "text" ? [block.text] : []))
+              .join("\n");
             return (
               options?.dispatched === undefined
                 ? Effect.void
@@ -6595,7 +6625,7 @@ describe("AcpAdapterV2", () => {
         ),
       );
       if (running.type !== "provider_turn.updated") return yield* Effect.die("Expected a turn");
-      // The question reached the agent but not T3 yet, so the steer went out and was refused.
+      // Two steers dispatch before the question reaches T3, then both refusals land.
       yield* harness.runtime.steerTurn({
         threadId: harness.threadId,
         runId: RunId.make(`run:${harness.threadId}:1`),
@@ -6604,15 +6634,29 @@ describe("AcpAdapterV2", () => {
         message: {
           createdBy: "agent",
           creationSource: "server",
-          messageId: MessageId.make("steer-refused-for-answer"),
-          text: "Delegated task completed",
+          messageId: MessageId.make("steer-refused-first"),
+          text: "First delegated task completed",
           attachments: [],
         },
       });
-      yield* Deferred.await(refused);
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: RunId.make(`run:${harness.threadId}:1`),
+        providerThread: harness.providerThread,
+        providerTurnId: running.providerTurn.id,
+        message: {
+          createdBy: "agent",
+          creationSource: "server",
+          messageId: MessageId.make("steer-refused-second"),
+          text: "Second delegated task completed",
+          attachments: [],
+        },
+      });
+      yield* Deferred.succeed(refusal1, undefined);
+      yield* Deferred.succeed(refusal2, undefined);
       yield* TestClock.adjust("500 millis");
-      // A second steer arriving during the retry wait must decline instead of superseding the first.
-      const secondDeclined = yield* harness.runtime
+      // A third steer arriving during the retry wait declines instead of superseding the held ones.
+      const thirdDeclined = yield* harness.runtime
         .steerTurn({
           threadId: harness.threadId,
           runId: RunId.make(`run:${harness.threadId}:1`),
@@ -6622,20 +6666,80 @@ describe("AcpAdapterV2", () => {
             createdBy: "agent",
             creationSource: "server",
             messageId: MessageId.make("steer-during-retry-wait"),
-            text: "Second steer",
+            text: "Third steer",
             attachments: [],
           },
         })
         .pipe(Effect.flip);
-      assert.equal(secondDeclined._tag, "ProviderAdapterSteerDeclinedError");
-      assert.equal(promptCalls, 2);
+      assert.equal(thirdDeclined._tag, "ProviderAdapterSteerDeclinedError");
+      assert.equal(promptCalls, 3);
       assert.isTrue(yield* harness.nextTurnRejected(2), "the refused steer ended the turn");
       yield* TestClock.adjust("500 millis");
       yield* Deferred.await(resent);
-      assert.equal(promptCalls, 3, "the refused steer was not sent again");
+      assert.equal(promptCalls, 4, "the refused steers were not sent again");
+      assert.isBelow(
+        resentText.indexOf("First delegated task completed"),
+        resentText.indexOf("Second delegated task completed"),
+        "both in-flight refused steers must be delivered in order",
+      );
+      assert.isAtLeast(resentText.indexOf("First delegated task completed"), 0);
       const [terminal] = yield* harness.terminals(1);
       assert.equal(terminal?.status, "completed");
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "keeps a live question attached to the incoming turn answerable instead of cancelling it",
+    () =>
+      Effect.gen(function* () {
+        const scope = yield* Effect.scope;
+        let promptCalls = 0;
+        let realPrompt:
+          | Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>
+          | undefined;
+        const cancelled = yield* Deferred.make<void>();
+        const questionVisible = yield* Deferred.make<void>();
+        const harness = yield* makePromptInactivityHarness({
+          environment: () => ({ T3_ACP_EMIT_ELICITATION: "1" }),
+          runtimeMode: "approval-required",
+          cancelled,
+          wrapPrompt: (prompt) => (payload, options) => {
+            promptCalls += 1;
+            if (promptCalls === 1) {
+              return Effect.gen(function* () {
+                realPrompt = yield* prompt(payload, options).pipe(Effect.forkIn(scope));
+                yield* Deferred.await(questionVisible);
+                return yield* EffectAcpErrors.AcpRequestError.internalError(AWAITING_ANSWER_ERROR);
+              });
+            }
+            return Fiber.join(realPrompt!);
+          },
+        });
+        yield* harness.startTurn(1);
+        const asked = Option.getOrThrow(
+          yield* harness.runtime.events.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+            ),
+            Stream.runHead,
+          ),
+        );
+        if (asked.type !== "turn_item.updated" || asked.turnItem.type !== "user_input_request") {
+          return yield* Effect.die("Expected a question");
+        }
+        yield* Deferred.succeed(questionVisible, undefined);
+        yield* TestClock.adjust("500 millis");
+        assert.isFalse(yield* Deferred.isDone(cancelled));
+        assert.equal(promptCalls, 1);
+
+        yield* harness.runtime.respondToRuntimeRequest({ requestId: asked.turnItem.requestId });
+        yield* TestClock.adjust("1 second");
+        const [terminal] = yield* harness.terminals(1);
+        assert.equal(terminal?.status, "completed");
+        assert.equal(promptCalls, 2);
+        assert.isFalse(yield* Deferred.isDone(cancelled));
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("sends no more prompts once a follow-up waiting on a busy agent is stopped", () =>
