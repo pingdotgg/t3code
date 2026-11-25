@@ -342,6 +342,8 @@ interface LiveSessionEntry {
   readonly linkedEnvironmentsByThread: ReadonlyMap<ThreadId, boolean | null>;
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
+  /** Tracks the team member whose MCP token owns this live process so warm sessions never cross members. */
+  readonly ownerActingMemberId: TeamMemberId | null;
   /** Tracks which team member's MCP token is bound to each attached thread so author switches recycle warm sessions. */
   readonly actingMemberIdByThread: ReadonlyMap<ThreadId, TeamMemberId | null>;
   readonly supportsMultipleProviderThreads: boolean;
@@ -584,17 +586,29 @@ export const layerWithOptions = (
       );
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
       const activeSessionIdByThread = yield* Ref.make(new Map<ThreadId, ProviderSessionId>());
+      const MEMBER_SESSION_SEPARATOR = "::member:";
+      const canonicalBaseSessionId = (id: ProviderSessionId): ProviderSessionId => {
+        const raw = String(id);
+        const idx = raw.indexOf(MEMBER_SESSION_SEPARATOR);
+        return idx === -1 ? id : ProviderSessionId.make(raw.slice(0, idx));
+      };
       const memberScopedSessionId = (
         base: ProviderSessionId,
         actingMemberId: TeamMemberId,
-      ): ProviderSessionId => ProviderSessionId.make(`${base}::member:${actingMemberId}`);
+      ): ProviderSessionId =>
+        ProviderSessionId.make(
+          `${canonicalBaseSessionId(base)}${MEMBER_SESSION_SEPARATOR}${actingMemberId}`,
+        );
       const resolveThreadSessionId = (
         byThread: ReadonlyMap<ThreadId, ProviderSessionId>,
         base: ProviderSessionId,
         threadId: ThreadId,
       ): ProviderSessionId => {
+        const canonicalBase = canonicalBaseSessionId(base);
         const activeForThread = byThread.get(threadId);
-        return activeForThread !== undefined && activeForThread.startsWith(`${base}::member:`)
+        return activeForThread !== undefined &&
+          (activeForThread === canonicalBase ||
+            activeForThread.startsWith(`${canonicalBase}${MEMBER_SESSION_SEPARATOR}`))
           ? activeForThread
           : base;
       };
@@ -602,8 +616,8 @@ export const layerWithOptions = (
         current: ReadonlyMap<string, LiveSessionEntry>,
         base: ProviderSessionId,
       ): ReadonlyArray<ProviderSessionId> => {
-        const baseKey = sessionKey(base);
-        const prefix = `${baseKey}::member:`;
+        const baseKey = sessionKey(canonicalBaseSessionId(base));
+        const prefix = `${baseKey}${MEMBER_SESSION_SEPARATOR}`;
         const matched: Array<ProviderSessionId> = [];
         for (const [key, entry] of current) {
           if (key === baseKey || key.startsWith(prefix)) {
@@ -3324,9 +3338,10 @@ export const layerWithOptions = (
 
       return ProviderSessionManagerV2.of({
         shutdown,
-        open: (input) =>
-          sessionOpen.withLock(
-            input.providerSessionId,
+        open: (input) => {
+          const baseSessionId = canonicalBaseSessionId(input.providerSessionId);
+          return sessionOpen.withLock(
+            baseSessionId,
             Effect.gen(function* () {
               if (teamHubOnly) {
                 return yield* new ProviderSessionOpenError({
@@ -3383,29 +3398,55 @@ export const layerWithOptions = (
                       threadId: input.threadId,
                       runtime: liveAfterLinks.runtime,
                     });
+                    yield* Ref.update(activeSessionIdByThread, (current) => {
+                      if (current.get(input.threadId) !== previousSessionId) return current;
+                      const next = new Map(current);
+                      next.delete(input.threadId);
+                      return next;
+                    });
                     yield* clearMcpSession(input.threadId, previousCredentialId);
                   }
                 }
               }
-              const baseEntry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+              const currentSessions = yield* Ref.get(sessions);
+              const baseEntry = currentSessions.get(sessionKey(baseSessionId));
+              const hasOtherMember = (entry: LiveSessionEntry, member: TeamMemberId | null) =>
+                entry.ownerActingMemberId !== member ||
+                [...entry.actingMemberIdByThread.values()].some(
+                  (existingMember) => existingMember !== member,
+                );
+              const memberSessionId =
+                input.actingMemberId !== undefined && input.actingMemberId !== null
+                  ? memberScopedSessionId(baseSessionId, input.actingMemberId)
+                  : undefined;
+              const existingMemberEntry =
+                memberSessionId === undefined
+                  ? undefined
+                  : currentSessions.get(sessionKey(memberSessionId));
               const baseOccupiedByOtherMember =
                 input.actingMemberId !== undefined &&
-                input.actingMemberId !== null &&
                 baseEntry !== undefined &&
-                [...baseEntry.actingMemberIdByThread.values()].some(
-                  (member) => member !== input.actingMemberId,
-                );
-              // Isolate multi-thread sessions by acting member so an author switch never reuses
-              // another member's warm process even when sibling threads remain attached or busy.
+                hasOtherMember(baseEntry, input.actingMemberId);
+              // Isolate multi-thread sessions by canonical base + acting member so author switches
+              // never nest `::member:` suffixes or collide with another member's warm process.
               const effectiveProviderSessionId =
-                baseOccupiedByOtherMember &&
-                input.actingMemberId !== undefined &&
-                input.actingMemberId !== null
-                  ? memberScopedSessionId(input.providerSessionId, input.actingMemberId)
-                  : input.providerSessionId;
+                memberSessionId !== undefined &&
+                (existingMemberEntry !== undefined || baseOccupiedByOtherMember)
+                  ? memberSessionId
+                  : baseSessionId;
               const key = sessionKey(effectiveProviderSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
+                if (
+                  input.actingMemberId !== undefined &&
+                  hasOtherMember(existing, input.actingMemberId)
+                ) {
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: effectiveProviderSessionId,
+                    cause: `Provider session ${effectiveProviderSessionId} is already bound to another team member.`,
+                  });
+                }
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {
                   return yield* new ProviderSessionOpenError({
@@ -3526,6 +3567,7 @@ export const layerWithOptions = (
                   mcpCredentialId === undefined
                     ? new Map()
                     : new Map([[input.threadId, mcpCredentialId]]),
+                ownerActingMemberId: input.actingMemberId ?? null,
                 actingMemberIdByThread: new Map([[input.threadId, input.actingMemberId ?? null]]),
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
@@ -3580,7 +3622,8 @@ export const layerWithOptions = (
               yield* scheduleIdleRelease(effectiveProviderSessionId);
               return exposedRuntime;
             }),
-          ),
+          );
+        },
         isLive: (providerSessionId) =>
           Ref.get(sessions).pipe(
             Effect.map((current) => matchingSessionIds(current, providerSessionId).length > 0),
@@ -3735,12 +3778,13 @@ export const layerWithOptions = (
         ),
         detach: Effect.fn("ProviderSessionManager.detach")(
           function* (input) {
-            const activeForThread = (yield* Ref.get(activeSessionIdByThread)).get(input.threadId);
-            const effectiveSessionId =
-              activeForThread !== undefined &&
-              activeForThread.startsWith(`${input.providerSessionId}::member:`)
-                ? activeForThread
-                : input.providerSessionId;
+            const byThread = yield* Ref.get(activeSessionIdByThread);
+            const activeForThread = byThread.get(input.threadId);
+            const effectiveSessionId = resolveThreadSessionId(
+              byThread,
+              input.providerSessionId,
+              input.threadId,
+            );
             if (activeForThread === effectiveSessionId) {
               yield* Ref.update(activeSessionIdByThread, (current) => {
                 if (current.get(input.threadId) !== effectiveSessionId) return current;
@@ -3762,7 +3806,11 @@ export const layerWithOptions = (
               if (Option.isSome(projection)) {
                 const providerThreads = new Map(
                   projection.value.providerThreads
-                    .filter((thread) => thread.providerSessionId === input.providerSessionId)
+                    .filter(
+                      (thread) =>
+                        thread.providerSessionId === effectiveSessionId ||
+                        thread.providerSessionId === input.providerSessionId,
+                    )
                     .map((thread) => [thread.id, thread] as const),
                 );
                 detachedProviderThreads = [...providerThreads.values()];
@@ -3813,6 +3861,8 @@ export const layerWithOptions = (
               loadedProviderThreadKeyByThread.delete(input.threadId);
               const linkedEnvironmentsByThread = new Map(entry.linkedEnvironmentsByThread);
               linkedEnvironmentsByThread.delete(input.threadId);
+              const actingMemberIdByThread = new Map(entry.actingMemberIdByThread);
+              actingMemberIdByThread.delete(input.threadId);
               const mcpCredentialIdByThread =
                 input.revokeMcpCredential === true
                   ? (() => {
@@ -3833,6 +3883,7 @@ export const layerWithOptions = (
                 attachedThreadIds,
                 loadedProviderThreadKeyByThread,
                 linkedEnvironmentsByThread,
+                actingMemberIdByThread,
                 mcpCredentialIdByThread,
                 idleThreadUnloads,
               };
@@ -3924,12 +3975,11 @@ export const layerWithOptions = (
         forgetLoadedProviderThread: (input) =>
           Ref.get(activeSessionIdByThread).pipe(
             Effect.flatMap((byThread) => {
-              const activeForThread = byThread.get(input.threadId);
-              const effectiveSessionId =
-                activeForThread !== undefined &&
-                activeForThread.startsWith(`${input.providerSessionId}::member:`)
-                  ? activeForThread
-                  : input.providerSessionId;
+              const effectiveSessionId = resolveThreadSessionId(
+                byThread,
+                input.providerSessionId,
+                input.threadId,
+              );
               return Ref.update(sessions, (current) => {
                 const key = sessionKey(effectiveSessionId);
                 const entry = current.get(key);

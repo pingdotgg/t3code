@@ -6385,6 +6385,271 @@ it.effect(
 );
 
 it.effect(
+  "ProviderSessionManagerV2 canonicalizes member-scoped providerSessionId across successive author switches without nesting or cross-member reuse",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const aliceId = TeamMemberId.make("member-alice-canon");
+      const bobId = TeamMemberId.make("member-bob-canon");
+      const charlieId = TeamMemberId.make("member-charlie-canon");
+      const thread1 = ThreadId.make("thread-canon-1");
+      const thread2 = ThreadId.make("thread-canon-2");
+      const thread3 = ThreadId.make("thread-canon-3");
+      const thread4 = ThreadId.make("thread-canon-4");
+      const turnHold = yield* Deferred.make<void>();
+
+      yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const mcpRegistry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const baseSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: thread1, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: thread2, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: thread3, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: thread4, now }),
+          ],
+        });
+
+        // 1. Alice holds T1 and busy T2 on the canonical base session.
+        const aliceRuntime = yield* manager.open({
+          threadId: thread1,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: aliceId,
+        });
+        yield* manager.open({
+          threadId: thread2,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: aliceId,
+        });
+        const aliceBusyRunId = idAllocator.derive.run({ threadId: thread2, ordinal: 1 });
+        const aliceBusyFiber = yield* Effect.forkChild(
+          aliceRuntime.startTurn({
+            appThread: (yield* projectionStore.getThreadProjection(thread2)).thread,
+            threadId: thread2,
+            runId: aliceBusyRunId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId: aliceBusyRunId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId: aliceBusyRunId }),
+            providerThread: makeProviderThread({
+              idAllocator,
+              threadId: thread2,
+              providerSessionId: baseSessionId,
+              now,
+            }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make("msg-canon-alice-t2"),
+              text: "Keep Alice busy on T2",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          }),
+        );
+        yield* Effect.yieldNow;
+
+        // 2. Bob switches onto T1 -> spawns base::member:bob (persisted onto T1's provider thread).
+        const bobRuntime1 = yield* manager.open({
+          threadId: thread1,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: bobId,
+        });
+        assert.strictEqual(
+          String(bobRuntime1.providerSessionId),
+          `${baseSessionId}::member:${bobId}`,
+        );
+
+        // 3. Charlie switches onto T1 passing the persisted member-scoped ID (base::member:bob).
+        // Must recycle Bob's idle session and spawn base::member:charlie (NOT under base::member:bob
+        // and NOT nested as base::member:bob::member:charlie).
+        const charlieRuntime = yield* manager.open({
+          threadId: thread1,
+          providerSessionId: bobRuntime1.providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: charlieId,
+        });
+        assert.strictEqual(
+          String(charlieRuntime.providerSessionId),
+          `${baseSessionId}::member:${charlieId}`,
+        );
+        assert.notStrictEqual(charlieRuntime, bobRuntime1);
+        assert.notStrictEqual(charlieRuntime, aliceRuntime);
+        assert.strictEqual((yield* Ref.get(state)).closeCount, 1);
+
+        // 4. Bob opens T3 passing the base session ID -> must spawn a brand-new base::member:bob
+        // and NEVER attach to Charlie's live process.
+        const bobRuntime3 = yield* manager.open({
+          threadId: thread3,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: bobId,
+        });
+        assert.strictEqual(
+          String(bobRuntime3.providerSessionId),
+          `${baseSessionId}::member:${bobId}`,
+        );
+        assert.notStrictEqual(bobRuntime3, charlieRuntime);
+        assert.notStrictEqual(bobRuntime3, aliceRuntime);
+        const bobToken3 = (yield* Ref.get(mcpConfigs))
+          .at(-1)
+          ?.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.isDefined(bobToken3);
+        assert.strictEqual((yield* mcpRegistry.resolve(bobToken3!))?.thread.actingMemberId, bobId);
+
+        // 5. Bob attaches T4 to his live base::member:bob while T3 is busy, then Charlie switches
+        // onto T4 passing bobRuntime3.providerSessionId -> reuses Charlie's base::member:charlie
+        // without nesting or disturbing Alice's T2 or Bob's T3.
+        const bobRuntime4 = yield* manager.open({
+          threadId: thread4,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: bobId,
+        });
+        assert.strictEqual(bobRuntime4, bobRuntime3);
+        const bobBusyRunId = idAllocator.derive.run({ threadId: thread3, ordinal: 1 });
+        const bobBusyFiber = yield* Effect.forkChild(
+          bobRuntime3.startTurn({
+            appThread: (yield* projectionStore.getThreadProjection(thread3)).thread,
+            threadId: thread3,
+            runId: bobBusyRunId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId: bobBusyRunId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId: bobBusyRunId }),
+            providerThread: makeProviderThread({
+              idAllocator,
+              threadId: thread3,
+              providerSessionId: bobRuntime3.providerSessionId,
+              now,
+            }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make("msg-canon-bob-t3"),
+              text: "Keep Bob busy on T3",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          }),
+        );
+        yield* Effect.yieldNow;
+
+        const charlieRuntime4 = yield* manager.open({
+          threadId: thread4,
+          providerSessionId: bobRuntime3.providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: charlieId,
+        });
+        assert.strictEqual(charlieRuntime4, charlieRuntime);
+        assert.strictEqual(
+          Option.getOrUndefined(yield* manager.get(baseSessionId, thread4)),
+          charlieRuntime,
+        );
+        assert.strictEqual(
+          Option.getOrUndefined(yield* manager.get(baseSessionId, thread3)),
+          bobRuntime3,
+        );
+        assert.strictEqual(
+          Option.getOrUndefined(yield* manager.get(baseSessionId, thread2)),
+          aliceRuntime,
+        );
+
+        yield* Deferred.succeed(turnHold, undefined);
+        yield* Fiber.join(aliceBusyFiber);
+        yield* Fiber.join(bobBusyFiber);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            mcpConfigs,
+            capabilities: CodexCapabilities,
+            startTurn: Deferred.await(turnHold),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 refuses attaching a different member to an empty warm multi-thread session after detach",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const aliceId = TeamMemberId.make("member-alice-detach");
+      const bobId = TeamMemberId.make("member-bob-detach");
+      const thread1 = ThreadId.make("thread-detach-1");
+
+      yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const baseSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: thread1, now })],
+        });
+
+        const aliceRuntime = yield* manager.open({
+          threadId: thread1,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: aliceId,
+        });
+        // Multi-thread session stays warm after detach until idle release.
+        yield* manager.detach({ providerSessionId: baseSessionId, threadId: thread1 });
+        assert.isTrue(yield* manager.isLive(baseSessionId));
+
+        // Bob opens T1 while Alice's empty warm process is still live -> must isolate to Bob.
+        const bobRuntime = yield* manager.open({
+          threadId: thread1,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: bobId,
+        });
+        assert.notStrictEqual(bobRuntime, aliceRuntime);
+        assert.strictEqual(
+          String(bobRuntime.providerSessionId),
+          `${baseSessionId}::member:${bobId}`,
+        );
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            capabilities: CodexCapabilities,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 refuses opening local agent sessions in --team-hub-only mode",
   () =>
     Effect.gen(function* () {

@@ -973,7 +973,7 @@ export const layer: Layer.Layer<
       const abandonedTurns = abandonedProviderTurns(projection, run, providerThread.id);
       const abandonedTurn = abandonedTurns.at(-1)?.turn;
       if (abandonedTurn !== undefined) {
-        const liveSession = yield* providerSessions.get(providerSessionId);
+        const liveSession = yield* providerSessions.get(providerSessionId, projection.thread.id);
         if (Option.isSome(liveSession)) {
           // The run already ended without stopping its provider — a failed start, an
           // ignored Stop, or an interrupt that never confirmed. Recover that exact
