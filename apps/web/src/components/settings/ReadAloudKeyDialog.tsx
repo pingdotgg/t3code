@@ -124,15 +124,23 @@ export function ReadAloudKeyDialog({
                 : gt("Read replies aloud with {name}?", { name })}
           </DialogTitle>
           <DialogDescription>
-            {remove
-              ? gt(
-                  "Everyone using {company} for dictation or read aloud on {environment} will lose access.",
-                  { company, environment: environment.label },
-                )
-              : gt(
-                  "Replies you play are sent to {company} through {environment}, which bills its API key. The key is shared with dictation.",
-                  { company, environment: environment.label },
-                )}
+            {remove ? (
+              <T>
+                Everyone using <Var>{company}</Var> for dictation or read aloud on{" "}
+                <strong className="font-medium text-foreground">
+                  <Var>{environment.label}</Var>
+                </strong>{" "}
+                will lose access.
+              </T>
+            ) : (
+              <T>
+                Replies you play are sent to <Var>{company}</Var> through{" "}
+                <strong className="font-medium text-foreground">
+                  <Var>{environment.label}</Var>
+                </strong>
+                , which bills its API key. The key is shared with dictation.
+              </T>
+            )}
           </DialogDescription>
         </DialogHeader>
         {!remove && (
@@ -206,16 +214,16 @@ export function ReadAloudKeyDialog({
                     )}
                   </div>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  {draft.trim() && !credential
-                    ? (source?.invalidReferenceMessage ??
-                      gt("Enter an API key, not a URL or secret reference."))
-                    : active
-                      ? gt("Updating the key keeps read aloud on.")
-                      : gt("Anyone with access to {environment} can bill this key.", {
-                          environment: environment.label,
-                        })}
-                </p>
+                {draft.trim() && !credential ? (
+                  <p className="text-sm text-muted-foreground">
+                    {source?.invalidReferenceMessage ??
+                      gt("Enter an API key, not a URL or secret reference.")}
+                  </p>
+                ) : active ? (
+                  <p className="text-sm text-muted-foreground">
+                    {gt("Updating the key keeps read aloud on.")}
+                  </p>
+                ) : null}
               </form>
             ) : !saved ? (
               <p>

@@ -7933,7 +7933,6 @@
   "7aa0d5470ed46175": "Gib einen API-Schlüssel ein, keine URL oder Geheimnisreferenz.",
   "dad7aceef19f0f5b": "Beim Aktualisieren des Schlüssels bleibt das Diktat aktiviert.",
   "015e394f14d5ede0": "Leer lassen, um den gespeicherten Schlüssel zu behalten.",
-  "0a9e4d44c145cd07": "Alle mit Diktat-Zugriff auf {environment} können über diesen Schlüssel abrechnen.",
   "55803224ee096dc0": "{company}-Schlüssel entfernen?",
   "0a7813c7df04ffe9": "OpenRouter-Diktat verwalten",
   "9996968084688efe": "{company}-Schlüssel verwalten",
@@ -12929,7 +12928,6 @@
   "09bc28a37e6caf92": "Wird einmal in die ausgewählte Umgebung heruntergeladen, die Antworten vorliest, ohne dass der Text sie verlässt.",
   "0097b134ae6e9d9c": "Vorlese-Schlüssel verwalten",
   "44e370c9cc900c63": "Vorlese-Modell",
-  "6e58953ca9c7fad5": "Alle mit Zugriff auf {environment} können über diesen Schlüssel abrechnen.",
   "f7323911c24ed501": "Standard",
   "c2be8693c77597a3": "{size} Download.",
   "eae80365006fbe17": "Ohne Angabe wird die Standardstimme des Anbieters verwendet.",
@@ -12940,7 +12938,6 @@
   "88f2bec553b72827": "Vorschau abspielen",
   "d33ab3b324ba0b36": "Vorlese-Modelle",
   "2d2ee6c94580e79f": "Wählen Sie ein Sprachmodell aus dem Katalog des Anbieters.",
-  "bfbaa4965c146e7c": "Alle, die {company} auf {environment} zum Diktieren oder Vorlesen nutzen, verlieren den Zugriff.",
   "bff81cb00fc73544": "Wiedergabegeschwindigkeit.",
   "6793112a0a873441": "Schlüssel verwalten",
   "b9c9fc9b61d7243e": "Standardstimme",
@@ -12949,7 +12946,6 @@
   "4b009ef01c76df8e": "Das ist T3 Code. Die Antwort Ihres Agenten kann jetzt vorgelesen werden.",
   "09f85302ef58020c": "Wenn Sie den Schlüssel aktualisieren, bleibt Vorlesen aktiviert.",
   "bec2c35646e0496a": "Vorschau",
-  "b9e06e668bd9bff0": "Antworten, die Sie abspielen, werden über {environment} an {company} gesendet und über dessen API-Schlüssel abgerechnet. Der Schlüssel wird mit dem Diktat geteilt.",
   "236b7b3f5ff18a4d": "tts text to speech sprachausgabe vorlesen sprechen stimme wiedergabe Grok OpenRouter ElevenLabs",
   "9fa6e93a8218ad60": "Stimme",
   "17076b27f1f3ada5": "Aus",
@@ -13049,5 +13045,43 @@
   "e5ad64bb69db1045": "Vorlesen pausieren",
   "d8e91bcf106d3bca": "Vorlesen wird vorbereitet",
   "d5a4a3f4c97e473c": "Wird vorgelesen",
-  "53dac468c9738c4e": "Zur aktuellen Stelle"
+  "53dac468c9738c4e": "Zur aktuellen Stelle",
+  "9bb4c18ca561c5c7": [
+    "Alle, die ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " auf ",
+    {
+      "t": "strong",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    " zum Diktieren oder Vorlesen nutzen, verlieren den Zugriff."
+  ],
+  "57f3bffc6b444c3d": [
+    "Antworten, die Sie abspielen, werden über ",
+    {
+      "t": "strong",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    " an ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " gesendet und über dessen API-Schlüssel abgerechnet. Der Schlüssel wird mit dem Diktat geteilt."
+  ]
 }

@@ -7940,7 +7940,6 @@
   "7aa0d5470ed46175": "Enter an API key, not a URL or secret reference.",
   "dad7aceef19f0f5b": "Updating the key keeps dictation enabled.",
   "015e394f14d5ede0": "Leave blank to keep the saved key.",
-  "0a9e4d44c145cd07": "Anyone with dictation access to {environment} can bill this key.",
   "55803224ee096dc0": "Remove the {company} key?",
   "0a7813c7df04ffe9": "Manage OpenRouter dictation",
   "9996968084688efe": "Manage {company} key",
@@ -12938,7 +12937,6 @@
   "09bc28a37e6caf92": "Downloaded once to the selected environment, which reads replies without the text leaving it.",
   "0097b134ae6e9d9c": "Manage read-aloud key",
   "44e370c9cc900c63": "Read-aloud model",
-  "6e58953ca9c7fad5": "Anyone with access to {environment} can bill this key.",
   "f7323911c24ed501": "Default",
   "c2be8693c77597a3": "{size} download.",
   "eae80365006fbe17": "An empty value uses the provider’s default voice.",
@@ -12949,7 +12947,6 @@
   "88f2bec553b72827": "Play preview",
   "d33ab3b324ba0b36": "Read-aloud models",
   "2d2ee6c94580e79f": "Choose a speech model from the provider catalog.",
-  "bfbaa4965c146e7c": "Everyone using {company} for dictation or read aloud on {environment} will lose access.",
   "bff81cb00fc73544": "Playback speed.",
   "6793112a0a873441": "Manage key",
   "b9c9fc9b61d7243e": "Default voice",
@@ -12958,7 +12955,6 @@
   "4b009ef01c76df8e": "This is T3 Code. Your agent’s response is ready to read aloud.",
   "09f85302ef58020c": "Updating the key keeps read aloud on.",
   "bec2c35646e0496a": "Preview",
-  "b9e06e668bd9bff0": "Replies you play are sent to {company} through {environment}, which bills its API key. The key is shared with dictation.",
   "236b7b3f5ff18a4d": "tts text to speech speak read aloud Grok OpenRouter ElevenLabs voice playback",
   "9fa6e93a8218ad60": "Voice",
   "17076b27f1f3ada5": "Off",
@@ -13058,5 +13054,46 @@
   "e5ad64bb69db1045": "Pause reading",
   "d8e91bcf106d3bca": "Preparing to read",
   "d5a4a3f4c97e473c": "Reading aloud",
-  "53dac468c9738c4e": "Jump to current"
+  "53dac468c9738c4e": "Jump to current",
+  "9bb4c18ca561c5c7": [
+    "Everyone using ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " for dictation or read aloud on",
+    " ",
+    {
+      "t": "strong",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    " ",
+    "will lose access."
+  ],
+  "57f3bffc6b444c3d": [
+    "Replies you play are sent to ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " through",
+    " ",
+    {
+      "t": "strong",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    ", which bills its API key. The key is shared with dictation."
+  ]
 }

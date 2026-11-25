@@ -7932,7 +7932,6 @@
   "7aa0d5470ed46175": "Introduce una clave de API, no una URL ni una referencia a un secreto.",
   "dad7aceef19f0f5b": "Actualizar la clave mantiene el dictado activado.",
   "015e394f14d5ede0": "Déjalo en blanco para conservar la clave guardada.",
-  "0a9e4d44c145cd07": "Cualquiera con acceso al dictado en {environment} puede cargar costes a esta clave.",
   "55803224ee096dc0": "¿Quitar la clave de {company}?",
   "0a7813c7df04ffe9": "Gestionar el dictado con OpenRouter",
   "9996968084688efe": "Gestionar la clave de {company}",
@@ -12924,7 +12923,6 @@
   "09bc28a37e6caf92": "Se descarga una vez en el entorno seleccionado, que lee las respuestas sin que el texto salga de él.",
   "0097b134ae6e9d9c": "Gestionar la clave de lectura en voz alta",
   "44e370c9cc900c63": "Modelo de lectura en voz alta",
-  "6e58953ca9c7fad5": "Cualquiera con acceso a {environment} puede cargar costes a esta clave.",
   "f7323911c24ed501": "Predeterminada",
   "c2be8693c77597a3": "Descarga de {size}.",
   "eae80365006fbe17": "Si se deja vacío, se usa la voz predeterminada del proveedor.",
@@ -12935,7 +12933,6 @@
   "88f2bec553b72827": "Reproducir vista previa",
   "d33ab3b324ba0b36": "Modelos de lectura en voz alta",
   "2d2ee6c94580e79f": "Elige un modelo de voz del catálogo del proveedor.",
-  "bfbaa4965c146e7c": "Todas las personas que usan {company} para dictado o lectura en voz alta en {environment} perderán el acceso.",
   "bff81cb00fc73544": "Velocidad de reproducción.",
   "6793112a0a873441": "Gestionar clave",
   "b9c9fc9b61d7243e": "Voz predeterminada",
@@ -12944,7 +12941,6 @@
   "4b009ef01c76df8e": "Esto es T3 Code. La respuesta de tu agente está lista para leerse en voz alta.",
   "09f85302ef58020c": "Actualizar la clave mantiene activada la lectura en voz alta.",
   "bec2c35646e0496a": "Vista previa",
-  "b9e06e668bd9bff0": "Las respuestas que reproduces se envían a {company} a través de {environment}, que paga con su clave de API. La clave se comparte con el dictado.",
   "236b7b3f5ff18a4d": "tts texto a voz hablar leer en voz alta voz reproducción Grok OpenRouter ElevenLabs",
   "9fa6e93a8218ad60": "Voz",
   "17076b27f1f3ada5": "Desactivado",
@@ -13044,5 +13040,43 @@
   "e5ad64bb69db1045": "Pausar la lectura",
   "d8e91bcf106d3bca": "Preparando la lectura",
   "d5a4a3f4c97e473c": "Leyendo en voz alta",
-  "53dac468c9738c4e": "Ir a la posición actual"
+  "53dac468c9738c4e": "Ir a la posición actual",
+  "9bb4c18ca561c5c7": [
+    "Todas las personas que usan ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " para dictado o lectura en voz alta en ",
+    {
+      "t": "strong",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    " perderán el acceso."
+  ],
+  "57f3bffc6b444c3d": [
+    "Las respuestas que reproduces se envían a ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " a través de ",
+    {
+      "t": "strong",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    ", que paga con su clave de API. La clave se comparte con el dictado."
+  ]
 }

@@ -312,18 +312,18 @@ export function CloudVoiceConfiguration({
           )}
         </div>
       </div>
-      <p className="text-sm text-muted-foreground">
-        {draft.trim() && !credential
-          ? (source?.invalidReferenceMessage ??
-            gt("Enter an API key, not a URL or secret reference."))
-          : active && !routed
-            ? gt("Updating the key keeps dictation enabled.")
-            : routed && saved
-              ? gt("Leave blank to keep the saved key.")
-              : gt("Anyone with dictation access to {environment} can bill this key.", {
-                  environment: environment.label,
-                })}
-      </p>
+      {draft.trim() && !credential ? (
+        <p className="text-sm text-muted-foreground">
+          {source?.invalidReferenceMessage ??
+            gt("Enter an API key, not a URL or secret reference.")}
+        </p>
+      ) : active && !routed ? (
+        <p className="text-sm text-muted-foreground">
+          {gt("Updating the key keeps dictation enabled.")}
+        </p>
+      ) : routed && saved ? (
+        <p className="text-sm text-muted-foreground">{gt("Leave blank to keep the saved key.")}</p>
+      ) : null}
     </>
   );
 

@@ -7938,7 +7938,6 @@
   "7aa0d5470ed46175": "Ange en API-nyckel, inte en URL eller en hemlighetsreferens.",
   "dad7aceef19f0f5b": "Om du uppdaterar nyckeln förblir diktering aktiverad.",
   "015e394f14d5ede0": "Lämna tomt för att behålla den sparade nyckeln.",
-  "0a9e4d44c145cd07": "Alla med dikteringsåtkomst till {environment} kan debitera den här nyckeln.",
   "55803224ee096dc0": "Ta bort nyckeln för {company}?",
   "0a7813c7df04ffe9": "Hantera diktering med OpenRouter",
   "9996968084688efe": "Hantera nyckel för {company}",
@@ -12936,7 +12935,6 @@
   "09bc28a37e6caf92": "Laddas ned en gång till den valda miljön, som läser upp svar utan att texten lämnar den.",
   "0097b134ae6e9d9c": "Hantera uppläsningsnyckel",
   "44e370c9cc900c63": "Uppläsningsmodell",
-  "6e58953ca9c7fad5": "Alla med åtkomst till {environment} kan debitera den här nyckeln.",
   "f7323911c24ed501": "Standard",
   "c2be8693c77597a3": "{size} att ladda ned.",
   "eae80365006fbe17": "Ett tomt värde använder leverantörens standardröst.",
@@ -12947,7 +12945,6 @@
   "88f2bec553b72827": "Spela upp förhandsvisning",
   "d33ab3b324ba0b36": "Uppläsningsmodeller",
   "2d2ee6c94580e79f": "Välj en talmodell från leverantörens katalog.",
-  "bfbaa4965c146e7c": "Alla som använder {company} för diktering eller uppläsning på {environment} förlorar åtkomsten.",
   "bff81cb00fc73544": "Uppspelningshastighet.",
   "6793112a0a873441": "Hantera nyckel",
   "b9c9fc9b61d7243e": "Standardröst",
@@ -12956,7 +12953,6 @@
   "4b009ef01c76df8e": "Det här är T3 Code. Agentens svar är redo att läsas upp.",
   "09f85302ef58020c": "Uppläsningen förblir på när du uppdaterar nyckeln.",
   "bec2c35646e0496a": "Förhandsvisning",
-  "b9e06e668bd9bff0": "Svar som du spelar upp skickas till {company} via {environment}, som debiterar sin API-nyckel. Nyckeln delas med dikteringen.",
   "236b7b3f5ff18a4d": "tts text till tal uppläsning läs upp röst uppspelning Grok OpenRouter ElevenLabs",
   "9fa6e93a8218ad60": "Röst",
   "17076b27f1f3ada5": "Av",
@@ -13056,5 +13052,43 @@
   "e5ad64bb69db1045": "Pausa uppläsningen",
   "d8e91bcf106d3bca": "Förbereder uppläsning",
   "d5a4a3f4c97e473c": "Läser upp",
-  "53dac468c9738c4e": "Gå till aktuell plats"
+  "53dac468c9738c4e": "Gå till aktuell plats",
+  "9bb4c18ca561c5c7": [
+    "Alla som använder ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " för diktering eller uppläsning på ",
+    {
+      "t": "strong",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    " förlorar åtkomsten."
+  ],
+  "57f3bffc6b444c3d": [
+    "Svar som du spelar upp skickas till ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " via ",
+    {
+      "t": "strong",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    ", som debiterar sin API-nyckel. Nyckeln delas med dikteringen."
+  ]
 }

@@ -7932,7 +7932,6 @@
   "7aa0d5470ed46175": "Informe uma chave de API, não uma URL nem uma referência de segredo.",
   "dad7aceef19f0f5b": "Atualizar a chave mantém o ditado ativado.",
   "015e394f14d5ede0": "Deixe em branco para manter a chave salva.",
-  "0a9e4d44c145cd07": "Qualquer pessoa com acesso ao ditado em {environment} pode gerar cobranças nesta chave.",
   "55803224ee096dc0": "Remover a chave da {company}?",
   "0a7813c7df04ffe9": "Gerenciar o ditado do OpenRouter",
   "9996968084688efe": "Gerenciar a chave da {company}",
@@ -12929,7 +12928,6 @@
   "09bc28a37e6caf92": "Baixado uma vez no ambiente selecionado, que lê as respostas sem que o texto saia dele.",
   "0097b134ae6e9d9c": "Gerenciar chave de leitura em voz alta",
   "44e370c9cc900c63": "Modelo de leitura em voz alta",
-  "6e58953ca9c7fad5": "Qualquer pessoa com acesso a {environment} pode gerar cobranças nesta chave.",
   "f7323911c24ed501": "Padrão",
   "c2be8693c77597a3": "Download de {size}.",
   "eae80365006fbe17": "Um valor vazio usa a voz padrão do provedor.",
@@ -12940,7 +12938,6 @@
   "88f2bec553b72827": "Reproduzir prévia",
   "d33ab3b324ba0b36": "Modelos de leitura em voz alta",
   "2d2ee6c94580e79f": "Escolha um modelo de voz do catálogo do provedor.",
-  "bfbaa4965c146e7c": "Todos que usam {company} para ditado ou leitura em voz alta em {environment} perderão o acesso.",
   "bff81cb00fc73544": "Velocidade de reprodução.",
   "6793112a0a873441": "Gerenciar chave",
   "b9c9fc9b61d7243e": "Voz padrão",
@@ -12949,7 +12946,6 @@
   "4b009ef01c76df8e": "Este é o T3 Code. A resposta do seu agente está pronta para ser lida em voz alta.",
   "09f85302ef58020c": "Atualizar a chave mantém a leitura em voz alta ativada.",
   "bec2c35646e0496a": "Prévia",
-  "b9e06e668bd9bff0": "As respostas que você reproduz são enviadas à {company} por meio de {environment}, que cobra na chave de API dele. A chave é compartilhada com o ditado.",
   "236b7b3f5ff18a4d": "tts texto para fala ler em voz alta voz reprodução Grok OpenRouter ElevenLabs",
   "9fa6e93a8218ad60": "Voz",
   "17076b27f1f3ada5": "Desativado",
@@ -13049,5 +13045,43 @@
   "e5ad64bb69db1045": "Pausar a leitura",
   "d8e91bcf106d3bca": "Preparando a leitura",
   "d5a4a3f4c97e473c": "Lendo em voz alta",
-  "53dac468c9738c4e": "Ir para o trecho atual"
+  "53dac468c9738c4e": "Ir para o trecho atual",
+  "9bb4c18ca561c5c7": [
+    "Todos que usam ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " para ditado ou leitura em voz alta em ",
+    {
+      "t": "strong",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    " perderão o acesso."
+  ],
+  "57f3bffc6b444c3d": [
+    "As respostas que você reproduz são enviadas à ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " por meio de ",
+    {
+      "t": "strong",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    ", que cobra na chave de API dele. A chave é compartilhada com o ditado."
+  ]
 }

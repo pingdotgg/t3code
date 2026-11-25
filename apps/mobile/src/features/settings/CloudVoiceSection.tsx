@@ -395,13 +395,9 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
             ? gt(
                 "Uses the API key saved on this environment. The model choice applies only to this device.",
               )
-            : gt("Anyone with dictation access to {environment} can bill this key.", {
-                environment: environment.label,
-              })
+            : undefined
           : editing.enable
-            ? gt("Anyone with dictation access to {environment} can bill this key.", {
-                environment: environment.label,
-              })
+            ? undefined
             : gt(
                 "Updates the {company} key on {environment}. Your dictation destination stays the same.",
                 { company, environment: environment.label },

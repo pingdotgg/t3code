@@ -3301,7 +3301,6 @@
   "0c5f24ba4be2d212": "{provider} verwenden",
   "5e7930d71a5c7f7c": "Gib einen gültigen API-Schlüssel ein.",
   "7d8a206fd3f67264": "Verwendet den in dieser Umgebung gespeicherten API-Schlüssel. Die Modellwahl gilt nur für dieses Gerät.",
-  "0a9e4d44c145cd07": "Alle mit Diktat-Zugriff auf {environment} können über diesen Schlüssel abrechnen.",
   "df7658221f3e8971": "Aktualisiert den {company}-Schlüssel auf {environment}. Dein Diktierziel bleibt gleich.",
   "c58d3c64027807c6": "Modelle konnten nicht geladen werden · Erneut versuchen",
   "dddfe3741f379a11": "Transkriptionsmodelle werden geladen…",

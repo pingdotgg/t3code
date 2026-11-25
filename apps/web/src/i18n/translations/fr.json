@@ -7933,7 +7933,6 @@
   "7aa0d5470ed46175": "Saisissez une clé API, pas une URL ni une référence de secret.",
   "dad7aceef19f0f5b": "Mettre à jour la clé garde la dictée activée.",
   "015e394f14d5ede0": "Laissez vide pour garder la clé enregistrée.",
-  "0a9e4d44c145cd07": "Toute personne ayant accès à la dictée sur {environment} peut facturer cette clé.",
   "55803224ee096dc0": "Supprimer la clé {company} ?",
   "0a7813c7df04ffe9": "Gérer la dictée OpenRouter",
   "9996968084688efe": "Gérer la clé {company}",
@@ -12929,7 +12928,6 @@
   "09bc28a37e6caf92": "Téléchargé une fois dans l’environnement sélectionné, qui lit les réponses sans que le texte le quitte.",
   "0097b134ae6e9d9c": "Gérer la clé de lecture à voix haute",
   "44e370c9cc900c63": "Modèle de lecture à voix haute",
-  "6e58953ca9c7fad5": "Toute personne ayant accès à {environment} peut facturer cette clé.",
   "f7323911c24ed501": "Par défaut",
   "c2be8693c77597a3": "Téléchargement de {size}.",
   "eae80365006fbe17": "Une valeur vide utilise la voix par défaut du fournisseur.",
@@ -12940,7 +12938,6 @@
   "88f2bec553b72827": "Lire l’aperçu",
   "d33ab3b324ba0b36": "Modèles de lecture à voix haute",
   "2d2ee6c94580e79f": "Choisissez un modèle vocal dans le catalogue du fournisseur.",
-  "bfbaa4965c146e7c": "Toutes les personnes qui utilisent {company} pour la dictée ou la lecture à voix haute sur {environment} perdront l’accès.",
   "bff81cb00fc73544": "Vitesse de lecture.",
   "6793112a0a873441": "Gérer la clé",
   "b9c9fc9b61d7243e": "Voix par défaut",
@@ -12949,7 +12946,6 @@
   "4b009ef01c76df8e": "Voici T3 Code. La réponse de votre agent est prête à être lue à voix haute.",
   "09f85302ef58020c": "La mise à jour de la clé garde la lecture à voix haute activée.",
   "bec2c35646e0496a": "Aperçu",
-  "b9e06e668bd9bff0": "Les réponses que vous lisez sont envoyées à {company} via {environment}, qui facture sa clé d’API. La clé est partagée avec la dictée.",
   "236b7b3f5ff18a4d": "tts synthèse vocale parler lecture à voix haute voix lecture Grok OpenRouter ElevenLabs",
   "9fa6e93a8218ad60": "Voix",
   "17076b27f1f3ada5": "Désactivé",
@@ -13049,5 +13045,43 @@
   "e5ad64bb69db1045": "Mettre la lecture en pause",
   "d8e91bcf106d3bca": "Préparation de la lecture",
   "d5a4a3f4c97e473c": "Lecture à voix haute",
-  "53dac468c9738c4e": "Aller au passage en cours"
+  "53dac468c9738c4e": "Aller au passage en cours",
+  "9bb4c18ca561c5c7": [
+    "Toutes les personnes qui utilisent ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " pour la dictée ou la lecture à voix haute sur ",
+    {
+      "t": "strong",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    " perdront l’accès."
+  ],
+  "57f3bffc6b444c3d": [
+    "Les réponses que vous lisez sont envoyées à ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " via ",
+    {
+      "t": "strong",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    ", qui facture sa clé d’API. La clé est partagée avec la dictée."
+  ]
 }
