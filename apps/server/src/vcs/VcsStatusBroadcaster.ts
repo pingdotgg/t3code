@@ -794,10 +794,12 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
-    "VcsStatusBroadcaster.refreshStatus",
-  )(function* (rawCwd, options) {
-    const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+  const refreshStatus = Effect.fn("VcsStatusBroadcaster.refreshStatus")(function* (
+    rawCwd: string,
+    localOnly: boolean,
+    canonicalCwd?: string,
+  ) {
+    const cwd = canonicalCwd ?? (yield* withFileSystem(normalizeCwd(rawCwd)));
     yield* acquireBranchChangesDemand(cwd);
     // Lets the client keep its cached branch list when refs and worktree paths match its last refresh.
     const withRefsDigest = (status: VcsStatusResult, refs: string | null) =>
@@ -807,7 +809,7 @@ export const make = Effect.gen(function* () {
             ...status,
             refsDigest: NodeCrypto.createHash("sha256").update(refs).digest("hex").slice(0, 32),
           };
-    if (options?.localOnly) {
+    if (localOnly) {
       const [refs] = yield* Effect.all(
         [workflow.readRefSnapshot(cwd), refreshLocalStatusCore(cwd)],
         { concurrency: "unbounded" },
@@ -1030,26 +1032,30 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  // A request made during a refresh needs a read that starts after it, so overlapping requests
-  // share one follow-up. Keyed by raw cwd because auto-pull policy depends on it.
+  // Requests made during a refresh share one follow-up that starts after them. Local-only
+  // refreshes share by canonical cwd and bypass the full queue, whose auto-pull policy uses raw cwd.
   // Missing means idle; null means running with no follow-up queued.
   type SharedRefresh = Deferred.Deferred<VcsRefreshStatusResult, GitManagerServiceError>;
-  const queuedRefreshesRef = yield* Ref.make(new Map<string, SharedRefresh | null>());
+  type QueuedRefreshes = Map<string, SharedRefresh | null>;
+  const queuedFullRefreshes = yield* Ref.make<QueuedRefreshes>(new Map());
+  const queuedLocalRefreshes = yield* Ref.make<QueuedRefreshes>(new Map());
 
   const runQueuedRefreshes = Effect.fn("VcsStatusBroadcaster.runQueuedRefreshes")(function* (
-    rawCwd: string,
+    queue: Ref.Ref<QueuedRefreshes>,
+    cwdKey: string,
     first: SharedRefresh,
+    refresh: Effect.Effect<VcsRefreshStatusResult, GitManagerServiceError>,
   ) {
     let next: SharedRefresh | null = first;
     while (next !== null) {
-      yield* Deferred.into(refreshStatus(rawCwd), next);
-      next = yield* Ref.modify(queuedRefreshesRef, (queued) => {
-        const followUp = queued.get(rawCwd) ?? null;
+      yield* Deferred.into(refresh, next);
+      next = yield* Ref.modify(queue, (queued) => {
+        const followUp = queued.get(cwdKey) ?? null;
         const nextQueued = new Map(queued);
         if (followUp === null) {
-          nextQueued.delete(rawCwd);
+          nextQueued.delete(cwdKey);
         } else {
-          nextQueued.set(rawCwd, null);
+          nextQueued.set(cwdKey, null);
         }
         return [followUp, nextQueued] as const;
       });
@@ -1059,22 +1065,30 @@ export const make = Effect.gen(function* () {
   const shareQueuedRefreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.shareQueuedRefreshStatus",
   )(function* (rawCwd, options) {
-    if (options?.localOnly) return yield* refreshStatus(rawCwd, options);
+    const localOnly = options?.localOnly === true;
+    const canonicalCwd = localOnly ? yield* withFileSystem(normalizeCwd(rawCwd)) : undefined;
+    const cwdKey = canonicalCwd ?? rawCwd;
+    const queue = localOnly ? queuedLocalRefreshes : queuedFullRefreshes;
     const requested = yield* Deferred.make<VcsRefreshStatusResult, GitManagerServiceError>();
     // Registering and forking together keeps an interrupt from leaving an entry with no worker.
     const shared = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const followUp = yield* Ref.modify(
-          queuedRefreshesRef,
-          (queued): readonly [SharedRefresh | undefined, Map<string, SharedRefresh | null>] => {
-            if (!queued.has(rawCwd)) return [undefined, new Map(queued).set(rawCwd, null)];
-            const followUp = queued.get(rawCwd) ?? requested;
-            return [followUp, new Map(queued).set(rawCwd, followUp)];
+          queue,
+          (queued): readonly [SharedRefresh | undefined, QueuedRefreshes] => {
+            if (!queued.has(cwdKey)) return [undefined, new Map(queued).set(cwdKey, null)];
+            const followUp = queued.get(cwdKey) ?? requested;
+            return [followUp, new Map(queued).set(cwdKey, followUp)];
           },
         );
         if (followUp !== undefined) return followUp;
         // The broadcaster scope owns the work, so one caller's interrupt does not cancel it for the rest.
-        yield* runQueuedRefreshes(rawCwd, requested).pipe(Effect.forkIn(broadcasterScope));
+        yield* runQueuedRefreshes(
+          queue,
+          cwdKey,
+          requested,
+          refreshStatus(rawCwd, localOnly, canonicalCwd),
+        ).pipe(Effect.forkIn(broadcasterScope));
         return requested;
       }),
     );
