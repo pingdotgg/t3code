@@ -4828,9 +4828,9 @@ describe("AcpAdapterV2", () => {
   const copilotAnswer = "There are five possible next steps.\n\nTell me which to start.";
   it.effect.each([
     {
-      name: "shows a Copilot Autopilot answer once when task_complete repeats it",
+      name: "shows a Copilot task_complete summary that repeats the answer as its own message",
       summary: copilotAnswer,
-      expected: [copilotAnswer],
+      expected: [copilotAnswer, copilotAnswer],
     },
     {
       name: "shows a different Copilot task_complete summary as its own message",
