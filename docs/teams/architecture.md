@@ -257,23 +257,32 @@ Whenever a member can read a team thread (via its View) **but cannot execute tur
   - The client only displays environments the current member can access in the "New Thread → Environment" picker.
   - Launching a thread on a remote team environment goes through the Team Server's authorization check (or validates a short-lived team-signed environment grant) before the target environment starts the thread.
 
-### Team Providers across all environments
+### Team Providers across all environments (Zero-Config for Teammates)
 
-Requirement: _Settings allow configuring model providers per team, and all threads on a team-assigned project use the team's configured providers regardless of which environment (local or remote) the thread runs on._
+Requirement: _Settings allow configuring model providers per team, authentication is performed **only once by an `owner` or `admin` on the Team Server**, and all threads on a team-assigned project automatically and transparently use the team's configured providers on **any** environment (including a teammate's local machine)—never the teammate's personal subscription._
 
-This is one of the trickiest architectural pieces because in upstream T3 Code, providers are local to each environment. We should solve it cleanly by separating **Provider Configuration** from **Credential Execution**:
+This solves the real-world case where a developer has a personal subscription (e.g., personal Gemini in local Antigravity) while the company has a team subscription on the shared Team Server:
 
-1. **Team Provider Catalog (stored on the Team Server):**
-   - `owner`/`admin` configure team provider instances in **Settings → Teams → \<Team\> → Providers** (model allowlists, default models, provider instances, API keys / endpoints).
-2. **How threads on _any_ environment use Team Providers:**
-   - **API-backed providers (Anthropic, OpenAI, OpenRouter, custom OpenAI/Anthropic-compatible gateways, etc.):**
+1. **Single point of authentication (Team Server only):**
+   - Only `owner` and `admin` members configure and sign in to team providers in **Settings → Teams → \<Team\> → Providers** on the owning Team Server.
+   - Regular / `modo` teammates **never** sign in to team providers, enter team API keys, or manage team provider auth locally or on attached remote environments.
+2. **Isolated virtual local instances (`team:<teamId>:<providerInstanceId>`):**
+   - When a teammate joins a team, their local `t3server` automatically syncs the team's provider catalog and provisions isolated virtual provider instances keyed as `team:<teamId>:<providerInstanceId>` (leveraging T3 Code's native multi-instance directory isolation: separate `GEMINI_HOME`, `CODEX_HOME`, and `CLAUDE_CONFIG_DIR` from the user's personal instances, with ambient env vars stripped).
+   - **Strict isolation invariant:** On any project assigned to team `T`, the model picker and orchestrator allow **only** `team:<T>:*` instances. A thread on a team project must **never** expose or silently fall back to the teammate's personal provider credentials.
+3. **Automatic credential delivery to local & attached remote environments (two strategies):**
+   - **Strategy A — `proxy` (API-key & `BASE_URL` providers: Anthropic API, OpenAI API, Gemini API / Vertex, OpenRouter, LiteLLM, custom gateways):**
      - The Team Server exposes an authenticated **Team Model Proxy** (`/api/team/provider-proxy/:providerInstanceId/...`).
-     - Any execution environment (the Team Server itself, an attached remote environment, or a member's **local** desktop environment) receives the team's provider catalog and routes inference requests through the Team Server's proxy using the member's session token.
-     - **Benefits:** Team API keys never leave the Team Server, revoking a member immediately cuts off model access on their local machine, and team usage/cost accounting is centralized.
-   - **CLI / OAuth subscription providers (Claude Code, Codex CLI, Cursor, Antigravity, etc.):**
-     - On the **Team Server** and **attached remote environments**, team-managed provider instances run directly with the environment's configured auth (or brokered tokens via a pattern like `CodexManagedTokenBroker.ts`).
-     - On a **local environment**, if a provider supports API-base-URL override (e.g., Claude Code with `ANTHROPIC_BASE_URL` or Codex with custom base URL), it can route through the Team Model Proxy seamlessly. For CLI providers that require a native local subscription login and cannot be proxied, the UI should transparently indicate "Remote team environments only" rather than silently falling back to personal credentials.
-3. **Invariant:** A thread on a team project must **never** silently fall back to the user's personal provider credentials without explicit indication.
+     - Any execution environment (local laptop or attached remote environment) points its `team:<teamId>:*` instance's `BASE_URL` at the Team Server proxy using the member's team session token; the Team Server injects the real company API key server-side.
+     - **Security:** Zero company secrets ever touch a teammate's laptop; revoking a member cuts off model access immediately; cost/usage accounting is centralized per member.
+   - **Strategy B — `token-lease` (OAuth subscription harnesses: Antigravity/Gemini, Codex ChatGPT, Claude OAuth):**
+     - The Team Server is the sole holder of the company's OAuth `refresh_token`—**a `refresh_token` never leaves the Team Server**.
+     - Before starting/resuming a turn (or when a lease approaches expiry), the local or remote `t3server` calls `POST /api/team/provider-lease/:providerInstanceId` with the member's session token.
+     - If the Team Server's cached OAuth `access_token` is near expiry (e.g., `< 10 min` remaining), the Team Server refreshes it server-side, **strips `refresh_token`**, and returns only the short-lived `{ access_token, expiry }` (~1 hour lifetime):
+       - **Codex:** injected in memory via T3's existing Unix-socket broker (`CodexManagedTokenBroker.ts` / `__managed-chatgpt-token`)—zero token written to disk.
+       - **Antigravity (Gemini):** written transiently (`chmod 0600`) to the isolated `team:<teamId>:antigravity` profile's `antigravity-oauth-token` without `refresh_token`, refreshed automatically before `expiry`, and purged on idle/disconnect/team leave. _(Note: verify `agy acp` behavior with omitted/placeholder `refresh_token` when `expiry` is valid at the start of Milestone 4; fall back to `gemini-api-key`/`agent-platform` via `proxy` or `remote-only` if `agy` enforces local refresh.)_
+       - **Claude OAuth:** injected into the isolated `CLAUDE_CONFIG_DIR` (`CLAUDE_CODE_OAUTH_TOKEN` / `.credentials.json`) without `refreshToken`.
+     - **Security:** Revoking a member from the team immediately prevents future leases, and any existing short-lived access token expires permanently within ≤ 1 hour.
+   - **Safe fallback (`remote-only`):** If a specific CLI driver cannot be proxied or leased without exposing a long-lived `refresh_token`, the Team Server marks it `remote-only` and the UI clearly explains it runs only on remote team environments—never falling back to personal subscriptions.
 
 ---
 
@@ -417,3 +426,4 @@ The following decisions are locked in for implementation:
 4. **Phased GitHub authentication** — start with per-user encrypted fine-grained PATs (zero OAuth app setup for self-hosted teams), then add GitHub OAuth / GitHub App user-to-server tokens in a follow-up phase.
 5. **Default View posting policy** — the Default View allows all team members to read and post in each other's threads by default.
 6. **Local-environment isolation & Thread Notes** — no colleague (not even `owner`/`admin`) can execute on another member's local environment; colleagues can read, fork onto an accessible environment, or leave immutable **Notes** (`Note from <pseudo>:`). The owner must explicitly accept, edit (preserving `original_body`), or reject pending notes (with an explicit UI confirmation dialog when the note author is `regular`, while `modo`/`admin`/`owner` authors skip the extra modal), may send an empty prompt once a note is accepted, and any note arriving concurrently with a new turn is ignored by that turn and re-anchored after it.
+7. **Admin-only Team Provider auth & zero-config local execution** — team providers are authenticated solely by `owner`/`admin` on the owning Team Server; teammates never configure provider auth locally. Local team threads automatically provision isolated `team:<teamId>:*` instances (never touching or falling back to personal subscriptions), fed transparently by the Team Server via `proxy` (API/gateway) or ephemeral `token-lease` (OAuth access tokens without `refresh_token`), with `remote-only` fallback for drivers that cannot safely lease/proxy.

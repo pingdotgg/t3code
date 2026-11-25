@@ -100,10 +100,12 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
   - Team Server UI & RPCs to attach additional remote `t3server` environments.
   - Per-environment access rules (default: everyone on the team; configurable by role and/or member whitelist).
   - Server-enforced environment launch authorization.
-- **Team Providers (`team_providers`):**
-  - Configure model providers per team in Settings.
-  - Authenticated **Team Model Proxy** on the Team Server so threads on team projects use team-configured providers whether running on the default Team Server, an attached remote environment, or a member's local environment—without leaking raw team API keys to local machines.
-  - Clear UI capability indicator for CLI-subscription providers that can only execute on remote team environments.
+- **Team Providers (`team_providers` — zero-config for teammates):**
+  - Provider authentication and configuration performed **only by `owner`/`admin` on the Team Server**; teammates never sign in or configure team provider credentials locally.
+  - Auto-provision isolated virtual local instances (`team:<teamId>:<providerInstanceId>`) with separate `GEMINI_HOME` / `CODEX_HOME` / `CLAUDE_CONFIG_DIR` from personal subscriptions; strictly restrict team projects to `team:<teamId>:*` (never fall back to personal providers).
+  - Authenticated **Team Model Proxy** (`/api/team/provider-proxy/:id/*`) for API-key / `BASE_URL` providers (zero company keys leave the Team Server).
+  - Authenticated **Ephemeral OAuth Token Lease** (`POST /api/team/provider-lease/:id`) for OAuth subscription harnesses (Antigravity/Gemini, Codex via `CodexManagedTokenBroker`, Claude OAuth): Team Server refreshes server-side, strips `refresh_token`, and leases only short-lived `access_token` + `expiry` to isolated local/remote instances.
+  - Clear `remote-only` indicator for any CLI driver that cannot safely be proxied or leased without a `refresh_token`.
 
 ### Definition of Done
 
