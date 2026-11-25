@@ -5685,7 +5685,7 @@
   "192bad6b5ce4de80": "셀 {number}",
   "e7b4d35b3eeeb470": "셀 {number} HTML 출력",
   "e0a34d979f4c963f": "셀 {number} 출력",
-  "b9bddb775ce67840": "{count, plural, other {셀 더 보기({count}개 남음)}}",
+  "095ac520054d7ee1": "{count, plural, other {셀 더 보기({count}개 남음)}}",
   "d999fe8cc29e31e4": "저장된 출력만 표시합니다. 코드는 실행되지 않습니다.",
   "c0dcfa827c8c6fc1": "이 노트북은 비어 있습니다.",
   "6b3a82494b31e7a2": "파일을 불러올 수 없습니다. 닫고 다시 시도하세요.",

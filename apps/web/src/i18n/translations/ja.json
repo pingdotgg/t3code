@@ -5687,7 +5687,7 @@
   "192bad6b5ce4de80": "セル {number}",
   "e7b4d35b3eeeb470": "セル {number} の HTML 出力",
   "e0a34d979f4c963f": "セル {number} の出力",
-  "b9bddb775ce67840": "{count, plural, other {さらにセルを表示 (残り {count} 個)}}",
+  "095ac520054d7ee1": "{count, plural, other {さらにセルを表示 (残り {count} 個)}}",
   "d999fe8cc29e31e4": "保存された出力のみです。コードは実行されません。",
   "c0dcfa827c8c6fc1": "このノートブックは空です。",
   "6b3a82494b31e7a2": "ファイルを読み込めませんでした。閉じてもう一度お試しください。",

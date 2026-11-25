@@ -5706,7 +5706,7 @@
   "192bad6b5ce4de80": "Cellule {number}",
   "e7b4d35b3eeeb470": "Sortie HTML de la cellule {number}",
   "e0a34d979f4c963f": "Sortie de la cellule {number}",
-  "b9bddb775ce67840": "{count, plural, one {Afficher plus de cellules ({count} restante)} other {Afficher plus de cellules ({count} restantes)}}",
+  "095ac520054d7ee1": "{count, plural, one {Afficher {count} cellule de plus} other {Afficher plus de cellules ({count} restantes)}}",
   "d999fe8cc29e31e4": "Sorties enregistrées uniquement. Le code n’est jamais exécuté.",
   "c0dcfa827c8c6fc1": "Ce notebook est vide.",
   "6b3a82494b31e7a2": "Impossible de charger le fichier. Fermez-le et réessayez.",

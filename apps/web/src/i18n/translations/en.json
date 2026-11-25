@@ -5707,7 +5707,7 @@
   "192bad6b5ce4de80": "Cell {number}",
   "e7b4d35b3eeeb470": "Cell {number} HTML output",
   "e0a34d979f4c963f": "Cell {number} output",
-  "b9bddb775ce67840": "{count, plural, one {Show more cells ({count} remaining)} other {Show more cells ({count} remaining)}}",
+  "095ac520054d7ee1": "{count, plural, one {Show {count} more cell} other {Show more cells ({count} remaining)}}",
   "d999fe8cc29e31e4": "Saved outputs only. Code is never executed.",
   "c0dcfa827c8c6fc1": "This notebook is empty.",
   "6b3a82494b31e7a2": "The file could not be loaded. Close it and try again.",

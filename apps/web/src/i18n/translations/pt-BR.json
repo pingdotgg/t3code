@@ -5705,7 +5705,7 @@
   "192bad6b5ce4de80": "Célula {number}",
   "e7b4d35b3eeeb470": "Saída HTML da célula {number}",
   "e0a34d979f4c963f": "Saída da célula {number}",
-  "b9bddb775ce67840": "{count, plural, one {Mostrar mais células ({count} restante)} other {Mostrar mais células ({count} restantes)}}",
+  "095ac520054d7ee1": "{count, plural, one {Mostrar mais {count} célula} other {Mostrar mais células ({count} restantes)}}",
   "d999fe8cc29e31e4": "Só saídas salvas. O código nunca é executado.",
   "c0dcfa827c8c6fc1": "Este notebook está vazio.",
   "6b3a82494b31e7a2": "Não foi possível carregar o arquivo. Feche-o e tente novamente.",

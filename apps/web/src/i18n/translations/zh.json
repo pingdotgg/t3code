@@ -5711,7 +5711,7 @@
   "192bad6b5ce4de80": "单元格 {number}",
   "e7b4d35b3eeeb470": "单元格 {number} 的 HTML 输出",
   "e0a34d979f4c963f": "单元格 {number} 的输出",
-  "b9bddb775ce67840": "{count, plural, other {显示更多单元格（剩余 {count} 个）}}",
+  "095ac520054d7ee1": "{count, plural, other {显示更多单元格（剩余 {count} 个）}}",
   "d999fe8cc29e31e4": "仅显示已保存的输出，不会执行代码。",
   "c0dcfa827c8c6fc1": "此笔记本为空。",
   "6b3a82494b31e7a2": "无法加载文件。请关闭后重试。",

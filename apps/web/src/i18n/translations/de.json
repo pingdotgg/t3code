@@ -5706,7 +5706,7 @@
   "192bad6b5ce4de80": "Zelle {number}",
   "e7b4d35b3eeeb470": "HTML-Ausgabe von Zelle {number}",
   "e0a34d979f4c963f": "Ausgabe von Zelle {number}",
-  "b9bddb775ce67840": "{count, plural, one {Mehr Zellen anzeigen ({count} verbleibend)} other {Mehr Zellen anzeigen ({count} verbleibend)}}",
+  "095ac520054d7ee1": "{count, plural, one {{count} weitere Zelle anzeigen} other {Mehr Zellen anzeigen ({count} verbleibend)}}",
   "d999fe8cc29e31e4": "Nur gespeicherte Ausgaben. Code wird nie ausgeführt.",
   "c0dcfa827c8c6fc1": "Dieses Notebook ist leer.",
   "6b3a82494b31e7a2": "Die Datei konnte nicht geladen werden. Schließe sie und versuche es erneut.",

@@ -5706,7 +5706,7 @@
   "192bad6b5ce4de80": "Cell {number}",
   "e7b4d35b3eeeb470": "HTML-utdata för cell {number}",
   "e0a34d979f4c963f": "Utdata för cell {number}",
-  "b9bddb775ce67840": "{count, plural, one {Visa fler celler ({count} kvar)} other {Visa fler celler ({count} kvar)}}",
+  "095ac520054d7ee1": "{count, plural, one {Visa {count} cell till} other {Visa fler celler ({count} kvar)}}",
   "d999fe8cc29e31e4": "Endast sparade utdata. Koden körs aldrig.",
   "c0dcfa827c8c6fc1": "Den här notebooken är tom.",
   "6b3a82494b31e7a2": "Filen kunde inte läsas in. Stäng den och försök igen.",
