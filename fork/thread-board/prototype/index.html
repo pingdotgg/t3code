@@ -271,9 +271,11 @@ html.embed #stage { width: 1280px; }
 /* ---------- board page ---------- */
 .board { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--background); }
 .board-header {
-  height: 52px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 16px;
+  height: 52px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 16px 0 8px;
   border-bottom: 1px solid var(--border); min-width: 0;
 }
+.board-left { width: 400px; flex: none; display: flex; align-items: center; gap: 6px; }
+.board-left .search { flex: 1; width: auto; }
 .board-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; flex: none; }
 .filters { display: flex; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .chip-btn {
@@ -298,10 +300,8 @@ html.embed #stage { width: 1280px; }
 .col-head .count { font-weight: 500; color: var(--muted-foreground); font-size: 12px; }
 .lane-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tone); flex: none; }
 .swim-row { margin-top: 10px; }
-.swim-head-row { display: flex; align-items: center; gap: 6px; }
-.swim-new { flex: none; }
 .swim-head {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 6px; border: 0; border-radius: 8px;
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 6px; border: 0; border-radius: 8px;
   background: transparent; cursor: pointer; text-align: left; font-size: 13px; font-weight: 600;
 }
 .swim-head:hover { background: var(--accent); }
@@ -779,12 +779,12 @@ function spawnThread() {
 }
 
 /* ================= settings ================= */
-const DEFAULTS = { theme: "system", peekLayout: "push", boardLayout: "full" };
+const DEFAULTS = { theme: "system", peekLayout: "push" };
 function loadSettings() {
-  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("thread-board-proto-v3") || "{}") }; } catch { return { ...DEFAULTS }; }
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("thread-board-proto-v4") || "{}") }; } catch { return { ...DEFAULTS }; }
 }
 function saveSettings() {
-  try { localStorage.setItem("thread-board-proto-v3", JSON.stringify(S.set)); } catch {}
+  try { localStorage.setItem("thread-board-proto-v4", JSON.stringify(S.set)); } catch {}
 }
 
 /* ================= state ================= */
@@ -1125,7 +1125,8 @@ function renderSidebar() {
   const keepScroll = el.querySelector(".sb-scroll")?.scrollTop ?? 0;
   const onBoard = S.view === "board";
   const needs = S.threads.filter((t) => laneOf(t) === "needs").length;
-  el.hidden = onBoard && S.set.boardLayout === "full";
+  // The board is full screen; the sidebar comes back when you leave it.
+  el.hidden = onBoard;
   const folders = PROJECT_ORDER.map((pid) => {
     const p = PROJECTS[pid];
     const rows = S.threads.filter((t) => t.project === pid).sort((a, b) => b.lastAt - a.lastAt).map((t) => {
@@ -1139,10 +1140,7 @@ function renderSidebar() {
     return `<div class="sb-folder"><div class="sb-folder-head">${favHtml(p)}<span class="spacer">${p.name}</span><button class="btn btn-ghost btn-icon btn-sm sb-folder-new" data-action="new-thread" data-project="${pid}" title="New thread in ${p.name}">${icon("pen", "i-xs")}</button></div>${rows}</div>`;
   }).join("");
   const boardBtn = `<button class="sb-util is-new" data-action="toggle-board" title="Board (${MOD}⇧B)" aria-label="Board">${icon("board")}${needs ? `<span class="badge-count">${needs}</span>` : ""}</button>`;
-  // Like the Pull requests page: on the board, the footer's utility icons become "Back".
-  const footer = onBoard
-    ? `<button class="sb-row" data-action="back">${icon("arrowLeft", "i-sm")}<span class="sb-title">Back</span></button>`
-    : `${boardBtn}
+  const footer = `${boardBtn}
       <button class="sb-util" data-action="noop" title="Settings">${icon("settings")}</button>
       <button class="sb-util" data-action="noop" title="Pull requests">${icon("pr")}</button>
       <button class="sb-util" data-action="noop" title="Issues">${icon("issue")}</button>
@@ -1156,16 +1154,18 @@ function renderSidebar() {
 }
 
 /* ================= board ================= */
+// New thread and search sit top left, where the sidebar keeps them on the main page,
+// and line up with the left panel they open into.
 function boardShellHtml() {
-  const full = S.set.boardLayout === "full";
   return `<div class="board">
     <header class="board-header">
-      ${full ? `<button class="btn btn-ghost btn-sm" data-action="back" title="Back to the last thread">${icon("arrowLeft", "i-sm")}Back</button>` : ""}
+      <div class="board-left">
+        <button class="btn btn-ghost btn-icon btn-sm" data-action="back" title="Back to the last thread">${icon("arrowLeft", "i-sm")}</button>
+        <button class="btn btn-sm" data-action="compose" title="New thread">${icon("pen", "i-xs")}New thread</button>
+        <label class="search">${icon("search", "i-sm")}<input id="board-search" placeholder="Search threads" value="${esc(S.query)}" /></label>
+      </div>
       <div class="board-title">${icon("board")}Board</div>
       <div class="filters" id="board-filters"></div>
-      <span class="spacer"></span>
-      <label class="search">${icon("search", "i-sm")}<input id="board-search" placeholder="Filter threads" value="${esc(S.query)}" /></label>
-      ${full ? `<button class="btn btn-primary" data-action="compose">${icon("pen", "i-sm")}New thread</button>` : ""}
     </header>
     <div class="board-body">
       <aside class="peek-panel" id="peek-panel" hidden></aside>
@@ -1206,8 +1206,7 @@ function swimHtml() {
     const mini = LANES.map((l) => { const n = byLane(list, l.id).length; return n ? `<span><span class="lane-dot ${l.tone}"></span>${n}</span>` : ""; }).join("");
     const cells = LANES.map((l) => `<div class="cell" data-lane="${l.id}">${byLane(list, l.id).map(cardHtml).join("")}</div>`).join("");
     return `<section class="swim-row ${collapsed ? "collapsed" : ""}" data-project="${pid}">
-      <div class="swim-head-row"><button class="swim-head" data-action="toggle-row" data-project="${pid}" aria-expanded="${!collapsed}">${icon("chevronDown", "i-sm chev")}${favHtml(p)}${p.name}<span class="mini">${mini}</span></button>
-        ${S.set.boardLayout === "full" ? `<button class="btn btn-ghost btn-sm swim-new" data-action="compose" data-project="${pid}" title="New thread in ${p.name}">${icon("pen", "i-xs")}New thread</button>` : ""}</div>
+      <button class="swim-head" data-action="toggle-row" data-project="${pid}" aria-expanded="${!collapsed}">${icon("chevronDown", "i-sm chev")}${favHtml(p)}${p.name}<span class="mini">${mini}</span></button>
       <div class="swim-cells swim-grid">${cells}</div>
     </section>`;
   }).join("");
@@ -1405,7 +1404,7 @@ function newThreadHtml() {
 function renderMain() {
   const main = document.getElementById("main");
   if (S.view === "board") {
-    ensure(main, `board:${S.set.boardLayout}`, boardShellHtml);
+    ensure(main, "board", boardShellHtml);
   } else if (S.view === "new") {
     ensure(main, "new", newThreadHtml);
     document.getElementById("project-pick").innerHTML = PROJECT_ORDER.map((pid) => `<button class="chip-btn ${S.newProject === pid ? "on" : ""}" data-action="pick-project" data-project="${pid}">${favHtml(PROJECTS[pid])}${PROJECTS[pid].name}</button>`).join("");
@@ -1443,10 +1442,9 @@ function renderProto() {
   root.innerHTML = `<div class="proto"><div class="proto-head">${icon("sliders", "i-sm")}<b>Prototype</b><span class="spacer"></span><button class="btn btn-ghost btn-icon btn-sm" data-action="toggle-proto" title="Collapse">${icon("chevronDown", "i-sm")}</button></div>
     <div class="proto-body">
       <div class="proto-row"><label>Live simulation</label><div class="proto-sim">${sim}<button class="btn btn-sm" data-action="reset" title="Reset data">${icon("reset", "i-xs")}</button></div></div>
-      <div class="proto-row"><label>Board layout</label>${seg("boardLayout", [["full", "Full screen"], ["beside", "Beside sidebar"]])}</div>
       <div class="proto-row"><label>Peek panel</label>${seg("peekLayout", [["push", "Pushes lanes"], ["float", "Floats over lanes"]])}</div>
       <div class="proto-row"><label>Theme</label>${seg("theme", [["system", "System"], ["light", "Light"], ["dark", "Dark"]])}</div>
-      <div class="proto-note">Click a card to peek. ${MOD}-click opens the thread. Arrow keys move between cards, Enter peeks, ${MOD}+Enter opens, Esc closes the peek. ${MOD}⇧B toggles the board. Full screen: start threads from the board's New thread buttons. Beside sidebar: from the sidebar's pen buttons.</div>
+      <div class="proto-note">Click a card to peek. ${MOD}-click opens the thread. Arrow keys move between cards, Enter peeks, ${MOD}+Enter opens, Esc closes the peek. ${MOD}⇧B toggles the board. Start a thread from the board's New thread button (top left).</div>
     </div></div>`;
 }
 

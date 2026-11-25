@@ -57,11 +57,10 @@ The clickable prototype lives at [prototype/index.html](prototype/index.html) (o
 browser; fake data, no build). Its "Prototype" panel toggles the variants that are still open.
 
 - **Entry point:** a board icon in the sidebar footer, with a Needs-you count.
-- **Board layout (being tried):** **full screen**, with a "Back" button and its own
-  **New thread** buttons (header, and one per swimlane). A new thread starts from the left
-  panel and its card arrives under *Working*; you stay on the board. The earlier layout, a page
-  **beside the sidebar** like Pull requests (footer icons become "Back", new threads start from
-  the sidebar), stays a prototype toggle until this is settled.
+- **Board layout:** **full screen**; the sidebar hides while the board is open. Top left, where
+  the sidebar keeps them on the main page, sit Back (to the last thread), **New thread** and
+  search, lined up with the left panel. New thread opens in that panel with a project picker;
+  the new card arrives under *Working* and you stay on the board.
 - **Layout:** one **swimlane per project** (rows, in sidebar order, collapsible, hidden when
   empty), crossed with three **lanes** (columns): *Needs you* → *Working* → *Done*.
   A project filter and a text filter sit in the header.
@@ -89,14 +88,13 @@ browser; fake data, no build). Its "Prototype" panel toggles the variants that a
 
 ## Open questions
 
-1. Full screen with its own New thread buttons, or beside the sidebar? (Prototype toggle.)
-2. Should the peek push the lanes aside (current) or float over them? Undecided; push for now.
-3. Is a state-built grey line enough, or will finished threads need an LLM summary later?
-4. Swimlane order: sidebar order (current), or projects with Needs-you cards first?
-5. Where snoozed threads go (hidden, or a lane state of their own).
-6. Later, the board could move into upstream's pane system (#28839–#28845, #28845 "tabs in
+1. Should the peek push the lanes aside (current) or float over them? Undecided; push for now.
+2. Is a state-built grey line enough, or will finished threads need an LLM summary later?
+3. Swimlane order: sidebar order (current), or projects with Needs-you cards first?
+4. Where snoozed threads go (hidden, or a lane state of their own).
+5. Later, the board could move into upstream's pane system (#28839–#28845, #28845 "tabs in
    split panes") once that lands.
-7. Mobile: later, or never?
+6. Mobile: later, or never?
 
 ## Data the board needs (learned from the prototype, feeds phase 2)
 
@@ -153,6 +151,8 @@ Add new entries at the bottom: date, decision, reason.
 - **2026-11-25** The third lane is called *Done*, matching the sidebar's word for a finished turn.
 - **2026-11-25** Trying a full-screen board with its own New thread buttons, after seeing the
   beside-the-sidebar page. Reason: start threads without leaving the board.
+- **2026-11-25** Keep the full-screen board. New thread and search move to the top left, where
+  the main page has them; the per-swimlane New thread buttons go (not useful).
 
 ## Prior art (upstream, all closed)
 
