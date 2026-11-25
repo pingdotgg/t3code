@@ -2999,7 +2999,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           }),
         ),
         Effect.onInterrupt(() =>
-          ptyProcess && session.process !== ptyProcess
+          ptyProcess && session.status === "starting"
             ? startKillEscalation(ptyProcess, session.threadId, session.terminalId)
             : Effect.void,
         ),
