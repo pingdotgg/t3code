@@ -20,6 +20,7 @@ const directory: {
   entries: readonly ProjectEntry[];
   load: () => Promise<void>;
   refresh: () => void;
+  revalidate: (directoryPath: string) => void;
   ready: boolean;
   error: null;
   isPending: boolean;
@@ -28,6 +29,7 @@ const directory: {
   entries,
   load: () => Promise.resolve(),
   refresh: () => {},
+  revalidate: () => {},
   ready: true,
   error: null,
   isPending: false,
@@ -365,9 +367,15 @@ describe("FileBrowserPanel", () => {
       );
     }
 
+    using revalidate = vi.spyOn(directory, "revalidate");
     await using _second = await render(panel());
     await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
     await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
+
+    // Refresh revalidates the folders behind the rows on screen: the open one and the root.
+    revalidate.mockClear();
+    await userEvent.click(page.getByRole("button", { name: "Refresh workspace files" }));
+    expect(revalidate.mock.calls).toEqual([["src"], [""]]);
   });
   describe("revealing a folder while folders above it are still loading", () => {
     const roots = Array.from({ length: 12 }, (_, index): ProjectEntry => {

@@ -1,5 +1,5 @@
 diff --git a/react-native.js b/react-native.js
-index 440b0ad0d8af34e5dc4ae9b2a21a7addd2d71efb..fd5d18d8d184036d140f543285c9b5738513baa7 100644
+index 785118ab1ac204e831ea6167331a6e8dbc34ed98..74ef4bfba918098ed5bac72b0e94f79f6598f230 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -1344,7 +1344,8 @@ function checkAtBottom(ctx, allowedEdge, allowGateCreatedInCurrentCheck) {
@@ -9,11 +9,23 @@ index 440b0ad0d8af34e5dc4ae9b2a21a7addd2d71efb..fd5d18d8d184036d140f543285c9b573
 -    const isContentLess = contentSize < scrollLength;
 +    // T3 patch: a top inset (e.g. a translucent header) shrinks the room content has to fit in.
 +    const isContentLess = contentSize + getContentInsetTop(ctx) < scrollLength;
-     set$(ctx, "isAtEnd", isContentLess || distanceFromEnd <= EDGE_POSITION_EPSILON);
-     set$(ctx, "isNearEnd", isContentLess || distanceFromEnd <= onEndReachedThreshold * scrollLength);
-     set$(
+     const isAtEnd = isContentLess || distanceFromEnd <= EDGE_POSITION_EPSILON;
+     const deferEndExit = !isAtEnd && state.measuringContainersInLayout && (maintainingScrollAtEnd === "pending-instant" || maintainingScrollAtEnd === "pending-animated") && !state.endFollowInterrupted && peek$(ctx, "isAtEnd");
+     if (!deferEndExit) set$(ctx, "isAtEnd", isAtEnd);
+@@ -8288,7 +8289,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+       contentLength: getContentSize(ctx),
+       data: state.props.data,
+       dataKey: state.props.dataKey,
+-      distanceFromEnd: Math.max(0, getContentSize(ctx) - getObservedScrollOffset(ctx) - state.scrollLength),
++      // T3 patch: computed on read; the scroll read forces a layout every getState() caller paid for.
++      get distanceFromEnd() {
++        return Math.max(0, getContentSize(ctx) - getObservedScrollOffset(ctx) - state.scrollLength);
++      },
+       elementAtIndex: (index) => {
+         var _a3;
+         return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
 diff --git a/react-native.mjs b/react-native.mjs
-index b95e1f86d2cd76d5dbaf1340fdc37f3f1990e9ee..e2b013a0969d512d7c9b5e6fe7d348761f286bed 100644
+index 8aae009e1fcd890150e5f216c488ef8ee1747940..65330874626f55b3acb98e40dff999d6002863e6 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
 @@ -1323,7 +1323,8 @@ function checkAtBottom(ctx, allowedEdge, allowGateCreatedInCurrentCheck) {
@@ -23,14 +35,58 @@ index b95e1f86d2cd76d5dbaf1340fdc37f3f1990e9ee..e2b013a0969d512d7c9b5e6fe7d34876
 -    const isContentLess = contentSize < scrollLength;
 +    // T3 patch: a top inset (e.g. a translucent header) shrinks the room content has to fit in.
 +    const isContentLess = contentSize + getContentInsetTop(ctx) < scrollLength;
-     set$(ctx, "isAtEnd", isContentLess || distanceFromEnd <= EDGE_POSITION_EPSILON);
-     set$(ctx, "isNearEnd", isContentLess || distanceFromEnd <= onEndReachedThreshold * scrollLength);
-     set$(
+     const isAtEnd = isContentLess || distanceFromEnd <= EDGE_POSITION_EPSILON;
+     const deferEndExit = !isAtEnd && state.measuringContainersInLayout && (maintainingScrollAtEnd === "pending-instant" || maintainingScrollAtEnd === "pending-animated") && !state.endFollowInterrupted && peek$(ctx, "isAtEnd");
+     if (!deferEndExit) set$(ctx, "isAtEnd", isAtEnd);
+@@ -8267,7 +8268,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+       contentLength: getContentSize(ctx),
+       data: state.props.data,
+       dataKey: state.props.dataKey,
+-      distanceFromEnd: Math.max(0, getContentSize(ctx) - getObservedScrollOffset(ctx) - state.scrollLength),
++      // T3 patch: computed on read; the scroll read forces a layout every getState() caller paid for.
++      get distanceFromEnd() {
++        return Math.max(0, getContentSize(ctx) - getObservedScrollOffset(ctx) - state.scrollLength);
++      },
+       elementAtIndex: (index) => {
+         var _a3;
+         return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
+diff --git a/react-native.web.js b/react-native.web.js
+index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..43db6848f3303fe6628e2402ce6d7df6c1b06c53 100644
+--- a/react-native.web.js
++++ b/react-native.web.js
+@@ -9024,7 +9024,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+       contentLength: getContentSize(ctx),
+       data: state.props.data,
+       dataKey: state.props.dataKey,
+-      distanceFromEnd: Math.max(0, getContentSize(ctx) - getObservedScrollOffset(ctx) - state.scrollLength),
++      // T3 patch: computed on read; the scroll read forces a layout every getState() caller paid for.
++      get distanceFromEnd() {
++        return Math.max(0, getContentSize(ctx) - getObservedScrollOffset(ctx) - state.scrollLength);
++      },
+       elementAtIndex: (index) => {
+         var _a3;
+         return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
+diff --git a/react-native.web.mjs b/react-native.web.mjs
+index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..590710611f4ceb3b77d84883d2ac196adb3ba5c0 100644
+--- a/react-native.web.mjs
++++ b/react-native.web.mjs
+@@ -9003,7 +9003,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+       contentLength: getContentSize(ctx),
+       data: state.props.data,
+       dataKey: state.props.dataKey,
+-      distanceFromEnd: Math.max(0, getContentSize(ctx) - getObservedScrollOffset(ctx) - state.scrollLength),
++      // T3 patch: computed on read; the scroll read forces a layout every getState() caller paid for.
++      get distanceFromEnd() {
++        return Math.max(0, getContentSize(ctx) - getObservedScrollOffset(ctx) - state.scrollLength);
++      },
+       elementAtIndex: (index) => {
+         var _a3;
+         return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
 diff --git a/react.js b/react.js
-index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb452be397 100644
+index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..05a943fa9e56cfcdfbba8e89fc37ee5981322d28 100644
 --- a/react.js
 +++ b/react.js
-@@ -6376,7 +6376,8 @@ function useOnLayoutSync({
+@@ -6415,7 +6415,8 @@ function useOnLayoutSync({
    onLayoutProp,
    onLayoutChange,
    webLayoutResync,
@@ -40,7 +96,7 @@ index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb
  }, deps) {
    const callbacks = useLatestRef({ onLayoutChange, onLayoutProp, webLayoutResync });
    const onExternalLayout = React3.useCallback(
-@@ -6409,7 +6410,7 @@ function useOnLayoutSync({
+@@ -6448,7 +6449,7 @@ function useOnLayoutSync({
        emit(toLayout(rect), true);
        prevRect = rect;
      }
@@ -49,7 +105,7 @@ index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb
        var _a4, _b2, _c;
        const target = entry.target instanceof HTMLElement ? entry.target : void 0;
        const borderBoxSize = Array.isArray(entry.borderBoxSize) ? entry.borderBoxSize[0] : entry.borderBoxSize;
-@@ -6427,7 +6428,30 @@ function useOnLayoutSync({
+@@ -6466,7 +6467,30 @@ function useOnLayoutSync({
          emit(toLayout(rectObserved), false);
        }
      });
@@ -81,7 +137,7 @@ index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb
    return webExternalScroll ? { onLayout: onExternalLayout } : {};
  }
  function toLayout(rect) {
-@@ -7801,10 +7825,10 @@ function useStableRenderComponent(renderComponent, mapProps) {
+@@ -7842,10 +7866,10 @@ function useStableRenderComponent(renderComponent, mapProps) {
      [mapPropsRef, renderComponentRef]
    );
  }
@@ -94,7 +150,7 @@ index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb
    return /* @__PURE__ */ React3__namespace.createElement("div", { ...rest, ref }, children);
  };
  var subscribeScreenReader = () => () => {
-@@ -7881,6 +7905,16 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -7922,6 +7946,16 @@ var ListComponent = typedMemo(function ListComponent2({
    );
    const ScrollComponent = renderScrollComponent ? CustomScrollComponent : ListComponentScrollView;
    const SnapOrScroll = snapToIndices ? SnapWrapper : ScrollComponent;
@@ -110,8 +166,17 @@ index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb
 +  };
    const updateFooterSize = React3.useCallback(
      (size, afterSizeUpdate) => {
-       var _a3;
-@@ -7956,7 +7990,7 @@ var ListComponent = typedMemo(function ListComponent2({
+       var _a4;
+@@ -7976,7 +8010,7 @@ var ListComponent = typedMemo(function ListComponent2({
+     },
+     [horizontal, onLayoutFooter, updateFooterSize]
+   );
+-  const footer = ListFooterComponent && /* @__PURE__ */ React3__namespace.createElement(LayoutView, { onLayoutChange: onLayoutFooterInternal, style: ListFooterComponentStyle }, getComponent(ListFooterComponent));
++  const footer = ListFooterComponent && /* @__PURE__ */ React3__namespace.createElement(LayoutView, { measureRef: measureFooterRef, onLayoutChange: onLayoutFooterInternal, style: ListFooterComponentStyle }, getComponent(ListFooterComponent));
+   const renderRows = canRender && !ListEmptyComponent;
+   const extentFooter = void 0;
+   return /* @__PURE__ */ React3__namespace.createElement(
+@@ -8000,7 +8034,7 @@ var ListComponent = typedMemo(function ListComponent2({
        style: autoOtherAxisStyle ? [autoOtherAxisStyle, style] : style
      },
      Platform.OS !== "web",
@@ -119,17 +184,8 @@ index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb
 +    ListHeaderComponent && /* @__PURE__ */ React3__namespace.createElement(LayoutView, { measureRef: measureHeaderRef, onLayoutChange: onLayoutHeader, style: ListHeaderComponentStyle }, getComponent(ListHeaderComponent)),
      ListEmptyComponent && getComponent(ListEmptyComponent),
      shouldRenderAlignItemsAtEndSpacer && /* @__PURE__ */ React3__namespace.createElement(AlignItemsAtEndSpacer, { horizontal }),
-     canRender && !ListEmptyComponent && /* @__PURE__ */ React3__namespace.createElement(
-@@ -7970,7 +8004,7 @@ var ListComponent = typedMemo(function ListComponent2({
-         stickyHeaderConfig
-       }
-     ),
--    ListFooterComponent && /* @__PURE__ */ React3__namespace.createElement(LayoutView, { onLayoutChange: onLayoutFooterInternal, style: ListFooterComponentStyle }, getComponent(ListFooterComponent)),
-+    ListFooterComponent && /* @__PURE__ */ React3__namespace.createElement(LayoutView, { measureRef: measureFooterRef, onLayoutChange: onLayoutFooterInternal, style: ListFooterComponentStyle }, getComponent(ListFooterComponent)),
-     /* @__PURE__ */ React3__namespace.createElement(ScrollAdjust, null),
-     IS_DEV && ENABLE_DEVMODE
-   );
-@@ -8853,7 +8887,12 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+     (renderRows || extentFooter) && /* @__PURE__ */ React3__namespace.createElement(
+@@ -8909,7 +8943,12 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          runScrollRequest(
            pendingScroll.token,
            state.pendingScrollResolve,
@@ -143,11 +199,23 @@ index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb
            () => isScrollToIndexReady(state.props.data.length - 1, true)
          );
        }
+@@ -9024,7 +9063,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+       contentLength: getContentSize(ctx),
+       data: state.props.data,
+       dataKey: state.props.dataKey,
+-      distanceFromEnd: Math.max(0, getContentSize(ctx) - getObservedScrollOffset(ctx) - state.scrollLength),
++      // T3 patch: computed on read; the scroll read forces a layout every getState() caller paid for.
++      get distanceFromEnd() {
++        return Math.max(0, getContentSize(ctx) - getObservedScrollOffset(ctx) - state.scrollLength);
++      },
+       elementAtIndex: (index) => {
+         var _a3;
+         return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
 diff --git a/react.mjs b/react.mjs
-index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df85187521c39518a 100644
+index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..a1c3fac58ca702836252bf774e8ccc533c597599 100644
 --- a/react.mjs
 +++ b/react.mjs
-@@ -6355,7 +6355,8 @@ function useOnLayoutSync({
+@@ -6394,7 +6394,8 @@ function useOnLayoutSync({
    onLayoutProp,
    onLayoutChange,
    webLayoutResync,
@@ -157,7 +225,7 @@ index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df8518752
  }, deps) {
    const callbacks = useLatestRef({ onLayoutChange, onLayoutProp, webLayoutResync });
    const onExternalLayout = useCallback(
-@@ -6388,7 +6389,7 @@ function useOnLayoutSync({
+@@ -6427,7 +6428,7 @@ function useOnLayoutSync({
        emit(toLayout(rect), true);
        prevRect = rect;
      }
@@ -166,7 +234,7 @@ index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df8518752
        var _a4, _b2, _c;
        const target = entry.target instanceof HTMLElement ? entry.target : void 0;
        const borderBoxSize = Array.isArray(entry.borderBoxSize) ? entry.borderBoxSize[0] : entry.borderBoxSize;
-@@ -6406,7 +6407,30 @@ function useOnLayoutSync({
+@@ -6445,7 +6446,30 @@ function useOnLayoutSync({
          emit(toLayout(rectObserved), false);
        }
      });
@@ -198,7 +266,7 @@ index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df8518752
    return webExternalScroll ? { onLayout: onExternalLayout } : {};
  }
  function toLayout(rect) {
-@@ -7780,10 +7804,10 @@ function useStableRenderComponent(renderComponent, mapProps) {
+@@ -7821,10 +7845,10 @@ function useStableRenderComponent(renderComponent, mapProps) {
      [mapPropsRef, renderComponentRef]
    );
  }
@@ -211,7 +279,7 @@ index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df8518752
    return /* @__PURE__ */ React3.createElement("div", { ...rest, ref }, children);
  };
  var subscribeScreenReader = () => () => {
-@@ -7860,6 +7884,16 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -7901,6 +7925,16 @@ var ListComponent = typedMemo(function ListComponent2({
    );
    const ScrollComponent = renderScrollComponent ? CustomScrollComponent : ListComponentScrollView;
    const SnapOrScroll = snapToIndices ? SnapWrapper : ScrollComponent;
@@ -227,8 +295,17 @@ index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df8518752
 +  };
    const updateFooterSize = useCallback(
      (size, afterSizeUpdate) => {
-       var _a3;
-@@ -7935,7 +7969,7 @@ var ListComponent = typedMemo(function ListComponent2({
+       var _a4;
+@@ -7955,7 +7989,7 @@ var ListComponent = typedMemo(function ListComponent2({
+     },
+     [horizontal, onLayoutFooter, updateFooterSize]
+   );
+-  const footer = ListFooterComponent && /* @__PURE__ */ React3.createElement(LayoutView, { onLayoutChange: onLayoutFooterInternal, style: ListFooterComponentStyle }, getComponent(ListFooterComponent));
++  const footer = ListFooterComponent && /* @__PURE__ */ React3.createElement(LayoutView, { measureRef: measureFooterRef, onLayoutChange: onLayoutFooterInternal, style: ListFooterComponentStyle }, getComponent(ListFooterComponent));
+   const renderRows = canRender && !ListEmptyComponent;
+   const extentFooter = void 0;
+   return /* @__PURE__ */ React3.createElement(
+@@ -7979,7 +8013,7 @@ var ListComponent = typedMemo(function ListComponent2({
        style: autoOtherAxisStyle ? [autoOtherAxisStyle, style] : style
      },
      Platform.OS !== "web",
@@ -236,17 +313,8 @@ index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df8518752
 +    ListHeaderComponent && /* @__PURE__ */ React3.createElement(LayoutView, { measureRef: measureHeaderRef, onLayoutChange: onLayoutHeader, style: ListHeaderComponentStyle }, getComponent(ListHeaderComponent)),
      ListEmptyComponent && getComponent(ListEmptyComponent),
      shouldRenderAlignItemsAtEndSpacer && /* @__PURE__ */ React3.createElement(AlignItemsAtEndSpacer, { horizontal }),
-     canRender && !ListEmptyComponent && /* @__PURE__ */ React3.createElement(
-@@ -7949,7 +7983,7 @@ var ListComponent = typedMemo(function ListComponent2({
-         stickyHeaderConfig
-       }
-     ),
--    ListFooterComponent && /* @__PURE__ */ React3.createElement(LayoutView, { onLayoutChange: onLayoutFooterInternal, style: ListFooterComponentStyle }, getComponent(ListFooterComponent)),
-+    ListFooterComponent && /* @__PURE__ */ React3.createElement(LayoutView, { measureRef: measureFooterRef, onLayoutChange: onLayoutFooterInternal, style: ListFooterComponentStyle }, getComponent(ListFooterComponent)),
-     /* @__PURE__ */ React3.createElement(ScrollAdjust, null),
-     IS_DEV && ENABLE_DEVMODE
-   );
-@@ -8832,7 +8866,12 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+     (renderRows || extentFooter) && /* @__PURE__ */ React3.createElement(
+@@ -8888,7 +8922,12 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          runScrollRequest(
            pendingScroll.token,
            state.pendingScrollResolve,
@@ -260,3 +328,15 @@ index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df8518752
            () => isScrollToIndexReady(state.props.data.length - 1, true)
          );
        }
+@@ -9003,7 +9042,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+       contentLength: getContentSize(ctx),
+       data: state.props.data,
+       dataKey: state.props.dataKey,
+-      distanceFromEnd: Math.max(0, getContentSize(ctx) - getObservedScrollOffset(ctx) - state.scrollLength),
++      // T3 patch: computed on read; the scroll read forces a layout every getState() caller paid for.
++      get distanceFromEnd() {
++        return Math.max(0, getContentSize(ctx) - getObservedScrollOffset(ctx) - state.scrollLength);
++      },
+       elementAtIndex: (index) => {
+         var _a3;
+         return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;

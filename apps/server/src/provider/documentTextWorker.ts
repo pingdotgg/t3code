@@ -110,11 +110,15 @@ function xml(source: string, extension: string): XmlNode {
     stack.at(-1)!.children.push(node);
     stack.push(node);
   });
-  parser.on("closetag", () => {
+  parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
+      (extension === ".epub" &&
+        (stack[1] ?? node).name === "html" &&
+        Object.hasOwn(tag.attributes, "hidden") &&
+        !/^until-found$/i.test(String(tag.attributes.hidden))) ||
       (extension === ".docx" && node.name === "del") ||
       (extension === ".docx" &&
         node.name === "r" &&
@@ -124,6 +128,11 @@ function xml(source: string, extension: string): XmlNode {
             (prop) => prop.name === "vanish" && ["true", "1", "on"].includes(prop.attrs.val ?? "1"),
           )) ||
       (odf && node.name === "annotation" && parent.name !== "semantics") ||
+      (extension === ".pptx" &&
+        node.name === "timing" &&
+        stack.every((ancestor) =>
+          ["root", "sld", "AlternateContent", "Choice", "Fallback"].includes(ancestor.name),
+        )) ||
       (extension === ".odp" &&
         node.name === "page-thumbnail" &&
         stack.some((ancestor) => ancestor.name === "notes"))
@@ -249,7 +258,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield "\n";
     } else {
       yield* paragraphs(child);
-      if (["li", "div", "section"].includes(child.name)) yield "\n";
+      if (["li", "div", "section", "dt", "dd"].includes(child.name)) yield "\n";
     }
   }
 }
@@ -501,6 +510,7 @@ const RTF_CODE_PAGES = new Map([
   [949, "euc-kr"],
   [950, "big5"],
   [10000, "macintosh"],
+  [54936, "gb18030"],
   [65001, "utf-8"],
 ]);
 
@@ -541,7 +551,8 @@ function* rtf(source: string): Generator<string, void> {
       yield String.fromCharCode(byte);
       return;
     }
-    encoded ??= new Uint8Array(Math.min(source.length, MAX_OUTPUT * 3 + 4));
+    // GB18030 spends up to 4 bytes per UTF-16 unit, so a full buffer decodes past MAX_OUTPUT.
+    encoded ??= new Uint8Array(Math.min(source.length, MAX_OUTPUT * 4 + 4));
     if (encodedLength === encoded.length) yield* flushBytes();
     encoded[encodedLength++] = byte;
   }
@@ -732,7 +743,10 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       yield* paragraphs(read(mainPart("word/document.xml")));
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
       const content = read("content.xml");
-      if (extension === ".odt") yield* paragraphs(content);
+      if (extension === ".odt")
+        yield* paragraphs(
+          children(children(content)[0]).find((child) => child.name === "body") ?? content,
+        );
       else {
         let index = 0;
         for (const part of all(content, extension === ".ods" ? "table" : "page")) {

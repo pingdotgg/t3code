@@ -4563,9 +4563,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("reports connecting while a turn's first API request is unanswered", () =>
+  it.effect("reports connecting while a process's first API request is unanswered", () =>
     Effect.gen(function* () {
-      const harness = yield* makeWakeHarnessWithOptions();
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        close: (queue) => Queue.shutdown(queue),
+      });
       const status = (uuid: string) =>
         claudeSdkFrame({
           type: "system",
@@ -4574,16 +4577,31 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid,
           session_id: WAKE_NATIVE_SESSION,
         });
-      yield* harness.runtime.startTurn(
+      const latest = (): OrchestrationV2ProviderThread => {
+        const event = harness.events.findLast(
+          (candidate) => candidate.type === "provider_thread.updated",
+        );
+        return event?.type === "provider_thread.updated"
+          ? event.providerThread
+          : harness.providerThread;
+      };
+      const turn = (ordinal: number) =>
         makeClaudeTestTurnInput({
           threadId: harness.threadId,
-          providerThread: harness.providerThread,
+          providerThread: latest(),
           now: DateTime.makeUnsafe(0),
-          attemptId: RunAttemptId.make("connecting-phase"),
-          text: "Hello",
+          attemptId: RunAttemptId.make(`connecting-phase-${ordinal}`),
+          text: `Turn ${ordinal}`,
           attachments: [],
-        }),
-      );
+          providerTurnOrdinal: ordinal,
+        });
+      const phases = () =>
+        harness.events.flatMap((event) =>
+          event.type === "provider_session.updated"
+            ? [event.providerSession.startupPhase ?? null]
+            : [],
+        );
+      yield* harness.runtime.startTurn(turn(1));
       // Init lands before the request and must not count as its answer.
       yield* harness.offerAndWait(wakeTurnInit);
       yield* harness.offerAndWait(status("00000000-0000-4000-8000-000000000901"));
@@ -4594,14 +4612,38 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.offerAndWait(status("00000000-0000-4000-8000-000000000903"));
       yield* harness.offerAndWait(turnOneResult);
       yield* Queue.take(harness.terminalReceipts);
-      assert.deepEqual(
-        harness.events.flatMap((event) =>
-          event.type === "provider_session.updated"
-            ? [event.providerSession.startupPhase ?? null]
-            : [],
-        ),
-        ["connecting", null],
+      assert.deepEqual(phases(), ["connecting", null]);
+      // The next turn reuses the running process, so its request is not startup either.
+      yield* harness.runtime.startTurn(turn(2));
+      yield* harness.offerAndWait(status("00000000-0000-4000-8000-000000000904"));
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000905", result: "Two." }),
       );
+      yield* Queue.take(harness.terminalReceipts);
+      assert.equal(harness.processQueues.length, 1);
+      assert.deepEqual(phases(), ["connecting", null]);
+      yield* harness.runtime.interruptTurn({
+        providerThread: latest(),
+        providerTurnId: lastProviderTurn(harness.events).id,
+        requestRuntimeRestart: true,
+      });
+      yield* harness.runtime.startTurn(turn(3));
+      assert.equal(harness.processQueues.length, 2);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          cwd: "/workspace",
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "00000000-0000-4000-8000-000000000906",
+        }),
+      );
+      yield* harness.offerAndWait(status("00000000-0000-4000-8000-000000000907"));
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000908", result: "Three." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepEqual(phases(), ["connecting", null, "connecting", null]);
     }).pipe(
       Effect.scoped,
       Effect.provide(
