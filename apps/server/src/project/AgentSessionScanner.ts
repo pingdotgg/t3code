@@ -1344,11 +1344,14 @@ export const make = Effect.gen(function* () {
     filePath: string,
     expected: ReturnType<typeof transcriptIdentity>,
     source: AgentSessionSource,
+    budget: { bytesRemaining: number },
     prefix?: { readonly endByteOffset: number; readonly historyBytes: number },
   ) {
     const compressed = isCompressedTranscript(filePath);
+    const chargeDecompressedBytes = compressed && prefix === undefined;
     const readBytes =
-      prefix?.endByteOffset ?? (compressed ? MAX_IMPORTED_TRANSCRIPT_BYTES : expected.size);
+      prefix?.endByteOffset ??
+      (compressed ? Math.min(MAX_IMPORTED_TRANSCRIPT_BYTES, budget.bytesRemaining) : expected.size);
     if ((!compressed && readBytes > expected.size) || readBytes > MAX_IMPORTED_TRANSCRIPT_BYTES) {
       return null;
     }
@@ -1422,11 +1425,12 @@ export const make = Effect.gen(function* () {
               );
               if (Option.isNone(next)) {
                 // A compressed rollout's decompressed length is only known at its end.
-                if (compressed && prefix === undefined) break;
+                if (chargeDecompressedBytes) break;
                 return null;
               }
 
               bytesRead += next.value.byteLength;
+              if (chargeDecompressedBytes) budget.bytesRemaining -= next.value.byteLength;
               const withinBudget = yield* Effect.try({
                 try: () => {
                   let start = 0;
@@ -1444,6 +1448,15 @@ export const make = Effect.gen(function* () {
                 catch: (cause) => new TranscriptParseError({ filePath, cause }),
               });
               if (!withinBudget) return null;
+            }
+
+            // A full rollout that fills the budget is only usable if it ends here.
+            if (
+              chargeDecompressedBytes &&
+              bytesRead === readBytes &&
+              Option.isSome(yield* readChunk(1))
+            ) {
+              return null;
             }
 
             if (
@@ -2203,7 +2216,7 @@ export const make = Effect.gen(function* () {
     );
     const importedSessions = new Set<string>();
     const codexThreadNamesByHome = new Map<string, ReadonlyMap<string, string>>();
-    let bytesRemaining = MAX_IMPORT_BYTES;
+    const budget = { bytesRemaining: MAX_IMPORT_BYTES };
     let transcriptsRemaining = MAX_IMPORT_TRANSCRIPTS;
     const codexRolloutPaths = new Map<ProviderInstanceId, ReadonlyMap<string, string>>();
     const codexRolloutPath = (providerInstanceId: ProviderInstanceId, rolloutId: string) => {
@@ -2237,15 +2250,16 @@ export const make = Effect.gen(function* () {
         const filePath = visited.has(base.thread_id)
           ? undefined
           : codexRolloutPath(providerInstanceId, base.thread_id);
-        if (filePath === undefined || base.end_byte_offset > bytesRemaining) return null;
+        if (filePath === undefined || base.end_byte_offset > budget.bytesRemaining) return null;
         visited.add(base.thread_id);
         const stats = yield* statOption(filePath);
         if (Option.isNone(stats) || stats.value.type !== "File") return null;
-        bytesRemaining -= base.end_byte_offset;
+        budget.bytesRemaining -= base.end_byte_offset;
         const inherited = yield* readTranscript(
           filePath,
           transcriptIdentity(filePath, stats.value),
           "codex",
+          budget,
           { endByteOffset: base.end_byte_offset, historyBytes },
         );
         if (inherited === null) return null;
@@ -2262,7 +2276,10 @@ export const make = Effect.gen(function* () {
           const completed = completedByFile.get(
             `${candidate.providerInstanceId}\0${transcript.filePath}`,
           );
-          if (completed === undefined && (transcriptsRemaining === 0 || bytesRemaining === 0)) {
+          if (
+            completed === undefined &&
+            (transcriptsRemaining === 0 || budget.bytesRemaining === 0)
+          ) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           const stats = yield* statOption(transcript.filePath);
@@ -2285,13 +2302,19 @@ export const make = Effect.gen(function* () {
           }
           if (
             transcriptsRemaining === 0 ||
+            budget.bytesRemaining === 0 ||
             identity.size > MAX_IMPORTED_TRANSCRIPT_BYTES ||
-            identity.size > bytesRemaining
+            identity.size > budget.bytesRemaining
           ) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
-          bytesRemaining -= identity.size;
-          const snapshot = yield* readTranscript(transcript.filePath, identity, candidate.source);
+          budget.bytesRemaining -= identity.size;
+          const snapshot = yield* readTranscript(
+            transcript.filePath,
+            identity,
+            candidate.source,
+            budget,
+          );
           if (snapshot === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
