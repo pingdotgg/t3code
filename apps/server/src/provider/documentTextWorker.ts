@@ -254,7 +254,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield "\n";
     } else {
       yield* paragraphs(child);
-      if (["li", "div", "section"].includes(child.name)) yield "\n";
+      if (["li", "div", "section", "dt", "dd"].includes(child.name)) yield "\n";
     }
   }
 }
