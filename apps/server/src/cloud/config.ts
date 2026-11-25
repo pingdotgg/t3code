@@ -19,10 +19,6 @@ export const PUBLISH_AGENT_ACTIVITY_SECRET = "cloud-publish-agent-activity";
 export const HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET = "cloud-hold-webhooks-while-offline";
 export const CLOUD_LINK_REVOKED = "cloud-link-revoked";
 
-export const encodeEndpointRuntimeConfigJson = Schema.encodeEffect(
-  Schema.fromJsonString(RelayManagedEndpointRuntimeConfig),
-);
-
 export const decodeRuntimeConfig = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayManagedEndpointRuntimeConfig),
 );
@@ -31,14 +27,6 @@ export const ManagedEndpointConfirmedOrigin = Schema.Struct({
   config: RelayManagedEndpointRuntimeConfig,
   origin: RelayManagedEndpointOrigin,
 });
-
-export const encodeConfirmedOriginJson = Schema.encodeEffect(
-  Schema.fromJsonString(ManagedEndpointConfirmedOrigin),
-);
-
-export const decodeConfirmedOrigin = Schema.decodeUnknownOption(
-  Schema.fromJsonString(ManagedEndpointConfirmedOrigin),
-);
 
 export function isAgentActivityPublishingEnabledValue(value: string | null): boolean {
   return value === "true";
@@ -76,25 +64,3 @@ export const readAgentActivityPublishingActive: (
   },
   Effect.orElseSucceed(() => false),
 );
-
-const readSecretString = (name: string) =>
-  ServerSecretStore.ServerSecretStore.pipe(
-    Effect.flatMap((secrets) => secrets.get(name)),
-    Effect.map((bytes) =>
-      Option.isSome(bytes) && bytes.value.length > 0 ? new TextDecoder().decode(bytes.value) : null,
-    ),
-    Effect.orElseSucceed(() => null),
-  );
-
-export const readRelayConnection = Effect.all([
-  readSecretString(RELAY_URL_SECRET),
-  readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
-]).pipe(
-  Effect.map(([url, environmentCredential]) =>
-    url && environmentCredential ? { url, environmentCredential } : null,
-  ),
-);
-
-export const readHoldWebhooksWhileOffline = readSecretString(
-  HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
-).pipe(Effect.map((value) => value === "true"));

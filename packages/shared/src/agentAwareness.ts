@@ -1,7 +1,6 @@
 import {
   isListedThreadLineage,
   type EnvironmentId,
-  isProviderNativeSubagentThread,
   type OrchestrationV2ThreadShell,
   type Project,
   type RuntimeRequestId,
@@ -43,23 +42,6 @@ export const turnItemCanChangeUserWait = (item: { readonly type: string }) =>
  * Provider-native subagents ask on their parent. The coordinator answers child questions,
  * but not a card only the user can answer, such as a secret.
  */
-export function subagentAwaitsUser(
-  thread: Pick<
-    OrchestrationV2ThreadShell,
-    "activityRunStatus" | "creationSource" | "lineage" | "pendingRuntimeRequest"
-  >,
-): boolean {
-  const kind = thread.pendingRuntimeRequest?.kind;
-  return (
-    kind !== undefined &&
-    kind !== "auth_refresh" &&
-    (kind !== "user_input" || thread.pendingRuntimeRequest?.userOnly === true) &&
-    thread.lineage.relationshipToParent === "subagent" &&
-    !isProviderNativeSubagentThread(thread) &&
-    // The activity run stays set when a follow-up is queued behind a blocked run.
-    thread.activityRunStatus != null
-  );
-}
 
 export interface AgentAwarenessState {
   readonly environmentId: EnvironmentId;

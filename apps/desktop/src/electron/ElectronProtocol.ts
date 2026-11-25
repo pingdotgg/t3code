@@ -12,7 +12,7 @@ import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
-export const DESKTOP_HOST = "app";
+const DESKTOP_HOST = "app";
 const DESKTOP_PRODUCTION_SCHEME = "tix";
 const DESKTOP_DEVELOPMENT_SCHEME = "tix-dev";
 
