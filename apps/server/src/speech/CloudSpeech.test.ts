@@ -52,7 +52,12 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     yield* service.setKey(provider === "openai" ? "xai" : "openai", Redacted.make("other"));
     expect((yield* Effect.flip(transcribe()))._tag).toBe("CloudSpeechError");
     yield* service.setKey(provider, Redacted.make("chosen"));
-    expect(yield* service.configured).toEqual({ openai: true, xai: true, openrouter: false });
+    expect(yield* service.configured).toEqual({
+      openai: true,
+      xai: true,
+      openrouter: false,
+      google: false,
+    });
     yield* Effect.flip(transcribe(new Uint8Array(3)));
     expect(upstream).not.toHaveBeenCalled();
     expect(yield* transcribe()).toBe("hello");
@@ -203,5 +208,55 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
     const exit = yield* Fiber.await(job);
     expect(uploads).toEqual([]);
     expect(exit._tag).toBe("Failure");
+  }),
+);
+
+it.effect("uploads to Google Gemini using x-goog-api-key and inlineData WAV", () =>
+  Effect.gen(function* () {
+    const upstream = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        candidates: [{ content: { parts: [{ text: "hola mundo" }] } }],
+      }),
+    );
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+    );
+    yield* service.setKey("google", Redacted.make("google-key"));
+    expect((yield* service.configured).google).toBe(true);
+    const text = yield* service
+      .transcribe("google", new Uint8Array(new Float32Array([0, 0.5]).buffer), {
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage: "es",
+        speechCustomWords: [{ term: "T3 Code", aliases: [] }],
+        speechHints: ["Server"],
+      })
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+    expect(text).toBe("hola mundo");
+    const [url, init] = upstream.mock.calls[0]!;
+    expect(String(url)).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent",
+    );
+    expect(init?.redirect).toBe("error");
+    const headers = new Headers(init?.headers);
+    expect(headers.get("x-goog-api-key")).toBe("google-key");
+    expect(headers.get("authorization")).toBeNull();
+    const body = JSON.parse(yield* Effect.promise(() => new Response(init?.body).text())) as {
+      contents: Array<{
+        parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }>;
+      }>;
+    };
+    const parts = body.contents[0]!.parts;
+    expect(parts[0]?.text).toContain("Spoken language: es.");
+    expect(parts[0]?.text).toContain("Server, T3 Code");
+    expect(parts[1]?.inlineData?.mimeType).toBe("audio/wav");
+    const wav = Buffer.from(parts[1]!.inlineData!.data, "base64");
+    expect(wav.toString("ascii", 0, 4)).toBe("RIFF");
+    expect(wav.readInt16LE(46)).toBe(16384);
   }),
 );

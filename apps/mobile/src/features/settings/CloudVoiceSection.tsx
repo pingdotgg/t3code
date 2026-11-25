@@ -305,7 +305,13 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
                 leading={
                   <ProviderIcon
                     provider={
-                      provider === "openai" ? "codex" : provider === "xai" ? "grok" : provider
+                      provider === "openai"
+                        ? "codex"
+                        : provider === "xai"
+                          ? "grok"
+                          : provider === "google"
+                            ? "antigravity"
+                            : provider
                     }
                     size={20}
                   />
