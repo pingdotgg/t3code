@@ -98,9 +98,7 @@ const makePiSpawner = Effect.fnUntraced(function* (
                 ? {
                     models: [
                       ...(discovery.models ?? [{ provider: "test", id: "model" }]),
-                      ...(command.args.includes("--no-extensions")
-                        ? []
-                        : (discovery.workspaceModels?.[cwd ?? ""] ?? [])),
+                      ...(discovery.workspaceModels?.[cwd ?? ""] ?? []),
                     ],
                   }
                 : request.type === "get_state"
