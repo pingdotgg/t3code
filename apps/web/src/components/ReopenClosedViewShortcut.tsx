@@ -49,6 +49,7 @@ import {
 } from "../threadRoutes";
 import { toastManager } from "./ui/toast";
 import { readIssueListPreferences } from "./issue/issueListPreferences";
+import { readPullRequestListPreferences } from "./pullRequest/pullRequestListPreferences";
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
@@ -163,7 +164,7 @@ export function ReopenClosedViewShortcut() {
       destination = globalPullRequests
         ? linkOptions({
             to: "/pull-requests",
-            search: (previous) => pullRequestsSearchForRestore(previous, selected),
+            search: pullRequestsSearchForRestore(readPullRequestListPreferences(), selected),
           })
         : linkOptions({
             to: "/issues",
