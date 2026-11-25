@@ -90,6 +90,7 @@ it.live("previews an @-prefixed Pi image read while it is running", () =>
       archivedAt: null,
       settledOverride: null,
       lastVisitedAt: null,
+      settledAt: null,
       deletedAt: null,
     } satisfies OrchestrationV2AppThread;
     const preview = yield* runtime.events.pipe(
