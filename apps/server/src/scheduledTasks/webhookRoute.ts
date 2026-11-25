@@ -129,6 +129,9 @@ export const layer = HttpApiBuilder.group(
               "invalid",
             );
           }
+          if (started.failure._tag === "WorkflowHookBusyError") {
+            return json(429, { error: "rate_limited" }, "rate_limited", { "retry-after": "60" });
+          }
           yield* Effect.logWarning("Workflow hook delivery failed", { hookId: params.hookId });
           return json(500, { error: "internal_error" }, "error");
         }

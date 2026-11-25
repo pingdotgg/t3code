@@ -33,17 +33,19 @@ export interface RunParent {
   readonly wait: string;
 }
 
-export interface RunRow {
+/** A run as lists show it: everything but what it was started with, which can be a whole payload. */
+export interface RunSummaryRow {
   readonly run_id: string;
   readonly workflow: string;
   readonly idempotency_key: string;
   readonly version: number | bigint;
   readonly engine_tag: string;
   readonly title: string;
+  /** The run's tags, as a JSON list of text. */
+  readonly tags_json: string;
   readonly status: WorkflowRunStatus;
   readonly detail: string | null;
   readonly result_json: string | null;
-  readonly input_json: string | null;
   readonly parent_run_id: string | null;
   readonly parent_wait: string | null;
   readonly pauses: number | bigint;
@@ -52,6 +54,9 @@ export interface RunRow {
   readonly started_at: string;
   readonly updated_at: string;
   readonly ended_at: string | null;
+}
+export interface RunRow extends RunSummaryRow {
+  readonly input_json: string | null;
 }
 export interface StepRow {
   readonly name: string;
@@ -195,6 +200,8 @@ export class WorkflowStore extends Context.Service<
       result: Schema.Json,
     ) => Effect.Effect<boolean>;
     readonly runTitle: (runId: string, title: string) => Effect.Effect<void>;
+    /** The run's tags from now on, in place of any it had. */
+    readonly runTags: (runId: string, tags: ReadonlyArray<string>) => Effect.Effect<void>;
     /** Marks the step running and returns how many times it has now been started. */
     readonly stepStarted: (
       runId: string,
@@ -256,6 +263,11 @@ export class WorkflowStore extends Context.Service<
       limit: number,
     ) => Effect.Effect<ReadonlyArray<{ readonly run_id: string; readonly engine_tag: string }>>;
     readonly enginePruned: (runId: string) => Effect.Effect<void>;
+    /**
+     * Deletes up to `limit` skipped top-level runs per call past each workflow's latest `kept`, once
+     * their engine journal is gone, with their steps. A run that invoked others is kept.
+     */
+    readonly pruneSkipped: (kept: number, limit: number) => Effect.Effect<number>;
     /** Every run in this state, however many: the sweep must not miss old ones past a page. */
     readonly everyRun: (
       status: "running" | "waiting" | "paused",
@@ -351,13 +363,19 @@ export class WorkflowStore extends Context.Service<
     readonly run: (runId: string) => Effect.Effect<RunRow | undefined>;
     /** The run a workflow was started as under `key`, of whichever version. */
     readonly runByKey: (workflow: string, key: string) => Effect.Effect<RunRow | undefined>;
-    readonly runs: (status: WorkflowRunStatus | undefined) => Effect.Effect<ReadonlyArray<RunRow>>;
+    readonly runs: (
+      status: WorkflowRunStatus | undefined,
+    ) => Effect.Effect<ReadonlyArray<RunSummaryRow>>;
     /** Runs by what they are a run of and what they were started as, newest first. */
     readonly runsWhere: (filter: {
       readonly workflow?: string | undefined;
       readonly status?: WorkflowRunStatus | undefined;
       readonly keyPrefix?: string | undefined;
-    }) => Effect.Effect<ReadonlyArray<RunRow>>;
+      /** Runs with an open question of this kind. */
+      readonly kind?: string | undefined;
+      /** Runs tagged with this. */
+      readonly tag?: string | undefined;
+    }) => Effect.Effect<ReadonlyArray<RunSummaryRow>>;
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
     /** Forgets every trigger but these, so one that comes back starts over. */
@@ -387,6 +405,7 @@ export const make = Effect.gen(function* () {
   const write = <A, E>(runId: string, effect: Effect.Effect<A, E>) =>
     effect.pipe(Effect.orDie, Effect.andThen(PubSub.publish(changes, runId)), Effect.asVoid);
   const waitColumns = sql`run_id, name, token, schema_json, request_json, watch_json, deadline, opened_at, woke_json`;
+  const summaryColumns = sql`run_id, workflow, idempotency_key, version, engine_tag, title, status, detail, result_json, parent_run_id, parent_wait, pauses, held, tags_json, started_at, updated_at, ended_at`;
 
   const hub = yield* Effect.serviceOption(MilestoneHub.MilestoneHub);
   /** Tells the milestone hub of a transition this store just wrote, under an id stable for it. */
@@ -547,7 +566,12 @@ export const make = Effect.gen(function* () {
             const rows = yield* sql`
               UPDATE workflow_runs
               SET status = ${status}, detail = ${detail}, result_json = ${resultJson},
-                  pauses = 0, updated_at = ${at}, ended_at = ${at}
+                  pauses = 0, updated_at = ${at}, ended_at = ${at},
+                  -- Only a cancelled run's cleanup reads it again; a skipped one has nothing to undo.
+                  input_json = CASE
+                    WHEN ${status} = 'skipped' AND parent_run_id IS NULL THEN NULL
+                    ELSE input_json
+                  END
               WHERE run_id = ${runId} AND ended_at IS NULL
               RETURNING run_id
             `;
@@ -573,9 +597,13 @@ export const make = Effect.gen(function* () {
       return true;
     }),
     runTitle: Effect.fn("WorkflowStore.runTitle")(function* (runId, title) {
+      const kept = title.slice(0, splitsSurrogatePair(title, 200) ? 199 : 200);
+      yield* write(runId, sql`UPDATE workflow_runs SET title = ${kept} WHERE run_id = ${runId}`);
+    }),
+    runTags: Effect.fn("WorkflowStore.runTags")(function* (runId, tags) {
       yield* write(
         runId,
-        sql`UPDATE workflow_runs SET title = ${title.slice(0, 200)} WHERE run_id = ${runId}`,
+        sql`UPDATE workflow_runs SET tags_json = ${jsonText([...tags])} WHERE run_id = ${runId}`,
       );
     }),
     stepStarted: Effect.fn("WorkflowStore.stepStarted")(function* (runId, name, kind) {
@@ -763,6 +791,56 @@ export const make = Effect.gen(function* () {
         UPDATE workflow_runs SET engine_pruned_at = ${at} WHERE run_id = ${runId}
       `.pipe(Effect.orDie);
     }),
+    pruneSkipped: Effect.fn("WorkflowStore.pruneSkipped")(function* (kept, limit) {
+      // Named, or SQLite picks the status index and reads every skipped run's row.
+      const workflows = yield* sql<{ workflow: string }>`
+        SELECT DISTINCT workflow FROM workflow_runs INDEXED BY workflow_runs_skipped
+        WHERE status = 'skipped' AND parent_run_id IS NULL
+      `;
+      let deleted = 0;
+      let last: string | undefined;
+      // Each batch commits on its own, so a later failure must not hide the earlier deletions.
+      return yield* Effect.gen(function* () {
+        for (const { workflow } of workflows) {
+          if (deleted >= limit) break;
+          // rowid breaks ties: a burst of runs can share one started_at across the boundary.
+          const [newest] =
+            kept === 0
+              ? [{ started_at: "\u{10FFFF}", id: 0 }]
+              : yield* sql<{ started_at: string; id: number }>`
+                  SELECT started_at, rowid AS id FROM workflow_runs
+                  INDEXED BY workflow_runs_skipped
+                  WHERE workflow = ${workflow} AND status = 'skipped' AND parent_run_id IS NULL
+                  ORDER BY started_at DESC, rowid DESC LIMIT 1 OFFSET ${kept - 1}
+                `;
+          if (newest === undefined) continue;
+          const ids = (yield* sql<{ run_id: string }>`
+            SELECT run_id FROM workflow_runs r INDEXED BY workflow_runs_skipped
+            WHERE workflow = ${workflow} AND status = 'skipped' AND parent_run_id IS NULL
+              AND (started_at, rowid) < (${newest.started_at}, ${newest.id})
+              AND ended_at IS NOT NULL AND engine_pruned_at IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM workflow_runs c WHERE c.parent_run_id = r.run_id)
+            ORDER BY started_at, rowid LIMIT ${limit - deleted}
+          `).map((row) => row.run_id);
+          if (ids.length === 0) continue;
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`DELETE FROM workflow_steps WHERE ${sql.in("run_id", ids)}`;
+              yield* sql`DELETE FROM workflow_marks WHERE ${sql.in("run_id", ids)}`;
+              yield* sql`DELETE FROM workflow_run_references WHERE ${sql.in("run_id", ids)}`;
+              yield* sql`DELETE FROM workflow_runs WHERE ${sql.in("run_id", ids)}`;
+            }),
+          );
+          deleted += ids.length;
+          last = ids.at(-1);
+        }
+        return deleted;
+      }).pipe(
+        Effect.ensuring(
+          Effect.suspend(() => (last === undefined ? Effect.void : PubSub.publish(changes, last))),
+        ),
+      );
+    }, Effect.orDie),
     orphans: sql<RunRow>`
       SELECT c.* FROM workflow_runs c
       JOIN workflow_runs p ON p.run_id = c.parent_run_id
@@ -830,9 +908,10 @@ export const make = Effect.gen(function* () {
         )
       `.pipe(Effect.orDie);
     }),
+    // CROSS JOIN keeps the few open waits outside: SQLite would otherwise read every run.
     untold: sql<RunRow>`
       SELECT c.* FROM workflow_waits w
-      JOIN workflow_runs c ON c.parent_run_id = w.run_id AND c.parent_wait = w.name
+      CROSS JOIN workflow_runs c ON c.parent_run_id = w.run_id AND c.parent_wait = w.name
       WHERE w.signalled_at IS NULL AND c.ended_at IS NOT NULL
     `.pipe(Effect.orDie),
     stepThread: Effect.fn("WorkflowStore.stepThread")(
@@ -996,14 +1075,32 @@ export const make = Effect.gen(function* () {
     }),
     runsWhere: Effect.fn("WorkflowStore.runsWhere")(function* (filter) {
       const prefix = filter.keyPrefix ?? null;
-      // A range, not LIKE, which would read `%` and `_` in a key as patterns.
-      return yield* sql<RunRow>`
-        SELECT * FROM workflow_runs
-        WHERE (${filter.workflow ?? null} IS NULL OR workflow = ${filter.workflow ?? null})
-          AND (${filter.status ?? null} IS NULL OR status = ${filter.status ?? null})
-          AND (${prefix} IS NULL OR (
-            idempotency_key >= ${prefix} AND idempotency_key < ${`${prefix ?? ""}\u{10FFFF}`}
-          ))
+      // Only the filters given, so SQLite can use an index for them.
+      const where = sql.and([
+        ...(filter.workflow === undefined ? [] : [sql`workflow = ${filter.workflow}`]),
+        ...(filter.status === undefined ? [] : [sql`status = ${filter.status}`]),
+        // A range, not LIKE, which would read `%` and `_` in a key as patterns.
+        ...(prefix === null
+          ? []
+          : [sql`idempotency_key >= ${prefix} AND idempotency_key < ${`${prefix}\u{10FFFF}`}`]),
+        ...(filter.tag === undefined
+          ? []
+          : [
+              sql`EXISTS (SELECT 1 FROM json_each(r.tags_json) WHERE json_each.value = ${filter.tag})`,
+            ]),
+        ...(filter.kind === undefined
+          ? []
+          : [
+              sql`EXISTS (
+                SELECT 1 FROM workflow_waits w
+                WHERE w.run_id = r.run_id AND w.signalled_at IS NULL AND w.request_json IS NOT NULL
+                  AND json_extract(w.request_json, '$.kind') = ${filter.kind}
+              )`,
+            ]),
+      ]);
+      return yield* sql<RunSummaryRow>`
+        SELECT ${summaryColumns} FROM workflow_runs r
+        WHERE ${where}
         ORDER BY started_at DESC, rowid DESC LIMIT 500
       `.pipe(Effect.orDie);
     }),
@@ -1011,23 +1108,30 @@ export const make = Effect.gen(function* () {
       return yield* (
         status === undefined
           ? // Skipped runs are counted apart, so a trigger that skips most of what it brings does
-            // not push the runs that did something out of the list.
-            sql<RunRow>`
-              SELECT * FROM (
-                SELECT * FROM workflow_runs
+            // not push the runs that did something out of the list. A run with a question open is
+            // listed however old, since what waits on a person is built from this list.
+            sql<RunSummaryRow>`
+              SELECT ${summaryColumns} FROM (
+                SELECT ${summaryColumns} FROM workflow_runs
                 WHERE NOT (status = 'skipped' AND parent_run_id IS NULL)
                 ORDER BY started_at DESC LIMIT 500
               )
               UNION ALL
-              SELECT * FROM (
-                SELECT * FROM workflow_runs
+              SELECT ${summaryColumns} FROM (
+                SELECT ${summaryColumns} FROM workflow_runs
                 WHERE status = 'skipped' AND parent_run_id IS NULL
                 ORDER BY started_at DESC LIMIT 500
               )
+              UNION
+              SELECT ${summaryColumns} FROM workflow_runs
+              WHERE run_id IN (
+                SELECT run_id FROM workflow_waits
+                WHERE request_json IS NOT NULL AND signalled_at IS NULL
+              )
               ORDER BY started_at DESC
             `
-          : sql<RunRow>`
-              SELECT * FROM workflow_runs WHERE status = ${status}
+          : sql<RunSummaryRow>`
+              SELECT ${summaryColumns} FROM workflow_runs WHERE status = ${status}
               ORDER BY started_at DESC LIMIT 500
             `
       ).pipe(Effect.orDie);

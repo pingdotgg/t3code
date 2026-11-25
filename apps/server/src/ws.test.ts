@@ -8,7 +8,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthAccessReadScope,
-  type AuthEnvironmentScope,
+  AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthProvidersManageScope,
@@ -17,6 +17,7 @@ import {
   type WorkflowStep,
   AuthSessionId,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   EnvironmentId,
@@ -24,6 +25,7 @@ import {
   GitManagerError,
   VcsProcessSpawnError,
   MessageId,
+  mcpClientScopes,
   ProjectId,
   ThreadId,
   TurnItemId,
@@ -160,6 +162,7 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
+import * as LayoutCommandApprovalWrites from "./workspace/LayoutCommandApprovalWrites.ts";
 import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
@@ -916,6 +919,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),
   Layer.mock(WorkspaceFolders.WorkspaceFolders)({}),
   Layer.mock(TaskFolders.TaskFolders)({}),
+  Layer.mock(LayoutCommandApprovalWrites.LayoutCommandApprovalWrites)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
   FeatureFlags.layerTest(),
@@ -1934,6 +1938,184 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       ),
     ),
   ),
+);
+
+it.effect(
+  "worktree requests run a project's layout commands only for a session that may run commands",
+  () =>
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const requested = Effect.fnUntraced(function* (scopes: ReadonlyArray<AuthEnvironmentScope>) {
+        const seen: TaskFolders.ProjectCommandsNow[] = [];
+        const exits = yield* Queue.unbounded<string>();
+        const services = Layer.mergeAll(
+          layerUnusedConfigRpcServices,
+          Layer.mock(TaskFolders.TaskFolders)({
+            createForProjectFolder: (_input, options) =>
+              Effect.sync(() => seen.push(options.projectCommands)).pipe(
+                Effect.as({ worktree: { path: "/repo-worktrees/feature", refName: "feature" } }),
+              ),
+            removeIfTaskFolder: (input) =>
+              Effect.sync(() => seen.push(input.projectCommands)).pipe(Effect.as(true)),
+          }),
+          Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+            refreshStatus: () => Effect.die("unused"),
+          }),
+          Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+          Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+          Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+          Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+          Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+          Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+          Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+        );
+        const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+          ...WS_RPC_SERVER_OPTIONS,
+          onFromServer: (response) =>
+            response._tag === "Exit" ? Queue.offer(exits, response.exit._tag) : Effect.void,
+        }).pipe(
+          Effect.provide(
+            layerWsRpc(
+              {
+                sessionId: AuthSessionId.make("worktree-test"),
+                subject: "worktree-test",
+                method: "browser-session-cookie",
+                scopes: [...scopes],
+              },
+              {},
+              browser,
+              () => Effect.void,
+              { secretReferences: true },
+            ).pipe(Layer.provide(services), Layer.merge(RpcAuthorization.layer(scopes))),
+          ),
+        );
+        yield* server.write(0, {
+          _tag: "Request",
+          id: RpcMessage.RequestId("create"),
+          tag: WS_METHODS.vcsCreateWorktree,
+          payload: { cwd: "/repo", refName: "main", newRefName: "feature", path: null },
+          headers: Headers.empty,
+        });
+        assert.equal(yield* Queue.take(exits), "Success");
+        yield* server.write(0, {
+          _tag: "Request",
+          id: RpcMessage.RequestId("remove"),
+          tag: WS_METHODS.vcsRemoveWorktree,
+          payload: { cwd: "/repo", path: "/repo-worktrees/feature" },
+          headers: Headers.empty,
+        });
+        assert.equal(yield* Queue.take(exits), "Success");
+        return seen;
+      }, Effect.scoped);
+
+      assert.deepEqual(yield* requested([AuthSourceControlWriteScope]), [
+        "request-not-permitted",
+        "request-not-permitted",
+      ]);
+      assert.deepEqual(
+        yield* requested([AuthSourceControlWriteScope, AuthOrchestrationOperateScope]),
+        ["permitted", "permitted"],
+      );
+      assert.deepEqual(yield* requested([AuthSourceControlWriteScope, AuthTerminalOperateScope]), [
+        "permitted",
+        "permitted",
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+    ),
+);
+
+it.effect(
+  "a project's layout command is approved only from a session that may use the terminal",
+  () =>
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const projectId = ProjectId.make("project:layout");
+      const approval = { kind: "create", command: "make worktree" } as const;
+      const requested = Effect.fnUntraced(function* (scopes: ReadonlyArray<AuthEnvironmentScope>) {
+        const recorded: unknown[] = [];
+        const exits = yield* Queue.unbounded<string>();
+        const services = Layer.mergeAll(
+          layerUnusedConfigRpcServices,
+          Layer.mock(TaskFolders.TaskFolders)({
+            layoutCommands: () => Effect.succeed({ commands: [{ ...approval, approved: true }] }),
+          }),
+          Layer.mock(LayoutCommandApprovalWrites.LayoutCommandApprovalWrites)({
+            set: (input) => Effect.sync(() => void recorded.push(input)),
+          }),
+          Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+          Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+          Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+          Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+          Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+          Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+          Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+          Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+        );
+        const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+          ...WS_RPC_SERVER_OPTIONS,
+          onFromServer: (response) =>
+            response._tag === "Exit" ? Queue.offer(exits, response.exit._tag) : Effect.void,
+        }).pipe(
+          Effect.provide(
+            layerWsRpc(
+              {
+                sessionId: AuthSessionId.make("layout-test"),
+                subject: "layout-test",
+                method: "browser-session-cookie",
+                scopes: [...scopes],
+              },
+              {},
+              browser,
+              () => Effect.void,
+              { secretReferences: true },
+            ).pipe(Layer.provide(services), Layer.merge(RpcAuthorization.layer(scopes))),
+          ),
+        );
+        yield* server.write(0, {
+          _tag: "Request",
+          id: RpcMessage.RequestId("approve"),
+          tag: WS_METHODS.workspaceApproveLayoutCommands,
+          payload: { projectId, approvals: [approval] },
+          headers: Headers.empty,
+        });
+        return { exit: yield* Queue.take(exits), recorded };
+      }, Effect.scoped);
+
+      // Everything the broadest agent session holds, and every other scope short of the terminal.
+      assert.deepEqual(yield* requested(mcpClientScopes("full-access")), {
+        exit: "Failure",
+        recorded: [],
+      });
+      assert.deepEqual(
+        yield* requested(
+          AuthEnvironmentScope.literals.filter((scope) => scope !== AuthTerminalOperateScope),
+        ),
+        { exit: "Failure", recorded: [] },
+      );
+      assert.deepEqual(yield* requested([AuthTerminalOperateScope]), {
+        exit: "Success",
+        recorded: [{ projectId, ...approval }],
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+    ),
 );
 
 it.effect("a git action that fails partway still refreshes the repository status", () =>

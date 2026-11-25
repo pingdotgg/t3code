@@ -497,7 +497,7 @@
   "bc24c300d53d61c5": "{host} svarade inte på någon sparad rutt.",
   "b0dd3cd876937ca8": "Anslutningsprofilen {connectionId} är inte tillgänglig.",
   "5ce46783e79ca9d1": "Autentiseringsuppgiften för anslutningen {connectionId} är inte tillgänglig.",
-  "0bda0cac7f5acc20": "Den anslutna miljön {actual} matchar inte {expected}.",
+  "b39d1428ec8b23f5": "Den här adressen kör nu en annan T3 Code-installation ({actual}, inte {expected}). Ta bort anslutningen och lägg till den igen.",
   "ea0d3e4e51d5706f": "Miljöns autentiseringsuppgift är ogiltig.",
   "7283ebfd16d09677": "Miljöns autentiseringsuppgift ger inte den åtkomst som krävs.",
   "d3e9a9cb543b4b7b": "Miljön avvisade autentiseringsbegäran.",
@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Startar MCP-servrar för {provider}",
   "fedaa29ff8815a77": "Läser in hooks för {provider}",
   "57025ae4de5beb57": "Läser in regler och färdigheter för {provider}",
+  "1cbfbcad9f0d04fe": "Återupptar sessionen för {provider}",
   "4729a188600f1501": "Ansluter till {provider}",
   "8c8977097681630f": "Startar {provider}",
   "f1d27d127ab27ac6": "Startar",
@@ -4339,6 +4340,21 @@
     },
     " lämnade sin sida och stoppades"
   ],
+  "796b81c4875c4feb": [
+    "Appen ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " behöver en nyare ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "-server i den här miljön. Uppdatera servern för att använda den."
+  ],
   "5ef18e4d39b398bf": [
     "Det gick inte att läsa in appen ",
     {
@@ -4900,6 +4916,7 @@
   "306a6f95ad9d52f7": "Ej skickade",
   "11276ab6c58b7a25": "Öppnar utkastet i inmatningsfältet för ny uppgift. Svep åt vänster för att kasta.",
   "99950f3a28d425fa": "Skickas när miljön återansluter. Öppnar uppgiften för redigering. Svep åt vänster för att ta bort.",
+  "d71048f4fb9cf44a": "Väntar på synkronisering",
   "0a260c7744afd0be": "Väntar",
   "ad78fae7d373cf21": "Arbetar",
   "be451f475c514b37": "Stäng aviseringen Väckt",
@@ -5328,6 +5345,9 @@
   "744127f8dfad7d22": "Anslut en miljö för att se dess arbetsflödeskörningar.",
   "b9aae2f7cdb1a379": "Inga arbetsflödeskörningar än",
   "ace8fc1c643cf9f6": "Ett arbetsflöde knyter ihop agenter, kod, scheman och frågor till dig i en enda körning som överlever omstarter. Skriv ett på din dator, under Arbetsflöden och sedan Definitioner.",
+  "fc9c3a00cfc18b55": "Alla typer",
+  "e4d1316c85ed7066": "Inga frågor av den här typen väntar på dig.",
+  "45a94c724845ec1d": "Övrigt",
   "86798f07ba2d7f4d": "Sök ärenden",
   "484cd83bb303bab8": "Sök pull requests",
   "75ed31fcea4f741a": "Filtrera ärenden",
@@ -5615,5 +5635,13 @@
   "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
   "99d51127f573296b": "Ett konto till",
   "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
-  "892f08d21b8e48a9": "Merga {layers} in i {base} med {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} när kraven är uppfyllda. Det kan ske direkt."
+  "892f08d21b8e48a9": "Merga {layers} in i {base} med {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} när kraven är uppfyllda. Det kan ske direkt.",
+  "89bf40eb2503b6c5": "Ny enhet inloggad på {environment}",
+  "c94b5fe9ef372bc0": "{device} anslöt via {product}. Om det inte var du, ta bort den under Inställningar → Åtkomst i T3 Code på den datorn.",
+  "bec67d0ed485f885": "{count, plural, one {{count} enhet} other {{count} enheter}} anslöt via {product}. Om det inte var du, ta bort dem under Inställningar → Åtkomst i T3 Code på den datorn.",
+  "18c30aa94d0a807f": "Anslutningsdiagnostik",
+  "eb287395a09cd288": "Skicka anslutningsspårningar",
+  "6787f93bbf6ce0b6": "Hjälper T3 Code-teamet att åtgärda anslutningsproblem. Spårningar innehåller tider, feltyper, ett ID för den här appsessionen och appversionen, aldrig dina trådar, prompter eller din kod. Du kan ändra det under Inställningar > Om T3 Code > Diagnostik.",
+  "0b1e4aecbd38e0cf": "När appen ansluter till en dator via {product} skickar den hur lång tid varje steg tog, feltypen, ett ID för den här appsessionen och appversionen till T3 Code-teamet. Spårningar innehåller aldrig dina trådar, prompter eller din kod.",
+  "e0856d6a402ad821": "Policyn för {organization} tillåter inte projekts layoutkommandon för worktrees."
 }
