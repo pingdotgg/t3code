@@ -631,6 +631,24 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("pending");
   });
 
+  it("reads a check by its conclusion when GitHub never marks it completed", () => {
+    const detail = detailOf([
+      inWorkflow({
+        name: "Changes",
+        workflowName: "CI",
+        status: "IN_PROGRESS",
+        conclusion: "SUCCESS",
+        startedAt: "2026-11-24T22:26:00Z",
+        completedAt: "2026-11-24T22:26:06Z",
+      }),
+    ]);
+
+    expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
+      ["Changes", "success"],
+    ]);
+    expect(detail.checksState).toBe("passing");
+  });
+
   it("keeps a check pending while another run of it on the same commit is still going", () => {
     const finished = {
       name: "check",
