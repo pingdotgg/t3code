@@ -5699,8 +5699,8 @@
   "cd8c60ecfa5238ed": "Si no, algo entre este dispositivo y {host} podría estar interceptando la conexión.",
   "0c749dab5288ee9f": "Algo entre este dispositivo y {host} podría estar alterando la conexión.",
   "f9f9ed1dc0b45f72": "No se pudo establecer la conexión cifrada con {host}.",
-  "dcf6f4ea88e6d6f2": "Si T3 Code en {host} se reinstaló o restableció, quita {host} de este dispositivo y vuelve a agregarlo para confiar en su nueva identidad.",
-  "405ee04d8c932c58": "La identidad de {host} cambió desde que este dispositivo se conectó por primera vez. Si lo esperabas, quita {host} de este dispositivo y vuelve a agregarlo para confiar en su nueva identidad.",
   "5c38b94ac8d96e9d": "Cifrado de extremo a extremo",
-  "37b578c0868b33dc": "Sin cifrado de extremo a extremo"
+  "37b578c0868b33dc": "Sin cifrado de extremo a extremo",
+  "95c2359e5d702192": "¿Confiar en la nueva identidad de {host}?\nHazlo solo si T3 Code en {host} se reinstaló o restableció. De lo contrario, algo entre este dispositivo y {host} podría estar interceptando la conexión, y confiar en ello le permitiría ver y cambiar lo que haces en {host}.",
+  "d65e774d56e83448": "Confiar en la nueva identidad"
 }

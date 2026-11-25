@@ -22,6 +22,8 @@ import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { environmentCatalog } from "../../connection/catalog";
 import { environmentPresentations } from "../../state/presentation";
 import { ConnectionDiagnosisDetails, useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
 import { ConnectionFormField } from "./ConnectionFormField";
@@ -78,6 +80,21 @@ export function ConnectionEnvironmentRow(props: {
     props.environment.environmentId,
     presentation,
   );
+  const forgetIdentity = useAtomCommand(environmentCatalog.forgetIdentity, "environment identity");
+  const trustNewIdentity = () => {
+    // One string shared with the web confirmation: its first line is the title.
+    const [title, message] = gt(
+      "Trust {host}'s new identity?\nOnly do this if T3 Code on {host} was reinstalled or reset. Otherwise something between this device and {host} may be intercepting the connection, and trusting it would let it see and change what you do on {host}.",
+      { host: props.environment.environmentLabel },
+    ).split("\n");
+    Dialog.confirm({
+      title: title ?? "",
+      ...(message === undefined ? {} : { message }),
+      confirmText: gt("Trust new identity"),
+      destructive: true,
+      onConfirm: () => void forgetIdentity(props.environment.environmentId),
+    });
+  };
   const enabled = props.environment.isEnabled && !unsupported;
   const statusLabel = connectionStatusLabel(props.environment, m);
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
@@ -228,6 +245,11 @@ export function ConnectionEnvironmentRow(props: {
             <ConnectionDiagnosisDetails
               hostLabel={props.environment.environmentLabel}
               diagnosis={diagnosis}
+              onTrustNewIdentity={
+                connectionState.lastFailure?.failureCause === "identity_changed"
+                  ? trustNewIdentity
+                  : undefined
+              }
             />
           ) : null}
           {props.environment.isRelayManaged ? (

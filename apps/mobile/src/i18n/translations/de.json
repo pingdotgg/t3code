@@ -5705,8 +5705,8 @@
   "cd8c60ecfa5238ed": "Andernfalls könnte etwas zwischen diesem Gerät und {host} die Verbindung abfangen.",
   "0c749dab5288ee9f": "Etwas zwischen diesem Gerät und {host} verändert möglicherweise die Verbindung.",
   "f9f9ed1dc0b45f72": "Die verschlüsselte Verbindung zu {host} konnte nicht hergestellt werden.",
-  "dcf6f4ea88e6d6f2": "Wenn T3 Code auf {host} neu installiert oder zurückgesetzt wurde, entferne {host} von diesem Gerät und füge es erneut hinzu, um seiner neuen Identität zu vertrauen.",
-  "405ee04d8c932c58": "Die Identität von {host} hat sich seit der ersten Verbindung dieses Geräts geändert. Wenn du das erwartet hast, entferne {host} von diesem Gerät und füge es erneut hinzu, um seiner neuen Identität zu vertrauen.",
   "5c38b94ac8d96e9d": "Ende-zu-Ende-verschlüsselt",
-  "37b578c0868b33dc": "Nicht Ende-zu-Ende-verschlüsselt"
+  "37b578c0868b33dc": "Nicht Ende-zu-Ende-verschlüsselt",
+  "95c2359e5d702192": "Der neuen Identität von {host} vertrauen?\nTu das nur, wenn T3 Code auf {host} neu installiert oder zurückgesetzt wurde. Andernfalls fängt möglicherweise etwas zwischen diesem Gerät und {host} die Verbindung ab, und wenn du ihm vertraust, kann es sehen und ändern, was du auf {host} tust.",
+  "d65e774d56e83448": "Neuer Identität vertrauen"
 }

@@ -5699,8 +5699,8 @@
   "cd8c60ecfa5238ed": "Sinon, quelque chose entre cet appareil et {host} intercepte peut-être la connexion.",
   "0c749dab5288ee9f": "Quelque chose entre cet appareil et {host} modifie peut-être la connexion.",
   "f9f9ed1dc0b45f72": "Impossible d’établir la connexion chiffrée avec {host}.",
-  "dcf6f4ea88e6d6f2": "Si T3 Code a été réinstallé ou réinitialisé sur {host}, retirez {host} de cet appareil puis ajoutez-le à nouveau pour faire confiance à sa nouvelle identité.",
-  "405ee04d8c932c58": "L’identité de {host} a changé depuis la première connexion de cet appareil. Si vous vous y attendiez, retirez {host} de cet appareil puis ajoutez-le à nouveau pour faire confiance à sa nouvelle identité.",
   "5c38b94ac8d96e9d": "Chiffré de bout en bout",
-  "37b578c0868b33dc": "Non chiffré de bout en bout"
+  "37b578c0868b33dc": "Non chiffré de bout en bout",
+  "95c2359e5d702192": "Faire confiance à la nouvelle identité de {host} ?\nNe le faites que si T3 Code a été réinstallé ou réinitialisé sur {host}. Sinon, quelque chose entre cet appareil et {host} intercepte peut-être la connexion, et lui faire confiance lui permettrait de voir et de modifier ce que vous faites sur {host}.",
+  "d65e774d56e83448": "Faire confiance à la nouvelle identité"
 }

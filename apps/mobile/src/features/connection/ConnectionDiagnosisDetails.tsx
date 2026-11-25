@@ -54,6 +54,8 @@ export function useConnectionDiagnosis(
 export function ConnectionDiagnosisDetails(props: {
   readonly hostLabel: string;
   readonly diagnosis: ConnectionDiagnosis;
+  /** Set when the failure is a changed identity key; forgets the pinned key and retries. */
+  readonly onTrustNewIdentity?: (() => void) | undefined;
 }) {
   const gt = useGT();
   const { diagnosis } = props;
@@ -99,6 +101,9 @@ export function ConnectionDiagnosisDetails(props: {
           });
         }}
       />
+      {props.onTrustNewIdentity ? (
+        <Button label={gt("Trust new identity")} tone="danger" onPress={props.onTrustNewIdentity} />
+      ) : null}
       {moreInfoUrl ? (
         <Button
           label={gt("More info")}

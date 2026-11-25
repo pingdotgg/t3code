@@ -5699,8 +5699,8 @@
   "cd8c60ecfa5238ed": "Caso contrário, algo entre este dispositivo e {host} pode estar interceptando a conexão.",
   "0c749dab5288ee9f": "Algo entre este dispositivo e {host} pode estar alterando a conexão.",
   "f9f9ed1dc0b45f72": "Não foi possível estabelecer a conexão criptografada com {host}.",
-  "dcf6f4ea88e6d6f2": "Se o T3 Code em {host} foi reinstalado ou redefinido, remova {host} deste dispositivo e adicione-o novamente para confiar na nova identidade.",
-  "405ee04d8c932c58": "A identidade de {host} mudou desde que este dispositivo se conectou pela primeira vez. Se você esperava isso, remova {host} deste dispositivo e adicione-o novamente para confiar na nova identidade.",
   "5c38b94ac8d96e9d": "Criptografia de ponta a ponta",
-  "37b578c0868b33dc": "Sem criptografia de ponta a ponta"
+  "37b578c0868b33dc": "Sem criptografia de ponta a ponta",
+  "95c2359e5d702192": "Confiar na nova identidade de {host}?\nFaça isso somente se o T3 Code em {host} foi reinstalado ou redefinido. Caso contrário, algo entre este dispositivo e {host} pode estar interceptando a conexão, e confiar nele permitiria que visse e alterasse o que você faz em {host}.",
+  "d65e774d56e83448": "Confiar na nova identidade"
 }
