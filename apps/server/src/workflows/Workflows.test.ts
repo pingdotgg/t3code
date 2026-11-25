@@ -21,10 +21,25 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 import { issues, pullRequests } from "./forgeApi.ts";
-import { cancel, runs, signal, signalAll, start, store } from "./stepServices.ts";
-import { type InRun, invoke, skip, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
+import { cancel, runs, signalAll, start } from "./stepServices.ts";
+import {
+  type InRun,
+  invoke,
+  skip,
+  sleep,
+  step,
+  stop,
+  tags,
+  text,
+  title,
+  wait,
+  workflow,
+} from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
+import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import {
   Issue,
@@ -243,85 +258,6 @@ const definitions = (
     ),
   ];
 };
-
-/** Write a change, ask a person whether to merge it, then land it in the writer's own thread. */
-const tally = store.entry("tally", Schema.Number);
-const stored = [
-  /** Counts itself in the store, with the first try of the step failing after it counted. */
-  workflow(
-    "tally",
-    {
-      version: 1,
-      payload: Schema.Struct({ wrong: Schema.optional(Schema.Boolean) }),
-      returns: Schema.Number,
-    },
-    (payload) =>
-      payload.wrong === true
-        ? step(
-            "read",
-            { returns: Schema.Number, ...once },
-            Effect.as(store.entry("tally", Schema.String).get, 0),
-          )
-        : step(
-            "count",
-            { returns: Schema.Number, ...once },
-            tally
-              .update((current) => Option.getOrElse(current, () => 0) + 1)
-              .pipe(Effect.map(Option.getOrElse(() => 0))),
-          ),
-  ),
-  /** Waits in line for a door that `opener` opens. */
-  workflow(
-    "door",
-    { version: 1, payload: Schema.Struct({ door: Schema.String }), returns: Schema.String },
-    (payload) =>
-      Effect.map(
-        wait("open", { returns: Schema.String, channel: payload.door }),
-        Option.getOrElse(() => "never"),
-      ),
-  ),
-  workflow(
-    "opener",
-    { version: 1, payload: Schema.Struct({ door: Schema.String, fail: Schema.Boolean }) },
-    (payload) =>
-      step(
-        "open",
-        { returns: Schema.Void, retry: { times: 1 } },
-        Effect.gen(function* () {
-          // Written and taken back together when the step fails after writing.
-          yield* store.transaction(
-            Effect.gen(function* () {
-              yield* store.entry(`doors/${payload.door}`, Schema.String).set("open");
-              const tries = yield* store
-                .entry(`tries/${payload.door}`, Schema.Number)
-                .update((current) => Option.getOrElse(current, () => 0) + 1);
-              if (payload.fail && Option.contains(tries, 1)) return yield* Effect.fail("slipped");
-            }),
-          );
-          yield* signal({ workflow: "door", channel: payload.door }, "came in");
-        }),
-      ),
-  ),
-  /** Opens two doors, fails, and on its second try opens the second and a third. */
-  workflow(
-    "relay",
-    { version: 1, payload: Schema.Struct({ doors: Schema.Array(Schema.String) }) },
-    (payload) =>
-      step(
-        "pass",
-        { returns: Schema.Void, retry: { times: 1 } },
-        Effect.gen(function* () {
-          const tries = yield* store
-            .entry("relay-tries", Schema.Number)
-            .update((current) => Option.getOrElse(current, () => 0) + 1);
-          const [a, b, c] = payload.doors;
-          const doors = Option.contains(tries, 1) ? [a!, b!] : [b!, c!];
-          for (const door of doors) yield* signal({ workflow: "door", channel: door }, "came in");
-          if (Option.contains(tries, 1)) return yield* Effect.fail("slipped");
-        }),
-      ),
-  ),
-];
 
 const kid = workflow(
   "kid",
@@ -649,6 +585,54 @@ const triggered = [
   ),
 ];
 
+const sorted = [
+  /** Tags its run, then asks a question of the kind it was started with, or of none. */
+  workflow(
+    "sorter",
+    {
+      version: 1,
+      payload: Schema.Struct({
+        tags: Schema.Array(Schema.String),
+        kind: Schema.optional(Schema.String),
+      }),
+      asks: { feature: "Feature wanted?", intended: "Bug or intended?" },
+    },
+    Effect.fn(function* (payload) {
+      yield* tags(payload.tags);
+      const question = { title: "Which way?", choices: ["Yes", "No"] } as const;
+      yield* ask(
+        "sort",
+        payload.kind === undefined ? question : { ...question, kind: payload.kind },
+      );
+    }),
+  ),
+  /** Finds runs by their tag, or by the kind of question they have open. */
+  workflow(
+    "finder",
+    {
+      version: 1,
+      payload: Schema.Struct({
+        kind: Schema.optional(Schema.String),
+        tag: Schema.optional(Schema.String),
+      }),
+      returns: Schema.Array(Schema.String),
+    },
+    (payload) =>
+      step(
+        "find",
+        { returns: Schema.Array(Schema.String) },
+        Effect.map(
+          runs({
+            workflow: "sorter",
+            ...(payload.kind === undefined ? {} : { kind: payload.kind }),
+            ...(payload.tag === undefined ? {} : { tag: payload.tag }),
+          }),
+          (found) => found.map((run) => `${run.key} ${run.tags.join("+")}`).toSorted(),
+        ),
+      ),
+  ),
+];
+
 const PROJECT = "/home/me/app";
 const triage = workflow(
   "triage",
@@ -770,7 +754,12 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
   const path = yield* Path.Path;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflows-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
-  yield* Effect.provide(WorkflowsMigration, database);
+  yield* Effect.provide(
+    Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration).pipe(
+      Effect.andThen(WorkflowRunTagsMigration),
+    ),
+    database,
+  );
   const counts = yield* Ref.make<Record<string, number>>({});
   const failures = yield* Ref.make(0);
   const latch: Latch = {
@@ -788,9 +777,9 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
     ...definitions(counts, failures, latch),
     fix,
     ...triggered,
-    ...stored,
     ...family,
     ...control,
+    ...sorted,
   ];
   const engineOf = (registered: typeof all) =>
     WorkflowEngine.layer(registered, store).pipe(
@@ -1638,84 +1627,6 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
-it.effect(
-  "the store is shared by runs, survives a restart, and a failed transaction writes nothing",
-  () =>
-    Effect.gen(function* () {
-      const { boot } = yield* harness();
-      yield* boot(
-        Effect.gen(function* () {
-          const workflows = yield* Workflows.Workflows;
-          const runs = yield* Effect.forEach(["a", "b", "c"], (key) =>
-            workflows.start("tally", {}, { idempotencyKey: key }),
-          );
-          const counted = yield* Effect.forEach(runs, (run) =>
-            workflows.waitFor(run.runId, status("completed")),
-          );
-          assert.sameMembers(
-            counted.map((run) => run.result),
-            [1, 2, 3],
-          );
-        }),
-      );
-      yield* boot(
-        Effect.gen(function* () {
-          const workflows = yield* Workflows.Workflows;
-          const next = yield* workflows.start("tally", {}, { idempotencyKey: "d" });
-          assert.equal((yield* workflows.waitFor(next.runId, status("completed"))).result, 4);
-          // A key read with another schema is the step's failure, with the key in the reason.
-          const wrong = yield* workflows.start("tally", { wrong: true }, { idempotencyKey: "w" });
-          const paused = yield* workflows.waitFor(wrong.runId, status("paused"));
-          assert.include(paused.detail ?? "", "The stored value at tally does not fit its schema");
-
-          // The first try fails inside the transaction, so the door it opened is not there, and
-          // the try count it raised is 1 again on the second try, which is the one that signals.
-          const waiting = yield* workflows.start("door", { door: "east" }, { idempotencyKey: "e" });
-          yield* workflows.waitFor(waiting.runId, status("waiting"));
-          const opener = yield* workflows.start(
-            "opener",
-            { door: "east", fail: true },
-            { idempotencyKey: "o" },
-          );
-          yield* workflows.waitFor(opener.runId, status("paused"));
-          assert.equal((yield* workflows.get(waiting.runId)).run.status, "waiting");
-          const clean = yield* workflows.start(
-            "opener",
-            { door: "east", fail: false },
-            { idempotencyKey: "o2" },
-          );
-          yield* workflows.waitFor(clean.runId, status("completed"));
-          assert.equal(
-            (yield* workflows.waitFor(waiting.runId, status("completed"))).result,
-            "came in",
-          );
-
-          // A retry sends again what the first try sent, and what it sends anew is new.
-          const doors = ["ra", "rb", "rc"];
-          const held = yield* Effect.forEach(doors, (door) =>
-            workflows.start("door", { door }, { idempotencyKey: door }),
-          );
-          yield* Effect.forEach(held, (run) => workflows.waitFor(run.runId, status("waiting")));
-          const relay = yield* workflows.start("relay", { doors }, { idempotencyKey: "relay" });
-          yield* workflows.waitFor(relay.runId, status("completed"));
-          // Each try is an attempt, though both were one run of the step.
-          assert.equal((yield* workflows.get(relay.runId)).steps[0]?.attempts, 2);
-          assert.equal(
-            yield* workflows.signal({ workflow: "door", channel: "rc" }, "late", { id: "rc-late" }),
-            "buffered",
-          );
-          const opened = yield* Effect.forEach(held, (run) =>
-            workflows.waitFor(run.runId, status("completed")),
-          );
-          assert.deepStrictEqual(
-            opened.map((run) => run.result),
-            ["came in", "came in", "came in"],
-          );
-        }),
-      );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-);
-
 it.effect("an invoked run reports how it ended, and cancelling the parent cancels it", () =>
   Effect.gen(function* () {
     const { boot } = yield* harness();
@@ -2168,6 +2079,47 @@ it("hooks of different workflows never share an id", () => {
   assert.equal(Workflows.hookId("inbound", "push"), "wf-inbound.push");
 });
 
+it.effect("the sweep deletes skipped runs past the number the settings keep", () =>
+  Effect.gen(function* () {
+    const exposed = exposedStore();
+    const { boot } = yield* harness(exposed.layer);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const store = yield* exposed.store;
+        const [hook] = yield* workflows.hooks;
+        const [hookId, token] = hook!.path.split("/").slice(-2).map(decodeURIComponent);
+        const deliver = (body: string, delivery: string) =>
+          Effect.map(
+            workflows.deliver({
+              hookId: hookId!,
+              token: token!,
+              request: { method: "POST", headers: { "x-delivery": delivery }, query: "", body },
+            }),
+            Option.getOrThrow,
+          );
+        const ping = yield* deliver("ping", "d1");
+        yield* workflows.waitFor(ping.runId, status("skipped"));
+        const hello = yield* deliver("hello", "d2");
+        yield* workflows.waitFor(hello.runId, status("completed"));
+        assert.isNull((yield* store.run(ping.runId))?.input_json);
+
+        // Deleted once its engine journal is, which waits an hour after the run ends.
+        yield* workflows.sweep;
+        assert.isDefined(yield* store.run(ping.runId));
+        yield* TestClock.adjust("2 hours");
+        yield* workflows.sweep;
+        assert.isUndefined(yield* store.run(ping.runId));
+        assert.isDefined(yield* store.run(hello.runId));
+      }),
+    ).pipe(
+      Effect.provide(
+        ServerSettings.ServerSettingsService.layerTest({ workflowSkippedRunsKept: 0 }),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("a request to a hook starts a run, its retry is the same run, and a bad token none", () =>
   Effect.gen(function* () {
     const { boot } = yield* harness();
@@ -2226,6 +2178,35 @@ it.effect("a request to a hook starts a run, its retry is the same run, and a ba
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("a hook starts sixty runs a minute; a retry of one it started still answers", () =>
+  Effect.gen(function* () {
+    const { boot, clock } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const [hook] = yield* workflows.hooks;
+        const [hookId, token] = hook!.path.split("/").slice(-2).map(decodeURIComponent);
+        const deliver = (delivery: string) =>
+          workflows.deliver({
+            hookId: hookId!,
+            token: token!,
+            request: { method: "POST", headers: { "x-delivery": delivery }, query: "", body: "hi" },
+          });
+        // Time stands still, so every request falls in the same minute.
+        yield* clock.close;
+        const first = Option.getOrThrow(yield* deliver("d0"));
+        for (let sent = 1; sent < 60; sent++) yield* deliver(`d${sent}`);
+        const refused = yield* deliver("d60").pipe(Effect.flip);
+        assert.equal(refused._tag, "WorkflowHookBusyError");
+        assert.deepStrictEqual(Option.getOrThrow(yield* deliver("d0")), first);
+        yield* TestClock.adjust("1 minute");
+        assert.isTrue(Option.isSome(yield* deliver("d60")));
+        yield* clock.open;
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("a step finds runs by their key, wakes everyone at a key, and cancels another run", () =>
   Effect.gen(function* () {
     const { boot } = yield* harness();
@@ -2269,6 +2250,97 @@ it.effect("a step finds runs by their key, wakes everyone at a key, and cancels 
         const left = yield* keeper("leave");
         assert.equal(left.status, "paused");
         assert.include(left.detail ?? "", "cannot cancel itself");
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it("tags refuses a list with a gap in it", () => {
+  // The same list `tags([, "pr"])` makes: a first entry that was never set.
+  const gapped = new Array<string>(2);
+  gapped[1] = "pr";
+  assert.throws(() => tags(gapped), /tags takes one list of words/);
+});
+
+it.effect("questions carry their kind and runs their tags, and both can be filtered by", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const sort = (key: string, runTags: ReadonlyArray<string>, kind?: string) =>
+          workflows.start(
+            "sorter",
+            { tags: runTags, ...(kind === undefined ? {} : { kind }) },
+            { idempotencyKey: key },
+          );
+        const [feature, intended, plain] = yield* Effect.all([
+          sort("a", ["pr", "backlog"], "feature"),
+          sort("b", ["pr"], "intended"),
+          sort("c", []),
+        ]);
+        for (const run of [feature, intended, plain]) {
+          yield* workflows.waitFor(run.runId, status("waiting"));
+        }
+        const snapshot = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        // The page reads the labels and their order from what the workflow declares.
+        assert.deepStrictEqual(
+          snapshot.workflows.find((workflow) => workflow.name === "sorter")?.asks,
+          [
+            { kind: "feature", label: "Feature wanted?" },
+            { kind: "intended", label: "Bug or intended?" },
+          ],
+        );
+        assert.deepStrictEqual(
+          snapshot.questions.map((question) => [question.runId, question.kind]),
+          [
+            [feature.runId, "feature"],
+            [intended.runId, "intended"],
+            [plain.runId, undefined],
+          ],
+        );
+        assert.deepStrictEqual(
+          [feature, intended, plain].map(
+            (run) => snapshot.runs.find((listed) => listed.runId === run.runId)?.tags,
+          ),
+          [["pr", "backlog"], ["pr"], undefined],
+        );
+        assert.deepStrictEqual(
+          (yield* workflows.list({ tag: "backlog" })).map((run) => run.runId),
+          [feature.runId],
+        );
+        assert.deepStrictEqual(
+          (yield* workflows.list({ tag: "pr", status: "completed" })).map((run) => run.runId),
+          [],
+        );
+        const find = Effect.fn(function* (
+          key: string,
+          filter: { readonly kind?: string; readonly tag?: string },
+        ) {
+          const run = yield* workflows.start("finder", filter, { idempotencyKey: key });
+          return (yield* workflows.waitFor(run.runId, status("completed", "paused"))).result;
+        });
+        assert.deepStrictEqual(yield* find("by-tag", { tag: "pr" }), ["a pr+backlog", "b pr"]);
+        assert.deepStrictEqual(yield* find("by-kind", { kind: "intended" }), ["b pr"]);
+        // Answered, the question is no longer open, so its run is no longer one of that kind.
+        yield* workflows.answer(intended.runId, "sort", { choice: "Yes" });
+        yield* workflows.waitFor(intended.runId, status("completed"));
+        assert.deepStrictEqual(yield* find("by-kind-after", { kind: "intended" }), []);
+
+        // A kind the workflow does not declare is asked all the same, and kept as it was written.
+        const typo = yield* sort("d", [], "feture");
+        yield* workflows.waitFor(typo.runId, status("waiting"));
+        const after = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        assert.equal(
+          after.questions.find((question) => question.runId === typo.runId)?.kind,
+          "feture",
+        );
+        assert.deepStrictEqual(yield* find("by-typo", { kind: "feture" }), ["d "]);
+        yield* workflows.answer(typo.runId, "sort", { choice: "No" });
+        assert.equal(
+          (yield* workflows.waitFor(typo.runId, status("completed"))).status,
+          "completed",
+        );
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -2422,3 +2494,11 @@ it.effect("a workflow can take an agent's failure as an answer and go on", () =>
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
+
+it("error text cuts at 2,000 units without leaving half an emoji", () => {
+  assert.equal(text(`${"a".repeat(1_999)}\u{1F680}tail`), "a".repeat(1_999));
+  assert.equal(
+    text(new Error("outer", { cause: `${"a".repeat(1_992)}\u{1F680}tail` })),
+    `outer: ${"a".repeat(1_992)}`,
+  );
+});

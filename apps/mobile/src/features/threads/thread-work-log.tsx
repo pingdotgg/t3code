@@ -61,7 +61,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
-import { highlightCommand, type HighlightedLines } from "../../lib/highlights";
+import { highlightCommand, type HighlightedLines, withTokenStarts } from "../../lib/highlights";
 import {
   commandHighlightLanguage,
   withVisibleControlCharacters,
@@ -290,7 +290,7 @@ export function ShimmeringWorkContent(props: {
 
   // Uses a native Animated value instead of Reanimated, whose per-frame commits
   // starve React's while commit pausing is disabled (package.json). See
-  // docs/internals/performance-regressions.md.
+  // docs/internals/16_performance-regressions.md.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- steps the native shimmer value on timers while visible and active, and stops them on cleanup
   useEffect(() => {
     progress.setValue(0);
@@ -851,15 +851,11 @@ function HighlightedCodeText({
   readonly code: string;
   readonly lines: HighlightedLines | null;
 }) {
-  let offset = 0;
-  const highlighted = lines?.flatMap((line, lineIndex) => {
+  const highlighted = (lines ? withTokenStarts(lines) : undefined)?.flatMap((line, lineIndex) => {
     const separator = lineIndex > 0 ? "\n" : "";
-    offset += separator.length;
     return [
       separator,
-      ...line.map((token) => {
-        const start = offset;
-        offset += token.content.length;
+      ...line.map(({ token, start }) => {
         // Plain RN Text inherits the mono font; AppText would reset it to sans.
         return (
           <RNText key={start} style={token.color ? { color: token.color } : undefined}>
@@ -1420,7 +1416,6 @@ export function ThreadWorkGroupToggle(props: {
   readonly hasFailure: boolean;
   readonly shimmer: boolean;
   readonly thought?: string | undefined;
-  readonly trailing?: ReactNode;
   readonly onToggle: () => void;
 }) {
   const gt = useGT();
@@ -1510,7 +1505,6 @@ export function ThreadWorkGroupToggle(props: {
             />
           </WorkLogPressable>
         </View>
-        {props.trailing}
       </View>
     </WorkLogBlock>
   );

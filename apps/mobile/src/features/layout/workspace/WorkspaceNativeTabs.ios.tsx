@@ -214,7 +214,7 @@ export function WorkspaceNativeTabs(props: {
           }
           onTabSelected={({ nativeEvent }: NativeSyntheticEvent<TabSelectedEvent>) => {
             setProvenance(nativeEvent.provenance);
-            if (nativeEvent.actionOrigin === "programmatic-js") return;
+            if (nativeEvent.actionOrigin === "programmaticJs") return;
             const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.selectedScreenKey);
             if (tab) selectTab(tab);
           }}
@@ -238,9 +238,17 @@ export function WorkspaceNativeTabs(props: {
                   icon: settings
                     ? { type: "sfSymbol", name: "gearshape" }
                     : tab === "pullRequests"
-                      ? { type: "templateSource", templateSource: PULL_REQUEST_ICON }
+                      ? {
+                          type: "imageSource",
+                          imageSource: PULL_REQUEST_ICON,
+                          renderingMode: "template",
+                        }
                       : tab === "issues"
-                        ? { type: "templateSource", templateSource: ISSUE_ICON }
+                        ? {
+                            type: "imageSource",
+                            imageSource: ISSUE_ICON,
+                            renderingMode: "template",
+                          }
                         : { type: "sfSymbol", name: NAVIGATION_TAB_ICONS[tab] },
                   selectedIcon:
                     !settings && tab === "threads"

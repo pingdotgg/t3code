@@ -497,7 +497,7 @@
   "bc24c300d53d61c5": "{host} n’a répondu sur aucune route enregistrée.",
   "b0dd3cd876937ca8": "Le profil de connexion {connectionId} n’est pas disponible.",
   "5ce46783e79ca9d1": "Les identifiants de connexion {connectionId} ne sont pas disponibles.",
-  "0bda0cac7f5acc20": "L’environnement connecté {actual} ne correspond pas à {expected}.",
+  "b39d1428ec8b23f5": "Cette adresse exécute désormais une autre installation de T3 Code ({actual}, et non {expected}). Supprimez cette connexion et ajoutez-la à nouveau.",
   "ea0d3e4e51d5706f": "Les identifiants de l’environnement ne sont pas valides.",
   "7283ebfd16d09677": "Les identifiants de l’environnement n’accordent pas l’accès requis.",
   "d3e9a9cb543b4b7b": "L’environnement a rejeté la demande d’authentification.",
@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Démarrage des serveurs MCP de {provider}",
   "fedaa29ff8815a77": "Chargement des hooks de {provider}",
   "57025ae4de5beb57": "Chargement des règles et des skills de {provider}",
+  "1cbfbcad9f0d04fe": "Reprise de la session de {provider}",
   "4729a188600f1501": "Connexion à {provider}",
   "8c8977097681630f": "Démarrage de {provider}",
   "f1d27d127ab27ac6": "Démarrage",
@@ -4333,6 +4334,21 @@
     },
     " a quitté sa page et a été arrêtée"
   ],
+  "796b81c4875c4feb": [
+    "L’app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " a besoin d’un serveur ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " plus récent sur cet environnement. Mettez à jour le serveur pour l’utiliser."
+  ],
   "5ef18e4d39b398bf": [
     "Impossible de charger l’app ",
     {
@@ -4645,10 +4661,6 @@
   "ccde552cdff4a9e5": "Touchez deux fois pour afficher le prompt.",
   "630df4f8b78ab8d3": "Au travail depuis {duration}",
   "01deb1ae9f51d3e0": "Impossible de charger le travail. Touchez pour réessayer.",
-  "868ed4fea1a3273c": "{count} dépôts",
-  "c887abfd190d8b40": "ce dossier",
-  "275b5fe6040f2c1c": "{files, plural, one {Relire {files} fichier modifié, {additions} ajouts, {deletions} suppressions} other {Relire {files} fichiers modifiés, {additions} ajouts, {deletions} suppressions}}",
-  "c4a35456c7bdc3a1": "{files, plural, one {Relire {files} fichier modifié dans {folders}, {additions} ajouts, {deletions} suppressions} other {Relire {files} fichiers modifiés dans {folders}, {additions} ajouts, {deletions} suppressions}}",
   "7a13ae3b70a050fb": "{label} (indisponible)",
   "8f033834a0194c33": "Contexte indisponible",
   "4031ea1541b3ec2b": "Ouvrir le contexte",
@@ -4898,6 +4910,7 @@
   "306a6f95ad9d52f7": "Non envoyées",
   "11276ab6c58b7a25": "Ouvre le brouillon dans la zone de saisie de nouvelle tâche. Balayez vers la gauche pour le supprimer.",
   "99950f3a28d425fa": "Envoyée dès que l’environnement se reconnecte. Ouvre la tâche pour la modifier. Balayez vers la gauche pour la supprimer.",
+  "d71048f4fb9cf44a": "En attente de synchronisation",
   "0a260c7744afd0be": "En attente",
   "ad78fae7d373cf21": "En cours",
   "be451f475c514b37": "Ignorer la notification Réveillé",
@@ -5326,6 +5339,9 @@
   "744127f8dfad7d22": "Connectez un environnement pour voir ses exécutions de workflow.",
   "b9aae2f7cdb1a379": "Aucune exécution de workflow pour l’instant",
   "ace8fc1c643cf9f6": "Un workflow réunit agents, code, planifications et questions qui vous sont posées en une seule exécution qui survit aux redémarrages. Écrivez-en un sur votre ordinateur, dans Workflows, puis Définitions.",
+  "fc9c3a00cfc18b55": "Tous les types",
+  "e4d1316c85ed7066": "Aucune question de ce type ne vous attend.",
+  "45a94c724845ec1d": "Autres",
   "86798f07ba2d7f4d": "Rechercher des tickets",
   "484cd83bb303bab8": "Rechercher des pull requests",
   "75ed31fcea4f741a": "Filtrer les tickets",
@@ -5612,5 +5628,14 @@
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
   "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
   "99d51127f573296b": "Autre compte",
-  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}."
+  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
+  "892f08d21b8e48a9": "Fusionner {layers} dans {base} avec {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} dès que leurs conditions sont remplies. Cela peut se produire immédiatement.",
+  "89bf40eb2503b6c5": "Nouvel appareil connecté à {environment}",
+  "c94b5fe9ef372bc0": "{device} s’est connecté via {product}. Si ce n’était pas vous, supprimez-le dans Paramètres → Accès de T3 Code sur cet ordinateur.",
+  "bec67d0ed485f885": "{count, plural, one {{count} appareil s’est connecté} other {{count} appareils se sont connectés}} via {product}. Si ce n’était pas vous, supprimez-les dans Paramètres → Accès de T3 Code sur cet ordinateur.",
+  "18c30aa94d0a807f": "Diagnostic de connexion",
+  "eb287395a09cd288": "Envoyer les traces de connexion",
+  "6787f93bbf6ce0b6": "Aide l’équipe T3 Code à résoudre les problèmes de connexion. Les traces contiennent des durées, des types d’erreur, un identifiant de cette session de l’app et la version de l’app, jamais vos fils, prompts ni votre code. Modifiable dans Réglages > À propos de T3 Code > Diagnostic.",
+  "0b1e4aecbd38e0cf": "Quand l’app se connecte à un ordinateur via {product}, elle envoie à l’équipe T3 Code la durée de chaque étape, le type d’erreur, un identifiant de cette session de l’app et la version de l’app. Les traces n’incluent jamais vos fils, prompts ni votre code.",
+  "e0856d6a402ad821": "La politique de {organization} n’autorise pas les commandes de disposition des worktrees des projets."
 }

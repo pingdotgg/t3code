@@ -373,6 +373,8 @@ function makeEncoderPage() {
     btoa,
     Blob,
     performance,
+    setInterval,
+    clearInterval,
   };
   sandbox.window = sandbox;
   const context = NodeVM.createContext(sandbox);
@@ -1733,6 +1735,34 @@ it.effect(
         expect(failure.message).toMatch(/2 elements/);
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+it.effect("stops typing long text at the request's deadline and says how far it got", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      page.evaluate.mockImplementation(async () => true as never);
+      let now = 1_700_000_000_000;
+      const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+      yield* Effect.addFinalizer(() => Effect.sync(() => clock.mockRestore()));
+      // Each piece of keys takes 10 seconds here: over the request's 5, under the 15-second default.
+      const type = vi.fn(async (_text: string) => void (now += 10_000));
+      Object.assign(page, { keyboard: { type } });
+      const failure = yield* broker
+        .invoke<void>({
+          scope,
+          tabId,
+          operation: "type",
+          input: { text: "a".repeat(200) },
+          timeoutMs: 5_000,
+        })
+        .pipe(Effect.flip);
+      expect(failure._tag).toBe("PreviewAutomationTimeoutError");
+      expect(failure.message).toMatch(/after 64 of 200 characters/);
+      expect(type.mock.calls).toEqual([["a".repeat(64)]]);
+    }),
+  ).pipe(Effect.provide(layer)),
 );
 
 it.effect("reports a pending dialog without evaluating the page and resolves it explicitly", () =>

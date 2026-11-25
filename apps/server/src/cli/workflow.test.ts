@@ -166,21 +166,54 @@ it.effect("reports what the server refused instead of calling it unreachable", (
   }),
 );
 
-it.effect("signal refuses both addresses at once before reaching the server", () =>
+it.effect("signal sends only one complete address to the server", () =>
   Effect.gen(function* () {
-    const { error, calls } = yield* runCli([
-      "signal",
-      "{}",
-      "--run",
-      "run-1",
-      "--wait",
-      "approve",
-      "--workflow",
-      "review",
-      "--channel",
-      "pr-1",
-    ]);
-    assert.strictEqual(error?._tag, "ThreadUsageError");
-    assert.lengthOf(calls, 0);
+    const byRun = ["--run", "run-1", "--wait", "approve"];
+    const byChannel = ["--workflow", "review", "--channel", "pr-1"];
+    for (const [address, sent] of [
+      [byRun, true],
+      [byChannel, true],
+      [[...byRun, ...byChannel], false],
+      [[], false],
+      [["--run", "run-1"], false],
+      [["--wait", "approve"], false],
+      [["--workflow", "review"], false],
+      [["--channel", "pr-1"], false],
+    ] as const) {
+      const { error, calls } = yield* runCli(["signal", "{}", ...address], () =>
+        Effect.succeed({ structuredContent: { delivery: "delivered" } }),
+      );
+      assert.strictEqual(error?._tag, sent ? undefined : "ThreadUsageError");
+      assert.lengthOf(calls, sent ? 1 : 0);
+    }
+  }),
+);
+
+it.effect("list --tag and questions --kind ask the server for only those", () =>
+  Effect.gen(function* () {
+    const listed = yield* runCli(["list", "--tag", "backlog", "--json"], () =>
+      Effect.succeed({
+        structuredContent: { runs: [{ ...makeRun("waiting"), tags: ["backlog"] }] },
+      }),
+    );
+    assert.deepStrictEqual(listed.calls, [{ action: "list", tag: "backlog" }]);
+    const asked = yield* runCli(["questions", "--kind", "feature"], () =>
+      Effect.succeed({
+        structuredContent: {
+          questions: [
+            {
+              runId: "run-1",
+              name: "wanted",
+              kind: "feature",
+              request: { title: "Wanted?", choices: ["Yes"], kind: "feature" },
+              askedAt: "2026-11-20T00:00:00.000Z",
+              thread: null,
+            },
+          ],
+        },
+      }),
+    );
+    assert.deepStrictEqual(asked.calls, [{ action: "questions", kind: "feature" }]);
+    assert.include((yield* TestConsole.logLines).join("\n"), "run-1  wanted  feature");
   }),
 );

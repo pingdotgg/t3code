@@ -3,7 +3,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -15,7 +18,9 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
-import { WorkflowAgents } from "./WorkflowAgents.ts";
+import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
+import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
+import { type AgentResult, WorkflowAgents } from "./WorkflowAgents.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowRuntime from "./WorkflowRuntime.ts";
 import { engineTag, type WorkflowDefinition } from "./workflow.ts";
@@ -39,6 +44,7 @@ workflow("greet", { version: 1, payload: Schema.Struct({}), returns: Schema.Stri
 const setup = Effect.fn("setup")(function* (
   wrap: (fileSystem: FileSystem.FileSystem) => FileSystem.FileSystem = (fileSystem) => fileSystem,
   engine?: (definitions: ReadonlyArray<WorkflowDefinition>) => Layer.Layer<Workflows.Workflows>,
+  agents?: WorkflowAgents["Service"],
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -48,13 +54,22 @@ const setup = Effect.fn("setup")(function* (
   yield* fileSystem.makeDirectory(directory);
   yield* fileSystem.writeFileString(at("hold.ts"), hold);
   const database = NodeSqliteClient.layer({ filename: path.join(home, "state.sqlite") });
-  yield* Effect.provide(WorkflowsMigration, database);
+  yield* Effect.provide(
+    Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration).pipe(
+      Effect.andThen(WorkflowRunTagsMigration),
+    ),
+    database,
+  );
   const made = WorkflowRuntime.make(
     Effect.succeed(
       (definitions: ReadonlyArray<WorkflowDefinition>) =>
         engine?.(definitions) ??
         WorkflowEngine.layer(definitions).pipe(
-          Layer.provide(Layer.mock(WorkflowAgents)({})),
+          Layer.provide(
+            agents === undefined
+              ? Layer.mock(WorkflowAgents)({})
+              : Layer.succeed(WorkflowAgents, agents),
+          ),
           Layer.provide(database),
           Layer.provide(NodeCrypto.layer),
         ),
@@ -327,6 +342,29 @@ it.effect("a file that never finishes loading is given up on, and later files st
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("a file loads whatever kinds its asks name, and only a malformed `asks` is refused", () =>
+  Effect.gen(function* () {
+    const { at, fileSystem } = yield* setup();
+    const sorter = (asks: string) => `const { workflow, ask } = T3;
+workflow("sorter", { version: 1, payload: Schema.Struct({})${asks} }, () =>
+  ask("sort", { kind: "feture", title: "Which way?", choices: ["Yes", "No"] }),
+);
+`;
+    // A kind the workflow does not declare, and one on a workflow that declares none.
+    for (const asks of [', asks: { feature: "Feature wanted?" }', ""]) {
+      yield* fileSystem.writeFileString(at("sorter.ts"), sorter(asks));
+      const loaded = yield* WorkflowRuntime.loadDefinitions(at("sorter.ts"), asks.length);
+      assert.deepStrictEqual(
+        loaded.map((definition) => Object.keys(definition.asks)),
+        [asks === "" ? [] : ["feature"]],
+      );
+    }
+    yield* fileSystem.writeFileString(at("sorter.ts"), sorter(', asks: { feature: "" }'));
+    const refused = yield* WorkflowRuntime.loadDefinitions(at("sorter.ts"), 1).pipe(Effect.flip);
+    assert.include(String(refused.cause), 'asks gives the kind "feature" no label');
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("a file given up on registers nothing into the file that loads after it", () =>
   Effect.gen(function* () {
     const { at, fileSystem } = yield* setup();
@@ -422,6 +460,68 @@ it.effect("a change held back by a run goes in once that run ends, with no furth
       Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "a reload does not wait for an agent that is still at work, and its step ends with the turn",
+  () =>
+    Effect.gen(function* () {
+      const ended = yield* Deferred.make<AgentResult>();
+      const started = yield* Deferred.make<void>();
+      const { fileSystem, at, runtime } = yield* setup(undefined, undefined, {
+        start: (input) =>
+          Effect.as(Deferred.succeed(started, undefined), {
+            threadId: "thread",
+            turnId: input.key,
+          }),
+        result: () => Deferred.await(ended),
+        interrupt: () => Effect.succeed("stopped" as const),
+      });
+      yield* fileSystem.writeFileString(
+        at("helper.ts"),
+        `T3.workflow("helper", { version: 1, payload: Schema.Struct({}), returns: Schema.String }, () =>
+  Effect.map(T3.agent("work", { brief: "Do it.", project: "p" }), (done) => done.value),
+);
+`,
+      );
+      const ticking = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.raceFirst(effect, Effect.forever(TestClock.adjust("1 second")));
+      yield* Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const definitions = yield* WorkflowRuntime.WorkflowDefinitions;
+        const helped = yield* ticking(
+          Effect.gen(function* () {
+            const run = yield* workflows.start("helper", {}, { idempotencyKey: "a" });
+            yield* Deferred.await(started);
+            yield* workflows.waitFor(run.runId, (row) => row.status === "waiting");
+            return run;
+          }),
+        );
+
+        // The test clock stands still during the save, so an engine that waited for the agent's
+        // step to finish would never stop: the step is not given up on, and the turn does not end.
+        // The swap cannot be interrupted, so a stuck save is unblocked by ending the turn.
+        const saving = yield* Effect.forkChild(definitions.save("greet.ts", greet("hello")));
+        const saved = yield* Fiber.await(saving).pipe(
+          Effect.timeoutOption("10 seconds"),
+          TestClock.withLive,
+        );
+        if (Option.isNone(saved)) {
+          yield* Deferred.succeed(ended, { ending: "completed", detail: "", reply: "late" });
+          yield* ticking(Fiber.await(saving));
+          assert.fail("The reload waited for the agent's turn to end.");
+        }
+        assert.isTrue(Exit.isSuccess(saved.value) && saved.value.value.changed);
+        assert.equal((yield* workflows.get(helped.runId)).run.status, "waiting");
+
+        // The turn ends after the reload, and the new engine carries its result into the run.
+        yield* Deferred.succeed(ended, { ending: "completed", detail: "", reply: "all done" });
+        const done = yield* ticking(
+          workflows.waitFor(helped.runId, (run) => run.status === "completed"),
+        );
+        assert.equal(done.result, "all done");
+      }).pipe(Effect.provide(runtime), Effect.scoped);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect(

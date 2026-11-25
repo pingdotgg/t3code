@@ -217,10 +217,20 @@ describe("agentWorkingDirectories", () => {
         "abcd /work/a; echo cd /work/b; git -C /work/c status; cd /work/d",
         `echo "cd /work/g"; echo 'x; cd /work/h' && grep -c "cd /work/i" notes`,
         "echo bash -c 'cd /work/j'; cd -",
+        `sh "cd /work/l"`,
         "cat <<EOF > notes\ncd /work/k\nEOF",
         "cd /work/e\\ f && cd `pwd`/x",
       ),
     ).toEqual(["/work/d"]);
+  });
+
+  it("leaves network shares out of the search roots", () => {
+    expect(
+      directories(
+        "cd //files.example/share",
+        String.raw`cd '\\files.example\share'; cd C:\work\repo`,
+      ),
+    ).toEqual([String.raw`C:\work\repo`]);
   });
 });
 

@@ -17,7 +17,7 @@
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "agent-device": "0.21.41",
-    "e2e": "0.23.0",
+    "e2e": "0.24.0",
     "effect": "catalog:",
     "playwright-core": "1.64.1",
     "plist": "catalog:",

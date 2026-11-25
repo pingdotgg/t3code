@@ -246,6 +246,99 @@ export function workflowRunInvolves(node: WorkflowRunNode, workflow: string): bo
   );
 }
 
+/**
+ * The filter value for the questions listed as Other: asked with no kind, or with one their
+ * workflow does not declare. A workflow cannot declare a blank kind.
+ */
+export const WORKFLOW_OTHER_KIND = "";
+
+export interface WorkflowQuestionKind {
+  /** The kind as its workflow declares it, or `WORKFLOW_OTHER_KIND`. */
+  readonly kind: string;
+  /** What its workflow calls it. Null for Other, which the caller words. */
+  readonly label: string | null;
+  /** How many open questions in these runs are listed under it. */
+  readonly count: number;
+}
+
+/**
+ * The kind a question of this run is listed under: its own when the run's workflow declares it,
+ * else `WORKFLOW_OTHER_KIND`. The question keeps the kind it was asked with either way.
+ */
+function workflowListedKind(
+  workflows: ReadonlyArray<WorkflowSummary>,
+  node: WorkflowRunNode,
+  question: WorkflowQuestion,
+): string {
+  const declared = workflows.find((workflow) => workflow.name === node.run.workflow)?.asks ?? [];
+  return question.kind !== undefined && declared.some(({ kind }) => kind === question.kind)
+    ? question.kind
+    : WORKFLOW_OTHER_KIND;
+}
+
+/** The first run among these, or the runs they invoked, that itself asks a question listed under this kind. */
+export function workflowRunAskingKind(
+  workflows: ReadonlyArray<WorkflowSummary>,
+  nodes: ReadonlyArray<WorkflowRunNode>,
+  kind: string,
+): WorkflowRunNode | null {
+  return (
+    flattenWorkflowRunNodes(nodes).find((node) =>
+      node.questions.some((question) => workflowListedKind(workflows, node, question) === kind),
+    ) ?? null
+  );
+}
+
+/**
+ * The declared kinds of the open questions, in declared order, then Other. `sources` is one per
+ * environment, counted together. `picked` stays listed at zero, so a filter with nothing left
+ * can be undone. Empty when no question is of a declared kind and none is picked.
+ */
+export function workflowQuestionKinds(
+  sources: ReadonlyArray<{
+    readonly workflows: ReadonlyArray<WorkflowSummary>;
+    readonly nodes: ReadonlyArray<WorkflowRunNode>;
+  }>,
+  picked: string | null = null,
+): ReadonlyArray<WorkflowQuestionKind> {
+  const counts = new Map<string, number>();
+  const labels = new Map<string, string>();
+  for (const { workflows, nodes } of sources) {
+    for (const node of flattenWorkflowRunNodes(nodes)) {
+      for (const question of node.questions) {
+        const kind = workflowListedKind(workflows, node, question);
+        counts.set(kind, (counts.get(kind) ?? 0) + 1);
+      }
+    }
+    for (const workflow of workflows) {
+      for (const { kind, label } of workflow.asks ?? []) {
+        if (!labels.has(kind)) labels.set(kind, label);
+      }
+    }
+  }
+  if (picked !== null && !counts.has(picked)) counts.set(picked, 0);
+  const other = counts.get(WORKFLOW_OTHER_KIND);
+  counts.delete(WORKFLOW_OTHER_KIND);
+  if (counts.size === 0 && picked === null) return [];
+  const order = [...new Set([...labels.keys(), ...counts.keys()])];
+  return [
+    ...order.flatMap((kind) => {
+      const count = counts.get(kind);
+      return count === undefined ? [] : [{ kind, label: labels.get(kind) ?? kind, count }];
+    }),
+    ...(other === undefined ? [] : [{ kind: WORKFLOW_OTHER_KIND, label: null, count: other }]),
+  ];
+}
+
+/** Whether a run, or one it invoked, has an open question listed under this kind. */
+export function workflowRunAsksKind(
+  workflows: ReadonlyArray<WorkflowSummary>,
+  node: WorkflowRunNode,
+  kind: string,
+): boolean {
+  return workflowRunAskingKind(workflows, [node], kind) !== null;
+}
+
 /** The list to open on: what waits on a person, else what is under way, else everything. */
 export function defaultWorkflowListTab(groups: WorkflowRunGroups): WorkflowListTab {
   if (groups.needsYou.length > 0) return "needs-you";
@@ -258,7 +351,9 @@ const CHIP_TONES = 5;
 export function workflowChip(name: string): { readonly letters: string; readonly tone: number } {
   const parts = name.split(/[^\p{L}\p{N}]+/u).filter((part) => part !== "");
   const letters =
-    parts.length > 1 ? `${parts[0]![0]}${parts[1]![0]}` : (parts[0] ?? name).slice(0, 2);
+    parts.length > 1
+      ? `${[...parts[0]!][0]}${[...parts[1]!][0]}`
+      : [...(parts[0] ?? name)].slice(0, 2).join("");
   let hash = 0;
   for (const char of name) hash = (hash * 31 + char.codePointAt(0)!) % 9973;
   return { letters: letters.toUpperCase(), tone: hash % CHIP_TONES };
@@ -700,7 +795,15 @@ export function workflowSaidStart(said: string, limit: number): string | null {
     kept = `${kept}\n\n${paragraph}`;
   }
   // One paragraph that runs on is cut at a word, which can still split markup but not a word.
-  if (kept.length > limit * 2) kept = `${kept.slice(0, kept.lastIndexOf(" ", limit))}…`;
+  // Text with no space before the limit, such as Chinese, is cut at the limit, never inside a
+  // surrogate pair.
+  if (kept.length > limit * 2) {
+    const space = kept.lastIndexOf(" ", limit);
+    const before = kept.charCodeAt(limit - 1);
+    const highSurrogateLast = before >= 0xd800 && before <= 0xdbff;
+    const end = space > 0 ? space : highSurrogateLast ? limit - 1 : limit;
+    kept = `${kept.slice(0, end)}…`;
+  }
   return kept === said ? null : kept;
 }
 
@@ -745,8 +848,9 @@ export function workflowStepReferences(
 
 /** A step's time in one shape down a column: 0.3s, 9.7s, 12s, then minutes. */
 export function workflowStepTime(ms: number): string {
-  if (ms < 10_000 && ms % 1000 !== 0) return `${(Math.max(ms, 100) / 1000).toFixed(1)}s`;
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 9_950 && ms % 1000 !== 0) return `${(Math.max(ms, 100) / 1000).toFixed(1)}s`;
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
   return formatDuration(ms);
 }
 

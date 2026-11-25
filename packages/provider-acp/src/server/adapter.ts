@@ -35,6 +35,7 @@ import {
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
+import { parseGrepOutput } from "@t3tools/shared/grepOutput";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -42,6 +43,7 @@ import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRun
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import {
   compactDynamicToolOutput,
+  compactT3McpToolOutput,
   htmlRenderFromToolItem,
   mcpToolResultOutput,
 } from "@t3tools/shared/toolOutput";
@@ -71,7 +73,11 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import {
+  formatReadToolLabel,
+  formatSearchToolLabel,
+  searchToolLabelParts,
+} from "@t3tools/shared/toolActivity";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeAcpMcpOverAcpBridge, type AcpMcpOverAcpBridge } from "./mcpOverAcpBridge.ts";
@@ -336,6 +342,19 @@ class AcpModelSelectionError extends Schema.TaggedError<AcpModelSelectionError>(
   }
 }
 
+const isAcpModelSelectionError = Schema.is(AcpModelSelectionError);
+const isProviderCompactionUnsupportedError = Schema.is(
+  ProviderAdapter.ProviderCompactionUnsupportedError,
+);
+
+/**
+ * Turn-start refusals that leave the session usable. Other start failures, such as a session that
+ * cannot be reopened or a setup step that fails, can mean the agent lost the session, so the
+ * server keeps its recovery for them.
+ */
+const refusedWithSessionIntact = (cause: unknown) =>
+  isAcpModelSelectionError(cause) || isProviderCompactionUnsupportedError(cause);
+
 /** A prompt-steered turn spans several prompts, each reporting its own usage. */
 function addAcpUsage(
   total: EffectAcpSchema.Usage | undefined,
@@ -464,7 +483,8 @@ export interface AcpAdapterV2Flavor {
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
     modelState: EffectAcpSchema.SessionModelState | null | undefined,
-  ) => Effect.Effect<void>;
+    options?: { readonly lastCatalogKey?: string | null },
+  ) => Effect.Effect<string | null | void>;
   readonly onUrlElicitation?: (input: {
     readonly elicitationId: string;
     readonly url: string;
@@ -1716,6 +1736,14 @@ interface ActiveAcpTurn {
   contextUsage: ThreadTokenUsageSnapshot | null;
   nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
   readonly tools: Map<string, AcpToolCallState & { readonly backgroundCommandTaskId?: string }>;
+  /** Confirmed T3 MCP tool outputs keyed by `${toolCallId}\0${tool}\0${inputHash}`. */
+  readonly claimedToolResults: Map<string, unknown>;
+  /** `${toolCallId}\0${tool}\0${inputHash}` keys that already drained a recorded MCP result. */
+  readonly drainedToolResultKeys: Set<string>;
+  /** `${toolCallId}\0${tool}\0${inputHash}` keys that reached terminal failure and must never do input-only recovery. */
+  readonly blockedInputRecoveryKeys: Set<string>;
+  /** `${toolCallId}\0${tool}\0${inputHash}` keys already tried for input-only recovery. */
+  readonly attemptedInputRecoveryKeys: Set<string>;
   /** Tools the agent failed after Stop; later updates keep them interrupted. */
   readonly stoppedToolCallIds: Set<string>;
   readonly toolUpdatesSkipped: Map<string, number>;
@@ -2332,6 +2360,41 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         } | null>(null);
         const activeSessionSetup =
           yield* Ref.make<AcpSessionRuntime.AcpSessionRuntimeStartResult | null>(null);
+        const lastPublishedCatalogKey = yield* Ref.make<{
+          readonly epoch: number;
+          readonly key: string | null;
+        }>({ epoch: 0, key: null });
+        const sessionConfigurationPublishPermit = yield* Semaphore.make(1);
+        const resetPublishedCatalogKey = Ref.update(lastPublishedCatalogKey, (current) => ({
+          epoch: current.epoch + 1,
+          key: null,
+        }));
+        // Per-update session config publication shares the enclosing session update/config span.
+        const publishSessionConfiguration = Effect.fnUntraced(function* (
+          targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+        ) {
+          const onSessionConfigurationUpdate = flavor.onSessionConfigurationUpdate;
+          if (onSessionConfigurationUpdate === undefined) return;
+          yield* sessionConfigurationPublishPermit.withPermit(
+            Effect.gen(function* () {
+              const { epoch, key } = yield* Ref.get(lastPublishedCatalogKey);
+              const configOptions = yield* targetRuntime.getConfigOptions;
+              const modeState = yield* targetRuntime.getModeState;
+              const modelState = (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models;
+              const nextKey = yield* onSessionConfigurationUpdate(
+                configOptions,
+                modeState,
+                modelState,
+                { lastCatalogKey: key },
+              );
+              if (nextKey === null || typeof nextKey === "string") {
+                yield* Ref.update(lastPublishedCatalogKey, (current) =>
+                  current.epoch === epoch ? { epoch, key: nextKey } : current,
+                );
+              }
+            }),
+          );
+        });
         const setActiveSessionSetup = Effect.fnUntraced(function* (
           setup: AcpSessionRuntime.AcpSessionRuntimeStartResult,
         ) {
@@ -2351,6 +2414,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           agentRequests.clear();
           nativeChildren.clear();
           yield* Ref.set(activeSessionSetup, setup);
+          yield* resetPublishedCatalogKey;
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
@@ -2792,6 +2856,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
           Effect.void;
         let refreshModelSwitchCapability: Effect.Effect<void> = Effect.void;
+        let reportStartupPhase: (phase: string | undefined) => Effect.Effect<void> = () =>
+          Effect.void;
         // openSession configures the session itself; a late setup that lands
         // first waits here and is adopted once that configuration is in place.
         const lateSessionSetup: {
@@ -4810,22 +4876,73 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const input =
               mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
             let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
-            const isHtmlRender = resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME;
+            const resolvedT3Tool = resolveT3McpToolId(toolName);
+            const isHtmlRender = resolvedT3Tool === HTML_RENDER_TOOL_NAME;
             const isError =
               compactDynamicToolOutput(output)?.isError === true ||
               compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
+            const callInputKey =
+              resolvedT3Tool !== null && !isHtmlRender
+                ? `${toolCall.toolCallId}\0${resolvedT3Tool}\0${McpProviderSessions.hashToolInput(input)}`
+                : undefined;
             if (
-              isHtmlRender &&
-              (status === "failed" || (status === "completed" && isError)) &&
-              previous?.status !== "failed" &&
-              previous?.status !== "completed"
+              status === "completed" &&
+              resolvedT3Tool !== null &&
+              callInputKey !== undefined &&
+              isError
             ) {
-              // A failed call may have published before the provider lost its result.
-              yield* mcpSessions.takeHtmlRender(
-                context.input.threadId,
-                input,
-                htmlRenderFromToolItem({ toolName, output }),
-              );
+              // Unwrapping `{ result: { isError: true, content/structuredContent } }` drops the
+              // error flag (and diagnostic content when structuredContent is also present);
+              // preserve the diagnostic error envelope and remember it across summary replays.
+              const rawResult = unknownRecord(rawOutputRecord?.result);
+              if (compactDynamicToolOutput(output)?.isError !== true) {
+                output =
+                  rawResult !== undefined && compactDynamicToolOutput(rawResult)?.isError === true
+                    ? rawResult
+                    : output === undefined
+                      ? { isError: true }
+                      : Array.isArray(output)
+                        ? { isError: true, content: output }
+                        : typeof output === "object" && output !== null
+                          ? { ...(output as Record<string, unknown>), isError: true }
+                          : { isError: true, content: [{ type: "text", text: String(output) }] };
+              }
+              context.blockedInputRecoveryKeys.add(callInputKey);
+              context.claimedToolResults.set(callInputKey, output);
+            }
+            if (
+              resolvedT3Tool !== null &&
+              (status === "failed" || (status === "completed" && isError))
+            ) {
+              // A failed call may have completed on T3's MCP server before the provider lost its result.
+              if (isHtmlRender) {
+                if (previous?.status !== "failed" && previous?.status !== "completed") {
+                  yield* mcpSessions.takeHtmlRender(
+                    context.input.threadId,
+                    input,
+                    htmlRenderFromToolItem({ toolName, output }),
+                  );
+                }
+              } else if (callInputKey !== undefined) {
+                const reportedError = compactT3McpToolOutput(resolvedT3Tool, output);
+                context.blockedInputRecoveryKeys.add(callInputKey);
+                // Only drain when the failed call reported an explicit output to match;
+                // a bare failure without output must not consume a sibling's cached record.
+                if (
+                  !context.drainedToolResultKeys.has(callInputKey) &&
+                  reportedError !== undefined
+                ) {
+                  const drained = yield* mcpSessions.takeToolResult(
+                    context.input.threadId,
+                    resolvedT3Tool,
+                    input,
+                    reportedError,
+                  );
+                  if (drained !== undefined) {
+                    context.drainedToolResultKeys.add(callInputKey);
+                  }
+                }
+              }
             }
             if (status === "completed" && isHtmlRender && !isError) {
               const reportedPage = htmlRenderFromToolItem({ toolName, output });
@@ -4844,6 +4961,54 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ...toolCall,
                   data: { ...toolCall.data, rawOutput: output },
                 });
+              }
+            }
+            if (
+              status === "completed" &&
+              resolvedT3Tool !== null &&
+              callInputKey !== undefined &&
+              !isError
+            ) {
+              const reportedOutput = compactT3McpToolOutput(resolvedT3Tool, output);
+              // ACP runtimes may omit or summarize MCP results, including across repeated or
+              // interleaved in_progress updates. Claims are keyed by (callId, tool, inputHash).
+              const claimedOutput = context.claimedToolResults.get(callInputKey);
+              if (reportedOutput !== undefined) {
+                context.claimedToolResults.set(callInputKey, reportedOutput);
+                if (!context.drainedToolResultKeys.has(callInputKey)) {
+                  const drained = yield* mcpSessions.takeToolResult(
+                    context.input.threadId,
+                    resolvedT3Tool,
+                    input,
+                    reportedOutput,
+                  );
+                  if (drained !== undefined) {
+                    context.drainedToolResultKeys.add(callInputKey);
+                  }
+                }
+              } else {
+                let recoveredOutput = claimedOutput;
+                if (
+                  recoveredOutput === undefined &&
+                  projectedStatus === undefined &&
+                  !context.blockedInputRecoveryKeys.has(callInputKey) &&
+                  !context.attemptedInputRecoveryKeys.has(callInputKey)
+                ) {
+                  context.attemptedInputRecoveryKeys.add(callInputKey);
+                  recoveredOutput = yield* mcpSessions.takeToolResult(
+                    context.input.threadId,
+                    resolvedT3Tool,
+                    input,
+                    undefined,
+                  );
+                  if (recoveredOutput !== undefined) {
+                    context.drainedToolResultKeys.add(callInputKey);
+                  }
+                }
+                if (recoveredOutput !== undefined) {
+                  context.claimedToolResults.set(callInputKey, recoveredOutput);
+                  output = recoveredOutput;
+                }
               }
             }
             turnItem = {
@@ -4925,6 +5090,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   break;
                 }
                 const pathIsQuery = resolvedPathInfo(toolCall)?.fromQuery === true;
+                const searchOutput = textFromUnknown(rawOutput);
+                const grepResults =
+                  path === undefined || searchOutput === undefined
+                    ? undefined
+                    : parseGrepOutput(searchOutput, path);
+                const pattern = searchToolLabelParts({ input: rawInputRecord }).query ?? path;
                 turnItem = {
                   ...base,
                   title:
@@ -4934,19 +5105,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       ...(path === undefined ? {} : { pattern: path }),
                     }) ?? title,
                   type: "file_search",
-                  ...(path === undefined ? {} : { pattern: path }),
-                  ...(path === undefined ||
-                  (pathIsQuery && textFromUnknown(rawOutput) === undefined)
+                  ...(pattern === undefined ? {} : { pattern }),
+                  ...(path === undefined || (pathIsQuery && searchOutput === undefined)
                     ? {}
                     : {
-                        results: [
-                          {
-                            fileName: path,
-                            ...(textFromUnknown(rawOutput) === undefined
-                              ? {}
-                              : { preview: textFromUnknown(rawOutput) }),
-                          },
-                        ],
+                        results: grepResults
+                          ? [...grepResults]
+                          : [
+                              {
+                                fileName: path,
+                                ...(searchOutput === undefined ? {} : { preview: searchOutput }),
+                              },
+                            ],
                       }),
                 };
                 break;
@@ -7178,13 +7348,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 notification.update.sessionUpdate === "config_option_update" ||
                 notification.update.sessionUpdate === "current_mode_update"
               ) {
-                yield* (
-                  flavor.onSessionConfigurationUpdate?.(
-                    yield* runtime.getConfigOptions,
-                    yield* runtime.getModeState,
-                    (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
-                  ) ?? Effect.void
-                );
+                yield* publishSessionConfiguration(runtime);
               }
               const normalized = flavor.normalizeSessionUpdate?.(notification) ?? notification;
               // Turn projection misses compactions that finish while idle or after settlement.
@@ -7300,6 +7464,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return;
           }
           yield* Ref.set(activeSessionSetup, result);
+          yield* resetPublishedCatalogKey;
           // The selection was configured against the provisional setup's
           // options, so the next turn re-applies it against the real ones.
           yield* Ref.set(activeSelection, null);
@@ -7315,13 +7480,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             nativeBuildConfigurationBySessionId.delete(result.sessionId);
           }
           yield* refreshModelSwitchCapability;
-          yield* (
-            flavor.onSessionConfigurationUpdate?.(
-              yield* targetRuntime.getConfigOptions,
-              yield* targetRuntime.getModeState,
-              result.sessionSetupResult.models,
-            ) ?? Effect.void
-          );
+          yield* publishSessionConfiguration(targetRuntime);
         });
 
         const wireAcpRuntimeHandlers = Effect.fnUntraced(function* (
@@ -8145,15 +8304,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           prepareTerminalEnvironment(mcpContext, sessionId);
           yield* Ref.set(loadingSessionId, sessionId);
           const activated = yield* Effect.gen(function* () {
+            if (!canLoadSession && !canResumeSession) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver,
+                detail: `ACP driver cannot load or resume session ${sessionId}`,
+              });
+            }
+            yield* reportStartupPhase("resume");
             return canLoadSession
               ? yield* runtime.loadSession(sessionId, activationOptions)
-              : canResumeSession
-                ? yield* runtime.resumeSession(sessionId, activationOptions)
-                : yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                    driver,
-                    detail: `ACP driver cannot load or resume session ${sessionId}`,
-                  });
-          }).pipe(Effect.onError(() => Ref.set(loadingSessionId, null)));
+              : yield* runtime.resumeSession(sessionId, activationOptions);
+          }).pipe(
+            Effect.onError(() => Ref.set(loadingSessionId, null)),
+            Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
+          );
           rememberTerminalEnvironment(activated.sessionId, yield* readMcpContext(threadId));
           return activated;
         });
@@ -8460,13 +8624,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* validateModelSelection(modelSelection);
           yield* Ref.set(configuredModes, yield* readModes);
           yield* Ref.set(configuredPermissionPolicy, permissionPolicyInputs(runtimePolicy));
-          yield* (
-            flavor.onSessionConfigurationUpdate?.(
-              yield* runtime.getConfigOptions,
-              yield* runtime.getModeState,
-              (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
-            ) ?? Effect.void
-          );
+          yield* publishSessionConfiguration(runtime);
         });
 
         yield* configureSession(
@@ -8522,6 +8680,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ...capabilities,
               sessions: { ...capabilities.sessions, supportsModelSwitchInSession },
             },
+            updatedAt: yield* DateTime.now,
+          };
+          yield* emitProviderEvent({ type: "provider_session.updated", driver, providerSession });
+        });
+        reportStartupPhase = Effect.fn("AcpAdapterV2.reportStartupPhase")(function* (
+          phase: string | undefined,
+        ) {
+          if (providerSession.startupPhase === phase) return;
+          const { startupPhase: _reported, ...reported } = providerSession;
+          providerSession = {
+            ...reported,
+            ...(phase === undefined ? {} : { startupPhase: phase }),
             updatedAt: yield* DateTime.now,
           };
           yield* emitProviderEvent({ type: "provider_session.updated", driver, providerSession });
@@ -8721,6 +8891,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               terminalizeSubagents: directStopQuarantine,
             });
           }
+          yield* mcpSessions.clearToolResults(context.input.threadId);
           yield* closeTextStreams(context);
           // Ingestion may stop at turn.terminal, before a delayed flush would run.
           yield* textEmissionPermit.withPermit(
@@ -9099,13 +9270,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           messageText: string,
           attachments: ReadonlyArray<ChatAttachment>,
         ) {
-          if (!supportsImagePrompts && attachments.some(isProviderNativeImageAttachment)) {
-            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-              driver,
-              detail: "ACP driver did not negotiate image prompt support",
-            });
+          // Without image prompts the saved path already in the message text is how the agent
+          // reaches the image; a flavor's own builder checks the capabilities it is handed.
+          if (!flavor.buildAttachmentPrompt) {
+            return supportsImagePrompts ? yield* imageAttachmentBlocks(attachments) : [];
           }
-          if (!flavor.buildAttachmentPrompt) return yield* imageAttachmentBlocks(attachments);
           const setup = yield* Ref.get(activeSessionSetup);
           return yield* flavor
             .buildAttachmentPrompt({
@@ -9229,6 +9398,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeSessionSetup, null);
+          yield* resetPublishedCatalogKey;
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
           yield* Ref.set(configuredPermissionPolicy, null);
@@ -9724,6 +9894,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
+              claimedToolResults: new Map(),
+              drainedToolResultKeys: new Set(),
+              blockedInputRecoveryKeys: new Set(),
+              attemptedInputRecoveryKeys: new Set(),
               stoppedToolCallIds: new Set(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
@@ -9964,6 +10138,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     providerThreadId: turnInput.providerThread.id,
                     runId: turnInput.runId,
                     cause,
+                    // The prompt is sent from a forked fiber, and its failures settle the turn
+                    // instead of reaching here, so no prompt was sent when this fails.
+                    ...(refusedWithSessionIntact(cause) ? { refusedBeforePrompt: true } : {}),
                   }),
               ),
             ),

@@ -15,7 +15,7 @@ import * as Layer from "effect/Layer";
 
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
-import { catalogModelLabel } from "./ProviderDimensions.ts";
+import { modelLabel } from "./ProviderDimensions.ts";
 import {
   ProviderTurnAnalytics,
   RequestUsageLedger,
@@ -26,29 +26,9 @@ import {
 } from "./ProviderUsageAnalytics.ts";
 
 const providers = [
-  // Vendor-routed Codex lists OpenAI's catalog, including early-access code names.
-  {
-    driver: "codex",
-    models: [{ slug: "gpt-6-sol" }, { slug: "gpt-6.2-sol" }, { slug: "nova-alpha" }],
-  },
-  // A custom endpoint serves whatever its owner chose, including private deployments.
-  {
-    instanceId: "azure-codex",
-    driver: "codex",
-    auth: { endpoint: "https://acme.example.com" },
-    models: [{ slug: "acme-azure-deployment" }, { slug: "gpt-acme-finetune" }],
-  },
-  {
-    driver: "claudeAgent",
-    models: [{ slug: "claude-opus-5-5" }, { slug: "claude-haiku-4-5" }, { slug: "claude-opus-6" }],
-  },
-  {
-    instanceId: "claude-gateway",
-    driver: "claudeAgent",
-    auth: { type: "customEndpoint" },
-    models: [{ slug: "claude-ops-internal" }],
-  },
-  { driver: "opencode", models: [{ slug: "ollama/acme-internal" }] },
+  { driver: "codex", models: [{ slug: "gpt-6-sol" }] },
+  { driver: "pi", models: [{ slug: "/Users/jane/models/llama.gguf", aliases: ["pi-local"] }] },
+  { driver: "claudeAgent", models: [{ slug: "claude-opus-5-5" }, { slug: "claude-haiku-4-5" }] },
   // Antigravity ships models before the bundled manifest lists them.
   {
     driver: "antigravity",
@@ -58,25 +38,15 @@ const providers = [
     ],
   },
 ].map(
-  ({
-    instanceId,
-    driver,
-    auth,
-    models,
-  }: {
-    instanceId?: string;
-    driver: string;
-    auth?: Record<string, string>;
-    models: ReadonlyArray<{ slug: string; aliases?: ReadonlyArray<string> }>;
-  }) =>
+  ({ driver, models }) =>
     ({
-      instanceId: ProviderInstanceId.make(instanceId ?? driver),
+      instanceId: ProviderInstanceId.make(driver),
       driver,
-      auth: { status: "authenticated", ...auth },
+      auth: { status: "authenticated" },
       models: models.map((model) => ({ ...model, isCustom: false })),
     }) as unknown as ServerProvider,
 );
-const label = (model: string) => catalogModelLabel(providers, model);
+const label = (driver: string, model: string) => modelLabel(providers, driver, model);
 
 const at = (ms: number) => DateTime.makeUnsafe(ms);
 const complete = (input: number, output: number, extra: Partial<TurnTokenUsage> = {}) =>
@@ -335,7 +305,7 @@ describe("provider usage reporting", () => {
     });
   });
 
-  it("reports routed catalog models and closed efforts only", () => {
+  it("reports catalog models by slug, custom models by driver, and closed efforts only", () => {
     const routed = (model: string, variant: string) =>
       providerTurnProperties(
         {
@@ -356,30 +326,19 @@ describe("provider usage reporting", () => {
       observedModel: "claude-opus-5-5",
       effort: "high",
     });
-    for (const local of [
-      routed("ollama/acme-internal", "secret-variant"),
-      routed("acme-azure-deployment", "high"),
-    ]) {
-      expect(local).not.toHaveProperty("model");
-      expect(local).not.toHaveProperty("observedModel");
-    }
-    expect(routed("ollama/acme-internal", "secret-variant")).not.toHaveProperty("effort");
+    const local = routed("ollama/acme-internal", "secret-variant");
+    expect(local).toMatchObject({
+      model: "custom:opencode",
+      observedModel: "custom:opencode",
+    });
+    expect(local).not.toHaveProperty("effort");
   });
 
-  it("reports vendor catalog models the bundled manifest does not list", () => {
-    expect(label("gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
-    expect(label("antigravity-default")).toBe("gemini-4-neon");
-    expect(label("gemini-4-unlisted")).toBeUndefined();
-    expect(label("gpt-6.2-sol")).toBe("gpt-6.2-sol");
-    expect(label("claude-opus-6")).toBe("claude-opus-6");
-    for (const hidden of [
-      "nova-alpha",
-      "acme-azure-deployment",
-      "gpt-acme-finetune",
-      "claude-ops-internal",
-    ]) {
-      expect(label(hidden)).toBeUndefined();
-    }
+  it("maps vendor catalog aliases to their slug and user-configured models to their driver", () => {
+    expect(label("antigravity", "gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
+    expect(label("antigravity", "antigravity-default")).toBe("gemini-4-neon");
+    expect(label("pi", "pi-local")).toBe("custom:pi");
+    expect(label("pi", "/Users/jane/models/qwen-coder.gguf")).toBe("custom:pi");
   });
 
   it("reports closed service tiers from a tier option or a fast mode toggle", () => {
