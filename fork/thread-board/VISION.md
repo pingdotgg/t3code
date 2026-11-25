@@ -93,7 +93,28 @@ drives the fake live simulation and the theme.
 
 ## Open questions
 
-None right now.
+1. **Nightly downloads.** `TRADEMARK.md` forbids distributing builds that carry T3 Code's name,
+   logos or icons; a public download needs our own branding and an "unofficial fork" notice.
+   Upstream's release workflow only runs in `pingdotgg/t3code` and needs paid runners and
+   signing secrets, so a fork nightly would be a new, smaller workflow. For personal use, a
+   local `vp run dist:desktop:dmg:arm64` build needs neither.
+
+## Remaining work (review, 2026-11-25)
+
+Gaps against the UX draft, roughly by value:
+
+1. Project filter in the header (only the text search exists).
+2. "Woke" chip on a card after a snoozed thread wakes.
+3. A way from the thread view back to the board (today: footer icon or palette).
+4. Peek: changed files and recent activity; "Create PR" when there is a diff and no PR.
+5. New thread without leaving the board (needs a server RPC; see decision log).
+6. Keyboard shortcut to open the board.
+7. "Queued" chip when a follow-up waits behind a running turn (`hasQueuedTurnStart`).
+8. Remember collapsed swimlanes between visits.
+
+Quality gaps: a browser test for the board page (only logic unit tests exist); a check of the
+Electron app (macOS window buttons vs the header); a remote environment; a profile with a few
+hundred threads (the footer badge derives lanes on every shell change).
 
 ## Phases
 
