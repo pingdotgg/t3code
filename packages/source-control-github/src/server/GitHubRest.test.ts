@@ -8,6 +8,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Keep the native socket path within the temporary directory.
 import * as NodePath from "node:path";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -113,6 +114,29 @@ describe("environmentToken", () => {
 });
 
 describe("GitHubRest", () => {
+  it.effect("acknowledges workflow approval without waiting for an unused body", () => {
+    const { layer } = harness(
+      () =>
+        new Response(
+          new ReadableStream({
+            start: (controller) => controller.error(new Error("Response body interrupted")),
+          }),
+          { status: 201 },
+        ),
+    );
+    return Effect.gen(function* () {
+      const api = yield* GitHubRest.GitHubRest;
+      const response = yield* api.rest({
+        host: "github.com",
+        operation: "approveWorkflowRun",
+        method: "POST",
+        path: "repos/acme/web/actions/runs/10/approve",
+        discardSuccessBody: true,
+      });
+      expect(response).toMatchObject({ status: 201, body: "" });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("routes REST and GraphQL through gh's plain HTTP Unix socket", () =>
     Effect.gen(function* () {
       const directory = yield* Effect.acquireRelease(
@@ -360,7 +384,10 @@ describe("GitHubRest", () => {
         const media = yield* instance.fetchMedia!({ url: mediaUrl, headers: {} });
         expect(media?.status).toBe(401);
         expect(directRequests).toEqual([mediaUrl]);
-      }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+      }).pipe(
+        Effect.provide(layer.pipe(Layer.provideMerge(FeatureFlags.layerTest()))),
+        Effect.provideService(HostProcess.Environment, {}),
+      );
     }),
   );
 

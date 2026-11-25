@@ -61,8 +61,15 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
       const tmp = yield* makeTempDir;
       const root = path.join(tmp, "wrapper");
       const outside = path.join(tmp, "outside");
+      // Labels are cut at 128 UTF-16 units; an emoji across the cut is left out whole.
+      const cut = `${"a".repeat(127)}🚀`;
+      const fits = `${"b".repeat(126)}🚀`;
+      const padded = `${" ".repeat(127)}🚀`;
       for (const folder of [
         ".git",
+        `${cut}/.git`,
+        `${fits}/.git`,
+        `${padded}/.git`,
         "api/.git",
         "web/.git",
         "sub/.git",
@@ -121,6 +128,14 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             source: "code-workspace",
           },
           { path: outside, name: "outside", isGitRepository: true, source: "code-workspace" },
+          { path: path.join(root, padded), name: "🚀", isGitRepository: true, source: "child" },
+          {
+            path: path.join(root, cut),
+            name: "a".repeat(127),
+            isGitRepository: true,
+            source: "child",
+          },
+          { path: path.join(root, fits), name: fits, isGitRepository: true, source: "child" },
           // One level below a plain folder is looked into.
           {
             path: path.join(root, "src", "svc"),
@@ -190,6 +205,43 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           ["Outside", outside],
         ]);
       }).pipe(Effect.provide(layerFor({ workspaceRoot, trackedFolders })));
+    }),
+  );
+
+  it.effect("does not walk a project's folders when t3.json ignores the whole project", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* makeTempDir;
+      for (const folder of ["api/.git", "src/web/.git", "notes"]) {
+        yield* fileSystem.makeDirectory(path.join(workspaceRoot, folder), { recursive: true });
+      }
+      yield* fileSystem.writeFileString(
+        path.join(workspaceRoot, "t3.json"),
+        JSON.stringify({ ignoreRepositories: ["."] }),
+      );
+      const probed: Array<string> = [];
+      const counting = FileSystem.FileSystem.of({
+        ...fileSystem,
+        readDirectory: (target, options) => {
+          probed.push(target);
+          return fileSystem.readDirectory(target, options);
+        },
+        stat: (target) => {
+          probed.push(target);
+          return fileSystem.stat(target);
+        },
+      });
+
+      const found = yield* WorkspaceFolders.discoverFolders(workspaceRoot).pipe(
+        Effect.provideService(FileSystem.FileSystem, counting),
+      );
+
+      assert.deepEqual(found, []);
+      assert.deepEqual(
+        probed.filter((target) => target !== workspaceRoot),
+        [],
+      );
     }),
   );
 
@@ -293,17 +345,21 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           folders: [],
           extraRoots: [],
         });
-        assert.deepEqual(yield* workspaceFolders.submodules({ projectId, worktreePath: null }), [
-          { name: "lib", path: path.join(workspaceRoot, "vendor", "lib"), isGitRepository: true },
-          {
-            name: "deep",
-            path: path.join(workspaceRoot, "vendor", "lib", "deep"),
-            isGitRepository: true,
-          },
-        ]);
+        const { folders } = yield* workspaceFolders.forThread({ projectId, worktreePath: null });
+        assert.deepEqual(
+          yield* workspaceFolders.submodules({ projectId, worktreePath: null, folders }),
+          [
+            { name: "lib", path: path.join(workspaceRoot, "vendor", "lib"), isGitRepository: true },
+            {
+              name: "deep",
+              path: path.join(workspaceRoot, "vendor", "lib", "deep"),
+              isGitRepository: true,
+            },
+          ],
+        );
         // A worktree reaches its own submodules, named by where the project folder has them.
         assert.deepEqual(
-          yield* workspaceFolders.submodules({ projectId, worktreePath: worktree }),
+          yield* workspaceFolders.submodules({ projectId, worktreePath: worktree, folders: [] }),
           [
             {
               name: "lib",

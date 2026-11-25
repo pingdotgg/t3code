@@ -11,6 +11,7 @@ import {
   type WorkspaceScanFoldersResult,
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
@@ -64,6 +65,8 @@ export class WorkspaceFolders extends Context.Service<
     readonly submodules: (input: {
       readonly projectId: ProjectId;
       readonly worktreePath: string | null;
+      /** The thread's `forThread` folders; passed in so the project is walked once. */
+      readonly folders: ReadonlyArray<ThreadFolder>;
     }) => Effect.Effect<ReadonlyArray<ThreadFolder>, WorkspaceFoldersError>;
     readonly list: (
       input: WorkspaceListFoldersInput,
@@ -77,7 +80,11 @@ export class WorkspaceFolders extends Context.Service<
 const DETECTION_CONCURRENCY = 8;
 // What `ProjectTrackedFolder.name` allows.
 const FOLDER_NAME_MAX = 128;
-const boundedName = (name: string) => name.slice(0, FOLDER_NAME_MAX).trim();
+const boundedName = (name: string) => {
+  const trimmed = name.trimStart();
+  const end = splitsSurrogatePair(trimmed, FOLDER_NAME_MAX) ? FOLDER_NAME_MAX - 1 : FOLDER_NAME_MAX;
+  return trimmed.slice(0, end).trimEnd();
+};
 const CODE_WORKSPACE_EXTENSION = ".code-workspace";
 
 const decodeCodeWorkspace = Schema.decodeUnknownEffect(
@@ -276,11 +283,7 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { realPath, ownsHistory } = yield* folderProbes;
-  // Uncapped: the folders outside the project are dropped below, and must not use up the room.
-  const scan = yield* scanFolders({ workspaceRoot }, Number.POSITIVE_INFINITY).pipe(Effect.option);
-  if (Option.isNone(scan)) return [];
-  const root = scan.value.workspaceRoot;
-  const realRoot = yield* realPath(root);
+  const root = path.resolve(expandHomePath(workspaceRoot.trim(), yield* HostProcess.HomeDirectory));
   const ignored = (
     parseT3ProjectFile(
       yield* fileSystem
@@ -288,6 +291,12 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
         .pipe(Effect.orElseSucceed(() => "")),
     )?.ignoreRepositories ?? []
   ).map((entry) => path.resolve(root, entry));
+  // Everything the scan could find would be dropped, so skip the walk.
+  if (ignored.some((entry) => isWithinRoot(path, root, entry))) return [];
+  // Uncapped: the folders outside the project are dropped below, and must not use up the room.
+  const scan = yield* scanFolders({ workspaceRoot }, Number.POSITIVE_INFINITY).pipe(Effect.option);
+  if (Option.isNone(scan)) return [];
+  const realRoot = yield* realPath(root);
   const inside = yield* Effect.filter(
     scan.value.folders.filter(
       (folder) =>
@@ -506,7 +515,6 @@ const make = Effect.gen(function* () {
   const submodules: WorkspaceFolders["Service"]["submodules"] = Effect.fn(
     "WorkspaceFolders.submodules",
   )(function* (input) {
-    const { folders } = yield* forThread(input);
     // A worktree can outlive its project record; its submodules are then named by where they are.
     const projectRoot = yield* readProject(input.projectId).pipe(
       Effect.map((project) => path.resolve(project.workspaceRoot)),
@@ -518,7 +526,7 @@ const make = Effect.gen(function* () {
     const identity = Option.getOrElse(projectRoot, () => root);
     return yield* submodulesOf([
       { path: root, identity },
-      ...folders.flatMap((folder) =>
+      ...input.folders.flatMap((folder) =>
         folder.isGitRepository
           ? [{ path: folder.path, identity: folder.repositoryPath ?? folder.path }]
           : [],

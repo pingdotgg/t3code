@@ -1,6 +1,6 @@
 import { pullRequestCommentPreview } from "./pullRequestMarkdown.logic";
 import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
-import { holdLinkedNodeInView } from "./holdLinkedNodeInView";
+import { holdLinkedNodeInView, holdScrollTop } from "./holdLinkedNodeInView";
 import { useAtomValue } from "@effect/atom-react";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -25,7 +25,15 @@ import {
 } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 
@@ -49,7 +57,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import {
   PullRequestActorLabel,
   PullRequestCheckStatusIcon,
@@ -87,7 +95,7 @@ import {
   startDescriptionSave,
   type DescriptionDraft,
 } from "@t3tools/client-runtime/pull-request-editing";
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
@@ -124,30 +132,30 @@ function CommentIdentity({
   return (
     <h2 className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
       <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            comment.url ? (
-              <a
-                href={comment.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-muted-foreground hover:text-foreground hover:underline"
-              />
-            ) : (
-              <span className="text-muted-foreground" />
-            )
-          }
-        >
-          <time dateTime={comment.createdAt}>
-            <RelativeTime timestamp={comment.createdAt} />
-          </time>
-        </TooltipTrigger>
-        <TooltipPopup>
-          {formatFullTimestamp(comment.createdAt, timestampFormat)}
-          {comment.url ? ` · ${gt("Open comment on host")}` : ""}
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          comment.url ? (
+            <a
+              href={comment.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-muted-foreground hover:text-foreground hover:underline"
+            />
+          ) : (
+            <span className="text-muted-foreground" />
+          )
+        }
+        label={
+          <>
+            {formatFullTimestamp(comment.createdAt, timestampFormat)}
+            {comment.url ? ` · ${gt("Open comment on host")}` : ""}
+          </>
+        }
+      >
+        <time dateTime={comment.createdAt}>
+          <RelativeTime timestamp={comment.createdAt} />
+        </time>
+      </SharedTooltipTrigger>
     </h2>
   );
 }
@@ -164,10 +172,9 @@ function CommentLocation({
   const label = `${path}${thread?.line ? `:${thread.line}` : ""}`;
   return (
     <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-      <Tooltip>
-        <TooltipTrigger render={<span className="truncate font-mono" />}>{label}</TooltipTrigger>
-        <TooltipPopup>{label}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger render={<span className="truncate font-mono" />} label={label}>
+        {label}
+      </SharedTooltipTrigger>
       {thread?.isOutdated ? (
         <span className="shrink-0">
           <T context="review thread state">Outdated</T>
@@ -321,6 +328,9 @@ function CollapsedComment({
                 })}
               </span>
             ) : null}
+            {/* Collapsed, the status label already says "Resolved". It goes before the
+                trigger so opening doesn't shift the trigger out from under the cursor. */}
+            {open ? resolveButton : null}
             <CollapsibleTrigger
               ref={statusTriggerRef}
               className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -331,8 +341,6 @@ function CollapsedComment({
                 className={cn("size-3.5 transition-transform", open && "rotate-180")}
               />
             </CollapsibleTrigger>
-            {/* Collapsed, the status label already says "Resolved". */}
-            {open ? resolveButton : null}
             {onAddToChat ? <AddToChatButton onClick={onAddToChat} /> : null}
             {reactionBar}
           </div>
@@ -461,11 +469,20 @@ export function PullRequestSection({
 
 const COMMENT_PAGE = 10;
 
+interface SummaryView {
+  readonly order: "newest" | "oldest";
+  readonly shown: number;
+  readonly scrollTop: number;
+}
+// Session-only: switching right-panel tabs unmounts the Summary, which comes back as it was left.
+const summaryViewByScopeKey = new Map<string, SummaryView>();
+
 const COMMENT_FILTER_STORAGE_KEY = "t3code:pull-request-comment-filter:v1";
 const CommentFilterSchema = Schema.Struct({ bots: Schema.Boolean, resolved: Schema.Boolean });
 const DEFAULT_COMMENT_FILTER: typeof CommentFilterSchema.Type = { bots: false, resolved: false };
 
-export function PullRequestSummaryTab({
+// Memoized: it renders every comment, and the panel re-renders on each query state change.
+export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
   revealUrl,
   onRevealSettled,
   scrollerRef,
@@ -473,6 +490,7 @@ export function PullRequestSummaryTab({
   threadRef,
   reference,
   detail,
+  observedAt,
   activityPending,
   checksStale = false,
   activityError,
@@ -492,6 +510,8 @@ export function PullRequestSummaryTab({
   threadRef: ScopedThreadRef | null;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
+  /** When the detail was last read; the detail itself keeps its older stamp across refreshes. */
+  observedAt: number | undefined;
   activityPending: boolean;
   checksStale?: boolean;
   activityError: string | null;
@@ -510,7 +530,23 @@ export function PullRequestSummaryTab({
   const fixCheckLabel =
     requestedFixCheckLabel ?? gt("Fix", { $context: "verb, fix a review finding" });
   const terminology = sourceControlClients.get(detail.provider).changeRequest;
-  const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
+  const viewKey = `${environmentId}:${detail.url}`;
+  const rememberView = (patch: Partial<SummaryView>) => {
+    const view = summaryViewByScopeKey.get(viewKey) ?? {
+      order: "newest",
+      shown: COMMENT_PAGE,
+      scrollTop: 0,
+    };
+    summaryViewByScopeKey.set(viewKey, { ...view, ...patch });
+  };
+  const [shown, setShownState] = useState(() => ({
+    url: detail.url,
+    count: summaryViewByScopeKey.get(viewKey)?.shown ?? COMMENT_PAGE,
+  }));
+  const setShown = (next: { url: string; count: number }) => {
+    setShownState(next);
+    rememberView({ shown: next.count });
+  };
   const shownConversations = shown.url === detail.url ? shown.count : COMMENT_PAGE;
   const [commentFilter, setCommentFilter] = useLocalStorage(
     COMMENT_FILTER_STORAGE_KEY,
@@ -536,7 +572,9 @@ export function PullRequestSummaryTab({
     filteredItems,
     shownConversations,
   );
-  const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
+  const [commentOrder, setCommentOrder] = useState(
+    () => summaryViewByScopeKey.get(viewKey)?.order ?? "newest",
+  );
   const visibleItems = orderPullRequestComments(recentItems, commentOrder);
   const showOldestCommentsButton =
     hiddenConversationCount > 0 ? (
@@ -607,11 +645,7 @@ export function PullRequestSummaryTab({
     readonly body: string;
   } | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState<DescriptionDraft | null>(null);
-  const descriptionDraftKept = descriptionDraftInForce(
-    descriptionDraft,
-    detail.url,
-    detail.observedAt,
-  );
+  const descriptionDraftKept = descriptionDraftInForce(descriptionDraft, detail.url, observedAt);
   if (descriptionDraftKept !== descriptionDraft) setDescriptionDraft(descriptionDraftKept);
   const description = descriptionDraftKept?.body ?? detail.body;
   const descriptionSaving = (descriptionDraftKept?.saves ?? 0) > 0;
@@ -637,6 +671,8 @@ export function PullRequestSummaryTab({
     }
   }
   const stopHolding = useRef<(() => void) | null>(null);
+  // A restore clamped by content still loading must not overwrite the saved position.
+  const restoringScroll = useRef(false);
   const revealSummary = useEffectEvent(() => {
     const root = scrollRef.current;
     if (revealUrl === undefined || !root) return;
@@ -674,12 +710,25 @@ export function PullRequestSummaryTab({
     revealSummary();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- retries once the description markdown renders, including after its editor closes
   }, [revealUrl, description, checksReveals, descriptionReveals, editingDescription]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- puts a remounted Summary back at the scroll position it left, before paint
+  useLayoutEffect(() => {
+    const scrollTop = summaryViewByScopeKey.get(viewKey)?.scrollTop ?? 0;
+    if (!scrollRef.current || scrollTop === 0) return;
+    restoringScroll.current = true;
+    stopHolding.current = holdScrollTop(scrollRef.current, scrollTop, () => {
+      restoringScroll.current = false;
+    });
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- restores once per mount
+  }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the hold observes DOM outside React and must end with the tab
   useEffect(() => () => stopHolding.current?.(), []);
   // Checkbox ticks and the editor share one draft, so each starts from the other's latest body.
   const saveDescription = async (body: string) => {
     const key = detail.url;
-    setDescriptionDraft((draft) => startDescriptionSave(draft, detail, body));
+    // The shown detail keeps its older stamp across refreshes; the draft must use the live one.
+    setDescriptionDraft((draft) =>
+      startDescriptionSave(draft, { url: detail.url, observedAt }, body),
+    );
     descriptionSavesRunning.current += 1;
     const result = await update({ environmentId, input: { ...reference, body } });
     descriptionSavesRunning.current -= 1;
@@ -813,7 +862,7 @@ export function PullRequestSummaryTab({
             <CommentLocation comment={comment} thread={thread} />
           </div>
         )}
-        {body === null && !commentEditing.canEdit(comment) ? null : (
+        {body === null && !canEditPullRequestComment(detail, comment) ? null : (
           <CommentBody className="px-3 py-3" comment={comment} editing={commentEditing} />
         )}
       </article>
@@ -871,6 +920,9 @@ export function PullRequestSummaryTab({
         scrollRef.current = node;
         scrollerRef(node);
       }}
+      onScroll={(event) => {
+        if (!restoringScroll.current) rememberView({ scrollTop: event.currentTarget.scrollTop });
+      }}
       tabIndex={-1}
       data-workspace-focus-default
       className="h-full overflow-y-auto outline-none"
@@ -893,51 +945,48 @@ export function PullRequestSummaryTab({
                         ? `${entry.actor.name} (@${login})`
                         : login;
                     return (
-                      <Tooltip key={entry.key}>
-                        <TooltipTrigger
-                          render={
-                            <span
-                              className={cn(
-                                "relative rounded-full hover:z-10",
-                                entry.outcome
-                                  ? pullRequestReviewOutcomeRingClassName(
-                                      entry.outcome,
-                                      entry.stale,
-                                    )
-                                  : undefined,
-                              )}
-                            />
-                          }
-                        >
-                          <PullRequestActorLabel
-                            actor={entry.actor}
-                            tooltip={false}
-                            variant="avatar"
+                      <SharedTooltipTrigger
+                        key={entry.key}
+                        render={
+                          <span
+                            className={cn(
+                              "relative rounded-full hover:z-10",
+                              entry.outcome
+                                ? pullRequestReviewOutcomeRingClassName(entry.outcome, entry.stale)
+                                : undefined,
+                            )}
                           />
-                          {entry.outcome ? (
-                            <>
-                              <PullRequestReviewOutcomeAvatarBadge
-                                outcome={entry.outcome}
-                                stale={entry.stale}
-                              />
-                              <span className="sr-only">
-                                {entry.stale
-                                  ? pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)
-                                  : pullRequestReviewOutcomeLabel(entry.outcome, resolve)}
-                              </span>
-                            </>
-                          ) : null}
-                        </TooltipTrigger>
-                        <TooltipPopup side="bottom">
-                          {entry.outcome
+                        }
+                        label={
+                          entry.outcome
                             ? `${named}: ${
                                 entry.stale
                                   ? pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)
                                   : pullRequestReviewOutcomeLabel(entry.outcome, resolve)
                               }`
-                            : named}
-                        </TooltipPopup>
-                      </Tooltip>
+                            : named
+                        }
+                        side="bottom"
+                      >
+                        <PullRequestActorLabel
+                          actor={entry.actor}
+                          tooltip={false}
+                          variant="avatar"
+                        />
+                        {entry.outcome ? (
+                          <>
+                            <PullRequestReviewOutcomeAvatarBadge
+                              outcome={entry.outcome}
+                              stale={entry.stale}
+                            />
+                            <span className="sr-only">
+                              {entry.stale
+                                ? pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)
+                                : pullRequestReviewOutcomeLabel(entry.outcome, resolve)}
+                            </span>
+                          </>
+                        ) : null}
+                      </SharedTooltipTrigger>
                     );
                   })}
                 </span>
@@ -1152,7 +1201,11 @@ export function PullRequestSummaryTab({
                   ? gt("Show oldest comments first")
                   : gt("Show newest comments first")
               }
-              onClick={() => setCommentOrder((value) => (value === "newest" ? "oldest" : "newest"))}
+              onClick={() => {
+                const order = commentOrder === "newest" ? "oldest" : "newest";
+                setCommentOrder(order);
+                rememberView({ order });
+              }}
             >
               <ArrowDownUpIcon aria-hidden className="size-3" />
               {commentOrder === "newest" ? gt("Newest first") : gt("Oldest first")}
@@ -1218,4 +1271,4 @@ export function PullRequestSummaryTab({
       </PullRequestSection>
     </div>
   );
-}
+});
