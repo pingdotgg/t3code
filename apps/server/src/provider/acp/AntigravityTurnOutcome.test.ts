@@ -43,6 +43,10 @@ const BAD_GATEWAY_ERROR = Buffer.concat([
   ),
   Buffer.from("\nThe model is currently unreachable."),
 ]);
+// Antigravity 1.5.17 rejects an SSE comment line, which proxies send to keep a stream open.
+const KEEP_ALIVE_STREAM_ERROR = errorPayload(
+  "generating and executing: iterateResponseStream: invalid stream chunk: : keep-alive",
+);
 const VERIFICATION_URL =
   "https://accounts.google.com/v3/signin/continue?plt=fixture&flowName=GlifWebSignIn";
 const CLASSIC_VERIFICATION_URL =
@@ -210,6 +214,15 @@ describe("watchAntigravityPromptOutcome", () => {
           message: "Bad Gateway: Failed to connect to backend API",
           retryable: true,
         },
+      );
+      // A harness error with no API status still names its cause.
+      assert.include(
+        (yield* turn([
+          [USER_INPUT, input],
+          [PLANNER_RESPONSE, reply],
+          [ERROR_MESSAGE, KEEP_ALIVE_STREAM_ERROR],
+        ]))?.failure.message,
+        "invalid stream chunk: : keep-alive",
       );
       // A prompt the watchdog retired keeps an absolute reset time but drops a relative one.
       assert.deepEqual(
