@@ -12975,58 +12975,6 @@
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "92e129bf413a1220": "zurückgezogen",
-  "0bda0cac7f5acc20": "Die verbundene Umgebung {actual} stimmt nicht mit {expected} überein.",
-  "0ecde875b0dd2f93": "Threads nach Projekt filtern: {projects}",
-  "1ef65b647231ff0b": "Threads nach Projekt filtern",
-  "643c4b50feadc874": "Worktree: {path} ({branch})",
-  "fb7c44da0f0825ea": "Worktree: {path}",
-  "3b03fc47eba632b4": "{count, plural, one {{formattedCount} geänderte Datei} other {{formattedCount} geänderte Dateien}}",
-  "afaf1bc8535e0adf": "Diff öffnen",
-  "d31b3c7be099ca82": "{count, plural, one {{formattedCount} weitere Datei im vollständigen Diff} other {{formattedCount} weitere Dateien im vollständigen Diff}}",
-  "452dc9eaa945693b": "Vollständigen Diff öffnen",
-  "eebe5b17e3c19a1c": "Zurück, Videovorschau schließen",
-  "58fd0009a6eb7258": "Zurück, Bildvorschau schließen",
-  "fe219642547fa0bf": "Im Terminal ausführen",
-  "b4fe8a076e9fd2f8": "Abgesetzte Formel",
-  "085d1407e8c92cce": "Formel im Text",
-  "a2ef393fa7b48ae8": "Abgesetzte Formel scrollen",
-  "e94685ea5642e088": "Formel im Text scrollen",
-  "1a6f6154d1cb51a9": "Nebenchat in diesem Chat öffnen",
-  "7fe7d5ae5fb4a655": "Subagent in diesem Chat öffnen",
-  "68060b380fe53942": "Läuft auf {label}. Verbinde dich damit, um den Thread dort zu öffnen.",
-  "b9b6bbd1e1ea189f": "Ganze Datei",
-  "f6e9581cba3467fa": "Wird indiziert…",
-  "2d1f293ac12463fc": "Der Rest der Datei wird geladen…",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "Checks"
-  ],
-  "15ad0159a826b290": "Wähle das {scope} in {tracker}, dessen Issues jedes Projekt neben denen seines eigenen Repositorys auflistet.",
-  "e63611bd62fad8d8": "Nicht zugeordnet",
-  "a8ff6d33b060736f": "Nutzung: Öffnen",
-  "7f8d6d1af69829d8": "Mehrere Umgebungen verknüpfen",
-  "ad5ed0ce61b966eb": "{label} vergessen? Agenten von hier arbeiten dort nicht mehr. Widerrufe „T3 Code · …“ unter „Freigabe & Zugriff“ auf {label}, um die Sitzung auch dort zu beenden.",
-  "f54364b854a07918": "Keine Hubs konfiguriert.",
-  "1d1e9cda847bd398": "Der Verwaltungsschlüssel des Hubs wird von diesem Server gelöscht. Seine Konten verschwinden aus der Limits-Ansicht; der Hub selbst bleibt unberührt. Füge ihn mit URL und Schlüssel erneut hinzu, um sie zurückzuholen.",
-  "c9bee4f93481b77a": "Hub entfernen",
-  "5c8ebc36f84dee7a": "erfordert eine neuere Desktop-App",
   "46b14ee7b6dc0de3": "Wird direkt in das Feld dieser Seite eingegeben und nie gespeichert. Der Agent sieht nur, was die Seite anzeigt, und Passwörter erscheinen als Punkte",
   "8d9e208aef08827f": "Feld ausfüllen",
   "f571cb7d488302a6": "Bleibt aus dem Chat heraus und wird nie gespeichert. Der nächste Befehl dieses Agenten, der ihn liest, erhält ihn einmalig",

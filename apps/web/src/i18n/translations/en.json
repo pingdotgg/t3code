@@ -12984,58 +12984,6 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "92e129bf413a1220": "withdrawn",
-  "0bda0cac7f5acc20": "Connected environment {actual} does not match {expected}.",
-  "0ecde875b0dd2f93": "Filter threads by project: {projects}",
-  "1ef65b647231ff0b": "Filter threads by project",
-  "643c4b50feadc874": "Worktree: {path} ({branch})",
-  "fb7c44da0f0825ea": "Worktree: {path}",
-  "3b03fc47eba632b4": "{count, plural, one {{formattedCount} changed file} other {{formattedCount} changed files}}",
-  "afaf1bc8535e0adf": "Open diff",
-  "d31b3c7be099ca82": "{count, plural, one {{formattedCount} more file in the full diff} other {{formattedCount} more files in the full diff}}",
-  "452dc9eaa945693b": "Open the full diff",
-  "eebe5b17e3c19a1c": "Back, close video preview",
-  "58fd0009a6eb7258": "Back, close image preview",
-  "fe219642547fa0bf": "Run in terminal",
-  "b4fe8a076e9fd2f8": "Display equation",
-  "085d1407e8c92cce": "Inline equation",
-  "a2ef393fa7b48ae8": "Scroll display equation",
-  "e94685ea5642e088": "Scroll inline equation",
-  "1a6f6154d1cb51a9": "Open side chat in this chat",
-  "7fe7d5ae5fb4a655": "Open subagent in this chat",
-  "68060b380fe53942": "Runs on {label}. Connect to it to open the thread there.",
-  "b9b6bbd1e1ea189f": "Full file",
-  "f6e9581cba3467fa": "Indexing…",
-  "2d1f293ac12463fc": "Loading the rest of the file…",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "checks"
-  ],
-  "15ad0159a826b290": "Pick the {tracker} {scope} whose issues each project lists beside its repository's own.",
-  "e63611bd62fad8d8": "Not bound",
-  "a8ff6d33b060736f": "Usage: Open",
-  "7f8d6d1af69829d8": "Link several environments",
-  "ad5ed0ce61b966eb": "Forget {label}? Agents here stop working there. Revoke \"T3 Code · …\" in {label}''s Sharing & access to end the session there too.",
-  "f54364b854a07918": "No hubs configured.",
-  "1d1e9cda847bd398": "The hub's management key is deleted from this server. Its accounts leave the Limits view; the hub itself is untouched. Add it again with the URL and key to bring them back.",
-  "c9bee4f93481b77a": "Remove hub",
-  "5c8ebc36f84dee7a": "needs a newer desktop app",
   "46b14ee7b6dc0de3": "Typed straight into this page's field, never stored. The agent sees only what the page shows, and passwords show as dots",
   "8d9e208aef08827f": "Fill field",
   "f571cb7d488302a6": "Kept out of chat and never stored. The next command this agent runs that reads it gets it once",

@@ -12982,58 +12982,6 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "92e129bf413a1220": "återkallad",
-  "0bda0cac7f5acc20": "Den anslutna miljön {actual} matchar inte {expected}.",
-  "0ecde875b0dd2f93": "Filtrera trådar efter projekt: {projects}",
-  "1ef65b647231ff0b": "Filtrera trådar efter projekt",
-  "643c4b50feadc874": "Worktree: {path} ({branch})",
-  "fb7c44da0f0825ea": "Worktree: {path}",
-  "3b03fc47eba632b4": "{count, plural, one {{formattedCount} ändrad fil} other {{formattedCount} ändrade filer}}",
-  "afaf1bc8535e0adf": "Öppna diff",
-  "d31b3c7be099ca82": "{count, plural, one {{formattedCount} fil till i hela diffen} other {{formattedCount} filer till i hela diffen}}",
-  "452dc9eaa945693b": "Öppna hela diffen",
-  "eebe5b17e3c19a1c": "Tillbaka, stäng videoförhandsvisningen",
-  "58fd0009a6eb7258": "Tillbaka, stäng bildförhandsvisningen",
-  "fe219642547fa0bf": "Kör i terminalen",
-  "b4fe8a076e9fd2f8": "Fristående ekvation",
-  "085d1407e8c92cce": "Ekvation i texten",
-  "a2ef393fa7b48ae8": "Rulla fristående ekvation",
-  "e94685ea5642e088": "Rulla ekvation i texten",
-  "1a6f6154d1cb51a9": "Öppna sidochatten i den här chatten",
-  "7fe7d5ae5fb4a655": "Öppna subagenten i den här chatten",
-  "68060b380fe53942": "Körs på {label}. Anslut till den för att öppna tråden där.",
-  "b9b6bbd1e1ea189f": "Hela filen",
-  "f6e9581cba3467fa": "Indexerar…",
-  "2d1f293ac12463fc": "Läser in resten av filen…",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "kontroller"
-  ],
-  "15ad0159a826b290": "Välj den {scope} i {tracker} vars ärenden varje projekt listar bredvid repots egna.",
-  "e63611bd62fad8d8": "Inte kopplad",
-  "a8ff6d33b060736f": "Användning: öppna",
-  "7f8d6d1af69829d8": "Länka flera miljöer",
-  "ad5ed0ce61b966eb": "Glöm {label}? Agenter här slutar arbeta där. Återkalla ”T3 Code · …” under Delning och åtkomst på {label} för att avsluta sessionen där också.",
-  "f54364b854a07918": "Inga hubbar konfigurerade.",
-  "1d1e9cda847bd398": "Hubbens hanteringsnyckel tas bort från den här servern. Dess konton försvinner från vyn Gränser; själva hubben påverkas inte. Lägg till den igen med URL och nyckel för att få tillbaka dem.",
-  "c9bee4f93481b77a": "Ta bort hubb",
-  "5c8ebc36f84dee7a": "behöver en nyare skrivbordsapp",
   "46b14ee7b6dc0de3": "Skrivs direkt i fältet på den här sidan och sparas aldrig. Agenten ser bara det sidan visar, och lösenord visas som punkter",
   "8d9e208aef08827f": "Fyll i fältet",
   "f571cb7d488302a6": "Hålls utanför chatten och sparas aldrig. Nästa kommando som den här agenten kör och som läser det får det en gång",

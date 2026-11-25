@@ -5694,12 +5694,6 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "201490988858b511": "återkallad av {by}",
-  "0bda0cac7f5acc20": "Den anslutna miljön {actual} matchar inte {expected}.",
-  "15ad0159a826b290": "Välj den {scope} i {tracker} vars ärenden varje projekt listar bredvid repots egna.",
-  "3cdda4bfc05d6bf5": "Körs på {label}. Anslut till den för att öppna dess tråd.",
-  "275b5fe6040f2c1c": "{files, plural, one {Granska {files} ändrad fil, {additions} tillägg, {deletions} borttagningar} other {Granska {files} ändrade filer, {additions} tillägg, {deletions} borttagningar}}",
-  "4314e052a3524c51": "Favoriter",
-  "0752b8ccc7dfba04": "Körs på {label}",
   "46b14ee7b6dc0de3": "Skrivs direkt i fältet på den här sidan och sparas aldrig. Agenten ser bara det sidan visar, och lösenord visas som punkter",
   "506705376c24c857": "Fyll i fältet",
   "f571cb7d488302a6": "Hålls utanför chatten och sparas aldrig. Nästa kommando som den här agenten kör och som läser det får det en gång"

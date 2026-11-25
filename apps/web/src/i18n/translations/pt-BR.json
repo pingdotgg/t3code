@@ -12975,58 +12975,6 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "92e129bf413a1220": "retirada",
-  "0bda0cac7f5acc20": "O ambiente conectado {actual} não corresponde a {expected}.",
-  "0ecde875b0dd2f93": "Filtrar threads por projeto: {projects}",
-  "1ef65b647231ff0b": "Filtrar threads por projeto",
-  "643c4b50feadc874": "Worktree: {path} ({branch})",
-  "fb7c44da0f0825ea": "Worktree: {path}",
-  "3b03fc47eba632b4": "{count, plural, one {{formattedCount} arquivo alterado} other {{formattedCount} arquivos alterados}}",
-  "afaf1bc8535e0adf": "Abrir diff",
-  "d31b3c7be099ca82": "{count, plural, one {Mais {formattedCount} arquivo no diff completo} other {Mais {formattedCount} arquivos no diff completo}}",
-  "452dc9eaa945693b": "Abrir o diff completo",
-  "eebe5b17e3c19a1c": "Voltar, fechar a pré-visualização do vídeo",
-  "58fd0009a6eb7258": "Voltar, fechar a pré-visualização da imagem",
-  "fe219642547fa0bf": "Executar no terminal",
-  "b4fe8a076e9fd2f8": "Equação em destaque",
-  "085d1407e8c92cce": "Equação em linha",
-  "a2ef393fa7b48ae8": "Rolar a equação em destaque",
-  "e94685ea5642e088": "Rolar a equação em linha",
-  "1a6f6154d1cb51a9": "Abrir o chat paralelo neste chat",
-  "7fe7d5ae5fb4a655": "Abrir o subagente neste chat",
-  "68060b380fe53942": "Roda em {label}. Conecte-se a ele para abrir a thread lá.",
-  "b9b6bbd1e1ea189f": "Arquivo completo",
-  "f6e9581cba3467fa": "Indexando…",
-  "2d1f293ac12463fc": "Carregando o restante do arquivo…",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "verificações"
-  ],
-  "15ad0159a826b290": "Escolha o {scope} do {tracker} cujas issues cada projeto lista ao lado das do próprio repositório.",
-  "e63611bd62fad8d8": "Não vinculado",
-  "a8ff6d33b060736f": "Uso: abrir",
-  "7f8d6d1af69829d8": "Vincular vários ambientes",
-  "ad5ed0ce61b966eb": "Esquecer {label}? Os agentes daqui deixam de funcionar lá. Revogue \"T3 Code · …\" em Compartilhamento e acesso de {label} para encerrar a sessão lá também.",
-  "f54364b854a07918": "Nenhum hub configurado.",
-  "1d1e9cda847bd398": "A chave de gerenciamento do hub é excluída deste servidor. As contas dele saem da visualização Limites; o hub em si não é afetado. Adicione-o novamente com a URL e a chave para trazê-las de volta.",
-  "c9bee4f93481b77a": "Remover hub",
-  "5c8ebc36f84dee7a": "precisa de um app desktop mais novo",
   "46b14ee7b6dc0de3": "Digitado direto no campo desta página e nunca armazenado. O agente vê apenas o que a página mostra, e senhas aparecem como pontos",
   "8d9e208aef08827f": "Preencher campo",
   "f571cb7d488302a6": "Fica fora do chat e nunca é armazenado. O próximo comando deste agente que o ler o recebe uma única vez",

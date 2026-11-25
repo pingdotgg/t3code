@@ -5688,12 +5688,6 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "201490988858b511": "retirée par {by}",
-  "0bda0cac7f5acc20": "L’environnement connecté {actual} ne correspond pas à {expected}.",
-  "15ad0159a826b290": "Choisissez le {scope} {tracker} dont chaque projet liste les tickets à côté de ceux de son propre dépôt.",
-  "3cdda4bfc05d6bf5": "S’exécute sur {label}. Connectez-vous-y pour ouvrir son fil.",
-  "275b5fe6040f2c1c": "{files, plural, one {Relire {files} fichier modifié, {additions} ajouts, {deletions} suppressions} other {Relire {files} fichiers modifiés, {additions} ajouts, {deletions} suppressions}}",
-  "4314e052a3524c51": "Favoris",
-  "0752b8ccc7dfba04": "S’exécute sur {label}",
   "46b14ee7b6dc0de3": "Saisi directement dans le champ de cette page, jamais enregistré. L'agent ne voit que ce que la page affiche, et les mots de passe apparaissent sous forme de points",
   "506705376c24c857": "Remplir le champ",
   "f571cb7d488302a6": "Hors du chat et jamais enregistré. La prochaine commande de cet agent qui le lit le reçoit une seule fois"
