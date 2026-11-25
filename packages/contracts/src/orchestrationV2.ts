@@ -516,6 +516,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(GitRefName),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  matchProviderSessionCwd: Schema.optional(Schema.Literal(true)),
   ...delegatedSkillPolicyFields,
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
@@ -3815,6 +3816,12 @@ export const OrchestrationV2Command = Schema.Union([
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
     workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+    existingWorkspace: Schema.optional(
+      Schema.Struct({
+        worktreePath: TrimmedNonEmptyString,
+        branch: Schema.NullOr(TrimmedNonEmptyString),
+      }),
+    ),
     ...delegatedSkillPolicyFields,
     // Defaults to settled_only; fire-and-forget wakes require always.
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),

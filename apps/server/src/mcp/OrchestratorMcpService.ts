@@ -88,8 +88,10 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -1384,6 +1386,8 @@ function timelineItemsWithinBudget(
 
 const make = Effect.gen(function* () {
   const layerScope = yield* Scope.Scope;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -3282,6 +3286,18 @@ const make = Effect.gen(function* () {
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
       yield* requireCapability(callerScope);
       const scope = yield* requireThreadScope(callerScope, "delegate_task");
+      const { cwd: requestedCwd } = input;
+      if (requestedCwd !== undefined) {
+        if (input.isolation === "worktree") {
+          return yield* failure("invalid_request", 'cwd cannot be used with isolation "worktree".');
+        }
+        if (input.target?.environmentId !== undefined) {
+          return yield* failure("invalid_request", "cwd cannot be used with target.environmentId.");
+        }
+        if (!path.isAbsolute(requestedCwd)) {
+          return yield* failure("invalid_request", "cwd must be an absolute directory path.");
+        }
+      }
       const environmentId = PeerForwarding.remoteTarget(callerScope, input.target?.environmentId);
       const key = yield* requestKey(input.clientRequestId);
       const commandId = stableCommandId({ scope, requestKey: key, operation: "delegate-task" });
@@ -3320,6 +3336,26 @@ const make = Effect.gen(function* () {
         profiled = { settings, profile };
       }
       const isolation = profiled?.profile.checkout ?? input.isolation;
+      if (requestedCwd !== undefined) {
+        if (isolation === "worktree") {
+          return yield* failure("invalid_request", "cwd cannot be used with a worktree profile.");
+        }
+        const directory = yield* fileSystem
+          .stat(requestedCwd)
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "invalid_request",
+                error.reason._tag === "NotFound"
+                  ? `cwd "${requestedCwd}" does not exist.`
+                  : `Unable to access cwd "${requestedCwd}".`,
+              ),
+            ),
+          );
+        if (directory.type !== "Directory") {
+          return yield* failure("invalid_request", `cwd "${requestedCwd}" is not a directory.`);
+        }
+      }
       if (input.target !== undefined && environmentId !== undefined) {
         const parent = yield* loadCallerRecords(scope.thread.threadId, []);
         if (parent.thread.deniedSkills?.length) {
@@ -3361,7 +3397,7 @@ const make = Effect.gen(function* () {
         );
       }
       const providers = yield* loadProviders;
-      const cwd = yield* parentWorkspaceCwd(parent);
+      const cwd = requestedCwd ?? (yield* parentWorkspaceCwd(parent));
       const { modelSelection, runtimeMode } = yield* profiled === undefined
         ? Effect.gen(function* () {
             const target = yield* resolveTargetRechecking({
@@ -3443,6 +3479,60 @@ const make = Effect.gen(function* () {
           startFromOrigin: false,
         };
       }
+      const existingWorkspace =
+        requestedCwd === undefined
+          ? undefined
+          : yield* Effect.gen(function* () {
+              const gitContext = {
+                cwd: requestedCwd,
+                operation: "OrchestratorMcpService.delegateTask.branch",
+              };
+              const inWorkTree = yield* gitDriver
+                .execute({
+                  ...gitContext,
+                  args: ["rev-parse", "--is-inside-work-tree"],
+                })
+                .pipe(
+                  Effect.map(({ stdout }) => stdout.trim() === "true"),
+                  Effect.catchIf(
+                    (error) => error.reason === "not_a_repository",
+                    () => Effect.succeed(false),
+                  ),
+                );
+              const branch = inWorkTree
+                ? yield* gitDriver
+                    .execute({
+                      ...gitContext,
+                      args: ["symbolic-ref", "--quiet", "HEAD"],
+                    })
+                    .pipe(
+                      Effect.map(({ stdout }) => {
+                        const ref = stdout.trim();
+                        return ref.startsWith("refs/heads/")
+                          ? ref.slice("refs/heads/".length)
+                          : null;
+                      }),
+                      Effect.catchIf(
+                        (error) => error.exitCode === 1,
+                        () => Effect.succeed(null),
+                      ),
+                    )
+                : null;
+              return {
+                worktreePath:
+                  requestedCwd === requestedCwd.trimEnd()
+                    ? requestedCwd
+                    : `${requestedCwd}${path.sep}`,
+                branch,
+              };
+            }).pipe(
+              Effect.mapError(() =>
+                failure(
+                  "invalid_request",
+                  `Unable to read the checkout branch in cwd "${requestedCwd}".`,
+                ),
+              ),
+            );
       const parentNodeId = parentRun.rootNodeId;
       // The command commits the child's preparing run, which only this call
       // prepares, so a caller that goes away must not stop it in between.
@@ -3472,6 +3562,7 @@ const make = Effect.gen(function* () {
               runtimeMode,
               interactionMode,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
+              ...(existingWorkspace === undefined ? {} : { existingWorkspace }),
               // Async delegations wake the parent on every child terminal; wait
               // delegations deliver through the blocking tool call until `awaitTask`
               // gives up the wait (timeout, cancelled call) and upgrades the wake.
@@ -4343,6 +4434,8 @@ export const layer: Layer.Layer<
   OrchestratorMcpService,
   never,
   | SecureRandom.SecureRandom
+  | FileSystem.FileSystem
+  | Path.Path
   | ThreadManagementService.ThreadManagementService
   | ThreadLaunchService.ThreadLaunchService
   | GitVcsDriver.GitVcsDriver

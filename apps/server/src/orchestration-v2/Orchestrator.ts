@@ -1772,26 +1772,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
 
-  const providerSessionIdFor = (input: {
+  const providerSessionIdFor = Effect.fn("Orchestrator.providerSessionIdFor")(function* (input: {
     readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
     readonly providerInstanceId: ProviderInstanceId;
     readonly thread: OrchestrationV2AppThread;
-  }) =>
-    input.adapter.getCapabilities().pipe(
-      Effect.flatMap((capabilities) =>
-        capabilities.sessions.supportsMultipleProviderThreadsPerSession &&
-        !input.thread.deniedSkills?.length
-          ? Effect.succeed(
-              idAllocator.derive.providerSession({
-                providerInstanceId: input.providerInstanceId,
-              }),
-            )
-          : idAllocator.allocate.providerSession({
-              providerInstanceId: input.providerInstanceId,
-              threadId: input.thread.id,
-            }),
-      ),
-    );
+  }) {
+    const { adapter, providerInstanceId, thread } = input;
+    const capabilities = yield* adapter.getCapabilities();
+    if (
+      capabilities.sessions.supportsMultipleProviderThreadsPerSession &&
+      !thread.deniedSkills?.length
+    ) {
+      const sharedId = idAllocator.derive.providerSession({ providerInstanceId });
+      if (thread.matchProviderSessionCwd !== true || thread.worktreePath === null) return sharedId;
+      const cwd = thread.worktreePath;
+      const matchesCwd = (sessionCwd: string) =>
+        sessionCwd === cwd
+          ? Effect.succeed(true)
+          : Effect.all([fileSystem.realPath(sessionCwd), fileSystem.realPath(cwd)]).pipe(
+              Effect.map(([sessionPath, requestedPath]) => sessionPath === requestedPath),
+              Effect.orElseSucceed(() => false),
+            );
+      const shared = yield* providerSessions.get(sharedId);
+      if (Option.isSome(shared) && (yield* matchesCwd(shared.value.providerSession.cwd)))
+        return sharedId;
+      if (thread.lineage.parentThreadId !== null) {
+        const parent = yield* projectionStore.getThreadRecords(thread.lineage.parentThreadId, [
+          "providerSessions",
+        ]);
+        for (const session of parent.providerSessions) {
+          if (session.id === sharedId || session.providerInstanceId !== providerInstanceId)
+            continue;
+          const live = yield* providerSessions.get(session.id);
+          if (Option.isSome(live) && (yield* matchesCwd(live.value.providerSession.cwd)))
+            return session.id;
+        }
+      }
+    }
+    return yield* idAllocator.allocate.providerSession({ providerInstanceId, threadId: thread.id });
+  });
 
   const makeEvent =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
@@ -10167,7 +10186,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         interactionMode: command.interactionMode,
         deniedSkills,
         ...(delegationProfile === undefined ? {} : { delegationProfile }),
-        ...(command.workspaceStrategy === undefined ? {} : { branch: null, worktreePath: null }),
+        ...(command.workspaceStrategy !== undefined
+          ? { branch: null, worktreePath: null, matchProviderSessionCwd: undefined }
+          : command.existingWorkspace === undefined
+            ? {}
+            : {
+                ...command.existingWorkspace,
+                delegatedWorktree: undefined,
+                matchProviderSessionCwd: true,
+              }),
       };
       const task: OrchestrationV2Subagent = {
         id: taskNodeId,

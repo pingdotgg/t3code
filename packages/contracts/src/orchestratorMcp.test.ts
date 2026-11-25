@@ -19,6 +19,7 @@ describe("orchestrator MCP contracts", () => {
         providerInstanceId: "claudeAgent",
         model: "claude-sonnet-4-6",
       },
+      cwd: "/work/child",
       mode: "wait",
       timeoutMs: 5_000,
       clientRequestId: "delegate-1",
@@ -47,6 +48,7 @@ describe("orchestrator MCP contracts", () => {
     });
 
     expect(request.target?.providerInstanceId).toBe("claudeAgent");
+    expect(request.cwd).toBe("/work/child");
     expect(result.status).toBe("completed");
     expect(result.summary).toBe("Workspace inspected.");
     expect(result.pendingApproval).toBeNull();

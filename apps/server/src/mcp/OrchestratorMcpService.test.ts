@@ -42,6 +42,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
@@ -50,11 +51,13 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ServerConfig from "../config.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import {
@@ -6187,7 +6190,7 @@ describe("OrchestratorMcpService thread list", () => {
   );
 });
 
-describe("OrchestratorMcpService thread stop", () => {
+describe("OrchestratorMcpService live threads", () => {
   const driver = ProviderDriverKind.make("codex");
   const instanceId = ProviderInstanceId.make("codex");
   const modelSelection = { instanceId, model: "gpt-5.4" };
@@ -6202,7 +6205,11 @@ describe("OrchestratorMcpService thread stop", () => {
   };
 
   // A provider whose turns run until they are interrupted.
-  const liveAdapter = (cwd: string): ProviderAdapter.ProviderAdapterV2["Service"] => ({
+  const codex = { instanceId, driver };
+  const liveAdapter = ({
+    instanceId,
+    driver,
+  } = codex): ProviderAdapter.ProviderAdapterV2["Service"] => ({
     instanceId,
     driver,
     getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
@@ -6220,7 +6227,7 @@ describe("OrchestratorMcpService thread stop", () => {
             driver,
             providerInstanceId: instanceId,
             status: "ready",
-            cwd,
+            cwd: input.runtimePolicy.cwd ?? process.cwd(),
             model: modelSelection.model,
             capabilities: CodexProviderCapabilitiesV2,
             createdAt: now,
@@ -6273,6 +6280,233 @@ describe("OrchestratorMcpService thread stop", () => {
       }),
   });
 
+  const delegationFixture = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parentCwd = yield* fs.makeTempDirectoryScoped({ prefix: "mcp-delegation-parent-" });
+    const pi = ProviderInstanceId.make("pi");
+    const piDriver = ProviderDriverKind.make("pi");
+    const projectId = ProjectId.make("project:mcp-cwd");
+    const adapters = ProviderAdapterRegistry.layerFromAdapters([
+      liveAdapter(),
+      liveAdapter({ instanceId: pi, driver: piDriver }),
+    ]);
+    const database = SqlitePersistence.layerMemory;
+    const orchestrationLayer = ProviderReplayHarness.layerWithRegistry(
+      { name: "mcp-cwd" },
+      adapters,
+      { databaseLayer: database, runEffectWorker: false },
+    );
+    const settings = ServerSettings.layerTest({
+      providerInstances: {
+        [pi]: { driver: "pi", enabled: true },
+      },
+      delegation: {
+        providerByVendor: { openai: pi },
+        profiles: {
+          shared: { checkout: "shared", model: "openai:gpt-5.4", deniedSkills: [] },
+          worktree: { checkout: "worktree", model: "openai:gpt-5.4", deniedSkills: [] },
+        },
+      },
+    });
+    const gitLayer = GitVcsDriver.layer.pipe(
+      Layer.provide(ServerConfig.layerTest(parentCwd, { prefix: "mcp-delegation-git-" })),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    );
+    const serviceLayer = OrchestratorMcpService.layer.pipe(
+      Layer.provideMerge(gitLayer),
+      Layer.provideMerge(
+        ThreadManagementService.layer.pipe(
+          Layer.provideMerge(orchestrationLayer),
+          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(database))),
+          Layer.provide(settings),
+        ),
+      ),
+      Layer.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          adapters,
+          settings,
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            prepareRun: () => Effect.die("A delegate in an existing folder must skip setup"),
+          }),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed(
+              [
+                { instanceId, driver },
+                { instanceId: pi, driver: piDriver },
+              ].map((provider) => ({
+                ...provider,
+                enabled: true,
+                installed: true,
+                version: "test",
+                status: "ready",
+                auth: { status: "authenticated" },
+                checkedAt: "2026-09-13T00:00:00.000Z",
+                models: [
+                  {
+                    slug: modelSelection.model,
+                    name: modelSelection.model,
+                    isCustom: false,
+                    capabilities: null,
+                  },
+                ],
+                slashCommands: [],
+                skills: [],
+              })),
+            ),
+          }),
+          Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        ),
+      ),
+    );
+    const context = yield* Layer.build(serviceLayer);
+    return yield* Effect.gen(function* () {
+      const orchestration = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      yield* orchestration.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create"),
+        threadId,
+        projectId,
+        title: "Parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "parent-branch",
+        worktreePath: parentCwd,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestration.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("start"),
+        threadId,
+        messageId: MessageId.make("parent-message"),
+        text: "Delegate work.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* worker.drain();
+      const { providerThreads } = yield* orchestration.getThreadProjection(threadId);
+      const providerSessionId = providerThreads[0]?.providerSessionId;
+      assert.isString(providerSessionId);
+      const scope = {
+        ...client,
+        requestNamespace: "provider-session:mcp-delegation",
+        client: undefined,
+        thread: { threadId, providerSessionId: providerSessionId!, providerInstanceId: instanceId },
+      } satisfies McpInvocationScope;
+      return { git, fs, path, parentCwd, orchestration, worker, service, scope, sessions };
+    }).pipe(Effect.provide(context));
+  }).pipe(Effect.provide(NodeServices.layer));
+
+  it.live(
+    "delegateTask: cwd starts children in the requested folder without setup or branch changes",
+    () =>
+      Effect.gen(function* () {
+        const { git, fs, parentCwd, orchestration, worker, service, scope, sessions } =
+          yield* delegationFixture;
+        const checkout = yield* checkpointWorkspace("mcp-delegation-child");
+        const scratch = yield* fs.makeTempDirectoryScoped({ prefix: "mcp-delegation-scratch-" });
+        const branch = "t3code/deadbeef";
+        const command = (args: readonly string[]) =>
+          git.execute({ operation: "delegation test", cwd: checkout, args });
+        yield* command(["checkout", "-b", branch]);
+        const checkChild = (
+          childThreadId: ThreadId | null,
+          cwd: string,
+          expectedBranch: string | null,
+        ) =>
+          Effect.gen(function* () {
+            assert.isNotNull(childThreadId);
+            yield* worker.drain();
+            const { thread, runs, providerThreads } = yield* orchestration.getThreadProjection(
+              childThreadId!,
+            );
+            assert.equal(thread.worktreePath, cwd);
+            assert.equal(thread.branch, expectedBranch);
+            assert.isUndefined(thread.delegatedWorktree);
+            assert.isUndefined(runs[0]?.workspacePreparation);
+            assert.isNotEmpty(providerThreads);
+            const sessionId = providerThreads[0]!.providerSessionId!;
+            const session = yield* sessions.get(sessionId);
+            assert.equal(Option.getOrUndefined(session)?.providerSession.cwd, cwd);
+            return {
+              threadId: thread.id,
+              providerSessionId: sessionId,
+              providerInstanceId: thread.modelSelection.instanceId,
+              subagent: true,
+            };
+          });
+        const local = yield* service.delegateTask(scope, {
+          task: "Use my checkout.",
+          cwd: checkout,
+        });
+        const localScope = yield* checkChild(local.childThreadId, checkout, branch);
+        assert.notEqual(localScope.providerSessionId, scope.thread.providerSessionId);
+        const sameFolder = yield* service.delegateTask(scope, {
+          task: "Use the same folder.",
+          cwd: parentCwd,
+        });
+        const sameFolderScope = yield* checkChild(sameFolder.childThreadId, parentCwd, null);
+        assert.equal(sameFolderScope.providerSessionId, scope.thread.providerSessionId);
+        const nested = yield* service.delegateTask(
+          { ...scope, thread: localScope },
+          { task: "Use the child checkout." },
+        );
+        const nestedScope = yield* checkChild(nested.childThreadId, checkout, branch);
+        assert.equal(nestedScope.providerSessionId, localScope.providerSessionId);
+        assert.equal((yield* command(["branch", "--show-current"])).stdout.trim(), branch);
+        const profiled = yield* service.delegateTask(scope, {
+          task: "Use a scratch folder.",
+          profile: "shared",
+          cwd: scratch,
+        });
+        yield* checkChild(profiled.childThreadId, scratch, null);
+        const defaulted = yield* service.delegateTask(scope, {
+          task: "Use the parent folder.",
+          profile: "shared",
+        });
+        yield* checkChild(defaulted.childThreadId, parentCwd, "parent-branch");
+      }),
+  );
+
+  it.effect("delegateTask: cwd rejects invalid folders and incompatible options", () =>
+    Effect.gen(function* () {
+      const { fs, path, parentCwd, service, scope } = yield* delegationFixture;
+      const file = path.join(parentCwd, "file");
+      yield* fs.writeFileString(file, "not a directory");
+      const invalidRequests = [
+        [{ cwd: parentCwd, isolation: "worktree" as const }, /cwd.*isolation.*worktree/],
+        [{ cwd: parentCwd, profile: "worktree" }, /cwd.*worktree.*profile/],
+        [
+          { cwd: parentCwd, target: { environmentId: scope.environmentId } },
+          /cwd.*target\.environmentId/,
+        ],
+        [{ cwd: "relative" }, /cwd.*absolute/],
+        [{ cwd: path.join(parentCwd, "missing") }, /cwd.*does not exist/],
+        [{ cwd: file }, /cwd.*not a directory/],
+      ] as const;
+      for (const [input, message] of invalidRequests) {
+        const error = yield* service
+          .delegateTask(scope, { task: "Invalid delegate.", ...input })
+          .pipe(Effect.flip);
+        assert.equal(error.code, "invalid_request");
+        assert.match(error.message, message);
+      }
+    }),
+  );
+
   it.effect.each([
     {
       name: "a running turn",
@@ -6287,7 +6521,7 @@ describe("OrchestratorMcpService thread stop", () => {
   ])("t3_thread_interrupt stop reports the run it interrupted on $name", ({ queued, stop }) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("mcp-thread-stop");
-      const layerAdapters = ProviderAdapterRegistry.layerSingle(liveAdapter(cwd));
+      const layerAdapters = ProviderAdapterRegistry.layerSingle(liveAdapter());
       const layerDatabase = SqlitePersistence.layerMemory;
       const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
         { name: "mcp-thread-stop" },
