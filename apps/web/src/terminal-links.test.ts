@@ -204,6 +204,7 @@ describe("extractTerminalLinks", () => {
     ["./src/a.js:1:function inner() {", "./src/a.js:1"],
     ["/home/dev/app/src/top.rb:2:in `f': boom (RuntimeError)", "/home/dev/app/src/top.rb:2"],
     ["./config/app.yml:3:name: web", "./config/app.yml:3"],
+    ["./src/a.js:12:console.log(value)", "./src/a.js:12"],
   ])("drops the colon that ends a compiler diagnostic location in %s", (line, text) => {
     const start = line.indexOf(text);
     expect(extractTerminalLinks(line)).toEqual([
