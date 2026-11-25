@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { buildRuntimeInstructions, threadHistoryInstructionMode } from "./runtimeInstructions.ts";
+import {
+  AGENT_FEEDBACK_INSTRUCTIONS,
+  buildRuntimeInstructions,
+  PULL_REQUEST_LINKING_INSTRUCTIONS,
+  threadHistoryInstructionMode,
+} from "./runtimeInstructions.ts";
 
 describe("buildRuntimeInstructions fork blocks", () => {
   it("tells the agent to address and resolve the user's document comments", () => {
@@ -7,6 +12,23 @@ describe("buildRuntimeInstructions fork blocks", () => {
     expect(instructions).toContain("review comments whose section reads `Document comment <id>`");
     expect(instructions).toContain("call resolve_document_comment with that id");
     expect(instructions).toContain("list_document_comments shows the open ones");
+  });
+
+  // Upstream's recorded prompts start with its own text, and replay matches them against ours.
+  it("puts Lathe's blocks after upstream's instructions, never inside them", () => {
+    const instructions = buildRuntimeInstructions({
+      harness: "Kiro",
+      model: "claude-sonnet-4.5",
+      agentFeedback: "auto",
+      threadHistory: "read",
+    });
+    const upstreamText = `</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}\n${AGENT_FEEDBACK_INSTRUCTIONS.auto}`;
+    expect(instructions).toContain(upstreamText);
+    const afterUpstream = instructions.slice(
+      instructions.indexOf(upstreamText) + upstreamText.length,
+    );
+    expect(afterUpstream.startsWith("\n\n<document_comments>")).toBe(true);
+    expect(afterUpstream).toContain("<thread_history>");
   });
 
   it("omits the thread history block without the capability", () => {

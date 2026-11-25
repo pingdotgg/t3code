@@ -77,9 +77,10 @@ describe("buildRuntimeInstructions", () => {
   it("lists a multi-folder thread's folders and leaves single-folder text unchanged", () => {
     const base = { runtimeMode: "full-access", interactionMode: "default" } as const;
     const single = buildRuntimeInstructions({ harness: "Codex" });
+    // Fork: Lathe's blocks follow upstream's, so the linking block is not the last one.
     assert.equal(
-      single,
-      `${buildRuntimeInstructions({ harness: "Codex", pullRequestLinking: false })}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`,
+      single.replace(`\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`, ""),
+      buildRuntimeInstructions({ harness: "Codex", pullRequestLinking: false }),
     );
     assert.equal(
       buildRuntimeInstructions({ harness: "Codex", runtimePolicy: { ...base, cwd: "/work/app" } }),

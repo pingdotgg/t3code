@@ -84,8 +84,9 @@ export function buildRuntimeInstructions(runtime: {
   const feedback = feedbackLine ? `\n${feedbackLine}` : "";
   const workspace =
     runtime.runtimePolicy === undefined ? "" : buildWorkspaceInstructions(runtime.runtimePolicy);
-  // PR linking follows the fork blocks, so a session that carries it elsewhere only loses a suffix.
-  const core = `${runtimeInfo}\n\n${DOCUMENT_COMMENT_INSTRUCTIONS}${threadHistory}${pullRequestLinking}${feedback}`;
+  // Fork: Lathe's blocks follow upstream's text. Upstream's recorded prompts begin with that
+  // text, and replay matches them against what is built here.
+  const core = `${runtimeInfo}${pullRequestLinking}${feedback}\n\n${DOCUMENT_COMMENT_INSTRUCTIONS}${threadHistory}`;
   return [core, ...(workspace === "" ? [] : [workspace])].join("\n\n");
 }
 
