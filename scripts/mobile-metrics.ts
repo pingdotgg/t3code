@@ -29,7 +29,7 @@ import {
   renewWhileRunning,
   type PoolAccess,
 } from "./mobile-behavior/pool.ts";
-import { reachableHost, startSession } from "./mobile-behavior/session.ts";
+import { reachableHost, startSession, type Build } from "./mobile-behavior/session.ts";
 import type { Device as PoolDevice } from "./mobile-e2e/device.ts";
 import {
   CASE_NAMES,
@@ -139,6 +139,7 @@ interface MeasureOptions {
   readonly renders: boolean;
   readonly host: string;
   readonly soak: number;
+  readonly build: Build;
 }
 
 /** The cases `--soak` repeats: thread switches, the flow whose memory matters most. */
@@ -163,6 +164,7 @@ const measureOnce = Effect.fn("mobileMetrics.measureOnce")(function* (options: M
     longTurns: options.longTurns,
     checkout: options.checkout,
     metroEnv: options.renders ? { EXPO_PUBLIC_T3_RENDER_COUNTER: "1" } : {},
+    build: options.build,
     environment: {
       serverEnv: forge.env,
       prepareWorkspace: (workspace) =>
@@ -341,13 +343,14 @@ const metaFor = Effect.fn("mobileMetrics.metaFor")(function* (
     readonly longTurns: number;
     readonly renders: boolean;
     readonly device: string;
+    readonly build: Build;
   },
 ) {
   return {
     commit: Option.getOrNull(yield* output("git", ["rev-parse", "--short=12", "HEAD"], checkout)),
     device: workload.device,
     platform: "ios-simulator",
-    build: "development",
+    build: workload.build === "release" ? "release" : "development",
     cases: workload.cases.join(","),
     rounds: workload.rounds,
     longTurns: workload.longTurns,
@@ -418,6 +421,12 @@ const report = Effect.fn("mobileMetrics.report")(function* (
   });
 });
 
+/** The render counter reads React's development-only fiber fields. */
+const checkBuild = (input: { readonly renders: boolean; readonly build: Build }) =>
+  input.renders && input.build === "release"
+    ? Effect.fail(new MetricsError({ message: "--renders needs --build dev" }))
+    : Effect.void;
+
 const casesOf = (list: string) => {
   const named = list
     .split(",")
@@ -465,6 +474,12 @@ const measureFlags = {
     ),
     Flag.withDefault(false),
   ),
+  build: Flag.Literals("build", ["dev", "release"]).pipe(
+    Flag.withDescription(
+      "dev runs the development bundle; release runs the production bundle as Hermes bytecode on the same dev client (compiling takes a few minutes per launch). Soak in release: dev-build heap grows with dev machinery.",
+    ),
+    Flag.withDefault("dev"),
+  ),
   soak: Flag.Int("soak").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     Flag.withDescription(
@@ -505,6 +520,7 @@ const runCommand = Command.make(
     const checkout = NodePath.resolve(input.checkout);
     const out = NodePath.resolve(input.out);
     const cases = yield* casesOf(input.cases);
+    yield* checkBuild(input);
     const meta = yield* metaFor(checkout, { ...input, cases });
     const artifacts = `${out.replace(/\.json$/, "")}-artifacts`;
     const measured = yield* withLease(artifacts, input.device, (access, device) =>
@@ -520,6 +536,7 @@ const runCommand = Command.make(
           longTurns: input.longTurns,
           renders: input.renders,
           soak: input.soak,
+          build: input.build,
           host: Option.getOrElse(input.host, reachableHost),
         });
       }),
@@ -557,6 +574,7 @@ const abCommand = Command.make(
   Effect.fn("mobileMetrics.ab")(function* (input) {
     const outDir = NodePath.resolve(input.outDir);
     const cases = yield* casesOf(input.cases);
+    yield* checkBuild(input);
     const floors = yield* readFloors(input.floors);
     const checkouts = [
       NodePath.resolve(input.checkoutA),
@@ -585,6 +603,7 @@ const abCommand = Command.make(
             longTurns: input.longTurns,
             renders: input.renders,
             soak: input.soak,
+            build: input.build,
             host,
           });
         }),
@@ -668,7 +687,7 @@ const summaryCommand = Command.make(
 
 const command = Command.make("mobile-metrics").pipe(
   Command.withDescription(
-    `Measure the iOS app on a Simlock simulator with mobile:behavior's server, Metro and dev-only probe. Needs SIMLOCK_AGENT_DEVICE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN.
+    `Measure the iOS app on a Simlock simulator with mobile:behavior's server, Metro and behavior probe. Needs SIMLOCK_AGENT_DEVICE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN.
 
 Cases (real taps, swipes and typing through agent-device):
   switch-short, switch-long   Tap a Home row: tap to the frame showing the thread's rows.
@@ -681,8 +700,11 @@ Cases (real taps, swipes and typing through agent-device):
   type             Keys typed into a composer, each to its next JS frame.
   scroll-long      Drag up through the long timeline: JS and UI frame drops.
 
-This is a development build: render and commit counts and A/B differences are representative,
-absolute times are not. Trust a change only from \`ab\` on one simulator model.`,
+\`--build dev\` (the default) runs the development bundle: render and commit counts and A/B
+differences are representative, absolute times and heap growth are not. \`--build release\` runs
+the production bundle as Hermes bytecode: real times and a flat heap, but no commit ms, no
+\`--renders\`, and minified component names in soak retention. Soak in release. Trust a change
+only from \`ab\` on one simulator model and build.`,
   ),
   Command.withSubcommands([runCommand, abCommand, compareCommand, noiseCommand, summaryCommand]),
 );

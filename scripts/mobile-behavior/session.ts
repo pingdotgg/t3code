@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - owns Metro.
 /**
  * One device's run state, shared by mobile:behavior and mobile:metrics: an isolated server with a
- * long settled thread, a Metro serving a checkout with the dev-only probe, and the dev client opened
+ * long settled thread, a Metro serving a checkout with the behavior probe, and the dev client opened
  * on it and paired with the server. Everything stops when the caller's scope closes.
  */
 import * as NodeChildProcess from "node:child_process";
@@ -15,6 +15,7 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 
 import { APP_ID, DeviceError, makeDevice, SCHEME, type ProbeState } from "./device.ts";
 import { freePort, startEnvironment, uuid, type EnvironmentOptions } from "./environment.ts";
+import { serveReleaseBytecode } from "./release-bytecode.ts";
 
 const REPO_ROOT = NodePath.resolve(import.meta.dirname, "../..");
 
@@ -29,6 +30,12 @@ export function reachableHost(): string {
   return lan?.address ?? "127.0.0.1";
 }
 
+/**
+ * `dev` serves the development bundle; `release` serves the production bundle as Hermes bytecode
+ * (see release-bytecode.ts) to the same dev client.
+ */
+export type Build = "dev" | "release";
+
 /** Metro with the behavior probe compiled in, stopped with its process group when the scope ends. */
 export const startMetro = Effect.fn("session.startMetro")(function* (input: {
   readonly host: string;
@@ -36,16 +43,31 @@ export const startMetro = Effect.fn("session.startMetro")(function* (input: {
   /** The checkout whose app Metro serves; defaults to this one. */
   readonly checkout?: string;
   readonly env?: Readonly<Record<string, string>>;
+  readonly build?: Build;
 }) {
+  const checkout = input.checkout ?? REPO_ROOT;
+  const release = input.build === "release";
   const port = yield* freePort();
+  // In release mode the app opens the bytecode proxy on `port`, which fronts Metro.
+  const metroPort = release ? yield* freePort() : port;
   const log = NodeFS.openSync(NodePath.join(input.out, "metro.log"), "w");
   yield* Effect.acquireRelease(
     Effect.sync(() =>
       NodeChildProcess.spawn(
         "npx",
-        ["expo", "start", "--dev-client", "--scheme", SCHEME, "--lan", "--port", String(port)],
+        [
+          "expo",
+          "start",
+          "--dev-client",
+          "--scheme",
+          SCHEME,
+          "--lan",
+          "--port",
+          String(metroPort),
+          ...(release ? ["--no-dev", "--minify"] : []),
+        ],
         {
-          cwd: NodePath.join(input.checkout ?? REPO_ROOT, "apps/mobile"),
+          cwd: NodePath.join(checkout, "apps/mobile"),
           detached: true,
           stdio: ["ignore", log, log],
           env: {
@@ -64,16 +86,24 @@ export const startMetro = Effect.fn("session.startMetro")(function* (input: {
     (child) => Effect.sync(() => child.pid !== undefined && process.kill(-child.pid, "SIGTERM")),
   );
   const metro = `http://${input.host}:${port}`;
-  for (let attempt = 0; attempt < 120; attempt++) {
-    const ready = yield* HttpClient.get(`${metro}/status`).pipe(
+  for (let attempt = 0; ; attempt++) {
+    const ready = yield* HttpClient.get(`http://${input.host}:${metroPort}/status`).pipe(
       Effect.flatMap((response) => response.text),
       Effect.provide(FetchHttpClient.layer),
       Effect.orElseSucceed(() => ""),
     );
-    if (ready.includes("running")) return metro;
+    if (ready.includes("running")) break;
+    if (attempt >= 120)
+      return yield* new DeviceError({
+        message: `Metro never started; see ${input.out}/metro.log.`,
+      });
     yield* Effect.sleep("1 second");
   }
-  return yield* new DeviceError({ message: `Metro never started; see ${input.out}/metro.log.` });
+  if (!release) return metro;
+  yield* Console.error("Compiling the production bundle to Hermes bytecode (a few minutes)...");
+  const bytes = yield* serveReleaseBytecode({ port, metroPort, checkout, out: input.out });
+  yield* Console.error(`Serving ${Math.round(bytes / 1024)} KB of release bytecode on ${metro}.`);
+  return metro;
 });
 
 export interface SessionOptions {
@@ -91,6 +121,7 @@ export interface SessionOptions {
   readonly longTurns: number;
   readonly checkout?: string;
   readonly metroEnv?: Readonly<Record<string, string>>;
+  readonly build?: Build;
   readonly environment?: EnvironmentOptions;
 }
 
@@ -110,6 +141,7 @@ export const startSession = Effect.fn("session.start")(function* (options: Sessi
     out: options.out,
     ...(options.checkout ? { checkout: options.checkout } : {}),
     ...(options.metroEnv ? { env: options.metroEnv } : {}),
+    ...(options.build ? { build: options.build } : {}),
   });
   const device = makeDevice({
     agentDevice: options.agentDevice,

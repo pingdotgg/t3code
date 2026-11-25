@@ -100,7 +100,7 @@ export const MobileMetrics = Schema.Struct({
 export type MobileMetrics = typeof MobileMetrics.Type;
 
 /** Settings that change what shared metrics measure. */
-export const WORKLOAD_KEYS = ["cases", "rounds", "longTurns", "device"] as const;
+export const WORKLOAD_KEYS = ["cases", "rounds", "longTurns", "device", "build"] as const;
 /** Settings that change timing without changing the workload. */
 export const PROBE_KEYS = ["renders"] as const;
 

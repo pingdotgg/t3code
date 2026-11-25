@@ -1,4 +1,4 @@
-/** Input points for mobile:metrics' perf windows; null unless the dev-only behavior probe loaded. */
+/** Input points for mobile:metrics' perf windows; null unless the env-gated behavior probe loaded. */
 export interface PerfProbe {
   readonly touchStart: () => void;
   readonly touchEnd: () => void;

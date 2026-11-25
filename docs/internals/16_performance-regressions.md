@@ -100,14 +100,17 @@ spread and writes a floor per metric, and which are too noisy to gate on; pass i
 [`scripts/mobile-metrics.ts`](../../scripts/mobile-metrics.ts) (`vp run mobile:metrics`) is the
 mobile counterpart, built on [mobile:behavior](../../scripts/mobile-behavior/README.md)'s stack: a
 Simlock iOS simulator, a server whose only provider is the scripted `evalbot`, a Metro serving the
-checkout with the dev-only behavior probe, and client-metrics' 40-file branch with its pull request
+checkout with the behavior probe, and client-metrics' 40-file branch with its pull request
 on the fake GitHub. Every step is a real tap, swipe or typed string through agent-device inside a
 probe window that records the app's touches, React commits, the commit that first shows the target
 thread's rows, composer keys, and JS and UI frames. `mobile-metrics --help` lists the cases.
 
-- It measures a development build, the only client the pool installs. Commit and render counts
-  (`--renders`) and A/B differences are representative; absolute times are dev-mode React on a
-  simulator and say little about a phone. A release build would need its own install pipeline.
+- The pool installs only the dev client. `--build dev` (default) runs the development bundle:
+  commit and render counts (`--renders`) and A/B differences are representative, absolute times
+  are not. `--build release` runs the production bundle as `hermesc -O` bytecode on that same
+  client ([release-bytecode.ts](../../scripts/mobile-behavior/release-bytecode.ts)), with the
+  probe kept by its env flag rather than `__DEV__`. It has no commit ms (React's profiling
+  fields), no `--renders`, and minified component names in soak retention.
 - `run`, `ab <checkoutA> <checkoutB>` and `compare` work like client-metrics' and share its gate:
   each app launch's median is one sample, so gate only with `--ab-rounds 2` or more, on one
   simulator model. `noise` calibrates floors from A/A runs.
@@ -118,7 +121,10 @@ thread's rows, composer keys, and JS and UI frames. `mobile-metrics --help` list
 - A side chat is seeded with one exchange, since an empty one shows a placeholder rather than a
   timeline and would never count as content.
 - `--soak <n>` repeats the switch cases and samples the Hermes heap after each one, with growth
-  per iteration after warm-up and per case. Each sample follows a full Hermes `gc()`.
+  per iteration after warm-up and per case. Each sample follows a full Hermes `gc()`. Soak with
+  `--build release`: the dev build grows about 5 MB an iteration with no leak, all of it the
+  DevTools backend, the debugger-enabled Hermes keeping closure locals alive, react-refresh, and
+  React's dev debug stacks.
 - `settled` is the last commit before a second of quiet. Any streaming thread keeps Home
   committing, so only `switch-working` streams, and it stops its thread when done.
 

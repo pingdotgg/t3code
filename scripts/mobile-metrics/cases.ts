@@ -145,7 +145,11 @@ const isRow = (label: string | undefined, title: string) =>
 const waitForRow = Effect.fn("metrics.waitForRow")(function* (ctx: CaseContext, title: string) {
   for (let attempt = 0; attempt < 20; attempt++) {
     const nodes = yield* ctx.device.nodes;
-    const row = nodes.find((node) => isRow(node.label, title));
+    const row = nodes.find((node) => isRow(node.label, title)) as
+      | (AxNode & { readonly ref?: string })
+      | undefined;
+    // The label ends in a relative time ("Bench short, 4m") that can tick before the press.
+    if (row?.ref) return `@${row.ref}`;
     if (row?.label) return `label="${row.label}"`;
     const shelf = nodes.find((node) => /^\d+ working threads?$/.test(node.label ?? ""));
     if (shelf?.label && attempt % 4 === 1) yield* ctx.device.press(`label="${shelf.label}"`);
