@@ -66,7 +66,7 @@
   "2f6e4f7cd364da73": "Resultado esperado",
   "9d11c93d4035de3e": "O que aconteceu",
   "c87d0595693704f9": "Alternativa utilizada",
-  "d7a4ea6ce5af44e0": "{speaker} · {count} caracteres",
+  "ed5c85bb4aecb472": "{count, plural, one {{speaker} · {count} caractere} other {{speaker} · {count} caracteres}}",
   "f5114fb9c40fd929": "Você",
   "cd03eb1b84271c02": "Agente",
   "bfe1a60f3f9c60fb": "Turno {turn} · {what}",
@@ -1552,6 +1552,7 @@
   "6848f5bbb2bd9eec": "Documento PDF",
   "7873a79df0cf6d0e": "Página do navegador",
   "0b55696e27387e4e": "Pressione Shift+Escape para sair da página do navegador.",
+  "90dfebe26eb86b2d": "Opções de seleção da página",
   "737d3c6bec93f9e6": "Escolher arquivos para a página",
   "e6a3fa7cfc14f86a": "Caixa de diálogo do navegador",
   "61a552a67e9e3eac": "Resposta da caixa de diálogo",
@@ -1855,7 +1856,7 @@
   "67f5b13c3c7bcd40": "Compartilhar com convidado",
   "82da5b8b340217ac": "Reiniciar a sessão do agente",
   "963d099509eabcd6": "A sessão do agente será reiniciada",
-  "1d384d4fe7888a09": "Sua próxima mensagem inicia uma nova sessão.",
+  "71ed7c0da0b93c77": "Sua próxima mensagem reinicia o agente. Esta conversa é mantida.",
   "e4b61c891fed297e": "Ir para arquivo",
   "d2ccdb8cd3297212": "Adicionar projeto",
   "594bcbef04093f72": "Abrir pasta do WSL",
@@ -3802,6 +3803,21 @@
     },
     " saiu da página e foi interrompido"
   ],
+  "796b81c4875c4feb": [
+    "O app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " precisa de um servidor ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " mais recente neste ambiente. Atualize o servidor para usá-lo."
+  ],
   "5ef18e4d39b398bf": [
     "Não foi possível carregar o app ",
     {
@@ -4107,6 +4123,8 @@
   "ac7416afe98ba5f8": "Trecho do terminal, {label}",
   "bf04d61dc50685dc": "Linha {lineStart}",
   "000e3bef072f07c8": "Linhas {lineStart}–{lineEnd}",
+  "f3c70064a22a0c76": "{terminalLabel} linha {lineStart}",
+  "8ba6febaabeb6f14": "{terminalLabel} linhas {lineStart}–{lineEnd}",
   "b3336a0e9a6e3fba": "Saída do terminal capturada",
   "8d24730972ce4fd3": "Trecho do terminal, {label}, expirado",
   "dd8f1439c88ef92b": "O contexto do terminal expirou. Remova e adicione {label} de novo para incluí-lo na mensagem.",
@@ -5555,7 +5573,7 @@
     },
     "."
   ],
-  "774654575f014b55": "Salve-o para abrir em um app compatível com este formato.",
+  "d3170aa2bb08efbd": "Salve-o para abrir em um app compatível com este formato.",
   "46f943a30e259620": "Áudio indisponível. Abrir {name}",
   "e2cf6b944d1d095d": "Áudio indisponível. Tentar {name} novamente",
   "f08fb460ad4617d6": "Carregando {name}",
@@ -8797,7 +8815,7 @@
   "a9cdd8c7073be920": "Paleta de comandos: alternar",
   "4e0943e8c7a465d1": "Seletor de arquivos: alternar",
   "df5fdcdf26a6b52a": "Pesquisa no projeto: alternar",
-  "a8ff6d33b060736f": "Uso: abrir",
+  "0ca6fd2b8fcab2c3": "Uso: Mostrar ou ocultar",
   "a513d51b71b95674": "Tema: selecionar",
   "1ffd8427452372e1": "Aparência: alternar ciclicamente",
   "3a3bb4a7551a87cc": "Editor de temas: alternar",
@@ -12214,6 +12232,7 @@
   "9c015d3d034316cb": "Use as setas para ajustar o valor em foco. Segure Shift para passos maiores. Use Home e End para o mínimo e o máximo. Pressione Tab para alternar entre saturação e brilho.",
   "8639d5532561f87f": "Fechar",
   "e1186ad82ee08b33": "Fechar",
+  "a4579e548b768663": "Mostrar barra lateral",
   "a1b11a1cf39c9dc9": "Redimensionar barra lateral",
   "c557090df5722838": "Alternar barra lateral",
   "bbde430e56272901": "Arraste para redimensionar a barra lateral",
@@ -12263,6 +12282,28 @@
   "8bcab2ef61de6518": "Limite de $0",
   "a16b48709357a5a7": "Gerenciar uso",
   "a00e74aaa421c524": "restante",
+  "0e34c3076c08feb2": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": [
+        "↻ +",
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        "%"
+      ]
+    },
+    " ",
+    "em ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    }
+  ],
   "8bd6f07136317c8f": "Nenhum provedor nos ambientes selecionados informa limites de assinatura.",
   "87f5d0c61b335f38": "Veja o uso no ChatGPT com sua conta conectada.",
   "5b4c71b36b979e80": "Custo",
@@ -12301,7 +12342,6 @@
   "d2d071e45a2d6b89": "Selecione um ambiente para ver os limites.",
   "c9180daea905a0a6": "Selecione um ambiente para ver o uso.",
   "f0297ec79e896a13": "{environment}: {error}",
-  "6dcbf651d51d4023": "{count, plural, one {{formatted} sessão} other {{formatted} sessões}}",
   "b01bf98dd90ee819": "Estimativa da API",
   "bab34b28e9ee8e88": "Detalhes do uso sem preço",
   "61571f4542da9903": "{count, plural, one {{formatted} sessão} other {{formatted} sessões}}",
@@ -12870,5 +12910,76 @@
   "f6a91589456cca50": "Aprovado",
   "c92657bb7f2293ff": "Precisa de aprovação",
   "f1e5c1be1ac92361": "Aprovar",
-  "fcb5f3c4d4753326": "Esta conexão não pode aprovar comandos. Use um cliente que possa usar o terminal."
+  "fcb5f3c4d4753326": "Esta conexão não pode aprovar comandos. Use um cliente que possa usar o terminal.",
+  "7150557773b3818b": "Na fila",
+  "efbeb3993ee2c3f5": "Na fila de {pool}",
+  "0398ca6c1d24b92d": "na fila, o próximo",
+  "0af6d5ffd5166214": "{count, plural, one {na fila, {count} à frente} other {na fila, {count} à frente}}",
+  "49be26a27dcb30e5": "na fila",
+  "4e96712d839ccbff": "{who} disse {choice}",
+  "19097cfb8f5a79cf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " disse",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    "."
+  ],
+  "e7bbf693910057bf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " disse",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    ": ",
+    {
+      "i": 4,
+      "k": "_gt_value_4",
+      "v": "v"
+    }
+  ],
+  "3759768c5d342c22": [
+    "respondida",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " precisa de um motivo."
+  ],
+  "91aadfc843c600de": "Verificar conta Google",
+  "201490988858b511": "retirada por {by}",
+  "99451a5d2d40440f": "Retirada por {by}.",
+  "3ee30a50b70fffab": "Retirada por {by}: {reason}",
+  "92e129bf413a1220": "retirada"
 }

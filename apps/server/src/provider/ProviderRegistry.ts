@@ -289,14 +289,30 @@ const mergeProviderModels = (
   }
 
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
+  const preserveDefault =
+    nextModels.length > 0 && !nextModels.some((model) => model.isDefault === true);
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
-    if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
+    if (!previousModel) {
       return model;
     }
+    const retainCapabilities = !hasModelCapabilities(model) && hasModelCapabilities(previousModel);
+    const retainDefault = preserveDefault && previousModel.isDefault === true;
+    if (!retainCapabilities && !retainDefault) {
+      return model;
+    }
+    const aliases = retainDefault
+      ? [...new Set([...(model.aliases ?? []), ...(previousModel.aliases ?? [])])]
+      : undefined;
     return {
       ...model,
-      capabilities: previousModel.capabilities,
+      ...(retainCapabilities ? { capabilities: previousModel.capabilities } : {}),
+      ...(retainDefault
+        ? {
+            isDefault: true,
+            ...(aliases && aliases.length > 0 ? { aliases } : {}),
+          }
+        : {}),
     };
   });
   const nextSlugs = new Set(nextModels.map((model) => model.slug));
