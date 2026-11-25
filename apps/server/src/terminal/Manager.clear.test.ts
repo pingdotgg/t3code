@@ -47,10 +47,30 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))), {
       legacy: true,
     },
     {
+      part: "queued terminator followed by a split color command",
+      publishing: "old output\r\n\u001b]0;Build ",
+      queued: "progress\u0007\u001b[31",
+      pending: "\u001b[31",
+      legacyReplay: "\u001b[31",
+      legacyOutput: "mready\r\n",
+      afterClear: "mready\r\n",
+      legacy: true,
+    },
+    {
+      part: "queued replacement of a clipped color command",
+      publishing: "old output\r\n\u001b[0000000032",
+      queued: "m\u001b[31",
+      pending: "\u001b[31",
+      legacyReplay: "\u001b[31",
+      legacyOutput: "mready\r\n",
+      afterClear: "mready\r\n",
+      legacy: true,
+    },
+    {
       part: "terminator after a legacy clear",
       publishing: "old output\r\n\u001b]0;Build ",
-      queued: "",
-      pending: "\u001b]0;Build ",
+      queued: "in ",
+      pending: "\u001b]0;Build in ",
       afterClear: "progress\u0007ready\r\n",
       legacy: true,
     },
@@ -142,7 +162,15 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))), {
       yield* manager.clear(input);
       const [cleared] = yield* live;
       expect(cleared?.type).toBe("cleared");
-      if (legacy) expect((yield* legacy)[0]?.type).toBe("cleared");
+      if (legacy) {
+        const [legacyClear] = yield* legacy;
+        expect(legacyClear?.type).toBe("cleared");
+        if (row.legacyReplay) {
+          expect(legacyClear).toHaveProperty("pendingControlSequence", row.legacyReplay);
+        } else {
+          expect(legacyClear).not.toHaveProperty("pendingControlSequence");
+        }
+      }
       yield* Deferred.succeed(resume, undefined);
 
       if (row.exit) {
@@ -155,13 +183,19 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))), {
       emitData(row.afterClear);
       yield* Deferred.await(printed);
       if (legacy) {
-        expect((yield* legacy)[0]).toMatchObject({ type: "output", data: "ready\r\n" });
+        expect((yield* legacy)[0]).toMatchObject({
+          type: "output",
+          data: row.legacyOutput ?? "ready\r\n",
+        });
       }
 
       const reopened = yield* Stream.toPull(manager.attachOutputStream(input, "reopened"));
       const [event] = yield* reopened;
       if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
-      const visible = event.snapshot.history.replace(/\u001b\]0;[^\u0007]*\u0007|\u001b\[m/g, "");
+      const visible = event.snapshot.history.replace(
+        /\u001b\]0;[^\u0007]*\u0007|\u001b\[(?:31)?m/g,
+        "",
+      );
       expect(visible).toBe("ready\r\n");
     }),
   );
