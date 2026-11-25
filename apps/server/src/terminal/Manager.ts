@@ -1413,8 +1413,7 @@ const OVERSIZED_SEQUENCE = "\u0018";
 // Stands in for the ESC of an oversized sequence, which ended any string history left open.
 const STRING_TERMINATOR = "\u001b\\";
 
-// Longer held text is cut to its introducer in a snapshot, so it cannot push history out of the
-// client's budget or add its size to every resync.
+// Bound the unfinished sequence in snapshots so it cannot push history out of the client's budget.
 const MAX_SNAPSHOT_SEQUENCE_LENGTH = 4_096;
 
 // History leaves out the sequence the terminal is still inside. A client that starts from a
@@ -1423,6 +1422,11 @@ function unfinishedSequenceReplay(session: TerminalSessionState): string {
   const held = session.pendingHistoryControlSequence;
   if (held.startsWith(OVERSIZED_SEQUENCE)) return held.slice(1);
   if (held.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH) return held;
+  if (held.startsWith("\u001b[") && /^[\x00-\x7f]*$/.test(held)) {
+    // NUL has no effect inside a CSI. Keep its parameters and executed controls in order.
+    const withoutPadding = held.replaceAll("\u0000", "");
+    if (withoutPadding.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH) return withoutPadding;
+  }
   return held.slice(0, 2) + (/[\u001b\ud800-\udbff]$/.exec(held)?.[0] ?? "");
 }
 
