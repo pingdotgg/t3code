@@ -49,7 +49,7 @@ test(
           Effect.timeoutOrElse({
             duration: "15 seconds",
             orElse: () =>
-              Effect.fail(new Error(`Terminal setup timed out waiting for ${description}.`)),
+              Effect.die(new Error(`Terminal setup timed out waiting for ${description}.`)),
           }),
         ),
       );
