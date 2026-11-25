@@ -115,7 +115,6 @@ import {
 } from "../../provider/ClaudeCodeModelRoutes.ts";
 import { resolveProviderCatalog } from "../../provider/ModelManifest.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { AGENT_FEEDBACK_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -1383,6 +1382,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
                 mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
                 reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
+                contextLimits: Effect.never,
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: Effect.void,

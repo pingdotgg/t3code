@@ -1423,6 +1423,7 @@ const exitWhileIdle = (options: {
                     mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
                     reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
+                    contextLimits: Effect.never,
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),

@@ -2551,15 +2551,6 @@ const CLAUDE_SEND_TO_USER_INSTRUCTIONS = `
 Text you write before a tool call may reach the user only as a one-line summary. When the user must read something in full before your turn ends, such as a draft, a code block, or what a question you're about to ask refers to, send it with \`send_to_user\`. Put everything else in your final reply.
 `;
 
-// Native subagents start from their task, not this session's system prompt.
-const subagentDeviceInstructions: HookCallback = () =>
-  Promise.resolve({
-    hookSpecificOutput: {
-      hookEventName: "SubagentStart",
-      additionalContext: T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
-    },
-  });
-
 interface ClaudeSkillDenyPolicy {
   readonly names: readonly string[];
   readonly readRules: readonly string[];
@@ -2582,6 +2573,7 @@ export function makeClaudeQueryOptions(input: {
   readonly skillDeny?: ClaudeSkillDenyPolicy;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  readonly agentFeedback?: AgentFeedbackMode;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -2762,7 +2754,14 @@ export function makeClaudeQueryOptions(input: {
       type: "preset" as const,
       preset: "claude_code" as const,
       append: [
-        buildRuntimeInstructions({ harness: "Claude Code" }),
+        buildRuntimeInstructions({
+          harness: "Claude Code",
+          runtimePolicy: { cwd: input.cwd, workspace: input.workspace },
+          agentFeedback: input.mcpServers === undefined ? "off" : (input.agentFeedback ?? "off"),
+        }),
+        ...(input.mcpServers === undefined
+          ? []
+          : [CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS, CLAUDE_SEND_TO_USER_INSTRUCTIONS]),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
@@ -13632,7 +13631,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const deniedSkills = [...deniedSkillsForTurn(turnInput)].sort();
           const skillDeny = yield* resolveSkillDeny(deniedSkills, turnInput.runtimePolicy.cwd);
           const queryPolicyKey = encodeClaudeJson([
-            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides, turnInput.runtimePolicy.workspace),
+            claudeEffectiveQueryPolicyKey(
+              queryPolicy,
+              mcpOverrides,
+              turnInput.runtimePolicy.workspace,
+            ),
             skillDeny,
           ]);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
@@ -13806,6 +13809,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
           const queryOptionsInput = {
+            agentFeedback: turnInput.agentFeedback ?? "off",
             modelSelection: turnInput.modelSelection,
             modelCatalog: catalog,
             nativeThreadId,

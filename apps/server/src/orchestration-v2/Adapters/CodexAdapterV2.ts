@@ -32,7 +32,6 @@ import {
   type CodexRateLimitSnapshot,
 } from "../../provider/codexUsageLimits.ts";
 import {
-  type AgentFeedbackMode,
   CodexSettings,
   defaultInstanceIdForDriver,
   isOrchestrationV2WorkActive,

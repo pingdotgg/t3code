@@ -1008,9 +1008,6 @@ interface ActiveCursorTurn {
 
 type CursorTurnUsage = NonNullable<Extract<InteractionUpdate, { type: "turn-ended" }>["usage"]>;
 
-const CURSOR_BACKGROUND_WAIT_INSTRUCTIONS =
-  "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID or pid before you end your turn. It returns at once, and T3 wakes you when the shell exits. Do not mark work you leave running, or PRs.";
-
 const BACKGROUND_SHELL_DETAIL_COMMAND_MAX_LENGTH = 200;
 
 function cursorBackgroundShellDetail(exit: {
@@ -1106,6 +1103,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         } | null>(null);
         // A native resume's own run may stop before it checkpoints; the request is still in history.
         const resumedAgent = yield* Ref.make<string | null>(null);
+        const told = yield* Ref.make<{
+          readonly agent: string;
+          readonly runtime: string | undefined;
+        } | null>(null);
         const warnedUnsupportedSandbox = yield* Ref.make(false);
         const activeTurn = yield* Ref.make<ActiveCursorTurn | null>(null);
         // Background shells the agent left running, by the shell id Cursor gave it.
@@ -2473,9 +2474,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 context.compacted = true;
                 yield* Ref.set(told, {
                   agent: context.run.agentId,
-                  orchestration: false,
-                  device: false,
-                  backgroundWait: false,
                   runtime: undefined,
                 });
                 yield* Ref.update(interruptedPrompt, (current) =>
@@ -2862,6 +2860,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         const resolveUserMessage = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           interrupted: string | undefined,
+          hasMcp: boolean,
+          previousRuntime: string | undefined,
         ) {
           const rawText = turnInput.message.text;
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
@@ -2913,13 +2913,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             });
           }
           const runtimeInstructions = buildRuntimeInstructions({
-            agentFeedback: mcpServers === undefined ? "off" : (turnInput.agentFeedback ?? "off"),
+            agentFeedback: hasMcp ? (turnInput.agentFeedback ?? "off") : "off",
             harness: "Cursor",
             model: turnInput.modelSelection.model,
             runtimePolicy: turnInput.runtimePolicy,
           });
           // Resend only on a new/compacted/rewound conversation or when the instructions change.
-          const sendRuntimeInstructions = delivered.runtime !== runtimeInstructions;
+          const sendRuntimeInstructions = previousRuntime !== runtimeInstructions;
           const text = sendRuntimeInstructions
             ? userText.length === 0
               ? runtimeInstructions
@@ -2979,6 +2979,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 providerThreadId: turnInput.providerThread.id,
               });
             }
+            const delivered = yield* Ref.get(told);
+            const previousRuntime =
+              delivered?.agent === agent.nativeThreadId ? delivered.runtime : undefined;
             const { message, prompt, runtimeInstructions } =
               resume === "native"
                 ? {
@@ -2990,8 +2993,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                         : undefined,
                   }
                 : resume === "replay"
-                  ? { message: dropped!.message, prompt: dropped!.text }
-                  : yield* resolveUserMessage(turnInput, dropped?.text);
+                  ? {
+                      message: dropped!.message,
+                      prompt: dropped!.text,
+                      runtimeInstructions: dropped!.runtimeInstructions,
+                    }
+                  : yield* resolveUserMessage(
+                      turnInput,
+                      dropped?.text,
+                      mcpServers !== undefined,
+                      previousRuntime,
+                    );
             const compacted = resume === undefined && prompt === undefined;
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
@@ -3042,7 +3054,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             if (resume === undefined) {
               yield* Ref.set(told, {
                 agent: agent.nativeThreadId,
-                voice: !compacted && (voiceDelivered || mcpServers !== undefined),
+                runtime: compacted ? undefined : previousRuntime,
               });
             }
             if (!compacted && resume !== "native") {
