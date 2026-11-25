@@ -3129,6 +3129,45 @@ it.effect("a run that pauses gives its place back, and once resumed queues for i
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("a resumed run given its place back just as the server stopped is paused again", () =>
+  Effect.gen(function* () {
+    entered.length = 0;
+    lockFailures.left = 1;
+    const { boot, database } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const first = yield* workflows.start("locked", { id: "a" }, { idempotencyKey: "a" });
+        yield* workflows.waitFor(first.runId, status("paused"));
+        const second = yield* workflows.start("locked", { id: "b" }, { idempotencyKey: "b" });
+        yield* workflows.waitFor(second.runId, (run) => run.detail === "done");
+        yield* workflows.resume(first.runId);
+        yield* workflows.waitFor(first.runId, (run) => run.detail === "queue q");
+        // The place is written as given back, and the server stops before it resumes the run.
+        const sql = yield* Effect.provide(SqlClient.SqlClient, database);
+        yield* sql`UPDATE workflow_pool_places SET state = 'held' WHERE run_id = ${first.runId}`;
+        yield* workflows.cancel(second.runId, "not needed");
+        assert.equal((yield* workflows.get(first.runId)).run.detail, "queue q");
+
+        // The next sweep finds it: paused as it was, its place free for whoever is next.
+        yield* workflows.sweep;
+        yield* workflows.waitFor(first.runId, status("paused"));
+        assert.deepStrictEqual(
+          yield* sql`SELECT state FROM workflow_pool_places WHERE run_id = ${first.runId}`,
+          [{ state: "away" }],
+        );
+        const third = yield* workflows.start("locked", { id: "c" }, { idempotencyKey: "c" });
+        yield* workflows.waitFor(third.runId, (run) => run.detail === "done");
+        yield* workflows.resume(first.runId);
+        yield* workflows.waitFor(first.runId, (run) => run.detail === "queue q");
+        yield* workflows.signal({ runId: third.runId, wait: "done" }, null, { id: "done-c" });
+        yield* workflows.waitFor(first.runId, (run) => run.detail === "done");
+        assert.deepStrictEqual(entered, ["b", "c", "a"]);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("one run moving sends a watcher an update about that run, not the whole list", () =>
   Effect.gen(function* () {
     const { boot } = yield* harness();
