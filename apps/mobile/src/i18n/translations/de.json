@@ -4339,6 +4339,21 @@
     },
     " hat ihre Seite verlassen und wurde gestoppt"
   ],
+  "796b81c4875c4feb": [
+    "Die App ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " benötigt einen neueren ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "-Server in dieser Umgebung. Aktualisiere den Server, um sie zu nutzen."
+  ],
   "5ef18e4d39b398bf": [
     "Die App ",
     {

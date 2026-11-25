@@ -3802,6 +3802,21 @@
     },
     " lämnade sin sida och stoppades"
   ],
+  "796b81c4875c4feb": [
+    "Appen ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " behöver en nyare ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "-server i den här miljön. Uppdatera servern för att använda den."
+  ],
   "5ef18e4d39b398bf": [
     "Det gick inte att läsa in appen ",
     {
@@ -8805,7 +8820,7 @@
   "a9cdd8c7073be920": "Kommandopalett: växla",
   "4e0943e8c7a465d1": "Filväljare: växla",
   "df5fdcdf26a6b52a": "Projektsökning: växla",
-  "a8ff6d33b060736f": "Användning: öppna",
+  "0ca6fd2b8fcab2c3": "Användning: Visa eller dölj",
   "a513d51b71b95674": "Tema: välj",
   "1ffd8427452372e1": "Utseende: växla mellan",
   "3a3bb4a7551a87cc": "Temaredigerare: växla",
@@ -12222,6 +12237,7 @@
   "9c015d3d034316cb": "Använd piltangenterna för att justera det fokuserade värdet. Håll ned Shift för större steg. Använd Home och End för minsta och högsta värde. Tryck Tab för att växla mellan mättnad och ljusstyrka.",
   "8639d5532561f87f": "Stäng",
   "e1186ad82ee08b33": "Stäng",
+  "a4579e548b768663": "Visa sidofältet",
   "a1b11a1cf39c9dc9": "Ändra storlek på sidofältet",
   "c557090df5722838": "Växla sidofält",
   "bbde430e56272901": "Dra för att ändra storlek på sidofältet",
@@ -12271,6 +12287,12 @@
   "8bcab2ef61de6518": "Tak på 0 $",
   "a16b48709357a5a7": "Hantera användning",
   "a00e74aaa421c524": "kvar",
+  "0e34c3076c08feb2": [
+    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    " ",
+    "om ",
+    { "i": 3, "k": "_gt_value_3", "v": "v" }
+  ],
   "8bd6f07136317c8f": "Ingen leverantör i de valda miljöerna rapporterar abonnemangsgränser.",
   "87f5d0c61b335f38": "Visa användning i ChatGPT med ditt anslutna konto.",
   "5b4c71b36b979e80": "Kostnad",

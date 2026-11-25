@@ -3802,6 +3802,21 @@
     },
     " a quitté sa page et a été arrêtée"
   ],
+  "796b81c4875c4feb": [
+    "L’app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " a besoin d’un serveur ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " plus récent sur cet environnement. Mettez à jour le serveur pour l’utiliser."
+  ],
   "5ef18e4d39b398bf": [
     "Impossible de charger l’app ",
     {
@@ -8798,7 +8813,7 @@
   "a9cdd8c7073be920": "Palette de commandes : afficher/masquer",
   "4e0943e8c7a465d1": "Sélecteur de fichiers : afficher/masquer",
   "df5fdcdf26a6b52a": "Recherche dans le projet : afficher/masquer",
-  "a8ff6d33b060736f": "Utilisation : ouvrir",
+  "0ca6fd2b8fcab2c3": "Utilisation : Afficher ou masquer",
   "a513d51b71b95674": "Thème : sélectionner",
   "1ffd8427452372e1": "Apparence : alterner",
   "3a3bb4a7551a87cc": "Éditeur de thème : afficher/masquer",
@@ -12214,6 +12229,7 @@
   "9c015d3d034316cb": "Utilisez les flèches pour ajuster la valeur active. Maintenez Shift pour des pas plus grands. Utilisez Home et End pour le minimum et le maximum. Appuyez sur Tab pour passer de la saturation à la luminosité.",
   "8639d5532561f87f": "Fermer",
   "e1186ad82ee08b33": "Fermer",
+  "a4579e548b768663": "Afficher la barre latérale",
   "a1b11a1cf39c9dc9": "Redimensionner la barre latérale",
   "c557090df5722838": "Afficher ou masquer la barre latérale",
   "bbde430e56272901": "Faites glisser pour redimensionner la barre latérale",
@@ -12263,6 +12279,12 @@
   "8bcab2ef61de6518": "Plafond de 0 $",
   "a16b48709357a5a7": "Gérer l’utilisation",
   "a00e74aaa421c524": "restant",
+  "0e34c3076c08feb2": [
+    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    " ",
+    "dans ",
+    { "i": 3, "k": "_gt_value_3", "v": "v" }
+  ],
   "8bd6f07136317c8f": "Aucun fournisseur des environnements sélectionnés ne signale de limites d’abonnement.",
   "87f5d0c61b335f38": "Consultez l’utilisation dans ChatGPT avec votre compte connecté.",
   "5b4c71b36b979e80": "Coût",

@@ -55,6 +55,10 @@
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"
     },
+    "./projectMonogram": {
+      "types": "./src/projectMonogram.ts",
+      "import": "./src/projectMonogram.ts"
+    },
     "./mobileSourceMaps": {
       "types": "./src/mobileSourceMaps.ts",
       "import": "./src/mobileSourceMaps.ts"
