@@ -631,6 +631,7 @@ export const AntigravityDriver: ProviderDriver<
         ),
       ),
       profileDirectory,
+      userHome,
       onSessionStarted: (started, cwd) =>
         provider.onSessionStarted(started, cwd).pipe(Effect.andThen(authFlow.onSignedInElsewhere)),
       onSessionEvent: (event, cwd) => {
