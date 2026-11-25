@@ -46,6 +46,8 @@ describe("ConnectionStorage.makeCatalogStore", () => {
       // A read writes nothing: only an update holds the lock the origin's tabs share.
       expect(yield* store.read).toEqual(emptyCatalog);
       expect([quarantined, writes]).toEqual([[], []]);
+      // A catalog that cannot be read is not evidence that no key is pinned.
+      expect(yield* Effect.flip(store.readStored)).toBeInstanceOf(ConnectionTransientError);
 
       yield* store.update((document) => document);
       expect(quarantined).toEqual(["{not-json"]);

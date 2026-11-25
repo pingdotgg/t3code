@@ -559,7 +559,10 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
 
 interface CatalogStore {
   readonly read: Effect.Effect<ConnectionCatalogDocumentType, ConnectionTransientError>;
-  /** What is stored now, for a decision that another tab's latest save must already bind. */
+  /**
+   * What is stored now, for a decision that another tab's latest save must already bind. Fails
+   * on a catalog that cannot be read, where `read` answers with an empty one.
+   */
   readonly readStored: Effect.Effect<ConnectionCatalogDocumentType, ConnectionTransientError>;
   readonly update: (
     transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
@@ -618,7 +621,10 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
 
   // A corrupt catalog reads as empty and stays where it is. The update that replaces it sets
   // it aside first, under the lock, so a recovering tab cannot write over another tab's save.
-  const loadStored = Effect.fn("web.connectionStorage.loadCatalog")(function* (replacing: boolean) {
+  // A read that decides trust fails instead: a catalog that cannot be read is not "no pin".
+  const loadStored = Effect.fn("web.connectionStorage.loadCatalog")(function* (
+    corrupt: "empty" | "set-aside" | "fail",
+  ) {
     const savesBefore = saves;
     const raw = yield* backend.read;
     let catalog = EMPTY_CONNECTION_CATALOG_DOCUMENT;
@@ -626,10 +632,11 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
       catalog = yield* decodeCatalog(raw).pipe(
         Effect.catch((error) =>
           Effect.gen(function* () {
+            if (corrupt === "fail") return yield* error;
             yield* Effect.logWarning("Discarding a corrupt web connection catalog.", {
               error: error.message,
             });
-            if (replacing && backend.quarantine !== undefined) {
+            if (corrupt === "set-aside" && backend.quarantine !== undefined) {
               yield* backend.quarantine(raw).pipe(
                 Effect.catch((cause) =>
                   Effect.logWarning("Could not quarantine the corrupt web connection catalog.", {
@@ -647,10 +654,10 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
     return catalog;
   });
 
-  const readStored = lock.withPermits(1)(loadStored(false));
+  const readStored = lock.withPermits(1)(loadStored("fail"));
   const read = lock.withPermits(1)(
     Effect.suspend(() =>
-      Option.isSome(cached) ? Effect.succeed(cached.value) : loadStored(false),
+      Option.isSome(cached) ? Effect.succeed(cached.value) : loadStored("empty"),
     ),
   );
   const update: CatalogStore["update"] = Effect.fn("web.connectionStorage.updateCatalog")(
@@ -658,11 +665,20 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
       yield* lock.withPermits(1)(
         exclusive(
           Effect.gen(function* () {
-            const next = transform(yield* loadStored(true));
-            yield* backend.write(yield* encodeCatalog(next));
-            cached = Option.some(next);
-            // oxlint-disable-next-line unicorn/require-post-message-target-origin -- BroadcastChannel is scoped to the origin
-            tabs?.changes.postMessage(null);
+            const next = transform(yield* loadStored("set-aside"));
+            const encoded = yield* encodeCatalog(next);
+            // Once the write is on its way the lock is held until it lands: released on
+            // interruption, it would let another tab save first and this write land over it.
+            yield* Effect.uninterruptible(
+              Effect.andThen(
+                backend.write(encoded),
+                Effect.sync(() => {
+                  cached = Option.some(next);
+                  // oxlint-disable-next-line unicorn/require-post-message-target-origin -- BroadcastChannel is scoped to the origin
+                  tabs?.changes.postMessage(null);
+                }),
+              ),
+            );
           }),
         ),
       );

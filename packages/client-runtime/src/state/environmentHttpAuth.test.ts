@@ -436,6 +436,34 @@ describe("authenticated environment HTTP requests", () => {
     }),
   );
 
+  it.effect("seals the retry when the key was pinned after the refused attempt", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness((requestNumber) =>
+        requestNumber === 1 ? credentialRejectedResponse() : Response.json(DIFF_RESULT),
+      );
+      const sealing = ManagedRelay.ManagedRelayDpopSigner.of({
+        ...Option.getOrThrow(harness.input.signer),
+        sealHttpClient: (client) =>
+          HttpClientModule.mapRequest(client, HttpClientRequest.setHeader("x-sealed", "yes")),
+      });
+      let lookups = 0;
+      const registrations = Layer.mock(Persistence.ConnectionRegistrationStore)({
+        environmentKey: () =>
+          Effect.sync(() => (lookups++ === 0 ? Option.none() : Option.some(new Uint8Array(32)))),
+      });
+      yield* PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({
+        ...harness.input,
+        signer: Option.some(sealing),
+        diff: DIFF,
+      }).pipe(Effect.provide(Layer.merge(harness.httpLayer, registrations)));
+
+      expect(harness.calls.map((call) => new Headers(call.init.headers).get("x-sealed"))).toEqual([
+        null,
+        "yes",
+      ]);
+    }),
+  );
+
   it.effect("renews credentials captured by the bounded snapshot loader", () =>
     Effect.gen(function* () {
       const harness = makeHarness((requestNumber) =>
