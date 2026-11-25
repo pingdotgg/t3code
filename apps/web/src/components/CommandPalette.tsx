@@ -345,7 +345,7 @@ function startFolderProject(
   key: string,
   create: () => Promise<ScopedProjectRef | null>,
 ): Promise<ScopedProjectRef | null> {
-  const pending = Promise.resolve().then(create);
+  const pending = create();
   pendingFolderProjects.set(key, pending);
   const forget = () => {
     if (pendingFolderProjects.get(key) === pending) pendingFolderProjects.delete(key);
