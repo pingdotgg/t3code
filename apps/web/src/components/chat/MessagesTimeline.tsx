@@ -88,7 +88,7 @@ import {
   resolveTimelineMinimapCurrentIndex,
   isTimelineMinimapTurnVisible,
   resolveTimelineMinimapVisibleRange,
-  resolveTimelineMinimapHitStripWidth,
+  resolveTimelineMinimapHitStrip,
   TIMELINE_MINIMAP_TARGET_OFFSET,
   timelineTurnFoldRunIdsByEntryId,
   liveAnswerPreview,
@@ -909,7 +909,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
           ...(alwaysRenderIndices.length === 0 ? {} : { indices: alwaysRenderIndices }),
           ...(alwaysRenderKeys.length === 0 ? {} : { keys: alwaysRenderKeys }),
         };
-  const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
+  const [minimapHitStrip, setMinimapHitStrip] = useState({ left: 0, width: 0 });
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
   const [minimapAtEnd, setMinimapAtEnd] = useState(false);
   const handleAnchorReady = (info: { anchorIndex: number | undefined }) => {
@@ -1078,7 +1078,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setMinimapHasPersistentGutter((current) =>
       current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
     );
-    setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
+    const nextHitStrip = resolveTimelineMinimapHitStrip(viewportWidth, contentWidth);
+    setMinimapHitStrip((current) =>
+      current.left === nextHitStrip.left && current.width === nextHitStrip.width
+        ? current
+        : nextHitStrip,
+    );
   };
   // Rows added, removed or rewrapped (chat width) change the content size,
   // which moves the scroll position, the overflow, and the content lane width.
@@ -1540,7 +1545,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
             <TimelineMinimap
               items={minimapItems}
               hasPersistentGutter={minimapHasPersistentGutter}
-              hitStripWidth={minimapHitStripWidth}
+              hitStrip={minimapHitStrip}
               currentIndex={minimapCurrentIndex}
               atEnd={minimapAtEnd}
               stripMap={minimapStripMap}

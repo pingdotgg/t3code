@@ -2,6 +2,7 @@ import {
   buildWorkflowFeed,
   buildWorkflowTimeline,
   workflowAgentSummary,
+  isOwnWorkflowAnswer,
   workflowAnswer,
   type WorkflowBeat,
   type WorkflowRunNode,
@@ -19,10 +20,11 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { useGT } from "gt-react-native";
+import { T, Var, useGT } from "gt-react-native";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 
+import { RelativeTime } from "../../components/RelativeTime";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
@@ -108,6 +110,8 @@ export function useWorkflowThreadOpener(
 /** All of one step, as its sheet shows it: what it said, its facts, and where to read more. */
 export function BeatCard(props: {
   readonly beat: WorkflowBeat;
+  /** This device's session on the run's environment: an answer it gave reads as yours. */
+  readonly sessionId: string | null;
   /** Null where this device cannot open the step's thread. */
   readonly onOpenThread: ((thread: NonNullable<WorkflowBeat["thread"]>) => void) | null;
   readonly onOpenRun: (runId: string) => void;
@@ -143,6 +147,32 @@ export function BeatCard(props: {
           {answer.reason === null
             ? gt("Answered {choice}", { choice: answer.choice })
             : gt("Answered {choice}: {reason}", { choice: answer.choice, reason: answer.reason })}
+        </Text>
+      )}
+      {answer?.answeredAt == null ? null : (
+        <Text className="text-xs text-foreground-muted">
+          {isOwnWorkflowAnswer(answer, props.sessionId) ? (
+            <T>
+              by you,{" "}
+              <Var>
+                <RelativeTime timestamp={answer.answeredAt} />
+              </Var>
+            </T>
+          ) : answer.answeredBy === null ? (
+            <T>
+              answered{" "}
+              <Var>
+                <RelativeTime timestamp={answer.answeredAt} />
+              </Var>
+            </T>
+          ) : (
+            <T>
+              by <Var>{answer.answeredBy}</Var>,{" "}
+              <Var>
+                <RelativeTime timestamp={answer.answeredAt} />
+              </Var>
+            </T>
+          )}
         </Text>
       )}
       {child === null ? null : (
