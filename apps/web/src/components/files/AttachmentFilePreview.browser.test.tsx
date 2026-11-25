@@ -289,6 +289,33 @@ describe("bounded binary previews", () => {
     }
   });
 
+  it("shows 0 bytes for empty archive entries and folders", async () => {
+    const zip = new JSZip();
+    zip.file("empty.txt", "");
+    zip.folder("empty-dir");
+    zip.file("pkg/__init__.py", "");
+    zip.file("readme.txt", "hello");
+    const bytes = await zip.generateAsync({ type: "arraybuffer" });
+    const src = URL.createObjectURL(new Blob([bytes]));
+    try {
+      await using screen = await render(<BinaryViewer src={src} name="sizes.zip" kind="archive" />);
+      const rows = () =>
+        [...screen.container.querySelectorAll("tbody tr")].map((row) =>
+          [...row.querySelectorAll("td")].slice(0, 2).map((cell) => cell.textContent?.trim()),
+        );
+      await vi.waitFor(() => {
+        expect(rows()).toEqual([
+          ["empty-dir", "0 bytes"],
+          ["pkg", "0 bytes"],
+          ["empty.txt", "0 bytes"],
+          ["readme.txt", "1 KB"],
+        ]);
+      }, 10_000);
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  });
+
   it("uses a PAX size override for the following TAR payload and bounds it", async () => {
     const archive = (size: string) => {
       const header = (name: string, size: number, type: string) => {
