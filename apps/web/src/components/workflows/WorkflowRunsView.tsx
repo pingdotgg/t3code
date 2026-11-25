@@ -37,8 +37,9 @@ import {
   type WorkflowRunNode,
   workflowRunInvolves,
 } from "@lathe/client-runtime/workflows";
+import { FORK_IDENTITY } from "@lathe/shared/forkIdentity";
 
-const WORKFLOWS_GUIDE_URL = "https://github.com/pingdotgg/t3code/blob/main/docs/user/workflows.md";
+const WORKFLOWS_GUIDE_URL = `${FORK_IDENTITY.repositoryUrl}/blob/main/docs/user/workflows.md`;
 const EVERY_WORKFLOW = "";
 // Never a kind: the questions of no kind are filtered by the empty kind.
 const EVERY_KIND = "*";
