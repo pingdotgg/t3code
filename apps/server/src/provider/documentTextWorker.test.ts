@@ -32,6 +32,10 @@ it.each([
       "New table",
     ],
   },
+  {
+    fixture: "epub-span-whitespace",
+    expected: ["## Chapter 1", "A\tB", "C\tD", "E\t\tF"],
+  },
 ])("preserves EPUB table placement in $fixture", async ({ fixture, expected }) => {
   const path = NodeURL.fileURLToPath(new URL(`./fixtures/${fixture}.epub`, import.meta.url));
   expect(await extractDocumentText(path, ".epub")).toBe(expected.join("\n"));
