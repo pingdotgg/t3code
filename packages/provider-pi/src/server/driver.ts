@@ -19,7 +19,6 @@ import {
   checkPiProviderStatus,
   discoverPiCommandsForCwd,
   enrichPiSnapshot,
-  PI_PRESENTATION,
 } from "./status.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
@@ -78,7 +77,7 @@ const withInstanceIdentity =
 export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
   driverKind: DRIVER_KIND,
   metadata: {
-    displayName: PI_PRESENTATION.displayName,
+    displayName: "Pi",
     supportsMultipleInstances: true,
   },
   usage: piUsageReader,

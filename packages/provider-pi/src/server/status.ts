@@ -56,7 +56,7 @@ import {
   type PiDiscoveredCommands,
 } from "./commands.ts";
 
-export const PI_PRESENTATION = {
+const PI_PRESENTATION = {
   displayName: "Pi",
   showInteractionModeToggle: false,
   supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],
