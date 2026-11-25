@@ -2,6 +2,12 @@ import JSZip from "jszip";
 import { checkZipDirectory } from "./zipDirectory.ts";
 import { ZipError } from "./zipError.ts";
 
+const CP437_HIGH_BYTES =
+  "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒ" +
+  "áíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐" +
+  "└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀" +
+  "αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u00a0";
+
 export const ARCHIVE_MAX_BYTES = 50 * 1024 * 1024;
 export const ARCHIVE_ENTRY_MAX_BYTES = 10 * 1024 * 1024;
 export const ARCHIVE_MAX_ENTRIES = 2048;
@@ -19,7 +25,16 @@ export async function boundedZip(
 ) {
   if (bytes.byteLength > ARCHIVE_MAX_BYTES) throw new ZipError({ code: "file-too-large" });
   checkZipDirectory(bytes, ARCHIVE_MAX_ENTRIES);
-  const zip = await JSZip.loadAsync(bytes);
+  const zip = await JSZip.loadAsync(bytes, {
+    decodeFileName: (name) => {
+      let decoded = "";
+      for (const byte of name) {
+        const code = typeof byte === "string" ? byte.charCodeAt(0) : byte;
+        decoded += code < 128 ? String.fromCharCode(code) : CP437_HIGH_BYTES[code - 128];
+      }
+      return decoded;
+    },
+  });
   const entries = Object.values(zip.files);
   if (entries.length > ARCHIVE_MAX_ENTRIES)
     throw new ZipError({ code: "archive-too-many-entries" });
