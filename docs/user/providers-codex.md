@@ -33,6 +33,19 @@ Running `codex login` does not change a managed ChatGPT connection. In
 and complete the wizard. Then select that instance from the thread's model
 picker. See [Use multiple accounts](#use-multiple-accounts).
 
+### Show limits through a pass-through proxy
+
+If your proxy forwards Codex requests to the ChatGPT account you signed in with,
+edit that Codex instance in **Settings → Providers** and add the environment variable
+`T3CODE_CODEX_SUBSCRIPTION_QUOTA_BASE_URL`. Set it to the exact base URL Codex uses,
+including its path, such as `http://127.0.0.1:6767/v1`. Refresh provider status to
+read the account's limits.
+
+Only set this for a proxy that spends the signed-in account's quota. A proxy that
+routes to other accounts or providers needs its own usage source. Changing the
+base URL stops the opt-in from matching; remove the variable to return to automatic
+quota detection.
+
 ## Allow more time for provider checks
 
 If an authenticated Codex installation reports “Timed out while checking Codex
