@@ -16,6 +16,7 @@ test(
       "paragraph\n\nboundary",
       `Rendered swift${" ".repeat(16)}\ncurrent`,
       "Later swift current",
+      `Standalone jade${" ".repeat(16)}\nfalcon`,
       ["```text", "canary", `${" ".repeat(17)}migration`, "canary", "    migration", "```"].join(
         "\n",
       ),
@@ -58,5 +59,19 @@ test(
       ),
     );
     expect(startsAtRenderedBreak).toBe(true);
+    await screen.getByRole("button", "Close find").tap();
+
+    await query.fill('"jade falcon"');
+    await screen.getByRole("option").filter({ hasText: "jade falcon" }).tap();
+    await expect(find).toContainText("1/1");
+
+    const imageThread = await t3.thread({ project, title: "Image notes", messages: ["Start"] });
+    await t3.open(imageThread);
+    const imageComposer = screen.getByRole("textbox", "Message Image notes");
+    await imageComposer.fill("![invisible heron](https://example.invalid/image.png)");
+    await imageComposer.press("Enter");
+    await screen.getByText("second fixture turn complete").waitFor();
+    await query.fill('"invisible heron"');
+    await expect(screen.getByText("No threads found", { exact: true })).toBeVisible();
   },
 );

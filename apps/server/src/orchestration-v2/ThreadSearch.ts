@@ -92,12 +92,16 @@ const SearchRow = Schema.Struct({
   projectId: ProjectId,
   source: OrchestrationThreadSearchSource,
   text: Schema.String,
+  rawText: Schema.NullOr(Schema.String),
+  hasContext: Schema.Number,
+  streaming: Schema.Number,
   messageCreatedAt: Schema.NullOr(IsoDateTime),
 });
 
 const ThreadOpensRow = Schema.Struct({
   threadId: ThreadId,
   opens: Schema.NullOr(Schema.String),
+  cwd: Schema.NullOr(Schema.String),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
 });
 const decodeThreadOpens = Schema.decodeUnknownOption(
@@ -113,6 +117,9 @@ const MESSAGE_HIT_LIMIT = 2000;
 const MESSAGE_CANDIDATE_LIMIT = 10_000;
 // Without the index, how many of the newest messages a search scans.
 const MESSAGE_SCAN_LIMIT = 20_000;
+// Reserve room for rejected snippets without parsing an entire candidate window.
+const RENDER_CHECKS_PER_RESULT = 4;
+const PLAIN_MESSAGE = /^\p{L}[\p{L}\p{M}\p{N} .'’,!?-]*$/u;
 const NON_ASCII = /[\u0080-\uffff]/;
 
 /** SQLite's lower() folds ASCII only, so a short word is checked as each spelling it can match. */
@@ -243,7 +250,13 @@ export const messageHitsQuery = (
     projectId,
     excludedThreadIds,
   }: typeof SearchRequest.Encoded,
-) => sql`
+) => {
+  const originalMessage = sql`
+    CASE WHEN messages.search_text IS NOT NULL THEN json_extract(messages.payload_json, '$.text') END AS "rawText",
+    json_type(messages.payload_json, '$.context') IS 'object' AS "hasContext",
+    messages.streaming AS streaming
+  `;
+  return sql`
     WITH eligible AS MATERIALIZED (
       SELECT threads.thread_id, threads.project_id
       FROM orchestration_v2_projection_threads AS threads
@@ -268,6 +281,7 @@ export const messageHitsQuery = (
             eligible.project_id AS "projectId",
             messages.role AS source,
             ${messageSearchText(sql)} AS text,
+            ${originalMessage},
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_projection_messages AS messages
           INNER JOIN eligible ON eligible.thread_id = messages.thread_id
@@ -285,6 +299,7 @@ export const messageHitsQuery = (
             eligible.project_id AS "projectId",
             messages.role AS source,
             ${messageSearchText(sql)} AS text,
+            ${originalMessage},
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_message_search
           INNER JOIN orchestration_v2_projection_messages AS messages
@@ -351,6 +366,7 @@ export const messageHitsQuery = (
     ORDER BY "messageRowid" DESC
     LIMIT ${hitLimit}
   `;
+};
 
 const TitleCandidateRow = Schema.Struct({
   thread: Schema.fromJsonString(OrchestrationV2AppThreadJson),
@@ -432,8 +448,10 @@ export const make = Effect.gen(function* () {
       SELECT
         threads.thread_id AS "threadId",
         json_extract(threads.payload_json, '$.opens') AS opens,
+        COALESCE(json_extract(threads.payload_json, '$.worktreePath'), projects.workspace_root) AS cwd,
         ${latestUserMessageAt(sql)} AS "latestUserMessageAt"
       FROM orchestration_v2_projection_threads AS threads
+      INNER JOIN projection_projects AS projects ON projects.project_id = threads.project_id
       WHERE threads.thread_id IN (SELECT value FROM json_each(${threadIds}))
     `,
   });
@@ -549,6 +567,7 @@ export const make = Effect.gen(function* () {
       readonly text: string;
       readonly quality: number;
       readonly offset: number;
+      readonly needsRender: boolean;
     };
     const newer = (left: Hit, right: Hit) =>
       (right.row.messageCreatedAt ?? "").localeCompare(left.row.messageCreatedAt ?? "");
@@ -580,30 +599,21 @@ export const make = Effect.gen(function* () {
     const matchMessage = messageMatcher(input.query);
     const { exact, words } = messageSearchTokens(input.query);
     const quotedPhrase = exact && words.length > 1;
+    const alternates = new Map<ThreadId, Hit[]>();
     for (const row of rows) {
       // Webhook URL tokens are withheld before matching, so a snippet cut inside the URL has none.
       const text = withoutWebhookUrlToken(row.text.replace(MARKDOWN_LINK, "$1"));
       const match = matchMessage(text);
-      if (match === null) continue;
-      let hit: Hit | null = { row, text, ...match };
-      if (quotedPhrase && /[\r\n]/.test(row.text)) {
-        // The index narrows by stored text. Find starts at the first rendered
-        // occurrence in the message, so the snippet must start there too.
-        const segments = searchableMessageSegments({
-          role: row.source,
-          text: withoutWebhookUrlToken(row.text),
-          streaming: false,
-        });
-        hit = null;
-        for (const segment of segments ?? []) {
-          const rendered = withoutWebhookUrlToken(segment);
-          const renderedMatch = matchMessage(rendered);
-          if (renderedMatch === null) continue;
-          hit = { row, text: rendered, ...renderedMatch };
-          break;
-        }
+      const needsRender = quotedPhrase && (row.rawText !== null || !PLAIN_MESSAGE.test(row.text));
+      if (match === null && !needsRender) continue;
+      // A source gap may shrink in Markdown, so proximity in the index is
+      // enough to make such a row a candidate for the rendered check.
+      const hit = { row, text, needsRender, ...(match ?? { quality: 1, offset: 0 }) };
+      if (quotedPhrase) {
+        const hits = alternates.get(row.threadId);
+        if (hits) hits.push(hit);
+        else alternates.set(row.threadId, [hit]);
       }
-      if (hit === null) continue;
       const current = best.get(row.threadId);
       if (current === undefined || hit.quality > current.quality) {
         hitCounts.set(row.threadId, 1);
@@ -616,6 +626,7 @@ export const make = Effect.gen(function* () {
     // a thread picked for this query must come back even when it only
     // matches in a few old messages.
     const opens = best.size === 0 ? [] : yield* read(threadOpens({ threadIds: [...best.keys()] }));
+    const cwdByThreadId = new Map(opens.map((row) => [row.threadId, row.cwd ?? undefined]));
     const subjectById = new Map(
       opens.map((row) => [
         row.threadId,
@@ -638,9 +649,45 @@ export const make = Effect.gen(function* () {
       now,
       { picks: input.picks ?? true },
     );
+    const limit = input.limit ?? 50;
+    let renderChecks = limit * RENDER_CHECKS_PER_RESULT;
+    const selected: Hit[] = [];
+    for (const leading of ranked) {
+      if (selected.length === limit) break;
+      const candidates = alternates.get(leading.row.threadId)?.sort(compareHits) ?? [leading];
+      let threadRenderChecks = RENDER_CHECKS_PER_RESULT;
+      for (const candidate of candidates) {
+        if (!candidate.needsRender) {
+          selected.push(candidate);
+          break;
+        }
+        if (renderChecks === 0 || threadRenderChecks === 0) continue;
+        renderChecks--;
+        threadRenderChecks--;
+        yield* Effect.yieldNow;
+        const { row } = candidate;
+        const segments = searchableMessageSegments(
+          {
+            role: row.source,
+            text: withoutWebhookUrlToken(row.rawText ?? row.text),
+            streaming: row.streaming !== 0,
+            context: row.hasContext ? { version: 1, records: [] } : undefined,
+          },
+          cwdByThreadId.get(row.threadId),
+        );
+        for (const segment of segments ?? []) {
+          const text = withoutWebhookUrlToken(segment);
+          const match = matchMessage(text);
+          if (match === null) continue;
+          selected.push({ ...candidate, text, ...match });
+          break;
+        }
+        if (selected.at(-1)?.row.threadId === row.threadId) break;
+      }
+    }
     return {
-      matches: ranked.slice(0, input.limit ?? 50).map(({ row, text, quality, offset }) => ({
-        hits: hitCount(row.threadId),
+      matches: selected.map(({ row, text, quality, offset }) => ({
+        ...(quotedPhrase ? {} : { hits: hitCount(row.threadId) }),
         threadId: row.threadId,
         messageId: row.messageId,
         projectId: row.projectId,

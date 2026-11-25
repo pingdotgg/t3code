@@ -408,6 +408,10 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         `…${readable.slice(readable.indexOf("the darkness"))}`,
       ]);
       assert.deepEqual(yield* snippets("ships safely through"), [readable]);
+      assert.deepEqual(yield* snippets('"ships safely through"'), []);
+      assert.deepEqual(yield* snippets('"what are you talking about"'), [
+        "what are you talking about quiet silver lantern",
+      ]);
       assert.deepEqual(yield* snippets("beacon01"), []);
       assert.deepEqual(yield* snippets("harbor"), []);
 
@@ -742,6 +746,15 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
           thread(apart, project),
           message(apart, "exact-apart", "user", apartText),
           message(apart, "exact-paragraphs", "user", "missing\n\nosprey files"),
+          message(together, "exact-hard-break", "user", `swift${" ".repeat(16)}\ncurrent`),
+          message(
+            together,
+            "exact-image",
+            "assistant",
+            "![remote avocet](https://example.invalid/a.png)",
+          ),
+          message(together, "exact-kept", "user", "a visible kestrel", { minute: 2 }),
+          message(together, "exact-hidden-newer", "user", "visible\n\nkestrel", { minute: 3 }),
         ],
         projections.apply,
         { discard: true },
@@ -750,6 +763,13 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
         search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
       assert.sameMembers(yield* threadIds("missing osprey files"), [together, wrapped, apart]);
       assert.sameMembers(yield* threadIds('"missing osprey files"'), [together, wrapped]);
+      assert.deepEqual(yield* threadIds('"swift current"'), [together]);
+      assert.deepEqual(yield* threadIds('"remote avocet"'), []);
+      const fallback = yield* search.search({ query: '"visible kestrel"', limit: 1 });
+      assert.deepEqual(
+        fallback.matches.map((hit) => hit.messageId),
+        [MessageId.make("exact-kept")],
+      );
       // Newer messages with the words apart, or close but not together, do not hide the phrase:
       // the first would fill the candidates the index reads, the second the hits it returns.
       const addNewer = (id: string, text: string, count: number) => sql`
@@ -976,6 +996,19 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
           [[mention, "Fix __init__.py and _café_.py"]],
         );
       }
+      yield* projections.apply(
+        message(
+          mention,
+          "heron-mention",
+          "user",
+          "Fix [\\_\\_init\\_\\_.py](pkg/__init__.py)\nplease",
+        ),
+      );
+      const quotedMention = yield* search.search({ query: '"Fix __init__.py"' });
+      assert.deepEqual(
+        quotedMention.matches.map((hit) => hit.threadId),
+        [mention],
+      );
     }),
   );
 
