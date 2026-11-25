@@ -92,8 +92,22 @@ Because `teams-release.yml` forwards `secrets: inherit` to upstream's `release-d
    git config remote.upstream.tagOpt --no-tags
    ```
    This guarantees upstream `vX.Y.Z` tags never collide with your fork's own release tags or push your nightlies out of `releases.atom`.
-2. **Cutting a release on the fork:**
+2. **Track stable upstream releases only (never `upstream/main`):**
+   - Upstream's `main` branch carries daily `*-nightly.*` churn. This fork merges **only published stable upstream release tags** (`vX.Y.Z`, excluding `*-nightly.*` and `*-preview.*`).
+   - Always use a `--no-ff` merge commit (never rebase `main`) so `git merge-base` stays accurate across future upstream releases:
+     ```sh
+     VERSION="v0.1.12"
+     UPSTREAM_SHA=$(git ls-remote --tags upstream "refs/tags/${VERSION}^{}" | awk '{print $1}')
+     UPSTREAM_SHA=${UPSTREAM_SHA:-$(git ls-remote --tags upstream "refs/tags/${VERSION}" | awk '{print $1}')}
+     git fetch --no-tags upstream "$UPSTREAM_SHA"
+     git checkout -b "sync/upstream-${VERSION}" origin/main
+     git merge --no-ff "$UPSTREAM_SHA" -m "chore(sync): merge upstream ${VERSION}"
+     ```
+   - For mechanical JSON conflicts in `apps/web/src/i18n/translations/*.json`, merge both key sets (keeping all upstream entries + all fork `team.*` entries) and verify with `vp run i18n:check`.
+   - Verify with `vp run check:changed` and `vp run scenarios:team` before merging to `main`, then rebase any active feature worktrees onto the updated `main`.
+3. **Cutting a release on the fork:**
+   - Use clean 3-part SemVer tags on the fork (e.g., `v1.0.0`, `v1.1.0`) so `electron-updater`'s `latest` channel works without prerelease quirks, and note the upstream base version in the release title/notes (e.g., `T3 Code Teams v1.0.0 (upstream v0.1.12)`).
    - **Test build (safe draft):** Actions → **Teams Release** → `channel=preview` (optionally `skip_tests=true`).
    - **Nightly:** Actions → **Teams Release** → `channel=nightly` on `main`.
-   - **Stable:** Actions → **Teams Release** → `channel=stable` on `main` (leave `version` empty to promote the latest nightly, or specify e.g. `0.2.0`), or push a tag `git tag v0.2.0 && git push origin v0.2.0`.
-3. **Never delete the `update-feed` release** once created—nightly desktop clients read `nightly.json` from it.
+   - **Stable:** Actions → **Teams Release** → `channel=stable` on `main` (leave `version` empty to promote the latest nightly, or specify e.g. `1.0.0`), or push a tag `git tag v1.0.0 && git push origin v1.0.0`.
+4. **Never delete the `update-feed` release** once created—nightly desktop clients read `nightly.json` from it.

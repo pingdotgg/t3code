@@ -478,8 +478,9 @@ We intend to **regularly port upstream changes from `pingdotgg/t3code`** into th
    - Keep all fork documentation under `docs/teams/` without renumbering or heavily editing `docs/internals/XX_*.md`.
 6. **Personal mode remains 100% upstream-identical:**
    - When no team is configured, all team hooks short-circuit as no-ops so upstream behavior and upstream test suites continue passing untouched.
-7. **Regular upstream sync cadence:**
-   - Merge `upstream/main` frequently (e.g., weekly or before starting each new milestone) so drift never compounds.
+7. **Stable-release-only upstream sync cadence:**
+   - Track **only stable upstream releases (`vX.Y.Z`)**—never merge `upstream/main` directly (which contains untested `*-nightly.*` commits).
+   - Fetch each stable tag's commit SHA with `--no-tags` and merge it via `--no-ff` (`chore(sync): merge upstream vX.Y.Z`) so `git merge-base` remains accurate for future releases without re-solving old conflicts. See [ci-and-releases.md §4](./ci-and-releases.md#4-tagging--upstream-merge-hygiene).
 
 ---
 
