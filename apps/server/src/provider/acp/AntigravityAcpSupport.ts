@@ -70,6 +70,8 @@ function compareVersions(left: ReadonlyArray<number>, right: ReadonlyArray<numbe
   return 0;
 }
 
+// `agy acp` 1.5.1 offers every model to every ACP client; older runtimes allowlist editors.
+export const OPEN_MODEL_ACCESS_RELEASE = [1, 5, 1] as const;
 // `agy acp` 1.5.0 steers a running turn with the next prompt; the 1.4 harness queues it.
 const PROMPT_STEERING_RELEASE = [1, 5, 0] as const;
 
@@ -78,6 +80,12 @@ export const antigravitySteersWithPrompt = (
 ) => {
   const parsed = parseAntigravityVersion(initializeResult.agentInfo?.version);
   return parsed !== undefined && compareVersions(parsed, PROMPT_STEERING_RELEASE) >= 0;
+};
+
+/** Whether a runtime that reported its version serves T3 Code, not only allowlisted editors. */
+export const antigravityServesT3Code = (version: string) => {
+  const parsed = parseAntigravityVersion(version);
+  return parsed === undefined || compareVersions(parsed, OPEN_MODEL_ACCESS_RELEASE) >= 0;
 };
 
 export const antigravityAppendsSystemPrompt = (

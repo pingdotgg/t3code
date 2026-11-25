@@ -3212,7 +3212,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
 });
 
 describe("AntigravityAdapterV2 session system prompt", () => {
-  it.effect.each(["1.5.0"])(
+  it.effect.each(["1.5.1"])(
     "carries PR linking once per turn on %s, which does not advertise a system prompt append",
     (agentVersion) =>
       Effect.gen(function* () {
