@@ -2033,9 +2033,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const clock = yield* Clock.Clock;
   const pasteIdleMillis = 15_000;
+  const pasteEndOverlap = TERMINAL_BRACKETED_PASTE_END.length - 1;
   const activePastes = new WeakMap<
     PtyAdapter.PtyProcess,
-    { readonly owner: string; readonly finished: Deferred.Deferred<void>; lastWrite: number }
+    {
+      readonly owner: string;
+      readonly finished: Deferred.Deferred<void>;
+      lastWrite: number;
+      trailingData: string;
+    }
   >();
 
   const releasePaste = (process: PtyAdapter.PtyProcess | null) => {
@@ -3935,8 +3941,22 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           if (phase === "abort") return;
           return yield* writeError("Bracketed paste is no longer active");
         }
+        if (
+          phase === "end" &&
+          !(paste.trailingData + input.data.slice(-TERMINAL_BRACKETED_PASTE_END.length)).endsWith(
+            TERMINAL_BRACKETED_PASTE_END,
+          )
+        ) {
+          return yield* writeError("Missing end of bracketed paste");
+        }
         paste.lastWrite = clock.currentTimeMillisUnsafe();
-        if (phase === "continue") return yield* writeData(input.data);
+        if (phase === "continue") {
+          yield* writeData(input.data);
+          paste.trailingData = (paste.trailingData + input.data.slice(-pasteEndOverlap)).slice(
+            -pasteEndOverlap,
+          );
+          return;
+        }
         yield* writeData(phase === "abort" ? TERMINAL_BRACKETED_PASTE_END : input.data);
         return releasePaste(process);
       }
@@ -3948,7 +3968,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           return yield* writeError("Bracketed paste already active");
         }
         yield* Deferred.await(active.finished);
-        if (session.process !== process || session.status !== "running") return;
+        if (session.process !== process || session.status !== "running") {
+          return yield* new TerminalNotRunningError({ threadId: input.threadId, terminalId });
+        }
         active = activePastes.get(process);
       }
       if (phase !== "start" || viewerId === undefined) {
@@ -3962,11 +3984,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         owner: viewerId,
         finished: Deferred.makeUnsafe<void>(),
         lastWrite: clock.currentTimeMillisUnsafe(),
+        trailingData: input.data.slice(-pasteEndOverlap),
       };
       // A disconnected sender cannot close its bracket. Close it on the original PTY
       // before releasing queued input, even when the rest of the paste never arrives.
       yield* Effect.uninterruptible(
         Effect.gen(function* () {
+          yield* writeData(input.data);
           activePastes.set(process, paste);
           yield* Effect.gen(function* () {
             while (activePastes.get(process) === paste && session.process === process) {
@@ -3984,7 +4008,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             }
             if (activePastes.get(process) === paste) releasePaste(process);
           }).pipe(Effect.interruptible, Effect.forkIn(workerScope));
-          yield* writeData(input.data);
         }),
       );
     },
