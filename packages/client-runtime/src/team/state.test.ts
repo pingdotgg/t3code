@@ -441,4 +441,49 @@ describe("team client-runtime state and presentation", () => {
         expect(observed).toEqual([teamId]);
       }),
   );
+
+  it("hydrates latestTurnByThreadId with the newest ascending turn while retaining older runs", () => {
+    const hydrated = applyTeamStreamEvent(EMPTY_TEAM_ENVIRONMENT_STATE, {
+      version: 1,
+      type: "snapshot",
+      payload: {
+        team,
+        currentMember: bob,
+        members: [alice, bob],
+        invites: [],
+        threadAttributions: [
+          {
+            threadId: aliceThreadId,
+            teamId,
+            creatorMemberId: aliceId,
+            creatorPseudo: alice.pseudo,
+            viewId,
+            locked: false,
+            createdAt: "2026-01-01T00:00:01.000Z",
+          },
+        ],
+        followedThreadIds: [],
+        latestTurnAttributions: [
+          {
+            turnId: "run-bob-active",
+            threadId: aliceThreadId,
+            authorMemberId: bobId,
+            authorPseudo: bob.pseudo,
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+          {
+            turnId: "run-alice-newest",
+            threadId: aliceThreadId,
+            authorMemberId: aliceId,
+            authorPseudo: alice.pseudo,
+            createdAt: "2026-01-01T00:00:05.000Z",
+          },
+        ],
+      },
+    });
+
+    expect(hydrated.latestTurnByThreadId.get(aliceThreadId)?.turnId).toBe("run-alice-newest");
+    expect(hydrated.turnAuthorByTurnId.get("run-bob-active")?.authorMemberId).toBe(bobId);
+    expect(hydrated.turnAuthorByTurnId.get("run-alice-newest")?.authorMemberId).toBe(aliceId);
+  });
 });

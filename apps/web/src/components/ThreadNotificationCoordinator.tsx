@@ -442,7 +442,7 @@ export function startThreadNotifications(
             current !== undefined &&
             current.thread.archivedAt === null &&
             current.raw.latestRunStopRequested !== true &&
-            current.thread.latestRun?.runId === latestRunId &&
+            (current.thread.latestRun?.runId ?? null) === latestRunId &&
             (deferred.kind === "input"
               ? current.attention === deferred.state.attention
               : current.settled) &&

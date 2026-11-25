@@ -78,9 +78,7 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
   const turnAuthorByTurnId = new Map<string, TeamTurnAttribution>();
   for (const turn of snapshot.latestTurnAttributions) {
     turnAuthorByTurnId.set(turn.turnId, turn);
-    if (!latestTurnByThreadId.has(turn.threadId)) {
-      latestTurnByThreadId.set(turn.threadId, turn);
-    }
+    latestTurnByThreadId.set(turn.threadId, turn);
   }
   return {
     team: snapshot.team,

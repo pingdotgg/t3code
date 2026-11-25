@@ -759,7 +759,7 @@ const make = Effect.gen(function* () {
                 SELECT 1
                 FROM orchestration_v2_projection_runs r
                 WHERE r.run_id = t.turn_id
-                  AND r.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
+                  AND r.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted', 'rolled_back')
               ) AS is_non_terminal
             FROM team_turn_meta t
             INNER JOIN team_thread_meta tm ON tm.thread_id = t.thread_id
