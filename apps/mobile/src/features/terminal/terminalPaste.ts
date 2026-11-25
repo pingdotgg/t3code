@@ -69,8 +69,9 @@ export function createTerminalPasteSession(): TerminalPasteSession {
     },
 
     async write(data, send) {
+      // Input can arrive before the first attach snapshot sets liveness; the caller gates on running.
       const target = liveTarget;
-      if (target !== null) await writeChunks(data, send, () => liveTarget === target, false);
+      await writeChunks(data, send, () => liveTarget === target, false);
     },
 
     async paste({ readText, write, onReadError }) {

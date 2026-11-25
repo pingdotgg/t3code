@@ -117,4 +117,14 @@ describe("terminal paste session", () => {
     await Promise.all([first, second, key]);
     expect(writes).toEqual([a, "1", b, "2", "k"]);
   });
+
+  it("sends a keystroke typed before the first attach snapshot", async () => {
+    const session = createTerminalPasteSession();
+    const writes: string[] = [];
+    await session.write("k", async (data) => {
+      writes.push(data);
+      return true;
+    });
+    expect(writes).toEqual(["k"]);
+  });
 });
