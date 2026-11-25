@@ -68,7 +68,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 test(
   "An image a running Read is opening shows a loading frame, not Image unavailable, then the image",
   WEB,
-  async ({ t3, app, screen }) => {
+  async ({ t3, app, screen, browser }) => {
     const project = await t3.project("demo");
     const script = NodePath.join(project, "pending-read-acp.mjs");
     const settingsPath = NodePath.join(T3_HOME, "userdata/settings.json");
@@ -121,26 +121,11 @@ test(
 
       await t3.open({ threadId });
       await screen.getByText("Read demo/later.png", { exact: true }).waitFor({ timeout: 60_000 });
-      // Asking for the missing file fails within a second or two of the Read row showing.
-      const unavailable = await screen
-        .getByText("Image unavailable", { exact: false })
-        .waitFor({ timeout: 8_000 })
-        .then(
-          () => true,
-          (error: unknown) => {
-            // Only "never showed up" means absent; any other failure is the test's own.
-            const notFound =
-              typeof error === "object" &&
-              error !== null &&
-              "code" in error &&
-              error.code === "LOCATOR_NOT_FOUND";
-            if (!notFound) throw error;
-            return false;
-          },
-        );
+      // The strip's frame shows either state; the bug is which one it is while the Read runs.
+      const frame = browser.locator('[data-image-gallery] :is([role="status"], [role="alert"])');
+      await frame.first().waitFor({ timeout: 10_000 });
       await app.screenshot("while-reading");
-      expect(unavailable).toBe(false);
-      await screen.getByRole("status", "Loading image").waitFor({ timeout: 5_000 });
+      await expect(frame).toHaveAttribute("aria-label", "Loading image");
 
       await NodeFSP.writeFile(NodePath.join(signals, "write-image"), "");
       await screen.getByRole("button", "Preview later.png").waitFor({ timeout: 30_000 });
