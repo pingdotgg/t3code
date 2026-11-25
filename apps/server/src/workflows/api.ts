@@ -21,6 +21,7 @@ export {
   tags,
   title,
   wait,
+  within,
   workflow,
 } from "./workflow.ts";
 export { agent, ask } from "./workflowAgent.ts";

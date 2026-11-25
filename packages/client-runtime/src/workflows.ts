@@ -437,6 +437,14 @@ export function workflowRunState(
           tone: "quiet",
         };
       }
+      if (detail.startsWith("queue ")) {
+        return {
+          word: resolve(
+            msg("Queued", { $context: "workflow run status: it waits for a free place" }),
+          ),
+          tone: "quiet",
+        };
+      }
       // Something below it holds it up; say that, not that it idles.
       if (node.children.some(needsPerson)) return input;
       return { word: resolve(msg("Waiting", { $context: "workflow run status" })), tone: "quiet" };
@@ -488,6 +496,9 @@ export function workflowRunNow(node: WorkflowRunNode, resolve: MFunctionType = m
       if (detail.startsWith("sleep ")) {
         return resolve(msg("Sleeping at {step}", { step: detail.slice(6) }));
       }
+      if (detail.startsWith("queue ")) {
+        return resolve(msg("Queued for {pool}", { pool: detail.slice(6) }));
+      }
       if (below.some((child) => child.run.endedAt === null)) {
         const open = below.filter((child) => child.run.endedAt === null);
         return open.length === 1
@@ -538,6 +549,8 @@ export interface WorkflowBeat {
   readonly result: WorkflowStep["result"];
   /** What an agent said in closing, when its result is data. */
   readonly said: string | null;
+  /** For a step queued for a place in a pool, how many are ahead of it. */
+  readonly ahead: number | undefined;
   readonly startMs: number;
   /** When it ended, or `nowMs` while it is under way. */
   readonly endMs: number;
@@ -608,8 +621,9 @@ export function buildWorkflowTimeline(input: {
     const stepStart = Date.parse(step.startedAt);
     const stepEnd = step.endedAt === null ? nowMs : Date.parse(step.endedAt);
     const childRun = step.kind === "wait" ? (childByStep.get(step.name) ?? null) : null;
+    // A place given at once is bookkeeping too; a wait for one is a beat.
     const isBeat =
-      step.kind !== "step" ||
+      (step.kind !== "step" && step.kind !== "queue") ||
       step.status !== "completed" ||
       step.attempts > 1 ||
       stepEnd - stepStart >= QUICK_STEP_MS;
@@ -626,6 +640,7 @@ export function buildWorkflowTimeline(input: {
       detail: step.detail,
       result: step.result,
       said: step.said,
+      ahead: step.ahead,
       startMs: stepStart,
       endMs: Math.max(stepStart, stepEnd),
       thread:

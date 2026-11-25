@@ -847,6 +847,14 @@ it.effect.each([
     }),
 );
 
+it("an unmatched background wait says Workflow IDs already keep the thread working", () => {
+  const error = new ThreadManagementService.ThreadManagementBackgroundWaitError({
+    threadId: ThreadId.make("thread:thread-management:background-wait"),
+    reason: "unmatched",
+  });
+  expect(error.message).toContain("Workflow");
+});
+
 it.effect.each([
   { status: "completed" as const, followUp: "none", settles: true },
   { status: "failed" as const, followUp: "none", settles: false },

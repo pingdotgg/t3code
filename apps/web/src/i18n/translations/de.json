@@ -12910,6 +12910,11 @@
   "c92657bb7f2293ff": "Genehmigung nötig",
   "f1e5c1be1ac92361": "Genehmigen",
   "fcb5f3c4d4753326": "Über diese Verbindung lassen sich keine Befehle genehmigen. Verwende einen Client, der das Terminal verwenden darf.",
+  "7150557773b3818b": "In der Warteschlange",
+  "efbeb3993ee2c3f5": "Wartet auf {pool}",
+  "0398ca6c1d24b92d": "wartet, als Nächstes dran",
+  "0af6d5ffd5166214": "{count, plural, one {wartet, {count} davor} other {wartet, {count} davor}}",
+  "49be26a27dcb30e5": "gewartet",
   "4e96712d839ccbff": "{who} hat {choice} gesagt",
   "19097cfb8f5a79cf": [
     {
