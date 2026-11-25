@@ -650,6 +650,15 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 CASE
                   WHEN candidate.available_at <= ${agedBefore} THEN 0
                   WHEN candidate.effect_type IN ${sql.in(INTERACTIVE_EFFECT_TYPES)} THEN 0
+                  -- Work its own thread's queued interactive work waits on inherits that priority.
+                  WHEN candidate.effect_type != 'thread-title.generate' AND EXISTS (
+                    SELECT 1
+                    FROM orchestration_v2_effect_outbox AS blocked
+                    WHERE blocked.thread_id = candidate.thread_id
+                      AND blocked.status = 'pending'
+                      AND blocked.rowid > candidate.rowid
+                      AND blocked.effect_type IN ${sql.in(INTERACTIVE_EFFECT_TYPES)}
+                  ) THEN 0
                   WHEN candidate.effect_type IN ${sql.in(BACKGROUND_EFFECT_TYPES)} THEN 2
                   ELSE 1
                 END ASC,

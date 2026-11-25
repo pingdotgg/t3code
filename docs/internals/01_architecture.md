@@ -45,7 +45,8 @@ on recovery rather than replayed.
 Effects on one thread run in order. Across threads the worker claims interactive work (turn starts
 and other user actions) before background work (checkpoint captures, cleanup), and caps how much
 background work runs at once. Git throughput limits captures, so more capture concurrency only
-makes turn ends slower.
+makes turn ends slower. Work that a thread's queued interactive work waits on, such as the capture
+ahead of the next turn, is claimed at interactive priority but still counts toward the cap.
 
 The event log retains only a bounded replay window, so projections cannot be rebuilt from scratch
 from the log. Retained events must remain decodable across upgrades: schema changes affect stored

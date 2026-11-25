@@ -3579,11 +3579,44 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         priorityEffect("lane-own-capture", "checkpoint.capture", "lane-held"),
         priorityEffect("lane-held-turn", "provider-turn.start", "lane-held"),
       ]);
-      assert.deepStrictEqual(yield* claimAll(outbox), ["lane-other-capture", "lane-own-capture"]);
+      assert.deepStrictEqual(yield* claimAll(outbox), ["lane-own-capture", "lane-other-capture"]);
       yield* settlePriority(outbox, ["lane-own-capture"]);
       assert.deepStrictEqual(yield* claimAll(outbox), ["lane-held-turn"]);
       yield* settlePriority(outbox, ["lane-other-capture", "lane-held-turn"]);
     }),
+  );
+
+  it.effect(
+    "claims a capture at its thread's queued turn's priority while it blocks the turn",
+    () =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const limits = { maxRunningNonInteractive: 5, maxRunningBackground: 4 };
+        const busyTurns = Array.from({ length: 6 }, (_, index) =>
+          priorityEffect(`boost-busy-turn-${index}`, "provider-turn.start"),
+        );
+        yield* outbox.enqueue(busyTurns);
+        assert.strictEqual((yield* claimAll(outbox, limits)).length, 6);
+        yield* outbox.enqueue([
+          priorityEffect("boost-other-capture", "checkpoint.capture"),
+          priorityEffect("boost-title", "thread-title.generate"),
+          priorityEffect("boost-own-capture", "checkpoint.capture", "boost-held"),
+          priorityEffect("boost-held-turn", "provider-turn.start", "boost-held"),
+        ]);
+        assert.deepStrictEqual(yield* claimAll(outbox, limits), [
+          "boost-own-capture",
+          "boost-title",
+          "boost-other-capture",
+        ]);
+        yield* settlePriority(outbox, ["boost-own-capture"]);
+        assert.deepStrictEqual(yield* claimAll(outbox, limits), ["boost-held-turn"]);
+        yield* settlePriority(outbox, [
+          ...busyTurns.map((turn) => turn.id.replace("effect:foundation-priority:", "")),
+          "boost-title",
+          "boost-other-capture",
+          "boost-held-turn",
+        ]);
+      }),
   );
 
   it.effect("does not reclaim a running effect after its process-local lease expires", () =>
