@@ -41,29 +41,23 @@ export function rowPhasesChanged(
   return nextAggregate.activities.some((row) => previousPhases.get(rowKey(row)) !== row.phase);
 }
 
-// Mirrors what the Dynamic Island's compact and minimal views show: the hero row
-// (first attention row, else first failed row, else the first row) and whether
-// all work is done. Starting and running share one working glyph family.
+// Mirrors the Dynamic Island's compact and minimal views (apps/mobile/src/widgets/AgentActivity.tsx):
+// the first attention row, else a failed row, else done or working. Starting and
+// running are left as one state so routine progress keeps priority 5.
 function islandSummary(aggregate: RelayAgentActivityAggregateState): string {
-  if (aggregate.activeCount === 0) {
-    const failed = aggregate.activities.some((row) => row.phase === "failed");
-    return failed ? "failed" : "done";
-  }
-  const hero =
-    aggregate.activities.find((row) => isAttentionPhase(row.phase)) ??
-    aggregate.activities.find((row) => row.phase === "failed") ??
-    aggregate.activities[0];
-  if (hero === undefined || hero.phase === "starting" || hero.phase === "running") {
-    return "working";
-  }
-  return hero.phase === "completed" ? "done" : hero.phase;
+  const attention = aggregate.activities.find((row) => isAttentionPhase(row.phase));
+  if (attention) return attention.phase;
+  if (aggregate.activities.some((row) => row.phase === "failed")) return "failed";
+  return aggregate.activeCount === 0 ? "done" : "working";
 }
 
 export function islandSummaryChanged(
   previousAggregate: RelayAgentActivityAggregateState | null,
   nextAggregate: RelayAgentActivityAggregateState,
 ): boolean {
-  return previousAggregate === null || islandSummary(previousAggregate) !== islandSummary(nextAggregate);
+  return (
+    previousAggregate === null || islandSummary(previousAggregate) !== islandSummary(nextAggregate)
+  );
 }
 
 function isAttentionPhase(phase: string): boolean {
