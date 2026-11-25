@@ -1,0 +1,237 @@
+name: Fork nightly
+
+# Fork-only (cogwal/t3code): hand-run, unsigned desktop installers published as
+# a GitHub prerelease. release.yml stays untouched and gated to pingdotgg, so
+# rebasing onto upstream never conflicts here. Builds never auto-update: see
+# "Package desktop app".
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to build
+        required: false
+        default: main
+        type: string
+      platforms:
+        description: Platforms to build
+        required: false
+        default: mac
+        type: choice
+        options:
+          - mac
+          - windows
+          - linux
+          - all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-nightly
+  cancel-in-progress: false
+
+env:
+  T3CODE_TELEMETRY_CHANNEL: dev
+
+jobs:
+  prepare:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.ref }}
+          sparse-checkout: apps/desktop/package.json
+          sparse-checkout-cone-mode: false
+
+      # -fork.<date>.<run> sorts and parses like upstream's -nightly.<date>.<run>
+      # but matches neither its nightly nor its preview pattern, so the app keeps
+      # stable branding. The tag never matches v*.*.*.
+      - id: resolve
+        name: Resolve version and build matrix
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          base="$(jq -r .version apps/desktop/package.json)"
+          date="$(date -u +%Y%m%d)"
+          {
+            echo "sha=$sha"
+            echo "version=$base-fork.$date.$GITHUB_RUN_NUMBER"
+            echo "tag=fork-nightly-$date-$GITHUB_RUN_NUMBER"
+          } >> "$GITHUB_OUTPUT"
+          all='[
+            {"label":"macOS arm64","runner":"macos-latest","platform":"mac","target":"dmg","arch":"arm64","rust_target":"aarch64-apple-darwin"},
+            {"label":"Windows x64","runner":"windows-latest","platform":"win","target":"nsis","arch":"x64","rust_target":"x86_64-pc-windows-msvc"},
+            {"label":"Linux x64","runner":"ubuntu-latest","platform":"linux","target":"AppImage","arch":"x64","rust_target":"x86_64-unknown-linux-gnu"}
+          ]'
+          case "$PLATFORMS" in
+            mac) want=mac ;;
+            windows) want=win ;;
+            linux) want=linux ;;
+            all) want="" ;;
+            *) echo "::error::Unknown platforms input: $PLATFORMS"; exit 1 ;;
+          esac
+          matrix="$(jq -c --arg want "$want" '{include: map(select($want == "" or .platform == $want))}' <<<"$all")"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.label }}
+    needs: [prepare]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # .repos holds orphaned gitlinks that break checkout's submodule cleanup.
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install Linux desktop build libraries
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config libgtk-3-0t64 libnss3 libasound2t64 libgbm1
+          command -v magick >/dev/null 2>&1 || command -v convert >/dev/null 2>&1 || sudo apt-get install -y imagemagick
+
+      # Upstream's production Clerk and relay ids, the same public values
+      # release.yml uses for preview builds.
+      - name: Load public relay config
+        run: |
+          set -euo pipefail
+          for key in CLERK_PUBLISHABLE_KEY CLERK_JWT_TEMPLATE CLERK_CLI_OAUTH_CLIENT_ID RELAY_URL; do
+            value="$(sed -n "s|^T3CODE_$key=||p" .env.example)"
+            [[ -n "$value" ]] || { echo "::error::.env.example has no T3CODE_$key"; exit 1; }
+            echo "T3CODE_$key=$value" >> "$GITHUB_ENV"
+          done
+
+      - name: Align package versions
+        run: node scripts/update-release-package-versions.ts "$VERSION"
+
+      # GITHUB_REPOSITORY stays set here so the web client links to this
+      # fork's releases.
+      - name: Build JS bundle
+        run: vp run build:desktop:bundle
+
+      # Without an update repository the packager writes no publish config, so
+      # the app ships no app-update.yml and reports "no update feed is
+      # configured". GITHUB_REPOSITORY is its fallback, so unset it too.
+      - name: Package desktop app
+        run: |
+          set -euo pipefail
+          unset GITHUB_REPOSITORY T3CODE_DESKTOP_UPDATE_REPOSITORY
+          vp run dist:desktop:artifact \
+            --platform "${{ matrix.platform }}" \
+            --target "${{ matrix.target }}" \
+            --arch "${{ matrix.arch }}" \
+            --build-version "$VERSION" \
+            --skip-build \
+            --verbose
+
+      # electron-builder writes latest*.yml next to the installers exactly when
+      # it also bakes app-update.yml into the app.
+      - name: Check no update feed is packaged
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          feeds=()
+          for file in release/*.yml; do
+            [[ "$file" == */builder-debug.yml ]] || feeds+=("$file")
+          done
+          if (( ${#feeds[@]} > 0 )); then
+            echo "::error::Update feed manifests were packaged: ${feeds[*]}"
+            exit 1
+          fi
+
+      - name: Collect installers
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p release-publish
+          files=(release/*.dmg release/*.exe release/*.AppImage)
+          (( ${#files[@]} > 0 )) || { echo "::error::No installer in release/"; ls -la release; exit 1; }
+          cp "${files[@]}" release-publish/
+
+      - name: Upload installers
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-publish/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  release:
+    name: Publish prerelease
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: desktop-*
+          path: assets
+          merge-multiple: true
+
+      - name: Create prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          (cd assets && sha256sum * > SHA256SUMS)
+          short="${SHA:0:7}"
+          cat > notes.md <<EOF
+          Unofficial fork build of T3 Code from \`$REF\` at $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$SHA.
+
+          Version \`$VERSION\`. Not an upstream release and not on any update channel: this build never updates itself. Install the next one by hand.
+
+          **Unsigned.** On macOS, right-click the app and choose **Open** the first time, or run \`xattr -dr com.apple.quarantine "/Applications/T3 Code.app"\`. On Windows, SmartScreen warns about an unknown publisher: choose **More info → Run anyway**.
+
+          It installs as **T3 Code** and shares its data with an upstream T3 Code install on the same machine.
+          EOF
+          gh release create "$TAG" assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "Fork nightly $VERSION ($short)" \
+            --notes-file notes.md \
+            --prerelease \
+            --latest=false
