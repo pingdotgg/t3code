@@ -8,7 +8,6 @@ import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -276,7 +275,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
            process.stdout.write(result);`,
       );
       const first = yield* Effect.forkChild(
-        Effect.exit(buildDesktopBundles(root, "0.0.43", false)).pipe(
+        buildDesktopBundles(root, "0.0.43", false).pipe(
           Effect.provideService(FileSystem.FileSystem, {
             ...fs,
             writeFileString: (filePath, contents, options) =>
@@ -306,8 +305,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.equal(Number(exitCode), 0, stderr);
         assert.equal(stdout, "DesktopBuildAlreadyRunningError");
       }).pipe(Effect.ensuring(Deferred.succeed(resume, undefined)));
-      const firstExit = yield* Fiber.join(first);
-      assert.isTrue(Exit.isSuccess(firstExit));
+      yield* Fiber.join(first);
       assert.equal(yield* fs.readFileString(path.join(root, "version.txt")), "0.0.43");
       for (const relativePath of releasePackageFiles) {
         assert.equal(yield* fs.readFileString(path.join(root, relativePath)), original);

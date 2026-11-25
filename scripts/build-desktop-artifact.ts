@@ -1846,7 +1846,8 @@ const buildDesktopBundlesUnlocked = Effect.fn("buildDesktopBundlesUnlocked")(fun
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
+  const node = yield* HostProcess.ExecutablePath;
+  const vitePlus = yield* path.fromFileUrl(new URL(import.meta.resolve("vite-plus/bin")));
   yield* Effect.acquireUseRelease(
     Effect.forEach(releasePackageFiles, (relativePath) =>
       Effect.gen(function* () {
@@ -1865,9 +1866,8 @@ const buildDesktopBundlesUnlocked = Effect.fn("buildDesktopBundlesUnlocked")(fun
         yield* updateReleasePackageVersions(appVersion, { rootDir: repoRoot });
         // The compiler must stop reading the aligned manifests before restoration.
         yield* runCommand(
-          ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          ChildProcess.make(node, [vitePlus, "run", "build:desktop"], {
             cwd: repoRoot,
-            shell: spawnCommand.shell,
             env: { APP_VERSION: appVersion },
             extendEnv: true,
           }),
