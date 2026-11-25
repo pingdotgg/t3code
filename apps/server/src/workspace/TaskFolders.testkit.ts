@@ -34,6 +34,7 @@ export interface TaskFoldersTestState {
   onApprovalRead?: Effect.Effect<void>;
   /** Runs after each listing of a repository's branches, in the fiber that asked. */
   onBranchListing?: Effect.Effect<void>;
+  /** Runs before each fetch of a repository's base from origin. */
   onFetchBase?: (cwd: string) => Effect.Effect<void>;
   /** Runs before each layout command starts, while it holds the project's turn. */
   onLayoutCommand?: Effect.Effect<void>;

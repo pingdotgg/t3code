@@ -905,6 +905,7 @@ const make = Effect.gen(function* () {
                     const current =
                       active.find(({ operation }) => operation === "fetch") ?? active[0];
                     const count = `${done} of ${total} ready`;
+                    // The project's own submodule step may already have marked checkout done.
                     return setupTracker.stage(threadId, "checkout", {
                       status: "running",
                       endedAt: null,
