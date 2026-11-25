@@ -7,3 +7,7 @@ export type MenuProps = Omit<ComponentProps<typeof MenuView>, "children" | "them
     readonly children: ReactNode;
     readonly className?: string;
   };
+
+export type MenuTriggerProps = Omit<MenuProps, "actions"> & {
+  readonly actions: MenuProps["actions"] | (() => MenuProps["actions"]);
+};

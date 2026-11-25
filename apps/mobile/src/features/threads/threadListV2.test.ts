@@ -39,7 +39,7 @@ import {
   layoutThreadListV2RowMenuActions,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SwipeActions,
-  resolveThreadListV2SnoozePresets,
+  createThreadListV2SnoozePresetReader,
   resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
@@ -48,6 +48,7 @@ import {
   threadHasUnseenCompletion,
   type ThreadListV2ListItem,
 } from "./threadListV2";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 const environmentId = EnvironmentId.make("environment-1");
 const decodeThreadShell = Schema.decodeUnknownSync(OrchestrationV2ThreadShell);
@@ -84,17 +85,46 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
   });
 });
 
-describe("resolveThreadListV2SnoozePresets", () => {
+describe("createThreadListV2SnoozePresetReader", () => {
+  it("formats presets only when read, once", () => {
+    let calls = 0;
+    const resolve = ((message, variables) => {
+      calls += 1;
+      return m(message, variables);
+    }) as MessageResolver;
+    const read = createThreadListV2SnoozePresetReader(
+      { secondary: "snooze", now: new Date(2026, 4, 8, 10).toISOString(), presets: undefined },
+      resolve,
+    );
+
+    expect(calls).toBe(0);
+    const presets = read();
+    const formatted = calls;
+    expect(formatted).toBeGreaterThan(0);
+    expect(read()).toBe(presets);
+    expect(calls).toBe(formatted);
+  });
+
+  it("reads no presets for a row without a snooze action", () => {
+    const read = createThreadListV2SnoozePresetReader({
+      secondary: null,
+      now: new Date(2026, 4, 8, 10).toISOString(),
+      presets: undefined,
+    });
+
+    expect(read()).toEqual([]);
+  });
+
   it("reads preset times from the list minute, not the clock at first render", () => {
     using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
     vi.useFakeTimers({ now: new Date(2026, 4, 8, 10) });
     const laterMinute = new Date(2026, 4, 8, 19, 15).toISOString();
 
-    const presets = resolveThreadListV2SnoozePresets({
+    const presets = createThreadListV2SnoozePresetReader({
       secondary: "snooze",
       now: laterMinute,
       presets: undefined,
-    });
+    })();
 
     expect(presets.find((preset) => preset.id === "after:60")?.snoozedUntil).toBe(
       new Date(2026, 4, 8, 20, 15).toISOString(),

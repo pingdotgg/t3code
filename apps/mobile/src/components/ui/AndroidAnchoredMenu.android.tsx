@@ -41,7 +41,7 @@ type OverlayFrame = {
 };
 
 export type AndroidAnchoredMenuProps = {
-  readonly actions: readonly MenuAction[];
+  readonly actions: readonly MenuAction[] | (() => readonly MenuAction[]);
   readonly title?: string;
   readonly onPressAction?: MenuComponentProps["onPressAction"];
   readonly accessibilityLabel?: AccessibilityProps["accessibilityLabel"];
@@ -199,9 +199,13 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   });
 
   const parent = path[path.length - 1] ?? null;
-  const levelActions = (parent?.subactions ?? props.actions).filter(
-    (action) => !(action.attributes?.hidden ?? false),
-  );
+  const levelActions =
+    anchor === null
+      ? []
+      : (
+          parent?.subactions ??
+          (typeof props.actions === "function" ? props.actions() : props.actions)
+        ).filter((action) => !(action.attributes?.hidden ?? false));
 
   const local =
     anchor === null || overlay === null

@@ -1,9 +1,9 @@
 import * as Haptics from "expo-haptics";
 import { cloneElement, isValidElement, type ReactElement } from "react";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu.android";
-import type { MenuProps } from "./Menu.types";
+import type { MenuTriggerProps } from "./Menu.types";
 
-export function Menu(props: MenuProps) {
+export function Menu(props: MenuTriggerProps) {
   if (props.shouldOpenOnLongPress && isValidElement(props.children)) {
     const child = props.children as ReactElement<{ onLongPress?: () => void }>;
     return (

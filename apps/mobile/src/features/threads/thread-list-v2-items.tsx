@@ -81,7 +81,7 @@ import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2SnoozeMenuSelection,
-  resolveThreadListV2SnoozePresets,
+  createThreadListV2SnoozePresetReader,
   threadHasUnseenCompletion,
   resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
@@ -990,24 +990,29 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
     snoozed: snoozedRow,
   });
-  const snoozePresets = resolveThreadListV2SnoozePresets(
-    {
-      secondary: swipeActions.secondary,
-      now: props.snoozePresetMinute || snoozeGateNow,
-      presets: props.snoozePresets,
-    },
-    m,
+  const snoozePresetMinute = props.snoozePresetMinute || snoozeGateNow;
+  const readSnoozePresets = useMemo(
+    () =>
+      createThreadListV2SnoozePresetReader(
+        {
+          secondary: swipeActions.secondary,
+          now: snoozePresetMinute,
+          presets: props.snoozePresets,
+        },
+        m,
+      ),
+    [swipeActions.secondary, snoozePresetMinute, props.snoozePresets, m],
   );
-  const snoozePresetActions = useMemo<MenuAction[]>(
-    () => [
-      ...snoozePresets.map((preset) => ({
+  const getSnoozePresetActions = useCallback(
+    (): MenuAction[] => [
+      ...readSnoozePresets().map((preset) => ({
         id: `snooze:${preset.id}`,
         title: preset.label,
         subtitle: preset.whenLabel,
       })),
       { id: "snooze:custom", title: gt("Custom…", { $context: "custom snooze time" }) },
     ],
-    [gt, snoozePresets],
+    [gt, readSnoozePresets],
   );
   const reorderMenuItems = useMemo<MenuAction[]>(
     () =>
@@ -1109,7 +1114,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       isRegeneratingTitle,
     ],
   );
-  const menuActions = useMemo<MenuAction[]>(() => {
+  // Android builds the row menu only when it opens; iOS still reads it on render.
+  const getMenuActions = useCallback((): MenuAction[] => {
     const nested = Platform.OS === "ios";
     const localized = (action: MenuAction): MenuAction => ({ ...action, title: m(action.title) });
     const direct: MenuAction[] = [
@@ -1188,7 +1194,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   id: "snooze",
                   title: gt("Snooze", { $context: "verb, thread action" }),
                   image: "clock",
-                  subactions: snoozePresetActions,
+                  subactions: getSnoozePresetActions(),
                 },
               ]
             : []),
@@ -1211,7 +1217,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     pinMenuItems,
     props.settlementSupported,
     reorderMenuItems,
-    snoozePresetActions,
+    getSnoozePresetActions,
     snoozedRow,
     gt,
     m,
@@ -1269,7 +1275,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       }
       const snoozeSelection = resolveThreadListV2SnoozeMenuSelection({
         event: nativeEvent.event,
-        displayedPresets: snoozePresets,
+        displayedPresets: readSnoozePresets(),
         now: new Date(),
         presets: props.snoozePresets,
       });
@@ -1303,7 +1309,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnsnooze,
       markThreadUnread,
       setCustomSnoozeOpen,
-      snoozePresets,
+      readSnoozePresets,
       props.snoozePresets,
     ],
   );
@@ -1362,14 +1368,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             icon: "clock" as const,
             label: gt("Snooze", { $context: "verb, thread action" }),
             menu: {
-              actions: snoozePresetActions,
+              actions: getSnoozePresetActions,
               onPressAction: handleMenuAction,
               title: gt("Snooze until"),
             },
             onPress: () => undefined,
           }
         : null,
-    [gt, handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
+    [gt, handleMenuAction, getSnoozePresetActions, swipeActions.secondary, thread.title],
   );
   const canSwipe =
     canOperateThread || (triageOnly && TRIAGE_MENU_ACTION_IDS.has(swipeActions.primary));
@@ -1803,8 +1809,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             accessibilityLabel={rowAccessibilityLabel}
             actions={
               triageOnly
-                ? menuActions.filter((action) => TRIAGE_MENU_ACTION_IDS.has(action.id ?? ""))
-                : menuActions
+                ? () =>
+                    getMenuActions().filter((action) => TRIAGE_MENU_ACTION_IDS.has(action.id ?? ""))
+                : getMenuActions
             }
             onPressAction={handleMenuAction}
             shouldOpenOnLongPress

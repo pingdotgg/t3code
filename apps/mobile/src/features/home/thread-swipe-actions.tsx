@@ -72,7 +72,7 @@ interface ThreadSwipeAction {
   readonly label: string;
   readonly destructive?: boolean;
   readonly menu?: {
-    readonly actions: MenuAction[];
+    readonly actions: MenuAction[] | (() => MenuAction[]);
     readonly onPressAction: NonNullable<ComponentProps<typeof Menu>["onPressAction"]>;
     readonly title?: string;
   };
