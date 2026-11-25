@@ -750,7 +750,7 @@ function markdownExcerpt(body: string): string | null {
   // Never end on a lone high surrogate.
   const last = text.charCodeAt(end - 1);
   if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-  return `${text.slice(0, end)}…`;
+  return `${text.slice(0, end).trimEnd()}…`;
 }
 
 /** The comment or commit a pull request link names, for its hover card; null for the PR itself. */
@@ -1750,4 +1750,37 @@ export function resolveDisplayedPullRequestDetail(input: {
   return link !== undefined && (link.authority ?? link.host) === input.reference.host.toLowerCase()
     ? input.cached
     : null;
+}
+
+const OBSERVATION_STAMPS = new Set(["observedAt", "readAt"]);
+
+/**
+ * Whether two reads of a pull request differ only in when they were observed. Every refresh
+ * restamps those, so the panel keeps the detail it shows instead of re-rendering its whole tree.
+ */
+export function samePullRequestReadExceptStamps(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) {
+    return false;
+  }
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((item, index) => samePullRequestReadExceptStamps(item, right[index]))
+    );
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const keys = (record: Record<string, unknown>) =>
+    Object.keys(record).filter((key) => !OBSERVATION_STAMPS.has(key));
+  const leftKeys = keys(leftRecord);
+  return (
+    leftKeys.length === keys(rightRecord).length &&
+    leftKeys.every(
+      (key) =>
+        Object.hasOwn(rightRecord, key) &&
+        samePullRequestReadExceptStamps(leftRecord[key], rightRecord[key]),
+    )
+  );
 }

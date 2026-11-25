@@ -1,5 +1,6 @@
 // A fake GitHub Enterprise host for the server-metrics soak: the GitHub API the server polls for a
-// web client, and a git remote it fetches from, both over HTTPS on loopback.
+// web client, and a git remote it fetches from, both over HTTPS on loopback. client-metrics also
+// gives the branch PR a body, files, commits and comments, so its panel renders real content.
 // @effect-diagnostics nodeBuiltinImport:off - NodeHttpServer takes a node:http2 server; the proxy is raw.
 import * as NodeHttp from "node:http";
 import * as NodeHttp2 from "node:http2";
@@ -23,7 +24,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 
-import { run, ScenarioError } from "./scenarios/shell.ts";
+import { run, ScenarioError } from "../../scenarios/shell.ts";
 
 const OWNER = "bench";
 const REPO = "project";
@@ -51,6 +52,7 @@ const GraphQlRequest = Schema.Struct({
 const decodeGraphQl = Schema.decodeUnknownEffect(Schema.fromJsonString(GraphQlRequest));
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const sum = (values: ReadonlyArray<number>) => values.reduce((total, value) => total + value, 0);
 /** FNV-1a, enough to tell bodies apart. */
 const hash = (text: string) => {
   let value = 0x811c9dc5;
@@ -70,8 +72,27 @@ interface FakePullRequest {
   oid: string;
 }
 
+export interface FakePullRequestFile {
+  readonly path: string;
+  readonly additions: number;
+  readonly deletions: number;
+  /** A unified diff hunk, as GitHub's REST files list returns it. */
+  readonly patch: string;
+}
+
+/** What the branch PR shows when its panel opens; without it, those reads answer 404. */
+export interface FakePullRequestDetail {
+  readonly body: string;
+  readonly files: ReadonlyArray<FakePullRequestFile>;
+  readonly comments: ReadonlyArray<string>;
+  readonly commits: number;
+}
+
 /** Serves the fake host until the scope closes. */
-export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(function* () {
+export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(function* (
+  options: { readonly detail?: FakePullRequestDetail } = {},
+) {
+  const detail = options.detail;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-server-metrics-forge-" });
@@ -117,13 +138,14 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
       DateTime.formatIso(DateTime.makeUnsafe((minute - offsetMinutes) * 60_000));
     // The branch PR's CI reruns every other minute, so checks and their rollup keep changing.
     const running = pr.number === 1 && minute % 2 === 0;
+    const detailed = pr.number === 1 ? detail : undefined;
     return {
       __typename: "PullRequest",
       id: `PR_bench_${pr.number}`,
       number: pr.number,
       title: `Bench change ${pr.number}`,
       url: `https://${host}/${OWNER}/${REPO}/pull/${pr.number}`,
-      body: "A pull request the soak polls.",
+      body: detailed?.body ?? "A pull request the soak polls.",
       baseRefName: "main",
       headRefName: pr.head,
       headRefOid: pr.oid,
@@ -132,9 +154,9 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
       mergeable: "MERGEABLE",
       mergeStateStatus: running ? "BLOCKED" : "CLEAN",
       reviewDecision: null,
-      additions: 1,
-      deletions: 0,
-      changedFiles: 1,
+      additions: detailed ? sum(detailed.files.map((file) => file.additions)) : 1,
+      deletions: detailed ? sum(detailed.files.map((file) => file.deletions)) : 0,
+      changedFiles: detailed?.files.length ?? 1,
       createdAt: at(600 + pr.number),
       updatedAt: at(0),
       mergedAt: null,
@@ -209,6 +231,52 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
     pageInfo: { hasNextPage: false, endCursor: null },
     nodes,
   });
+  /** The detailed PR's activity: commits, comments and one approving review. */
+  const activity = (pr: FakePullRequest, now: number, value: FakePullRequestDetail) => {
+    const at = (offsetMinutes: number) =>
+      DateTime.formatIso(DateTime.makeUnsafe(now - offsetMinutes * 60_000));
+    const url = `https://${host}/${OWNER}/${REPO}/pull/${pr.number}`;
+    return {
+      author: actor,
+      commits: {
+        nodes: Array.from({ length: value.commits }, (_, index) => ({
+          commit: {
+            id: `C_bench_${index}`,
+            oid: index === value.commits - 1 ? pr.oid : index.toString(16).padStart(40, "a"),
+            messageHeadline: `Bench commit ${index + 1}: move the next helper`,
+            committedDate: at(500 - index),
+            parents: { totalCount: 1 },
+            authors: {
+              nodes: [{ name: "Bench", email: "bench@t3.codes", user: { login: OWNER } }],
+            },
+          },
+        })),
+      },
+      comments: page(
+        value.comments.map((body, index) => ({
+          id: `IC_bench_${index}`,
+          body,
+          createdAt: at(400 - index),
+          lastEditedAt: null,
+          url: `${url}#issuecomment-${index}`,
+          isMinimized: false,
+          author: actor,
+        })),
+      ),
+      reviews: page([
+        {
+          id: "PRR_bench_0",
+          body: "Looks good once the last helper moves.",
+          state: "APPROVED",
+          submittedAt: at(10),
+          lastEditedAt: null,
+          url: `${url}#pullrequestreview-0`,
+          isMinimized: false,
+          author: actor,
+        },
+      ]),
+    };
+  };
 
   /** The `data` of a GraphQL answer, each aliased slice (`_0_repository`) answered on its own. */
   const answer = (
@@ -248,6 +316,26 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
         case "PullRequestCore":
           data[`${prefix}repository`] = { ...repositorySettings, pullRequest: single };
           break;
+        case "PullRequestActivity":
+          if (detail === undefined || byNumber?.number !== 1) return undefined;
+          data[`${prefix}repository`] = { pullRequest: activity(byNumber, now, detail) };
+          break;
+        case "PullRequestFileStats":
+        case "PullRequestFilesViewed":
+          if (detail === undefined || byNumber?.number !== 1) return undefined;
+          data[`${prefix}repository`] = {
+            pullRequest: {
+              files: page(
+                detail.files.map((file) => ({
+                  path: file.path,
+                  additions: file.additions,
+                  deletions: file.deletions,
+                  viewerViewedState: "UNVIEWED",
+                })),
+              ),
+            },
+          };
+          break;
         case "RoutingIdentityViewer":
           data[`${prefix}viewer`] = { databaseId: 1, login: OWNER };
           break;
@@ -264,7 +352,7 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
   };
 
   /** REST answers by path under /api/v3; the body moves each minute where real polling sees change. */
-  const restAnswer = (path: string, now: number): unknown => {
+  const restAnswer = (path: string, search: URLSearchParams, now: number): unknown => {
     const minute = Math.floor(now / 60_000);
     const repository = `repos/${OWNER}/${REPO}`;
     if (path === "user")
@@ -281,6 +369,28 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
         owner: { login: OWNER, id: 1, type: "User" },
         permissions: { admin: true, maintain: true, push: true, triage: true, pull: true },
       };
+    }
+    const branchPullRequest = pullRequests[0];
+    if (detail !== undefined && branchPullRequest !== undefined) {
+      if (path === `${repository}/pulls/1`) {
+        return {
+          number: 1,
+          base: { sha: publishedMain ?? "0".repeat(40), ref: "main" },
+          head: { sha: branchPullRequest.oid, ref: branchPullRequest.head },
+        };
+      }
+      if (path === `${repository}/pulls/1/files`) {
+        // One page holds every file; the next page ends the listing.
+        if (Number(search.get("page") ?? "1") > 1) return [];
+        return detail.files.map((file) => ({
+          filename: file.path,
+          status: "modified",
+          additions: file.additions,
+          deletions: file.deletions,
+          changes: file.additions + file.deletions,
+          patch: file.patch,
+        }));
+      }
     }
     if (path === `${repository}/actions/runs`) {
       return {
@@ -333,9 +443,23 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
         data === undefined
           ? HttpServerResponse.jsonUnsafe({ message: "Not Found" }, { status: 404 })
           : HttpServerResponse.jsonUnsafe({ data });
+    } else if (
+      detail !== undefined &&
+      url.pathname === `/api/v3/repos/${OWNER}/${REPO}/pulls/1` &&
+      (request.headers.accept ?? "").includes("application/vnd.github.diff")
+    ) {
+      // GitHub refuses large diffs with 406, which sends the provider to the paged files list.
+      response = HttpServerResponse.jsonUnsafe(
+        { message: "Sorry, the diff exceeded the maximum number of files (300)." },
+        { status: 406 },
+      );
     } else {
       const body = url.pathname.startsWith("/api/v3/")
-        ? restAnswer(url.pathname.slice("/api/v3/".length), yield* Clock.currentTimeMillis)
+        ? restAnswer(
+            url.pathname.slice("/api/v3/".length),
+            url.searchParams,
+            yield* Clock.currentTimeMillis,
+          )
         : undefined;
       if (body === undefined) {
         response = HttpServerResponse.jsonUnsafe(
@@ -385,6 +509,8 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
   });
   proxy.on("connect", (request: NodeHttp.IncomingMessage, client: NodeNet.Socket) => {
     if (request.url !== `${HOST}:443`) {
+      // A refused client may reset before the 403 lands; unhandled, that crashes the harness.
+      client.on("error", () => client.destroy());
       client.end("HTTP/1.1 403 Forbidden\r\n\r\n");
       return;
     }

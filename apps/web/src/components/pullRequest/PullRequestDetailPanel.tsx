@@ -87,7 +87,6 @@ import { useUiStateStore } from "~/uiStateStore";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import {
   PullRequestChecksStatusLine,
@@ -97,7 +96,13 @@ import {
 } from "./PullRequestDetailLayout";
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
 import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
-import { pullRequestRefKey, usePullRequestDetail } from "./usePullRequestDetail";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
+import {
+  internPullRequestReference,
+  pullRequestRefKey,
+  usePullRequestDetail,
+} from "./usePullRequestDetail";
 import { PullRequestActionsMenu } from "./PullRequestActionsMenu";
 import {
   PullRequestApproveWorkflowsButton,
@@ -298,15 +303,21 @@ function resolvePullRequestReference(
       };
 }
 
+// Takes the fields, not the detail: the detail is rebuilt whenever any of its queries changes
+// state, and a new context value re-renders every markdown block in the panel.
 function pullRequestMarkdownContext(
-  detail: Pick<PullRequestDetail, "provider" | "url" | "repository"> | null,
+  provider: string | null,
+  url: string | null,
+  repository: string | null,
   threadRef: ScopedThreadRef | null,
 ) {
   return {
-    extensions: pullRequestMarkdownExtensions(detail),
-    lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
+    extensions: pullRequestMarkdownExtensions(
+      provider === null || url === null ? null : { provider, url },
+    ),
+    lineBreaks: sourceControlClients.find(provider ?? "")?.hardLineBreaks ?? false,
     threadRef,
-    repository: detail?.repository ?? null,
+    repository,
   };
 }
 
@@ -404,10 +415,8 @@ export function PullRequestDetailPanel({
   );
   const repositoryIdentity = project?.repositoryIdentity;
   const supportsThreadPullRequests = environmentConfigs.get(environmentId) !== undefined;
-  const reference = resolvePullRequestReference(
-    requestedReference,
-    repositoryIdentity,
-    supportsThreadPullRequests,
+  const reference = internPullRequestReference(
+    resolvePullRequestReference(requestedReference, repositoryIdentity, supportsThreadPullRequests),
   );
   const loadingCheckoutCommand = loadingPullRequestCheckoutCommand(reference, repositoryIdentity);
   const unavailableHostUrl = projectChangeRequestUrl(
@@ -450,6 +459,7 @@ export function PullRequestDetailPanel({
     sharedSummary,
     coreDetail,
     detail,
+    observedAt,
   } = usePullRequestDetail(environmentId, reference, matchingListEntry);
   const revealAnchor = parsePullRequestAnchor(revealUrl);
   const [selectedTab, setTab] = useState<PullRequestDetailTab>(
@@ -661,7 +671,12 @@ export function PullRequestDetailPanel({
       : (sourceControlClients.parseChangeRequestUrl(detail.url)?.link.repositoryUrl ?? null);
   const hostClient = sourceControlClients.get(detail?.provider);
   const openOnHostText = openOnHostLabel(hostClient, resolve);
-  const markdownContext = pullRequestMarkdownContext(detail, threadRef);
+  const markdownContext = pullRequestMarkdownContext(
+    detail?.provider ?? null,
+    detail?.url ?? null,
+    detail?.repository ?? null,
+    threadRef,
+  );
   const authorProfileUrl =
     detail?.author && repositoryUrl !== null
       ? hostClient.authorProfileUrl(detail.author.login, repositoryUrl)
@@ -712,10 +727,15 @@ export function PullRequestDetailPanel({
       : gt("Checking stack membership…");
   const activityPending = activityQuery.isPending && activity === null;
   const activityError = activity === null ? activityQuery.error : null;
+  // Reads only the refresh functions: the query views are new whenever a read starts or settles,
+  // and this goes to every comment's reaction bar and resolve button.
+  const { refresh: refreshDetailQuery } = detailQuery;
+  const { refresh: refreshActivityQuery } = activityQuery;
+  const { refresh: refreshNativeStack } = nativeStackQuery;
   const refreshDetail = () => {
-    detailQuery.refresh();
-    activityQuery.refresh();
-    nativeStackQuery.refresh();
+    refreshDetailQuery();
+    refreshActivityQuery();
+    refreshNativeStack();
   };
   const [refreshToken, setRefreshToken] = useState(0);
   const seenHeadKey = `${environmentId}:${pullRequestKey}`;
@@ -1546,6 +1566,13 @@ export function PullRequestDetailPanel({
     />
   );
 
+  // The summary renders every comment; these change with every query state, and a new handler
+  // would re-render that whole tree. They are only called from events.
+  const settleRevealStable = useStableCallback(settleReveal);
+  const startFixFindingStable = useStableCallback(startFixFinding);
+  const addCommentToChatStable = useStableCallback(addCommentToChat);
+  const refreshFromHostStable = useStableCallback(refreshFromHost);
+
   if (detailQuery.isPending && !detail) {
     return (
       <PullRequestDetailGhost
@@ -1561,12 +1588,12 @@ export function PullRequestDetailPanel({
         {...(onClose ? { onClose } : {})}
         actions={
           handoffSummary ? (
-            <TooltipProvider delay={150} closeDelay={150} timeout={400}>
+            <>
               {handoffSummary.state === "open" && handoffSummary.mergeability === "conflicting"
                 ? resolveConflictsControl
                 : null}
               {checkoutControl}
-            </TooltipProvider>
+            </>
           ) : undefined
         }
       />
@@ -1604,7 +1631,7 @@ export function PullRequestDetailPanel({
         />
         <div className="mr-4 flex h-7 shrink-0 select-none items-center justify-end gap-1">
           {detail ? (
-            <TooltipProvider delay={150} closeDelay={150} timeout={400}>
+            <>
               {detail.visibility === "private" ? <PullRequestPrivateBadge /> : null}
               {context === "page" ? (
                 <PullRequestThreadLinks
@@ -1667,6 +1694,7 @@ export function PullRequestDetailPanel({
                 reference={reference}
                 pullRequestKey={pullRequestKey}
                 detail={detail}
+                observedAt={observedAt}
                 terminology={terminology}
                 threadRef={threadRef}
                 linkThreadRef={
@@ -1709,7 +1737,7 @@ export function PullRequestDetailPanel({
                 openOnHostText={openOnHostText}
                 copyReference={copyReference}
               />
-            </TooltipProvider>
+            </>
           ) : null}
           {onClose ? (
             <Button
@@ -1752,6 +1780,7 @@ export function PullRequestDetailPanel({
                     <PullRequestActorLabel
                       actor={detail.author}
                       profileUrl={authorProfileUrl}
+                      threadRef={threadRef}
                       variant="avatar"
                       className="shrink-0"
                     />
@@ -1776,16 +1805,14 @@ export function PullRequestDetailPanel({
                       })}
                       className="size-3 shrink-0 opacity-60"
                     />
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <code className="flex min-w-0 flex-1">
-                            <MiddleTruncate value={detail.headBranch} showTitle={false} />
-                          </code>
-                        }
-                      />
-                      <TooltipPopup side="top">{detail.headBranch}</TooltipPopup>
-                    </Tooltip>
+                    <SharedTooltipTrigger
+                      render={
+                        <code className="flex min-w-0 flex-1">
+                          <MiddleTruncate value={detail.headBranch} showTitle={false} />
+                        </code>
+                      }
+                      label={detail.headBranch}
+                    />
                   </span>
                   <span className="ml-auto inline-flex shrink-0 items-baseline justify-end gap-2 text-2xs">
                     <span
@@ -1847,7 +1874,11 @@ export function PullRequestDetailPanel({
                   />
                 }
                 author={
-                  <PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />
+                  <PullRequestActorLabel
+                    actor={detail.author}
+                    profileUrl={authorProfileUrl}
+                    threadRef={threadRef}
+                  />
                 }
                 updated={
                   <span>
@@ -2137,6 +2168,7 @@ export function PullRequestDetailPanel({
               ? {
                   host: {
                     url: unavailableHostUrl,
+                    threadRef,
                     openLabel: openOnHostLabel(
                       sourceControlClients.get(repositoryIdentity?.provider),
                       resolve,
@@ -2152,21 +2184,22 @@ export function PullRequestDetailPanel({
                 <PullRequestSummaryTab
                   scrollerRef={scrollerRefs.summary}
                   revealUrl={tab === "summary" ? revealUrl : undefined}
-                  onRevealSettled={settleReveal}
+                  onRevealSettled={settleRevealStable}
                   environmentId={environmentId}
                   threadRef={threadRef}
                   reference={reference}
                   detail={detail}
+                  observedAt={observedAt}
                   activityPending={activityPending}
                   checksStale={checksStale}
                   activityError={activityError}
                   pendingFinding={handoff}
                   fixFindingLabel={handoffLabels.fixFinding}
                   fixCheckLabel={handoffLabels.fixCheck}
-                  {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
-                  {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
+                  {...(canFixFindings ? { onFixFinding: startFixFindingStable } : {})}
+                  {...(attachTarget === null ? {} : { onAddToChat: addCommentToChatStable })}
                   onRefresh={refreshDetail}
-                  onRefreshChecks={refreshFromHost}
+                  onRefreshChecks={refreshFromHostStable}
                 />
               </div>
             ) : null}
@@ -2251,6 +2284,7 @@ export function PullRequestDetailPanel({
                     scrollerRef={scrollerRefs.code}
                     onAddToAgentSelection={addSelectionToAgent}
                     environmentId={environmentId}
+                    threadRef={threadRef}
                     reference={reference}
                     detail={detail}
                     selectedCommitOid={selectedCodeCommitOid}

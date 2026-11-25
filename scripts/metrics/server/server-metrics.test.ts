@@ -1,16 +1,12 @@
-import { it as effectIt } from "@effect/vitest";
-import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import { loadWarnings } from "../core/report.ts";
 import {
   compareMetrics,
-  competingBetween,
   activityRenewalMissed,
-  describeFailure,
   heapGrowth,
   heapRetainers,
-  loadWarnings,
   nextActivityReport,
   noiseReport,
   noisePairProblem,
@@ -22,8 +18,7 @@ import {
   pathSpellings,
   ServerMetrics,
   slope,
-} from "./server-metrics-report.ts";
-import { runAbRounds } from "./server-metrics.ts";
+} from "./report.ts";
 
 const decodeMetrics = Schema.decodeSync(ServerMetrics);
 
@@ -259,17 +254,6 @@ describe("noisePairProblem", () => {
   });
 });
 
-describe("competingBetween", () => {
-  it.each([
-    ["a process that kept running", [["10:500", 900]], [["10:500", 960]], 60],
-    ["a new process, counted whole", [], [["11:700", 30]], 30],
-    ["a reused pid is a new process", [["10:500", 900]], [["10:800", 300]], 300],
-    ["a process that exited is lost", [["10:500", 900]], [], 0],
-  ] as const)("%s", (_name, before, after, seconds) => {
-    expect(competingBetween(new Map(before), new Map(after))).toBe(seconds);
-  });
-});
-
 describe("loadWarnings", () => {
   const loaded = (cpus: number | null, ...machines: Array<[number | null, number | null]>) =>
     ({
@@ -411,26 +395,6 @@ describe("compareMetrics on the busy shell snapshot", () => {
     ["40 KB larger, past it", busyRun(190, 140), ["busy.shellKB"]],
   ])("%s", (_name, after, regressed) => {
     expect(compareMetrics(busyRun(190, 100), after).regressed).toEqual(regressed);
-  });
-});
-
-describe("describeFailure", () => {
-  it.each([
-    ["a plain error", new Error("boom"), "boom"],
-    [
-      "an RPC error wrapping the server's",
-      new Error("RpcClientError", { cause: new Error("Command x was already handled") }),
-      "RpcClientError: Command x was already handled",
-    ],
-    ["a tagged error with no message", { _tag: "TimeoutError" }, "TimeoutError"],
-    [
-      "a cause that repeats its wrapper",
-      new Error("lost: gone", { cause: new Error("gone") }),
-      "lost: gone",
-    ],
-    ["a string", "exit 1", "exit 1"],
-  ])("%s", (_name, error, expected) => {
-    expect(describeFailure(error)).toBe(expected);
   });
 });
 
@@ -697,22 +661,4 @@ describe("activityRenewalMissed", () => {
   ])("%s", (_name, sentAt, repliedAt, missed) => {
     expect(activityRenewalMissed(0, sentAt, repliedAt)).toBe(missed);
   });
-});
-
-describe("runAbRounds", () => {
-  effectIt.effect("keeps the runs that finished when a later run fails", () =>
-    Effect.gen(function* () {
-      const files: Record<0 | 1, ReadonlyArray<string>> = { 0: [], 1: [] };
-      const failure = yield* Effect.flip(
-        runAbRounds({
-          rounds: 3,
-          outDir: "out",
-          runSide: (side) => (side === 0 ? Effect.succeed("a1") : Effect.fail("b crashed")),
-          save: (side, runs) => Effect.sync(() => (files[side] = [...runs])),
-        }),
-      );
-      expect(failure).toBe("b crashed");
-      expect(files).toEqual({ 0: ["a1"], 1: [] });
-    }),
-  );
 });

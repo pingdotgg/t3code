@@ -1,5 +1,7 @@
-// The pure half of scripts/server-metrics.ts: the JSON it writes, and how two of them compare.
+// The pure half of server-metrics.ts: the JSON it writes, and how two of them compare.
 import * as Schema from "effect/Schema";
+
+import { bootstrapMedianDifference, loadWarnings, MachineState, round } from "../core/report.ts";
 
 const Window = Schema.Struct({
   cpuPct: Schema.Number,
@@ -40,15 +42,6 @@ const Soak = Schema.Struct({
   /** Processes below the server, so agent or git children that outlive their thread show. */
   childProcessesPerHour: Schema.optional(Schema.Number),
 });
-
-const MachineState = Schema.Struct({
-  /** The highest 1-minute load average read through the run; none on Windows. */
-  load1: Schema.NullOr(Schema.Number),
-  /** Cores other node, T3 and agent processes kept busy over the run; Linux only. */
-  otherCpuCores: Schema.NullOr(Schema.Number),
-  minutes: Schema.Number,
-});
-export type MachineState = typeof MachineState.Type;
 
 const WorkingPoint = Schema.Struct({
   ...Window.fields,
@@ -183,8 +176,6 @@ export const ServerMetrics = Schema.Struct({
   soakRetainerGrowth: Schema.optional(Schema.Array(RetainerGrowth)),
 });
 export type ServerMetrics = typeof ServerMetrics.Type;
-
-export const round = (value: number, digits = 1) => Math.round(value * 10 ** digits) / 10 ** digits;
 
 /** `ps -o time=` CPU time, `[[dd-]hh:]mm:ss[.ss]`, in seconds; NaN for anything else. */
 export function parsePsCpuTime(text: string) {
@@ -367,25 +358,6 @@ export function noiseRule(metric: string, rules: ReadonlyArray<NoiseRule> = NOIS
   return rules.find((rule) => rule.pattern.test(metric)) ?? { floor: 0, gate: true };
 }
 
-/** An error and the errors it wraps as one line, outermost first, repeats left out. */
-export function describeFailure(error: unknown): string {
-  const parts: string[] = [];
-  const seen = new Set<unknown>();
-  for (let at = error; at !== undefined && at !== null && !seen.has(at);) {
-    seen.add(at);
-    if (typeof at !== "object") {
-      parts.push(String(at));
-      break;
-    }
-    const tag = "_tag" in at && typeof at._tag === "string" ? at._tag : undefined;
-    const message = "message" in at && typeof at.message === "string" ? at.message.trim() : "";
-    const text = message || tag || String(at);
-    if (!parts.some((part) => part.includes(text))) parts.push(text);
-    at = "cause" in at ? at.cause : undefined;
-  }
-  return parts.join(": ");
-}
-
 /** Why two files cannot be compared at all: a quick run measures shorter windows than a full one. */
 export function profileMismatch(before: ServerMetrics, after: ServerMetrics) {
   const profile = (metrics: ServerMetrics) => metrics.meta.profile ?? "full";
@@ -412,56 +384,11 @@ const isMetric = (metric: string) =>
     metric.startsWith("scaling.points")
   );
 
-/**
- * A run is loaded when other node, T3 and agent processes kept this share of the cores busy, or,
- * where that is unknown, when the 1-minute load passed this much per CPU. The load counts the
- * run's own agents too, so it is only the fallback.
- */
-export const HEAVY_LOAD_PER_CPU = 0.75;
-export const HEAVY_OTHER_CPU_SHARE = 0.25;
-
-/** One line per side whose runs shared the machine with heavy load, so its numbers are suspect. */
-export function loadWarnings(side: string, metrics: ServerMetrics) {
-  const cpus = typeof metrics.meta.cpus === "number" ? metrics.meta.cpus : null;
-  if (cpus === null) return [];
-  const loaded = metrics.runs.flatMap(({ machine }) =>
-    machine &&
-    (machine.otherCpuCores === null
-      ? (machine.load1 ?? 0) >= cpus * HEAVY_LOAD_PER_CPU
-      : machine.otherCpuCores >= cpus * HEAVY_OTHER_CPU_SHARE)
-      ? [machine]
-      : [],
-  );
-  if (loaded.length === 0) return [];
-  const worstLoad = Math.max(...loaded.map(({ load1 }) => load1 ?? 0));
-  const worstOther = Math.max(...loaded.map(({ otherCpuCores }) => otherCpuCores ?? 0));
-  return [
-    `${side} ran under heavy load in ${loaded.length} of ${metrics.runs.length} runs (load up to ${worstLoad} on ${cpus} CPUs, other node/T3/agent processes up to ${worstOther} cores); rerun on a quieter machine before trusting a change`,
-  ];
-}
-
 const median = (values: ReadonlyArray<number>) => {
   const sorted = values.toSorted((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
 };
-
-/** 95% bootstrap interval of median(b) - median(a), with a fixed seed so reruns agree. */
-export function bootstrapMedianDifference(a: ReadonlyArray<number>, b: ReadonlyArray<number>) {
-  let seed = 0x5eed;
-  const random = () => {
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
-  };
-  const resample = (values: ReadonlyArray<number>) =>
-    median(Array.from(values, () => values[Math.floor(random() * values.length)]!));
-  const differences = Array.from({ length: 2_000 }, () => resample(b) - resample(a)).toSorted(
-    (x, y) => x - y,
-  );
-  return [differences[49]!, differences[1_949]!] as const;
-}
 
 /**
  * False for a wakeup count where only one side had the delay sampler: wakeups include the
@@ -480,14 +407,6 @@ function sameWakeupMethod(
         ? metric.slice(0, -"wakeupsPerSec".length)
         : "";
   return !window || a.has(`${window}loopSamples`) === b.has(`${window}loopSamples`);
-}
-
-/** CPU seconds spent between two reads keyed by pid and start time; a process that exited is lost. */
-export function competingBetween(
-  before: ReadonlyMap<string, number>,
-  after: ReadonlyMap<string, number>,
-) {
-  return [...after].reduce((total, [key, seconds]) => total + seconds - (before.get(key) ?? 0), 0);
 }
 
 /** Why a directory is not an A/A pair: its files must record one and the same commit. */
