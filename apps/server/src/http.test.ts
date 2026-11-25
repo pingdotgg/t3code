@@ -1023,8 +1023,63 @@ describe("downloadContentDisposition", () => {
   });
 });
 
+const exportThroughOtlpProxy = Effect.fn("HttpTest.exportThroughOtlpProxy")(function* (
+  otlpTracesUrl: string,
+) {
+  const logs: Array<string> = [];
+  const captureLogger = Logger.make((options) => {
+    logs.push(JSON.stringify(options.message));
+  });
+  const baseConfig = yield* ServerConfig.ServerConfig;
+  const config = ServerConfig.make({
+    ...baseConfig,
+    otlpTracesUrl,
+    otlpTracesExport: { ...baseConfig.otlpTracesExport, headers: { "x-api-key": "header-secret" } },
+  });
+  const authLayer = Layer.succeed(
+    EnvironmentAuth.EnvironmentAuth,
+    EnvironmentAuth.EnvironmentAuth.of({
+      authenticateHttpRequest: () =>
+        Effect.succeed({
+          sessionId: "sess-1",
+          method: "bearer-session-token",
+          clientType: "web",
+          role: "owner",
+          scopes: ["orchestration:operate"],
+        } as unknown as EnvironmentAuth.AuthenticatedSession),
+    } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
+  );
+  const services = yield* Layer.build(
+    HttpRouter.serve(ServerHttp.layerOtlpTracesProxyRoute, {
+      disableListenLog: true,
+      disableLogger: true,
+    }).pipe(
+      Layer.provideMerge(ServerConfig.layer(config)),
+      Layer.provideMerge(authLayer),
+      Layer.provideMerge(
+        Layer.succeed(
+          BrowserTraceCollector.BrowserTraceCollector,
+          BrowserTraceCollector.BrowserTraceCollector.of({ record: () => Effect.void }),
+        ),
+      ),
+      Layer.provideMerge(OtlpSerialization.layerJson),
+      Layer.provideMerge(FetchHttpClient.layer),
+      Layer.provideMerge(Layer.fresh(NodeHttpServer.layerTest)),
+    ),
+  ).pipe(Effect.provide(Logger.layer([captureLogger], { mergeWithExisting: false })));
+  const proxyAddress = Context.get(services, HttpServer.HttpServer).address;
+  if (!NetAddress.isInetAddress(proxyAddress)) {
+    return yield* Effect.die(new Error("Expected a TCP address"));
+  }
+  const response = yield* HttpClient.post(
+    `http://127.0.0.1:${proxyAddress.port}/api/observability/v1/traces`,
+    { body: HttpBody.text(JSON.stringify({ resourceSpans: [] }), "application/json") },
+  ).pipe(Effect.provide(FetchHttpClient.layer));
+  return { status: response.status, logs: logs.join("\n") };
+});
+
 describe("OTLP traces proxy", () => {
-  it.effect("does not follow receiver redirects or leak URL credentials into warning logs", () =>
+  it.effect("does not follow receiver redirects or log URL credentials", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const collectorRequests: Array<{ url: string; apiKey: string | undefined }> = [];
@@ -1033,10 +1088,7 @@ describe("OTLP traces proxy", () => {
           Effect.gen(function* () {
             const request = yield* HttpServerRequest.HttpServerRequest;
             yield* request.text;
-            collectorRequests.push({
-              url: request.url,
-              apiKey: request.headers["x-api-key"],
-            });
+            collectorRequests.push({ url: request.url, apiKey: request.headers["x-api-key"] });
             return request.url.startsWith("/v1/traces")
               ? HttpServerResponse.redirect("/stolen", { status: 307 })
               : HttpServerResponse.empty({ status: 200 });
@@ -1045,82 +1097,19 @@ describe("OTLP traces proxy", () => {
         if (!NetAddress.isInetAddress(collector.address)) {
           return yield* Effect.die(new Error("Expected a TCP address"));
         }
+        const collectorUrl = `http://127.0.0.1:${collector.address.port}/v1/traces`;
 
-        const loggedWarnings: Array<string> = [];
-        const captureLogger = Logger.make((options) => {
-          loggedWarnings.push(JSON.stringify(options.message));
-        });
-
-        const otlpTracesUrl = `http://127.0.0.1:${collector.address.port}/v1/traces?api_key=query-secret`;
-        const baseConfig = yield* ServerConfig.ServerConfig;
-        const config = ServerConfig.make({
-          ...baseConfig,
-          otlpTracesUrl,
-          otlpTracesExport: {
-            ...baseConfig.otlpTracesExport,
-            headers: { "x-api-key": "header-secret" },
-          },
-        });
-
-        const authLayer = Layer.succeed(
-          EnvironmentAuth.EnvironmentAuth,
-          EnvironmentAuth.EnvironmentAuth.of({
-            authenticateHttpRequest: () =>
-              Effect.succeed({
-                sessionId: "sess-1",
-                method: "bearer-session-token",
-                clientType: "web",
-                role: "owner",
-                scopes: ["orchestration:operate"],
-              } as unknown as EnvironmentAuth.AuthenticatedSession),
-          } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
+        const { status, logs } = yield* exportThroughOtlpProxy(
+          `${collectorUrl}?api_key=query-secret`,
         );
 
-        const collectorLayer = Layer.succeed(
-          BrowserTraceCollector.BrowserTraceCollector,
-          BrowserTraceCollector.BrowserTraceCollector.of({
-            record: () => Effect.void,
-          }),
-        );
-
-        const services = yield* Layer.build(
-          HttpRouter.serve(ServerHttp.layerOtlpTracesProxyRoute, {
-            disableListenLog: true,
-            disableLogger: true,
-          }).pipe(
-            Layer.provideMerge(ServerConfig.layer(config)),
-            Layer.provideMerge(authLayer),
-            Layer.provideMerge(collectorLayer),
-            Layer.provideMerge(OtlpSerialization.layerJson),
-            Layer.provideMerge(FetchHttpClient.layer),
-            Layer.provideMerge(Layer.fresh(NodeHttpServer.layerTest)),
-          ),
-        ).pipe(Effect.provide(Logger.layer([captureLogger], { mergeWithExisting: false })));
-
-        const proxyServer = Context.get(services, HttpServer.HttpServer);
-        const proxyAddress = proxyServer.address;
-        if (!NetAddress.isInetAddress(proxyAddress)) {
-          return yield* Effect.die(new Error("Expected a TCP address"));
-        }
-        const response = yield* Effect.gen(function* () {
-          const client = yield* HttpClient.HttpClient;
-          return yield* client.post(
-            `http://127.0.0.1:${proxyAddress.port}/api/observability/v1/traces`,
-            {
-              headers: { "content-type": "application/json" },
-              body: HttpBody.text(JSON.stringify({ resourceSpans: [] }), "application/json"),
-            },
-          );
-        }).pipe(Effect.provide(FetchHttpClient.layer));
-
-        expect(response.status).toBe(502);
+        expect(status).toBe(502);
         expect(collectorRequests).toEqual([
           { url: "/v1/traces?api_key=query-secret", apiKey: "header-secret" },
         ]);
-        const combinedLogs = loggedWarnings.join("\n");
-        expect(combinedLogs).toContain(`http://127.0.0.1:${collector.address.port}/v1/traces`);
-        expect(combinedLogs).not.toContain("query-secret");
-        expect(combinedLogs).not.toContain("header-secret");
+        expect(logs).toContain(collectorUrl);
+        expect(logs).not.toContain("query-secret");
+        expect(logs).not.toContain("header-secret");
       }),
     ).pipe(
       Effect.provide(
@@ -1132,85 +1121,18 @@ describe("OTLP traces proxy", () => {
     ),
   );
 
-  it.effect("redacts userinfo and query credentials from OTLP proxy failure logs", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const loggedWarnings: Array<string> = [];
-        const captureLogger = Logger.make((options) => {
-          loggedWarnings.push(JSON.stringify(options.message));
-        });
+  it.effect("redacts userinfo from OTLP proxy failure logs", () =>
+    Effect.gen(function* () {
+      const { status, logs } = yield* exportThroughOtlpProxy(
+        "http://collector-user:secret-pass@127.0.0.1:1/v1/traces",
+      );
 
-        const baseConfig = yield* ServerConfig.ServerConfig;
-        const config = ServerConfig.make({
-          ...baseConfig,
-          otlpTracesUrl:
-            "http://collector-user:secret-pass@127.0.0.1:1/v1/traces?api_key=query-secret",
-          otlpTracesExport: {
-            ...baseConfig.otlpTracesExport,
-            headers: { "x-api-key": "header-secret" },
-          },
-        });
-
-        const authLayer = Layer.succeed(
-          EnvironmentAuth.EnvironmentAuth,
-          EnvironmentAuth.EnvironmentAuth.of({
-            authenticateHttpRequest: () =>
-              Effect.succeed({
-                sessionId: "sess-1",
-                method: "bearer-session-token",
-                clientType: "web",
-                role: "owner",
-                scopes: ["orchestration:operate"],
-              } as unknown as EnvironmentAuth.AuthenticatedSession),
-          } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
-        );
-
-        const collectorLayer = Layer.succeed(
-          BrowserTraceCollector.BrowserTraceCollector,
-          BrowserTraceCollector.BrowserTraceCollector.of({
-            record: () => Effect.void,
-          }),
-        );
-
-        const services = yield* Layer.build(
-          HttpRouter.serve(ServerHttp.layerOtlpTracesProxyRoute, {
-            disableListenLog: true,
-            disableLogger: true,
-          }).pipe(
-            Layer.provideMerge(ServerConfig.layer(config)),
-            Layer.provideMerge(authLayer),
-            Layer.provideMerge(collectorLayer),
-            Layer.provideMerge(OtlpSerialization.layerJson),
-            Layer.provideMerge(FetchHttpClient.layer),
-            Layer.provideMerge(Layer.fresh(NodeHttpServer.layerTest)),
-          ),
-        ).pipe(Effect.provide(Logger.layer([captureLogger], { mergeWithExisting: false })));
-
-        const proxyServer = Context.get(services, HttpServer.HttpServer);
-        const proxyAddress = proxyServer.address;
-        if (!NetAddress.isInetAddress(proxyAddress)) {
-          return yield* Effect.die(new Error("Expected a TCP address"));
-        }
-        const response = yield* Effect.gen(function* () {
-          const client = yield* HttpClient.HttpClient;
-          return yield* client.post(
-            `http://127.0.0.1:${proxyAddress.port}/api/observability/v1/traces`,
-            {
-              headers: { "content-type": "application/json" },
-              body: HttpBody.text(JSON.stringify({ resourceSpans: [] }), "application/json"),
-            },
-          );
-        }).pipe(Effect.provide(FetchHttpClient.layer));
-
-        expect(response.status).toBe(502);
-        const combinedLogs = loggedWarnings.join("\n");
-        expect(combinedLogs).toContain("http://127.0.0.1:1/v1/traces");
-        expect(combinedLogs).not.toContain("collector-user");
-        expect(combinedLogs).not.toContain("secret-pass");
-        expect(combinedLogs).not.toContain("query-secret");
-        expect(combinedLogs).not.toContain("header-secret");
-      }),
-    ).pipe(
+      expect(status).toBe(502);
+      expect(logs).toContain("http://127.0.0.1:1/v1/traces");
+      expect(logs).not.toContain("collector-user");
+      expect(logs).not.toContain("secret-pass");
+    }).pipe(
+      Effect.scoped,
       Effect.provide(
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-otlp-proxy-log-" }).pipe(
           Layer.provideMerge(NodeServices.layer),
