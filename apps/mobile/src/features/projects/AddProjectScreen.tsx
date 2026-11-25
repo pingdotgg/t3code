@@ -768,15 +768,17 @@ function useOpenNewTaskDraft() {
     },
     originRoute: NavigationState<ParamListBase>["routes"][number] | undefined,
   ) => {
-    const activeRoute = getActiveRoute(navigation);
-    // A warm link can change the task without replacing its native route key.
-    if (
-      !originRoute ||
-      activeRoute?.key !== originRoute.key ||
-      activeRoute.name !== originRoute.name ||
-      activeRoute.params !== originRoute.params
-    )
-      return;
+    const isStillOnOrigin = () => {
+      const activeRoute = getActiveRoute(navigation);
+      // A warm link can change the task without replacing its native route key.
+      return (
+        originRoute !== undefined &&
+        activeRoute?.key === originRoute.key &&
+        activeRoute.name === originRoute.name &&
+        activeRoute.params === originRoute.params
+      );
+    };
+    if (!isStillOnOrigin()) return;
     const chooserDraft =
       params.draftId === undefined
         ? chooserDraftKey(
@@ -790,6 +792,7 @@ function useOpenNewTaskDraft() {
         environmentId: params.environmentId,
         projectId: params.projectId,
       }).catch(() => false));
+    if (!isStillOnOrigin()) return;
     selectDetail({
       name: "Thread",
       params: { draft: carried ? { ...params, draftId: chooserDraft } : params },
