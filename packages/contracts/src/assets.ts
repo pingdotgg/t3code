@@ -50,6 +50,7 @@ export const AssetResource = Schema.Union([
     /** Defaults to download; viewers may request inline after checking the type is safe. */
     disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
     renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
+    includeSize: Schema.optionalKey(Schema.Literal(true)),
   }),
   Schema.TaggedStruct("tool-output-image", {
     threadId: ThreadId,
@@ -100,6 +101,7 @@ export const AssetCreateUrlResult = Schema.Struct({
     TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   ),
   imageDimensions: Schema.optional(AssetImageDimensions),
+  sizeBytes: Schema.optional(NonNegativeInt),
   /** Changes only when the file's contents or identity change, unlike `relativeUrl`, which is re-signed on every mint. */
   fileRevision: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
 });
