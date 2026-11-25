@@ -302,8 +302,9 @@ function* xstringText(node: XmlNode): Generator<string, void> {
         literal ? `_${literal}` : String.fromCharCode(Number.parseInt(hex!, 16)),
     );
 }
-function* paragraphs(node: XmlNode): Generator<TextPart, void> {
+function* paragraphs(node: XmlNode, insideListItem = false): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
+  const inListItem = insideListItem || node.name === "li";
   for (const child of node.children) {
     if (typeof child === "string") yield child;
     else if (["br", "line-break", "cr"].includes(child.name)) yield "\n";
@@ -321,8 +322,8 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield "\n";
     } else {
-      if (node.name === "li" && ["ol", "ul"].includes(child.name)) yield LINE_START;
-      yield* paragraphs(child);
+      if (inListItem && ["ol", "ul"].includes(child.name)) yield LINE_START;
+      yield* paragraphs(child, inListItem);
       if (["li", "div", "section", "dt", "dd"].includes(child.name)) yield "\n";
     }
   }
