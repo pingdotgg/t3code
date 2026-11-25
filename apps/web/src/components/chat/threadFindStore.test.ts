@@ -116,5 +116,8 @@ describe("findForMessageMatch", () => {
     expect(findForMessageMatch({ snippet: "then Vp  run dev again" }, "vp run dev")).toEqual({
       query: "Vp  run dev",
     });
+    expect(findForMessageMatch({ snippet: "cafe opening; Café open" }, '"cafe open"')).toEqual({
+      query: "Café open",
+    });
   });
 });
