@@ -339,8 +339,9 @@ it("app-type-in-composer", async () => {
     await userEvent.type(editor, TYPED_TEXT);
     await expect.element(editor).toHaveTextContent(TYPED_TEXT);
   });
-  // The footer controls re-render for the first character only, not per keystroke.
+  // The footer controls and primary actions re-render for the first character only, not per keystroke.
   expect(counted.components.ComposerControlsBar).toBe(1);
+  expect(counted.components.ComposerFooterPrimaryActions).toBe(1);
   await report("app-type-in-composer", [counted]);
 });
 
@@ -357,9 +358,11 @@ it("app-answer-question", async () => {
     await userEvent.type(editor, TYPED_TEXT);
     await expect.element(editor).toHaveTextContent(TYPED_TEXT);
   });
-  // Answers live in the composer; the chat view renders for the request, not its answers.
+  // Answers live in the composer; the chat view renders for the request, not its answers. The
+  // primary actions re-render once, when the first character makes the answer advanceable.
   expect(pick.components.ChatView).toBeUndefined();
   expect(type.components.ChatView).toBeUndefined();
+  expect(type.components.ComposerFooterPrimaryActions).toBe(1);
   await report("app-answer-question", [pick, type]);
 });
 
