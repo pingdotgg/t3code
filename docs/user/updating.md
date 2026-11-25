@@ -11,8 +11,10 @@ in one step. It updates outdated providers, then servers that are behind, then
 the desktop app you are using. Servers move to the
 version your desktop app is installing, or to your web app's version. A
 background service stays on its current release channel. A remote desktop app
-installs the latest release from its own channel. Hover the button to see what
-it will update.
+that runs its own server installs the latest release from its own channel. A
+desktop app with no server of its own, such as one that uses the background
+service on its machine, is not updated and is not listed. Update it from its
+own update prompt. Hover the button to see what it will update.
 
 While it runs, the button widens to show progress. It names a machine that is
 taking longer than usual, and offers **Retry** for a server that failed. Click
