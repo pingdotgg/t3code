@@ -1041,6 +1041,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // Safari may click after Ctrl+click opens settings; suppress that selection until the picker reopens.
   const suppressNextScopeChangeRef = useRef(false);
   const highlightedProjectScopeKeyRef = useRef<string | null>(null);
+  // Closing the picker from the shortcut skips Base UI's keyboard close, so it restores no focus itself.
+  const projectScopeReturnFocusRef = useRef<HTMLElement | null>(null);
+  const projectScopeTriggerRef = useRef<HTMLButtonElement>(null);
   // Hold dropped rows until server placement is confirmed; block another pickup from replacing the hold.
   const [optimisticDrop, setOptimisticDrop] = useState<SidebarOptimisticDrop | null>(null);
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
@@ -3010,8 +3013,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           if (isMobile) setOpenMobile(true);
           else if (!sidebarOpen) setSidebarOpen(true);
           suppressNextScopeChangeRef.current = false;
+          projectScopeReturnFocusRef.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          dispatchProjectScopeMenu({ type: "open-changed", open: true });
+          return;
         }
-        dispatchProjectScopeMenu({ type: "open-changed", open: !projectScopeMenuState.open });
+        dispatchProjectScopeMenu({ type: "open-changed", open: false });
+        const returnFocus = projectScopeReturnFocusRef.current;
+        projectScopeReturnFocusRef.current = null;
+        (returnFocus?.isConnected ? returnFocus : projectScopeTriggerRef.current)?.focus();
         return;
       }
       const traversalDirection = threadTraversalDirectionFromCommand(command);
@@ -3126,6 +3136,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   open={projectScopeMenuState.open}
                   onOpenChange={(open, eventDetails) => {
                     if (eventDetails.isCanceled) return;
+                    projectScopeReturnFocusRef.current = null;
                     if (open) suppressNextScopeChangeRef.current = false;
                     dispatchProjectScopeMenu({ type: "open-changed", open });
                   }}
@@ -3157,6 +3168,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   }}
                 >
                   <ComboboxTrigger
+                    ref={projectScopeTriggerRef}
                     render={
                       <SidebarHeaderIconButton
                         label={projectScopeLabel}
