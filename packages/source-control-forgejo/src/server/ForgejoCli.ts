@@ -56,6 +56,25 @@ export function parseForgejoLogins(raw: string) {
   return Result.isSuccess(decoded) ? decoded.success : [];
 }
 
+function forgejoWebPort(url: URL): string | undefined {
+  if (url.protocol === "http:") return url.port || "80";
+  if (url.protocol === "https:") return url.port || "443";
+  return undefined;
+}
+
+export function matchesForgejoWebRemote(host: string, remote: URL): boolean {
+  const login = URL.parse(`https://${host}`);
+  const remotePort = forgejoWebPort(remote);
+  return (
+    login !== null &&
+    remote.hostname === login.hostname &&
+    remotePort !== undefined &&
+    (host.toLowerCase() === login.hostname
+      ? remote.port === ""
+      : remotePort === forgejoWebPort(login))
+  );
+}
+
 export const ForgejoKeysSchema = Schema.Struct({
   hosts: Schema.Record(
     Schema.String,
@@ -313,17 +332,14 @@ export const make = Effect.gen(function* () {
     keys: typeof ForgejoKeysSchema.Type,
     remoteUrl?: string,
   ): ReturnType<typeof parseForgejoLogins> => {
-    const remote = remoteUrl ? parseForgejoRemote(remoteUrl) : null;
+    const remote = remoteUrl ? URL.parse(remoteUrl) : null;
     return Object.keys(keys.hosts).flatMap((host) => {
-      const url = parseForgejoRemote(`https://${host}`);
+      const url = URL.parse(`https://${host}`);
       // fj drops URL mounts during whoami and OAuth renewal; tea supports them.
-      if (!url || url.path) return [];
+      if (!url || url.pathname !== "/") return [];
       // fj omits the scheme in storage. Only an explicit matching HTTP remote opts into HTTP.
-      const scheme =
-        remote && !remote.ssh && remote.host === url.host && /^http:\/\//i.test(remoteUrl ?? "")
-          ? "http"
-          : "https";
-      const login = { name: host, url: `${scheme}://${host}`, user: "", default: "false" };
+      const loginUrl = `${remote?.protocol === "http:" && matchesForgejoWebRemote(host, remote) ? "http" : "https"}://${host}`;
+      const login = { name: host, url: loginUrl, user: "", default: "false" };
       const aliases = Object.entries(keys.aliases ?? {})
         .filter(([, target]) => target === host)
         .map(([alias]) => ({ ...login, ssh_host: alias }));

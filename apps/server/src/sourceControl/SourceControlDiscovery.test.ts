@@ -1,4 +1,6 @@
 import {
+  type OrchestrationProjectShell,
+  ProjectId,
   SourceControlProviderKind,
   type VcsError,
   VcsProcessExitError,
@@ -27,6 +29,8 @@ import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as ServerConfig from "../config.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -109,6 +113,7 @@ const onPath = (command: string) => `/usr/local/bin/${command}`;
 const layerDiscovery = (
   runProcess = run,
   discoveries: ReadonlyArray<SourceControlProviderDiscoverySpec> = defaultDiscoveries,
+  projects: ReadonlyArray<OrchestrationProjectShell> = [],
 ) =>
   Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
@@ -125,6 +130,21 @@ const layerDiscovery = (
     Layer.provideMerge(Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({})),
     Layer.provideMerge(Layer.mock(VcsProcess.VcsProcess)({ run: runProcess })),
     Layer.provideMerge(
+      Layer.mock(ProjectStore.ProjectStoreV2)({
+        getShell: (id) =>
+          Effect.succeed(Option.fromUndefinedOr(projects.find((project) => project.id === id))),
+        listShells: () => Effect.succeed(projects),
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
+        readRepositoryIdentity: (cwd) =>
+          Effect.succeed(
+            projects.find((project) => project.workspaceRoot === cwd)?.repositoryIdentity ?? null,
+          ),
+      }),
+    ),
+    Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-discovery-" }),
     ),
     Layer.provideMerge(NodeServices.layer),
@@ -133,7 +153,7 @@ const layerDiscovery = (
 it.effect("reports every hosting integration in registry order with its sign-in", () =>
   Effect.gen(function* () {
     const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
-    const result = yield* discovery.discover;
+    const result = yield* discovery.discover();
 
     assert.deepStrictEqual(
       result.sourceControlProviders.map((item) => ({
@@ -180,49 +200,88 @@ it.effect("reports every hosting integration in registry order with its sign-in"
   ),
 );
 
-it.effect("uses checkout and registered remote context for provider discovery", () =>
+const forgejoProject: OrchestrationProjectShell = {
+  id: ProjectId.make("forgejo-project"),
+  title: "Forgejo project",
+  workspaceRoot: "/forgejo-checkout",
+  defaultModelSelection: null,
+  scripts: [],
+  archivedAt: null,
+  createdAt: "2026-08-01T00:00:00.000Z",
+  updatedAt: "2026-08-01T00:00:00.000Z",
+  repositoryIdentity: {
+    canonicalKey: "localhost/maria/project",
+    locator: {
+      source: "git-remote",
+      remoteName: "origin",
+      remoteUrl: "http://localhost:3000/maria/project.git",
+    },
+  },
+};
+
+it.effect("uses the selected checkout or the active project remotes for provider discovery", () =>
   Effect.gen(function* () {
     const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
-    const environment = yield* discovery.discover;
-    const project = yield* discovery.discoverForProject("/forgejo-checkout");
-    const remote = "http://localhost:3000/maria/project.git";
-    const allProjects = yield* discovery.discoverWithProjectRemotes(Effect.succeed([remote]));
+    const project = yield* discovery.discover(forgejoProject.id);
+    const allProjects = yield* discovery.discover();
+    const missingProject = yield* discovery.discover(ProjectId.make("missing-project"));
 
-    assert.strictEqual(environment.sourceControlProviders[0]?.auth.status, "unknown");
     assert.strictEqual(project.sourceControlProviders[0]?.auth.status, "authenticated");
-    assert.deepStrictEqual(project.sourceControlProviders[0]?.auth.account, Option.some("maria"));
+    assert.deepStrictEqual(
+      project.sourceControlProviders[0]?.auth.account,
+      Option.some("checkout"),
+    );
     assert.strictEqual(allProjects.sourceControlProviders[0]?.auth.status, "authenticated");
+    assert.deepStrictEqual(
+      allProjects.sourceControlProviders[0]?.auth.account,
+      Option.some("registered"),
+    );
+    assert.deepStrictEqual(missingProject, allProjects);
   }).pipe(
     Effect.provide(
       SourceControlDiscovery.layer.pipe(
         Layer.provide(
-          layerDiscovery(run, [
-            {
-              type: "managed-cli",
-              kind: kind("forgejo"),
-              label: "Forgejo",
-              installHint: "Install fj.",
-              refineUnknownRemote: () => Effect.succeed(null),
-              probe: (cwd, projectRemotes) =>
-                (projectRemotes ?? Effect.succeed([])).pipe(
-                  Effect.map((registered) => ({
-                    kind: kind("forgejo"),
-                    label: "Forgejo",
-                    executable: "fj",
-                    status: "available",
-                    installHint: "Install fj.",
-                    detail: Option.none(),
-                    version: Option.none(),
-                    auth: providerAuth(
-                      cwd === "/forgejo-checkout" ||
-                        registered.includes("http://localhost:3000/maria/project.git")
-                        ? { status: "authenticated", account: "maria" }
-                        : { status: "unknown" },
-                    ),
-                  })),
-                ),
-            },
-          ]),
+          layerDiscovery(
+            run,
+            [
+              {
+                type: "managed-cli",
+                kind: kind("forgejo"),
+                label: "Forgejo",
+                installHint: "Install fj.",
+                refineUnknownRemote: () => Effect.succeed(null),
+                probe: (cwd, projectRemotes) =>
+                  (projectRemotes ?? Effect.succeed([])).pipe(
+                    Effect.map((registered) => ({
+                      kind: kind("forgejo"),
+                      label: "Forgejo",
+                      executable: "fj",
+                      status: "available",
+                      installHint: "Install fj.",
+                      detail: Option.none(),
+                      version: Option.none(),
+                      auth: providerAuth(
+                        cwd === forgejoProject.workspaceRoot
+                          ? { status: "authenticated", account: "checkout" }
+                          : registered.length === 1 &&
+                              registered[0] === forgejoProject.repositoryIdentity?.locator.remoteUrl
+                            ? { status: "authenticated", account: "registered" }
+                            : { status: "unknown" },
+                      ),
+                    })),
+                  ),
+              },
+            ],
+            [
+              forgejoProject,
+              {
+                ...forgejoProject,
+                id: ProjectId.make("archived-project"),
+                workspaceRoot: "/archived-checkout",
+                archivedAt: "2026-09-01T00:00:00.000Z",
+              },
+            ],
+          ),
         ),
       ),
     ),
@@ -233,7 +292,7 @@ it.effect("uses checkout and registered remote context for provider discovery", 
 it.effect("explains a CLI whose version probe failed instead of advising an install", () =>
   Effect.gen(function* () {
     const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
-    const result = yield* discovery.discover;
+    const result = yield* discovery.discover();
     const item = (name: string) => {
       const found = result.sourceControlProviders.find((entry) => entry.kind === kind(name));
       assert.isDefined(found);
@@ -291,7 +350,7 @@ it.effect.each(["darwin", "linux"] as const)(
       );
     return Effect.gen(function* () {
       const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
-      const result = yield* discovery.discover;
+      const result = yield* discovery.discover();
       for (const item of [...result.versionControlSystems, ...result.sourceControlProviders]) {
         if (item.kind === kind("gamma")) continue;
         assert.strictEqual(item.status, "missing");
@@ -354,7 +413,7 @@ it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       yield* fs.writeFileString(path.join(home, ".profile"), 'export PATH="$HOME/fakebin:$PATH"\n');
 
       const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
-      const jj = (yield* discovery.discover).versionControlSystems.find(
+      const jj = (yield* discovery.discover()).versionControlSystems.find(
         (item) => item.kind === "jj",
       );
 

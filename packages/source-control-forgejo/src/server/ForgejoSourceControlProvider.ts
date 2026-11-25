@@ -72,21 +72,23 @@ export const discovery = {
 } satisfies SourceControlCliDiscoverySpec;
 
 const projectForgejoLoginUrl = Effect.fn("ForgejoSourceControlProvider.projectLoginUrl")(function* (
-  loginUrl: string,
+  entry: { readonly name: string; readonly url: string },
   projectRemotes: Effect.Effect<ReadonlyArray<string>>,
 ) {
-  const login = URL.parse(loginUrl);
+  const login = URL.parse(entry.url);
   if (login === null || !["localhost", "127.0.0.1", "[::1]"].includes(login.hostname)) {
-    return loginUrl;
+    return entry.url;
   }
   let httpOrigin: string | undefined;
   for (const remoteUrl of yield* projectRemotes) {
     const remote = URL.parse(remoteUrl);
-    if (remote?.host !== login.host) continue;
-    if (remote.protocol === "https:") return loginUrl;
-    if (remote.protocol === "http:") httpOrigin = remote.origin;
+    if (remote === null || !ForgejoCli.matchesForgejoWebRemote(entry.name, remote)) continue;
+    if (remote.protocol === "https:") return entry.url;
+    if (remote.protocol === "http:") {
+      httpOrigin = `http://${entry.name}`;
+    }
   }
-  return httpOrigin ?? loginUrl;
+  return httpOrigin ?? entry.url;
 });
 
 export const makeDiscovery = Effect.gen(function* () {
@@ -127,7 +129,7 @@ export const makeDiscovery = Effect.gen(function* () {
         (defaultLogin && projectRemotes
           ? {
               ...defaultLogin,
-              url: yield* projectForgejoLoginUrl(defaultLogin.url, projectRemotes),
+              url: yield* projectForgejoLoginUrl(defaultLogin, projectRemotes),
             }
           : defaultLogin);
       const fj = yield* probeSourceControlProvider({

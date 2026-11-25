@@ -510,6 +510,50 @@ it.effect("asks again once discovery finds a new sign-in, not on every discovery
   }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );
 
+it.effect("refreshes only the scanned checkout's cached unknown remote after sign-in", () =>
+  Effect.gen(function* () {
+    let signedIn = false;
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://git.example.internal/team/project.git" }],
+      discovery: [
+        {
+          ...claimingCli("gitlab"),
+          parseAuth: () => ({
+            status: signedIn ? "authenticated" : "unauthenticated",
+            account: Option.none(),
+            host: Option.none(),
+            detail: Option.none(),
+          }),
+        },
+      ],
+      run: ({ args }) =>
+        Effect.succeed(
+          TestSourceControlHost.processOutput(
+            signedIn ? `  ✓ Logged in to ${args.at(-1)} as user\n` : "",
+          ),
+        ),
+    });
+    const unrelated = {
+      cwd: "/unrelated",
+      context: {
+        provider: {
+          kind: kind("unknown"),
+          name: "other.example.test",
+          baseUrl: "https://other.example.test",
+        },
+        remoteName: "origin",
+        remoteUrl: "https://other.example.test/team/project.git",
+      },
+    };
+    assert.strictEqual((yield* registry.resolve({ cwd: "/project" })).kind, "unknown");
+    assert.strictEqual((yield* registry.resolveHandle(unrelated)).provider.kind, "unknown");
+    signedIn = true;
+    yield* registry.discoverForProject("/project");
+    assert.strictEqual((yield* registry.resolve({ cwd: "/project" })).kind, "gitlab");
+    assert.strictEqual((yield* registry.resolveHandle(unrelated)).provider.kind, "unknown");
+  }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
+);
+
 it.effect("answers discovery without waiting on a hosting API that stalls", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry({

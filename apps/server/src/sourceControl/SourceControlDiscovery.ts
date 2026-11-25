@@ -1,4 +1,5 @@
 import {
+  type ProjectId,
   type SourceControlDiscoveryResult,
   type SourceControlProviderDiscoveryItem,
   type VcsDiscoveryItem,
@@ -13,6 +14,8 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
 import { refreshPathFromLoginShell } from "../os-jank.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
   detailFromCause,
@@ -69,11 +72,7 @@ const VCS_PROBES: ReadonlyArray<VcsProbe> = [
 export class SourceControlDiscovery extends Context.Service<
   SourceControlDiscovery,
   {
-    readonly discover: Effect.Effect<SourceControlDiscoveryResult>;
-    readonly discoverForProject: (cwd: string) => Effect.Effect<SourceControlDiscoveryResult>;
-    readonly discoverWithProjectRemotes: (
-      projectRemotes: Effect.Effect<ReadonlyArray<string>>,
-    ) => Effect.Effect<SourceControlDiscoveryResult>;
+    readonly discover: (projectId?: ProjectId) => Effect.Effect<SourceControlDiscoveryResult>;
   }
 >()("t3/sourceControl/SourceControlDiscovery") {}
 
@@ -82,6 +81,8 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const process = yield* VcsProcess.VcsProcess;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const projectStore = yield* ProjectStore.ProjectStoreV2;
+  const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   // Discovery re-reads the login shell so a tool installed since launch
   // resolves here and in every later spawn. Thread views, the palette and
@@ -168,15 +169,30 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const projectRemotes = Effect.gen(function* () {
+    const projects = yield* projectStore.listShells().pipe(Effect.orElseSucceed(() => []));
+    const repositories = yield* Effect.forEach(
+      projects.filter((project) => project.archivedAt === null),
+      (project) => projectEnrichment.readRepositoryIdentity(project.workspaceRoot),
+      { concurrency: 4 },
+    );
+    return repositories.flatMap((identity) => (identity ? [identity.locator.remoteUrl] : []));
+  });
+
   return SourceControlDiscovery.of({
-    discover: discover(sourceControlProviders.discover),
-    discoverForProject: Effect.fn("SourceControlDiscovery.discoverForProject")((cwd: string) =>
-      discover(sourceControlProviders.discoverForProject(cwd)),
-    ),
-    discoverWithProjectRemotes: Effect.fn("SourceControlDiscovery.discoverWithProjectRemotes")(
-      (projectRemotes: Effect.Effect<ReadonlyArray<string>>) =>
-        discover(sourceControlProviders.discoverWithProjectRemotes(projectRemotes)),
-    ),
+    discover: Effect.fn("SourceControlDiscovery.discover")(function* (projectId?: ProjectId) {
+      if (projectId !== undefined) {
+        const project = yield* projectStore
+          .getShell(projectId)
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (Option.isSome(project)) {
+          return yield* discover(
+            sourceControlProviders.discoverForProject(project.value.workspaceRoot),
+          );
+        }
+      }
+      return yield* discover(sourceControlProviders.discoverWithProjectRemotes(projectRemotes));
+    }),
   });
 });
 

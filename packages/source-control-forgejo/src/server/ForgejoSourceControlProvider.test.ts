@@ -2478,7 +2478,11 @@ it.effect("explains a slow fj instead of advising an install when tea is absent"
   ),
 );
 
-it.effect("uses an explicit matching loopback project remote for environment discovery", () =>
+it.effect.each([
+  { savedHost: "localhost:80", port: 80, httpsHost: "localhost:80" },
+  { savedHost: "localhost:3000", port: 3000, httpsHost: "localhost:3000" },
+  { savedHost: "localhost", port: 80, httpsHost: "localhost" },
+])("uses a matching HTTP loopback remote for $savedHost", ({ savedHost, port, httpsHost }) =>
   Effect.gen(function* () {
     const spec = yield* ForgejoSourceControlProvider.makeDiscovery.pipe(
       Effect.provide(ForgejoCli.layer),
@@ -2489,20 +2493,22 @@ it.effect("uses an explicit matching loopback project remote for environment dis
     assert.strictEqual(result.executable, "fj");
     assert.strictEqual(result.auth.status, "unknown");
 
-    const http = "http://localhost:3000/maria/project.git";
+    const http = `http://localhost:${port}/maria/project.git`;
     const withProject = yield* spec.probe("/repo", Effect.succeed([http]));
     assert.strictEqual(withProject.auth.status, "authenticated");
     assert.deepStrictEqual(withProject.auth.account, Option.some("maria"));
+    const scopedProject = yield* spec.probe("/scoped");
+    assert.strictEqual(scopedProject.auth.status, "authenticated");
 
     const conflicting = yield* spec.probe(
       "/repo",
-      Effect.succeed([http, "https://localhost:3000/maria/other.git"]),
+      Effect.succeed([http, `https://${httpsHost}/maria/other.git`]),
     );
     assert.strictEqual(conflicting.auth.status, "unknown");
 
     const wrongPort = yield* spec.probe(
       "/repo",
-      Effect.succeed(["http://localhost:3001/maria/project.git"]),
+      Effect.succeed([`http://localhost:${port + 1}/maria/project.git`]),
     );
     assert.strictEqual(wrongPort.auth.status, "unknown");
   }).pipe(
@@ -2515,7 +2521,7 @@ it.effect("uses an explicit matching loopback project remote for environment dis
         readFileString: () =>
           Effect.succeed(
             encodeJson({
-              hosts: { "localhost:3000": { type: "Application", token: "test-token" } },
+              hosts: { [savedHost]: { type: "Application", token: "test-token" } },
             }),
           ),
       }),
@@ -2540,7 +2546,9 @@ it.effect("uses an explicit matching loopback project remote for environment dis
             // Settings has no project in scope, so there is no origin remote.
             if (input.command === "git")
               return Effect.succeed(
-                processOutput("", { exitCode: ChildProcessSpawner.ExitCode(2) }),
+                input.cwd === "/scoped"
+                  ? processOutput(`http://localhost:${port}/maria/project.git`)
+                  : processOutput("", { exitCode: ChildProcessSpawner.ExitCode(2) }),
               );
             if (input.command !== "fj")
               return Effect.fail(
@@ -2554,8 +2562,8 @@ it.effect("uses an explicit matching loopback project remote for environment dis
             if (input.args[0] === "version") return Effect.succeed(processOutput("fj v0.7.0"));
             const host = input.args[input.args.indexOf("--host") + 1] ?? "";
             return Effect.succeed(
-              host.startsWith("http://")
-                ? processOutput("currently signed into maria@localhost:3000")
+              host === `http://${savedHost}`
+                ? processOutput(`currently signed into maria@${savedHost}`)
                 : processOutput("", {
                     exitCode: ChildProcessSpawner.ExitCode(1),
                     stderr: `Error: error sending request for url (${host}/api/v1/user?)\nCaused by:\n   0: client error (Connect)\n   1: received corrupt message of type InvalidContentType`,

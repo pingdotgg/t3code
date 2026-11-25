@@ -282,11 +282,6 @@ import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as TextGenerators from "./textGeneration/TextGenerators.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
-import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
-import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
-import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
-import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
-import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
@@ -2863,35 +2858,8 @@ export const layerWsRpc = (
               : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
             return ServerSettings.redactServerSettingsForClient(settings, settingsClient);
           }),
-        [WS_METHODS.serverDiscoverSourceControl]: Effect.fn("ws.sourceControl.discover")(
-          function* (input) {
-            if (input.projectId !== undefined) {
-              const project = yield* projectStore
-                .get(input.projectId)
-                .pipe(Effect.orElseSucceed(() => Option.none()));
-              if (Option.isSome(project)) {
-                return yield* sourceControlDiscovery.discoverForProject(
-                  project.value.workspaceRoot,
-                );
-              }
-            }
-            return yield* sourceControlDiscovery.discoverWithProjectRemotes(
-              Effect.gen(function* () {
-                const projects = yield* projectStore
-                  .listShells()
-                  .pipe(Effect.orElseSucceed(() => []));
-                const repositories = yield* Effect.forEach(
-                  projects.filter((project) => project.archivedAt === null),
-                  (project) => projectEnrichment.readRepositoryIdentity(project.workspaceRoot),
-                  { concurrency: 4 },
-                );
-                return repositories.flatMap((identity) =>
-                  identity ? [identity.locator.remoteUrl] : [],
-                );
-              }),
-            );
-          },
-        ),
+        [WS_METHODS.serverDiscoverSourceControl]: (input) =>
+          sourceControlDiscovery.discover(input.projectId),
         [WS_METHODS.serverCheckSecretSource]: (input) => secretCheck.check(input.source),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           TraceDiagnostics.readTraceDiagnostics({
@@ -3829,6 +3797,7 @@ export const WS_RPC_SERVER_OPTIONS = {
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
+    const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
@@ -3951,16 +3920,9 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(PeerThreadRelay.PeerThreadRelay, peerThreadRelay)),
               Layer.provide(Layer.succeed(PeerClientPairing.PeerClientPairing, peerClientPairing)),
               Layer.provide(
-                SourceControlDiscovery.layer.pipe(
-                  Layer.provide(
-                    SourceControlProviderRegistry.layer.pipe(
-                      Layer.provide(SourceControlBuiltInDrivers.layer),
-                      Layer.provideMerge(GitVcsDriver.layer),
-                      Layer.provide(
-                        VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer)),
-                      ),
-                    ),
-                  ),
+                Layer.succeed(
+                  SourceControlDiscovery.SourceControlDiscovery,
+                  sourceControlDiscovery,
                 ),
               ),
             ),
