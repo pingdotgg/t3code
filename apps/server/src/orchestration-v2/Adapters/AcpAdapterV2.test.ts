@@ -4825,7 +4825,19 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.effect("shows a Copilot Autopilot answer once when task_complete repeats it", () =>
+  const copilotAnswer = "There are five possible next steps.\n\nTell me which to start.";
+  it.effect.each([
+    {
+      name: "shows a Copilot Autopilot answer once when task_complete repeats it",
+      summary: copilotAnswer,
+      expected: [copilotAnswer],
+    },
+    {
+      name: "shows a different Copilot task_complete summary as its own message",
+      summary: "There are five possible next steps.",
+      expected: [copilotAnswer, "There are five possible next steps."],
+    },
+  ])("$name", ({ summary, expected }) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const mockAgentPath = yield* bundledMockAgentPath;
@@ -4833,7 +4845,6 @@ describe("AcpAdapterV2", () => {
       let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
       const routing = makeCopilotSubagentRouting();
       const instanceId = ProviderInstanceId.make("copilot-task-complete");
-      const answer = "There are five possible next steps.\n\nTell me which to start.";
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
@@ -4862,7 +4873,7 @@ describe("AcpAdapterV2", () => {
                   yield* update({
                     sessionUpdate: "agent_message_chunk",
                     messageId: "199b1cf7",
-                    content: { type: "text", text: answer },
+                    content: { type: "text", text: copilotAnswer },
                   });
                   yield* update({
                     sessionUpdate: "tool_call",
@@ -4878,7 +4889,7 @@ describe("AcpAdapterV2", () => {
                   });
                   yield* update({
                     sessionUpdate: "agent_message_chunk",
-                    content: { type: "text", text: answer },
+                    content: { type: "text", text: summary },
                   });
                   return { stopReason: "end_turn" as const };
                 }),
@@ -4926,7 +4937,7 @@ describe("AcpAdapterV2", () => {
             : [],
         ),
       );
-      assert.deepEqual([...messages.values()], [answer]);
+      assert.deepEqual([...messages.values()], expected);
     }).pipe(Effect.provide(layerTest)),
   );
 

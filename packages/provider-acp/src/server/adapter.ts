@@ -1705,6 +1705,8 @@ interface ActiveTextSegment {
   emitted: boolean;
   // Text changed since the last emission; a delayed flush is scheduled.
   dirty: boolean;
+  // Text of the identified message this unidentified one followed; output waits while it repeats it.
+  repeatOf?: string;
 }
 
 interface ActiveTextStream {
@@ -3538,6 +3540,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           const segment = textStreamFor(context, kind).current;
           if (segment === null) return;
+          if (segment.repeatOf?.startsWith(segment.text)) return;
+          delete segment.repeatOf;
           if (!segment.emitted) return yield* emitTextSegment(context, kind, false);
           if (segment.dirty) return;
           segment.dirty = true;
@@ -3554,7 +3558,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const stream = textStreamFor(context, kind);
           const segment = stream.current;
           if (segment === null) return;
-          yield* emitTextSegment(context, kind, true);
+          if (segment.repeatOf !== segment.text) yield* emitTextSegment(context, kind, true);
           if (segment.sourceMessageId !== null) {
             stream.closedNamedSegments.set(segment.sourceMessageId, segment);
           }
@@ -3607,17 +3611,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           const stream = textStreamFor(context, kind);
           const sourceMessageId = messageId || null;
-          if (
-            stream.current !== null &&
-            sourceMessageId !== null &&
-            stream.current.sourceMessageId !== null &&
-            stream.current.sourceMessageId !== sourceMessageId
-          ) {
-            yield* closeTextStream(context, kind);
-          }
+          // Chunks of one message share its messageId, so an unidentified chunk does not continue an identified message.
+          const previous = stream.current;
+          const leavesIdentifiedMessage =
+            previous !== null &&
+            previous.sourceMessageId !== null &&
+            previous.sourceMessageId !== sourceMessageId;
+          if (leavesIdentifiedMessage) yield* closeTextStream(context, kind);
           let segment = stream.current;
           if (segment === null) {
             segment = yield* openTextSegment(context, kind, sourceMessageId);
+            // Agents may resend an identified message verbatim without its id; show it once.
+            if (leavesIdentifiedMessage && sourceMessageId === null)
+              segment.repeatOf = previous.text;
           } else if (segment.sourceMessageId === null && sourceMessageId !== null) {
             // Agents may omit the first messageId; retain projected identity until the first later id.
             segment.sourceMessageId = sourceMessageId;
