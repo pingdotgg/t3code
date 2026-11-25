@@ -703,6 +703,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   ::highlight(t3-assistant-citation-comment) {
     background-color: color-mix(in oklab, var(--primary) 45%, transparent);
   }
+  /* Fork: Kaluwa's sidebar backdrop. */
+  :root {
+    --kaluwa-deep: #030b2e;
+    --kaluwa-mid: #0a2a8a;
+    --kaluwa-bright: #1650d8;
+    --kaluwa-glow: #5b8cff;
+    --kaluwa-wave: #2f6bff;
+    --kaluwa-wave-soft: #7aa2ff;
+    --kaluwa-line: #a9c1ff;
+  }
   :root {
     /* Keep the original T3 Code artwork palettes as the defaults. Built-in
        themes override them with their own pigments in the components layer. */

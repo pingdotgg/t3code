@@ -15,6 +15,7 @@ import {
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
+import { KaluwaBrandMark, KaluwaStageBackdrop } from "../KaluwaBrand";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -67,7 +68,14 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
         isElectron && "drag-region",
       )}
     >
-      {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
+      {backdropVariant ? (
+        // Fork: the local build has its own blue backdrop.
+        isLocalStage(stageLabel) ? (
+          <KaluwaStageBackdrop />
+        ) : (
+          <SidebarStageBackdrop variant={backdropVariant} />
+        )
+      ) : null}
       <div className="relative top-[calc(var(--workspace-controls-top)-env(safe-area-inset-top))] z-10 ml-[calc(var(--workspace-controls-left)+1px-env(safe-area-inset-left))] flex shrink-0 items-center md:hidden">
         <SidebarTrigger
           variant={backdropVariant ? "media-navigation" : "ghost"}
@@ -183,7 +191,14 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
   );
 }
 
+function isLocalStage(stageLabel: string): boolean {
+  return stageLabel.trim().toLowerCase() === "local";
+}
+
 function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
+  const stageLabel = useEnvironmentStageLabel();
+  // Fork: the local build goes by Kaluwa.
+  if (isLocalStage(stageLabel)) return <KaluwaBrandMark />;
   return (
     <span className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight">
       <T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />
