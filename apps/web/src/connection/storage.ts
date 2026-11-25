@@ -39,6 +39,7 @@ import { EnvironmentId, ServerConfig, ThreadId, VcsListRefsResult } from "@t3too
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -584,19 +585,33 @@ const CATALOG_TABS_NAME = "t3code:connection-catalog";
 
 /**
  * Web Locks need a secure context, as the proof key does, so a context without them has no
- * pinned key to lose.
+ * pinned key to lose. An interrupted caller waits for the callback to end: a write that has
+ * started finishes under the lock, and the caller's own lock must not be released before it.
  */
-const exclusiveAcrossTabs: CatalogTabs["exclusive"] = (update) =>
+export const exclusiveAcrossTabs: CatalogTabs["exclusive"] = (update) =>
   typeof navigator === "undefined" || navigator.locks === undefined
     ? update
     : Effect.context<never>().pipe(
-        Effect.flatMap((context) =>
-          Effect.promise((signal) =>
-            navigator.locks.request(CATALOG_TABS_NAME, { signal }, () =>
-              Effect.runPromiseExitWith(context)(update, { signal }),
+        Effect.flatMap((context) => {
+          const abort = new AbortController();
+          const held: Promise<
+            Exit.Exit<Effect.Success<typeof update>, Effect.Error<typeof update>>
+          > = navigator.locks.request(CATALOG_TABS_NAME, { signal: abort.signal }, () =>
+            Effect.runPromiseExitWith(context)(update, { signal: abort.signal }),
+          );
+          return Effect.promise(() => held).pipe(
+            Effect.onInterrupt(() =>
+              Effect.promise(() => {
+                abort.abort();
+                // Rejects when the lock was never granted, which leaves nothing to wait for.
+                return held.then(
+                  () => undefined,
+                  () => undefined,
+                );
+              }),
             ),
-          ),
-        ),
+          );
+        }),
         Effect.flatten,
       );
 

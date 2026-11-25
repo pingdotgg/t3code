@@ -132,6 +132,52 @@ describe("ConnectionStorage.makeCatalogStore", () => {
   );
 });
 
+it.effect("keeps an interrupted save's caller waiting until its write has landed", () =>
+  Effect.gen(function* () {
+    let stored = encodeCatalog(emptyCatalog);
+    const started = Promise.withResolvers<void>();
+    const landing = Promise.withResolvers<void>();
+    // The write lands a task after the interruption asks for it, so a caller that does not wait
+    // gets ahead of it.
+    vi.stubGlobal("navigator", {
+      locks: {
+        request: (
+          _name: string,
+          options: { signal: AbortSignal },
+          held: () => Promise<unknown>,
+        ) => {
+          options.signal.addEventListener("abort", () => setTimeout(landing.resolve));
+          return held();
+        },
+      },
+    });
+    const store = yield* ConnectionStorage.makeCatalogStore(
+      {
+        read: Effect.sync(() => stored),
+        write: (raw) =>
+          Effect.promise(async () => {
+            started.resolve();
+            await landing.promise;
+            stored = raw;
+          }),
+      },
+      {
+        changes: { postMessage: () => undefined, addEventListener: () => undefined },
+        exclusive: ConnectionStorage.exclusiveAcrossTabs,
+      },
+    );
+    const disabledEnvironmentIds = [EnvironmentId.make("other")];
+    const saving = yield* Effect.forkChild(
+      store.update((document) => ({ ...document, disabledEnvironmentIds })),
+    );
+    yield* Effect.promise(() => started.promise);
+
+    yield* Fiber.interrupt(saving);
+    expect(decodeCatalog(stored).disabledEnvironmentIds).toEqual(disabledEnvironmentIds);
+    expect((yield* store.read).disabledEnvironmentIds).toEqual(disabledEnvironmentIds);
+  }),
+);
+
 const fixedHandle = (database: IDBDatabase) => ({
   get: Effect.succeed(database),
   invalidate: () => Effect.void,
