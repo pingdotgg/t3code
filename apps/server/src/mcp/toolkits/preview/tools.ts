@@ -59,7 +59,7 @@ const readonlyBrowserTool = <T extends Tool.Any>(tool: T): T =>
 
 const PreviewStatusTool = Tool.make("preview_status", {
   description:
-    "Report preview tab state: owner, pending dialog, URL, title, loading, viewport, and size. `tabs` lists this thread's tabs. `profiles` lists logins for `preview_open`. Read any listed tab. Act only on your tab, or an unclaimed tab with no human in control.",
+    "Report preview tab state: owner, pending dialog, URL, title, loading, viewport, size, `tabs`, and `profiles`. Read any listed tab; act only on your tab or an unclaimed tab. Switch browsers only if absent, unsupported, user-asked, or after 2 step failures (quote error).",
   parameters: PreviewAutomationTabTargetInput,
   success: PreviewAutomationStatus,
   failure: PreviewToolFailure,
@@ -145,7 +145,7 @@ const PreviewSetAppearanceTool = safeBrowserTool(
 export const PreviewSnapshotTool = safeBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Use it only when the current request asks for browser work, including checking an edit in the browser. Never use it unasked to verify your own edit, or to repeat a snapshot from an earlier turn. Works on a tab the user is driving. Returns page state, elements, diagnostics, and screenshot size. Target one element with `locator='aria-ref=<ref>'` from `accessibilityTree`, even in frames. Refs die on navigation, a new snapshot, or handoff. Text caps near 20 KB; on your own or an unclaimed tab, `preview_evaluate` reads more. To show a screenshot when asked: `save=true`, then embed ![alt](screenshotPath).",
+      "Inspect a preview tab (only when this turn asks for browser work, never unasked after edits). Works on user-driven tabs. Returns page state, elements, diagnostics, and size. Target with `locator='aria-ref=<ref>'` (refs die on navigation/snapshot/handoff). Text caps ~20 KB; use `preview_evaluate` on your/unclaimed tabs for more. `save=true` writes PNG and returns `screenshotPath` for `![alt](path)`.",
     parameters: Schema.Struct({
       ...PreviewAutomationTabTargetInput.fields,
       includeImage: Schema.optional(

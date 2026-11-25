@@ -12,7 +12,7 @@ describe("buildCodexAdditionalContext", () => {
   describe.each([
     { model: "custom-model", modelName: "Custom 🦊 Model", reasoningEffort: "xhigh" },
   ])("with runtime $model", (runtime) => {
-    it.each([undefined, { browser: true, device: true }])(
+    it.each([undefined, { browser: true, device: true, linkedEnvironments: true }])(
       "keeps every entry within Codex's per-entry cap with tools %j",
       (availability) => {
         const context = buildCodexAdditionalContext(runtime, availability);
@@ -41,6 +41,11 @@ describe("Codex runtime context", () => {
     NodeAssert.match(instructions, /as gpt 5\.3 codex with high effort reasoning effort/);
     NodeAssert.doesNotMatch(instructions, /<runtime_info>[^<]*\n/);
   });
+
+  it("omits PR linking outside git repositories", () => {
+    const nonGit = runtimeInstructions({ model: "gpt-6.1-sol", isGitRepository: false });
+    NodeAssert.ok(!nonGit.includes("<pull_request_linking>"));
+  });
 });
 
 describe("Codex orchestration context", () => {
@@ -50,20 +55,36 @@ describe("Codex orchestration context", () => {
       .map(([, entry]) => entry.value)
       .join("\n");
 
-    NodeAssert.ok(orchestration.includes("use your native tool when the child uses your provider"));
+    NodeAssert.ok(orchestration.includes("native tool"));
     NodeAssert.ok(orchestration.includes("`run_in_background:false`"));
-    NodeAssert.ok(orchestration.includes("A native type on another provider's model"));
+    NodeAssert.ok(orchestration.includes("native types on another model"));
     NodeAssert.ok(
       orchestration.includes("Background agent: `delegate_task`, never a background `Agent`."),
     );
-    NodeAssert.ok(
-      orchestration.includes("Every new delegate review or re-check is a new `delegate_task`"),
-    );
-    NodeAssert.ok(orchestration.includes("never a `t3_thread_send`"));
+    NodeAssert.ok(orchestration.includes("new review rounds"));
+    NodeAssert.ok(orchestration.includes("never `t3_thread_send`"));
     NodeAssert.ok(!orchestration.includes("inheritedOptions"));
     NodeAssert.ok(!orchestration.includes("Prefer native"));
     // The ACP terminal fallback is ACP-only; Codex agents never need it.
     NodeAssert.ok(!orchestration.includes("acp-mcp-call"));
+  });
+
+  it("gates linked-environment and browser guidance on availability", () => {
+    const off = buildCodexAdditionalContext(
+      { model: "gpt-6.1-sol" },
+      { browser: false, device: false, linkedEnvironments: false },
+    ).t3_code_orchestration_01!.value;
+    NodeAssert.ok(!off.includes("`preview_*`"));
+    NodeAssert.ok(!off.includes("`t3_environment_link`"));
+    NodeAssert.ok(off.includes("Settings → Labs → Linked environments"));
+
+    const on = buildCodexAdditionalContext(
+      { model: "gpt-6.1-sol" },
+      { browser: true, device: false, linkedEnvironments: true },
+    ).t3_code_orchestration_01!.value;
+    NodeAssert.ok(on.includes("`preview_*`"));
+    NodeAssert.ok(on.includes("`t3_environment_link`"));
+    NodeAssert.ok(!on.includes("Settings → Labs → Linked environments"));
   });
 });
 

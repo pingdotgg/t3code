@@ -31,6 +31,8 @@ export interface McpSessionRegistryShape {
   readonly resolve: (
     rawToken: string,
   ) => Effect.Effect<McpInvocationContext.McpThreadInvocationScope | undefined>;
+  /** True once `/mcp` has authenticated at least one request for this provider session. */
+  readonly isConnected: (providerSessionId: string) => Effect.Effect<boolean>;
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
@@ -53,6 +55,8 @@ interface CredentialRecord {
   readonly lastAlive: AliveMark;
   /** Set when a request finds the token idle; only `touch` clears it, whatever the clocks do. */
   readonly expired: boolean;
+  /** Set once `/mcp` resolves this credential for a client request. */
+  readonly connected: boolean;
 }
 
 interface RegistryState {
@@ -146,7 +150,13 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(records);
-        next.set(tokenHash, { tokenHash, scope, lastAlive: issuedAlive, expired: false });
+        next.set(tokenHash, {
+          tokenHash,
+          scope,
+          lastAlive: issuedAlive,
+          expired: false,
+          connected: false,
+        });
         return { records: next };
       });
       return {
@@ -178,11 +188,23 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           return [undefined, { records: next }] as const;
         }
         const next = new Map(records);
-        next.set(tokenHash, { ...record, lastAlive: alive });
+        next.set(tokenHash, { ...record, lastAlive: alive, connected: true });
         return [record.scope, { records: next }] as const;
       });
     },
   );
+
+  const isConnected: McpSessionRegistryShape["isConnected"] = (providerSessionId) =>
+    SynchronizedRef.get(state).pipe(
+      Effect.map(({ records }) => {
+        for (const record of records.values()) {
+          if (record.scope.thread.providerSessionId === providerSessionId && record.connected) {
+            return true;
+          }
+        }
+        return false;
+      }),
+    );
 
   const touch: McpSessionRegistryShape["touch"] = Effect.fn("McpSessionRegistry.touch")(
     function* (threadId) {
@@ -207,6 +229,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   return McpSessionRegistry.of({
     issue,
     resolve,
+    isConnected,
     touch,
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {

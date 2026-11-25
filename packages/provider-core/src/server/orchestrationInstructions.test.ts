@@ -1,6 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  acpMcpFallbackInstructions,
+  buildT3OrchestrationSections,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
@@ -8,6 +10,69 @@ import {
   t3OrchestrationPrompt,
   t3OrchestrationSystemPrompt,
 } from "./orchestrationInstructions.ts";
+
+describe("T3 orchestration gating", () => {
+  it("gates browser and linked-environment guidance on session capabilities", () => {
+    const defaultText = buildT3OrchestrationSections().join("\n");
+    assert.include(defaultText, "`preview_*`");
+    assert.include(defaultText, "Settings → Labs → Linked environments");
+    assert.notInclude(defaultText, "`t3_environment_links`");
+    assert.notInclude(defaultText, "`t3_environment_link`");
+
+    const noBrowser = buildT3OrchestrationSections({ browser: false }).join("\n");
+    assert.notInclude(noBrowser, "`preview_*`");
+    assert.include(noBrowser, "`html_render`");
+
+    const withLinks = buildT3OrchestrationSections({ linkedEnvironments: true }).join("\n");
+    assert.include(withLinks, "`t3_environment_links`");
+    assert.include(withLinks, "`t3_environment_link`");
+    assert.notInclude(withLinks, "Settings → Labs → Linked environments");
+  });
+
+  it("gates ACP fallback on unattached MCP and emits only the current OS syntax", () => {
+    const attached = t3AcpPromptWithInstructions({
+      prompt: "Hello.",
+      state: {
+        interactionMode: "default",
+        hasT3Mcp: true,
+        hasDeviceTools: false,
+        needsAcpMcpFallback: false,
+        platform: "linux",
+      },
+    });
+    assert.notInclude(attached, "ACP fallback");
+    assert.notInclude(attached, "acp-mcp-call");
+    assert.notInclude(attached, "PowerShell");
+
+    const linuxFallback = t3AcpPromptWithInstructions({
+      prompt: "Hello.",
+      state: {
+        interactionMode: "default",
+        hasT3Mcp: true,
+        hasDeviceTools: false,
+        needsAcpMcpFallback: true,
+        platform: "linux",
+      },
+    });
+    assert.include(linuxFallback, acpMcpFallbackInstructions("linux"));
+    assert.include(linuxFallback, "T3_ACP_MCP_NODE");
+    assert.notInclude(linuxFallback, "T3_ACP_MCP_CALL");
+
+    const winFallback = t3AcpPromptWithInstructions({
+      prompt: "Hello.",
+      state: {
+        interactionMode: "default",
+        hasT3Mcp: true,
+        hasDeviceTools: false,
+        needsAcpMcpFallback: true,
+        platform: "win32",
+      },
+    });
+    assert.include(winFallback, acpMcpFallbackInstructions("win32"));
+    assert.include(winFallback, "T3_ACP_MCP_CALL");
+    assert.notInclude(winFallback, "T3_ACP_MCP_NODE");
+  });
+});
 
 describe("T3 device instructions", () => {
   it("route device work through device_open and give Claude the line that loads the tools", () => {
@@ -27,7 +92,7 @@ describe("T3 device instructions", () => {
   it("open the app before the returned command's snapshots, screenshots and input", () => {
     assert.include(
       T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
-      "its snapshots, screenshots and input need `open <app>` first,",
+      "run `open <app>` before snapshots/screenshots/input",
     );
   });
 
@@ -35,7 +100,7 @@ describe("T3 device instructions", () => {
     // agent-device's DEVICE_IN_USE advice is to rerun with the owner's --session or close it first.
     assert.include(
       T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
-      "follow its advice once, but never reuse or close another session; if it still fails,",
+      "follow advice once, never reuse or close another session; if still failing,",
     );
   });
 

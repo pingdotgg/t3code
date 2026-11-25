@@ -10,8 +10,10 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
@@ -141,6 +143,35 @@ export const layerFromProjectStore: Layer.Layer<
     const projects = yield* ProjectStore.ProjectStoreV2;
     const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
     const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
+    const pathService = yield* Effect.serviceOption(Path.Path);
+    const detectGitRepository = (
+      cwd: string | null,
+      workspace: WorkspaceFolders.ThreadWorkspace | undefined,
+    ): Effect.Effect<boolean | undefined> => {
+      if (workspace?.folders.some((folder) => folder.isGitRepository) === true) {
+        return Effect.succeed(true);
+      }
+      if (cwd === null || Option.isNone(fileSystem) || Option.isNone(pathService)) {
+        return Effect.undefined;
+      }
+      const fs = fileSystem.value;
+      const path = pathService.value;
+      return Effect.gen(function* () {
+        const exists = (target: string) =>
+          fs.exists(target).pipe(Effect.orElseSucceed(() => false));
+        // Synthetic paths in unit tests do not exist on disk; leave them unset.
+        if (!(yield* exists(cwd))) return undefined;
+        let current = path.resolve(cwd);
+        for (let depth = 0; depth < 64; depth += 1) {
+          if (yield* exists(path.join(current, ".git"))) return true;
+          const parent = path.dirname(current);
+          if (parent === current) break;
+          current = parent;
+        }
+        return false;
+      });
+    };
     // The same ceiling the orchestrator enforces, fixed for the server's life.
     const { managedPolicy } = yield* ServerSettings.ServerSettingsService;
     const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
@@ -190,10 +221,12 @@ export const layerFromProjectStore: Layer.Layer<
               ),
             ),
           );
+        const isGitRepository = yield* detectGitRepository(cwd, workspace);
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
+          ...(isGitRepository === undefined ? {} : { isGitRepository }),
           ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),
           ...(workspace === undefined || workspace.folders.length === 0 ? {} : { workspace }),
         });

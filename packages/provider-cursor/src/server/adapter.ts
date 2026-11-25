@@ -2871,7 +2871,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         const resolveUserMessage = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           mcpServers: Record<string, McpServerConfig> | undefined,
+          hasBrowserTools: boolean,
           hasDeviceTools: boolean,
+          hasLinkedEnvironments: boolean,
           delivered: {
             readonly orchestration: boolean;
             readonly device: boolean;
@@ -2895,7 +2897,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               resolveExtractedTextPath: host.resolveExtractedTextPath,
             }),
             hasT3Mcp: mcpServers !== undefined,
+            hasBrowserTools,
             hasDeviceTools,
+            hasLinkedEnvironments,
             orchestrationDelivered: delivered.orchestration,
             deviceInstructionsDelivered: delivered.device,
             providerInstructions: CURSOR_BACKGROUND_WAIT_INSTRUCTIONS,
@@ -2982,7 +2986,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const mcpServers = cursorMcpServers(mcpSession);
             const hasDeviceTools =
-              mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
+              mcpServers !== undefined &&
+              mcpSession?.capabilities?.has("device") === true &&
+              mcpSession.deviceHostsAvailable !== false;
             const known = yield* Ref.get(told);
             // A conversation this process has not sent to was told on its first run.
             const delivered =
@@ -3039,7 +3045,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   : yield* resolveUserMessage(
                       turnInput,
                       mcpServers,
+                      mcpSession?.browserToolsAvailable ?? true,
                       hasDeviceTools,
+                      mcpSession?.linkedEnvironmentsAvailable === true,
                       delivered,
                       dropped?.text,
                     );

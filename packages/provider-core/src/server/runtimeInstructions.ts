@@ -11,8 +11,7 @@ export const AGENT_FEEDBACK_INSTRUCTIONS = {
 
 /** Session-invariant; harnesses with a native system-prompt append can carry it once per session. */
 export const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
-Link each PR you create, take over, or push to: link_pull_request, or link_pull_requests for several, full URL, every stack layer, as your next call. Host tools don't link for you. If linking fails, say so. Skip PRs you only read or review and PRs named only as background. Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch. Finish any needed branch update and push first, then watch and end your turn. Otherwise act now or hand back. Delegated children never watch, even if the brief says babysit. After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>. Links and watches persist across pushes. For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup. Before handback, call unwatch_pull_request on any PR you watch. When pull_request_* tools are listed, use them, not gh or cafe, to read, list, open, edit, review, reply on, close, or merge PRs, and ci_logs and ci_rerun for their checks. pull_request_create links for you.
-If available, call link_issue for each issue you take on or file, even via CLI; skip issues you only read.
+Use \`pull_request_*\`/\`ci_logs\`/\`ci_rerun\` over \`gh\`/\`cafe\` when listed (\`pull_request_create\` auto-links). Link created/pushed/taken-over PRs (\`link_pull_request\`/\`link_pull_requests\`, full URL, every stack layer; report failures); skip read/review/background PRs. For PR waits/monitoring: push first, call \`watch_pull_request\`, end turn (no sleep/loops/\`gh --watch\`/Monitor/ScheduleWakeup; \`unwatch_pull_request\` before handback). Children never watch; end PR replies with \`PR <full URL>, head <SHA>, checks and reviews <state>\`. Link worked/filed issues (\`link_issue\`); skip read-only.
 </pull_request_linking>`;
 
 /** Omit model and effort when the harness manages them dynamically. */
@@ -24,8 +23,10 @@ export function buildRuntimeInstructions(runtime: {
   readonly reasoningEffort?: string | undefined;
   /** False when the session's system prompt already carries the linking instructions. */
   readonly pullRequestLinking?: boolean;
-  /** Adds the folder list of a multi-folder thread. */
-  readonly runtimePolicy?: Pick<ProviderAdapterV2RuntimePolicy, "cwd" | "workspace"> | undefined;
+  /** Adds the folder list of a multi-folder thread and gates git-only linking guidance. */
+  readonly runtimePolicy?:
+    | Pick<ProviderAdapterV2RuntimePolicy, "cwd" | "workspace" | "isGitRepository">
+    | undefined;
 }): string {
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
@@ -35,15 +36,16 @@ export function buildRuntimeInstructions(runtime: {
     modelName && modelName !== model ? `${modelName} (model slug: ${model})` : model;
   const modelInfo = model && model !== "auto" && model !== "default" ? `, as ${modelLabel}` : "";
   const effortInfo = effort ? ` with ${effort} reasoning effort` : "";
-  const runtimeInfo = `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images, video, and audio using Markdown image syntax with absolute file paths. Link every other file you cite or produce by its absolute path, as in [http.ts:42](/abs/path/http.ts:42), so the user can open it in T3 Code's files viewer.</runtime_info>`;
+  const runtimeInfo = `<runtime_info>If asked: T3 Code via ${harness}${modelInfo}${effortInfo}. Embed images/video/audio with Markdown image syntax and absolute paths. Link every other cited/created file by absolute path, e.g. [http.ts:42](/abs/path/http.ts:42).</runtime_info>`;
   const feedbackLine = AGENT_FEEDBACK_INSTRUCTIONS[runtime.agentFeedback ?? "off"];
   const feedback = feedbackLine ? `\n${feedbackLine}` : "";
   const workspace =
     runtime.runtimePolicy === undefined ? "" : buildWorkspaceInstructions(runtime.runtimePolicy);
-  const linked =
-    runtime.pullRequestLinking === false
-      ? runtimeInfo
-      : `${runtimeInfo}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
+  const includePullRequestLinking =
+    runtime.pullRequestLinking !== false && runtime.runtimePolicy?.isGitRepository !== false;
+  const linked = includePullRequestLinking
+    ? `${runtimeInfo}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`
+    : runtimeInfo;
   return [linked + feedback, ...(workspace === "" ? [] : [workspace])].join("\n\n");
 }
 

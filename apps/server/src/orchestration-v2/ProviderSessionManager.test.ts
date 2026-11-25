@@ -41,6 +41,7 @@ import { HttpServer } from "effect/http";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -688,6 +689,7 @@ function layerTest(input: {
   readonly releaseRecorded?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly deviceServiceLayer?: Layer.Layer<DeviceService.DeviceService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
 }) {
   const layerConfiguredEventSink =
@@ -788,6 +790,7 @@ function layerTest(input: {
           input.installationGateLayer ?? ProviderInstallationGate.layer,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.deviceServiceLayer === undefined ? [] : [input.deviceServiceLayer]),
         ),
       ),
     ),
@@ -862,6 +865,7 @@ function runBrowserAccessScenario(input: {
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
   readonly delegatedBy?: ThreadId;
+  readonly deviceServiceLayer?: Layer.Layer<DeviceService.DeviceService>;
 }) {
   return Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -911,6 +915,9 @@ function runBrowserAccessScenario(input: {
           idleTimeoutMs: 1_000,
           mcpConfigs,
           projectServiceLayer: layerProjectService,
+          ...(input.deviceServiceLayer === undefined
+            ? {}
+            : { deviceServiceLayer: input.deviceServiceLayer }),
           serverSettingsLayer: ServerSettings.layerTest({
             enableAgentBrowserAccess: input.enableAgentBrowserAccess,
             ...(input.enableAgentDeviceAccess === undefined
@@ -6140,4 +6147,68 @@ it.effect("ProviderSessionManagerV2 gives a delegated child its project's device
     });
     assert.isTrue(child?.capabilities?.has("device"));
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 gates deviceHostsAvailable on configured or available hosts",
+  () =>
+    Effect.gen(function* () {
+      const makeDeviceLayer = (
+        hosts: ReadonlyArray<{
+          readonly id: string;
+          readonly label: string;
+          readonly kind: "local" | "ssh";
+          readonly platforms: ReadonlyArray<{
+            readonly platform: "ios" | "android";
+            readonly available: boolean;
+          }>;
+        }>,
+      ) =>
+        Layer.mock(DeviceService.DeviceService)({
+          state: Effect.succeed({ hosts } as never),
+        });
+
+      const unavailable = yield* runBrowserAccessScenario({
+        enableAgentBrowserAccess: false,
+        projectOverride: false,
+        deviceOverride: true,
+        enableDeviceSupport: true,
+        deviceServiceLayer: makeDeviceLayer([
+          {
+            id: "local",
+            label: "Local",
+            kind: "local",
+            platforms: [
+              { platform: "ios", available: false },
+              { platform: "android", available: false },
+            ],
+          },
+        ]),
+      });
+      assert.isTrue(unavailable?.capabilities?.has("device"));
+      assert.isFalse(unavailable?.deviceHostsAvailable);
+
+      const remoteConfigured = yield* runBrowserAccessScenario({
+        enableAgentBrowserAccess: false,
+        projectOverride: false,
+        deviceOverride: true,
+        enableDeviceSupport: true,
+        deviceServiceLayer: makeDeviceLayer([
+          {
+            id: "local",
+            label: "Local",
+            kind: "local",
+            platforms: [{ platform: "ios", available: false }],
+          },
+          {
+            id: "ssh-mac",
+            label: "Build Mac",
+            kind: "ssh",
+            platforms: [{ platform: "ios", available: true }],
+          },
+        ]),
+      });
+      assert.isTrue(remoteConfigured?.capabilities?.has("device"));
+      assert.isTrue(remoteConfigured?.deviceHostsAvailable);
+    }),
 );

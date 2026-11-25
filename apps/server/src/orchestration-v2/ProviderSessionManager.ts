@@ -53,6 +53,7 @@ import {
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
@@ -478,6 +479,7 @@ export const layerWithOptions = (
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      const deviceService = yield* Effect.serviceOption(DeviceService.DeviceService);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const promptSuggestionStore = yield* SubscriptionRef.make<
@@ -551,6 +553,17 @@ export const layerWithOptions = (
           Effect.orElseSucceed(() => null),
         );
       });
+      const hasAvailableDeviceHost = Option.isNone(deviceService)
+        ? Effect.succeed(true)
+        : deviceService.value.state.pipe(
+            Effect.map((state) =>
+              state.hosts.some(
+                (host) =>
+                  host.kind !== "local" || host.platforms.some((platform) => platform.available),
+              ),
+            ),
+            Effect.orElseSucceed(() => false),
+          );
       const layerScope = yield* Effect.scope;
       // Group signals stop providers before restart capture; drop post-signal events so recovery owns that state.
       const shutdownSignal = { received: false };
@@ -626,6 +639,9 @@ export const layerWithOptions = (
                 // Live providers build MCP clients once; reuse credentials across workspace handoffs.
                 const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
                   yield* agentAccessSettings(threadId);
+                const deviceHostsAvailable =
+                  deviceToolsAvailable && (yield* hasAvailableDeviceHost);
+                const linkedEnvironmentsAvailable = (yield* readLinkedEnvironments) === true;
                 const capabilities = new Set<
                   import("../mcp/McpInvocationContext.ts").McpCapability
                 >(["orchestration", "worktree", "pull-requests", "issues"]);
@@ -670,6 +686,16 @@ export const layerWithOptions = (
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {
+                    if (
+                      existing.deviceHostsAvailable !== deviceHostsAvailable ||
+                      existing.linkedEnvironmentsAvailable !== linkedEnvironmentsAvailable
+                    ) {
+                      yield* mcpSessions.set({
+                        ...existing,
+                        deviceHostsAvailable,
+                        linkedEnvironmentsAvailable,
+                      });
+                    }
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -684,6 +710,9 @@ export const layerWithOptions = (
                 });
                 yield* mcpSessions.set({
                   ...credential.config,
+                  deviceHostsAvailable,
+                  linkedEnvironmentsAvailable,
+                  isConnected: mcpSessionRegistry.isConnected(credential.config.providerSessionId),
                   hasPendingWake: projectionStore
                     .getThreadRecords(threadId, ["runs", "subagents"])
                     .pipe(

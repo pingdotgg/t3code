@@ -405,7 +405,7 @@ const WatchPullRequestInput = Schema.Struct({
 
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
-    "Watch an open PR for this thread, linking it if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, conflicts, and once on merge or close unless you did it via CLI. Handle old comments first; only new ones wake you. After this call, end your turn. The watch stays on: do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
+    "Watch an open PR for this thread (auto-links). Wakes on failed checks, passed required checks, new comments/reviews, conflicts, and merge/close unless done via CLI. Handle old comments first. End your turn after calling. Links/watches persist across pushes; don't re-call on a wake (re-watch if unwatched earlier). Check readiness yourself before merging.",
   parameters: WatchPullRequestInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,

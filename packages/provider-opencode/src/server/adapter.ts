@@ -1096,7 +1096,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const hasT3Mcp = mcpSession !== undefined && !connection.external;
         const orchestrationSystemPrompt = t3OrchestrationSystemPrompt(
           hasT3Mcp,
-          mcpSession?.capabilities?.has("device") === true,
+          mcpSession?.capabilities?.has("device") === true &&
+            mcpSession.deviceHostsAvailable !== false,
+          {
+            browser: mcpSession?.browserToolsAvailable ?? true,
+            linkedEnvironments: mcpSession?.linkedEnvironmentsAvailable === true,
+          },
         );
         if (hasT3Mcp) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>

@@ -9325,10 +9325,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           sessionId: string,
         ) {
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+          const mcpConnected =
+            mcpSession?.isConnected === undefined ? undefined : yield* mcpSession.isConnected;
+          const platform = yield* HostProcess.Platform;
           const instructionState = {
             interactionMode: turnInput.runtimePolicy.interactionMode,
             hasT3Mcp: mcpSession !== undefined,
-            hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
+            hasBrowserTools: mcpSession?.browserToolsAvailable ?? true,
+            hasDeviceTools:
+              mcpSession?.capabilities?.has("device") === true &&
+              mcpSession.deviceHostsAvailable !== false,
+            hasLinkedEnvironments: mcpSession?.linkedEnvironmentsAvailable === true,
+            // Only inject the terminal fallback when T3 MCP is configured but the agent did not attach to `/mcp`.
+            needsAcpMcpFallback: mcpSession !== undefined && mcpConnected === false,
+            platform,
           } satisfies T3AcpInstructionState;
           const userText =
             flavor.rewriteUserText === undefined

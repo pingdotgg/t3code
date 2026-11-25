@@ -223,8 +223,8 @@ import {
 } from "../../provider/claudeUsageLimits.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import {
+  buildT3OrchestrationInstructions,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
-  T3_CODE_ORCHESTRATION_INSTRUCTIONS,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
@@ -2497,18 +2497,13 @@ function splitClaudeSleepTimerSteps(tail: string): string[] | undefined {
 // Claude Code defers MCP tools behind ToolSearch, so the agent only finds
 // t3_background_wait when the system prompt says when to reach for it.
 const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
-
-### Background work you wait on
-
-To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.
+To wait on a background command or Monitor you started (tests, builds; not dev servers or PRs), call \`t3_background_wait\` with its task ID before ending your turn. Load deferred T3 tools via ToolSearch.
 `;
 
 // Claude 5.1+ returns text written before a tool call as a progress update, which the API
 // returns only as a summary.
 const CLAUDE_SEND_TO_USER_INSTRUCTIONS = `
-### Text the user must read mid-turn
-
-Text you write before a tool call may reach the user only as a one-line summary. When the user must read something in full before your turn ends, such as a draft, a code block, or what a question you're about to ask refers to, send it with \`send_to_user\`. Put everything else in your final reply.
+Text written before a tool call may show only as a one-line summary; use \`send_to_user\` for text the user must read in full mid-turn (drafts, code, question context). Put everything else in your final reply.
 `;
 
 // Native subagents start from their task, not this session's system prompt.
@@ -2537,8 +2532,14 @@ export function makeClaudeQueryOptions(input: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   readonly agentFeedback?: AgentFeedbackMode;
-  /** The thread's T3 MCP session holds the `device` capability. */
+  /** The thread's T3 MCP session holds the `preview` capability. */
+  readonly browserToolsAvailable?: boolean;
+  /** The thread's T3 MCP session holds the `device` capability with an available device host. */
   readonly deviceToolsAvailable?: boolean;
+  /** Settings → Labs → Linked environments is enabled. */
+  readonly linkedEnvironmentsAvailable?: boolean;
+  /** False when neither `cwd` nor any tracked folder is a Git repository. */
+  readonly isGitRepository?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -2699,11 +2700,20 @@ export function makeClaudeQueryOptions(input: {
         buildRuntimeInstructions({
           harness: "Claude Code",
           agentFeedback,
-          runtimePolicy: { cwd: input.cwd, workspace: input.workspace },
+          runtimePolicy: {
+            cwd: input.cwd,
+            workspace: input.workspace,
+            ...(input.isGitRepository === undefined
+              ? {}
+              : { isGitRepository: input.isGitRepository }),
+          },
         }) +
           (input.mcpServers === undefined
             ? ""
-            : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
+            : buildT3OrchestrationInstructions({
+                browser: input.browserToolsAvailable ?? true,
+                linkedEnvironments: input.linkedEnvironmentsAvailable ?? false,
+              }) +
               CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
               CLAUDE_SEND_TO_USER_INSTRUCTIONS +
               (deviceInstructions
@@ -13733,7 +13743,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(mcpOverrides.mcpServers === undefined
               ? {}
               : { mcpServers: mcpOverrides.mcpServers }),
-            deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
+            browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
+            deviceToolsAvailable:
+              mcpSession?.capabilities?.has("device") === true &&
+              mcpSession.deviceHostsAvailable !== false,
+            linkedEnvironmentsAvailable: mcpSession?.linkedEnvironmentsAvailable === true,
+            ...(turnInput.runtimePolicy.isGitRepository === undefined
+              ? {}
+              : { isGitRepository: turnInput.runtimePolicy.isGitRepository }),
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}

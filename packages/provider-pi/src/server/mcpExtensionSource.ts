@@ -16,6 +16,7 @@ export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
 import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as NodeCrypto from "node:crypto";
+import * as NodeFs from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { Type } from "typebox";
@@ -549,10 +550,24 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
+  const isGitWorkspace = (cwd?: string): boolean => {
+    if (!cwd || !NodeFs.existsSync(cwd)) return true;
+    let current = NodePath.resolve(cwd);
+    for (let depth = 0; depth < 64; depth += 1) {
+      if (NodeFs.existsSync(NodePath.join(current, ".git"))) return true;
+      const parent = NodePath.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+    return false;
+  };
+
   // Keep guidance in the system prompt so leading slash commands still expand.
   pi.on("before_agent_start", (event, ctx) => {
     reconcileDiscovery(ctx);
-    const instructions = ORCHESTRATION_INSTRUCTIONS + "\\n\\n" + PULL_REQUEST_LINKING_INSTRUCTIONS;
+    const instructions = isGitWorkspace(ctx.cwd)
+      ? ORCHESTRATION_INSTRUCTIONS + "\\n\\n" + PULL_REQUEST_LINKING_INSTRUCTIONS
+      : ORCHESTRATION_INSTRUCTIONS;
     const sections = event.systemPromptOptions?.sections;
     if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {
       // A full prompt override bypasses Pi's later section rendering.

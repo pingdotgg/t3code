@@ -17,9 +17,15 @@ export interface McpProviderSessionConfig {
   /** Omit preview_* instructions when the user withholds agent browser access. */
   readonly browserToolsAvailable: boolean;
   readonly capabilities?: ReadonlySet<string>;
+  /** True when at least one device host is configured or locally available. */
+  readonly deviceHostsAvailable?: boolean;
+  /** True while Settings → Labs → Linked environments is enabled. */
+  readonly linkedEnvironmentsAvailable?: boolean;
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   /** True while a delegated task this thread started will wake it with its result. */
   readonly hasPendingWake?: Effect.Effect<boolean>;
+  /** True once the provider's MCP client has connected to `/mcp` with this session's token. */
+  readonly isConnected?: Effect.Effect<boolean>;
 }
 
 export function withAgentDeviceEnvironment(

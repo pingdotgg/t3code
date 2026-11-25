@@ -12,7 +12,9 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -281,6 +283,41 @@ it.layer(
       const allowed = yield* resolve("auto-accept-edits");
       assert.equal(allowed.runtimeMode, "auto-accept-edits");
       assert.equal(allowed.maxRuntimeMode, "auto-accept-edits");
+    }),
+  );
+});
+
+it.layer(
+  layerWithPolicy(
+    undefined,
+    Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+      forThread: () => Effect.succeed(noWorkspace),
+    }),
+  ).pipe(Layer.provideMerge(NodeServices.layer)),
+)("RuntimePolicyV2 git repository detection", (it) => {
+  it.effect("marks real directories as git or non-git based on ancestor .git", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const now = yield* DateTime.now;
+      const nonGitDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runtime-policy-nongit-" });
+      const gitRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runtime-policy-git-" });
+      const nestedDir = path.join(gitRoot, "packages", "app");
+      yield* fs.makeDirectory(path.join(gitRoot, ".git"), { recursive: true });
+      yield* fs.makeDirectory(nestedDir, { recursive: true });
+
+      const nonGitPolicy = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: nonGitDir }),
+        modelSelection,
+      });
+      const gitPolicy = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: nestedDir }),
+        modelSelection,
+      });
+
+      assert.equal(nonGitPolicy.isGitRepository, false);
+      assert.equal(gitPolicy.isGitRepository, true);
     }),
   );
 });
