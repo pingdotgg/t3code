@@ -21,6 +21,8 @@ export interface TerminalOutputState {
   // The terminal parser's state at the first retained code unit. Trimming can cut a control
   // sequence, and a replay has to skip the rest of it instead of printing it.
   readonly sequenceState: number;
+  /** Parser state of a prefix omitted after the snapshot history. */
+  readonly pendingSnapshotSequenceState?: number | undefined;
   /** Chunks before this offset are replayed to emulators but are no longer displayed text. */
   readonly textStartOffset: number;
 }
@@ -183,6 +185,27 @@ function appendOutput(
   data: string,
   maxBufferBytes: number,
 ): TerminalOutputState {
+  const pending = current.pendingSnapshotSequenceState;
+  if (pending === undefined || data.length === 0) {
+    return appendRetainedOutput(current, data, maxBufferBytes);
+  }
+  const end = terminalSequenceEnd(pending, data);
+  const state = terminalSequenceStateAfter(pending, data, 0, end);
+  return appendRetainedOutput(
+    {
+      ...current,
+      pendingSnapshotSequenceState: state === TERMINAL_SEQUENCE_GROUND ? undefined : state,
+    },
+    data.slice(end),
+    maxBufferBytes,
+  );
+}
+
+function appendRetainedOutput(
+  current: TerminalOutputState,
+  data: string,
+  maxBufferBytes: number,
+): TerminalOutputState {
   if (data.length === 0) return current;
   if (maxBufferBytes <= 0) {
     return {
@@ -270,8 +293,8 @@ function resetOutput(
     retainedBytes: reset.byteLength,
     resetVersion: current.resetVersion + 1,
     nextOffset: reset.nextOffset,
-    sequenceState:
-      snapshot.historySequenceState ?? retained.historySequenceState ?? TERMINAL_SEQUENCE_GROUND,
+    sequenceState: TERMINAL_SEQUENCE_GROUND,
+    pendingSnapshotSequenceState: snapshot.historySequenceState ?? retained.historySequenceState,
     textStartOffset: 0,
   };
 }
@@ -284,7 +307,7 @@ const CLEAR_TERMINAL_TEXT = "\u001b[H\u001b[2J\u001b[3J";
 function clearOutput(current: TerminalOutputState, maxBufferBytes: number): TerminalOutputState {
   // The erase rides over the budget: trimming here would evict the output that set those modes.
   const cleared = appendOutput(
-    current,
+    { ...current, pendingSnapshotSequenceState: undefined },
     CLEAR_TERMINAL_TEXT,
     maxBufferBytes <= 0
       ? maxBufferBytes

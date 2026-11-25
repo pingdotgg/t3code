@@ -410,7 +410,7 @@ function terminalWireLabel(session: TerminalSessionState): string {
   return truncateTerminalWireLabel(getTerminalLabel(session.terminalId));
 }
 
-function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
+function snapshot(session: TerminalSessionState, legacyReplay = false): TerminalSessionSnapshot {
   return {
     threadId: session.threadId,
     terminalId: session.terminalId,
@@ -418,7 +418,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     worktreePath: session.worktreePath,
     status: session.status,
     pid: session.pid,
-    history: session.history.value() + unfinishedSequenceReplay(session),
+    ...snapshotHistory(session, legacyReplay),
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     label: terminalWireLabel(session),
@@ -1413,17 +1413,32 @@ const OVERSIZED_SEQUENCE = "\u0018";
 // Stands in for the ESC of an oversized sequence, which ended any string history left open.
 const STRING_TERMINATOR = "\u001b\\";
 
-// Longer held text is cut to its introducer in a snapshot, so it cannot push history out of the
-// client's budget or add its size to every resync.
+// Long prefixes stay out of snapshots so they cannot crowd out scrollback on every resync.
 const MAX_SNAPSHOT_SEQUENCE_LENGTH = 4_096;
 
-// History leaves out the sequence the terminal is still inside. A client that starts from a
-// snapshot needs it, or it prints the rest of the sequence as text.
-function unfinishedSequenceReplay(session: TerminalSessionState): string {
+function snapshotHistory(session: TerminalSessionState, legacyReplay: boolean) {
+  const history = session.history.value();
   const held = session.pendingHistoryControlSequence;
-  if (held.startsWith(OVERSIZED_SEQUENCE)) return held.slice(1);
-  if (held.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH) return held;
-  return held.slice(0, 2) + (/[\u001b\ud800-\udbff]$/.exec(held)?.[0] ?? "");
+  const oversized = held.startsWith(OVERSIZED_SEQUENCE);
+  if (!oversized && held.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH) {
+    return { history: history + held };
+  }
+  // The standalone open RPC retains its historical replay format.
+  if (legacyReplay) {
+    const replay = oversized
+      ? held.slice(1)
+      : held.slice(0, 2) + (/[\u001b\ud800-\udbff]$/.exec(held)?.[0] ?? "");
+    return { history: history + replay };
+  }
+  const state = terminalSequenceStateAfter(TERMINAL_SEQUENCE_GROUND, held, oversized ? 1 : 0);
+  // The omitted prefix's ESC may also have ended the preceding string in history.
+  const closedHistory =
+    terminalSequenceStateAfter(TERMINAL_SEQUENCE_GROUND, history) === TERMINAL_SEQUENCE_GROUND
+      ? history
+      : history + STRING_TERMINATOR;
+  return state === TERMINAL_SEQUENCE_GROUND
+    ? { history: closedHistory }
+    : { history: closedHistory, historySequenceState: state };
 }
 
 export function sanitizeTerminalHistoryChunk(
@@ -3380,7 +3395,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         },
         "started",
       );
-      return snapshot(session);
+      return session;
     }
 
     const liveSession = existing.value;
@@ -3430,26 +3445,28 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         },
         "started",
       );
-      return snapshot(liveSession);
+      return liveSession;
     }
 
     if (liveSession.cols !== targetCols || liveSession.rows !== targetRows) {
       yield* resizeSession(liveSession, liveSession.process, targetCols, targetRows);
     }
 
-    return snapshot(liveSession);
+    return liveSession;
   });
 
-  const openLocked = (input: TerminalOpenInput) =>
+  const openLocked = (input: TerminalOpenInput, legacyReplay = false) =>
     withWorkspaceLease(
       path.resolve(input.worktreePath ?? input.cwd),
-      openWithWorkspaceLease(input),
+      openWithWorkspaceLease(input).pipe(Effect.map((session) => snapshot(session, legacyReplay))),
     );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
     withThreadLock(
       input.threadId,
-      resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
+      resolveLaunchInputEnvironment(input).pipe(
+        Effect.flatMap((resolved) => openLocked(resolved, true)),
+      ),
     );
 
   const getShell = Effect.fn("terminal.getShell")(function* (input: TerminalObserveInput) {

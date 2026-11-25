@@ -266,7 +266,7 @@ export const TerminalSessionSnapshot = Schema.Struct({
   status: TerminalSessionStatus,
   pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   history: Schema.String,
-  // Parser state after an unfinished prefix was dropped from an empty history.
+  // Parser state of an unfinished prefix omitted after the replayable history.
   historySequenceState: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: (0xdbff << 3) | SEQUENCE_OSC })),
   ),

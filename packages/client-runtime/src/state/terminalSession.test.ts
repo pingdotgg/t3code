@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   retainTerminalSnapshotHistory,
   retainedTerminalHistory,
+  terminalSequenceStateAfter,
   TerminalSessionSnapshot,
   ThreadId,
 } from "@t3tools/contracts";
@@ -69,32 +70,46 @@ describe("terminal session reducers", () => {
       chunks: ["\ude00"],
       attach: true,
     },
-  ])("skips a continuation after $title", ({ history, budget, chunks, attach }) => {
-    const snapshot = {
-      ...BASE_SNAPSHOT,
-      ...(attach ? retainTerminalSnapshotHistory(history, budget) : { history }),
-    };
-    const clientBudget = attach ? 8_192 : budget;
-    let state = applyTerminalAttachStreamEvent(
-      EMPTY_TERMINAL_BUFFER_STATE,
-      { type: "snapshot", snapshot },
-      clientBudget,
-    );
-    const initial = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
-    expect(initial).toMatchObject({ type: "reset", data: "" });
-    let cursor = initial.cursor;
-    for (const data of [...chunks, "ok"]) {
-      state = applyTerminalAttachStreamEvent(
-        state,
-        { type: "output", threadId: TARGET.threadId, terminalId: TARGET.terminalId, data },
+    {
+      title: "CSI omitted after replayable history",
+      history: "before\n",
+      budget: 8_192,
+      chunks: ["C"],
+      attach: false,
+      historySequenceState: terminalSequenceStateAfter(0, "\u001b[20"),
+    },
+  ])(
+    "skips a continuation after $title",
+    ({ history, budget, chunks, attach, historySequenceState }) => {
+      const snapshot = {
+        ...BASE_SNAPSHOT,
+        ...(attach
+          ? retainTerminalSnapshotHistory(history, budget)
+          : { history, historySequenceState }),
+      };
+      const clientBudget = attach ? 8_192 : budget;
+      let state = applyTerminalAttachStreamEvent(
+        EMPTY_TERMINAL_BUFFER_STATE,
+        { type: "snapshot", snapshot },
         clientBudget,
       );
-      const update = readTerminalOutputUpdate(state.output, cursor);
-      expect("data" in update ? update.data : "").toBe(data === "ok" ? data : "");
-      cursor = update.cursor;
-    }
-    expect(terminalOutputText(state.output)).toBe("ok");
-  });
+      const initial = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
+      const replayed = historySequenceState === undefined ? "" : history;
+      expect(initial).toMatchObject({ type: "reset", data: replayed });
+      let cursor = initial.cursor;
+      for (const data of [...chunks, "ok"]) {
+        state = applyTerminalAttachStreamEvent(
+          state,
+          { type: "output", threadId: TARGET.threadId, terminalId: TARGET.terminalId, data },
+          clientBudget,
+        );
+        const update = readTerminalOutputUpdate(state.output, cursor);
+        expect("data" in update ? update.data : "").toBe(data === "ok" ? data : "");
+        cursor = update.cursor;
+      }
+      expect(terminalOutputText(state.output)).toBe(replayed + "ok");
+    },
+  );
 
   it("prefers live attach status over stale metadata after the attach stream starts", () => {
     const summary = applyTerminalMetadataStreamEvent([], {
