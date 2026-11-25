@@ -305,19 +305,26 @@ export default function DiffPanel({
   const tracksFolders = (activeProject?.trackedFolders?.length ?? 0) > 0;
   // Unchanged repositories are listed too: work done outside a turn only shows in these scopes.
   const threadWorktreePath = activeThread?.worktreePath ?? null;
-  const { repositories: gitRepositories, taskFolder } = useThreadGitRepositories({
+  const chosenGitRepositoryPath = useThreadGitRepositoryPath(routeThreadRef);
+  const {
+    repositories: gitRepositories,
+    taskFolder,
+    loading: gitRepositoriesLoading,
+  } = useThreadGitRepositories({
     threadRef: routeThreadRef,
     isServerThread: true,
     projectId: activeProjectId,
     worktreePath: threadWorktreePath,
     threadCwd: activeCwd ?? null,
     // As in the thread details panel, which this must resolve the same repository as.
-    enabled: visible && (tracksFolders || threadWorktreePath !== null),
+    // Also while hidden once a repository is chosen: the diff still loads then, for that repository.
+    enabled:
+      (visible || chosenGitRepositoryPath !== null) &&
+      (tracksFolders || threadWorktreePath !== null),
   });
   // A task folder's plain project directory can sit inside someone else's repository.
   const threadFolderIsRepo =
     (gitStatusQuery.data?.isRepo ?? true) && taskFolder?.projectIsWorktree !== false;
-  const chosenGitRepositoryPath = useThreadGitRepositoryPath(routeThreadRef);
   const gitRepository = resolveThreadGitRepository({
     repositories: gitRepositories,
     chosenPath: chosenGitRepositoryPath,
@@ -425,8 +432,14 @@ export default function DiffPanel({
     },
     { enabled: (isGitRepo || hasRepositoryChanges) && selectedTurn !== undefined },
   );
+  // The chosen repository's commit or base ref means nothing in the thread's folder, so its diff
+  // waits until the repository is found again, as after a reload.
+  const awaitingChosenRepository =
+    chosenGitRepositoryPath !== null &&
+    gitRepository?.repositoryPath !== chosenGitRepositoryPath &&
+    gitRepositoriesLoading;
   const branchDiffPreviewInput =
-    canReadFiles && isGitSelection && activeThread && gitCwd
+    canReadFiles && isGitSelection && activeThread && gitCwd && !awaitingChosenRepository
       ? {
           cwd: gitCwd,
           ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),

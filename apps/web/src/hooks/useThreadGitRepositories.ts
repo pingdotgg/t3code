@@ -32,6 +32,8 @@ export function useThreadGitRepositories(input: {
   readonly repositories: ReadonlyArray<ThreadGitRepository>;
   /** The worktree thread's task folder, once read; null otherwise. */
   readonly taskFolder: { readonly projectIsWorktree: boolean } | null;
+  /** True until the first read of the folders this thread reaches comes back. */
+  readonly loading: boolean;
 } {
   const { threadRef, worktreePath, enabled } = input;
   const structure = useQuietThreadProjection(input.isServerThread ? threadRef : null);
@@ -61,5 +63,8 @@ export function useThreadGitRepositories(input: {
       threadCwd: input.threadCwd,
     }),
     taskFolder,
+    loading:
+      (taskFolderQuery.isPending && taskFolderQuery.data === null) ||
+      (foldersQuery.isPending && foldersQuery.data === null),
   };
 }
