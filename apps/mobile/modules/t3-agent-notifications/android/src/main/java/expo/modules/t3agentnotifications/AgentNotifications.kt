@@ -213,8 +213,10 @@ object AgentNotifications {
     postGroupSummary(context, scheme, group, data)
   }
 
+  // Older relays send no alert_updated_at; those alerts keep plain replacement, since their id is
+  // already marked seen and a retry could not post them later.
   private fun isSuperseded(context: Context, tag: String, id: Int, updatedAt: Long): Boolean =
-    manager(context).activeNotifications.any {
+    updatedAt > 0L && manager(context).activeNotifications.any {
       it.tag == tag && it.id == id &&
         it.notification.extras.getLong(ALERT_UPDATED_AT, 0L) > updatedAt
     }

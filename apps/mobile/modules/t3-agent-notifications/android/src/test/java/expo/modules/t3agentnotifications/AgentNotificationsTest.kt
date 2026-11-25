@@ -199,6 +199,23 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   }
 
   @Test
+  fun keyedAlertDoesNotBlockAnUnkeyedOne() {
+    AgentNotifications.receive(
+      context,
+      update("keyed", false) + mapOf(
+        "alert_updated_at" to (System.currentTimeMillis() + 2000).toString(),
+        "alert_body" to "Failed: Test project",
+      )
+    )
+    AgentNotifications.receive(context, update("unkeyed", false))
+
+    val alerts = manager.activeNotifications.filter { it.tag.startsWith("t3-agent-alert") }
+    val alert = alerts.single().notification
+    val text = alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+    assertEquals("Done: Test project", text)
+  }
+
+  @Test
   fun differentThreadsWithCollidingHashesKeepTheirOwnAlerts() {
     val groups = listOf("environment/Aa", "environment/BB")
     assertEquals(groups[0].hashCode(), groups[1].hashCode())
