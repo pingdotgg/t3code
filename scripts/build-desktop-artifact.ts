@@ -128,6 +128,7 @@ export const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* ()
 
 interface DesktopBuildIconAssets {
   readonly macIconComposerProject?: string;
+  readonly macDockIconPngs?: { readonly light: string; readonly dark: string };
   readonly macIconPng: string;
   readonly linuxIconPng: string;
   readonly windowsIconIco: string;
@@ -2777,6 +2778,10 @@ export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIcon
   if (isDesktopLocalVersion(version)) {
     return {
       macIconComposerProject: BRAND_ASSET_PATHS.localIconComposerProject,
+      macDockIconPngs: {
+        light: BRAND_ASSET_PATHS.localMacIconPng,
+        dark: BRAND_ASSET_PATHS.localMacDarkIconPng,
+      },
       macIconPng: BRAND_ASSET_PATHS.localMacIconPng,
       linuxIconPng: BRAND_ASSET_PATHS.localLinuxIconPng,
       windowsIconIco: BRAND_ASSET_PATHS.localWindowsIconIco,
@@ -3061,6 +3066,19 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* fs.copy(iconAssets.macIconComposerProject, path.join(stageResourcesDir, "icon.icon"));
+    }
+    // Fork: the local build swaps its Dock icon with the app theme at runtime.
+    if (iconAssets.macDockIconPngs) {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.copyFile(
+        iconAssets.macDockIconPngs.light,
+        path.join(stageResourcesDir, "dock-icon-light.png"),
+      );
+      yield* fs.copyFile(
+        iconAssets.macDockIconPngs.dark,
+        path.join(stageResourcesDir, "dock-icon-dark.png"),
+      );
     }
     return;
   }
@@ -3913,6 +3931,14 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     {
       ...(iconAssets.macIconComposerProject
         ? { macIconComposerProject: path.join(repoRoot, iconAssets.macIconComposerProject) }
+        : {}),
+      ...(iconAssets.macDockIconPngs
+        ? {
+            macDockIconPngs: {
+              light: path.join(repoRoot, iconAssets.macDockIconPngs.light),
+              dark: path.join(repoRoot, iconAssets.macDockIconPngs.dark),
+            },
+          }
         : {}),
       macIconPng: path.join(repoRoot, iconAssets.macIconPng),
       linuxIconPng: path.join(repoRoot, iconAssets.linuxIconPng),

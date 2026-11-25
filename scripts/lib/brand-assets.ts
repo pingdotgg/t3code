@@ -39,6 +39,7 @@ export const BRAND_ASSET_PATHS = {
   // Fork: Kaluwa icon for -local builds.
   localIconComposerProject: "assets/local/app-icon.icon",
   localMacIconPng: "assets/local/kaluwa-macos-1024.png",
+  localMacDarkIconPng: "assets/local/kaluwa-macos-dark-1024.png",
   localLinuxIconPng: "assets/local/kaluwa-universal-1024.png",
   localWindowsIconIco: "assets/local/kaluwa-windows.ico",
   localWebFaviconIco: "assets/local/kaluwa-web-favicon.ico",
