@@ -6,6 +6,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Layer from "effect/Layer";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
+import { definition } from "../shared/definition.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsIssueTracker from "./AzureDevOpsIssueTracker.ts";
 
@@ -424,6 +425,27 @@ describe("AzureDevOpsIssueTracker", () => {
       expect(issue.url).toBe("https://acme.visualstudio.com/Web%20App/_workitems/edit/7");
       expect(issue.events).toHaveLength(101);
       expect(issue.events.at(-1)?.detail).toBe("title 102");
+    }),
+  );
+
+  it.effect("names a linked pull request's repository as its URL does, on either host", () =>
+    Effect.gen(function* () {
+      const api = yield* tracker(answer);
+      const pullRequestKey = definition.canonicalRepositoryKey(
+        "dev.azure.com/acme/web app/_git/web",
+      );
+      for (const [host, scope] of [
+        ["dev.azure.com", "acme/Web App"],
+        ["acme.visualstudio.com", "Web App"],
+      ] as const) {
+        const issue = yield* api.getIssue({ cwd: "/w", host, scope, key: "7" });
+        const [linked] = issue.linkedPullRequests;
+        // The issue panel opens the row on the work item's host; the pull request service keys it so.
+        expect(
+          definition.canonicalRepositoryKey(`${host}/${linked?.repository}`.toLowerCase()),
+          host,
+        ).toBe(pullRequestKey);
+      }
     }),
   );
 
