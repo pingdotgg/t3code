@@ -3256,7 +3256,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       }
                       // Base UI would move focus into a non-tabbable target's first tabbable child.
                       returnFocus.focus();
-                      return false;
+                      return document.activeElement === returnFocus
+                        ? false
+                        : projectScopeTriggerRef.current;
                     }}
                     render={<TooltipScrollDismissArea holdPositionOnExit />}
                   >
