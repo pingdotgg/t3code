@@ -127,10 +127,16 @@ function xml(source: string, extension: string): XmlNode {
     const node: XmlNode = {
       name: tag.name.split(":").at(-1)!,
       attrs: Object.fromEntries(
-        Object.entries(tag.attributes).flatMap(([key, value]) => [
-          [key, String(value)],
-          [key.split(":").at(-1)!, String(value)],
-        ]),
+        Object.entries(tag.attributes).flatMap(([key, value]) => {
+          const local = key.split(":").at(-1)!;
+          // XHTML table spans are unqualified; a prefixed colspan is a foreign attribute.
+          return extension === ".epub" && (local === "colspan" || local === "rowspan")
+            ? [[key, String(value)]]
+            : [
+                [key, String(value)],
+                [local, String(value)],
+              ];
+        }),
       ),
       children: [],
     };
