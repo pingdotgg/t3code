@@ -4084,7 +4084,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       rollbackInput.providerThread.createdAt,
                       request({ type: "get_entries" }),
                     );
-                  } else if (switchedTo === undefined) {
+                  } else if (switchedTo === undefined && boundary === firstBoundary) {
                     return piThreadSnapshot(state.providerThread);
                   } else {
                     const listing = piSessionListing(yield* request({ type: "get_entries" }));
@@ -4096,8 +4096,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       return yield* protocolError(
                         "Pi rollback could not verify the retained session head",
                       );
-                    // A move can leave prompts behind in the source file, even when no later
-                    // app turn points at that file. Keep steers sent during the retained turn.
+                    // A move can leave prompts behind in the source file even if Pi has since
+                    // returned to it. Keep steers sent during the retained turn.
                     for (const id of [...walk.userEntryIds].reverse()) {
                       const timestamp = listing.entries.get(id)?.timestamp;
                       if (timestamp == null || target?.completedAt == null)
