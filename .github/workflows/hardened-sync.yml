@@ -1,0 +1,59 @@
+name: Hardened Sync
+
+# Merges upstream into main every four hours. Claude Code resolves conflicts and repairs a merge
+# that fails CI, up to two times. A merge that still fails stays in a pull request for a person.
+on:
+  schedule:
+    - cron: "17 */4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: hardened-sync
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  merge:
+    name: Merge
+    uses: ./.github/workflows/hardened-agent-change.yml
+    with:
+      task: sync
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SYNC_APP_CLIENT_ID: ${{ secrets.SYNC_APP_CLIENT_ID }}
+      SYNC_APP_PRIVATE_KEY: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+
+  repair:
+    name: Repair
+    needs: merge
+    if: needs.merge.outputs.failed_ci != ''
+    uses: ./.github/workflows/hardened-agent-change.yml
+    with:
+      task: sync
+      attempt: "2"
+      failed_run: ${{ needs.merge.outputs.failed_ci }}
+      repair_branch: ${{ needs.merge.outputs.sync_branch }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SYNC_APP_CLIENT_ID: ${{ secrets.SYNC_APP_CLIENT_ID }}
+      SYNC_APP_PRIVATE_KEY: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+
+  repair_again:
+    name: Repair again
+    needs: repair
+    if: needs.repair.outputs.failed_ci != ''
+    uses: ./.github/workflows/hardened-agent-change.yml
+    with:
+      task: sync
+      attempt: "3"
+      failed_run: ${{ needs.repair.outputs.failed_ci }}
+      repair_branch: ${{ needs.repair.outputs.sync_branch }}
+      final: true
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SYNC_APP_CLIENT_ID: ${{ secrets.SYNC_APP_CLIENT_ID }}
+      SYNC_APP_PRIVATE_KEY: ${{ secrets.SYNC_APP_PRIVATE_KEY }}

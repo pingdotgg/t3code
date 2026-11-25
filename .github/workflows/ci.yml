@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-      - "sync/upstream-*"
+      - "sync/*"
 
 permissions:
   contents: read

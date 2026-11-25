@@ -1,0 +1,188 @@
+name: Hardened Agent Change
+
+# One attempt at a change that Claude Code makes and CI gates: an upstream merge, the repair of
+# a merge that failed CI, or the repair of a failed release. Hardened Sync and Hardened Daily
+# Release call it.
+on:
+  workflow_call:
+    inputs:
+      task:
+        description: "sync or release-fix"
+        required: true
+        type: string
+      attempt:
+        description: "Number of this call in the run. It names the artifact."
+        required: false
+        default: "1"
+        type: string
+      failed_run:
+        description: "Run whose failed jobs the agent repairs"
+        required: false
+        default: ""
+        type: string
+      repair_branch:
+        description: "Sync branch of the merge under repair"
+        required: false
+        default: ""
+        type: string
+      final:
+        description: "No repair follows, so a CI failure fails the job"
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      SYNC_APP_CLIENT_ID:
+        required: true
+      SYNC_APP_PRIVATE_KEY:
+        required: true
+    outputs:
+      failed_ci:
+        description: "CI run that failed on the change, when a repair can follow"
+        value: ${{ jobs.land.outputs.failed_ci }}
+      sync_branch:
+        description: "Branch that holds the change"
+        value: ${{ jobs.land.outputs.sync_branch }}
+
+permissions:
+  contents: read
+
+jobs:
+  # The agent reads upstream's text and runs its code, so this job holds no write credential.
+  change:
+    name: Make the change
+    if: github.repository == 'HYRMedia-LLC/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      resolved: ${{ steps.change.outputs.resolved }}
+    steps:
+      # No credential on disk. actions/checkout cannot do this here: removing its credential runs
+      # git submodule foreach, which fails on the .repos gitlinks. The repository is public.
+      - name: Checkout
+        run: |
+          git init --quiet .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git fetch --quiet --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          git checkout --quiet -B main origin/main
+
+      # Only this step holds the token. The agent reads the log as a file.
+      - name: Fetch the failed logs
+        if: inputs.failed_run != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED_RUN: ${{ inputs.failed_run }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FAILED_RUN/jobs?per_page=100" \
+            --jq '.jobs[] | select(.conclusion == "failure") | "\(.id) \(.name)"' |
+            while read -r id name; do
+              echo "===== Failed job: $name"
+              # gh api refuses output that has terminal escapes, and test logs have them.
+              curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" |
+                cut -d' ' -f2- | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' | tail -n 600
+            done >"$RUNNER_TEMP/failed.log"
+          [[ -s "$RUNNER_TEMP/failed.log" ]] || { echo "::error::Run $FAILED_RUN has no failed job log."; exit 1; }
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      # Claude Code needs bubblewrap and socat to keep the API key out of the agent's commands.
+      # Ubuntu 24.04 blocks the user namespaces that bubblewrap needs.
+      - name: Install Claude Code
+        run: |
+          npm install --prefix "$RUNNER_TEMP/claude-code" @anthropic-ai/claude-code@2.1.316
+          echo "$RUNNER_TEMP/claude-code/node_modules/.bin" >>"$GITHUB_PATH"
+          sudo apt-get install -y bubblewrap socat
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # Web browser tests fail CI most often after a sync, so the agent can run them.
+      - name: Install Chromium
+        if: inputs.task == 'sync'
+        continue-on-error: true
+        run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
+
+      - id: change
+        name: Run the agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TASK: ${{ inputs.task }}
+          REPAIR_BRANCH: ${{ inputs.repair_branch }}
+          FAILED_LOG: ${{ runner.temp }}/failed.log
+        run: |
+          case "$TASK" in
+            sync) .github/hardened/resolve-sync.sh "$RUNNER_TEMP/sync" ;;
+            release-fix) .github/hardened/repair-release.sh "$RUNNER_TEMP/sync" ;;
+            *) echo "::error::Unknown task: $TASK"; exit 1 ;;
+          esac
+
+      - name: Upload the change
+        if: steps.change.outputs.resolved == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: agent-change-${{ inputs.attempt }}
+          path: ${{ runner.temp }}/sync
+          if-no-files-found: error
+          include-hidden-files: true
+
+      # Post steps reread local actions from the workspace. A merge that changes them breaks the
+      # runner's step indexes, so restore the versions this job started with.
+      - name: Restore local actions
+        if: always()
+        run: git checkout --quiet origin/main -- .github/actions
+
+  # A new runner holds the App token and treats the change as data.
+  land:
+    name: Land after CI
+    needs: change
+    if: needs.change.outputs.resolved == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    outputs:
+      failed_ci: ${{ steps.land.outputs.failed_ci }}
+      sync_branch: ${{ steps.land.outputs.sync_branch }}
+    steps:
+      # No credential on disk. actions/checkout cannot do this here: removing its credential runs
+      # git submodule foreach, which fails on the .repos gitlinks. The repository is public.
+      - name: Checkout
+        run: |
+          git init --quiet .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git fetch --quiet --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          git checkout --quiet -B main origin/main
+
+      - name: Download the change
+        uses: actions/download-artifact@v8
+        with:
+          name: agent-change-${{ inputs.attempt }}
+          path: ${{ runner.temp }}/sync
+
+      - id: sync_token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+
+      - id: land
+        name: Check, run CI, and land
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUSH_TOKEN: ${{ steps.sync_token.outputs.token }}
+          TASK: ${{ inputs.task }}
+          SYNC_BRANCH: ${{ inputs.repair_branch }}
+          FINAL: ${{ inputs.final }}
+        run: |
+          case "$TASK" in
+            sync) .github/hardened/land-sync.sh "$RUNNER_TEMP/sync" main ;;
+            release-fix) .github/hardened/land-fix.sh "$RUNNER_TEMP/sync" main ;;
+          esac
