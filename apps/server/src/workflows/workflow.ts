@@ -365,7 +365,21 @@ export const sleep = Effect.fn("workflow.sleep")(function* (
   });
 });
 
-export const Woke = Schema.Struct({ expired: Schema.Boolean, value: Schema.Json });
+export const Woke = Schema.Struct({
+  expired: Schema.Boolean,
+  value: Schema.Json,
+  /** Ended unanswered from outside the run, which reads it as a timeout. */
+  withdrawn: Schema.optional(
+    Schema.Struct({ by: Schema.String, reason: Schema.NullOr(Schema.String) }),
+  ),
+});
+const closedDetail = (woke: typeof Woke.Type) => {
+  if (woke.withdrawn !== undefined) {
+    const { by, reason } = woke.withdrawn;
+    return `withdrawn by ${by}${reason === null ? "" : `: ${reason}`}`;
+  }
+  return woke.expired ? "timed out" : null;
+};
 export const wakeOf = (name: string) => DurableDeferred.make(`wait/${name}`, { success: Woke });
 const finite = [Schema.isFinite()] as const;
 // JSON carries a bare `Schema.Number` as a number or the text "Infinity", "-Infinity" or "NaN",
@@ -592,8 +606,12 @@ const waitClaimed = Effect.fnUntraced(function* <A, I>(
       name: `wait/${name}/close`,
       execute: Effect.gen(function* () {
         yield* run.store.waitClosed(run.runId, name);
-        yield* run.store.stepEnded(run.runId, name, "completed", woke.expired ? "timed out" : null);
+        yield* run.store.stepEnded(run.runId, name, "completed", closedDetail(woke));
         if (!woke.expired) yield* run.store.stepResult(run.runId, name, woke.value);
+        // Kept as data, so the history can say who withdrew the question and why.
+        else if (woke.withdrawn !== undefined) {
+          yield* run.store.stepResult(run.runId, name, { withdrawn: woke.withdrawn });
+        }
         yield* run.store.runResumed(run.runId);
       }),
     });

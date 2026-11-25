@@ -12971,5 +12971,9 @@
     },
     " braucht eine Begründung."
   ],
-  "91aadfc843c600de": "Google-Konto bestätigen"
+  "91aadfc843c600de": "Google-Konto bestätigen",
+  "201490988858b511": "zurückgezogen von {by}",
+  "99451a5d2d40440f": "Zurückgezogen von {by}.",
+  "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
+  "92e129bf413a1220": "zurückgezogen"
 }
