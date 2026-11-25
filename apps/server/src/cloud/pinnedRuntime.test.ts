@@ -1120,10 +1120,10 @@ it.layer(NodeServices.layer)("launcher lookup on PATH", (it) => {
       yield* fs.writeFileString(executable, "", { mode: 0o755 });
       const bin = path.join(root, "bin");
       yield* fs.makeDirectory(bin);
-      yield* fs.writeFileString(path.join(bin, "t3"), posixLauncherScript(executable), {
-        mode: 0o755,
-      });
-      const script = yield* fs.realPath(path.join(bin, "t3"));
+      // Fork: the launcher on PATH carries the fork's name; the runtime executable keeps its own.
+      const launcher = path.join(bin, FORK_IDENTITY.cliBin);
+      yield* fs.writeFileString(launcher, posixLauncherScript(executable), { mode: 0o755 });
+      const script = yield* fs.realPath(launcher);
       const missing = path.join(root, "missing");
       const lookup = (searchPath: string) =>
         findPosixLauncher({ launchedAs: executable, versionsDir }).pipe(
