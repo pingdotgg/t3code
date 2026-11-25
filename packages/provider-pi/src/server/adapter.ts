@@ -3042,6 +3042,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return readable ? { entries, leafId } : null;
       });
 
+      const historicalSessionFiles = Effect.fnUntraced(function* (sessionFile: string) {
+        const dir = path.dirname(sessionFile);
+        const siblings = yield* fileSystem
+          .readDirectoryEntries(dir)
+          .pipe(Effect.orElseSucceed(() => []));
+        return siblings
+          .filter((entry) => entry.type === "File" && entry.name.endsWith(".jsonl"))
+          .map((entry) => path.join(dir, entry.name))
+          .sort()
+          .reverse();
+      });
+
       // Old records hold entry IDs without a session file. Recover only when both
       // timestamped user entries are on the same branch in a sibling session.
       const findHistoricalForkSession = Effect.fnUntraced(function* (
@@ -3063,15 +3075,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const from = DateTime.toEpochMillis(startedAt);
         const between = DateTime.toEpochMillis(completedAt);
         const to = DateTime.toEpochMillis(boundaryEnd);
-        const dir = path.dirname(currentFile);
-        const siblings = yield* fileSystem
-          .readDirectoryEntries(dir)
-          .pipe(Effect.orElseSucceed(() => []));
-        const files = siblings
-          .filter((entry) => entry.type === "File" && entry.name.endsWith(".jsonl"))
-          .map((entry) => path.join(dir, entry.name))
-          .sort()
-          .reverse();
+        const files = yield* historicalSessionFiles(currentFile);
         for (const file of files) {
           if (file === currentFile) continue;
           const listing = yield* readSessionFile(file);
@@ -3086,6 +3090,31 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }
         }
         return undefined;
+      });
+
+      const findHistoricalCheckpointSession = Effect.fnUntraced(function* (
+        boundaryFile: string,
+        targetId: string,
+        startedAt: DateTime.Utc,
+        completedAt: DateTime.Utc,
+      ) {
+        const from = DateTime.toEpochMillis(startedAt);
+        const to = DateTime.toEpochMillis(completedAt);
+        let match: string | undefined;
+        for (const file of yield* historicalSessionFiles(boundaryFile)) {
+          if (file === boundaryFile) continue;
+          const listing = yield* readSessionFile(file);
+          if (
+            listing !== null &&
+            piUserEntryInWindow(listing.entries.get(targetId), from, to) &&
+            walkPiBranch(listing.entries, listing.leafId, targetId)?.reachedStop === true
+          ) {
+            // Forks may inherit the same checkpoint, so the first match need not be its source.
+            if (match !== undefined) return undefined;
+            match = file;
+          }
+        }
+        return match;
       });
 
       const sessionFileInCwd = Effect.fnUntraced(function* (
@@ -4000,6 +4029,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       : firstBoundary.turn.nativeThreadRef?.nativeId;
                   let boundary = firstBoundary;
                   let sourceFile = targetFile ?? boundaryFile;
+                  let recoveredLegacySource = false;
                   const targetId = piTurnEntryId(target);
                   if (
                     targetFile !== undefined &&
@@ -4029,6 +4059,31 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       sourceFile = boundaryFile;
                     } else {
                       boundary = piForkBoundary({ ...rollbackInput, sessionFile: targetFile });
+                    }
+                  }
+                  if (
+                    targetFile === undefined &&
+                    boundaryFile != null &&
+                    boundary.type === "uncaptured" &&
+                    targetId !== undefined &&
+                    target?.startedAt != null &&
+                    target.completedAt !== null
+                  ) {
+                    const resolvedBoundaryFile = path.resolve(cwd, boundaryFile);
+                    const listing = isCurrentFile(boundaryFile)
+                      ? piSessionListing(yield* request({ type: "get_entries" }))
+                      : yield* readSessionFile(resolvedBoundaryFile);
+                    if (listing !== null && !listing.entries.has(targetId)) {
+                      sourceFile = yield* findHistoricalCheckpointSession(
+                        resolvedBoundaryFile,
+                        targetId,
+                        target.startedAt,
+                        target.completedAt,
+                      );
+                      if (sourceFile === undefined)
+                        return yield* protocolError("Pi rollback entry was not found in a session");
+                      boundary = { type: "nothing" };
+                      recoveredLegacySource = true;
                     }
                   }
                   if (
@@ -4084,7 +4139,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       rollbackInput.providerThread.createdAt,
                       request({ type: "get_entries" }),
                     );
-                  } else if (switchedTo === undefined) {
+                  } else if (switchedTo === undefined && !recoveredLegacySource) {
                     return piThreadSnapshot(state.providerThread);
                   } else {
                     const listing = piSessionListing(yield* request({ type: "get_entries" }));
