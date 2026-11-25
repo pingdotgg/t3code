@@ -3042,11 +3042,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return readable ? { entries, leafId } : null;
       });
 
-      // Old records hold entry IDs without a session file. Recover only when both
-      // timestamped user entries are on the same branch in a sibling session.
+      // Old records hold entry IDs without a session file. Use timestamped user entries
+      // to distinguish the original branch from unrelated sessions with matching IDs.
       const findHistoricalForkSession = Effect.fnUntraced(function* (
         currentFile: string,
         boundary: Extract<PiForkBoundary, { type: "entry" }>,
+        acrossHandoff = false,
       ) {
         const targetId = piTurnEntryId(boundary.target);
         const startedAt = boundary.target?.startedAt;
@@ -3072,12 +3073,30 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           .map((entry) => path.join(dir, entry.name))
           .sort()
           .reverse();
+        let historicalFile: string | undefined;
         for (const file of files) {
           if (file === currentFile) continue;
           const listing = yield* readSessionFile(file);
           if (
-            listing !== null &&
-            piUserEntryInWindow(listing.entries.get(targetId), from, between) &&
+            listing === null ||
+            !piUserEntryInWindow(listing.entries.get(targetId), from, between)
+          )
+            continue;
+          if (acrossHandoff) {
+            // The discard boundary is in the new session. Clone only a unique old branch
+            // whose saved history already ends within the selected turn.
+            const leafTime =
+              listing.leafId === null ? null : listing.entries.get(listing.leafId)?.timestamp;
+            if (
+              leafTime == null ||
+              leafTime < from ||
+              leafTime > between ||
+              walkPiBranch(listing.entries, listing.leafId, targetId)?.reachedStop !== true
+            )
+              continue;
+            if (historicalFile !== undefined) return undefined;
+            historicalFile = file;
+          } else if (
             piUserEntryInWindow(listing.entries.get(boundary.entryId), between, to) &&
             walkPiBranch(listing.entries, listing.leafId, boundary.entryId)?.reachedStop === true &&
             walkPiBranch(listing.entries, boundary.entryId, targetId)?.reachedStop === true
@@ -3085,7 +3104,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             return file;
           }
         }
-        return undefined;
+        return historicalFile;
       });
 
       const sessionFileInCwd = Effect.fnUntraced(function* (
@@ -4224,11 +4243,41 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const boundaryFile =
               boundary.type === "nothing" ? undefined : boundary.turn.nativeThreadRef?.nativeId;
             const sourceFile = targetFile ?? boundaryFile ?? currentFile;
-            const nativeId = yield* forkSessionIntoCwd(sourceFile, boundary, source.createdAt).pipe(
+            let historicalFile: string | undefined;
+            // Pi can successfully fork before the first entry in the new session,
+            // even though that session never contained the selected turn.
+            if (targetFile === undefined && boundaryFile != null && boundary.type === "entry") {
+              const targetId = piTurnEntryId(boundary.target);
+              const completedAt = boundary.target?.completedAt;
+              const boundaryEnd = boundary.turn.completedAt;
+              if (targetId !== undefined && completedAt != null && boundaryEnd !== null) {
+                const file = path.resolve(cwd, boundaryFile);
+                const listing = yield* readSessionFile(file);
+                if (
+                  listing !== null &&
+                  !listing.entries.has(targetId) &&
+                  piUserEntryInWindow(
+                    listing.entries.get(boundary.entryId),
+                    DateTime.toEpochMillis(completedAt),
+                    DateTime.toEpochMillis(boundaryEnd),
+                  )
+                ) {
+                  historicalFile = yield* findHistoricalForkSession(file, boundary, true);
+                  if (historicalFile === undefined)
+                    return yield* protocolError("Pi fork target was not found in a session");
+                }
+              }
+            }
+            const nativeId = yield* forkSessionIntoCwd(
+              historicalFile ?? sourceFile,
+              historicalFile === undefined ? boundary : { type: "nothing" },
+              source.createdAt,
+            ).pipe(
               Effect.catchTags({
                 PiRpcError: (error) => {
                   if (
                     boundary.type !== "entry" ||
+                    targetFile !== undefined ||
                     boundaryFile != null ||
                     error.operation !== "fork" ||
                     error.detail !== "Invalid entry ID for forking"
