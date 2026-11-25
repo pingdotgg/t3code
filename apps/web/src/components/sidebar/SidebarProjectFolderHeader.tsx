@@ -3,7 +3,7 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { ContextMenuSource } from "@t3tools/contracts";
 import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { contextMenuSourceOf } from "../../contextMenuSource";
@@ -40,6 +40,7 @@ export function sidebarFolderRowId(projectKey: string) {
  */
 export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHeader(props: {
   group: SidebarProjectSnapshot;
+  environmentBadge: ReactNode;
   collapsed: boolean;
   hiddenThreads: readonly EnvironmentThreadShell[];
   onToggle: (group: SidebarProjectSnapshot) => void;
@@ -89,8 +90,11 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <ProjectFavicon project={group} className="size-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90">
-          {group.displayName}
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 pr-5">
+          <span className="truncate text-sm font-medium text-sidebar-foreground/90">
+            {group.displayName}
+          </span>
+          {props.environmentBadge}
         </span>
         {dot ? (
           <span className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}>

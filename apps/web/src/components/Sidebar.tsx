@@ -1,3 +1,4 @@
+import { localEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
@@ -1014,6 +1015,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const localEnvironmentId = useAtomValue(localEnvironmentIdAtom);
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
@@ -3658,6 +3660,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               <SidebarProjectFolderHeader
                                 key={`project-folder:${folder.group.projectKey}`}
                                 group={folder.group}
+                                environmentBadge={
+                                  <ProjectEnvironmentBadge
+                                    group={folder.group}
+                                    primaryEnvironmentId={localEnvironmentId}
+                                    machineByEnvironmentId={environmentMachineById}
+                                  />
+                                }
                                 collapsed={folder.collapsed}
                                 hiddenThreads={folder.hiddenThreads}
                                 onToggle={toggleProjectFolder}
