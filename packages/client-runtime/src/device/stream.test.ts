@@ -864,26 +864,41 @@ describe("Android WebRTC device streams", () => {
     fixture.client.stop();
   });
 
-  it("renews access only when a viewport stream that had connected is refused twice", async () => {
+  it("renews access only when the viewport stream is refused with 401 or 403", async () => {
     const fixture = setup();
-    const { events, viewportSources } = fixture;
+    const { client, events, fetch, sockets, viewportSources } = fixture;
+    let viewportStatus = 503;
+    const answer = fetch.getMockImplementation()!;
+    fetch.mockImplementation((url, init) =>
+      url.includes("/t3/display-viewport")
+        ? Promise.resolve(new Response(null, { status: viewportStatus }))
+        : answer(url, init),
+    );
     await streamFrame(fixture, 540, 1200);
+    sockets[0]!.onopen?.();
     const refuse = (source: (typeof viewportSources)[number]) => {
       source.readyState = 2;
       source.onerror?.();
     };
     viewportSources[0]!.onopen?.();
-    // A one-off refusal after the stream worked reconnects the viewport alone.
+    // A one-off drop after the stream worked reconnects the viewport alone.
     refuse(viewportSources[0]!);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(viewportSources).toHaveLength(2);
-    viewportSources[1]!.onopen?.();
+
+    // A replacement the proxy cannot serve for now keeps video and input up.
     refuse(viewportSources[1]!);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(events.onUnauthorized).not.toHaveBeenCalled();
+    expect(sockets[0]!.close).not.toHaveBeenCalled();
+    expect(fixture.peers.at(-1)!.close).not.toHaveBeenCalled();
+    expect(viewportSources).toHaveLength(3);
 
-    // Refused again before connecting: the media ticket has expired.
+    // Refused for access: the media ticket has expired.
+    viewportStatus = 401;
     refuse(viewportSources[2]!);
+    await vi.advanceTimersByTimeAsync(0);
     expect(events.onUnauthorized).toHaveBeenCalledOnce();
+    client.stop();
   });
 });

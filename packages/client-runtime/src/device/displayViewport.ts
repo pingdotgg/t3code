@@ -1,4 +1,4 @@
-// @effect-diagnostics globalTimers:off - This browser and WebView transport runs without an Effect runtime.
+// @effect-diagnostics globalFetch:off globalTimers:off - This browser and WebView transport runs without an Effect runtime.
 import { DeviceDisplayViewport } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -88,12 +88,10 @@ const sameViewport = (a: DeviceDisplayViewport | null, b: DeviceDisplayViewport 
     sameRegion(a.content, b.content) &&
     sameRegion(a.touch, b.touch));
 
-// EventSource reports no status code, so a refusal is only treated as lost access when a fresh
-// connection is refused too: a one-off proxy error must not tear down healthy video.
 const RECONNECT_DELAY_MS = 1_000;
 // A first connection can meet a hub that is still starting; a server without the route refuses
 // every attempt, and the frame stays uncropped.
-const FIRST_CONNECTION_ATTEMPTS = 4;
+const CONNECTION_ATTEMPTS = 4;
 
 /**
  * Follows where an Android emulator draws its display inside the streamed framebuffer. The
@@ -103,7 +101,7 @@ export function watchDisplayViewport(options: {
   readonly url: string;
   readonly credentials: boolean;
   readonly onChange: (viewport: DeviceDisplayViewport | null) => void;
-  /** A stream that had connected is refused twice in a row, as when its media ticket expired. */
+  /** A stream that had connected is refused with 401 or 403, as when its media ticket expired. */
   readonly onRefused: () => void;
 }) {
   // Undefined until the first event, which always applies: a watch started for a reconnect
@@ -111,6 +109,7 @@ export function watchDisplayViewport(options: {
   let current: DeviceDisplayViewport | null | undefined;
   let source: EventSource | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
+  let probe: AbortController | null = null;
   let connected = false;
   let failedAttempts = 0;
   const reconnect = (delay: number) => {
@@ -118,6 +117,35 @@ export function watchDisplayViewport(options: {
       retry = null;
       connect();
     }, delay);
+  };
+  const failAttempt = () => {
+    failedAttempts += 1;
+    if (failedAttempts < CONNECTION_ATTEMPTS)
+      return reconnect(RECONNECT_DELAY_MS * 2 ** (failedAttempts - 1));
+    // Out of attempts: a crop that is no longer followed could go stale.
+    if (current !== null) {
+      current = null;
+      options.onChange(null);
+    }
+  };
+  // EventSource reports no status code, so ask for it: only lost access may renew it, since that
+  // reconnects healthy video and input too.
+  const checkRefusal = (refused: EventSource) => {
+    const controller = new AbortController();
+    probe = controller;
+    void fetch(options.url, {
+      credentials: options.credentials ? "include" : "same-origin",
+      signal: controller.signal,
+    })
+      .then((response) => response.status)
+      .catch(() => 0)
+      .then((status) => {
+        controller.abort();
+        if (source !== refused) return;
+        probe = null;
+        if (status === 401 || status === 403) options.onRefused();
+        else failAttempt();
+      });
   };
   const connect = () => {
     const next = new EventSource(options.url, { withCredentials: options.credentials });
@@ -131,15 +159,8 @@ export function watchDisplayViewport(options: {
     next.onerror = () => {
       if (source !== next || next.readyState !== EventSource.CLOSED) return;
       if (opened) return reconnect(RECONNECT_DELAY_MS);
-      if (connected) return options.onRefused();
-      failedAttempts += 1;
-      if (failedAttempts < FIRST_CONNECTION_ATTEMPTS)
-        return reconnect(RECONNECT_DELAY_MS * 2 ** (failedAttempts - 1));
-      // Out of attempts: a crop kept from before this watch would no longer be followed.
-      if (current !== null) {
-        current = null;
-        options.onChange(null);
-      }
+      if (connected) return checkRefusal(next);
+      failAttempt();
     };
     next.onmessage = (event: MessageEvent<string>) => {
       const decoded = decodeEvent(event.data);
@@ -155,6 +176,8 @@ export function watchDisplayViewport(options: {
     stop: () => {
       if (retry !== null) clearTimeout(retry);
       retry = null;
+      probe?.abort();
+      probe = null;
       source?.close();
       source = null;
     },
