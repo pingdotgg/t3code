@@ -689,6 +689,7 @@ function layerTest(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
+  readonly replacementAdapter?: Ref.Ref<ProviderAdapter.ProviderAdapterV2["Service"] | undefined>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -741,7 +742,19 @@ function layerTest(input: {
       ...(input.eventStreamsEnded === undefined
         ? {}
         : { eventStreamsEnded: input.eventStreamsEnded }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+    }).pipe(
+      Effect.map((adapter) => {
+        const replacement = input.replacementAdapter;
+        if (replacement === undefined) return ProviderAdapterRegistry.layerSingle(adapter);
+        return Layer.succeed(
+          ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+          ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+            get: () => Ref.get(replacement).pipe(Effect.map((replaced) => replaced ?? adapter)),
+            list: () => Effect.succeed([adapter.instanceId]),
+          }),
+        );
+      }),
+    ),
   );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
@@ -1197,6 +1210,45 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
           eventStreamsEnded,
         }),
       ),
+    );
+  }),
+);
+
+// A settings.json reload rebuilds the instance without going through closeInstance.
+it.effect("ProviderSessionManagerV2 does not reuse a session opened by a replaced instance", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const replacementState = yield* Ref.make(emptyState);
+    const replacementAdapter = yield* Ref.make<
+      ProviderAdapter.ProviderAdapterV2["Service"] | undefined
+    >(undefined);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-replaced-instance");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const openInput = { threadId, providerSessionId, modelSelection, runtimePolicy };
+
+      yield* manager.open(openInput);
+      assert.equal((yield* Ref.get(state)).openCount, 1);
+
+      yield* Ref.set(replacementAdapter, yield* makeProviderAdapter(replacementState));
+      yield* manager.open(openInput);
+
+      assert.equal((yield* Ref.get(replacementState)).openCount, 1);
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, replacementAdapter })),
     );
   }),
 );
