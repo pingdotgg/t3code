@@ -37,8 +37,8 @@ export function createTerminalInputWriter(onIdle = () => {}) {
       interrupted();
       return;
     }
-    const bracketed =
-      chunks.length > 1 && data.startsWith("\x1b[200~") && data.endsWith("\x1b[201~");
+    const split = chunks.length > 1;
+    const bracketed = split && data.startsWith("\x1b[200~") && data.endsWith("\x1b[201~");
     let opened = false;
     try {
       for (const [index, chunk] of chunks.entries()) {
@@ -48,11 +48,11 @@ export function createTerminalInputWriter(onIdle = () => {}) {
           phase ? (bracketed ? { bracketedPaste: phase } : { plainWrite: phase }) : undefined,
         );
         if (result !== true) {
-          if (result !== "not-dispatched") opened = chunks.length > 1;
-          if (chunks.length > 1) interrupted();
+          if (result !== "not-dispatched") opened = split;
+          if (split) interrupted();
           return;
         }
-        opened = chunks.length > 1;
+        opened = split;
       }
       opened = false;
     } finally {
@@ -111,13 +111,11 @@ export function createTerminalInputWriter(onIdle = () => {}) {
 const writers = new Map<string, ReturnType<typeof createTerminalInputWriter>>();
 
 /** Retain ordering and framing obligations until acknowledged, across terminal view remounts. */
-export function terminalInputWriter(key: string, retain: () => () => void) {
+export function terminalInputWriter(key: string) {
   const existing = writers.get(key);
   if (existing) return existing;
-  const release = retain();
   const writer = createTerminalInputWriter(() => {
     if (writers.get(key) === writer) writers.delete(key);
-    release();
   });
   writers.set(key, writer);
   return writer;
