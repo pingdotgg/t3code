@@ -168,7 +168,7 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
     // UIKit's floating UITabBar leaves its pointer interaction's hover driver active after the bar
     // leaves the window; the next hover update builds UIPreviewTarget(container: tabBar) and aborts.
     if newWindow == nil {
-      disablePointerInteractions(in: self)
+      disableTabBarPointerInteractions()
     }
     super.willMove(toWindow: newWindow)
   }
@@ -178,19 +178,14 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
     if window != nil {
       restorePointerInteractions()
     } else {
-      disablePointerInteractions(in: self)
+      disableTabBarPointerInteractions()
     }
     updateSelection()
   }
 
-  private func disablePointerInteractions(in view: UIView) {
-    for interaction in view.interactions {
-      if let pointerInteraction = interaction as? UIPointerInteraction {
-        disablePointerInteraction(pointerInteraction)
-      }
-    }
-    for subview in view.subviews {
-      disablePointerInteractions(in: subview)
+  private func disableTabBarPointerInteractions() {
+    for case let interaction as UIPointerInteraction in tabBar.interactions {
+      disablePointerInteraction(interaction)
     }
   }
 
@@ -201,7 +196,8 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
   }
 
   private func restorePointerInteractions() {
-    for interaction in disabledPointerInteractions.allObjects {
+    // Skip interactions UIKit removed or moved while the bar was detached.
+    for interaction in disabledPointerInteractions.allObjects where interaction.view === tabBar {
       interaction.isEnabled = true
     }
     disabledPointerInteractions.removeAllObjects()
