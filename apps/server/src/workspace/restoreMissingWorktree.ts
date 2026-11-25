@@ -213,10 +213,8 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
         : new WorktreeRecreateError({
             worktreePath,
             branch,
-            ...(cause._tag === "GitCommandError" &&
-            cause.reason === "branch_checked_out_in_worktree"
-              ? { branchInUse: true }
-              : {}),
+            branchInUse:
+              cause._tag === "GitCommandError" && cause.reason === "branch_checked_out_in_worktree",
             cause,
           });
 
