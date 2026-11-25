@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as MilestoneHub from "../milestones/MilestoneHub.ts";
@@ -202,6 +203,8 @@ export class WorkflowStore extends Context.Service<
     readonly runResumed: (runId: string) => Effect.Effect<void>;
     /** `held` unsaid keeps what the run had: a run put back to paused is still held. */
     readonly runPaused: (runId: string, detail: string, held?: boolean) => Effect.Effect<void>;
+    /** Runs `effect` unless the run is paused, and no run is paused while it runs. */
+    readonly unlessPaused: (runId: string, effect: Effect.Effect<void>) => Effect.Effect<void>;
     /**
      * A paused run is running again. With `current`, only while that is still the pause: the
      * sweep's deadline was worked out from it. False when the run was not changed.
@@ -425,6 +428,9 @@ export class WorkflowStore extends Context.Service<
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const changes = yield* PubSub.unbounded<string>();
+  // A wake sent to a paused run replays it and runs its failed step again, so a wake's last look
+  // at the run and its send are kept from a pause landing in between.
+  const pausing = yield* Semaphore.make(1);
   // A write here is bookkeeping for a run the engine already journaled: failing it would park a
   // healthy run, so a database that cannot take it is a defect of the process instead.
   const write = <A, E>(runId: string, effect: Effect.Effect<A, E>) =>
@@ -559,11 +565,21 @@ export const make = Effect.gen(function* () {
           held = ${held === undefined ? sql`held` : held ? 1 : 0}, updated_at = ${at}
         WHERE run_id = ${runId} AND ended_at IS NULL AND status != 'paused'
         RETURNING run_id
-      `.pipe(Effect.orDie);
+      `.pipe(Effect.orDie, pausing.withPermits(1));
       yield* PubSub.publish(changes, runId);
       if (paused.length > 0) {
         yield* tell(runId, `${runId}:${at}`, at, { type: "workflow.run_paused", reason });
       }
+    }),
+    unlessPaused: Effect.fn("WorkflowStore.unlessPaused")(function* (runId, effect) {
+      yield* pausing.withPermits(1)(
+        Effect.gen(function* () {
+          const [row] = yield* sql<Pick<RunRow, "status">>`
+            SELECT status FROM workflow_runs WHERE run_id = ${runId}
+          `.pipe(Effect.orDie);
+          if (row?.status !== "paused") yield* effect;
+        }),
+      );
     }),
     runUnpaused: Effect.fn("WorkflowStore.runUnpaused")(function* (runId, current) {
       const at = yield* now;

@@ -215,7 +215,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   // claim keeps the value, and the resume sends it.
   const wake = Effect.fnUntraced(function* (wait: WorkflowStore.WaitRow, value: typeof Woke.Type) {
     if (resuming.has(wait.run_id) || (yield* store.run(wait.run_id))?.status === "paused") return;
-    yield* send(wait, value);
+    // A step can fail and pause the run since that look.
+    yield* store.unlessPaused(wait.run_id, send(wait, value));
   });
 
   // Agent turns being watched now, by run and wait. The fibers live in the engine's scope, so a
