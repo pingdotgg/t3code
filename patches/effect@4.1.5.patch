@@ -4138,3 +4138,38 @@ diff --git a/src/sql/SqlClient.ts b/src/sql/SqlClient.ts
                          services.pipe(
                            Context.add(options.transactionService, level),
                            Context.add(CurrentTransactionService, options.transactionService),
+diff --git a/dist/workflow/Workflow.js b/dist/workflow/Workflow.js
+--- a/dist/workflow/Workflow.js
++++ b/dist/workflow/Workflow.js
+@@ -327,6 +327,11 @@ export const wrapActivityResult = (effect, isSuspend) => Effect.contextWith(cont
+     if (Exit.isSuccess(exit) && isResult(exit.value) && exit.value._tag === "Suspended" && exit.value.cause) {
+       instance.cause = instance.cause ? Cause.combine(instance.cause, exit.value.cause) : exit.value.cause;
+     }
++    // Recorded before waiting on sibling activities: a deferred wake can interrupt that wait, and
++    // a run suspended without `failed` is reset by the next automatic wake.
++    if (Exit.isSuccess(exit) && isResult(exit.value) && exit.value._tag === "Suspended" && exit.value.failed) {
++      instance.failed = true;
++    }
+     return isSuspended && instance.activityState.count > 0 ? waitForZero(instance) : Effect.void;
+   });
+ });
+diff --git a/src/workflow/Workflow.ts b/src/workflow/Workflow.ts
+--- a/src/workflow/Workflow.ts
++++ b/src/workflow/Workflow.ts
+@@ -809,6 +809,16 @@ export const wrapActivityResult = <A, E, R>(
+             ? Cause.combine(instance.cause, exit.value.cause)
+             : exit.value.cause
+         }
++        // Recorded before waiting on sibling activities: a deferred wake can interrupt that wait, and
++        // a run suspended without `failed` is reset by the next automatic wake.
++        if (
++          Exit.isSuccess(exit) &&
++          isResult(exit.value) &&
++          exit.value._tag === "Suspended" &&
++          exit.value.failed
++        ) {
++          instance.failed = true
++        }
+         return isSuspended && instance.activityState.count > 0
+           ? waitForZero(instance)
+           : Effect.void
