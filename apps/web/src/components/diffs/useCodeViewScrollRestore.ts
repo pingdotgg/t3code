@@ -25,13 +25,15 @@ export function createCodeViewScrollRestore() {
   let settled = true;
   let loadMore: (() => void) | null = null;
   let loaded = 0;
+  // False while the caller still loads something that moves the content: scrolls save, none restore.
+  let ready = true;
   let viewer: Viewer | undefined;
   let handle: ScrollRestoreHandle | null = null;
   let pending: { readonly scrollTop: number; readonly loaded: number } | null = null;
   // A restore the reader cut short leaves the saved position unreached until a scroll replaces it.
   let interrupted = false;
   const flush = () => {
-    if (pending === null || !viewer || !handle || viewer.getHeight() === 0) return;
+    if (pending === null || !ready || !viewer || !handle || viewer.getHeight() === 0) return;
     const maxScrollTop = viewer.getScrollHeight() - viewer.getHeight();
     // Until as many batches are back as when it was saved, the offset can name another file.
     if (!settled && (loaded < pending.loaded || maxScrollTop < pending.scrollTop)) {
@@ -50,6 +52,7 @@ export function createCodeViewScrollRestore() {
       nextSettled: boolean,
       nextLoadMore: (() => void) | null,
       nextLoaded = 0,
+      nextReady = true,
     ) {
       // A viewer kept across a scope change takes the new scope's position, never the old one's.
       if (viewer && nextScopeKey !== scopeKey) {
@@ -60,6 +63,7 @@ export function createCodeViewScrollRestore() {
       settled = nextSettled;
       loadMore = nextLoadMore;
       loaded = nextLoaded;
+      ready = nextReady;
     },
     attach(next: ScrollRestoreHandle | null) {
       handle = next;
@@ -100,9 +104,10 @@ export function useCodeViewScrollRestore(
   settled: boolean,
   loadMore: (() => void) | null,
   loaded = 0,
+  ready = true,
 ) {
   const [restore] = useState(createCodeViewScrollRestore);
-  restore.update(scopeKey, settled, loadMore, loaded);
+  restore.update(scopeKey, settled, loadMore, loaded, ready);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a loaded batch can leave the viewer's rendered items alone, so no ref or post-render call re-checks the pending position
   useEffect(() => restore.flush());
   return restore;

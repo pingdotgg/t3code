@@ -95,6 +95,24 @@ describe("createCodeViewScrollRestore", () => {
     expect(again.scrolls).toEqual([{ type: "position", position: 332 }]);
   });
 
+  it("holds a position, even one saved meanwhile, until the caller's layout is ready", () => {
+    const first = viewer(10_000);
+    const early = createCodeViewScrollRestore();
+    early.update("pull-request-b", true, null, 1, false);
+    early.attach(first);
+    early.onScroll(400, first.instance);
+
+    const again = viewer(10_000);
+    const restore = createCodeViewScrollRestore();
+    restore.update("pull-request-b", true, null, 1, false);
+    restore.attach(again);
+    restore.flush();
+    expect(again.scrolls).toEqual([]);
+    restore.update("pull-request-b", true, null, 1, true);
+    restore.flush();
+    expect(again.scrolls).toEqual([{ type: "position", position: 432 }]);
+  });
+
   it("lets a reader who scrolls while more files load keep their own position", () => {
     const first = viewer(10_000);
     mount("thread-e", first).onScroll(4000, first.instance);

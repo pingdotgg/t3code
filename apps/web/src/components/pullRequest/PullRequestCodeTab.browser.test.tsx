@@ -73,10 +73,12 @@ const diffAtoms = await vi.hoisted(async () => {
         nextCursor: null,
       }),
     ),
+    emptyDiffAtom: Atom.make(AsyncResult.success({ ...firstPage, patch: "" })),
     pagedDiffAtom,
   };
 });
-const { diffAtom, onlyTestFilesDiffAtom, testFileDiffAtom, pagedDiffAtom } = diffAtoms;
+const { diffAtom, onlyTestFilesDiffAtom, testFileDiffAtom, emptyDiffAtom, pagedDiffAtom } =
+  diffAtoms;
 
 const mocks = vi.hoisted(() => ({
   // Folds and scroll persist per pull request for the session, so each test gets its own scope.
@@ -88,6 +90,7 @@ const mocks = vi.hoisted(() => ({
   refreshed: false,
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
+  viewedPending: false,
   viewedListeners: new Set<() => void>(),
 }));
 
@@ -111,6 +114,7 @@ vi.mock(import("./usePullRequestFilesViewed"), async () => {
       const viewedPaths = useSyncExternalStore(subscribe, () => mocks.viewedPaths);
       return {
         enabled: viewedPaths !== null,
+        settled: !mocks.viewedPending,
         isViewed: (path: string) => viewedPaths?.has(path) === true,
         isStale: () => false,
         setViewed: (path: string, viewed: boolean) => {
@@ -134,6 +138,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       ...actual.pullRequestEnvironment,
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
         mocks.diffCommits.push(input.commit);
+        if (input.commit === "empty") return emptyDiffAtom;
         if (mocks.paged) return pagedDiffAtom(mocks.shortPages)(input.cursor ?? "first");
         if (mocks.onlyTestFiles) return onlyTestFilesDiffAtom;
         return mocks.withTestFile ? testFileDiffAtom : diffAtom;
@@ -210,6 +215,7 @@ function setup({ paged }: { paged: boolean }) {
   mocks.refreshed = false;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
+  mocks.viewedPending = false;
   mocks.viewedListeners.clear();
 }
 
@@ -340,6 +346,105 @@ it("keeps the wrap and whitespace toggles when the tab remounts", async () => {
   await screen.getByRole("button", { name: "Diff options", exact: true }).click();
   await expect.element(whitespace).toHaveAttribute("aria-checked", "false");
   await expect.element(wrap).toHaveAttribute("aria-checked", "false");
+
+  // The panel swaps pull requests under a mounted tab; the next one has toggles of its own.
+  const other = (reference: Partial<PullRequestDetailView> & { readonly host?: string }) => (
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make(`environment-${mocks.session}`)}
+      reference={{ ...detail, ...reference }}
+      detail={{ ...detail, ...reference }}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+    />
+  );
+  await screen.rerender(other({ number: 2, url: "https://github.com/owner/repo/pull/2" }));
+  await expect.element(whitespace).toHaveAttribute("aria-checked", "true");
+  await expect.element(wrap).toHaveAttribute("aria-checked", "true");
+  await screen.rerender(tab(0));
+  await expect.element(wrap).toHaveAttribute("aria-checked", "false");
+  // The project's host arriving late names the same pull request, toggles included.
+  await screen.rerender(other({ host: "github.com" }));
+  await expect.element(whitespace).toHaveAttribute("aria-checked", "false");
+  await expect.element(wrap).toHaveAttribute("aria-checked", "false");
+  // The same repository and number on another host is another pull request.
+  const enterprise = "https://github.example.com/owner/repo/pull/1";
+  await screen.rerender(other({ host: "github.example.com", url: enterprise }));
+  await expect.element(whitespace).toHaveAttribute("aria-checked", "true");
+  await expect.element(wrap).toHaveAttribute("aria-checked", "true");
+});
+
+it("waits for the Viewed marks before it goes back to a saved place", async () => {
+  setup({ paged: true });
+  mocks.viewedPaths = new Set();
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0), { container });
+  await expect.element(screen.getByText("early-0.ts", { exact: true })).toBeVisible();
+  const scroller = () => container.querySelector(".diff-render-surface")!;
+  await readDownTo(scroller(), 400);
+
+  // The marks fold files when they arrive, which moves everything below them.
+  mocks.viewedPending = true;
+  await screen.rerender(<div />);
+  await screen.rerender(tab(0));
+  // Laid out, so nothing but the missing marks holds the position back.
+  await vi.waitFor(() => expect(scroller().scrollHeight).toBeGreaterThan(1000));
+  expect(scroller().scrollTop).toBe(0);
+  mocks.viewedPending = false;
+  deliverViewedPaths(new Set());
+  await vi.waitFor(() => expect(scroller().scrollTop).toBe(400));
+});
+
+/** Scrolls the viewer the way a reader does and waits until the viewer has reported it. */
+async function readDownTo(scroller: Element, scrollTop: number) {
+  const reported = new Promise((resolve) =>
+    scroller.addEventListener("scroll", resolve, { once: true }),
+  );
+  scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+  scroller.scrollTop = scrollTop;
+  await reported;
+}
+
+it("comes back to the reader's place, not to one a returning viewer was clamped to", async () => {
+  setup({ paged: true });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  const commits = [
+    { oid: "empty", messageHeadline: "Empty commit", committedDate: "2026-09-01T00:00:00Z" },
+  ];
+  const scoped = (selectedCommitOid: string | null) => (
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make(`environment-${mocks.session}`)}
+      reference={detail}
+      detail={{ ...detail, commits }}
+      selectedCommitOid={selectedCommitOid}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+    />
+  );
+  await using screen = await render(scoped(null), { container });
+  await expect.element(screen.getByText("early-0.ts", { exact: true })).toBeVisible();
+  const scroller = () => container.querySelector(".diff-render-surface")!;
+  await readDownTo(scroller(), 400);
+  const contentHeight = scroller().scrollHeight;
+
+  // A commit without files shows no viewer; the taller panel then cannot reach the old place.
+  await screen.rerender(scoped("empty"));
+  await expect.element(screen.getByRole("button", { name: /Empty commit/ })).toBeVisible();
+  container.style.height = `${contentHeight - 160}px`;
+  await screen.rerender(scoped(null));
+  await vi.waitFor(() => {
+    expect(scroller().scrollTop).toBeGreaterThan(0);
+    expect(scroller().scrollTop).toBeLessThan(400);
+  });
+
+  container.style.height = "";
+  await screen.rerender(<div />);
+  await screen.rerender(scoped(null));
+  await vi.waitFor(() => expect(scroller().scrollTop).toBe(400));
 });
 
 // regression: #13279 a Viewed answer that lands after a link reveals a file must not fold it

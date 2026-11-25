@@ -356,6 +356,8 @@ function linkedTab(anchor: PullRequestAnchor | null): PullRequestDetailTab | nul
 const summaryCondensedByScopeKey = new Map<string, boolean>();
 // The Code tab restores its scroll on remount too, per commit.
 const codeCondensedByScopeKey = new Map<string, boolean>();
+// Session-only: the commit each pull request's Code tab was left on.
+const codeCommitByScopeKey = new Map<string, string>();
 
 export function PullRequestDetailPanel({
   environmentId,
@@ -428,6 +430,7 @@ export function PullRequestDetailPanel({
     reference.number,
   );
   const pullRequestKey = pullRequestRefKey(reference);
+  const tabScopeKey = `${environmentId}:${pullRequestKey}`;
   const matchingListEntry =
     listEntry?.projectId === reference.projectId &&
     listEntry.repository.toLowerCase() === reference.repository.toLowerCase() &&
@@ -489,13 +492,29 @@ export function PullRequestDetailPanel({
   };
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
   const [codeCommitScope, setCodeCommitScope] = useState<{
-    readonly pullRequestKey: string;
+    readonly scopeKey: string;
     readonly oid: string | null;
-  }>(() => ({ pullRequestKey, oid: pullRequestLinkCommit(revealUrl) }));
+  }>(() => ({
+    scopeKey: tabScopeKey,
+    // Only a link into the Code tab picks the commit; any other leaves the saved one.
+    oid:
+      linkedTab(revealAnchor) === "code"
+        ? pullRequestLinkCommit(revealUrl)
+        : (codeCommitByScopeKey.get(tabScopeKey) ?? null),
+  }));
+  const chosenCodeCommitOid =
+    codeCommitScope.scopeKey === tabScopeKey
+      ? codeCommitScope.oid
+      : (codeCommitByScopeKey.get(tabScopeKey) ?? null);
+  // A commit a force-push removed reads as "All commits", for the header's key as for the diff.
   const selectedCodeCommitOid =
-    codeCommitScope.pullRequestKey === pullRequestKey ? codeCommitScope.oid : null;
+    detail?.commits.some((entry) => entry.oid === chosenCodeCommitOid) === false
+      ? null
+      : chosenCodeCommitOid;
   const selectCodeCommit = (oid: string | null) => {
-    setCodeCommitScope({ pullRequestKey, oid });
+    if (oid === null) codeCommitByScopeKey.delete(tabScopeKey);
+    else codeCommitByScopeKey.set(tabScopeKey, oid);
+    setCodeCommitScope({ scopeKey: tabScopeKey, oid });
   };
   const openCommit = (oid: string) => {
     selectCodeCommit(oid);
@@ -538,7 +557,6 @@ export function PullRequestDetailPanel({
     followLink();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- each clicked link is a navigation request
   }, [revealUrl]);
-  const tabScopeKey = `${environmentId}:${pullRequestKey}`;
   const [tabMountState, setTabMountState] = useState(() => ({
     key: tabScopeKey,
     tabs: new Set<PullRequestDetailTab>([tab]),
@@ -555,7 +573,13 @@ export function PullRequestDetailPanel({
   const [codeIntentKey, setCodeIntentKey] = useState<string | null>(null);
   useEnvironmentQuery(
     codeIntentKey === pullRequestKey && !mountedTabs.has("code")
-      ? pullRequestEnvironment.diff({ environmentId, input: { ...reference } })
+      ? pullRequestEnvironment.diff({
+          environmentId,
+          input: {
+            ...reference,
+            ...(selectedCodeCommitOid === null ? {} : { commit: selectedCodeCommitOid }),
+          },
+        })
       : null,
   );
   const codeScopeKey = `${tabScopeKey}:${selectedCodeCommitOid ?? ""}`;

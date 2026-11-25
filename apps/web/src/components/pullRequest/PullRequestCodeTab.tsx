@@ -523,17 +523,19 @@ function PullRequestCodeTab({
   }>({ key: "", cursor: null, slices: NO_SLICES });
 
   const referenceKey = pullRequestReviewKey(reference);
-  const viewOverridesKey = JSON.stringify([environmentId, referenceKey]);
-  const [viewOverrides, setViewOverrides] = useState(
-    () => viewOverridesByPullRequestKey.get(viewOverridesKey) ?? NO_VIEW_OVERRIDES,
-  );
+  // The pull request's own URL names its host from the start; the reference can gain one later.
+  const viewOverridesKey = JSON.stringify([environmentId, reference.projectId, detail.url]);
+  const [changedViewOverrides, setChangedViewOverrides] = useState<{
+    readonly key: string;
+    readonly overrides: ViewOverrides;
+  } | null>(null);
+  const viewOverrides =
+    changedViewOverrides?.key === viewOverridesKey
+      ? changedViewOverrides.overrides
+      : (viewOverridesByPullRequestKey.get(viewOverridesKey) ?? NO_VIEW_OVERRIDES);
   const wordWrap = viewOverrides.wordWrap ?? settings.wordWrap;
   const [initialIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const ignoreWhitespace = viewOverrides.ignoreWhitespace ?? initialIgnoreWhitespace;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- saves the toggles to the session map so a remount restores them, under the key a late host resolution moves to
-  useEffect(() => {
-    viewOverridesByPullRequestKey.set(viewOverridesKey, viewOverrides);
-  }, [viewOverridesKey, viewOverrides]);
   // A commit opened from the timeline or left selected across a force-push may no longer be
   // part of the pull request; read it as "All commits" instead of requesting its diff.
   const commit =
@@ -556,17 +558,20 @@ function PullRequestCodeTab({
   ) => setFolds((current) => withPullRequestDiffFold(current, isTestChangedFile(path), update));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- saves folds to the session map so a remount restores them
   useEffect(() => {
-    foldsByScopeKey.set(scopeKey, folds);
+    if (folds !== EMPTY_PULL_REQUEST_DIFF_FOLDS) foldsByScopeKey.set(scopeKey, folds);
   }, [scopeKey, folds]);
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   const [stateScopeKey, setStateScopeKey] = useState(scopeKey);
+  // Counts scope changes: coming back to a scope is a new visit, with a viewer nobody has scrolled.
+  const [scopeVisit, setScopeVisit] = useState(0);
   if (stateScopeKey !== scopeKey) {
     setStateScopeKey(scopeKey);
     setLastViewedFileKey(null);
     setDraft(null);
     setSelectedLines(null);
     setFolds(foldsByScopeKey.get(scopeKey) ?? EMPTY_PULL_REQUEST_DIFF_FOLDS);
+    setScopeVisit(scopeVisit + 1);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
     setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
@@ -1074,12 +1079,14 @@ function PullRequestCodeTab({
     canLoadNextSlice ? loadNextSlice : null,
     // Review order moves files as pages arrive, so the offset waits for the pages it was saved on.
     loadedSlices.length,
+    // Viewed marks fold files when they arrive, which moves everything below them.
+    filesViewed.settled,
   );
   // The viewer moves scrollTop itself while it measures restored rows; saving those moves would
   // drift the offset further on every remount, so only a reader's own scroll is saved.
-  const scrolledByReader = useRef<string | null>(null);
+  const scrolledByReader = useRef<number | null>(null);
   const followReader = () => {
-    scrolledByReader.current = scopeKey;
+    scrolledByReader.current = scopeVisit;
     codeViewScroll.cancel();
     codeViewReveal.cancel();
   };
@@ -1088,12 +1095,10 @@ function PullRequestCodeTab({
   // left stays until a scroll.
   const repositionForReader = () => {
     if (codeViewScroll.cancel()) codeViewScroll.discard();
-    scrolledByReader.current = scopeKey;
+    scrolledByReader.current = scopeVisit;
   };
   const attachCodeView = useStableCallback(
     (handle: CodeViewHandle<ReviewAnnotationGroup, undefined> | null) => {
-      // Another scope's viewer starts unscrolled; a reveal queued for this one already counts.
-      if (handle !== null && scrolledByReader.current !== scopeKey) scrolledByReader.current = null;
       codeViewScroll.attach(handle);
       codeViewReveal.attach(handle);
     },
@@ -1516,7 +1521,9 @@ function PullRequestCodeTab({
   const changeViewOverride = (override: ViewOverrides) => {
     // The layout changes under the reader, so a position saved in the old one no longer applies.
     repositionForReader();
-    setViewOverrides({ ...viewOverrides, ...override });
+    const next = { ...viewOverrides, ...override };
+    viewOverridesByPullRequestKey.set(viewOverridesKey, next);
+    setChangedViewOverrides({ key: viewOverridesKey, overrides: next });
   };
   const changeIgnoreWhitespace = (next: boolean) => {
     changeViewOverride({ ignoreWhitespace: next });
@@ -2130,7 +2137,7 @@ function PullRequestCodeTab({
               }}
               viewerRef={attachCodeView}
               onScroll={(scrollTop, viewer) => {
-                if (scrolledByReader.current === scopeKey) {
+                if (scrolledByReader.current === scopeVisit) {
                   codeViewScroll.onScroll(scrollTop, viewer);
                 }
               }}
