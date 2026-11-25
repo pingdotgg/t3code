@@ -36,11 +36,11 @@ describe("buildCodexAdditionalContext", () => {
     NodeAssert.doesNotMatch(instructions, /<runtime_info>[^<]*\n/);
   });
 
-  it("carries no T3 tool guidance", () => {
+  it("keeps PR linking but leaves other T3 tool guidance to the tools", () => {
     const context = JSON.stringify(buildCodexAdditionalContext({ model: "gpt-6.1-sol" }));
 
     NodeAssert.ok(!context.includes("delegate_task"));
-    NodeAssert.ok(!context.includes("link_pull_request"));
+    NodeAssert.ok(context.includes("<pull_request_linking>"));
     NodeAssert.ok(!context.includes("device_open"));
   });
 });
