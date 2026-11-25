@@ -12532,7 +12532,7 @@
   "7755500a4cde5066": "Close the pane",
   "b8dcbc93a2ca1861": "This run no longer lists it.",
   "115c69de3202f664": "Open",
-  "644eafa9048b62df": "{count, plural, =1 {1st try} =2 {2nd try} =3 {3rd try} other {{count}th try}}",
+  "a2bbf464a3be4882": "{count, selectordinal, one {{count}st try} two {{count}nd try} few {{count}rd try} other {{count}th try}}",
   "e39f89c909df4db0": "Could not resume the run",
   "865f034346b82f47": "Cancel {title}? Its agents stop and the run cannot be resumed.",
   "6bc75632fd9c9136": "Could not cancel the run",
