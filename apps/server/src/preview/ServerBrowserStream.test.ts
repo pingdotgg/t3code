@@ -23,6 +23,7 @@ import { HttpRouter, HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
+import { layerMediaSocketTest } from "../auth/secureSocket.testkit.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import { routeLayer } from "./ServerBrowserStream.ts";
@@ -121,7 +122,11 @@ it.effect.each([
           Layer.provide(platformLayer),
         ),
         { disableListenLog: true },
-      ).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provide(auth.layer)),
+      ).pipe(
+        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provide(layerMediaSocketTest()),
+        Layer.provide(auth.layer),
+      ),
     );
     const server = Context.get(services, HttpServer.HttpServer);
     const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
@@ -192,6 +197,7 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
         { disableListenLog: true },
       ).pipe(
         Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provide(layerMediaSocketTest()),
         Layer.provide(
           makeAuth([AuthOrchestrationReadScope], undefined, () => Deferred.await(invalidated))
             .layer,
@@ -272,6 +278,7 @@ it.effect.each([
           routeLayer.pipe(
             Layer.provide(Layer.succeed(ServerBrowser.ServerBrowser, browser)),
             Layer.provide(platformLayer),
+            Layer.provideMerge(layerMediaSocketTest()),
             Layer.provideMerge(auth.layer),
           ),
           { disableLogger: true },
@@ -318,6 +325,7 @@ it.effect("serves a tab's download only to an authorized session", () =>
               routeLayer.pipe(
                 Layer.provide(Layer.succeed(ServerBrowser.ServerBrowser, browser)),
                 Layer.provide(platformLayer),
+                Layer.provideMerge(layerMediaSocketTest()),
                 Layer.provideMerge(makeAuth(scopes, undefined).layer),
               ),
               { disableLogger: true },
@@ -367,6 +375,7 @@ it.effect("passes uploaded files to the page's open picker and needs operate sco
               routeLayer.pipe(
                 Layer.provide(Layer.succeed(ServerBrowser.ServerBrowser, browser)),
                 Layer.provide(platformLayer),
+                Layer.provideMerge(layerMediaSocketTest()),
                 Layer.provideMerge(makeAuth(scopes, undefined).layer),
               ),
               { disableLogger: true },
@@ -430,6 +439,7 @@ it.effect.each([
         { disableListenLog: true },
       ).pipe(
         Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provide(layerMediaSocketTest()),
         Layer.provide(makeAuth([AuthOrchestrationReadScope]).layer),
       ),
     );

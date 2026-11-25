@@ -47,7 +47,7 @@ import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
-import { verifyRequestDpopProof } from "./dpop.ts";
+import { SealedHttpRequest, verifyRequestDpopProof } from "./dpop.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
@@ -119,7 +119,7 @@ export interface AuthenticatedSession {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
-  /** Set on an RPC socket upgrade whose verified DPoP proof asked for the secure channel. */
+  /** Set on a socket upgrade whose verified DPoP proof asked for the secure channel. */
   readonly secureChannel?: true;
 }
 
@@ -1573,31 +1573,33 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.issueStartupPairingUrl"),
     );
 
-  // Only the RPC socket's ticket is bound to the client's proof key. The media
-  // routes reuse one ticket across <img>, EventSource and several sockets, and
-  // each of those would need its own single-use proof.
+  // A bound ticket opens a socket only with a single-use proof from the client's key. RPC tickets
+  // are always bound. Media tickets are bound when their request arrived sealed: a client that
+  // predates sealing opens media sockets with the ticket alone, and binding its tickets would
+  // lock it out. <img> and EventSource requests cannot carry a proof and take the ticket alone.
   const issueWebSocketTicket: EnvironmentAuth["Service"]["issueWebSocketTicket"] = (
     session,
     input,
   ) =>
-    sessions
-      .issueWebSocketToken(session.sessionId, {
+    Effect.flatMap(SealedHttpRequest, (sealed) =>
+      sessions.issueWebSocketToken(session.sessionId, {
         ...(input?.use ? { audience: input.use } : {}),
-        ...(input?.use === "rpc" && session.proofKeyThumbprint
+        ...((input?.use === "rpc" || (input?.use === "media" && sealed)) &&
+        session.proofKeyThumbprint
           ? { proofKeyThumbprint: session.proofKeyThumbprint }
           : {}),
-      })
-      .pipe(
-        Effect.mapError((cause) => new ServerAuthWebSocketTokenIssueError({ cause })),
-        Effect.map(
-          (issued) =>
-            ({
-              ticket: Redacted.make(issued.token),
-              expiresAt: DateTime.toUtc(issued.expiresAt),
-            }) satisfies AuthWebSocketTicketResult,
-        ),
-        Effect.withSpan("EnvironmentAuth.issueWebSocketTicket"),
-      );
+      }),
+    ).pipe(
+      Effect.mapError((cause) => new ServerAuthWebSocketTokenIssueError({ cause })),
+      Effect.map(
+        (issued) =>
+          ({
+            ticket: Redacted.make(issued.token),
+            expiresAt: DateTime.toUtc(issued.expiresAt),
+          }) satisfies AuthWebSocketTicketResult,
+      ),
+      Effect.withSpan("EnvironmentAuth.issueWebSocketTicket"),
+    );
 
   const authenticateHttpRequest: EnvironmentAuth["Service"]["authenticateHttpRequest"] = (
     request,
@@ -1622,7 +1624,10 @@ export const make = Effect.gen(function* () {
             });
           }
           let secureChannel = false;
-          if (session.proofKeyThumbprint) {
+          if (
+            session.proofKeyThumbprint &&
+            (use === "rpc" || request.headers.upgrade?.toLowerCase() === "websocket")
+          ) {
             // WebSocket clients cannot set headers, so the proof travels in the query.
             // The proof hashes the ticket; consuming its jti prevents replay after first use.
             // Only encrypted transport prevents an active interceptor from racing that use.

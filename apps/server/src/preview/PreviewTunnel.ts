@@ -15,6 +15,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import type * as Socket from "effect/socket/Socket";
 
 import { authenticateMediaRequest } from "../auth/http.ts";
+import { upgradeMediaSocket } from "../auth/secureSocket.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import { requestUrl } from "../requestUrl.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -175,7 +176,7 @@ const handler = Effect.gen(function* () {
     const turnedOff = yield* tunnel.watchTurnedOff;
     // Dialled before the upgrade so a dead port fails the handshake instead of an open socket.
     const upstream = yield* tunnel.connect({ port, servedPort });
-    const client = yield* request.upgrade;
+    const client = yield* upgradeMediaSocket(request, session);
     const clientReader = yield* client.reader;
     const clientWriter = yield* client.writer;
     // A tunnel is raw TCP into the host, so it closes with its session like the RPC socket.

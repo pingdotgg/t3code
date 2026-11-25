@@ -21,6 +21,7 @@ import {
 import * as Socket from "effect/socket/Socket";
 
 import { authenticateMediaRequest, failEnvironmentInternal } from "../auth/http.ts";
+import { upgradeMediaSocket } from "../auth/secureSocket.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import { assetResponseHeaders } from "../http.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
@@ -109,7 +110,7 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
       // pending writes in the socket buffer we bound below, not a zlib queue.
       delete incoming.headers["sec-websocket-extensions"];
       const transport = incoming.socket;
-      const socket = yield* request.upgrade;
+      const socket = yield* upgradeMediaSocket(request, session);
       const reader = yield* socket.reader;
       const writer = yield* socket.writer;
       // A refused upgrade reads as an auth failure to ticket clients, so a

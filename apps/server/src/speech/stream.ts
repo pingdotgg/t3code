@@ -15,6 +15,7 @@ import * as Scope from "effect/Scope";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { upgradeMediaSocket } from "../auth/secureSocket.ts";
 import * as SpeechService from "./SpeechService.ts";
 
 // A recording client streams audio continuously; behind a proxy a vanished
@@ -129,7 +130,7 @@ export const speechStreamRouteLayer = Layer.unwrap(
         if (session._tag === "Failure") return HttpServerResponse.empty({ status: 401 });
         if (!session.success.scopes.includes(AuthOrchestrationOperateScope))
           return HttpServerResponse.empty({ status: 403 });
-        const socket = yield* request.upgrade;
+        const socket = yield* upgradeMediaSocket(request, session.success);
         yield* runSpeechSocket(socket, speech).pipe(Effect.scoped);
         return HttpServerResponse.empty();
       }),

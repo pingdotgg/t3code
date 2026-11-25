@@ -20,6 +20,7 @@ import { makeDpopKey } from "./dpop.testkit.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import { SealedHttpRequest } from "./dpop.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -1215,6 +1216,64 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         expect((yield* upgrade(Redacted.value(legacy.ticket), "rpc")).sessionId).toBe(
           session.sessionId,
         );
+      }).pipe(
+        Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
+      ),
+    );
+
+    it.effect("binds a sealed media ticket to the proof key on socket upgrades", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const key = makeDpopKey();
+        const exchanged = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          "desktop-bootstrap-token",
+          ["orchestration:read"],
+          requestMetadata,
+          { proofKeyThumbprint: key.thumbprint },
+        );
+        const session = yield* sessions.verify(exchanged.access_token);
+        const mint = serverAuth.issueWebSocketTicket(session, { use: "media" });
+        const media = Redacted.value(
+          (yield* mint.pipe(Effect.provideService(SealedHttpRequest, true))).ticket,
+        );
+        const host = "192.168.1.50:3773";
+        const path = "/api/device-hub/vendor/serve-sim/helper/ws";
+        const iat = Math.floor((yield* DateTime.now).epochMilliseconds / 1_000);
+        const request = (headers: Record<string, string>, proof?: string) =>
+          serverAuth.authenticateWebSocketUpgrade(
+            {
+              method: "GET",
+              url: `${path}?device=d&wsTicket=${media}${proof ? `&dpop=${proof}` : ""}`,
+              cookies: {},
+              headers: { host, ...headers },
+            } as never,
+            "media",
+          );
+        const proof = (claims: Record<string, unknown> = {}) =>
+          key.sign({ method: "GET", url: `http://${host}${path}`, token: media, iat, claims });
+
+        // `<img>` and EventSource cannot carry a proof, so plain HTTP media still takes the ticket.
+        expect((yield* request({})).sessionId).toBe(session.sessionId);
+        const stolen = yield* Effect.flip(request({ upgrade: "websocket" }));
+        expect(stolen._tag).toBe("ServerAuthInvalidCredentialError");
+        const plain = yield* request({ upgrade: "websocket" }, proof());
+        expect(plain.secureChannel).toBeUndefined();
+        const secure = yield* request({ upgrade: "websocket" }, proof({ t3sc: true }));
+        expect(secure.secureChannel).toBe(true);
+
+        // A client that predates sealing mints unsealed and opens its sockets with no proof.
+        const legacy = Redacted.value((yield* mint).ticket);
+        const legacyUpgrade = yield* serverAuth.authenticateWebSocketUpgrade(
+          {
+            method: "GET",
+            url: `${path}?device=d&wsTicket=${legacy}`,
+            cookies: {},
+            headers: { host, upgrade: "websocket" },
+          } as never,
+          "media",
+        );
+        expect(legacyUpgrade.sessionId).toBe(session.sessionId);
       }).pipe(
         Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
       ),

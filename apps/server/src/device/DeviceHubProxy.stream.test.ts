@@ -15,69 +15,85 @@ import {
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { layerMediaSocketTest } from "../auth/secureSocket.testkit.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceHubProxy from "./DeviceHubProxy.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import type { SecureChannelError, SecureChannelIdentity } from "@t3tools/shared/secureChannel";
+import { SECURE_CHANNEL_CLOSE_CODE } from "@t3tools/shared/secureChannelSocket";
+import { makeSecureSocketKeys } from "../auth/secureSocket.testkit.ts";
+
+const bearerSession: EnvironmentAuth.AuthenticatedSession = {
+  sessionId: AuthSessionId.make("test"),
+  subject: "test",
+  method: "bearer-access-token",
+  scopes: [AuthOrchestrationOperateScope],
+};
+
+/** An echoing hub that first sends 0x83, behind the real proxy route. */
+const serveHubProxy = Effect.fnUntraced(function* (
+  session: EnvironmentAuth.AuthenticatedSession = bearerSession,
+  identity?: Effect.Effect<SecureChannelIdentity, SecureChannelError>,
+) {
+  const hub = yield* Effect.acquireRelease(
+    Effect.sync(() => new NodeWS.WebSocketServer({ port: 0 })),
+    (server) =>
+      Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            for (const client of server.clients) client.terminate();
+            server.close(() => resolve());
+          }),
+      ),
+  );
+  if (!hub.address())
+    yield* Effect.promise(() => new Promise<void>((resolve) => hub.once("listening", resolve)));
+  const address = hub.address();
+  if (typeof address !== "object" || !address) throw new Error("Missing hub port");
+  const upstreamClosed = Promise.withResolvers<void>();
+  hub.on("connection", (socket) => {
+    socket.once("close", upstreamClosed.resolve);
+    socket.send(Uint8Array.of(0x83));
+    socket.on("message", (data, binary) => socket.send(data, { binary }));
+  });
+  const invalidated = yield* Deferred.make<void>();
+  const services = yield* Layer.build(
+    HttpRouter.serve(DeviceHubProxy.layer, { disableListenLog: true }).pipe(
+      Layer.provideMerge(NodeHttpServer.layerTest),
+      Layer.provide(layerMediaSocketTest(identity)),
+      Layer.provide(
+        Layer.mock(SessionStore.SessionStore, {
+          cookieName: "test",
+          legacyCookieName: undefined,
+          awaitInvalidation: () => Deferred.await(invalidated),
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
+          authenticateWebSocketUpgrade: () => Effect.succeed(session),
+        } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
+      ),
+      Layer.provide(
+        Layer.succeed(DeviceService.DeviceService, {
+          currentReadiness: () =>
+            Effect.succeed({
+              hostId: LOCAL_DEVICE_HOST_ID,
+              hub: { origin: `http://127.0.0.1:${address.port}` },
+            }),
+        } as DeviceService.DeviceService["Service"]),
+      ),
+    ),
+  );
+  const origin = HttpServer.formatAddress(
+    Context.get(services, HttpServer.HttpServer).address,
+  ).replace(/^http/, "ws");
+  return { origin, invalidated, upstreamClosed };
+});
 
 it.effect("preserves binary input and admission frames through the real socket proxy", () =>
   Effect.gen(function* () {
-    const hub = yield* Effect.acquireRelease(
-      Effect.sync(() => new NodeWS.WebSocketServer({ port: 0 })),
-      (server) =>
-        Effect.promise(
-          () =>
-            new Promise<void>((resolve) => {
-              for (const client of server.clients) client.terminate();
-              server.close(() => resolve());
-            }),
-        ),
-    );
-    if (!hub.address())
-      yield* Effect.promise(() => new Promise<void>((resolve) => hub.once("listening", resolve)));
-    const address = hub.address();
-    if (typeof address !== "object" || !address) throw new Error("Missing hub port");
-    const upstreamClosed = Promise.withResolvers<void>();
-    hub.on("connection", (socket) => {
-      socket.once("close", upstreamClosed.resolve);
-      socket.send(Uint8Array.of(0x83));
-      socket.on("message", (data, binary) => socket.send(data, { binary }));
-    });
-    const invalidated = yield* Deferred.make<void>();
-    const services = yield* Layer.build(
-      HttpRouter.serve(DeviceHubProxy.layer, { disableListenLog: true }).pipe(
-        Layer.provideMerge(NodeHttpServer.layerTest),
-        Layer.provide(
-          Layer.mock(SessionStore.SessionStore, {
-            cookieName: "test",
-            legacyCookieName: undefined,
-            awaitInvalidation: () => Deferred.await(invalidated),
-          }),
-        ),
-        Layer.provide(
-          Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
-            authenticateWebSocketUpgrade: () =>
-              Effect.succeed({
-                sessionId: AuthSessionId.make("test"),
-                subject: "test",
-                method: "bearer-access-token",
-                scopes: [AuthOrchestrationOperateScope],
-              }),
-          } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
-        ),
-        Layer.provide(
-          Layer.succeed(DeviceService.DeviceService, {
-            currentReadiness: () =>
-              Effect.succeed({
-                hostId: LOCAL_DEVICE_HOST_ID,
-                hub: { origin: `http://127.0.0.1:${address.port}` },
-              }),
-          } as DeviceService.DeviceService["Service"]),
-        ),
-      ),
-    );
-    const origin = HttpServer.formatAddress(
-      Context.get(services, HttpServer.HttpServer).address,
-    ).replace(/^http/, "ws");
+    const { origin, invalidated, upstreamClosed } = yield* serveHubProxy();
     const client = yield* Effect.acquireRelease(
       Effect.sync(
         () =>
@@ -139,4 +155,44 @@ it.live("closes an upstream socket that is still connecting without an unhandled
     yield* Fiber.interrupt(reading);
     yield* Effect.promise(() => abandoned);
   }),
+);
+
+it.live("runs a socket that asked for it inside the secure channel and forwards plaintext", () =>
+  Effect.gen(function* () {
+    const keys = yield* makeSecureSocketKeys;
+    const { origin } = yield* serveHubProxy(
+      keys.session([AuthOrchestrationOperateScope]),
+      Effect.succeed(keys.environment),
+    );
+    const socket = yield* keys.connect(
+      `${origin}/api/device-hub/vendor/serve-sim/helper/ws?device=test&wsTicket=test`,
+    );
+    const reader = yield* socket.reader;
+    const writer = yield* socket.writer;
+    expect(yield* reader.pull).toEqual([Uint8Array.of(0x83)]);
+    yield* writer.writeAll([Uint8Array.of(0x03, 1), "text"]);
+    const echoed: Array<Uint8Array | string> = [];
+    while (echoed.length < 2) echoed.push(...(yield* reader.pull));
+    expect(echoed).toEqual([Uint8Array.of(0x03, 1), "text"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
+);
+
+it.live("closes a plaintext client on a socket whose proof asked for the secure channel", () =>
+  Effect.gen(function* () {
+    const keys = yield* makeSecureSocketKeys;
+    const { origin } = yield* serveHubProxy(
+      keys.session([AuthOrchestrationOperateScope]),
+      Effect.succeed(keys.environment),
+    );
+    const socket = yield* Socket.makeWebSocket(
+      `${origin}/api/device-hub/vendor/serve-sim/helper/ws?device=test&wsTicket=test`,
+    ).pipe(Effect.provide(NodeWS.layerWebSocketConstructor));
+    const writer = yield* socket.writer;
+    const reader = yield* socket.reader;
+    yield* writer.write(Uint8Array.of(0x03, 1));
+    const error = yield* Effect.flip(reader.pull);
+    expect(error.reason._tag === "SocketCloseError" ? error.reason.code : undefined).toBe(
+      SECURE_CHANNEL_CLOSE_CODE,
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
 );

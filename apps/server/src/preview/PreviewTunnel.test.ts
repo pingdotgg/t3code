@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { layerMediaSocketTest } from "../auth/secureSocket.testkit.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as PreviewTunnel from "./PreviewTunnel.ts";
@@ -91,6 +92,7 @@ const serveTunnel = (
     const services = yield* Layer.build(
       HttpRouter.serve(PreviewTunnel.routeLayer, { disableListenLog: true }).pipe(
         Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provide(layerMediaSocketTest()),
         Layer.provide(PreviewTunnel.layer.pipe(Layer.provide(settingsLayer))),
         Layer.provide(
           Layer.mock(SessionStore.SessionStore, {

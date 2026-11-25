@@ -20,6 +20,8 @@ import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
 import { authenticateMediaRequest, failEnvironmentInternal } from "../auth/http.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
+import { upgradeMediaSocket } from "../auth/secureSocket.ts";
+import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import * as DeviceService from "./DeviceService.ts";
 import { repeatStillFrame } from "./mjpegStillFrame.ts";
 
@@ -100,12 +102,13 @@ export const upstreamWebSocketConstructor = Layer.effect(
 
 const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
   request: HttpServerRequest.HttpServerRequest,
+  session: Pick<AuthenticatedSession, "secureChannel" | "proofKeyThumbprint">,
   upstreamUrl: string,
   protocols: ReadonlyArray<string> = [],
   headers: Readonly<Record<string, string>> = {},
 ) {
   const transport = NodeHttpServerRequest.toIncomingMessage(request).socket;
-  const client = yield* request.upgrade;
+  const client = yield* upgradeMediaSocket(request, session);
   const upstream = yield* Socket.makeWebSocket(upstreamUrl, {
     openTimeout: "10 seconds",
     ...(protocols.length > 0 ? { protocols: [...protocols] } : {}),
@@ -231,6 +234,7 @@ const handler = Effect.gen(function* () {
   // Consume the auth ticket here; never forward it to the hub.
   const upstreamSearch = new URLSearchParams(url.value.search);
   upstreamSearch.delete("wsTicket");
+  upstreamSearch.delete("dpop");
   upstreamSearch.delete("hostId");
   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
   const screenshotDevice = upstreamSearch.get("device");
@@ -257,6 +261,7 @@ const handler = Effect.gen(function* () {
     return yield* Effect.raceFirst(
       proxyWebSocket(
         request,
+        session,
         upstreamUrl.replace(/^http/, "ws"),
         routed?.protocols,
         upstreamHeaders,
