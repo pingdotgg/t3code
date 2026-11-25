@@ -630,7 +630,6 @@ function OpenCommandPaletteDialog(props: {
       });
       if (project === null || !isCurrentAddProjectIntent()) return;
       if (await moveDraftToAddedProject(project)) return;
-      if (!isCurrentAddProjectIntent()) return;
     }
     await handleNewThread(projectRef);
   };
@@ -2079,7 +2078,6 @@ function OpenCommandPaletteDialog(props: {
         if (isCurrentAddProjectIntent()) setOpen(false);
         return;
       }
-      if (!isCurrentAddProjectIntent()) return;
       const latestThread = getLatestThreadForProject(
         threads.filter((thread) => thread.environmentId === existing.environmentId),
         existing.id,
