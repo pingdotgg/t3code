@@ -5421,6 +5421,14 @@ interface ActiveClaudeTurnContext {
       readonly text: string;
       readonly startedAt: DateTime.Utc;
     } | null;
+    // The latest root reply since the turn began or Claude last read a steer. Tool calls after it
+    // do not clear it: it is what the user saw before the steer Claude reads next.
+    segmentReply: {
+      readonly nativeItemId: string;
+      readonly text: string;
+      readonly startedAt: DateTime.Utc;
+      readonly completedAt: DateTime.Utc;
+    } | null;
     // The CLI repeats a notice that ends a prompt as the turn's result text.
     noticeTexts: Set<string>;
   };
@@ -9809,6 +9817,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             context.pendingSteers.delete(uuid);
             // Claude now answers this steer, and that answer's result ends the turn.
             absorbHeldResult(context);
+            // What Claude wrote before reading the steer stays an answer, as it would have had
+            // the turn ended there; the steer's reply must not turn it into folded commentary.
+            const answer = context.assistant.segmentReply;
+            context.assistant.segmentReply = null;
+            if (answer !== null) {
+              yield* publishAssistantArtifacts({
+                context,
+                ...answer,
+                createdAt: answer.startedAt,
+                status: "completed",
+                finalAnswer: true,
+              });
+            }
             yield* emitSteerStatus(context, steer.messageId, "completed");
           }
           // Claude removed the steer before reading it. Its item stays pending, so the orchestrator
@@ -12371,6 +12392,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const assistantText = assistantTextFromSdkMessage(message);
           if (message.type === "assistant" && assistantParentToolUseId === null) {
             context.assistant.lastReply = streamedSnapshotReply;
+            if (streamedSnapshotReply !== null) {
+              context.assistant.segmentReply = {
+                ...streamedSnapshotReply,
+                completedAt: yield* DateTime.now,
+              };
+            }
           }
           if (
             assistantText !== null &&
@@ -12433,6 +12460,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 nativeItemId: assistantText.nativeItemId,
                 text,
                 startedAt,
+              };
+              context.assistant.segmentReply = {
+                nativeItemId: assistantText.nativeItemId,
+                text,
+                startedAt,
+                completedAt: startedAt,
               };
             }
             return;
@@ -12513,6 +12546,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
               const cutOffReply = context.assistant.lastReply;
               context.assistant.lastReply = null;
+              // A steer that aborted the segment cut its work short; nothing shows it had answered.
+              context.assistant.segmentReply = null;
               if (message.terminal_reason === "aborted_streaming") {
                 yield* cutOffStreamedText(context);
               }
@@ -12647,6 +12682,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context.heldResult = message;
               // Claude ended its native turn on this reply; the run continues only for the steer.
               const answer = context.assistant.lastReply;
+              context.assistant.segmentReply = null;
               if (answer !== null) {
                 yield* publishAssistantArtifacts({
                   context,
@@ -14135,6 +14171,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 snapshotBlockIndex: new Map(),
                 streamItems: new Map(),
                 lastReply: null,
+                segmentReply: null,
                 noticeTexts: new Set(),
               },
               reasoning: {
