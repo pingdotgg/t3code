@@ -12,6 +12,7 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
 import WorkflowsMigration from "../../apps/server/src/persistence/Migrations/110_Workflows.ts";
+import WorkflowRunTagsMigration from "../../apps/server/src/persistence/Migrations/115_WorkflowRunTags.ts";
 import type { WorkflowDefinition } from "../../apps/server/src/workflows/workflow.ts";
 import {
   type AgentResult,
@@ -74,7 +75,7 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
   const path = yield* Path.Path;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflow-eval-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
-  yield* Effect.provide(WorkflowsMigration, database);
+  yield* Effect.provide(Effect.andThen(WorkflowsMigration, WorkflowRunTagsMigration), database);
   const turns: Array<AgentTurnInput> = [];
   const asked = new Map<string, AgentTurnInput>();
   const agents = WorkflowAgents.of({
@@ -125,8 +126,9 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
         .pipe(Effect.timeoutOption("10 seconds")),
     asks: (workflows, runId) =>
       workflows.watch.pipe(
-        Stream.filterMap((snapshot) => {
-          const question = snapshot.questions.find((asked) => asked.runId === runId);
+        // A question comes in the first list, or in the update where it is asked.
+        Stream.filterMap((update) => {
+          const question = update.questions.find((asked) => asked.runId === runId);
           return question === undefined ? Result.failVoid : Result.succeed(question.name);
         }),
         Stream.runHead,

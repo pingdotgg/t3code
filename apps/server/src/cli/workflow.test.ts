@@ -188,3 +188,32 @@ it.effect("signal sends only one complete address to the server", () =>
     }
   }),
 );
+
+it.effect("list --tag and questions --kind ask the server for only those", () =>
+  Effect.gen(function* () {
+    const listed = yield* runCli(["list", "--tag", "backlog", "--json"], () =>
+      Effect.succeed({
+        structuredContent: { runs: [{ ...makeRun("waiting"), tags: ["backlog"] }] },
+      }),
+    );
+    assert.deepStrictEqual(listed.calls, [{ action: "list", tag: "backlog" }]);
+    const asked = yield* runCli(["questions", "--kind", "feature"], () =>
+      Effect.succeed({
+        structuredContent: {
+          questions: [
+            {
+              runId: "run-1",
+              name: "wanted",
+              kind: "feature",
+              request: { title: "Wanted?", choices: ["Yes"], kind: "feature" },
+              askedAt: "2026-11-20T00:00:00.000Z",
+              thread: null,
+            },
+          ],
+        },
+      }),
+    );
+    assert.deepStrictEqual(asked.calls, [{ action: "questions", kind: "feature" }]);
+    assert.include((yield* TestConsole.logLines).join("\n"), "run-1  wanted  feature");
+  }),
+);

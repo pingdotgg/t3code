@@ -989,6 +989,9 @@ describe("what to say when an action fails", () => {
     const reason = "The worktree directory already exists. Choose another directory.";
     expect(checkoutFailureDescription(diagnostic(reason))).toBe(reason);
     expect(checkoutFailureDescription(diagnostic("x".repeat(900)))).toBe(`${"x".repeat(319)}…`);
+    expect(checkoutFailureDescription(diagnostic(`${"x".repeat(318)}😀 tail`))).toBe(
+      `${"x".repeat(318)}…`,
+    );
     for (const failure of [undefined, diagnostic(""), diagnostic("exited with code 1")]) {
       expect(checkoutFailureDescription(failure)).toBe(
         "Check that the branch still exists and is not checked out elsewhere, then try again.",

@@ -497,7 +497,7 @@
   "bc24c300d53d61c5": "{host} n’a répondu sur aucune route enregistrée.",
   "b0dd3cd876937ca8": "Le profil de connexion {connectionId} n’est pas disponible.",
   "5ce46783e79ca9d1": "Les identifiants de connexion {connectionId} ne sont pas disponibles.",
-  "0bda0cac7f5acc20": "L’environnement connecté {actual} ne correspond pas à {expected}.",
+  "b39d1428ec8b23f5": "Cette adresse exécute désormais une autre installation de T3 Code ({actual}, et non {expected}). Supprimez cette connexion et ajoutez-la à nouveau.",
   "ea0d3e4e51d5706f": "Les identifiants de l’environnement ne sont pas valides.",
   "7283ebfd16d09677": "Les identifiants de l’environnement n’accordent pas l’accès requis.",
   "d3e9a9cb543b4b7b": "L’environnement a rejeté la demande d’authentification.",
@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Démarrage des serveurs MCP de {provider}",
   "fedaa29ff8815a77": "Chargement des hooks de {provider}",
   "57025ae4de5beb57": "Chargement des règles et des skills de {provider}",
+  "1cbfbcad9f0d04fe": "Reprise de la session de {provider}",
   "4729a188600f1501": "Connexion à {provider}",
   "8c8977097681630f": "Démarrage de {provider}",
   "f1d27d127ab27ac6": "Démarrage",
@@ -2628,6 +2629,8 @@
   "89b5e8f3887812da": "Demande d’invité",
   "62e626804919b294": "Réponse requise",
   "c6196d99000642b4": "Ouvrir le fil",
+  "70bdebaa3d291d3b": "Fil indisponible",
+  "a351ebbdcf1a3f7a": "Ce fil se trouve dans un environnement auquel cette app n’est pas connectée.",
   "826cb862b4a11fb3": "{label} :",
   "3e597ec938e7551b": "Vous :",
   "a1fbf2422c588292": "Agent :",
@@ -3626,8 +3629,8 @@
   "478e3b4551be4db3": "Afficher le texte extrait",
   "e7205ebfead1aafc": "Aperçu vidéo agrandi",
   "1bda77e861bb472f": "Aperçu d’image agrandi",
-  "eebe5b17e3c19a1c": "Retour, fermer l’aperçu vidéo",
-  "58fd0009a6eb7258": "Retour, fermer l’aperçu d’image",
+  "fb633d54edaeb4b1": "Fermer l’aperçu vidéo",
+  "62d0c453f5803180": "Fermer l’aperçu d’image",
   "47bae54b5f532ff3": "Média précédent",
   "fb9434aad2b5c0bb": "Impossible de charger cette image.",
   "26aee5d4e97bfb28": "Image indisponible. Le fichier a peut-être été déplacé ou supprimé.",
@@ -3798,6 +3801,21 @@
       "v": "v"
     },
     " a quitté sa page et a été arrêtée"
+  ],
+  "796b81c4875c4feb": [
+    "L’app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " a besoin d’un serveur ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " plus récent sur cet environnement. Mettez à jour le serveur pour l’utiliser."
   ],
   "5ef18e4d39b398bf": [
     "Impossible de charger l’app ",
@@ -4623,6 +4641,7 @@
   "7f0f9b1ee42892db": "La sortie n’est plus disponible.",
   "e470bb79fa74a6ae": "Image de sortie de l’outil",
   "e8c80b6d40c0944c": "Résultat de recherche",
+  "76cf478e5674fd12": "{count, plural, one {{count} correspondance} other {{count} correspondances}}",
   "8d1906900b5c95c7": [
     "code de sortie ",
     {
@@ -6634,28 +6653,8 @@
   "a6d75a4380173c60": "Ouvrir les checks : {summary}",
   "be3d1766bad18693": "Checks : {summary}",
   "425e4a3d6c5c2867": "{count, plural, one {{count} en échec} other {{count} en échec}}",
+  "fd63b391898889f9": "{count, plural, one {{count} en attente d’action} other {{count} en attente d’action}}",
   "cb116c139cdace98": "Aucun check signalé",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "checks"
-  ],
   "60b56e201607c7ec": "Les détails des checks ne sont plus à jour. Actualisez la pull request pour les mettre à jour.",
   "e74cd4e960cbb5e5": "Les lignes inchangées ne sont pas disponibles dans un fichier aux lignes tronquées.",
   "38d6169e04a9a4ce": "Impossible de charger plus de commentaires",
@@ -7520,9 +7519,20 @@
   "dc87902396b8ade4": "Lettres, chiffres, '-' ou '_'.",
   "251dfec07b7c3612": "Ce driver n’a aucune configuration requise. Vous pouvez ajouter l’instance maintenant.",
   "08fe32f007e788f1": "Configurer manuellement",
+  "65300794c1edb929": "Jeton Bearer (facultatif)",
   "84eb2878dc17d3eb": "Clé de gestion",
   "7ac196c1e8175928": "Par défaut, le nom d’hôte du hub",
+  "0c026221dcd2820b": "Ajouter une source de quotas HTTP",
   "e3548407052e9e12": "Ajouter un hub CLIProxyAPI",
+  "d185c750156b2121": [
+    "Consultez les quotas depuis un point de terminaison sur ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "432e85a50e2e7964": [
     "Affichez le quota de chaque compte regroupé par le hub, à côté des fournisseurs sur",
     " ",
@@ -7533,7 +7543,9 @@
     },
     ". La clé reste sur ce serveur."
   ],
+  "2324770ba91371ac": "URL du point de terminaison",
   "556a695b117565ac": "URL du hub",
+  "e4e5b75bba51396c": "Jeton Bearer (facultatif)",
   "e62cedcbcdbafc75": "Clé de gestion",
   "f1b3d0634ec035cb": "Libellé (facultatif)",
   "52814dd6f7d0a15c": "Ajouter le hub",
@@ -8801,7 +8813,7 @@
   "a9cdd8c7073be920": "Palette de commandes : afficher/masquer",
   "4e0943e8c7a465d1": "Sélecteur de fichiers : afficher/masquer",
   "df5fdcdf26a6b52a": "Recherche dans le projet : afficher/masquer",
-  "a8ff6d33b060736f": "Utilisation : ouvrir",
+  "0ca6fd2b8fcab2c3": "Utilisation : Afficher ou masquer",
   "a513d51b71b95674": "Thème : sélectionner",
   "1ffd8427452372e1": "Apparence : alterner",
   "3a3bb4a7551a87cc": "Éditeur de thème : afficher/masquer",
@@ -11524,10 +11536,11 @@
       "v": "v"
     }
   ],
-  "f54364b854a07918": "Aucun hub configuré.",
+  "39f64d971ba424b5": "Aucune source de suivi de l’utilisation configurée.",
+  "dbd877abdc2c7c81": "Source de quotas HTTP",
   "4cf6a373a7535324": "{name} · Désactivé",
-  "1d1e9cda847bd398": "La clé de gestion du hub est supprimée de ce serveur. Ses comptes quittent la vue Limites ; le hub lui-même n’est pas touché. Ajoutez-le à nouveau avec l’URL et la clé pour les récupérer.",
-  "c9bee4f93481b77a": "Supprimer le hub",
+  "c792e744936dbe1b": "Ajouter une source HTTP",
+  "4032a03ee5301037": "La connexion enregistrée et ses identifiants sont supprimés de cet environnement.",
   "0424112d5a0ecd71": "Auto",
   "3f0e1b77e45d53a9": "Appuyer pour basculer, maintenir pour parler",
   "45928549c050a1b4": "Maintenir",
@@ -11857,6 +11870,10 @@
   "6826fa9579c22035": "bêta partager invité invitation lien coéquipier regarder t3 connect tunnel",
   "f10c06cba0cdf7fe": "bêta associer une autre machine vps pair agents y travaillent déléguer",
   "bc0b409d89ce086e": "bêta workflow exécutions durables automatisation étapes planification webhook dossier",
+  "933dabf0700708af": "Nombre d’exécutions ignorées que chaque workflow conserve dans son historique. Les exécutions ignorées plus anciennes sont supprimées ; celles qui ont fait quelque chose sont toujours conservées.",
+  "f172d7e5deb24f75": "Rétablir la valeur par défaut des exécutions ignorées conservées",
+  "ba94015389f327bc": "Exécutions ignorées conservées",
+  "4b2669dcdb7d3776": "workflow historique rétention supprimer anciennes exécutions ignorées webhook history retention skipped runs",
   "4a21cf825a2045b0": "bêta tab autocomplétion prédire prochain message claude codex texte fantôme",
   "fea2dc36585c4a20": "Hôtes d’appareils Simlock (alpha)",
   "9d834d178130180e": "bêta alpha simlock callstack simulateur émulateur ios android pool bail passerelle",
@@ -12072,11 +12089,14 @@
   "37ffec8201f153c1": "Échec",
   "984b361806ce8d25": "Réveillé",
   "c6e8abc00ae470d2": "Terminé",
+  "353b08f4363dbb2c": "En attente",
   "f31a95961de19433": "Ticket {key} : {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} ticket lié} other {{count} tickets liés}}",
   "8cf699ae75fd8067": "Épinglés",
   "be451f475c514b37": "Ignorer la notification Réveillé",
   "e9ced65134f2f36c": "Réveiller le fil maintenant",
+  "374dac09151d4578": "En attente",
+  "a8f30f631e2b010e": "En attente de synchronisation avec son environnement",
   "aca5896600bf173e": "Vous êtes actuellement sur une autre branche.",
   "f665b5be60d8c144": [
     "Transféré depuis ",
@@ -12152,6 +12172,8 @@
   "f13e08bd3614112e": "mettez à jour T3 Code sur cette machine",
   "3c3348c36a2695af": "changez le canal de mise à jour sur cette machine",
   "fa8faa732a2688ef": "sur le canal {channel}",
+  "e65649675cb4cbaa": "désactivé",
+  "a1e7c08d9ef315c7": "chargement en cours",
   "9b961309baafa09d": "pas d’autorisation",
   "9bafb2622c22d145": "déjà en cours de mise à jour",
   "61aa0109862ff7ca": "Nightly",
@@ -12207,6 +12229,7 @@
   "9c015d3d034316cb": "Utilisez les flèches pour ajuster la valeur active. Maintenez Shift pour des pas plus grands. Utilisez Home et End pour le minimum et le maximum. Appuyez sur Tab pour passer de la saturation à la luminosité.",
   "8639d5532561f87f": "Fermer",
   "e1186ad82ee08b33": "Fermer",
+  "a4579e548b768663": "Afficher la barre latérale",
   "a1b11a1cf39c9dc9": "Redimensionner la barre latérale",
   "c557090df5722838": "Afficher ou masquer la barre latérale",
   "bbde430e56272901": "Faites glisser pour redimensionner la barre latérale",
@@ -12256,6 +12279,12 @@
   "8bcab2ef61de6518": "Plafond de 0 $",
   "a16b48709357a5a7": "Gérer l’utilisation",
   "a00e74aaa421c524": "restant",
+  "0e34c3076c08feb2": [
+    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    " ",
+    "dans ",
+    { "i": 3, "k": "_gt_value_3", "v": "v" }
+  ],
   "8bd6f07136317c8f": "Aucun fournisseur des environnements sélectionnés ne signale de limites d’abonnement.",
   "87f5d0c61b335f38": "Consultez l’utilisation dans ChatGPT avec votre compte connecté.",
   "5b4c71b36b979e80": "Coût",
@@ -12603,9 +12632,13 @@
   "5459bf696a187c26": "Impossible de charger les exécutions de workflow",
   "d57c35d43b0f163a": "Cette exécution n’est pas ici",
   "b9aae2f7cdb1a379": "Aucune exécution de workflow pour l’instant",
+  "45a94c724845ec1d": "Autres",
   "8f15f66e545af7c0": "Quelles exécutions",
   "b6409289e0c9a4dd": "Workflow",
   "035cb02ca1ae4952": "Les {count} workflows",
+  "8eeb9cb07d7c59e1": "Type de question",
+  "e4d1316c85ed7066": "Aucune question de ce type ne vous attend.",
+  "e2131cbec8accfe3": "Tous les types",
   "46d614fa7b4bf1e5": "Exécutions de workflow",
   "1c635faa2fb45b8b": "Pas encore exécuté.",
   "156ff7b625287a1e": "Masquer les éléments ignorés",
@@ -12647,6 +12680,7 @@
   ],
   "ed8ce6ebc73dc12d": "Ouvrir le fichier",
   "5d8d278ff828102d": "Tous les workflows",
+  "3b0f1659172107e4": "Tous les types",
   "39459da07479f482": "Agent",
   "7741243632056b81": "{step} · transcription",
   "c512071143a5ba32": "Ce fil n’existe plus.",
@@ -12813,5 +12847,50 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Annuler la fusion automatique de la pile",
-  "012c67c7f1a99e33": "Fusion automatique de la pile"
+  "012c67c7f1a99e33": "Fusion automatique de la pile",
+  "4a18481bea4b4ad5": "Nouvel appareil connecté à {environmentLabel}",
+  "4144ab6aa487528a": "{device} s’est connecté via {product}. Ce n’était pas vous ? Vérifiez-le.",
+  "a10cfdb27152c757": "{count, plural, one {{count} appareil s’est connecté} other {{count} appareils se sont connectés}} via {product}. Ce n’était pas vous ? Vérifiez-les.",
+  "e0856d6a402ad821": "La politique de {organization} n’autorise pas les commandes de disposition des worktrees des projets.",
+  "206811f6f441bfc7": "Ce projet prépare ses worktrees avec sa propre commande, que personne n’a approuvée telle qu’elle est écrite actuellement. Cette connexion ne peut pas l’approuver : approuvez-la depuis un client qui peut utiliser le terminal.",
+  "b8087c9a70c26da9": "Impossible d’approuver la commande de disposition des worktrees.",
+  "49eda70cfd56e621": "S’exécute au démarrage d’un fil dans un worktree et à la restauration de son dossier",
+  "188ccaa1199f5611": "S’exécute à la suppression du worktree d’un fil",
+  "7e8476e7306acabe": "Autoriser ce projet à exécuter ses commandes de worktree ?",
+  "8e11914556fd8b13": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " prépare les fils en worktree avec ses propres commandes issues de ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "t3.json"
+    },
+    ". Elles s’exécutent sur la machine de cet environnement avec vos autorisations, hors de tout bac à sable d’agent. La question vous sera reposée chaque fois que leur texte changera."
+  ],
+  "46807acd02a4ff72": "Approuver et continuer",
+  "a9cb97fca6a6576b": "Commande de création",
+  "90f45a354884ccdd": "Commande de suppression",
+  "78e308ada516928b": "Impossible d’approuver la commande",
+  "a0c772d32a233da6": "Impossible de révoquer l’approbation",
+  "0cdc8cdbed3e5eae": "Disposition des worktrees",
+  "c17b25519e2b194e": "Impossible de charger les commandes de disposition des worktrees",
+  "5ccd5614c65f8d1f": "Révoquer l’approbation de la commande {kind}",
+  "80c3794a5fa12f3a": "Approuver la commande {kind}",
+  "f206891e124c77b0": [
+    "Le ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "t3.json"
+    },
+    " de ce projet prépare les fils en worktree avec ses propres commandes. Elles s’exécutent sur la machine de cet environnement avec vos autorisations, et uniquement telles qu’approuvées ici : une commande dont le texte change doit être approuvée de nouveau."
+  ],
+  "f6a91589456cca50": "Approuvée",
+  "c92657bb7f2293ff": "Approbation requise",
+  "f1e5c1be1ac92361": "Approuver",
+  "fcb5f3c4d4753326": "Cette connexion ne peut pas approuver de commandes. Utilisez un client qui peut utiliser le terminal."
 }
