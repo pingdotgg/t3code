@@ -93,7 +93,19 @@ drives the fake live simulation and the theme.
 
 ## Open questions
 
-None right now. Phase 2 will raise data questions; add them here.
+From the data map; each has a recommendation.
+
+1. **Request text on cards.** Fetch thread detail for Needs-you cards only (client-only,
+   bounded), or add a short preview to the shell's `pendingRuntimeRequest` (server and wire
+   change). Recommendation: client-only first, measure, move to the server only if it costs.
+2. **Check details.** Show "Checks running" and "Checks failing" without counts, and failing
+   check names only when the PR is watched. Recommendation: yes; counts aren't worth a query
+   per card.
+3. **Diff chip.** Show it only for threads with a PR (from the snapshot), and the file list
+   only in the peek. Recommendation: yes.
+4. **Grey line while running.** Use the latest visible message for running threads too, or
+   drop the line while running and keep the status with its timer. Recommendation: latest
+   visible message.
 
 ## Phases
 
@@ -101,36 +113,34 @@ None right now. Phase 2 will raise data questions; add them here.
 |---|-------|--------|--------|
 | 0 | Vision and setup | This doc, the fork, the T3 project | done |
 | 1 | UX prototype | Clickable mock with fake threads: lanes, card anatomy, click and Ctrl-click flow | done |
-| 2 | Data spike | Map lanes, cards and the peek to real thread state in client-runtime | next |
+| 2 | Data spike | Map lanes, cards and the peek to real thread state in client-runtime | done, 4 questions open |
 | 3 | Build | Board behind a Labs toggle, in small steps (shell → lanes → cards → peek → live polish) | - |
 | 4 | Upstream (optional) | Ideas discussion upstream with a demo | - |
 
-## Data the board needs (learned from the prototype, feeds phase 2)
+## Data map (phase 2)
 
-Short list; rewrite entries as phase 2 answers them.
+Every thread's shell (`EnvironmentThreadShell`, `packages/client-runtime/src/state/models.ts`;
+wire type `OrchestrationV2ThreadShell` in `packages/contracts/src/orchestrationV2.ts`) is
+already on the client for the sidebar, per environment. The board reads the same shells, so
+lanes and most of the card cost no new subscriptions.
 
-- **Lane = turn state + work state.** The sidebar's `resolveSidebarRowStatus`
-  (`apps/web/src/components/Sidebar.logic.ts`) covers the turn: approval, input, request,
-  preparing, working, waiting (on subagents), failed, limited, ready. On top of that, PR state
-  decides lanes (failing checks → *Needs you*), and "merged or settled" (`settledOverride`)
-  decides whether a thread is on the board at all.
-- **Pending request content, not just a flag.** The "Asked:" line and the peek need the
-  approval's command and reason, the question and its options, the failure message, and the
-  usage limit's reset time plus a model to switch to.
-- **PR and checks per thread.** Number, state (open, merged), checks running (x of n),
-  passed, or failing with the failing check names (the "Fix checks" quick action sends them). Upstream already links PRs to threads; check
-  whether check status is available without one subscription per card.
-- **The grey line, from thread state.** Running: the current command or tool call. Finished:
-  an excerpt of the last assistant message. Waiting cards show the request instead.
-- **Diff stats of the settled turn** (+/−, file list for the peek).
-- **Snooze and settle:** `snoozedUntil` (off the board until it wakes, then "Woke") and
-  `settledOverride` (off the board until reopened).
-- **Timestamps:** last activity (sorting, "11m"), turn start (working duration), and when the
-  thread entered its lane (Needs you is a queue, oldest first).
-- **Origin and relations:** started by a scheduled task, waiting on N subagents, queued
-  follow-ups. Provider and model only for the peek.
-- **Summary-level data for every thread, all projects.** The sidebar leases row subscriptions
-  (`useSidebarRowSubscriptionLease`); the board must not pull full thread detail per card.
+| Board needs | Source today | Gap |
+|---|---|---|
+| Lane: approval, question, failed, limited, working, waiting, finished | `resolveSidebarRowStatus` (`apps/web/src/components/Sidebar.logic.ts`) over shell flags: `hasPendingApprovals`, `hasPendingUserInput`, `source.pendingRuntimeRequest.kind`, `runtime` (`status`, `lastErrorClass`), `latestRun` | None. Lives in `apps/web`, fine for a web-only board. |
+| Off the board: settled, snoozed, woke | `settledOverride`, `snoozedUntil`; `effectiveSnoozed`, `threadWokeAt`, `canSnooze` in `client-runtime/src/state/threadSettled.ts`; commands in `threadCommands.ts` | None. |
+| PR chip, failing checks → *Needs you* | `pullRequests[].snapshot`: `state`, `checksState` (`passing`/`failing`/`pending`), `title`, `additions`/`deletions`; `resolveThreadCurrentPullRequestLink` | No "x of n" check count. Failing check names only in `watch.failedChecks` when the PR is watched. |
+| Grey line | `latestVisibleMessage` (`role`, `text`) | The running command or tool call is not in the shell. |
+| Request content (approval command, question and options) | Thread detail timeline only; the shell's `pendingRuntimeRequest` has `kind` and `createdAt`, no text | Needs thread detail per Needs-you card, or a short preview added to the shell (server and wire change). |
+| Failure and usage limit text | `runtime.lastError`, `lastErrorClass`, `usageLimitResetAt`, `limitRecovery` | None. |
+| Diff chip | PR snapshot `additions`/`deletions` when a PR exists | No per-turn diff stats in the shell (the sidebar's `latestRunDiff` is a stub returning null). |
+| Times: last activity, working duration, waiting since | `updatedAt`; `runtime.activityStartedAt` / `latestRun.startedAt`; `pendingRuntimeRequest.createdAt` | None. |
+| Queued follow-up | `hasQueuedTurnStart` (`threadSettled.ts`) | A flag, not a count. |
+| Started by a scheduled task | Not checked yet (`lineage`, `linkOrigin`, `workflowRun` are candidates) | Drop the chip for v1 unless one of these says it. |
+| Peek: summary, files, activity | Thread detail (`createEnvironmentThreadDetailAtoms`, `threadDetail.ts`), checkpoints (`threadCheckpoints.ts`) | Subscribe only while the peek is open. |
+
+**Performance rule:** the board subscribes to nothing per card beyond the shells it already
+has. Thread detail is fetched for the open peek and, if we choose that route, for Needs-you
+cards (few, bounded). No per-card PR status queries: the shell's PR snapshot is enough.
 
 ## Decision log
 
@@ -172,6 +182,8 @@ Add new entries at the bottom: date, decision, reason.
 - **2026-11-25** The board will not move into upstream's pane system.
 - **2026-11-25** Mobile is out of scope for now.
 - **2026-11-25** Phase 1 is done; the prototype is the reference for the build.
+- **2026-11-25** Prototype merged into the fork's `main`; the build happens on
+  `fork/thread-board`.
 
 ## Prior art (upstream, all closed)
 
