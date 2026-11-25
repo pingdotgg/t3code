@@ -4,7 +4,7 @@ import { installThreadOutboxDelivery } from "./state/threadOutboxDelivery";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { requireNativeModule } from "expo";
-import { useLocale } from "gt-react-native";
+import { useGT, useLocale } from "gt-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Platform, StatusBar } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -108,6 +108,7 @@ import {
 import { pruneNewTaskFlowStates } from "./features/threads/new-task-flow-state";
 import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRouteScreen";
 import { installAppUpdateChecks } from "./features/updates/app-updates";
+import { publishAppLockStrings } from "./features/app-lock/appLock";
 
 import "../global.css";
 
@@ -264,6 +265,17 @@ function QuickActionsLanguage() {
   return null;
 }
 
+function AppLockLanguage() {
+  const gt = useGT();
+  const unlockLabel = gt("Unlock", { $context: "verb, app lock button" });
+  const reason = gt("Unlock {product}", { product: "PseudoCode" });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the native lock screen draws before JS loads, so it keeps the copy last published here
+  useEffect(() => {
+    publishAppLockStrings({ unlockLabel, reason });
+  }, [unlockLabel, reason]);
+  return null;
+}
+
 export default function App() {
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
@@ -294,6 +306,7 @@ function AppContent() {
     <>
       <SplashScreenCoordinator />
       <QuickActionsLanguage />
+      <AppLockLanguage />
       <SubscriptionUsageCoordinator />
       <ConnectDeviceApprovalCoordinator />
       <GestureHandlerRootView className="flex-1">

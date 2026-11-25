@@ -112,6 +112,7 @@ import {
 } from "./features/settings/SettingsSourceControlDetailRouteScreens";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
+import { SettingsAppLockRouteScreen } from "./features/settings/SettingsAppLockRouteScreen";
 import { SettingsLanguageRouteScreen } from "./features/settings/SettingsLanguageRouteScreen";
 import {
   SettingsEnvironmentMaintenanceRouteScreen,
@@ -197,6 +198,7 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   SettingsKeyboard: msg("Keyboard"),
   SettingsVoice: msg("Voice"),
   SettingsFollowUp: msg("Chat", { $context: "noun, settings page title" }),
+  SettingsAppLock: msg("App Lock"),
   SettingsScheduledTasks: msg("Scheduled tasks"),
   SettingsScheduledTaskNew: msg("New scheduled task"),
   SettingsScheduledTaskEdit: msg("Edit scheduled task"),
@@ -370,6 +372,11 @@ const SETTINGS_SCREENS = {
   SettingsFollowUp: createNativeStackScreen({
     screen: SettingsFollowUpRouteScreen,
     linking: "settings/follow-ups",
+    options: settingsPage(),
+  }),
+  SettingsAppLock: createNativeStackScreen({
+    screen: SettingsAppLockRouteScreen,
+    linking: "settings/app-lock",
     options: settingsPage(),
   }),
   SettingsScheduledTasks: createNativeStackScreen({
