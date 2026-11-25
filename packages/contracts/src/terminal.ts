@@ -179,7 +179,6 @@ export function retainedTerminalHistory(history: string, maxBytes: number): stri
     0,
     history.length - retained.length,
   );
-  if (state === TERMINAL_SEQUENCE_GROUND) return retained;
   const { end, replay } = scanSnapshotContinuation(state, retained);
   const tail = retained.slice(end);
   if (replay.length === 0) return tail;
