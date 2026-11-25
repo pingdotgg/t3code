@@ -1468,7 +1468,16 @@ function makeLocalCommandHarness(input: {
         }),
         input.skillPolicy === undefined
           ? Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: resolveRuntimePolicy })
-          : RuntimePolicy.layer,
+          : Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+              resolve: ({ thread }) =>
+                Effect.succeed({
+                  runtimeMode: thread.runtimeMode,
+                  interactionMode: thread.interactionMode,
+                  cwd: thread.worktreePath,
+                  deniedSkills: thread.deniedSkills ?? [],
+                  delegationProfile: thread.delegationProfile,
+                }),
+            }),
       ),
     ),
   );

@@ -2709,8 +2709,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         input.cwd,
         fromRevision,
         toRevision,
-      ).pipe(Effect.orElseSucceed(() => []))).filter(({ path: nestedPath }) =>
-        !input.excludePaths?.some((excluded) => nestedPath === excluded || nestedPath.startsWith(`${excluded}/`))
+      ).pipe(Effect.orElseSucceed(() => []))).filter(
+        ({ path: nestedPath }) =>
+          !input.excludePaths?.some(
+            (excluded) => nestedPath === excluded || nestedPath.startsWith(`${excluded}/`),
+          ),
       );
       const normalizedFilePaths = input.filePaths?.map(unaliasWorktreeDisplayPath);
       const nestedFilePaths = (prefix: string) =>
