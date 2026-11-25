@@ -901,10 +901,21 @@ const make = Effect.gen(function* () {
                       createdWorktreePath = taskFolder.projectPath;
                       createdBranch = claimedBranch;
                     }),
-                  onRepository: ({ name, done, total }) =>
-                    setupTracker.stage(threadId, "checkout", {
-                      detail: `${name} (${done} of ${total})`,
-                    }),
+                  onRepository: ({ active, done, total }) => {
+                    const current =
+                      active.find(({ operation }) => operation === "fetch") ?? active[0];
+                    const count = `${done} of ${total} ready`;
+                    // The project's own submodule step may already have marked checkout done.
+                    return setupTracker.stage(threadId, "checkout", {
+                      status: "running",
+                      endedAt: null,
+                      percent: null,
+                      detail:
+                        current === undefined
+                          ? count
+                          : `${current.operation === "fetch" ? "Fetching" : "Checking out"} ${current.name} · ${count}`,
+                    });
+                  },
                 })
                 .pipe(
                   Effect.map((created) => ({

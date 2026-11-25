@@ -3479,11 +3479,12 @@ it.live("launches into a task folder and leaves nothing behind when its setup is
       git
         .execute({ operation: "launch-test", cwd, args })
         .pipe(Effect.map((result) => result.stdout.trim()));
-    // A project folder that is not a repository, holding two that are.
+    // A project folder that is not a repository, holding three that are.
     const shop = yield* fileSystem.realPath(
       yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-folders-" }),
     );
-    const repositories = [path.join(shop, "api"), path.join(shop, "web")];
+    const slowRepository = path.join(shop, "assets");
+    const repositories = [path.join(shop, "api"), path.join(shop, "web"), slowRepository];
     for (const folder of repositories) {
       yield* fileSystem.makeDirectory(folder);
       yield* run(folder, "init", "-b", "main");
@@ -3493,11 +3494,20 @@ it.live("launches into a task folder and leaves nothing behind when its setup is
       yield* run(folder, "add", ".");
       yield* run(folder, "commit", "-m", "initial");
     }
+    yield* run(slowRepository, "remote", "add", "origin", repositories[0]!);
     state.workspaceRoot = shop;
     state.trackedFolders = repositories.map((folder) => ({
       path: folder,
       name: path.basename(folder),
     }));
+    const fetchStarted = yield* Deferred.make<void>();
+    const releaseFetch = yield* Deferred.make<void>();
+    state.onFetchBase = (cwd) =>
+      cwd === slowRepository
+        ? Deferred.succeed(fetchStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseFetch)),
+          )
+        : Effect.void;
     const entered = yield* Deferred.make<void>();
     const harness = makeHarness({
       taskFolders: layerTaskFolders,
@@ -3513,8 +3523,29 @@ it.live("launches into a task folder and leaves nothing behind when its setup is
           command: "launch:task-folder",
           thread: "thread:task-folder",
           message: "Start",
-          workspace: { type: "worktree", baseRef: "main", branch: "feature/launch" },
+          workspace: {
+            type: "worktree",
+            baseRef: "main",
+            branch: "feature/launch",
+            startFromOrigin: true,
+          },
         }),
+      );
+      yield* Effect.gen(function* () {
+        yield* Deferred.await(fetchStarted);
+        const progress = yield* tracker.stream(launched.threadId).pipe(
+          Stream.map((snapshot) => snapshot?.stages.find((stage) => stage.id === "checkout")),
+          Stream.filter((stage) => stage?.detail?.includes("2 of 3") === true),
+          Stream.runHead,
+        );
+        assert.equal(Option.getOrThrow(progress)?.detail, "Fetching assets · 2 of 3 ready");
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: "30 seconds",
+          orElse: () =>
+            Effect.die(new Error("Timed out waiting for tracked repository fetch progress")),
+        }),
+        Effect.ensuring(Deferred.succeed(releaseFetch, undefined)),
       );
       yield* Deferred.await(entered);
 
@@ -3543,7 +3574,7 @@ it.live("launches into a task folder and leaves nothing behind when its setup is
           ["agent", "pending"],
         ],
       );
-      assert.match(stages[1]?.detail ?? "", /\(2 of 2\)$/);
+      assert.equal(stages[1]?.detail, "3 of 3 ready");
 
       assert.isTrue(yield* tracker.cancel(launched.threadId));
 

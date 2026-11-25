@@ -88,6 +88,13 @@ interface TaskFolderCheckout {
   readonly repositoryPath: string;
 }
 
+type RepositoryOperation = "fetch" | "checkout";
+
+interface RepositoryActivity {
+  readonly name: string;
+  readonly operation: RepositoryOperation;
+}
+
 export class TaskFolders extends Context.Service<
   TaskFolders,
   {
@@ -124,7 +131,7 @@ export class TaskFolders extends Context.Service<
       /** As soon as the folder is recorded, so a cancelled caller knows what to remove. */
       readonly onClaimed?: (taskFolder: TaskFolder, branch: string) => Effect.Effect<void>;
       readonly onRepository?: (progress: {
-        readonly name: string;
+        readonly active: ReadonlyArray<RepositoryActivity>;
         readonly done: number;
         readonly total: number;
       }) => Effect.Effect<void>;
@@ -692,6 +699,7 @@ const make = Effect.gen(function* () {
     cwd: string,
     startFromOrigin: boolean,
     baseBranch?: string,
+    onFetch?: Effect.Effect<void>,
   ) {
     // Clients send `HEAD` when no base was chosen; as a name it would match `origin/HEAD`.
     const wanted = baseBranch?.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
@@ -711,10 +719,13 @@ const make = Effect.gen(function* () {
       else if (yield* git.hasCommit({ cwd, refName: `refs/remotes/origin/${defaultBranch}` }))
         baseRef = `origin/${defaultBranch}`;
     }
-    const remoteBase =
+    const remote =
       startFromOrigin && baseRef !== "HEAD"
-        ? yield* git.fetchWorktreeBaseCommit({ cwd, refName: baseRef })
+        ? yield* git.resolveWorktreeBaseRemote({ cwd, refName: baseRef })
         : null;
+    if (remote === null) return { refName: baseRef, baseRefName: baseRef };
+    if (onFetch !== undefined) yield* onFetch;
+    const remoteBase = yield* git.fetchWorktreeBaseCommit({ cwd, refName: baseRef, remote });
     return remoteBase === null
       ? { refName: baseRef, baseRefName: baseRef }
       : { refName: remoteBase.commitSha, baseRefName: `refs/remotes/${remoteBase.remoteRefName}` };
@@ -1059,6 +1070,7 @@ const make = Effect.gen(function* () {
     startFromOrigin: boolean,
     baseBranch: string | undefined,
     recordBranch: <A, E>(exit: Exit.Exit<A, E>) => Effect.Effect<void>,
+    reportActivity: (operation: RepositoryOperation) => Effect.Effect<void>,
   ) {
     const worktreePath = mapped(taskFolder, repository.path);
     // The project's own checkout (a post-checkout hook, say) already provided this repository.
@@ -1069,7 +1081,13 @@ const make = Effect.gen(function* () {
     )
       return null;
     yield* fileSystem.makeDirectory(path.dirname(worktreePath), { recursive: true });
-    const start = yield* repositoryStart(repository.path, startFromOrigin, baseBranch);
+    const start = yield* repositoryStart(
+      repository.path,
+      startFromOrigin,
+      baseBranch,
+      reportActivity("fetch"),
+    );
+    yield* reportActivity("checkout");
     yield* git
       .createWorktree({
         cwd: repository.path,
@@ -1256,6 +1274,18 @@ const make = Effect.gen(function* () {
           yield* linkFolder(taskPlan.projectRoot, empty.projectPath, taskPlan.trackedRepositories);
         }
         let finished = 0;
+        const active = new Map<string, RepositoryActivity>();
+        const reportProgress = () =>
+          input.onRepository?.({
+            active: [...active.values()],
+            done: finished,
+            total: taskPlan.repositories.length,
+          }) ?? Effect.void;
+        const reportActivity = (repository: ProjectTrackedFolder, operation: RepositoryOperation) =>
+          Effect.suspend(() => {
+            active.set(repository.path, { name: repository.name, operation });
+            return reportProgress();
+          });
         // Whatever the project put at a skipped path also stands for the repositories inside it.
         const skipped: string[] = [];
         // A repository inside another waits for the one that holds it.
@@ -1282,24 +1312,25 @@ const make = Effect.gen(function* () {
                     input.startFromOrigin,
                     input.baseBranch,
                     recordBranch(repository.path),
+                    (operation) => reportActivity(repository, operation),
                   )
               ).pipe(
                 Effect.tap((worktree) =>
                   Effect.suspend(() => {
                     finished += 1;
+                    active.delete(repository.path);
                     if (worktree === null) skipped.push(repository.path);
                     else {
                       created.push(worktree.repository);
                       repositoriesStartedFromOrigin ||= worktree.fromOrigin;
                     }
-                    return (
-                      input.onRepository?.({
-                        name: repository.name,
-                        done: finished,
-                        total: taskPlan.repositories.length,
-                      }) ?? Effect.void
-                    );
+                    return reportProgress();
                   }),
+                ),
+                Effect.onError(() =>
+                  Effect.suspend(() =>
+                    active.delete(repository.path) ? reportProgress() : Effect.void,
+                  ),
                 ),
                 Effect.mapError(fail("create", `Could not create the ${repository.name} worktree`)),
                 Effect.exit,
