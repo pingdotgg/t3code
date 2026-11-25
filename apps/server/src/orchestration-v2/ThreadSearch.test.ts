@@ -741,6 +741,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
           message(wrapped, "exact-wrapped", "assistant", wrappedText),
           thread(apart, project),
           message(apart, "exact-apart", "user", apartText),
+          message(apart, "exact-paragraphs", "user", "missing\n\nosprey files"),
         ],
         projections.apply,
         { discard: true },

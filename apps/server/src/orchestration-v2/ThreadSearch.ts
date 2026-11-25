@@ -34,6 +34,7 @@ import {
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
+import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import {
   foldedMessageSearchText,
   indexedMessageCondition,
@@ -577,12 +578,32 @@ export const make = Effect.gen(function* () {
     const hitCounts = new Map<ThreadId, number>();
     const hitCount = (threadId: ThreadId) => hitCounts.get(threadId) ?? 1;
     const matchMessage = messageMatcher(input.query);
+    const { exact, words } = messageSearchTokens(input.query);
+    const quotedPhrase = exact && words.length > 1;
     for (const row of rows) {
       // Webhook URL tokens are withheld before matching, so a snippet cut inside the URL has none.
       const text = withoutWebhookUrlToken(row.text.replace(MARKDOWN_LINK, "$1"));
       const match = matchMessage(text);
       if (match === null) continue;
-      const hit = { row, text, ...match };
+      let hit: Hit | null = { row, text, ...match };
+      if (quotedPhrase && /[\r\n]/.test(row.text)) {
+        // The index narrows by stored text. Find starts at the first rendered
+        // occurrence in the message, so the snippet must start there too.
+        const segments = searchableMessageSegments({
+          role: row.source,
+          text: withoutWebhookUrlToken(row.text),
+          streaming: false,
+        });
+        hit = null;
+        for (const segment of segments ?? []) {
+          const rendered = withoutWebhookUrlToken(segment);
+          const renderedMatch = matchMessage(rendered);
+          if (renderedMatch === null) continue;
+          hit = { row, text: rendered, ...renderedMatch };
+          break;
+        }
+      }
+      if (hit === null) continue;
       const current = best.get(row.threadId);
       if (current === undefined || hit.quality > current.quality) {
         hitCounts.set(row.threadId, 1);
