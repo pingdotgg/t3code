@@ -22365,6 +22365,161 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("shows a forked skill's work from its transcript while it runs, once", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-fork-" });
+      const subagentsDir = NodePath.join(
+        configDir,
+        "projects",
+        "-workspace",
+        WAKE_NATIVE_SESSION,
+        "subagents",
+      );
+      yield* fileSystem.makeDirectory(subagentsDir, { recursive: true });
+      const forkParent = "forked-command-fork-probe";
+      const bashCall = {
+        type: "assistant" as const,
+        parent_tool_use_id: forkParent,
+        message: {
+          model: "claude-haiku-5-5",
+          id: "msg_fork_live_bash",
+          type: "message",
+          role: "assistant",
+          stop_reason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu-fork-live-bash",
+              name: "Bash",
+              input: { command: "cat hello.txt", description: "Read hello.txt" },
+            },
+          ],
+        },
+        uuid: "00000000-0000-4000-8000-000000000b04",
+        session_id: WAKE_NATIVE_SESSION,
+      };
+      yield* fileSystem.writeFileString(
+        NodePath.join(subagentsDir, "agent-task-forked-live.jsonl"),
+        `${JSON.stringify(bashCall)}\n`,
+      );
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: { CLAUDE_CONFIG_DIR: configDir },
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-forked-skill-live"),
+          text: "/fork-probe go",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-forked-live",
+          description: "/fork-probe",
+          prompt: "go",
+          subagent_type: "general-purpose",
+          task_type: "local_agent",
+          uuid: "00000000-0000-4000-8000-000000000b01",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* TestClock.adjust("1 second");
+      yield* harness.until(
+        () => subagentRouting(harness.events, ["toolu-fork-live-bash"]).toolThreadIds.size > 0,
+      );
+      const running = harness.events
+        .filter((event) => event.type === "subagent.updated")
+        .at(-1)?.subagent;
+      assert.equal(running?.status, "running", "the fork's command appeared only after it ended");
+
+      for (const frame of [
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "task-forked-live",
+          status: "completed",
+          summary: "/fork-probe",
+          output_file: "",
+          uuid: "00000000-0000-4000-8000-000000000b02",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame(bashCall),
+        claudeSdkFrame({
+          type: "user",
+          parent_tool_use_id: forkParent,
+          message: {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: "toolu-fork-live-bash", content: "greetings" },
+            ],
+          },
+          uuid: "00000000-0000-4000-8000-000000000b05",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "assistant",
+          parent_tool_use_id: forkParent,
+          message: {
+            model: "claude-haiku-5-5",
+            id: "msg_fork_live_reply",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "text", text: "FORK-REPORT greetings" }],
+          },
+          uuid: "00000000-0000-4000-8000-000000000b06",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000b07",
+          result: "FORK-REPORT greetings",
+        }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* Queue.take(harness.terminalReceipts);
+
+      const routing = subagentRouting(harness.events, ["toolu-fork-live-bash"]);
+      const toolItemIds = new Set(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "toolu-fork-live-bash"
+            ? [event.turnItem.id]
+            : [],
+        ),
+      );
+      assert.equal(toolItemIds.size, 1, "the fork's command was shown twice");
+      const completedCall = harness.events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "toolu-fork-live-bash",
+      );
+      assert.equal(
+        completedCall?.type === "turn_item.updated" ? completedCall.turnItem.status : undefined,
+        "completed",
+      );
+      assert.deepEqual(routing.assistantTexts(routing.childThreadId), ["FORK-REPORT greetings"]);
+      const subagent = harness.events
+        .filter((event) => event.type === "subagent.updated")
+        .at(-1)?.subagent;
+      assert.equal(subagent?.result, "FORK-REPORT greetings");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     {
       source: "custom model",

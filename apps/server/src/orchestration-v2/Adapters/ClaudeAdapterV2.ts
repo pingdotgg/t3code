@@ -403,6 +403,7 @@ const CLAUDE_STDERR_TAIL_LENGTH = 2_048;
 const CLAUDE_STDERR_DRAIN_TIMEOUT = Duration.seconds(1);
 // How often a working CLI's process tree is recorded when no agent scope will stop what it leaves.
 const CLAUDE_DESCENDANT_POLL = "1 second";
+const CLAUDE_FORKED_SKILL_TRANSCRIPT_POLL = "1 second";
 // Claude Code's refusal of bypassPermissions as root, which it explains only on stderr.
 const CLAUDE_ROOT_REFUSAL =
   "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
@@ -6431,6 +6432,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // A forked skill's frames arrive only after its task_notification; hold that until they are in.
         const forkedSkillToolUseIdsByTaskId = new Map<string, string>();
         const heldForkedSkillNotifications = new Map<string, SDKMessage>();
+        // The stream withholds a fork's frames until it ends, so its transcript is shown while it runs.
+        // Frames whose uuid the transcript already showed are skipped when they arrive.
+        const forkedSkillTranscripts = new Map<
+          string,
+          { readonly fiber: Fiber.Fiber<void>; readonly shownUuids: Set<string> }
+        >();
         // Subagent frames can precede the task_started that registers their owner.
         const pendingSubagentFramesByToolUseId = yield* Ref.make(
           new Map<string, ReadonlyArray<SDKMessage>>(),
@@ -8347,10 +8354,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
 
         // Claude Code records the effort a subagent ran at only in its transcript.
-        const readSubagentTranscriptEffort = Effect.fnUntraced(function* (
+        const findSubagentTranscriptDir = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           taskId: string,
-          completed: boolean,
         ) {
           const cwd = context.input.runtimePolicy.cwd;
           if (cwd === null) return undefined;
@@ -8375,8 +8381,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               break;
             }
           }
-          if (found === undefined) return undefined;
-          const transcriptDir = found;
+          return found === undefined ? undefined : { transcriptDir: found, configDir };
+        });
+
+        const readSubagentTranscriptEffort = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          taskId: string,
+          completed: boolean,
+        ) {
+          const located = yield* findSubagentTranscriptDir(context, taskId);
+          if (located === undefined) return undefined;
+          const { transcriptDir, configDir } = located;
           let metadata: WorkflowAgentMetadata = {};
           let cursor = initialWorkflowAgentTranscriptCursor;
           const read = Effect.fnUntraced(function* () {
@@ -9446,6 +9461,66 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             now: at,
           });
           return true;
+        });
+
+        const followForkedSkillTranscript = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          taskId: string,
+          shownUuids: Set<string>,
+        ) {
+          let located: Effect.Success<ReturnType<typeof findSubagentTranscriptDir>>;
+          let cursor = initialWorkflowAgentTranscriptCursor;
+          while (true) {
+            yield* Effect.sleep(CLAUDE_FORKED_SKILL_TRANSCRIPT_POLL);
+            if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId)?.task.status !== "running") {
+              return;
+            }
+            located ??= yield* findSubagentTranscriptDir(context, taskId);
+            if (located === undefined) continue;
+            const { transcriptDir, configDir } = located;
+            for (let drained = false; !drained;) {
+              const read = yield* readWorkflowAgentTranscript({
+                transcriptDir,
+                agentId: taskId,
+                cursor,
+                ...(configDir === undefined ? {} : { configDir }),
+              }).pipe(Effect.option);
+              if (Option.isNone(read)) break;
+              const advanced = read.value.cursor.offset !== cursor.offset;
+              cursor = read.value.cursor;
+              // Stopping mid-line would leave a shown line unmarked and repeat it from the stream.
+              yield* Effect.uninterruptible(
+                Effect.gen(function* () {
+                  for (const line of read.value.lines) {
+                    const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
+                    const uuid = text(field(line, "uuid"));
+                    if (subagent === undefined || uuid === undefined || shownUuids.has(uuid)) {
+                      continue;
+                    }
+                    if (
+                      (yield* projectSubagentTranscriptLine(
+                        subagentProjectionTarget(subagent),
+                        line,
+                      )) &&
+                      isClaudeTranscriptConversationLine(line) &&
+                      line.type === "assistant"
+                    ) {
+                      const messageId =
+                        typeof line.message.id === "string" ? line.message.id : null;
+                      const reply = textFromClaudeContent(line.message.content);
+                      subagent.lastAssistantText =
+                        messageId !== null && messageId === subagent.lastAssistantMessageId
+                          ? `${subagent.lastAssistantText ?? ""}\n${reply}`
+                          : reply;
+                      subagent.lastAssistantMessageId = messageId;
+                    }
+                    shownUuids.add(uuid);
+                  }
+                }),
+              );
+              drained = !read.value.truncated || !advanced;
+            }
+          }
         });
 
         const buildApprovalRequestArtifacts = Effect.fnUntraced(function* (input: {
@@ -12047,6 +12122,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) =>
                   new Map(current).set(forkedSkillToolUseId, message.task_id),
                 );
+                const previous = forkedSkillTranscripts.get(forkedSkillToolUseId);
+                if (previous !== undefined) yield* Fiber.interrupt(previous.fiber);
+                const shownUuids = new Set<string>();
+                const fiber = yield* followForkedSkillTranscript(
+                  context,
+                  message.task_id,
+                  shownUuids,
+                ).pipe(Effect.forkIn(sessionScope));
+                forkedSkillTranscripts.set(forkedSkillToolUseId, { fiber, shownUuids });
               }
               yield* Ref.update(wakeBuffers, (current) => {
                 const entry = current.get(liveQuery.nativeThreadId);
@@ -12748,6 +12832,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           for (const [toolUseId, notification] of heldForkedSkillNotifications) {
             if (toolUseId === parentToolUseId) continue;
             heldForkedSkillNotifications.delete(toolUseId);
+            forkedSkillTranscripts.delete(toolUseId);
             yield* routeSdkMessage({ query: input.query, message: notification });
           }
           if (input.message.type === "system" && input.message.subtype === "task_notification") {
@@ -12756,9 +12841,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               forkedSkillToolUseId !== undefined &&
               !heldForkedSkillNotifications.has(forkedSkillToolUseId)
             ) {
+              const transcript = forkedSkillTranscripts.get(forkedSkillToolUseId);
+              if (transcript !== undefined) yield* Fiber.interrupt(transcript.fiber);
               heldForkedSkillNotifications.set(forkedSkillToolUseId, input.message);
               return;
             }
+          }
+          const uuid = text(field(input.message, "uuid"));
+          if (
+            typeof parentToolUseId === "string" &&
+            uuid !== undefined &&
+            forkedSkillTranscripts.get(parentToolUseId)?.shownUuids.has(uuid) === true
+          ) {
+            return;
           }
           yield* routeSdkMessage(input);
         });
