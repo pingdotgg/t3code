@@ -584,52 +584,47 @@ const PROVIDER_LIMIT_NOTICE =
 export function deriveUsageLimitNoticeRows(
   projection: ThreadStructure,
 ): UsageLimitNoticeRows | null {
-  let hasUsageLimitFailure = false;
+  const rootNodeByRunId = new Map(projection.runs.map((run) => [run.id, run.rootNodeId]));
+  const failures: Array<ThreadStructureTurnItem> = [];
   for (const item of projection.turnItems) {
-    if (item.type === "error" && item.status === "failed" && item.failure.class === "usage_limit") {
-      hasUsageLimitFailure = true;
-      break;
+    if (
+      item.type === "error" &&
+      item.status === "failed" &&
+      item.failure.class === "usage_limit" &&
+      item.runId !== null &&
+      item.nodeId === rootNodeByRunId.get(item.runId)
+    ) {
+      failures.push(item);
     }
   }
-  if (!hasUsageLimitFailure) return null;
+  if (failures.length === 0) return null;
 
   const runtime = deriveThreadStructureRuntime(projection);
   const latestRun = presentedLatestRun(projection);
-  const activeBannerRunId =
-    runtime?.status === "failed" && runtime.lastErrorClass === "usage_limit" && latestRun !== null
-      ? latestRun.id
+  const bannerRunId =
+    runtime?.status === "failed" && runtime.lastErrorClass === "usage_limit"
+      ? (latestRun?.id ?? null)
       : null;
 
-  const rootNodeByRunId = new Map(projection.runs.map((run) => [run.id, run.rootNodeId]));
   const itemIds = new Set<ThreadStructureTurnItem["id"]>();
-  const failedTurnRootNode = new Map<string, ThreadStructureTurnItem["nodeId"]>();
-
-  for (const item of projection.turnItems) {
-    if (
-      item.runId === null ||
-      item.type !== "error" ||
-      item.status !== "failed" ||
-      item.failure.class !== "usage_limit"
-    ) {
-      continue;
-    }
-    const rootNodeId = rootNodeByRunId.get(item.runId);
-    if (rootNodeId === undefined || item.nodeId !== rootNodeId) continue;
-
-    if (item.runId === activeBannerRunId) {
-      itemIds.add(item.id);
-    }
-    if (item.providerTurnId !== null) {
-      failedTurnRootNode.set(`${item.runId}\0${item.providerTurnId}`, rootNodeId);
+  const failedTurns = new Set<string>();
+  for (const failure of failures) {
+    if (failure.runId === bannerRunId) itemIds.add(failure.id);
+    if (failure.providerTurnId !== null) {
+      failedTurns.add(`${failure.runId}\0${failure.providerTurnId}`);
     }
   }
 
   const providerNoticeItemIds = new Set<ThreadStructureTurnItem["id"]>();
-  if (failedTurnRootNode.size > 0) {
+  if (failedTurns.size > 0) {
     for (const item of projection.turnItems) {
-      if (item.runId === null || item.providerTurnId === null) continue;
-      const rootNodeId = failedTurnRootNode.get(`${item.runId}\0${item.providerTurnId}`);
-      if (rootNodeId === undefined || item.nodeId !== rootNodeId || item.parentItemId !== null) {
+      if (
+        item.runId === null ||
+        item.providerTurnId === null ||
+        item.parentItemId !== null ||
+        item.nodeId !== rootNodeByRunId.get(item.runId) ||
+        !failedTurns.has(`${item.runId}\0${item.providerTurnId}`)
+      ) {
         continue;
       }
       if (
@@ -639,12 +634,7 @@ export function deriveUsageLimitNoticeRows(
       ) {
         itemIds.add(item.id);
       }
-      if (
-        item.type === "assistant_message" &&
-        (item.nativeItemRef === null || item.nativeItemRef.driver === "claudeAgent")
-      ) {
-        providerNoticeItemIds.add(item.id);
-      }
+      if (item.type === "assistant_message") providerNoticeItemIds.add(item.id);
     }
   }
 
