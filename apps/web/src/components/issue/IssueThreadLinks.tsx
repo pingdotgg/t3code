@@ -33,7 +33,7 @@ import { ThreadLinkPicker } from "../ThreadLinkPicker";
 import { Button } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 /**
  * The threads an issue is linked to, and the control that links it to one more: the thread it is
@@ -129,65 +129,59 @@ export function IssueThreadLinks({
   return (
     <>
       {linkedThreads.length > 0 || (!relationsKnown && relations.error !== null) ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="xs"
-                variant="ghost"
-                aria-label={linkedThreadsLabel}
-                onClick={() =>
-                  openCommandPalette({
-                    query: issue.url,
-                    ...(relationsKnown
-                      ? { linkedThreads: { environmentId, threads: linkedThreads } }
-                      : {}),
-                  })
-                }
-              >
-                <MessageSquareIcon aria-hidden className="size-3.5" />
-                <span aria-hidden>{linkedThreads.length || "?"}</span>
-              </Button>
-            }
-          />
-          <TooltipPopup>
-            {gt("{label}. Search in the command palette.", { label: linkedThreadsLabel })}
-          </TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <Button
+              size="xs"
+              variant="ghost"
+              aria-label={linkedThreadsLabel}
+              onClick={() =>
+                openCommandPalette({
+                  query: issue.url,
+                  ...(relationsKnown
+                    ? { linkedThreads: { environmentId, threads: linkedThreads } }
+                    : {}),
+                })
+              }
+            >
+              <MessageSquareIcon aria-hidden className="size-3.5" />
+              <span aria-hidden>{linkedThreads.length || "?"}</span>
+            </Button>
+          }
+          label={gt("{label}. Search in the command palette.", { label: linkedThreadsLabel })}
+        />
       ) : null}
       {canOperate ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label={linkedHere ? gt("Unlink from thread") : gt("Link to thread")}
-                aria-pressed={thread === null ? undefined : linkedHere}
-                disabled={pending}
-                onClick={() => {
-                  if (thread === null) setPickerOpen(true);
-                  else void changeLink(thread.id, linkedHere);
-                }}
-              />
-            }
-          >
-            {linkedHere ? (
-              <Link2OffIcon aria-hidden className="size-3.5" />
-            ) : (
-              <Link2Icon aria-hidden className="size-3.5" />
-            )}
-          </TooltipTrigger>
-          <TooltipPopup>
-            {linkedHere ? (
+        <SharedTooltipTrigger
+          render={
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label={linkedHere ? gt("Unlink from thread") : gt("Link to thread")}
+              aria-pressed={thread === null ? undefined : linkedHere}
+              disabled={pending}
+              onClick={() => {
+                if (thread === null) setPickerOpen(true);
+                else void changeLink(thread.id, linkedHere);
+              }}
+            />
+          }
+          label={
+            linkedHere ? (
               <T>Unlink from this thread</T>
             ) : thread === null ? (
               gt("Link to thread")
             ) : (
               <T>Link to this thread</T>
-            )}
-          </TooltipPopup>
-        </Tooltip>
+            )
+          }
+        >
+          {linkedHere ? (
+            <Link2OffIcon aria-hidden className="size-3.5" />
+          ) : (
+            <Link2Icon aria-hidden className="size-3.5" />
+          )}
+        </SharedTooltipTrigger>
       ) : null}
       {pickerOpen ? (
         <Dialog open onOpenChange={setPickerOpen}>

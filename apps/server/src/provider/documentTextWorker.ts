@@ -13,6 +13,7 @@ const MAX_OUTPUT = 1_000_000;
 const CELL_START = Symbol("cell-start");
 const CELL_END = Symbol("cell-end");
 const LINE_START = Symbol("line-start");
+const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 type TextPart =
   | string
   | typeof CELL_START
@@ -61,6 +62,8 @@ interface XmlNode {
   spaceCount?: number;
   hasText?: boolean;
   hasTextChoice?: boolean;
+  markupCompatibility?: boolean;
+  hasSelectedChoice?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -131,10 +134,24 @@ function xml(source: string, extension: string): XmlNode {
     if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
     stack.at(-1)!.children.push(node);
     stack.push(node);
+    if (node.name === "AlternateContent" || node.name === "Choice") {
+      const colon = tag.name.lastIndexOf(":");
+      const binding = colon === -1 ? "xmlns" : `xmlns:${tag.name.slice(0, colon)}`;
+      if (
+        stack.findLast((ancestor) => Object.hasOwn(ancestor.attrs, binding))?.attrs[binding] ===
+        MARKUP_COMPATIBILITY_NS
+      )
+        node.markupCompatibility = true;
+    }
   });
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    const isCompatibilityChoice =
+      node.name === "Choice" &&
+      node.markupCompatibility &&
+      parent.name === "AlternateContent" &&
+      parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
       (extension === ".epub" &&
@@ -157,7 +174,8 @@ function xml(source: string, extension: string): XmlNode {
         )) ||
       (extension === ".odp" &&
         node.name === "page-thumbnail" &&
-        stack.some((ancestor) => ancestor.name === "notes"))
+        stack.some((ancestor) => ancestor.name === "notes")) ||
+      (isCompatibilityChoice && parent.hasSelectedChoice)
     ) {
       parent.children.pop();
       return;
@@ -181,6 +199,15 @@ function xml(source: string, extension: string): XmlNode {
     if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
     parent.hasText = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
+    if (isCompatibilityChoice) {
+      parent.hasSelectedChoice = true;
+      parent.children = parent.children.filter(
+        (child) =>
+          child === node ||
+          typeof child === "string" ||
+          !(child.name === "Choice" && child.markupCompatibility),
+      );
+    }
   });
   const text = (value: string) => {
     const node = stack.at(-1)!;
