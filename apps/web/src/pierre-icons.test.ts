@@ -67,6 +67,16 @@ describe("Pierre file icons", () => {
   });
 
   it.each([
+    ["src/app.test.ts", "lathe-file-icon-typescript-test"],
+    ["src/App.spec.tsx", "lathe-file-icon-typescript-test"],
+    ["src/app.test.js", "lathe-file-icon-javascript-test"],
+    ["vitest.config.ts", "lathe-file-icon-vitest"],
+    [".oxfmtrc.json", "file-tree-builtin-oxc"],
+  ])("uses the Pierre VS Code icon for %s", (path, iconName) => {
+    assert.equal(resolvePierreIconForEntry(path, "file")?.name, iconName);
+  });
+
+  it.each([
     ["luau", "lua"],
     ["xsd", "xml"],
     ["xsl", "xml"],

@@ -344,9 +344,15 @@ export function resolveClaudeUpdateRequiredModels(
   });
 }
 
+// The two casks conflict, so moving to the faster channel means replacing the install.
+const HOMEBREW_STABLE_CASK_UPDATE_COMMAND = "brew upgrade --cask claude-code";
+const HOMEBREW_LATEST_CASK_SWITCH_COMMAND =
+  "brew uninstall --cask claude-code && brew install --cask claude-code@latest";
+
 export function formatClaudeVersionUpgradeMessage(
   catalog: ClaudeModelCatalog,
   version: string | null,
+  channel?: { readonly latestVersion: string | null; readonly updateCommand: string | null },
 ): string | undefined {
   const unavailable = catalog.models
     .filter(
@@ -359,7 +365,38 @@ export function formatClaudeVersionUpgradeMessage(
     )[0];
   if (!unavailable?.compatibility.minVersion) return undefined;
   const versionLabel = version ? `v${version}` : "the installed version";
-  return `Claude Code ${versionLabel} is too old for ${unavailable.model.name}. Upgrade to v${unavailable.compatibility.minVersion} or newer to access it.`;
+  const minVersion = unavailable.compatibility.minVersion;
+  const latestVersion = channel?.latestVersion;
+  if (latestVersion && compareSemverVersions(latestVersion, minVersion) < 0) {
+    const tooOld = `Claude Code ${versionLabel} is too old for ${unavailable.model.name}, which needs v${minVersion} or newer`;
+    if (channel?.updateCommand === HOMEBREW_STABLE_CASK_UPDATE_COMMAND) {
+      return `${tooOld}, but the claude-code Homebrew cask only has v${latestVersion}. Switch to the claude-code@latest cask: ${HOMEBREW_LATEST_CASK_SWITCH_COMMAND}`;
+    }
+    return `${tooOld}, but the newest version this install can update to is v${latestVersion}. Install Claude Code another way or wait for a newer release.`;
+  }
+  return `Claude Code ${versionLabel} is too old for ${unavailable.model.name}. Upgrade to v${minVersion} or newer to access it.`;
+}
+
+/** The status check words the upgrade before the install channel reports its newest version. */
+export function scopeClaudeUpgradeMessageToChannel<
+  P extends {
+    readonly message?: string | undefined;
+    readonly version: string | null;
+    readonly versionAdvisory?:
+      | { readonly latestVersion: string | null; readonly updateCommand: string | null }
+      | undefined;
+  },
+>(catalog: ClaudeModelCatalog, provider: P): P {
+  const channel = provider.versionAdvisory;
+  if (
+    !channel?.latestVersion ||
+    provider.message === undefined ||
+    provider.message !== formatClaudeVersionUpgradeMessage(catalog, provider.version)
+  ) {
+    return provider;
+  }
+  const message = formatClaudeVersionUpgradeMessage(catalog, provider.version, channel);
+  return message === undefined ? provider : { ...provider, message };
 }
 
 /** Claude Code's effort levels, lowest first. */

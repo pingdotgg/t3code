@@ -8,6 +8,7 @@ import {
   clearReviewCommentTarget,
   completeReviewCommentRange,
   formatReviewCommentContext,
+  formatReviewSelectedRangeLabel,
   getReviewCommentSelection,
   reviewCommentSelectionScope,
   selectReviewCommentSelection,
@@ -221,6 +222,40 @@ describe("review comment serialization", () => {
 
     expect(serialized).toContain('sectionTitle="Changes &gt; 5"');
     expect(comment?.sectionTitle).toBe("Changes > 5");
+  });
+});
+
+describe("review selected range label", () => {
+  it("falls back to line count when unified endpoints decrease across old and new numbers", () => {
+    expect(
+      formatReviewSelectedRangeLabel({
+        ...makeTarget(),
+        lines: [
+          {
+            kind: "line",
+            id: "line-1",
+            change: "context",
+            oldLineNumber: 10,
+            newLineNumber: 13,
+            content: "line 10 of the original file",
+            additionTokenIndex: null,
+            deletionTokenIndex: null,
+            comparison: null,
+          },
+          {
+            kind: "line",
+            id: "line-2",
+            change: "delete",
+            oldLineNumber: 11,
+            newLineNumber: null,
+            content: "line 11 of the original file",
+            additionTokenIndex: null,
+            deletionTokenIndex: 0,
+            comparison: null,
+          },
+        ],
+      }),
+    ).toBe("2 lines");
   });
 });
 

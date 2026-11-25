@@ -59,6 +59,13 @@ function answer(path: string): string {
         created_at: "2026-07-03T00:00:00Z",
         system: true,
       },
+      {
+        id: 10,
+        body: "mentioned in merge request api!51",
+        author: { username: "theo" },
+        created_at: "2026-07-04T00:00:00Z",
+        system: true,
+      },
     ]);
   }
   if (path.startsWith("projects/acme%2Fweb/issues/42/resource_label_events")) {
@@ -206,7 +213,14 @@ describe("GitLabIssueTracker", () => {
       expect(issue.events.map((event) => [event.kind, event.detail])).toEqual([
         ["labeled", "bug"],
         ["closed", null],
+        ["referenced", "merge request api!51"],
       ]);
+      expect(issue.events.at(-1)?.reference).toEqual({
+        repository: "acme/api",
+        number: 51,
+        kind: "pull-request",
+        url: "https://gitlab.com/acme/api/-/merge_requests/51",
+      });
       // A closing merge request is not repeated as a related one.
       expect(
         issue.linkedPullRequests.map((link) => [link.number, link.closesIssue, link.isDraft]),

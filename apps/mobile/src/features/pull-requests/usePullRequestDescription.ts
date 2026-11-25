@@ -8,7 +8,7 @@ import {
 } from "@lathe/client-runtime/pull-request-editing";
 import { squashAtomCommandFailure } from "@lathe/client-runtime/state/runtime";
 import type { PullRequestDetail } from "@lathe/contracts";
-import { setMarkdownTaskChecked } from "@lathe/shared/markdownTaskList";
+import { setMarkdownTaskChecked } from "@lathe/shared/markdownTaskEdits";
 import { AsyncResult } from "effect/reactivity";
 import { useGT } from "gt-react-native";
 import { useRef, useState } from "react";

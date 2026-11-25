@@ -1,3 +1,4 @@
+import type { AgentFeedbackMode } from "@lathe/contracts";
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
 import { buildRuntimeInstructions } from "@lathe/provider-core/server/runtimeInstructions";
 
@@ -32,6 +33,7 @@ const toolInstructions = (availability: boolean | LatheToolAvailability): string
 };
 
 export interface CodexRuntimeInfo {
+  readonly agentFeedback?: AgentFeedbackMode;
   readonly model: string;
   readonly modelName?: string | undefined;
   readonly reasoningEffort?: string | undefined;

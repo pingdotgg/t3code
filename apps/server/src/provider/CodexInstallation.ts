@@ -53,6 +53,16 @@ const PackageManifest = Schema.Struct({
   target: Schema.String,
   entrypoint: Schema.String,
 });
+const LocalProbe = Schema.fromJsonString(
+  Schema.Struct({ executablePath: Schema.String, fingerprint: Schema.String, version: Version }),
+);
+const decodeLocalProbe = Schema.decodeEffect(LocalProbe);
+const encodeLocalProbe = Schema.encodeEffect(LocalProbe);
+const decodeNpmCodexPackage = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ name: Schema.Literal("@openai/codex"), version: Schema.String }),
+  ),
+);
 const decodeVersion = Schema.decodeUnknownEffect(Version);
 const decodeNpmLatest = Schema.decodeUnknownEffect(Schema.Struct({ version: Version }));
 const encodeRecord = Schema.encodeEffect(Schema.fromJsonString(InstalledRelease));
@@ -197,6 +207,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       : options.releaseAsset;
   const managedDirectory = path.join(options.baseDir, "tools", "codex");
   const activePath = path.join(managedDirectory, "active.json");
+  const localProbePath = path.join(options.baseDir, "caches", "codex-local-probe.json");
   const executableName = platform === "win32" ? "codex.exe" : "codex";
   const gate = yield* Semaphore.make(1);
   const updateCheckGate = yield* Semaphore.make(1);
@@ -427,12 +438,12 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     return output;
   }, Effect.scoped);
   // Native Codex needs its adjacent host; launchers resolve their own payloads.
-  const hasCodeModeHost = Effect.fn("CodexInstallation.hasCodeModeHost")(
+  const localKind = Effect.fn("CodexInstallation.localKind")(
     function* (realExecutablePath: string) {
       if (/^(?:volta-shim|mise|aqua-proxy)(?:\.exe)?$/iu.test(path.basename(realExecutablePath)))
-        return true;
+        return "launcher";
       if (platform === "win32") {
-        if (path.extname(realExecutablePath).toLowerCase() !== ".exe") return true;
+        if (path.extname(realExecutablePath).toLowerCase() !== ".exe") return "launcher";
         for (const extension of [".bunx", ".shim"]) {
           const marker = yield* fs
             .stat(realExecutablePath.slice(0, -4) + extension)
@@ -442,7 +453,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
             marker.value.type === "File" &&
             Number(marker.value.size) > 0
           )
-            return true;
+            return "launcher";
         }
       } else {
         const header = yield* fs.open(realExecutablePath, { flag: "r" }).pipe(
@@ -450,7 +461,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           Effect.orElseSucceed(() => Option.none()),
         );
         if (Option.isSome(header) && header.value[0] === 0x23 && header.value[1] === 0x21)
-          return true;
+          return "launcher";
       }
       const info = yield* fs.stat(
         path.join(
@@ -458,15 +469,31 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           `codex-code-mode-host${platform === "win32" ? ".exe" : ""}`,
         ),
       );
-      return (
-        info.type === "File" &&
+      return info.type === "File" &&
         Number(info.size) > 0 &&
         (platform === "win32" || (info.mode & 0o111) !== 0)
-      );
+        ? "native"
+        : null;
     },
     Effect.scoped,
-    Effect.orElseSucceed(() => false),
+    Effect.orElseSucceed(() => null),
   );
+  // npm's shim (Windows) or bin symlink (POSIX) stays the same across upgrades; its package does not.
+  const npmCodexVersion = Effect.fn("CodexInstallation.npmCodexVersion")(function* (
+    executablePath: string,
+    realExecutablePath: string,
+  ) {
+    for (const manifest of [
+      path.join(path.dirname(executablePath), "node_modules", "@openai", "codex", "package.json"),
+      path.join(path.dirname(realExecutablePath), "..", "package.json"),
+    ]) {
+      const pkg = yield* fs
+        .readFileString(manifest)
+        .pipe(Effect.flatMap(decodeNpmCodexPackage), Effect.option);
+      if (Option.isSome(pkg)) return pkg.value.version;
+    }
+    return null;
+  });
   const localCache = new Map<string, { fingerprint: string; executable: CodexExecutable | null }>();
   const resolveLocal = Effect.fn("CodexInstallation.resolveLocal")(
     function* () {
@@ -485,28 +512,52 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         )
       )
         return null;
-      if (!(yield* hasCodeModeHost(realExecutablePath))) return null;
+      const kind = yield* localKind(realExecutablePath);
+      if (kind === null) return null;
+      // A launcher's own file cannot show a Codex switch, so only a native binary or npm's package persists.
+      const npmVersion =
+        kind === "launcher" ? yield* npmCodexVersion(executablePath, realExecutablePath) : null;
+      const persists = kind === "native" || npmVersion !== null;
       const info = yield* fs.stat(executablePath);
-      const fingerprint = `${realExecutablePath}:${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}:${Option.getOrUndefined(info.ino)}`;
+      const fingerprint = `${realExecutablePath}:${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}:${Option.getOrUndefined(info.ino)}:${npmVersion ?? ""}`;
       const cached = localCache.get(executablePath);
+      const local = (version: string) =>
+        ({
+          executablePath,
+          source: "local",
+          version,
+          managedVersionDirectory: null,
+        }) satisfies CodexExecutable;
+      // Only successful probes persist, so a slow or failed one is retried on the next start.
+      const persisted = fs.readFileString(localProbePath).pipe(
+        Effect.flatMap(decodeLocalProbe),
+        Effect.map((record) =>
+          record.executablePath === executablePath && record.fingerprint === fingerprint
+            ? local(record.version)
+            : null,
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+      const probe = Effect.gen(function* () {
+        const output = yield* runCommand(executablePath, ["--version"]);
+        const version = /^codex-cli (\d+\.\d+\.\d+)$/u.exec(output.trim())?.[1];
+        if (!version) return null;
+        yield* runCommand(executablePath, ["app-server", "--help"]);
+        if (persists)
+          yield* fs.makeDirectory(path.dirname(localProbePath), { recursive: true }).pipe(
+            Effect.andThen(encodeLocalProbe({ executablePath, fingerprint, version })),
+            Effect.flatMap((record) => fs.writeFileString(localProbePath, record)),
+            Effect.ignore,
+          );
+        return local(version);
+      }).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.orElseSucceed(() => null),
+      );
       const executable =
         cached?.fingerprint === fingerprint
           ? cached.executable
-          : yield* Effect.gen(function* () {
-              const output = yield* runCommand(executablePath, ["--version"]);
-              const version = /^codex-cli (\d+\.\d+\.\d+)$/u.exec(output.trim())?.[1];
-              if (!version) return null;
-              yield* runCommand(executablePath, ["app-server", "--help"]);
-              return {
-                executablePath,
-                source: "local",
-                version,
-                managedVersionDirectory: null,
-              } satisfies CodexExecutable;
-            }).pipe(
-              Effect.timeout("5 seconds"),
-              Effect.orElseSucceed(() => null),
-            );
+          : ((yield* persisted) ?? (yield* probe));
       localCache.set(executablePath, { fingerprint, executable });
       if (!executable) return null;
       const advisory = yield* compatibility(executable.version);

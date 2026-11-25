@@ -70,6 +70,7 @@ export function PullRequestActionsMenu({
   reference,
   pullRequestKey,
   detail,
+  observedAt,
   terminology,
   threadRef,
   linkThreadRef,
@@ -121,8 +122,9 @@ export function PullRequestActionsMenu({
     | "capabilities"
     | "viewerPermissions"
     | "maintainerCanModify"
-    | "observedAt"
   >;
+  /** When the detail was last read; the detail itself keeps its older stamp across refreshes. */
+  observedAt: number | undefined;
   terminology: ChangeRequestTerminology;
   threadRef: ScopedThreadRef | null;
   linkThreadRef: ScopedThreadRef | null;
@@ -179,7 +181,7 @@ export function PullRequestActionsMenu({
   const maintainerEditsChoiceKept = maintainerEditsChoiceInForce(
     maintainerEditsChoice,
     pullRequestKey,
-    detail.observedAt,
+    observedAt,
     maintainerEditsSaving,
   );
   if (maintainerEditsChoiceKept !== maintainerEditsChoice) {
@@ -191,7 +193,7 @@ export function PullRequestActionsMenu({
   const saveMaintainerEdits = async (value: boolean) => {
     if (!canSaveMaintainerEdits) return;
     const previousChoice = maintainerEditsChoice;
-    setMaintainerEditsChoice({ key: pullRequestKey, observedAt: detail.observedAt, value });
+    setMaintainerEditsChoice({ key: pullRequestKey, observedAt, value });
     setMaintainerEditsSaving(true);
     const result = await updatePullRequest({
       environmentId,

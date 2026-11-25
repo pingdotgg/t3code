@@ -459,7 +459,15 @@ export const make = Effect.gen(function* () {
           ...(owned ? [] : ["--collect"]),
         ],
       };
-      return { ...agentScopeCommand({ command: resolved, args, scope: systemdScope }), unit };
+      // systemd-run does not search the caller's cwd, so anchor a relative path to it. Keep ".."
+      // as spelled: collapsing it would skip a symlinked parent directory.
+      const executable = path.isAbsolute(resolved)
+        ? resolved
+        : `${process.cwd()}${path.sep}${resolved}`;
+      return {
+        ...agentScopeCommand({ command: executable, args, scope: systemdScope }),
+        unit,
+      };
     }),
     oomKilled,
     stop,

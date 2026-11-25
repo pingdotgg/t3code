@@ -84,15 +84,21 @@ function getTimestampFormatter(
   timestampFormat: TimestampFormat,
   includeSeconds: boolean,
   timeZone = "UTC",
+  locale = timestampLocale,
 ): Intl.DateTimeFormat {
-  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}:${timeZone}`;
+  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}:${timeZone}:${locale ?? ""}`;
   const cachedFormatter = timestampFormatterCache.get(cacheKey);
   if (cachedFormatter) {
     return cachedFormatter;
   }
 
-  const formatter = new Intl.DateTimeFormat(timestampLocale, {
+  const hourCycle =
+    timestampFormat === "locale" && locale !== timestampLocale
+      ? getTimestampFormatter(timestampFormat, includeSeconds).resolvedOptions().hourCycle
+      : undefined;
+  const formatter = new Intl.DateTimeFormat(locale, {
     ...getTimestampFormatOptions(timestampFormat, includeSeconds),
+    ...(hourCycle === undefined ? {} : { hourCycle }),
     timeZone,
   });
   timestampFormatterCache.set(cacheKey, formatter);
@@ -175,10 +181,41 @@ export function formatFullTimestamp(isoDate: string, timestampFormat: TimestampF
   );
 }
 
-export function formatShortTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
+export function formatShortTimestamp(
+  isoDate: string,
+  timestampFormat: TimestampFormat,
+  locale?: string,
+): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
-  return formatTime(date, timestampFormat);
+  return getTimestampFormatter(timestampFormat, false, "UTC", locale).format(wallClockAsUtc(date));
+}
+
+const dateTimeFormatterCache = new Map<TimestampFormat, Intl.DateTimeFormat>();
+
+export function formatDateTimeTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
+  const date = parseTimestampDate(isoDate);
+  if (!date) return "";
+  let formatter = dateTimeFormatterCache.get(timestampFormat);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(timestampLocale, {
+      dateStyle: "medium",
+      timeStyle: "short",
+      ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
+    });
+    dateTimeFormatterCache.set(timestampFormat, formatter);
+  }
+  return formatter.format(date);
+}
+
+/** A wall-clock `H:MM` or `HH:MM` that names no date or zone, such as a daily schedule's time. */
+export function formatTimeOfDay(timeOfDay: string, timestampFormat: TimestampFormat): string {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(timeOfDay);
+  if (!match) return timeOfDay;
+  // Default-zone formatters run in UTC, so the host zone cannot shift the wall time.
+  return getTimestampFormatter(timestampFormat, false).format(
+    Date.UTC(2000, 0, 1, Number(match[1]), Number(match[2])),
+  );
 }
 
 const numericDateOptions: Intl.DateTimeFormatOptions = { month: "numeric", day: "numeric" };

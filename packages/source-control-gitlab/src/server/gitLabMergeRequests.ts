@@ -23,6 +23,8 @@ export interface NormalizedGitLabMergeRequestRecord {
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
+  /** Set when a cross-repository MR names its source project only by id. */
+  readonly unresolvedSourceProjectId?: number;
 }
 
 const GitLabProjectReferenceSchema = Schema.Struct({
@@ -120,6 +122,24 @@ function normalizeGitLabMergeRequestRecord(
     mergedAt: raw.merged_at ?? null,
     updatedAt: raw.updated_at ?? Option.none(),
     ...(typeof isCrossRepository === "boolean" ? { isCrossRepository } : {}),
+    ...(sourceProjectPath ? { headRepositoryNameWithOwner: sourceProjectPath } : {}),
+    ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
+    ...(isCrossRepository === true &&
+    !sourceProjectPath &&
+    typeof raw.source_project_id === "number"
+      ? { unresolvedSourceProjectId: raw.source_project_id }
+      : {}),
+  };
+}
+
+export function withSourceProjectPath(
+  record: NormalizedGitLabMergeRequestRecord,
+  sourceProjectPath: string | null,
+): NormalizedGitLabMergeRequestRecord {
+  const { unresolvedSourceProjectId: _, ...resolved } = record;
+  const headRepositoryOwnerLogin = ownerLoginFromPathWithNamespace(sourceProjectPath);
+  return {
+    ...resolved,
     ...(sourceProjectPath ? { headRepositoryNameWithOwner: sourceProjectPath } : {}),
     ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
   };

@@ -17,6 +17,7 @@ export interface ChatCanvasMeasurements {
   readonly height: number;
   readonly padding: number;
   readonly maxChatWidth: number;
+  readonly maxHtmlPreviewWidth: number;
   readonly minChatWidth: number;
   readonly composerHeight: number;
   readonly timelineGutter: number;
@@ -36,6 +37,7 @@ const INITIAL_MEASUREMENTS: ChatCanvasMeasurements = {
   height: 0,
   padding: 48,
   maxChatWidth: 768,
+  maxHtmlPreviewWidth: 768,
   minChatWidth: 640,
   composerHeight: 0,
   timelineGutter: 0,
@@ -52,6 +54,7 @@ const sameMeasurements = (a: ChatCanvasMeasurements, b: ChatCanvasMeasurements) 
   a.height === b.height &&
   a.padding === b.padding &&
   a.maxChatWidth === b.maxChatWidth &&
+  a.maxHtmlPreviewWidth === b.maxHtmlPreviewWidth &&
   a.minChatWidth === b.minChatWidth &&
   a.composerHeight === b.composerHeight &&
   a.timelineGutter === b.timelineGutter &&
@@ -135,6 +138,7 @@ export function resolveChatCanvasModel({
     preview,
     padding: measurements.padding,
     maxChatWidth: measurements.maxChatWidth,
+    maxHtmlPreviewWidth: measurements.maxHtmlPreviewWidth,
     minChatWidth: measurements.minChatWidth,
     composerHeight: measurements.composerHeight,
     detailsCard,

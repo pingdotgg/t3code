@@ -1,5 +1,5 @@
 import { resolveEnvironmentMachineKind } from "@lathe/contracts";
-import { fileBasename } from "@lathe/shared/path";
+import { fileDisplayName } from "@lathe/shared/path";
 import { useLocation } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, FolderIcon, LayersIcon } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
@@ -394,7 +394,7 @@ function CheckoutScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) 
       allOption={{ value: ALL_CHECKOUTS_VALUE, label: gt("All checkouts") }}
       options={checkouts.map((member) => ({
         value: member.physicalProjectKey,
-        label: fileBasename(member.workspaceRoot),
+        label: fileDisplayName(member.workspaceRoot),
         secondary: member.workspaceRoot,
       }))}
     />

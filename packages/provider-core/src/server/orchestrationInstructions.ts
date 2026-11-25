@@ -57,7 +57,7 @@ export const LATHE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = deviceToolInstruc
 
 // ACP only: some ACP agents accept the injected MCP server but never expose
 // its tools, so they need the terminal transport other harnesses never use.
-const LATHE_ACP_MCP_FALLBACK_INSTRUCTIONS = `ACP fallback: if the Lathe tools are absent and \`LATHE_ACP_MCP_NODE\` is present, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$LATHE_ACP_MCP_NODE" \${LATHE_ACP_MCP_ENTRYPOINT:+"$LATHE_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`LATHE_ACP_MCP_ENTRYPOINT\` is unset for a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`.`;
+const LATHE_ACP_MCP_FALLBACK_INSTRUCTIONS = `ACP fallback: if the Lathe tools are absent and \`LATHE_ACP_MCP_NODE\` is present, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$LATHE_ACP_MCP_NODE" \${LATHE_ACP_MCP_ENTRYPOINT:+"$LATHE_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`LATHE_ACP_MCP_ENTRYPOINT\` is unset for a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. On Windows, run \`LATHE_ACP_MCP_CALL\` instead and pipe the JSON to stdin, as in PowerShell \`'{}' | & $env:LATHE_ACP_MCP_CALL orchestrator_capabilities -\`, writing non-ASCII characters as \`\\uXXXX\` escapes.`;
 
 const LATHE_ACP_DEFAULT_MODE_INSTRUCTIONS = `## Lathe interaction mode: Default
 

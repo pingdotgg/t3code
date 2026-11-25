@@ -34,7 +34,7 @@ Send `/compact` to compact a thread yourself.
 Leave **Server URL** empty to let Lathe start OpenCode locally. A password in
 provider settings applies to both that server and Lathe's connection. With no
 password setting, the local server uses `OPENCODE_SERVER_PASSWORD` from its
-environment.
+environment, and with neither Lathe generates a password for it.
 
 To use an existing OpenCode server, set **Server URL** and its password in provider
 settings. Lathe uses only that configured password for an external server; it

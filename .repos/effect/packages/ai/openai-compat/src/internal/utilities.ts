@@ -11,8 +11,12 @@ const finishReasonMap: Record<string, Response.FinishReason> = {
 /** @internal */
 export const resolveFinishReason = (
   finishReason: string | null | undefined,
-  hasToolCalls: boolean
+  hasToolCalls: boolean,
+  hasRefusal: boolean
 ): Response.FinishReason => {
+  if (hasRefusal && finishReason === "stop") {
+    return "content-filter"
+  }
   if (finishReason == null) {
     return hasToolCalls ? "tool-calls" : "stop"
   }

@@ -179,6 +179,32 @@ it("lets Escape in another editor of the recording editor's dialog reach that ed
   expect(speech.cancel).not.toHaveBeenCalled();
 });
 
+it("lets Escape close a modal opened over the recording before canceling it", async () => {
+  const speech = recording();
+  const closeImage = vi.fn();
+  await using screen = await render(
+    <>
+      <Probe speech={speech} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Expanded image"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") closeImage();
+        }}
+      >
+        <button type="button">Close</button>
+      </div>
+    </>,
+  );
+  const close = screen.getByRole("button", { name: "Close" }).element();
+  if (!(close instanceof HTMLElement)) throw new Error("expected the image dialog's button");
+  close.focus();
+  close.dispatchEvent(escape());
+  expect(speech.cancel).not.toHaveBeenCalled();
+  expect(closeImage).toHaveBeenCalledTimes(1);
+});
+
 it("cancels the recording on Escape outside other shown dictation editors", async () => {
   const speech = recording();
   const reviewRef = createRef<HTMLTextAreaElement>();

@@ -3,6 +3,7 @@ import type { MFunctionType } from "gt-i18n/types";
 import type { ChatAttachment } from "@lathe/contracts";
 import { assistantCitationsToPlainText } from "@lathe/shared/assistantCitations";
 import { replaceComposerContextReferences } from "@lathe/shared/composerContextReferences";
+import { composerFileLinksToPlainText } from "@lathe/shared/composerInlineTokens";
 import { truncate } from "@lathe/shared/String";
 
 import { collectComposerModelMentions } from "../composerModelMentions.ts";
@@ -14,7 +15,8 @@ export interface ThreadTitleSeedInput {
 }
 
 function normalizeTitleSeed(value: string): string {
-  return assistantCitationsToPlainText(value).trim().replace(/\s+/gu, " ");
+  // Mentioned macOS paths can be NFD; titles show them composed.
+  return assistantCitationsToPlainText(value).trim().replace(/\s+/gu, " ").normalize("NFC");
 }
 
 function modelMentionsAsSlugs(value: string): string {
@@ -44,7 +46,7 @@ export function threadTitleTextFromPrompt(
     return reference.label;
   });
   return (
-    normalizeTitleSeed(modelMentionsAsSlugs(prose)) ||
+    normalizeTitleSeed(modelMentionsAsSlugs(composerFileLinksToPlainText(prose))) ||
     (imageIds.size > 0 ? attachedImagesTitle(imageIds.size, resolve) : "")
   );
 }

@@ -53,6 +53,8 @@ function setup() {
   state.timestampFormat = "locale";
 }
 
+import "~/index.css";
+import { workspaceAreaProps } from "~/lib/workspaceFocus";
 import { act, render as renderUi } from "../../../test/render";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 
@@ -117,6 +119,7 @@ const tab = (value = detail) => (
     threadRef={null}
     reference={value}
     detail={value}
+    observedAt={value.observedAt}
     activityPending={false}
     activityError={null}
     onRefresh={() => {}}
@@ -237,6 +240,7 @@ it("fixes an overview thread as its opening remark, since it has no line to atta
       threadRef={null}
       reference={value}
       detail={value}
+      observedAt={value.observedAt}
       activityPending={false}
       activityError={null}
       onRefresh={() => {}}
@@ -269,4 +273,79 @@ it("shows a comment's exact time in the chosen 24-hour clock", async () => {
   await vi.waitFor(() =>
     expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(expected),
   );
+});
+
+it("keeps the chosen comment order when the right panel remounts the tab", async () => {
+  setup();
+  const comment = (id: string, createdAt: string) => ({
+    id,
+    kind: "review-comment" as const,
+    body: `Remark ${id}`,
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    createdAt,
+    url: null,
+    path: null,
+    reviewState: null,
+  });
+  const value = {
+    ...detail,
+    comments: [comment("10", "2026-09-01T10:00:00Z"), comment("11", "2026-09-02T10:00:00Z")],
+    commentCount: 2,
+  };
+  {
+    await using screen = await render(value);
+    await userEvent.click(screen.getByRole("button", { name: "Show oldest comments first" }));
+    await expect
+      .element(screen.getByRole("button", { name: "Show newest comments first" }))
+      .toBeVisible();
+  }
+  // Switching to another right-panel tab unmounts the pull request surface.
+  await using screen = await render(value);
+  await expect
+    .element(screen.getByRole("button", { name: "Show newest comments first" }))
+    .toBeVisible();
+});
+
+it("comes back at the scroll position it left when the right panel remounts the tab", async () => {
+  setup();
+  const body = Array.from({ length: 80 }, (_, index) => `Paragraph ${index}`).join("\n\n");
+  const value = { ...detail, body, url: "https://github.com/owner/repo/pull/2" };
+  const mount = async (shown = value) => {
+    const container = document.createElement("div");
+    container.className = "flex h-[300px]";
+    const screen = await renderUi(tab(shown), { container });
+    const scroller = container.querySelector<HTMLElement>("[data-pull-request-summary-scroll]")!;
+    return Object.assign(screen, { scroller });
+  };
+  {
+    await using screen = await mount();
+    screen.scroller.scrollTop = 500;
+    await vi.waitFor(() => expect(screen.scroller.scrollTop).toBe(500));
+    await act(async () => screen.scroller.dispatchEvent(new Event("scroll")));
+  }
+  // The tab can come back before the content that reached that position has loaded.
+  await using screen = await mount({ ...value, body: "Paragraph 0" });
+  await screen.rerender(tab(value));
+  await vi.waitFor(() => expect(screen.scroller.scrollTop).toBe(500));
+  await screen.unmount();
+  await using again = await mount();
+  expect(again.scroller.scrollTop).toBe(500);
+});
+
+it("scrolls from the keyboard after a click inside it", async () => {
+  setup();
+  const body = Array.from({ length: 80 }, (_, index) => `Paragraph ${index}`).join("\n\n");
+  const container = document.createElement("div");
+  container.className = "flex h-[300px]";
+  await using screen = await renderUi(
+    // The panel area takes focus itself, so a click on plain text lands on it unless the tab can.
+    <div {...workspaceAreaProps("panel", 4, "Workspace panel")} className="flex min-w-0 flex-1">
+      {tab({ ...detail, body })}
+    </div>,
+    { container },
+  );
+  const scroller = container.querySelector<HTMLElement>("[data-pull-request-summary-scroll]")!;
+  await userEvent.click(screen.getByText("Paragraph 0", { exact: true }));
+  await userEvent.keyboard("{PageDown}");
+  await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
 });

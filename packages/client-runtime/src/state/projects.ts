@@ -208,3 +208,4 @@ export function canNavigateUp(currentPath: string): boolean {
 export * from "./projectCommands.ts";
 export * from "./projectEntities.ts";
 export * from "./projectRemoval.ts";
+export * from "./projectTrackedFolders.ts";

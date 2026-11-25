@@ -79,3 +79,32 @@ export const invalidateCachedVcsRefs = Effect.fn("VcsRefsState.invalidateCached"
     }),
   );
 });
+
+// Ref digests from each cwd's last status refresh; the cached branch list is at least that new.
+const refsDigestsByEnvironment = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make<ReadonlyMap<string, string>>(new Map()).pipe(
+    Atom.keepAlive,
+    Atom.withLabel(`environment-data:vcs:refs-digests:${environmentId}`),
+  ),
+);
+
+/** Skips the branch list reload when a status refresh saw the same refs as the last one. */
+export const invalidateCachedVcsRefsIfChanged = Effect.fn("VcsRefsState.invalidateCachedIfChanged")(
+  function* (
+    registry: AtomRegistry.AtomRegistry,
+    target: CachedVcsRefsInvalidationTarget,
+    refsDigest: string | undefined,
+  ) {
+    const digestsAtom = refsDigestsByEnvironment(target.environmentId);
+    if (refsDigest !== undefined && registry.get(digestsAtom).get(target.cwd) === refsDigest) {
+      return;
+    }
+    registry.update(digestsAtom, (digests) => {
+      const next = new Map(digests);
+      if (refsDigest === undefined) next.delete(target.cwd);
+      else next.set(target.cwd, refsDigest);
+      return next;
+    });
+    yield* invalidateCachedVcsRefs(registry, target);
+  },
+);

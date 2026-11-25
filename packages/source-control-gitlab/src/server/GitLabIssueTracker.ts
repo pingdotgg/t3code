@@ -25,6 +25,7 @@ import {
   decodeIssueDetailListJson,
   decodeIssueListJson,
   decodeIssueNotesJson,
+  withMentionReference,
   decodeLabelEventsJson,
   decodeLinkedMergeRequestsJson,
   decodeProjectLabelsJson,
@@ -576,9 +577,12 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                   reactions: awardPage?.reactionsByNoteId.get(comment.id) ?? [],
                 })),
                 commentsCursor: commentsCursor(notes.nextCursor, awardPage?.nextCursor ?? null),
-                events: [...systemEvents, ...labelEvents].sort((left, right) =>
-                  left.createdAt.localeCompare(right.createdAt),
-                ),
+                events: [
+                  ...systemEvents.map((event) =>
+                    withMentionReference(event, issue.url, input.scope),
+                  ),
+                  ...labelEvents,
+                ].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
                 // A merge request that closes the issue outranks its sighting as a mere mention.
                 linkedPullRequests: [
                   ...closing,

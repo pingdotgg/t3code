@@ -115,7 +115,7 @@ function terminalBufferStateFromSnapshot(
   current: TerminalBufferState = EMPTY_TERMINAL_BUFFER_STATE,
 ): TerminalBufferState {
   return {
-    output: resetOutput(current.output, snapshot.history, maxBufferBytes),
+    output: resetOutput(current.output, snapshot, maxBufferBytes),
     grid: nextGrid(current.grid, snapshot),
     status: snapshot.status,
     error: snapshot.error ?? null,
@@ -195,7 +195,7 @@ export function applyTerminalAttachStreamEvent(
     case "cleared":
       return {
         ...current,
-        output: clearOutput(current.output, maxBufferBytes),
+        output: clearOutput(current.output, maxBufferBytes, event.pendingControlSequence),
         error: null,
         version: current.version + 1,
       };

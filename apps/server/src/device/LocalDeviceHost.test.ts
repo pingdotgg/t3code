@@ -55,6 +55,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     cameraHelp: "",
     cameraProbes: 0,
     spawnedEnvironments: [] as Array<NodeJS.ProcessEnv | undefined>,
+    spawnedArgs: [] as Array<ReadonlyArray<unknown>>,
   };
   const daemonStopRequested = yield* Deferred.make<ReadonlyArray<string>>();
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
@@ -93,22 +94,25 @@ const agentFixture = Effect.fn("agentFixture")(function* (
             )
           : Effect.addFinalizer(() => hub.cleanup).pipe(
               Effect.tap(() =>
-                Effect.sync(() =>
-                  hub.spawnedEnvironments.push(
+                Effect.sync(() => {
+                  if (command._tag === "StandardCommand") hub.spawnedArgs.push(command.args);
+                  return hub.spawnedEnvironments.push(
                     (
                       command as unknown as {
                         readonly options: { readonly env?: NodeJS.ProcessEnv };
                       }
                     ).options.env,
-                  ),
-                ),
+                  );
+                }),
               ),
               Effect.as(
                 ChildProcessSpawner.makeHandle({
                   pid: ChildProcessSpawner.ProcessId(123),
                   stdout: Stream.empty,
                   stderr: Stream.empty,
-                  all: Stream.empty,
+                  all: Stream.encodeText(
+                    Stream.make("  Local:   http://localhost:1/?token=hub-token\n"),
+                  ),
                   exitCode: Effect.never,
                   isRunning: Effect.sync(() => hub.running),
                   kill: () => Effect.void,
@@ -187,6 +191,82 @@ describe("AgentDevice startup", () => {
         baseUrl: "http://127.0.0.1:12347",
         token: "token-2",
       });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  // regression: #41190 a daemon left by the previous pin keeps answering /health
+  it.effect("hands a daemon recorded at another agent-device version to the pinned client", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const previous = { httpPort: 12345, token: "previous-token", version: "0.21.36" };
+      const { host, runs } = yield* agentFixture(
+        (stateDir) =>
+          fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({
+                httpPort: 23456,
+                token: "next-token",
+                version: AGENT_DEVICE_VERSION,
+              }),
+            )
+            .pipe(Effect.orDie, Effect.as(processOutput(0))),
+        processOutput(0),
+        previous,
+      );
+      const ready = yield* host.ensureAgentReady(() => Effect.void);
+      expect(runs.filter((run) => run.args.includes("devices"))).toHaveLength(1);
+      expect(ready.agentDevice).toMatchObject({
+        baseUrl: "http://127.0.0.1:23456",
+        token: "next-token",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps a busy daemon from another version that the pinned client leaves running", () =>
+    Effect.gen(function* () {
+      const previous = { httpPort: 12345, token: "previous-token", version: "0.21.36" };
+      const { host, runs } = yield* agentFixture(
+        () => Effect.succeed(processOutput(1)),
+        processOutput(0),
+        previous,
+      );
+      const ready = yield* host.ensureAgentReady(() => Effect.void);
+      expect(runs.filter((run) => run.args.includes("devices"))).toHaveLength(1);
+      expect(ready.agentDevice).toMatchObject({
+        baseUrl: "http://127.0.0.1:12345",
+        token: "previous-token",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports a stopped daemon a failed replacement left registered", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let health: Ref.Ref<boolean> | undefined;
+      const previous = {
+        httpPort: 12345,
+        token: "previous-token",
+        pid: process.pid,
+        version: "0.21.36",
+      };
+      const { host, stateDir, runs, daemonHealthy } = yield* agentFixture(
+        () => (health ? Ref.set(health, false) : Effect.void).pipe(Effect.as(processOutput(1))),
+        processOutput(0),
+        previous,
+      );
+      health = daemonHealthy;
+      const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+      expect(runs.filter((run) => run.args.includes("devices"))).toHaveLength(1);
+      expect(error).toMatchObject({
+        _tag: "AgentDeviceStartError",
+        reason: "command_failed",
+        exitCode: 1,
+      });
+      expect(yield* fs.readFileString(path.join(stateDir, "daemon.json"))).toContain(
+        previous.token,
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -381,6 +461,18 @@ describe("AgentDevice startup", () => {
       );
       expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
       expect(attempts).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("starts the hub requiring a session token and keeps the one it prints", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { host, hub, baseDir } = yield* agentFixture(() => Effect.succeed(processOutput(0)));
+      expect(hub.spawnedArgs[0]).toContain("--require-token");
+      expect(hub.spawnedEnvironments[0]?.EXPO_DEVICE_HUB_STATE_DIR).toBe(
+        path.join(baseDir, "userdata", "device", "hub"),
+      );
+      expect((yield* host.current)?.hub.token).toBe("hub-token");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

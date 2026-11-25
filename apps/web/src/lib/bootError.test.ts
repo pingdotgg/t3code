@@ -118,6 +118,9 @@ describe("buildErrorReport", () => {
     expect(report).toContain("[truncated]");
     expect(report.length).toBeLessThan(7_000);
     expect(report).toContain("Time: 2026-10-26T00:00:00.000Z");
+    expect(buildErrorReport(`${"x".repeat(5_999)}😀 tail`, environment)).toMatch(
+      new RegExp(`^x{5999}\\n\\[truncated\\]\\n`),
+    );
   });
 });
 

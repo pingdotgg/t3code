@@ -4,7 +4,9 @@
  * @stability stable
  * @since 4.0.0
  */
+import * as base64 from "../internal/base64.ts"
 import * as Result from "../Result.ts"
+import * as Base64Url from "./Base64Url.ts"
 import { EncodingError } from "./EncodingError.ts"
 
 /**
@@ -18,6 +20,7 @@ import { EncodingError } from "./EncodingError.ts"
  * **Details**
  *
  * String inputs are encoded as UTF-8 bytes before Base64 encoding.
+ * Each unpaired UTF-16 surrogate is replaced with U+FFFD (�).
  * `Uint8Array` inputs are encoded directly. The output uses the standard
  * RFC 4648 alphabet with `=` padding.
  *
@@ -69,7 +72,7 @@ export const encode: (input: Uint8Array | string) => string = (input) =>
  * @since 4.0.0
  */
 export const decode = (str: string): Result.Result<Uint8Array, EncodingError> => {
-  const stripped = stripCrlf(str)
+  const stripped = base64.stripCrlf(str)
   const length = stripped.length
   if (length % 4 !== 0) {
     return Result.fail(
@@ -94,9 +97,29 @@ export const decode = (str: string): Result.Result<Uint8Array, EncodingError> =>
     )
   }
 
+  const missingOctets = stripped.endsWith("==") ? 2 : stripped.endsWith("=") ? 1 : 0
+  const decodedLength = 3 * (length / 4) - missingOctets
+  const native = base64.decodeNative(stripped, decodedLength, undefined)
+  if (native) return Result.succeed(native)
+  if (native === null) {
+    // Locating the first invalid character directly is cheaper than rerunning
+    // the decoder. On JavaScriptCore the rerun also slows down sharply once the
+    // native call has thrown.
+    const invalid = invalidCharacter.exec(stripped)
+    if (invalid !== null) {
+      return Result.fail(
+        new EncodingError({
+          kind: "Decode",
+          module: "Base64",
+          input: stripped,
+          message: `Invalid character ${invalid[0]}`
+        })
+      )
+    }
+  }
+
   try {
-    const missingOctets = stripped.endsWith("==") ? 2 : stripped.endsWith("=") ? 1 : 0
-    const result = new Uint8Array(3 * (length / 4) - missingOctets)
+    const result = new Uint8Array(decodedLength)
     for (let i = 0, j = 0; i < length; i += 4, j += 3) {
       const buffer = getCode(stripped.charCodeAt(i)) << 18 |
         getCode(stripped.charCodeAt(i + 1)) << 12 |
@@ -146,6 +169,83 @@ export const decode = (str: string): Result.Result<Uint8Array, EncodingError> =>
  * @since 4.0.0
  */
 export const decodeString = (str: string) => Result.map(decode(str), (_) => decoder.decode(_))
+
+/**
+ * Encodes the given value into a Base64 (RFC 4648) string without `=`
+ * padding.
+ *
+ * **When to use**
+ *
+ * Use when a format requires standard Base64 without padding, such as the
+ * `grpc-status-details-bin` value in the Connect protocol.
+ *
+ * **Details**
+ *
+ * Same as {@link encode}, but drops the trailing `=` padding.
+ *
+ * **Example** (Encoding unpadded Base64)
+ *
+ * ```ts import.meta.vitest
+ * import { Base64 } from "effect/encoding"
+ *
+ * Base64.encodeUnpadded("hello") // => "aGVsbG8"
+ * ```
+ *
+ * @see {@link encode} for padded output
+ * @see {@link decodeLenient} for decoding unpadded Base64
+ *
+ * @stability stable
+ * @category encoding
+ * @since 4.1.5
+ */
+export const encodeUnpadded: (input: Uint8Array | string) => string = (input) => {
+  const encoded = encode(input)
+  return encoded.endsWith("==") ? encoded.slice(0, -2) : encoded.endsWith("=") ? encoded.slice(0, -1) : encoded
+}
+
+/**
+ * Decodes Base64 in the standard or the URL-safe alphabet, with or without
+ * padding, into bytes safely.
+ *
+ * **When to use**
+ *
+ * Use when a format accepts either Base64 alphabet, such as the protobuf JSON
+ * mapping for `bytes` fields or the Connect protocol.
+ *
+ * **Details**
+ *
+ * Returns `Result.succeed` with a `Uint8Array` when decoding succeeds, or
+ * `Result.fail` with an `EncodingError` holding the original input when the
+ * input is not valid. Each input must use a single alphabet. CR/LF are
+ * ignored, and other whitespace is rejected.
+ *
+ * **Example** (Decoding either Base64 alphabet)
+ *
+ * ```ts import.meta.vitest
+ * import { Result } from "effect"
+ * import { Base64 } from "effect/encoding"
+ *
+ * Base64.decodeLenient("+/8=") // => Result.succeed(new Uint8Array([251, 255]))
+ * Base64.decodeLenient("-_8") // => Result.succeed(new Uint8Array([251, 255]))
+ * ```
+ *
+ * @see {@link decode} for strict standard Base64
+ *
+ * @stability stable
+ * @category decoding
+ * @since 4.1.5
+ */
+export const decodeLenient = (str: string): Result.Result<Uint8Array, EncodingError> =>
+  Result.mapError(
+    str.includes("-") || str.includes("_") ? Base64Url.decode(str) : decode(addPadding(base64.stripCrlf(str))),
+    (error) => new EncodingError({ kind: "Decode", module: "Base64", input: str, message: error.message })
+  )
+
+// Lengths that cannot be valid are left for `decode` to reject.
+const addPadding = (stripped: string): string => {
+  const remainder = stripped.length % 4
+  return remainder < 2 || stripped.endsWith("=") ? stripped : stripped + (remainder === 2 ? "==" : "=")
+}
 
 const encodeBytes = (bytes: Uint8Array): string => {
   const length = bytes.length
@@ -208,11 +308,11 @@ const encodeLong = (bytes: Uint8Array): string => {
 }
 
 const encoder = new TextEncoder()
-const decoder = new TextDecoder()
-const stripCrlf = (str: string) => str.replace(/[\n\r]/g, "")
+const decoder = new TextDecoder("utf-8", { ignoreBOM: true })
 const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 const alphabetCodes = encoder.encode(alphabet)
 const paddingCode = "=".charCodeAt(0)
+const invalidCharacter = /[^A-Za-z0-9+/=]/
 const codes = new Uint8Array(123).fill(255)
 for (let i = 0; i < alphabet.length; i++) codes[alphabet.charCodeAt(i)] = i
 codes["=".charCodeAt(0)] = 0

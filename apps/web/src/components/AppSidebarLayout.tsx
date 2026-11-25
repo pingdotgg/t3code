@@ -484,6 +484,7 @@ export function AppSidebarLayout({
               role="navigation"
               aria-label={gt("Threads")}
               resizable={{
+                collapseOnResize: true,
                 maxWidth: sidebarMaximumWidth,
                 minWidth: sidebarMinimumWidth,
                 shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>

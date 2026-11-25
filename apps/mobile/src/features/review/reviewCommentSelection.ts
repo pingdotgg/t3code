@@ -212,7 +212,7 @@ export function formatReviewSelectedRangeLabel(target: ReviewCommentTarget): str
   const firstNumber = getReviewUnifiedLineNumber(firstLine);
   const lastNumber = getReviewUnifiedLineNumber(lastLine);
 
-  if (firstNumber === null || lastNumber === null) {
+  if (firstNumber === null || lastNumber === null || firstNumber > lastNumber) {
     return lines.length === 1 ? "line" : `${lines.length} lines`;
   }
 

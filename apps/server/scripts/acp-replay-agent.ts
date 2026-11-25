@@ -73,7 +73,9 @@ function resumedCursor(): number {
 let cursor = resumedCursor();
 let stopped = false;
 let nextAgentRequestId = 1;
-const pendingClientRequestIds = new Map<string, string | number>();
+// Several requests of one method can be open at once (a prompt steer is a second
+// session/prompt while the first runs), so responses pair first-in-first-out per method.
+const pendingClientRequestIds = new Map<string, Array<string | number>>();
 const pendingAgentRequestMethods = new Map<string, string>();
 
 // The test reads status while this agent may still be running; rename makes each
@@ -167,7 +169,10 @@ function send(message: JsonRpcMessage): void {
 }
 
 function pendingClientRequestId(method: string): string | number | undefined {
-  return pendingClientRequestIds.get(method);
+  const ids = pendingClientRequestIds.get(method);
+  const id = ids?.shift();
+  if (ids !== undefined && ids.length === 0) pendingClientRequestIds.delete(method);
+  return id;
 }
 
 function logicalIncoming(message: JsonRpcMessage): LogicalFrame | undefined {
@@ -228,7 +233,6 @@ function inboundMessage(recorded: LogicalFrame): JsonRpcMessage | undefined {
         stopWithFailure(`No pending client request for ${frame.method}`, frame);
         return undefined;
       }
-      pendingClientRequestIds.delete(frame.method);
       return {
         jsonrpc: "2.0",
         id,
@@ -295,7 +299,9 @@ function handleMessage(message: JsonRpcMessage): void {
     return;
   }
   if (actual.kind === "request" && message.id !== undefined && message.id !== null) {
-    pendingClientRequestIds.set(actual.method, message.id);
+    const pending = pendingClientRequestIds.get(actual.method) ?? [];
+    pending.push(message.id);
+    pendingClientRequestIds.set(actual.method, pending);
   } else if (actual.kind === "response" && message.id !== undefined && message.id !== null) {
     pendingAgentRequestMethods.delete(String(message.id));
   }
