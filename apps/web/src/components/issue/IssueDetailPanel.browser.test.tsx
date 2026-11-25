@@ -20,7 +20,7 @@ const detail = vi.hoisted(() => ({
   closedAt: null,
   assignees: [],
   labels: [],
-  commentCount: 0,
+  commentCount: 1,
   projectId: "project-1",
   projectTitle: "Project",
   writable: false,
@@ -46,7 +46,15 @@ const detail = vi.hoisted(() => ({
   states: [],
   viewer: null,
   body: "",
-  comments: [],
+  comments: [
+    {
+      id: "c1",
+      author: { login: "reviewer", name: null, avatarUrl: null },
+      body: "A remark",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      url: "https://github.com/owner/repo/issues/7#issuecomment-1",
+    },
+  ],
   commentsCursor: null,
   events: [],
   linkedPullRequests: [],
@@ -90,5 +98,33 @@ describe("IssueDetailPanel", () => {
     expect(click.defaultPrevented).toBe(true);
     expect(state.openLink).toHaveBeenCalledOnce();
     expect(state.openLink).toHaveBeenCalledWith(url, { event: expect.anything() });
+  });
+
+  it("opens a comment's timestamp through the link-target setting, not a popup", async () => {
+    state.openLink.mockClear();
+    const threadRef = { environmentId: "env-1", threadId: "thread-1" } as never;
+    await using screen = await render(
+      <IssueDetailPanel
+        environmentId={"env-1" as never}
+        reference={{
+          projectId: "project-1" as never,
+          tracker: "github" as never,
+          scope: "owner/repo",
+          key: "7",
+        }}
+        threadRef={threadRef}
+      />,
+    );
+    const commentUrl = "https://github.com/owner/repo/issues/7#issuecomment-1";
+    const anchor = await vi.waitFor(() => {
+      const found = screen.container.querySelector<HTMLAnchorElement>(`a[href="${commentUrl}"]`);
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    anchor.dispatchEvent(click);
+
+    expect(click.defaultPrevented).toBe(true);
+    expect(state.openLink).toHaveBeenCalledWith(commentUrl, { event: expect.anything() });
   });
 });

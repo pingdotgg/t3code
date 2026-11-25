@@ -9,6 +9,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
   update: vi.fn(),
+  openLink: vi.fn(async () => {}),
   canUpdate: true,
   timestampFormat: "locale" as "locale" | "12-hour" | "24-hour",
 }));
@@ -17,6 +18,7 @@ vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => state.update) as never,
 }));
+vi.mock(import("~/browser/useOpenLink"), () => ({ useOpenLink: () => state.openLink }));
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
   readEnvironmentScope: () => true,
@@ -48,6 +50,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 
 function setup() {
   state.update.mockReset();
+  state.openLink.mockClear();
   state.update.mockResolvedValue({ _tag: "Success", value: undefined });
   state.canUpdate = true;
   state.timestampFormat = "locale";
@@ -273,6 +276,30 @@ it("shows a comment's exact time in the chosen 24-hour clock", async () => {
   await vi.waitFor(() =>
     expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(expected),
   );
+});
+
+it("opens a comment's timestamp through the link-target setting, not a popup", async () => {
+  setup();
+  const url = "https://github.com/owner/repo/pull/1#issuecomment-10";
+  const comment = {
+    id: "10",
+    kind: "issue-comment" as const,
+    body: "A remark",
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    createdAt: "2026-09-01T17:30:00Z",
+    url,
+    path: null,
+    reviewState: null,
+  };
+  await using screen = await render({ ...detail, comments: [comment], commentCount: 1 });
+
+  const anchor = screen.container.querySelector<HTMLAnchorElement>(`a[href="${url}"]`);
+  expect(anchor).not.toBeNull();
+  const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+  anchor!.dispatchEvent(click);
+
+  expect(click.defaultPrevented).toBe(true);
+  expect(state.openLink).toHaveBeenCalledWith(url, { event: expect.anything() });
 });
 
 it("keeps the chosen comment order when the right panel remounts the tab", async () => {
