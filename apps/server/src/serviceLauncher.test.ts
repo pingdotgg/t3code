@@ -213,9 +213,6 @@ const fakeServiceUnit = (
     return unit;
   });
 
-// Stopping drains the launcher's queue, including work that follows the "committed" reply.
-const drain = (launcher: Launcher) => launcher.stop("SIGTERM");
-
 it.layer(NodeServices.layer)("service state persistence", (it) => {
   it.effect.each([
     "startup",
@@ -400,8 +397,8 @@ setInterval(() => {}, 1_000);
       recovered = true;
       yield* Effect.promise(() => vi.advanceTimersByTimeAsync(30_000));
       yield* Effect.promise(() => Promise.race([ready.promise, running]));
-      // The backup drop now follows the "committed" reply, so it lands after the child acts.
-      yield* Effect.promise(() => drain(launcher));
+      // Stopping drains the queue, including the backup drop that follows the "committed" reply.
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
       const state = yield* Effect.promise(() => readServiceState(statePath));
       assert.equal(
         state.activeVersion,
