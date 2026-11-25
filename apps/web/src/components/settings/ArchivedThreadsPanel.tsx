@@ -25,8 +25,7 @@ import { useSearchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 
 import { msg, T, useGT, useMessages } from "gt-react";
-import { type ReactNode, useRef, useState } from "react";
-import { observeIntersection } from "~/lib/observeIntersection";
+import { useDeferredValue, useRef, useState } from "react";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 
 const ARCHIVE_ACTIONS = [
@@ -46,43 +45,9 @@ const ARCHIVE_ACTIONS = [
   },
 ] as const;
 type ArchiveAction = (typeof ARCHIVE_ACTIONS)[number]["action"];
-
-const ARCHIVED_ROW_CHUNK_SIZE = 50;
-const ESTIMATED_ARCHIVED_ROW_PX = 67;
-
-// Thousands of archived threads would mount at once, so each chunk of rows mounts only near the
-// visible part of the settings scroller and otherwise keeps its last measured height.
-function ArchivedThreadChunk(props: {
-  readonly rowCount: number;
-  readonly initiallyMounted: boolean;
-  readonly renderRows: () => ReactNode;
-}) {
-  const { rowCount } = props;
-  const [view, setView] = useState({
-    near: props.initiallyMounted,
-    rowHeight: ESTIMATED_ARCHIVED_ROW_PX,
-  });
-  return (
-    <div
-      ref={(node) => {
-        if (!node) return;
-        return observeIntersection(
-          node,
-          (entry) =>
-            setView({
-              near: entry.isIntersecting,
-              rowHeight: entry.boundingClientRect.height / rowCount,
-            }),
-          { root: node.closest("[data-settings-page-scroll]"), rootMargin: "1200px 0px" },
-        );
-      }}
-      className="*:not-first:border-t *:not-first:border-border/50"
-      style={view.near ? undefined : { height: view.rowHeight * rowCount }}
-    >
-      {view.near ? props.renderRows() : null}
-    </div>
-  );
-}
+// Archives reach hundreds of rows. The first rows paint at once; the rest mount in a
+// background render, so every title stays in the DOM for find-in-page.
+const INITIAL_ARCHIVED_ROWS = 40;
 
 export function ArchivedThreadsPanel() {
   const searchableSetting = useSearchableSetting();
@@ -179,22 +144,32 @@ export function ArchivedThreadsPanel() {
         }
       }
     }
-    const sortedGroups = [];
-    let firstRow = 0;
-    for (const [key, group] of groups) {
-      sortedGroups.push({
-        ...group,
-        key,
-        firstRow,
-        threads: group.threads.toSorted((left, right) => {
-          const leftKey = left.archivedAt ?? left.createdAt;
-          const rightKey = right.archivedAt ?? right.createdAt;
-          return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
-        }),
-      });
-      firstRow += group.threads.length;
-    }
+    const sortedGroups = Array.from(groups, ([key, group]) => ({
+      ...group,
+      key,
+      threads: group.threads.toSorted((left, right) => {
+        const leftKey = left.archivedAt ?? left.createdAt;
+        const rightKey = right.archivedAt ?? right.createdAt;
+        return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
+      }),
+    }));
     return { groups: sortedGroups, hasMultipleEnvironments };
+  })();
+  // The limit only rises once rows exist, so data that arrives after the loading render
+  // still paints the first rows before the background render mounts the rest.
+  const archivedRowLimit = useDeferredValue(
+    archivedGroups.length === 0 ? INITIAL_ARCHIVED_ROWS : Number.POSITIVE_INFINITY,
+    INITIAL_ARCHIVED_ROWS,
+  );
+  const renderedGroups = (() => {
+    const rendered: typeof archivedGroups = [];
+    let remaining = archivedRowLimit;
+    for (const group of archivedGroups) {
+      if (remaining <= 0) break;
+      rendered.push({ ...group, threads: group.threads.slice(0, remaining) });
+      remaining -= group.threads.length;
+    }
+    return rendered;
   })();
 
   type ArchivedThread = (typeof archivedGroups)[number]["threads"][number];
@@ -266,7 +241,6 @@ export function ArchivedThreadsPanel() {
     return (
       <SettingsRow
         key={`${thread.environmentId}:${thread.id}`}
-        className="rounded-none"
         onContextMenu={(event) => {
           event.preventDefault();
           void handleContextMenu(
@@ -343,28 +317,14 @@ export function ArchivedThreadsPanel() {
           />
         </SettingsSection>
       ) : (
-        archivedGroups.map(({ key, project, title, firstRow, threads: projectThreads }, index) => (
+        renderedGroups.map(({ key, project, title, threads: projectThreads }, index) => (
           <SettingsSection
             key={key}
             id={index === 0 ? searchableSetting("archive").id : undefined}
             title={title}
             icon={<ProjectFavicon project={project} />}
           >
-            {Array.from(
-              { length: Math.ceil(projectThreads.length / ARCHIVED_ROW_CHUNK_SIZE) },
-              (_, chunkIndex) => {
-                const start = chunkIndex * ARCHIVED_ROW_CHUNK_SIZE;
-                const rows = projectThreads.slice(start, start + ARCHIVED_ROW_CHUNK_SIZE);
-                return (
-                  <ArchivedThreadChunk
-                    key={chunkIndex}
-                    rowCount={rows.length}
-                    initiallyMounted={firstRow + start < ARCHIVED_ROW_CHUNK_SIZE}
-                    renderRows={() => rows.map(renderRow)}
-                  />
-                );
-              },
-            )}
+            {projectThreads.map(renderRow)}
           </SettingsSection>
         ))
       )}
