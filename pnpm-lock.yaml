@@ -282,7 +282,7 @@ overrides:
   alchemy: 2.0.0-beta.85
   expo-audio: 58.0.12
   expo-network: 58.0.5
-  '@clerk/expo-native-components': 0.4.4
+  '@clerk/expo-native-components': 0.4.8
   '@cursor/sdk': 1.5.0
   expo-sharing: 58.0.23
   expo-widgets: 58.0.29
@@ -315,16 +315,16 @@ overrides:
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-x64-musl': '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-arm64': '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-x64': '-'
-  '@clerk/backend': 3.27.0
-  '@clerk/clerk-js': 6.42.3
+  '@clerk/backend': 3.33.0
+  '@clerk/clerk-js': 6.47.0
   '@clerk/clerk-js>@base-org/account': '-'
   '@clerk/clerk-js>@coinbase/wallet-sdk': '-'
   '@clerk/clerk-js>@wallet-standard/core': '-'
-  '@clerk/electron': 0.1.10
+  '@clerk/electron': 0.1.20
   '@clerk/electron-passkeys': 0.0.3
-  '@clerk/expo': 4.15.1
-  '@clerk/react': 6.18.6
-  '@clerk/shared': 4.44.1
+  '@clerk/expo': 4.17.6
+  '@clerk/react': 6.19.6
+  '@clerk/shared': 4.49.0
   '@effect/atom-react': 4.1.5
   '@effect/platform-bun': 4.1.5
   '@effect/platform-node': 4.1.5
@@ -366,7 +366,7 @@ pnpmfileChecksum: sha256-G0L7+qfid3Wo9BlLIlMyF/+fqBnAnqHKSe0HlWAtlg8=
 
 patchedDependencies:
   '@alchemy.run/test@2.0.0-beta.85': 29c0539ea71d9cc372f0b16558640599beb9bc609605feb2a493da268d72713e
-  '@clerk/expo-native-components@0.4.4': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
+  '@clerk/expo-native-components@0.4.8': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
   '@cursor/sdk@1.5.0': 7fe8889d7916196c56006cf15a39abba4099feb2c567b4030b82a09364cee500
   '@effect/platform-node-shared@4.1.5': 06952843c6f431ca83c78762fd18d23cda76883801049ee311feced2438ecf14
   '@effect/vitest@4.1.5': dd0bf2b1ae0f63aff0d620ebc67b82d19759b3fa69a608ef85e2a5b40b4d46c5
@@ -429,8 +429,8 @@ importers:
   apps/desktop:
     dependencies:
       '@clerk/electron':
-        specifier: 0.1.10
-        version: 0.1.10(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.10.1(supports-color@8.1.1))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: 0.1.20
+        version: 0.1.20(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.10.1(supports-color@8.1.1))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@clerk/electron-passkeys':
         specifier: 0.0.3
         version: 0.0.3
@@ -548,11 +548,11 @@ importers:
   apps/mobile:
     dependencies:
       '@clerk/expo':
-        specifier: 4.15.1
-        version: 4.15.1(597f83a0e87d34a2a87f36b65d0922f7)
+        specifier: 4.17.6
+        version: 4.17.6(cf1a39caf7f249451c54204fb98d7586)
       '@clerk/expo-native-components':
-        specifier: 0.4.4
-        version: 0.4.4(patch_hash=7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4)(expo@58.0.26)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1)(typescript@6.0.3)
+        specifier: 0.4.8
+        version: 0.4.8(patch_hash=7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4)(expo@58.0.26)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1)(typescript@6.0.3)
       '@effect/atom-react':
         specifier: 4.1.5
         version: 4.1.5(effect@4.1.5(patch_hash=14a7acd734809d8dddbf2c19c4ec01fdd2ffae60a612de42b5ed29860216052a))(react@19.3.0)(scheduler@0.28.0)
@@ -1072,14 +1072,14 @@ importers:
         specifier: 0.5.1
         version: 0.5.1
       '@clerk/clerk-js':
-        specifier: 6.42.3
-        version: 6.42.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: 6.47.0
+        version: 6.47.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@clerk/electron':
-        specifier: 0.1.10
-        version: 0.1.10(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.10.1(supports-color@8.1.1))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: 0.1.20
+        version: 0.1.20(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.10.1(supports-color@8.1.1))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@clerk/react':
-        specifier: 6.18.6
-        version: 6.18.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: 6.19.6
+        version: 6.19.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@daypicker/react':
         specifier: ^10.0.1
         version: 10.0.1(@types/react@19.3.0)(react@19.3.0)
@@ -1380,8 +1380,8 @@ importers:
         specifier: 'catalog:'
         version: 2.0.0-beta.85(6906a3a93dff07c63d6ad3b93feb5862)
       '@clerk/backend':
-        specifier: 3.27.0
-        version: 3.27.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: 3.33.0
+        version: 3.33.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@distilled.cloud/cloudflare':
         specifier: 'catalog:'
         version: 1.0.0-rc.18(effect@4.1.5(patch_hash=14a7acd734809d8dddbf2c19c4ec01fdd2ffae60a612de42b5ed29860216052a))
@@ -3488,12 +3488,12 @@ packages:
     resolution: {integrity: sha512-tEj8X2No2A1c9NDnZECxiiJ8TP3vmFlN9tLlLeSaMqVW4tUmVG2R4qpv/eP4zymWxnymYLkLcIYVV0VcWj3RCQ==}
     engines: {node: '>= 20.12.0'}
 
-  '@clerk/backend@3.27.0':
-    resolution: {integrity: sha512-pmhVVP9EsAOL1rlRU4xR0XSL1BJczxGAJIqv8c+C9fRz7TYzCndGUMSSE/Zg7i2QOA24ExJbEJUiOjILdUL2EQ==}
+  '@clerk/backend@3.33.0':
+    resolution: {integrity: sha512-rC9rZGW2asq2FunUZEBoI5WlNnGPhOgU3KC47rdmBw/l9LxuFQMIXFAUlqHXMK/vBpptQIw9CS7Cnpr2ZF6TsQ==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/clerk-js@6.42.3':
-    resolution: {integrity: sha512-hjUf0j4Q6mWSEKC5Mg5WuE1uNu5eYPF8NpMJvGCPAxx7GwJKOTb1Pct2FNybEGf4mC14Xau+ic3jk75GB12joA==}
+  '@clerk/clerk-js@6.47.0':
+    resolution: {integrity: sha512-XAN7ELvWipkb1q4nTyQs9E7RkRC3xt8+vLnmwsbmjPZkXx7ao3aMKgDGlvs4Gh1K9VJ2cePVAdfMS5FSuTPbLw==}
     engines: {node: '>=20.9.0'}
 
   '@clerk/electron-passkeys-darwin-arm64@0.0.3':
@@ -3520,8 +3520,8 @@ packages:
     resolution: {integrity: sha512-OHhIe88qDL+FxyBalXdXNHAS5eEramr6Rerp+6iNkfkjqT8rx4hHNmfpmjg5/T1/am8QfknbOBZkqoXZlCrjPg==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/electron@0.1.10':
-    resolution: {integrity: sha512-Erik4s3N/YqVhOcvB3C+V9uhuimUpT6jlDws8rO4PoRDg1WbNoVbGnc/Z7TNSwfZMj+IzvJbpir/za5tX5Bc4w==}
+  '@clerk/electron@0.1.20':
+    resolution: {integrity: sha512-Bl4pPrtZVTS4uJ7Kxl0NTfL8tZI+Ns4CD4mRvUFwvy+fdqD7+OCSPe1KwcaaNwWcTOK0notGMDXneuVDjSRc5Q==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       '@clerk/electron-passkeys': 0.0.3
@@ -3537,21 +3537,21 @@ packages:
       react-dom:
         optional: true
 
-  '@clerk/expo-native-components@0.4.4':
-    resolution: {integrity: sha512-N3kuURfZqBsh1ux6/2CJO0w+B80GrZpNf6xx2yfnIZPGcxEYFmuiEuZSZvK/AcqEADkN2NCvqbo5+hipOlMX8Q==}
+  '@clerk/expo-native-components@0.4.8':
+    resolution: {integrity: sha512-xDfjmUPttHTfSwne94+j16XIgofh8WlWhCWCVekOzPbaDPlblbdWJ8oddusE9QfZPjdQzTTbxFd7/2hhKtm73g==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       expo: '>=54 <59'
       react: ^18.0.0 || ^19.0.0
       react-native: '>=0.75'
 
-  '@clerk/expo@4.15.1':
-    resolution: {integrity: sha512-+HxlXXqo5LWTB+kVIqaeuSw8NVe8aEy19Wr+Le5kIshCAfe3WAf9Ai/iCdpFzFy3LUxc20YMNPRM4FJXJYFIkw==}
+  '@clerk/expo@4.17.6':
+    resolution: {integrity: sha512-NoGGHVEEGXIbcn3jMGL/i1F+CdzoEW+h1NX58Af59jbCq53EgYBMXNyjQu9L/e33F1MUBI0inoVE+fDogrKIpw==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       '@clerk/expo-biometrics': '>=0.1.0'
       '@clerk/expo-google-signin': '>=0.1.0'
-      '@clerk/expo-native-components': 0.4.4
+      '@clerk/expo-native-components': 0.4.8
       '@clerk/expo-passkeys': '>=0.0.6'
       expo: '>=54 <59'
       expo-apple-authentication: '>=7.0.0'
@@ -3559,12 +3559,14 @@ packages:
       expo-auth-session: '>=5'
       expo-constants: 58.0.16
       expo-crypto: '>=12'
+      expo-intent-launcher: '>=12'
       expo-local-authentication: '>=13.5.0'
       expo-secure-store: '>=12.4.0'
       expo-web-browser: '>=12.5.0'
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
       react-native: '>=0.75'
+      react-native-webview: 14.0.1
     peerDependenciesMeta:
       '@clerk/expo-biometrics':
         optional: true
@@ -3584,6 +3586,8 @@ packages:
         optional: true
       expo-crypto:
         optional: true
+      expo-intent-launcher:
+        optional: true
       expo-local-authentication:
         optional: true
       expo-secure-store:
@@ -3592,16 +3596,18 @@ packages:
         optional: true
       react-dom:
         optional: true
+      react-native-webview:
+        optional: true
 
-  '@clerk/react@6.18.6':
-    resolution: {integrity: sha512-vNsg5smbANI7Bf8W+2e6p4hR3LlMZvSKT+lih8tVlBZVAQzkoVCgmD7EmiEwMqLz23y8Z0klDBtejQlcpn9Deg==}
+  '@clerk/react@6.19.6':
+    resolution: {integrity: sha512-8poLpDuISc7KQlhuZaifsdKrnjIHH7WEyL5rm3NCMlEK0gLbcgwoDqCqktr0N0NoB2bWRYAiFGEjmzhKyMN7kA==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
       react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
 
-  '@clerk/shared@4.44.1':
-    resolution: {integrity: sha512-c06U6GtlLJNOKj900rHDSqjVRz0/0zb3RZXVGKUqTulfQxr4Ym543JE6cbOnZVJZCbm0fGPhdRKvHq6fO/SvVw==}
+  '@clerk/shared@4.49.0':
+    resolution: {integrity: sha512-OI7+jr+Y481nBJJdAIt5NXJSo+wJAk9SYPYDpmcIOzyq8JnCtIdcd86wod2J3IY7UG6UxnBMT+IDbchFwJGs1Q==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
@@ -14145,17 +14151,17 @@ snapshots:
       fast-wrap-ansi: 0.2.2
       sisteransi: 2.0.0
 
-  '@clerk/backend@3.27.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@clerk/backend@3.33.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
-      '@clerk/shared': 4.44.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@clerk/shared': 4.49.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       standardwebhooks: 1.0.0
     transitivePeerDependencies:
       - react
       - react-dom
 
-  '@clerk/clerk-js@6.42.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@clerk/clerk-js@6.47.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
-      '@clerk/shared': 4.44.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@clerk/shared': 4.49.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@stripe/stripe-js': 5.6.0
       '@swc/helpers': 0.5.21
       '@tanstack/query-core': 5.102.8
@@ -14189,11 +14195,11 @@ snapshots:
       '@clerk/electron-passkeys-win32-arm64-msvc': 0.0.3
       '@clerk/electron-passkeys-win32-x64-msvc': 0.0.3
 
-  '@clerk/electron@0.1.10(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.10.1(supports-color@8.1.1))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@clerk/electron@0.1.20(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.10.1(supports-color@8.1.1))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
-      '@clerk/clerk-js': 6.42.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@clerk/react': 6.18.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@clerk/shared': 4.44.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@clerk/clerk-js': 6.47.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@clerk/react': 6.19.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@clerk/shared': 4.49.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       electron: 44.10.1(supports-color@8.1.1)
       react: 19.3.0
     optionalDependencies:
@@ -14201,7 +14207,7 @@ snapshots:
       electron-store: 8.2.0
       react-dom: 19.3.0(react@19.3.0)
 
-  '@clerk/expo-native-components@0.4.4(patch_hash=7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4)(expo@58.0.26)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1)(typescript@6.0.3)':
+  '@clerk/expo-native-components@0.4.8(patch_hash=7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4)(expo@58.0.26)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1)(typescript@6.0.3)':
     dependencies:
       '@expo/config-plugins': 58.0.13(supports-color@8.1.1)(typescript@6.0.3)
       expo: 58.0.26(de08f5b2b2354602508d76a06f0f9989)
@@ -14211,11 +14217,11 @@ snapshots:
       - supports-color
       - typescript
 
-  '@clerk/expo@4.15.1(597f83a0e87d34a2a87f36b65d0922f7)':
+  '@clerk/expo@4.17.6(cf1a39caf7f249451c54204fb98d7586)':
     dependencies:
-      '@clerk/clerk-js': 6.42.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@clerk/react': 6.18.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@clerk/shared': 4.44.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@clerk/clerk-js': 6.47.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@clerk/react': 6.19.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@clerk/shared': 4.49.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@expo/config-plugins': 58.0.13(supports-color@8.1.1)(typescript@6.0.3)
       base-64: 1.0.0
       expo: 58.0.26(de08f5b2b2354602508d76a06f0f9989)
@@ -14223,7 +14229,7 @@ snapshots:
       react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
       react-native-url-polyfill: 4.0.0(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))
     optionalDependencies:
-      '@clerk/expo-native-components': 0.4.4(patch_hash=7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4)(expo@58.0.26)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1)(typescript@6.0.3)
+      '@clerk/expo-native-components': 0.4.8(patch_hash=7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4)(expo@58.0.26)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1)(typescript@6.0.3)
       expo-application: 58.1.2(expo@58.0.26)
       expo-auth-session: 58.0.19(expo@58.0.26)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1)(typescript@6.0.3)
       expo-constants: 58.0.16(expo@58.0.26)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(supports-color@8.1.1)(typescript@6.0.3)
@@ -14231,17 +14237,18 @@ snapshots:
       expo-secure-store: 58.0.3(expo@58.0.26)
       expo-web-browser: 58.1.0(expo@58.0.26)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))
       react-dom: 19.3.0(react@19.3.0)
+      react-native-webview: 14.0.1(patch_hash=71009983c76818bd5e73d4ca597f76efd04101600c84cd4b4c5d920781c048ae)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  '@clerk/react@6.18.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@clerk/react@6.19.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
-      '@clerk/shared': 4.44.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@clerk/shared': 4.49.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       react: 19.3.0
       react-dom: 19.3.0(react@19.3.0)
 
-  '@clerk/shared@4.44.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@clerk/shared@4.49.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
       '@tanstack/query-core': 5.102.8
       dequal: 2.0.3

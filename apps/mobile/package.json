@@ -55,7 +55,7 @@
   },
   "dependencies": {
     "@clerk/expo": "catalog:",
-    "@clerk/expo-native-components": "0.4.4",
+    "@clerk/expo-native-components": "0.4.8",
     "@effect/atom-react": "catalog:",
     "@expo-google-fonts/dm-sans": "^0.4.2",
     "@expo/metro-runtime": "~58.0.17",
