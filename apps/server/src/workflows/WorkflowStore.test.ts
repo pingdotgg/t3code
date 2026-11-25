@@ -452,6 +452,59 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
   ),
 );
 
+it.effect.each([999, 1000])("buffered mail with a 1s TTL claimed after %i ms", (elapsed) =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const address = { workflow: "gate", channel: "ready" };
+      yield* store.waitOpened({
+        runId: "r1",
+        name: "go",
+        workflow: address.workflow,
+        key: address.channel,
+        token: "token",
+        schemaJson: "{}",
+        requestJson: null,
+        watchJson: null,
+        deadline: null,
+      });
+      yield* store.mailPut({
+        signalId: "first",
+        address,
+        valueJson: "1",
+        expiresAt: "1970-01-01T00:00:01.000Z",
+        sender,
+      });
+      yield* store.mailPut({
+        signalId: "second",
+        address,
+        valueJson: "2",
+        expiresAt: "1970-01-01T00:00:02.000Z",
+        sender,
+      });
+      const selected = yield* store.mailNext([address]);
+      assert.equal(selected?.signalId, "first");
+      yield* TestClock.adjust(elapsed);
+      const live = elapsed < 1000;
+      assert.deepStrictEqual(
+        {
+          next: (yield* store.mailNext([address]))?.signalId,
+          claim: yield* store.mailDeliver(selected!.signalId, "r1", "go", {
+            expired: false,
+            value: 1,
+          }),
+          waitOpen: (yield* store.waitAt({ runId: "r1", wait: "go" })) !== undefined,
+          receipt: yield* store.signalSeen("first"),
+          rowPresent: (yield* store.mailSender("first")) !== undefined,
+        },
+        live
+          ? { next: "first", claim: "delivered", waitOpen: false, receipt: true, rowPresent: false }
+          : { next: "second", claim: "gone", waitOpen: true, receipt: false, rowPresent: true },
+      );
+    }),
+  ),
+);
+
 it.effect("tells the milestone hub of each run and question transition once", () =>
   withStore(
     Effect.gen(function* () {
