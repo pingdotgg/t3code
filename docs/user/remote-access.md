@@ -102,9 +102,9 @@ For a command-line host, choose the local network in `t3 up`, or run:
 t3 up --lan
 ```
 
-For a server in a terminal, run `t3 serve --lan`. Either way, T3 Code then
-accepts connections from your local network and tailnet, so a pairing code is
-all that keeps other devices on them out.
+For a server in a terminal, run `t3 serve --lan`. This makes T3 Code listen for
+connections from your local network and tailnet; your host firewall must also
+allow the connection. Devices still need to pair before they can use the server.
 
 If a server is already running, generate a fresh link without restarting it:
 
@@ -133,6 +133,53 @@ older than this release, has to pair again. Links
 created in Settings can only be copied from the client that created them while
 its Sharing & access page stays open. If you leave or reload that page, create
 another link to share.
+
+### LAN pairing times out
+
+If the mobile app reports a timeout or transport error, check reachability before
+generating another pairing code. Keep the host running and both devices on the
+same LAN. A guest Wi-Fi network, VPN, or router's client isolation can prevent
+devices from reaching each other.
+
+On Linux, check the listener and host firewall (replace `3773` if you chose a
+different port):
+
+```bash
+ss -ltn 'sport = :3773'
+sudo ufw status verbose
+```
+
+If the listener is only `127.0.0.1` or `::1`:
+
+- For a desktop host, enable **Settings → Sharing & access → Network access**.
+- For a terminal server, stop it and restart with `t3 serve --lan`. Remove any
+  loopback `--host` argument or `T3CODE_HOST` environment override first: an
+  explicit host takes precedence over `--lan`.
+
+If it listens on the LAN but UFW denies incoming traffic, allow the T3 port from
+your trusted LAN. For example, for a `192.168.1.0/24` LAN:
+
+```bash
+sudo ufw allow from 192.168.1.0/24 to any port 3773 proto tcp comment 'T3 Code LAN'
+```
+
+Check existing rules with `sudo ufw status numbered`. UFW uses the first matching
+rule, so an earlier deny can still block the connection. If you intend to allow
+this LAN traffic through that deny and already ran the allow command above,
+first remove that appended rule using the same command with `ufw delete allow`
+instead of `ufw allow`. UFW skips inserting an identical rule that already exists.
+Run `sudo ufw status numbered` again after deletion because rule numbers can change.
+Then replace `ufw allow` in the command above with `ufw insert N allow`, where `N`
+is the deny rule's current number, to insert the allow before it.
+
+Use your own LAN subnet and server port. Keep the firewall enabled; no router port
+forwarding is needed. To remove this rule later, use the command above with
+`ufw delete allow` instead of `ufw allow`, without an insertion position.
+
+A successful request from the host to its own LAN address does not prove that
+the phone can reach it through the firewall. Retry from the mobile app with the
+host's LAN address, including `http://` for a plain HTTP server. If the pairing
+code has expired, generate a fresh QR code with `t3 pair` after fixing reachability.
 
 ### Reach one machine several ways
 
