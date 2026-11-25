@@ -385,6 +385,40 @@ describe("compareMetrics on working throughput", () => {
   });
 });
 
+describe("compareMetrics on the eager scenario", () => {
+  const eager = (turnEndMedian: number) =>
+    ({
+      meta,
+      runs: [
+        {
+          eager: {
+            active: {
+              "20": {
+                ...loopAtRest,
+                cpuPct: 90,
+                wakeupsPerSec: 1_600,
+                rssPeakMB: 700,
+                rssMB: 560,
+                heapAfterGcMB: 218,
+                turnsPerMin: 30,
+                toRequestMs: { median: 4_000, p90: 9_000 },
+                turnEndMs: { median: turnEndMedian, p90: 25_000 },
+                turnMs: { median: 24_000, p90: 36_000 },
+                pendingAtSendPct: 80,
+              },
+            },
+          },
+        },
+      ],
+    }) satisfies ServerMetrics;
+
+  it("shows a move past working's floor without gating on it", () => {
+    const result = compareMetrics(eager(10_000), eager(20_000));
+    expect(result.regressed).toEqual([]);
+    expect(result.informational).toEqual(["eager.active.20.turnEndMs.median"]);
+  });
+});
+
 describe("compareMetrics on the busy shell snapshot", () => {
   const window = { cpuPct: 1, wakeupsPerSec: 10, rssPeakMB: 500, rssMB: 500, heapAfterGcMB: 200 };
   const busyRun = (shellMs: number, shellKB: number) =>

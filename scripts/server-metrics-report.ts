@@ -63,6 +63,13 @@ const WorkingPoint = Schema.Struct({
 });
 export type WorkingPoint = typeof WorkingPoint.Type;
 
+const EagerPoint = Schema.Struct({
+  ...WorkingPoint.fields,
+  /** Sends that landed while the thread's previous run, usually its checkpoint, was still open. */
+  pendingAtSendPct: Schema.Number,
+});
+export type EagerPoint = typeof EagerPoint.Type;
+
 const Reconnect = Schema.Struct({
   clients: Schema.Number,
   threadsPerClient: Schema.optional(Schema.Number),
@@ -109,6 +116,8 @@ export const Measured = Schema.Struct({
       loopDelayP99MsPerThread: Schema.Number,
     }),
   ),
+  /** `working`, but each thread sends again once the reply ends, not once the run ends. */
+  eager: Schema.optional(Schema.Struct({ active: Schema.Record(Schema.String, EagerPoint) })),
   /** 50 short turns back to back on one thread. */
   pipeline: Schema.optional(
     Schema.Struct({
@@ -277,20 +286,7 @@ const informational = (pattern: RegExp): NoiseRule => ({ pattern, floor: 0, gate
 // Estimated from A/A runs on cups (16 cores, load 1 to 20) on 2026-11-23, with and without the
 // agent scope, rounded up and taking the larger of the two.
 // busy and soak had no A/A run and keep the earlier floors.
-export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
-  informational(/loopDelayP50Ms$/),
-  informational(/^(rest|quiet|streaming|clients\.attached\.\d+)\.loopDelay(P99|Max)Ms$/),
-  informational(/^(rest|quiet|clients\.attached\.\d+)\.gc(Count|PauseMs)$/),
-  informational(/^(streaming|pipeline)\.gcPauseMs$/),
-  informational(
-    /^(pipeline\.loopDelayMaxMs|clients\.(storm|reconnect)\.loopDelayP99Ms|quiet\.cpuPct)$/,
-  ),
-  informational(/^scaling\.(cpuPct|wakeups)PerThread$/),
-  informational(/^clients\.attached\.\d+\.(cpuPct|wakeupsPerSec)$/),
-  informational(/^(firstWord\..*|pipeline\.turnEndMs)\.p90$/),
-  { pattern: /^scaling\.heapMBPerThread$/, floor: 0.06, gate: true },
-  { pattern: /^scaling\.rssMBPerThread$/, floor: 0.2, gate: true },
-  { pattern: /^soak\./, floor: 20, gate: true },
+const WORKING_RULES: ReadonlyArray<NoiseRule> = [
   informational(/^working\.(cpuPct|loopDelayP99Ms)PerThread$/),
   informational(/^working\.active\.\d+\.(wakeupsPerSec|loopDelayMaxMs|gcPauseMs)$/),
   { pattern: /^working\.heapMBPerThread$/, floor: 0.06, gate: true },
@@ -309,6 +305,35 @@ export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
   { pattern: /^working\.active\.\d+\.rssPeakMB$/, floor: 170, gate: true },
   { pattern: /^working\.active\.\d+\.(cpuPct|loopDelayP99Ms)$/, floor: 5, gate: true },
   { pattern: /^working\.active\.\d+\.gcCount$/, floor: 8, gate: true },
+];
+
+export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
+  informational(/loopDelayP50Ms$/),
+  informational(/^(rest|quiet|streaming|clients\.attached\.\d+)\.loopDelay(P99|Max)Ms$/),
+  informational(/^(rest|quiet|clients\.attached\.\d+)\.gc(Count|PauseMs)$/),
+  informational(/^(streaming|pipeline)\.gcPauseMs$/),
+  informational(
+    /^(pipeline\.loopDelayMaxMs|clients\.(storm|reconnect)\.loopDelayP99Ms|quiet\.cpuPct)$/,
+  ),
+  informational(/^scaling\.(cpuPct|wakeups)PerThread$/),
+  informational(/^clients\.attached\.\d+\.(cpuPct|wakeupsPerSec)$/),
+  informational(/^(firstWord\..*|pipeline\.turnEndMs)\.p90$/),
+  { pattern: /^scaling\.heapMBPerThread$/, floor: 0.06, gate: true },
+  { pattern: /^scaling\.rssMBPerThread$/, floor: 0.2, gate: true },
+  { pattern: /^soak\./, floor: 20, gate: true },
+  ...WORKING_RULES,
+  // eager has no A/A run yet: working's floors, shown but never gated.
+  informational(/^eager\.active\.\d+\.pendingAtSendPct$/),
+  ...WORKING_RULES.filter(({ pattern }) => pattern.source.startsWith("^working\\.active")).map(
+    ({ pattern, floor }) => ({
+      pattern: new RegExp(pattern.source.replace("^working", "^eager")),
+      floor,
+      gate: false,
+    }),
+  ),
+  { pattern: /^eager\.active\.\d+\.heapAfterGcMB$/, floor: 1, gate: false },
+  { pattern: /^eager\.active\.\d+\.rssMB$/, floor: 4, gate: false },
+  { pattern: /^eager\./, floor: 300, gate: false },
   { pattern: /^startup\.readyMs$/, floor: 600, gate: true },
   { pattern: /^firstWord\./, floor: 600, gate: true },
   { pattern: /^pipeline\.(toRequestMs|turnEndMs)\.median$/, floor: 300, gate: true },

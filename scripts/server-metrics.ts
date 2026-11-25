@@ -90,6 +90,7 @@ import {
   type MachineState,
   type Measured,
   type WorkingPoint,
+  type EagerPoint,
   type ProfileSummary,
   type Window,
 } from "./server-metrics-report.ts";
@@ -117,6 +118,8 @@ const PROFILES = {
     workingWarmupSeconds: 10,
     /** Long enough that most threads finish a turn inside it even at 20 working. */
     workingSeconds: 30,
+    /** Threads in each window of the eager scenario. */
+    eagerThreads: [5, 20],
     threads: "0,5,10,20",
     runs: 5,
   },
@@ -129,6 +132,7 @@ const PROFILES = {
     workingThreads: [5, 20],
     workingWarmupSeconds: 5,
     workingSeconds: 20,
+    eagerThreads: [5, 20],
     threads: "0,10",
     runs: 3,
   },
@@ -1400,7 +1404,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
   );
   return {
     /** Sends a message the way the composer does, starting a turn at once. */
-    send: (threadId: string, messageId: string, text: string) =>
+    send: (threadId: string, messageId: string, text: string, deliveryIntent?: "auto") =>
       client["orchestration.dispatchCommand"]({
         type: "message.dispatch",
         commandId: CommandId.make(messageId),
@@ -1410,6 +1414,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
         attachments: [],
         createdBy: "user",
         creationSource: "web",
+        ...(deliveryIntent === undefined ? {} : { deliveryIntent }),
         dispatchMode: { type: "start_immediately" },
       }),
     rpc: client,
@@ -1636,6 +1641,160 @@ const workingWindow = Effect.fn("serverMetrics.workingWindow")(function* (
   );
 }, Effect.scoped);
 
+/**
+ * Like `working`, but each thread sends its next message as soon as the client sees the provider
+ * finish the reply, while the previous run is usually still capturing its checkpoint. A send
+ * that lands while a capture blocks the thread's next turn is what interactive priority targets.
+ */
+const eagerWindow = Effect.fn("serverMetrics.eagerWindow")(function* (
+  environment: Environment,
+  server: Server,
+  token: string,
+  threadIds: ReadonlyArray<string>,
+  timing: { readonly warmupSeconds: number; readonly windowSeconds: number },
+  firstMarker: number,
+) {
+  interface Turn {
+    readonly messageId: string;
+    attemptId?: string;
+    /** The provider finished this turn's reply, as the client sees it. */
+    readonly replied: Deferred.Deferred<void>;
+    readonly done: Deferred.Deferred<string>;
+  }
+  const turnsByThread = new Map<string, Turn[]>();
+  // Provider turns can complete before the client sees the run name their attempt.
+  const completedAttempts = new Set<string>();
+  const reply = (turn: Turn) => Deferred.succeed(turn.replied, undefined).pipe(Effect.asVoid);
+  const client = yield* attachClient(server, token, threadIds, (threadId, item) => {
+    if (item.kind !== "event") return Effect.void;
+    const turns = turnsByThread.get(threadId) ?? [];
+    if (item.event.type === "provider-turn.updated") {
+      const providerTurn = item.event.payload;
+      if (providerTurn.status === "pending" || providerTurn.status === "running")
+        return Effect.void;
+      if (providerTurn.runAttemptId === null) return Effect.void;
+      completedAttempts.add(providerTurn.runAttemptId);
+      const turn = turns.find((candidate) => candidate.attemptId === providerTurn.runAttemptId);
+      return turn ? reply(turn) : Effect.void;
+    }
+    if (item.event.type !== "run.updated") return Effect.void;
+    const run = item.event.payload;
+    const turn = turns.find((candidate) => candidate.messageId === run.userMessageId);
+    if (!turn) return Effect.void;
+    if (run.activeAttemptId !== null) turn.attemptId = run.activeAttemptId;
+    if (TERMINAL_RUN.has(run.status)) {
+      // A run that ends without a completed provider turn must not leave its thread waiting.
+      return Effect.andThen(reply(turn), Deferred.succeed(turn.done, run.status));
+    }
+    return turn.attemptId !== undefined && completedAttempts.has(turn.attemptId)
+      ? reply(turn)
+      : Effect.void;
+  });
+  const turns: Array<{
+    endedAt: number;
+    toRequest: number;
+    turnEnd: number;
+    turnMs: number;
+    pendingAtSend: boolean;
+  }> = [];
+  let stopping = false;
+  let sequence = 0;
+  const finish = Effect.fn("serverMetrics.eagerTurnEnd")(function* (
+    turn: Turn,
+    marker: string,
+    sentAt: number,
+    pendingAtSend: boolean,
+  ) {
+    const status = yield* Deferred.await(turn.done).pipe(
+      Effect.timeoutOrElse({
+        duration: Duration.seconds(180),
+        orElse: () => new MetricsError({ message: `turn ${marker} never ended` }),
+      }),
+    );
+    const endedAt = yield* nowMs;
+    if (status !== "completed") {
+      return yield* new MetricsError({ message: `turn ${marker} ended ${status}` });
+    }
+    const forTurn = environment.requests.filter(
+      (request) => request.agent && request.marker === marker && request.at >= sentAt,
+    );
+    const first = forTurn.find((request) => !request.toolResult);
+    const last = forTurn.findLast((request) => request.toolResult);
+    if (first === undefined || last?.endedAt === undefined) {
+      return yield* new MetricsError({
+        message: `turn ${marker} never called its Write tool; is the Claude CLI's tool set unchanged?`,
+      });
+    }
+    turns.push({
+      endedAt,
+      toRequest: first.at - sentAt,
+      turnEnd: endedAt - last.endedAt,
+      turnMs: endedAt - sentAt,
+      pendingAtSend,
+    });
+  });
+  const work = Effect.fn("serverMetrics.eagerThread")(function* (threadId: string) {
+    const ends: Array<Fiber.Fiber<void, MetricsError>> = [];
+    let previous: Turn | undefined;
+    while (!stopping) {
+      const marker = `bench-run-${firstMarker + sequence++}`;
+      const turn: Turn = {
+        messageId: `bench-message-${marker}`,
+        replied: yield* Deferred.make<void>(),
+        done: yield* Deferred.make<string>(),
+      };
+      turnsByThread.set(threadId, [...(turnsByThread.get(threadId) ?? []).slice(-1), turn]);
+      const pendingAtSend = previous !== undefined && !(yield* Deferred.isDone(previous.done));
+      const sentAt = yield* nowMs;
+      // The composer's default send (`deliveryIntent: "auto"`). Sent after the provider turn
+      // completed but before the run ended, the server queues it behind that run rather than
+      // steering, so it starts as its own run once the checkpoint is captured.
+      yield* client.send(threadId, turn.messageId, `Edit a file. ${EDIT_MARKER} ${marker}`, "auto");
+      ends.push(yield* Effect.forkChild(finish(turn, marker, sentAt, pendingAtSend)));
+      yield* Deferred.await(turn.replied).pipe(
+        Effect.timeoutOrElse({
+          duration: Duration.seconds(180),
+          orElse: () => new MetricsError({ message: `turn ${marker} never finished its reply` }),
+        }),
+      );
+      previous = turn;
+    }
+    yield* Effect.forEach(ends, Fiber.join, { discard: true });
+  });
+  const workers = yield* Effect.forEach(threadIds, (threadId) => Effect.forkScoped(work(threadId)));
+  const failed = Effect.forEach(workers, Fiber.join, {
+    concurrency: "unbounded",
+    discard: true,
+  }).pipe(Effect.andThen(Effect.never));
+  return yield* Effect.raceFirst(
+    Effect.gen(function* () {
+      yield* Effect.sleep(Duration.seconds(timing.warmupSeconds));
+      const from = yield* nowMs;
+      const window = yield* server.measure(timing.windowSeconds);
+      const to = yield* nowMs;
+      stopping = true;
+      yield* Effect.forEach(workers, Fiber.join, { discard: true });
+      yield* client.healthy;
+      const inside = turns.filter((turn) => turn.endedAt >= from && turn.endedAt <= to);
+      if (inside.length === 0) {
+        return yield* new MetricsError({ message: "no turn finished inside the window" });
+      }
+      const point: EagerPoint = {
+        ...window,
+        turnsPerMin: round((inside.length / (to - from)) * 60_000),
+        toRequestMs: spread(inside.map((turn) => turn.toRequest)),
+        turnEndMs: spread(inside.map((turn) => turn.turnEnd)),
+        turnMs: spread(inside.map((turn) => turn.turnMs)),
+        pendingAtSendPct: round(
+          (inside.filter((turn) => turn.pendingAtSend).length / inside.length) * 100,
+        ),
+      };
+      return point;
+    }),
+    failed,
+  );
+}, Effect.scoped);
+
 const SCENARIOS = [
   "startup",
   "rest",
@@ -1645,6 +1804,7 @@ const SCENARIOS = [
   "clients",
   "pipeline",
   "working",
+  "eager",
   "busy",
 ] as const;
 /** Scenarios that read the developer's real database, so they run only when named. */
@@ -1851,6 +2011,30 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           cpuPctPerThread: fit((point) => point.cpuPct),
           loopDelayP99MsPerThread: fit((point) => point.loopDelayP99Ms ?? 0),
         };
+      }),
+    );
+  }
+  if (wanted("eager")) {
+    yield* withServer("eager", (server) =>
+      Effect.gen(function* () {
+        const token = yield* server.issueToken;
+        const counts = options.profile.eagerThreads;
+        const threads = yield* openWorktreeThreads(server, Math.max(...counts));
+        const active: Record<string, EagerPoint> = {};
+        for (const [index, count] of counts.entries()) {
+          active[`${count}`] = yield* eagerWindow(
+            environment,
+            server,
+            token,
+            threads.slice(0, count),
+            {
+              warmupSeconds: options.profile.workingWarmupSeconds,
+              windowSeconds: options.profile.workingSeconds,
+            },
+            60_000 + index * 10_000,
+          );
+        }
+        measured.eager = { active };
       }),
     );
   }
@@ -2664,6 +2848,7 @@ const serverMetricsCommand = Command.make("server-metrics").pipe(
 
 Which scenario answers what:
   working     Many threads editing files at once, one client watching all: steer performance work by its loop delay, turn end and turns per minute.
+  eager       working, but each thread sends its next message once the reply ends, while the last checkpoint capture is still pending.
   pipeline    One thread's overhead per turn: send to API request, reply end to run end.
   clients     What an attached client costs, and a user's 3 devices reconnecting. --stress adds the 20-client storm, an upper bound.
   quiet       Idle cost per open thread (the scaling fit); rest is an idle server.
