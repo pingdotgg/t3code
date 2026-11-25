@@ -1,10 +1,24 @@
+import * as Schema from "effect/Schema";
 import type * as AcpSchema from "effect-acp/compat";
+import * as AcpErrors from "effect-acp/errors";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import type { AcpAdapterV2SubagentUpdate } from "@t3tools/provider-acp/server/adapter";
+
+const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/** Devin rejects the prompt when the model ends a turn with only thinking; its session carries on. */
+export function devinPromptErrorResumeWith(error: unknown): string | undefined {
+  if (!isAcpRequestError(error) || error.method !== "session/prompt") return undefined;
+  const data = record(error.data);
+  return data?.["cognition.ai/errorKind"] === "empty_response" &&
+    data["cognition.ai/retryable"] === true
+    ? "continue"
     : undefined;
 }
 

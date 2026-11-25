@@ -8,6 +8,7 @@ import {
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
   devinAnswerablePermissionOptions,
+  devinPromptErrorResumeWith,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
 import { makeKimiPromptOutcomeWatch } from "./kimiAcp.ts";
@@ -327,6 +328,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
           answerablePermissionOptions: devinAnswerablePermissionOptions,
+          promptErrorResumeWith: devinPromptErrorResumeWith,
         }
       : {}),
     ...(copilotRouting === undefined

@@ -9,6 +9,7 @@ export {
   extractDevinSubagentUpdate,
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
+  devinPromptErrorResumeWith,
 } from "./server/devinAcp.ts";
 export { extractCopilotSubagentUpdate, makeCopilotSubagentRouting } from "./server/copilotAcp.ts";
 export {

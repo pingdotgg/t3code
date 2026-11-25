@@ -62,6 +62,7 @@ import {
   makeAcpRegistryAdapterV2,
   acpRegistryPromptFailure,
   acpRegistryProbeResult,
+  devinPromptErrorResumeWith,
 } from "@t3tools/provider-acp-registry/testing";
 
 const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
@@ -668,6 +669,31 @@ describe("AcpRegistryAdapterV2", () => {
     assert.include(rejected.message, "Request rejected.");
     assert.notInclude(rejected.message, "private-key");
     assert.notInclude(rejected.message, "token=secret");
+  });
+
+  it("resumes Devin only after an empty model reply it marks retryable", () => {
+    const promptError = (data: unknown, method = "session/prompt") =>
+      new EffectAcpErrors.AcpRequestError({
+        code: -32021,
+        errorMessage: "The model ended its turn without a response. Send a message to continue.",
+        method,
+        data,
+      });
+    const emptyReply = {
+      "cognition.ai/errorKind": "empty_response",
+      "cognition.ai/retryable": true,
+    };
+    assert.equal(devinPromptErrorResumeWith(promptError(emptyReply)), "continue");
+    assert.isUndefined(
+      devinPromptErrorResumeWith(promptError({ ...emptyReply, "cognition.ai/retryable": false })),
+    );
+    assert.isUndefined(
+      devinPromptErrorResumeWith(
+        promptError({ ...emptyReply, "cognition.ai/errorKind": "resource_exhausted" }),
+      ),
+    );
+    assert.isUndefined(devinPromptErrorResumeWith(promptError(emptyReply, "session/load")));
+    assert.isUndefined(devinPromptErrorResumeWith(new Error("process exited")));
   });
 
   describe("the agent's own pickers", () => {
