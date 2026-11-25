@@ -80,7 +80,6 @@ const VARIANT_CONFIG = {
     scheme: "tix-dev",
     iosBundleIdentifier: "com.penouc.tix.dev",
     androidPackage: "com.penouc.tix.dev",
-    relyingParty: "clerk.t3.codes",
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
@@ -88,7 +87,6 @@ const VARIANT_CONFIG = {
     scheme: "tix-preview",
     iosBundleIdentifier: "com.penouc.tix.preview",
     androidPackage: "com.penouc.tix.preview",
-    relyingParty: "clerk.t3.codes",
     assets: PREVIEW_ASSETS,
   },
   production: {
@@ -96,7 +94,6 @@ const VARIANT_CONFIG = {
     scheme: "tix",
     iosBundleIdentifier: "com.penouc.tix",
     androidPackage: "com.penouc.tix",
-    relyingParty: "clerk.t3.codes",
     assets: RELEASE_ASSETS,
   },
 } as const;
@@ -115,8 +112,14 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
-// Copied thread links open the app. app.t3.codes/.well-known lists every variant's identifiers.
-const HOSTED_APP_HOST = "app.t3.codes";
+const relyingPartyHost = process.env.TIX_CLERK_RELYING_PARTY?.trim() || undefined;
+const hostedAppHost = process.env.TIX_HOSTED_APP_HOST?.trim() || undefined;
+const associatedDomains = [
+  ...(relyingPartyHost
+    ? [`applinks:${relyingPartyHost}`, `webcredentials:${relyingPartyHost}`]
+    : []),
+  ...(hostedAppHost ? [`applinks:${hostedAppHost}`] : []),
+];
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : variant.iosBundleIdentifier;
@@ -257,11 +260,7 @@ const config: ExpoConfig = {
     bundleIdentifier: iosBundleIdentifier,
     // Avoid Personal Team fallback: it cannot sign App Groups, Apple sign-in or push entitlements.
     appleTeamId: "ARK85ZXQ4Z",
-    associatedDomains: [
-      `applinks:${variant.relyingParty}`,
-      `webcredentials:${variant.relyingParty}`,
-      `applinks:${HOSTED_APP_HOST}`,
-    ],
+    ...(associatedDomains.length > 0 ? { associatedDomains } : {}),
     entitlements: {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
     },
@@ -310,14 +309,18 @@ const config: ExpoConfig = {
     predictiveBackGestureEnabled: true,
     // expo-sensors declares this for its pedometer, which the app does not use.
     blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
-    intentFilters: [
-      {
-        action: "VIEW",
-        autoVerify: true,
-        data: [{ scheme: "https", host: HOSTED_APP_HOST, pathPrefix: "/threads/" }],
-        category: ["BROWSABLE", "DEFAULT"],
-      },
-    ],
+    ...(hostedAppHost
+      ? {
+          intentFilters: [
+            {
+              action: "VIEW",
+              autoVerify: true,
+              data: [{ scheme: "https", host: hostedAppHost, pathPrefix: "/threads/" }],
+              category: ["BROWSABLE", "DEFAULT"],
+            },
+          ],
+        }
+      : {}),
   },
   web: {
     favicon: variant.assets.appIcon,

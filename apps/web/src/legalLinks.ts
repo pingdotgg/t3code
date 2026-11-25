@@ -1,1 +1,1 @@
-export const PRIVACY_POLICY_URL = "https://t3.codes/privacy-policy";
+export const PRIVACY_POLICY_URL = "https://github.com/penouc/tix";
