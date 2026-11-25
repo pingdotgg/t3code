@@ -1,14 +1,9 @@
 name: Release
 
+# Disabled automatic tag/cron triggers in favor of split unsigned workflows
+# (build-desktop-macos.yml, build-desktop-linux.yml, build-desktop-windows.yml,
+# mobile-android-apk.yml) running on official GitHub runners.
 on:
-  push:
-    tags:
-      - "v*.*.*"
-      - "!v*-nightly.*"
-      - "!v*-preview.*"
-  schedule:
-    # Avoid minute zero, when GitHub scheduled jobs are busiest.
-    - cron: "8,38 * * * *"
   workflow_dispatch:
     inputs:
       channel:

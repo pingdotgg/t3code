@@ -1,11 +1,12 @@
-const REPO = "pingdotgg/t3code";
+import { CDN_ORIGIN } from "./site";
+
+const REPO = "penouc/tix";
 
 export const RELEASES_URL = `https://github.com/${REPO}/releases`;
 export const NIGHTLY_RELEASES_URL = `${RELEASES_URL}?q=nightly&expanded=true`;
 
-const LATEST_API_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
-// GitHub's latest endpoint excludes prereleases; the newest nightly comes from the ordered release list.
-const LIST_API_URL = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
+const LATEST_API_URL = `${CDN_ORIGIN}/api/releases/latest`;
+const LIST_API_URL = `${CDN_ORIGIN}/api/releases`;
 
 export type ReleaseChannel = "stable" | "nightly";
 

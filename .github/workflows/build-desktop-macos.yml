@@ -1,0 +1,189 @@
+name: Build Desktop macOS (Unsigned)
+
+# Builds unsigned/ad-hoc macOS desktop installers (DMG + ZIP) on GitHub's
+# official macos-15 runner and optionally attaches them to a GitHub Release.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "!v*-nightly.*"
+      - "!v*-preview.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version override (defaults to tag without v prefix or apps/desktop/package.json version)"
+        required: false
+        type: string
+      arch:
+        description: "Target architecture"
+        required: false
+        default: arm64
+        type: choice
+        options:
+          - arm64
+          - x64
+          - both
+      publish_release:
+        description: "Create or update a GitHub Release with the built installers"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-desktop-macos-${{ github.ref }}-${{ inputs.arch || 'arm64' }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Resolve macOS targets
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      matrix: ${{ steps.meta.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            apps/desktop/package.json
+
+      - id: meta
+        name: Resolve version and matrix
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_ARCH: ${{ inputs.arch || 'arm64' }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$INPUT_VERSION" ]]; then
+            version="${INPUT_VERSION#v}"
+          elif [[ "$REF_TYPE" == "tag" && "$REF_NAME" == v* ]]; then
+            version="${REF_NAME#v}"
+          else
+            version="$(node -p "require('./apps/desktop/package.json').version")"
+          fi
+          tag="v${version}"
+          if [[ "$INPUT_ARCH" == "both" ]]; then
+            matrix='[{"arch":"arm64","rust_target":"aarch64-apple-darwin"},{"arch":"x64","rust_target":"x86_64-apple-darwin"}]'
+          elif [[ "$INPUT_ARCH" == "x64" ]]; then
+            matrix='[{"arch":"x64","rust_target":"x86_64-apple-darwin"}]'
+          else
+            matrix='[{"arch":"arm64","rust_target":"aarch64-apple-darwin"}]'
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build macOS (${{ matrix.arch }})
+    needs: [prepare]
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    env:
+      T3CODE_TELEMETRY_CHANNEL: dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+          save-pnpm-store: ${{ matrix.arch == 'arm64' }}
+
+      - name: Ensure Rosetta for macOS x64 bytecode generation
+        if: matrix.arch == 'x64'
+        shell: bash
+        run: |
+          if [[ "$(uname -m)" == "arm64" ]] && ! /usr/bin/arch -x86_64 /usr/bin/true; then
+            sudo /usr/sbin/softwareupdate --install-rosetta --agree-to-license
+          fi
+
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor
+          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('.cargo/config.toml', 'native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+
+      - name: Build resource monitor
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target "${{ matrix.rust_target }}"
+
+      - name: Align package versions
+        shell: bash
+        run: node scripts/update-release-package-versions.ts "${{ needs.prepare.outputs.version }}"
+
+      - name: Build JS bundle
+        shell: bash
+        run: vp run build:desktop:bundle
+
+      - name: Package unsigned macOS desktop artifact
+        shell: bash
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true"
+        run: |
+          vp run dist:desktop:artifact \
+            --platform mac \
+            --target dmg \
+            --arch "${{ matrix.arch }}" \
+            --build-version "${{ needs.prepare.outputs.version }}" \
+            --skip-build \
+            --verbose
+
+      - name: Collect release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          out_dir="$RUNNER_TEMP/macos-release"
+          mkdir -p "$out_dir"
+          for file in release/*.dmg release/*.zip release/*.blockmap release/latest-mac*.yml; do
+            if [[ -f "$file" ]]; then
+              cp "$file" "$out_dir/"
+            fi
+          done
+          ls -la "$out_dir"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tix-desktop-macos-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}
+          path: ${{ runner.temp }}/macos-release/*
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish to GitHub Release
+        if: github.event_name == 'push' || inputs.publish_release == true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          APP_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --title "tix ${APP_VERSION}" \
+              --generate-notes || true
+          fi
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP"/macos-release/* --clobber

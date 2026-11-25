@@ -6,6 +6,9 @@ on:
   push:
     tags:
       - "mobile-v*"
+      - "v*.*.*"
+      - "!v*-nightly.*"
+      - "!v*-preview.*"
   workflow_dispatch:
     inputs:
       version:
@@ -52,14 +55,19 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "$INPUT_VERSION" ]; then
-            version="$INPUT_VERSION"
+            version="${INPUT_VERSION#v}"
+            tag="mobile-v${version}"
           elif [ "$REF_TYPE" = "tag" ] && [[ "$REF_NAME" == mobile-v* ]]; then
             version="${REF_NAME#mobile-v}"
+            tag="$REF_NAME"
+          elif [ "$REF_TYPE" = "tag" ] && [[ "$REF_NAME" == v* ]]; then
+            version="${REF_NAME#v}"
+            tag="$REF_NAME"
           else
             version="$(sed -n 's/.*T3CODE_MOBILE_VERSION ?? "\([^"]*\)".*/\1/p' apps/mobile/app.config.ts | head -n 1)"
+            version="${version:-2.3.0}"
+            tag="mobile-v${version}"
           fi
-          version="${version:-2.3.0}"
-          tag="mobile-v${version}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "apk_name=tix-android-${version}.apk" >> "$GITHUB_OUTPUT"
@@ -152,15 +160,12 @@ jobs:
         run: |
           set -euo pipefail
           out_dir="$RUNNER_TEMP/apk-release"
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" \
-              "$out_dir/$APK_NAME" \
-              "$out_dir/${APK_NAME}.sha256" \
-              --clobber
-          else
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
-              "$out_dir/$APK_NAME" \
-              "$out_dir/${APK_NAME}.sha256" \
-              --title "tix Android ${APP_VERSION}" \
-              --generate-notes
+              --title "tix ${APP_VERSION}" \
+              --generate-notes || true
           fi
+          gh release upload "$RELEASE_TAG" \
+            "$out_dir/$APK_NAME" \
+            "$out_dir/${APK_NAME}.sha256" \
+            --clobber

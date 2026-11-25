@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "tix-cdn",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "cdn.penglei.dev",
+      "custom_domain": true,
+    },
+  ],
+  "vars": {
+    "GITHUB_REPO": "penouc/tix",
+    "GITHUB_BRANCH": "main",
+    "CDN_ORIGIN": "https://cdn.penglei.dev",
+  },
+}

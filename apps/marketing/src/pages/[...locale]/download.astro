@@ -5,7 +5,7 @@ import iconStable from "../../assets/icon.webp";
 import iconNightly from "../../assets/icon-nightly.webp";
 import Layout from "../../layouts/Layout.astro";
 import { RELEASES_URL } from "../../lib/releases";
-import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../../lib/site";
+import { IOS_APP_STORE_URL } from "../../lib/site";
 import { breadcrumbJsonLd, softwareJsonLd } from "../../lib/seo";
 import { messagesFor } from "../../i18n";
 import { localeStaticPaths, localizedHref, templateParts } from "../../i18n/locales";
@@ -30,7 +30,7 @@ const imageProps = {
   jsonLd={[
     softwareJsonLd(messagesFor(locale).layout.defaultDescription),
     breadcrumbJsonLd([
-      { name: "T3 Code", path: localizedHref(locale, "/") },
+      { name: "tix", path: localizedHref(locale, "/") },
       { name: t.breadcrumb, path: localizedHref(locale, "/download") },
     ]),
   ]}
@@ -158,10 +158,10 @@ const imageProps = {
               <span class="card-format">App Store</span>
             </span>
           </a>
-          <a class="download-card" href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">
+          <a class="download-card" data-asset=".apk" href={RELEASES_URL}>
             <span class="card-text">
               <span class="card-arch">Android</span>
-              <span class="card-format">Google Play</span>
+              <span class="card-format">Direct APK</span>
             </span>
           </a>
         </div>
@@ -172,13 +172,10 @@ const imageProps = {
           <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M12 17h7"/></svg>
           <h2 class="platform-name">{t.terminal}</h2>
         </div>
-        <code class="cli-line cli-line--stable">curl -fsSL https://t3.codes/install.sh | sh</code>
-        <code class="cli-line cli-line--stable">irm https://t3.codes/install.ps1 | iex</code>
-        <code class="cli-line cli-line--nightly">curl -fsSL https://t3.codes/install.sh | T3CODE_CHANNEL=nightly sh</code>
-        <code class="cli-line cli-line--nightly">$env:T3CODE_CHANNEL="nightly"; irm https://t3.codes/install.ps1 | iex</code>
-        <p class="cli-note">{t.tryOnce}</p>
-        <code class="cli-line cli-line--stable">npx t3@latest</code>
-        <code class="cli-line cli-line--nightly">npx t3@nightly</code>
+        <code class="cli-line cli-line--stable">curl -fsSL https://tix.penglei.dev/install.sh | sh</code>
+        <code class="cli-line cli-line--stable">irm https://tix.penglei.dev/install.ps1 | iex</code>
+        <code class="cli-line cli-line--nightly">curl -fsSL https://cdn.penglei.dev/install.sh | T3CODE_CHANNEL=nightly sh</code>
+        <code class="cli-line cli-line--nightly">$env:T3CODE_CHANNEL="nightly"; irm https://cdn.penglei.dev/install.ps1 | iex</code>
       </section>
     </div>
 
@@ -241,7 +238,10 @@ const imageProps = {
           : release.tag_name;
       if (release.html_url) changelogLink.href = release.html_url;
       cards.forEach((card) => {
-        const match = (release.assets ?? []).find((a) => a.name.endsWith(`-${card.dataset.asset}`));
+        const suffix = card.dataset.asset!;
+        const match = (release.assets ?? []).find((a) =>
+          suffix.startsWith(".") ? a.name.endsWith(suffix) : a.name.endsWith(`-${suffix}`),
+        );
         card.href = match?.browser_download_url ?? fallback;
       });
     } catch {
