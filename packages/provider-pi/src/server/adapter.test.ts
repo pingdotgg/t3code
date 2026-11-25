@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import { expect } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointId,
@@ -3950,6 +3951,72 @@ describe("PiAdapterV2", () => {
           includeSubagents: true,
         }),
       );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("reports that a Pi workflow continues after its coordinator fails", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const emitWorkflow = (state: "running" | "complete") =>
+        fake.emit({
+          type: "extension_ui_request",
+          method: "setWidget",
+          widgetKey: "subagent-async",
+          widgetLines: [
+            `PI_SUBAGENT_ASYNC_JSON:${JSON.stringify({
+              kind: "pi-subagents.async-status-snapshot",
+              version: 1,
+              runs: [
+                {
+                  id: "wf-1",
+                  kind: "workflow",
+                  state,
+                  children: [{ id: "alpha", kind: "step", agent: "scout", state }],
+                },
+              ],
+            })}`,
+          ],
+        });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* emitWorkflow("running");
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_wf",
+        toolName: "subagent",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "Async workflow started: wf-1" }],
+          details: { mode: "workflow", runId: "wf-1", asyncId: "wf-1", results: [] },
+        },
+      });
+      const running = yield* takeEvent((event) => event.type === "subagent.updated");
+      assert.isTrue(running.type === "subagent.updated" && running.subagent.status === "running");
+
+      yield* fake.emit({
+        type: "message_end",
+        message: { role: "assistant", stopReason: "error", errorMessage: "Rate limited" },
+      });
+      yield* fake.emit({ type: "agent_settled" });
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      if (terminal.type !== "turn.terminal" || terminal.status !== "failed") {
+        throw new Error("Expected the Pi coordinator's turn to fail");
+      }
+
+      yield* emitWorkflow("complete");
+      const finished = yield* takeEvent((event) => event.type === "subagent.updated");
+      assert.isTrue(
+        finished.type === "subagent.updated" && finished.subagent.status === "completed",
+      );
+      // Without this signal the server fails the subagent and drops the completion above.
+      expect(terminal.childTurnsContinue).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
