@@ -873,6 +873,10 @@
   "05b16c85cb1e18bd": "Inga repon",
   "04ea9e0e663983fd": "Alla repon",
   "c07bd24ff49e85d9": "{count, plural, one {{count} repo} other {{count} repon}}",
+  "1b799ebfa94c2408": "Godkännande av push-hooks",
+  "81d703184fe5112e": "Köra det här repositoryts push-hooks?",
+  "027b0d65c7a67af6": "Hook-fil",
+  "ade585910165bb52": "Konfigurerad hook",
   "e94aa66471dae6aa": "Varför får jag den här frågan?",
   "228a325b5708e675": "Full åtkomst hoppar över godkännanden, men en fråga-regel i agentens egna inställningar matchar den här åtgärden, så den frågar ändå. Ta bort eller begränsa regeln för att slippa de här frågorna.",
   "3f9101f696c738a8": "Full åtkomst hoppar över godkännanden, men agenten stannar ändå för några egna säkerhetskontroller som ingen inställning kan hoppa över, till exempel en radering vars sökväg den inte kan verifiera. T3 Code kan inte stänga av dem, så kontrollera begäran och godkänn den om den är vad du väntar dig.",
@@ -1298,7 +1302,7 @@
   "c13753167634f7aa": "Läste fil",
   "5ce648cd03020fd9": "Läste {path} +{count} till",
   "5d6c2898401c94e6": "Läste {path}",
-  "612170d804b03320": "{count, plural, one {{count} felaktig eller inkonsekvent användningspost hoppades över; användningen kan vara ofullständig.} other {{count} felaktiga eller inkonsekventa användningsposter hoppades över; användningen kan vara ofullständig.}}",
+  "69150fe436b3a0c2": "{count, plural, one {{count} felaktig eller inkonsekvent användningspost hoppades över; användningen kan vara ofullständig.} other {{count} felaktiga eller inkonsekventa användningsposter hoppades över; användningen kan vara ofullständig.}}",
   "ee448ceb6820ce2f": "{environment} kör en äldre serverversion och räknas inte med i totalerna.",
   "732708950237004e": "Den här klienten är äldre än servern på {environment}; dess användning räknas inte med i totalerna.",
   "9758c2ede06aa19b": "{hour} i dag",
@@ -5698,5 +5702,6 @@
   "1a1beecff68a6e61": "Verifiera Google-konto",
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
-  "201490988858b511": "återkallad av {by}"
+  "201490988858b511": "återkallad av {by}",
+  "46d614fa7b4bf1e5": "Arbetsflödeskörningar"
 }

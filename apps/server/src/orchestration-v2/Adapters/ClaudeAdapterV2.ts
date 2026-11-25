@@ -128,6 +128,7 @@ import {
   type ProviderApprovalFullAccessOverride,
   ProviderMcpSignInError,
   type ProviderApprovalOption,
+  type ProviderApprovalPushHooks,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderRequestKind,
@@ -140,6 +141,8 @@ import {
 } from "@t3tools/contracts";
 
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure note filter.
+import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as Predicate from "effect/Predicate";
 import * as Clock from "effect/Clock";
@@ -403,6 +406,7 @@ const CLAUDE_STDERR_TAIL_LENGTH = 2_048;
 const CLAUDE_STDERR_DRAIN_TIMEOUT = Duration.seconds(1);
 // How often a working CLI's process tree is recorded when no agent scope will stop what it leaves.
 const CLAUDE_DESCENDANT_POLL = "1 second";
+const CLAUDE_FORKED_SKILL_TRANSCRIPT_POLL = "1 second";
 // Claude Code's refusal of bypassPermissions as root, which it explains only on stderr.
 const CLAUDE_ROOT_REFUSAL =
   "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
@@ -2843,6 +2847,9 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__t3_submit_output",
 ];
 
+// The name this adapter registers T3's MCP server under, and so the one Claude gives for it.
+const CLAUDE_T3_MCP_SERVER = "t3-code";
+
 // request_secret can wait an hour; exceed Claude's default 60 s timeout.
 export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 
@@ -2867,7 +2874,7 @@ export function claudeMcpQueryOverrides(input: {
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
-      "t3-code": {
+      [CLAUDE_T3_MCP_SERVER]: {
         type: "http",
         url: session.endpoint,
         headers: {
@@ -3407,22 +3414,44 @@ const reserveClaudePdfBudget = (
       }).pipe(Effect.andThen(persist)),
   );
 
+type ClaudeAppContext = NonNullable<ProviderAdapter.ProviderAdapterV2TurnInput["appContext"]>;
+
+// Digests keep the persisted record of delivered notes small; notes can be 16 KiB each.
+const claudeAppContextDigests = (appContext: ClaudeAppContext): ReadonlyMap<string, string> =>
+  new Map(
+    appContext.map((entry) => [
+      entry.key,
+      NodeCrypto.createHash("sha256").update(entry.text).digest("base64url"),
+    ]),
+  );
+
+const unseenClaudeAppContext = (
+  appContext: ClaudeAppContext,
+  seen: ReadonlyMap<string, string> | undefined,
+): ClaudeAppContext => {
+  const digests = claudeAppContextDigests(appContext);
+  return appContext.filter((entry) => seen?.get(entry.key) !== digests.get(entry.key));
+};
+
 // MCP app notes are app-written, so they go as quoted user input like Codex's untrusted context.
 // A slash command runs only when it opens a plain-text prompt; its note waits for the next turn.
 // Returns `message` itself when it adds nothing.
 const withClaudeAppContext = (
   message: SDKUserMessage,
-  appContext: NonNullable<ProviderAdapter.ProviderAdapterV2TurnInput["appContext"]>,
+  appContext: ClaudeAppContext,
   reservation: Effect.Success<ReturnType<typeof reserveClaudePdfBudget>>,
 ): SDKUserMessage => {
   const content = message.message.content;
   if (appContext.length === 0 || (typeof content === "string" && content.startsWith("/"))) {
     return message;
   }
-  const contextBlocks = appContext.map((entry) => ({
-    type: "text" as const,
-    text: `<external_${entry.key}>${entry.text}</external_${entry.key}>`,
-  }));
+  const contextBlocks = appContext.map((entry) => {
+    const updatedAt = entry.updatedAt === undefined ? "" : ` updated_at="${entry.updatedAt}"`;
+    return {
+      type: "text" as const,
+      text: `<external_${entry.key}${updatedAt}>${entry.text}</external_${entry.key}>`,
+    };
+  });
   const bytes = Buffer.byteLength(encodeClaudeJson(contextBlocks));
   reservation.budget.pending.bytes += bytes;
   reservation.bytes += bytes;
@@ -4138,6 +4167,20 @@ function claudeTaskTypeFromSdkMessage(message: SDKMessage): string | null {
 
 function isClaudeNonSubagentTask(message: SDKMessage): boolean {
   return isClaudeOpaqueBackgroundTaskType(claudeTaskTypeFromSdkMessage(message));
+}
+
+// A `context: fork` skill's task_started names no tool call; its frames use this parent id instead.
+function claudeForkedSkillToolUseId(
+  message: Extract<SDKMessage, { readonly type: "system"; readonly subtype: "task_started" }>,
+): string | undefined {
+  const skill = message.description.trim();
+  return message.tool_use_id === undefined &&
+    message.task_type === "local_agent" &&
+    (message.spawn_depth ?? 1) <= 1 &&
+    skill.length > 1 &&
+    skill.startsWith("/")
+    ? `forked-command-${skill.slice(1)}`
+    : undefined;
 }
 
 function isClaudeBackgroundTasksChangedMessage(message: SDKMessage): boolean {
@@ -6004,6 +6047,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   adapterOptions: ClaudeAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  // `onElicitation` shows T3 Code's own requests and passes on the person's answer to each.
+  yield* mcpSessions.showsApprovalRequests(adapterOptions.instanceId);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const { attachmentsDir, fileSystem, path, random, idAllocator, queryRunner } = adapterOptions;
@@ -6352,7 +6397,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // Sessions Claude Code reported gone on resume; resumeThread fails them into a fresh session.
         const missingNativeThreads = new Set<string>();
         const pdfBudgets = new Map<string, ReturnType<typeof makeClaudeAttachmentBudget>>();
-        // MCP app notes already in each native session's history, by key. Cleared when it compacts.
+        // Digests of MCP app notes already in each native session's history, by key. Cleared when it
+        // compacts; persisted in native metadata so a restarted server does not resend them.
         const deliveredAppContext = new Map<string, ReadonlyMap<string, string>>();
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
         // Claude 5 task tools edit one list per native session, across turns.
@@ -6414,6 +6460,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const workflowStopRequestedAt = new Map<string, number>();
         // Buffered idle outcomes must not settle a resumed child again.
         const appliedSubagentOutcomes = new WeakSet<SDKMessage>();
+        // A forked skill's frames arrive only after its task_notification; hold that until they are in.
+        const forkedSkillToolUseIdsByTaskId = new Map<string, string>();
+        const heldForkedSkillNotifications = new Map<string, SDKMessage>();
+        // The stream withholds a fork's frames until it ends, so its transcript is shown while it runs.
+        // Frames whose uuid the transcript already showed are skipped when they arrive.
+        const forkedSkillTranscripts = new Map<
+          string,
+          {
+            readonly fiber: Fiber.Fiber<void>;
+            readonly shownUuids: Set<string>;
+            readonly finish: Deferred.Deferred<void>;
+          }
+        >();
         // Subagent frames can precede the task_started that registers their owner.
         const pendingSubagentFramesByToolUseId = yield* Ref.make(
           new Map<string, ReadonlyArray<SDKMessage>>(),
@@ -6693,13 +6752,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const budget = pdfBudgets.get(nativeThreadId);
           const hasAppliedTitle = appliedSessionTitles.has(nativeThreadId);
           const recordedTitle = providerThread.nativeMetadata?.title;
-          if (budget === undefined && !hasAppliedTitle && recordedTitle === undefined) {
+          const delivered = deliveredAppContext.get(nativeThreadId);
+          if (
+            budget === undefined &&
+            !hasAppliedTitle &&
+            recordedTitle === undefined &&
+            delivered === undefined
+          ) {
             return providerThread;
           }
+          const { claudeDeliveredAppContext: _recorded, ...nativeMetadata } =
+            providerThread.nativeMetadata ?? {};
           return {
             ...providerThread,
             nativeMetadata: {
-              ...providerThread.nativeMetadata,
+              ...(delivered === undefined ? providerThread.nativeMetadata : nativeMetadata),
+              ...(delivered === undefined || delivered.size === 0
+                ? {}
+                : { claudeDeliveredAppContext: Object.fromEntries(delivered) }),
               ...(budget === undefined
                 ? {}
                 : {
@@ -8330,10 +8400,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
 
         // Claude Code records the effort a subagent ran at only in its transcript.
-        const readSubagentTranscriptEffort = Effect.fnUntraced(function* (
+        const findSubagentTranscriptDir = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           taskId: string,
-          completed: boolean,
         ) {
           const cwd = context.input.runtimePolicy.cwd;
           if (cwd === null) return undefined;
@@ -8358,8 +8427,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               break;
             }
           }
-          if (found === undefined) return undefined;
-          const transcriptDir = found;
+          return found === undefined ? undefined : { transcriptDir: found, configDir };
+        });
+
+        const readSubagentTranscriptEffort = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          taskId: string,
+          completed: boolean,
+        ) {
+          const located = yield* findSubagentTranscriptDir(context, taskId);
+          if (located === undefined) return undefined;
+          const { transcriptDir, configDir } = located;
           let metadata: WorkflowAgentMetadata = {};
           let cursor = initialWorkflowAgentTranscriptCursor;
           const read = Effect.fnUntraced(function* () {
@@ -9431,6 +9509,86 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return true;
         });
 
+        const followForkedSkillTranscript = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          taskId: string,
+          shownUuids: Set<string>,
+          finish: Deferred.Deferred<void>,
+        ) {
+          let located: Effect.Success<ReturnType<typeof findSubagentTranscriptDir>>;
+          let cursor = initialWorkflowAgentTranscriptCursor;
+          let turnEnded = false;
+          const drain = Effect.fnUntraced(function* () {
+            if (located === undefined) return;
+            const { transcriptDir, configDir } = located;
+            for (let drained = false; !drained;) {
+              const read = yield* readWorkflowAgentTranscript({
+                transcriptDir,
+                agentId: taskId,
+                cursor,
+                ...(configDir === undefined ? {} : { configDir }),
+              }).pipe(Effect.option);
+              if (Option.isNone(read)) break;
+              const advanced = read.value.cursor.offset !== cursor.offset;
+              cursor = read.value.cursor;
+              // Stopping mid-line would leave a shown line unmarked and repeat it from the stream.
+              yield* Effect.uninterruptible(
+                Effect.gen(function* () {
+                  for (const line of read.value.lines) {
+                    const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
+                    const uuid = text(field(line, "uuid"));
+                    if (subagent === undefined || uuid === undefined || shownUuids.has(uuid)) {
+                      continue;
+                    }
+                    if (
+                      (yield* projectSubagentTranscriptLine(
+                        subagentProjectionTarget(subagent),
+                        line,
+                      )) &&
+                      isClaudeTranscriptConversationLine(line) &&
+                      line.type === "assistant"
+                    ) {
+                      const messageId =
+                        typeof line.message.id === "string" ? line.message.id : null;
+                      const reply = textFromClaudeContent(line.message.content);
+                      subagent.lastAssistantText =
+                        messageId !== null && messageId === subagent.lastAssistantMessageId
+                          ? `${subagent.lastAssistantText ?? ""}\n${reply}`
+                          : reply;
+                      subagent.lastAssistantMessageId = messageId;
+                    }
+                    shownUuids.add(uuid);
+                    turnEnded = isClaudeTranscriptTurnEnd(line);
+                  }
+                }),
+              );
+              drained = !read.value.truncated || !advanced;
+            }
+          });
+          while (true) {
+            const finishing = yield* Deferred.await(finish).pipe(
+              Effect.as(true),
+              Effect.timeoutOrElse({
+                duration: CLAUDE_FORKED_SKILL_TRANSCRIPT_POLL,
+                orElse: () => Effect.succeed(false),
+              }),
+            );
+            if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId)?.task.status !== "running") {
+              return;
+            }
+            located ??= yield* findSubagentTranscriptDir(context, taskId);
+            yield* drain();
+            if (!finishing) continue;
+            // The fork's report is only in its transcript (the stream never sends it) and can land
+            // just after the task_notification.
+            if (located !== undefined && !turnEnded) {
+              yield* Effect.sleep(WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS);
+              yield* drain();
+            }
+            return;
+          }
+        });
+
         const buildApprovalRequestArtifacts = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
@@ -9439,6 +9597,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly requestKind: OrchestrationV2RuntimeRequest["kind"];
           readonly prompt?: string;
           readonly appName?: string;
+          readonly pushHooks?: ProviderApprovalPushHooks | undefined;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
           readonly presentation?: ReturnType<typeof claudeApprovalPresentation>;
 
@@ -9532,6 +9691,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   requestKind: input.requestKind as ProviderRequestKind,
                   ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
                   ...(input.appName === undefined ? {} : { appName: input.appName }),
+                  ...(input.pushHooks === undefined ? {} : { pushHooks: input.pushHooks }),
                   ...(input.options === undefined ? {} : { options: input.options }),
                   ...input.presentation,
                 }
@@ -11627,7 +11787,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           // Every trigger discards the conversation, so reset whatever the trigger is.
           if (message.type === "conversation_reset") {
-            deliveredAppContext.delete(context.nativeThreadId);
+            deliveredAppContext.set(context.nativeThreadId, new Map());
             context.appContextOffered = undefined;
             if (context.streamUsage !== null) context.streamUsage.usage = null;
             context.compactionTokens = 0;
@@ -11698,7 +11858,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               budget.compacting = null;
               yield* persistAttachmentBudget(context.nativeThreadId);
             }
-            deliveredAppContext.delete(context.nativeThreadId);
+            deliveredAppContext.set(context.nativeThreadId, new Map());
             context.appContextOffered = undefined;
             if (context.streamUsage !== null) context.streamUsage.usage = null;
             const postTokens = message.compact_metadata.post_tokens;
@@ -12024,6 +12184,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 reopen: true,
                 ...(message.run_id === undefined ? {} : { nativeRunId: message.run_id }),
               });
+              const forkedSkillToolUseId = claudeForkedSkillToolUseId(message);
+              if (forkedSkillToolUseId !== undefined) {
+                forkedSkillToolUseIdsByTaskId.set(message.task_id, forkedSkillToolUseId);
+                yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) =>
+                  new Map(current).set(forkedSkillToolUseId, message.task_id),
+                );
+                const previous = forkedSkillTranscripts.get(forkedSkillToolUseId);
+                if (previous !== undefined) yield* Fiber.interrupt(previous.fiber);
+                const shownUuids = new Set<string>();
+                const finish = yield* Deferred.make<void>();
+                const fiber = yield* followForkedSkillTranscript(
+                  context,
+                  message.task_id,
+                  shownUuids,
+                  finish,
+                ).pipe(Effect.forkIn(sessionScope));
+                forkedSkillTranscripts.set(forkedSkillToolUseId, { fiber, shownUuids, finish });
+              }
               yield* Ref.update(wakeBuffers, (current) => {
                 const entry = current.get(liveQuery.nativeThreadId);
                 if (entry === undefined) return current;
@@ -12173,13 +12351,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               !context.ignoredTaskIds.has(message.task_id) &&
               !appliedSubagentOutcomes.has(message)
             ) {
+              // A forked skill's summary is only its name; its last reply is the report.
+              const result = forkedSkillToolUseIdsByTaskId.delete(message.task_id)
+                ? ((yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)
+                    ?.lastAssistantText ?? undefined)
+                : message.summary;
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 workflowFrame: message,
                 nativeOutcome: message,
-                result: message.summary,
+                ...(result === undefined ? {} : { result }),
                 status:
                   message.status === "completed"
                     ? "completed"
@@ -12696,7 +12879,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
-        const handleRoutedSdkMessage = Effect.fnUntraced(function* (input: {
+        const routeSdkMessage = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
         }) {
@@ -12709,6 +12892,48 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           for (const message of yield* takeReleasableSubagentFrames(input.message)) {
             yield* handleSdkMessageFrame({ query: input.query, message, replayed: true });
           }
+        });
+
+        const handleRoutedSdkMessage = Effect.fnUntraced(function* (input: {
+          readonly query: ClaudeAgentSdkQuerySession;
+          readonly message: SDKMessage;
+        }) {
+          const parentToolUseId = Reflect.get(input.message, "parent_tool_use_id");
+          // The fork's frames end where the root turn resumes; a system frame (init) can come between.
+          const forkFramesDone =
+            input.message.type === "result" ||
+            (input.message.type !== "system" && isClaudeRootTurnFrame(input.message));
+          for (const [toolUseId, notification] of heldForkedSkillNotifications) {
+            if (!forkFramesDone) break;
+            heldForkedSkillNotifications.delete(toolUseId);
+            forkedSkillTranscripts.delete(toolUseId);
+            yield* routeSdkMessage({ query: input.query, message: notification });
+          }
+          if (input.message.type === "system" && input.message.subtype === "task_notification") {
+            const forkedSkillToolUseId = forkedSkillToolUseIdsByTaskId.get(input.message.task_id);
+            if (
+              forkedSkillToolUseId !== undefined &&
+              !heldForkedSkillNotifications.has(forkedSkillToolUseId)
+            ) {
+              // Read the rest of the transcript, including the report, before the fork can settle.
+              const transcript = forkedSkillTranscripts.get(forkedSkillToolUseId);
+              if (transcript !== undefined) {
+                yield* Deferred.succeed(transcript.finish, undefined);
+                yield* Fiber.join(transcript.fiber);
+              }
+              heldForkedSkillNotifications.set(forkedSkillToolUseId, input.message);
+              return;
+            }
+          }
+          const uuid = text(field(input.message, "uuid"));
+          if (
+            typeof parentToolUseId === "string" &&
+            uuid !== undefined &&
+            forkedSkillTranscripts.get(parentToolUseId)?.shownUuids.has(uuid) === true
+          ) {
+            return;
+          }
+          yield* routeSdkMessage(input);
         });
 
         const heldToolUseIds = (context: ActiveClaudeTurnContext): ReadonlySet<string> =>
@@ -13175,8 +13400,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // request was dismissed and may be asked another way.
             return { action: "cancel" } satisfies ElicitationResult;
           }
+          // T3's own tools leave what they ask with the thread's MCP session while they wait.
+          // A request is T3's when it is one of those, whatever a server calls itself.
+          const ownRequest =
+            request.serverName === CLAUDE_T3_MCP_SERVER
+              ? yield* mcpSessions.findApprovalRequest(context.input.threadId, request.message)
+              : undefined;
           const grantKey = `${request.serverName}\u0000${request.message}`;
-          if ((yield* Ref.get(mcpElicitationSessionGrants)).has(grantKey)) {
+          // T3 Code asks only when a person has to answer, so its own request is never answered
+          // from an earlier answer and offers none to remember.
+          if (
+            ownRequest === undefined &&
+            (yield* Ref.get(mcpElicitationSessionGrants)).has(grantKey)
+          ) {
             return acceptance;
           }
           // The CLI waits on this answer, so a turn held for its prompt echo
@@ -13194,8 +13430,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeRequestId,
             requestKind: "mcp-elicitation",
             prompt: request.message,
-            appName: request.displayName ?? request.title ?? request.serverName,
-            options: CLAUDE_MCP_ELICITATION_OPTIONS,
+            // T3 Code asking is the app itself, so there is no other app to name.
+            ...(ownRequest === undefined
+              ? { appName: request.displayName ?? request.title ?? request.serverName }
+              : { pushHooks: ownRequest.pushHooks }),
+            options:
+              ownRequest === undefined
+                ? CLAUDE_MCP_ELICITATION_OPTIONS
+                : CLAUDE_MCP_ELICITATION_OPTIONS.filter(
+                    (option) => option.decision !== "acceptForSession",
+                  ),
           });
           const decision = yield* Deferred.make<ClaudeApprovalResponse>();
           yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -13265,10 +13509,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               runtimeRequest: { ...artifacts.request, status: "cancelled", resolvedAt: now },
             });
           }
-          if (resolved === "acceptForSession") {
-            yield* Ref.update(mcpElicitationSessionGrants, (current) =>
-              new Set(current).add(grantKey),
+          // The person's answer in the app is what T3 Code's own request goes by, so it is
+          // left with the request before the CLI carries a reply back.
+          if (ownRequest !== undefined) {
+            yield* mcpSessions.answerApprovalRequests(
+              context.input.threadId,
+              request.message,
+              resolved === "accept" || resolved === "acceptForSession",
             );
+          }
+          if (resolved === "acceptForSession") {
+            if (ownRequest === undefined) {
+              yield* Ref.update(mcpElicitationSessionGrants, (current) =>
+                new Set(current).add(grantKey),
+              );
+            }
             return acceptance;
           }
           // Never null: the SDK reads null as answered out of band and leaves
@@ -14040,6 +14295,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const used = turnInput.providerThread.nativeMetadata?.claudeAttachmentBudget;
               pdfBudgets.set(nativeThreadId, makeClaudeAttachmentBudget(used));
             }
+            if (!deliveredAppContext.has(nativeThreadId)) {
+              const recorded = turnInput.providerThread.nativeMetadata?.claudeDeliveredAppContext;
+              if (recorded !== undefined) {
+                deliveredAppContext.set(nativeThreadId, new Map(Object.entries(recorded)));
+              }
+            }
             if (!appliedSessionTitles.has(nativeThreadId)) {
               const recordedTitle = turnInput.providerThread.nativeMetadata?.title;
               if (recordedTitle !== undefined && recordedTitle !== null) {
@@ -14097,7 +14358,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       Effect.map((message) => {
                         const withContext = withClaudeAppContext(
                           message,
-                          appContext.filter((entry) => delivered?.get(entry.key) !== entry.text),
+                          unseenClaudeAppContext(appContext, delivered),
                           pdfReservation,
                         );
                         appContextSent = withContext !== message;
@@ -14260,9 +14521,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               offerCommitted = true;
               pdfReservation.commit();
               if (appContextSent) {
-                context.appContextOffered = new Map(
-                  appContext.map((entry) => [entry.key, entry.text]),
-                );
+                context.appContextOffered = claudeAppContextDigests(appContext);
               }
             };
             const offerUserMessage =
@@ -14666,16 +14925,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               currentTurn.appContextOffered ?? deliveredAppContext.get(existing.nativeThreadId);
             const userMessage = withClaudeAppContext(
               steerMessage,
-              appContext.filter((entry) => seenAppContext?.get(entry.key) !== entry.text),
+              unseenClaudeAppContext(appContext, seenAppContext),
               pdfReservation,
             );
             // `offer` may call this twice; a second call must not restore notes compaction cleared.
             let offerCommitted = false;
             const appContextBefore = currentTurn.appContextOffered;
             const appContextOffered =
-              userMessage === steerMessage
-                ? undefined
-                : new Map(appContext.map((entry) => [entry.key, entry.text]));
+              userMessage === steerMessage ? undefined : claudeAppContextDigests(appContext);
             const commitOffer = () => {
               if (offerCommitted) return;
               offerCommitted = true;
@@ -15398,7 +15655,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const nativeThreadId = yield* getNativeThreadId(rollbackInput.providerThread);
               yield* closeLiveQueryForNativeThread(nativeThreadId);
               // The rewound history may no longer hold the turns that carried app notes.
-              deliveredAppContext.delete(nativeThreadId);
+              deliveredAppContext.set(nativeThreadId, new Map());
               const now = yield* DateTime.now;
               const resumeSessionAt = yield* resolveClaudeRollbackResumeSessionAt(rollbackInput);
 
@@ -15427,9 +15684,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 };
               }
 
+              const { claudeDeliveredAppContext: _delivered, ...nativeMetadata } =
+                rollbackInput.providerThread.nativeMetadata ?? {};
               return {
                 providerThread: {
                   ...rollbackInput.providerThread,
+                  ...(rollbackInput.providerThread.nativeMetadata === null
+                    ? {}
+                    : { nativeMetadata }),
                   providerSessionId: input.providerSessionId,
                   nativeConversationHeadRef:
                     resumeSessionAt === null
