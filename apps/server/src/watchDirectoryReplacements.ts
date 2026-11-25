@@ -106,9 +106,6 @@ export const watchDirectoryPath = (
     Stream.unwrap(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const link = yield* fs.readLink(entry).pipe(Effect.option);
-        if (Option.isNone(link)) return watchChild;
-
         let childEnded = false;
         const watchContents = Stream.suspend(() => {
           childEnded = false;
@@ -121,11 +118,19 @@ export const watchDirectoryPath = (
           );
         });
 
-        // One stat per second for linked paths catches ancestor replacements the watches cannot see.
-        const identity = fs.stat(entry).pipe(
-          Effect.map(
-            (info) =>
-              `${info.dev}:${info.ino.valueOrUndefined}:${info.birthtime.valueOrUndefined?.getTime()}`,
+        // One probe per second catches replacements the watches cannot see: a link target's
+        // ancestors, or the entry becoming a link before macOS has armed the parent watch.
+        // A plain or missing entry probes as null, a link whose target is missing as "", and a
+        // link as its target's identity and its text.
+        const identity = fs.readLink(entry).pipe(
+          Effect.flatMap((link) =>
+            fs.stat(entry).pipe(
+              Effect.map(
+                (info) =>
+                  `${info.dev}:${info.ino.valueOrUndefined}:${info.birthtime.valueOrUndefined?.getTime()}:${link}`,
+              ),
+              Effect.orElseSucceed(() => ""),
+            ),
           ),
           Effect.orElseSucceed(() => null),
         );
@@ -141,7 +146,7 @@ export const watchDirectoryPath = (
               Stream.mapEffect(([current, tick]) =>
                 Effect.gen(function* () {
                   // A catalog read can see the path missing even if both probes see the same inode.
-                  const sawMissing = current !== null && (yield* consumeMissingObservation);
+                  const sawMissing = Boolean(current) && (yield* consumeMissingObservation);
                   const replaced = previous !== undefined && current !== previous;
                   const firstProbe = previous === undefined;
                   previous = current;
@@ -152,7 +157,7 @@ export const watchDirectoryPath = (
                   }
                   if (firstProbe) return false;
                   if (replaced || sawMissing) return true;
-                  if (!childEnded || current === null || tick < nextRetry) return false;
+                  if (!childEnded || !current || tick < nextRetry) return false;
 
                   // A stable inode can stay unwatchable due to permissions or OS watch limits.
                   retryDelay = Math.min(60, retryDelay * 2);
@@ -172,7 +177,15 @@ export const watchDirectoryPath = (
                   previous = acquired;
                 }),
               ),
-              Effect.andThen(resolveLinkedPath(entry, link.value)),
+              Effect.andThen(fs.readLink(entry).pipe(Effect.option)),
+              Effect.flatMap((link) => {
+                if (Option.isSome(link)) return resolveLinkedPath(entry, link.value);
+                // Watched as plain, so the next probe that reads a link rebuilds.
+                return Effect.sync(() => {
+                  previous = null;
+                  return entry;
+                });
+              }),
               Effect.map((target) => {
                 if (target === entry || target === NodePath.dirname(target)) return watchContents;
                 return watchDirectoryReplacements(
