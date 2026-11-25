@@ -557,6 +557,7 @@ describe("parseResolvedPath", () => {
 const WSL_EXE = "/windows/System32/wsl.exe";
 const STORE_SERVICE = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\WSLService";
 const INBOX_SERVICE = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\LxssManager";
+const SERVICES_ROOT = "HKLM\\SYSTEM\\CurrentControlSet\\Services";
 
 const registrySpawner = (keys: ReadonlyArray<string>) =>
   ChildProcessSpawner.make((command) =>
@@ -570,7 +571,7 @@ const registrySpawner = (keys: ReadonlyArray<string>) =>
           ChildProcessSpawner.ExitCode(
             command._tag === "StandardCommand" &&
               command.command === "reg.exe" &&
-              keys.some((key) => command.args.includes(key))
+              [SERVICES_ROOT, ...keys].some((key) => command.args.includes(key))
               ? 0
               : 1,
           ),
