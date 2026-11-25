@@ -4,6 +4,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -34,7 +35,7 @@ const skill = NodeFS.readFileSync(skillFile, "utf8")
   .replace(/^---\n[\s\S]*?\n---\n/, "")
   .trim();
 const selected = values.case ? cases.filter((entry) => values.case!.includes(entry.id)) : cases;
-const proxy = proxyConfig();
+const proxy = await Effect.runPromise(proxyConfig().pipe(Effect.provide(NodeServices.layer)));
 
 const Row = Schema.Struct({
   model: Schema.String,

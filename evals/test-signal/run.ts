@@ -7,6 +7,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -39,7 +40,7 @@ const instructions = NodeFS.readFileSync(checkFile, "utf8")
 const words = instructions.split(/\s+/).length;
 const promptHash = NodeCrypto.createHash("sha256").update(instructions).digest("hex").slice(0, 12);
 const selected = values.case ? cases.filter((entry) => values.case!.includes(entry.id)) : cases;
-const proxy = proxyConfig();
+const proxy = await Effect.runPromise(proxyConfig().pipe(Effect.provide(NodeServices.layer)));
 
 const git = (args: ReadonlyArray<string>) => {
   const result = NodeChildProcess.spawnSync("git", args, {
