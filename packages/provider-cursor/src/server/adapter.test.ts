@@ -1542,6 +1542,19 @@ describe("CursorAdapterV2", () => {
           prefix: "cursor-v2-restart-",
         });
         const sentMessages: Array<string> = [];
+        const runningRuns: Array<
+          Deferred.Deferred<"finished" | "cancelled", CursorAgentSdk.CursorAgentSdkRunnerError>
+        > = [];
+        // Like the worker's teardown at shutdown, fail the run still in flight.
+        const failRunningRuns = Effect.forEach(runningRuns, (ended) =>
+          Deferred.fail(
+            ended,
+            new CursorAgentSdk.CursorAgentSdkRunnerError({
+              method: "run.wait",
+              cause: new Error("Cursor SDK session was closed."),
+            }),
+          ),
+        ).pipe(Effect.asVoid);
         const instanceId = ProviderInstanceId.make("cursor");
         const threadId = ThreadId.make("cursor-restart-thread");
         const modelSelection = { instanceId, model: "composer-2.5" };
@@ -1571,7 +1584,11 @@ describe("CursorAdapterV2", () => {
                       typeof input.message === "string" ? input.message : input.message.text,
                     );
                     const runId = `native-cursor-run-${sentMessages.length}`;
-                    const ended = yield* Deferred.make<"finished" | "cancelled">();
+                    const ended = yield* Deferred.make<
+                      "finished" | "cancelled",
+                      CursorAgentSdk.CursorAgentSdkRunnerError
+                    >();
+                    runningRuns.push(ended);
                     return {
                       agentId: "native-cursor-restart",
                       runId,
@@ -1640,21 +1657,30 @@ describe("CursorAdapterV2", () => {
         });
         const question = "How many integers below 100000 are divisible by exactly two of 3, 5, 7?";
 
-        // Before the restart: the question is still thinking when the server process dies.
-        const before = yield* makeAdapter;
-        const beforeRuntime = yield* before.openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make("cursor-restart-session-1"),
-          modelSelection,
-          runtimePolicy,
-        });
-        const providerThread = yield* beforeRuntime.ensureThread({
-          threadId,
-          modelSelection,
-          runtimePolicy,
-        });
-        yield* beforeRuntime.startTurn(turnInput(providerThread, 1, question));
-        assert.lengthOf(sentMessages, 1);
+        // Before the restart: the question is still thinking when the server shuts down.
+        const providerThread = yield* Effect.gen(function* () {
+          const before = yield* makeAdapter;
+          const beforeRuntime = yield* before.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make("cursor-restart-session-1"),
+            modelSelection,
+            runtimePolicy,
+          });
+          const providerThread = yield* beforeRuntime.ensureThread({
+            threadId,
+            modelSelection,
+            runtimePolicy,
+          });
+          yield* beforeRuntime.startTurn(turnInput(providerThread, 1, question));
+          assert.lengthOf(sentMessages, 1);
+          // Shutdown fails the run before the session's scope closes.
+          yield* failRunningRuns;
+          yield* beforeRuntime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runDrain,
+          );
+          return providerThread;
+        }).pipe(Effect.scoped);
 
         // After the restart: a new process resumes the agent and sends the continuation.
         const after = yield* makeAdapter;

@@ -1118,7 +1118,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly message: string | SDKUserMessage;
           readonly runtimeInstructions: string | undefined;
         } | null>(null);
-        // A restart wipes interruptedPrompt before the run ends, so each sent prompt is also kept on disk.
+        // A restart wipes interruptedPrompt, so the restart continuation reads the sent prompt from disk.
         const sentPromptPath = (agent: string) =>
           path.join(
             host.paths.stateDir,
@@ -2679,7 +2679,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               input.context.session.runCheckpointed?.(input.context.run.runId) ??
               Effect.succeed(false)
             ).pipe(Effect.orElseSucceed(() => false)));
-          if (input.status !== "interrupted" && input.context.prompt !== undefined) {
+          // A dropped prompt stays for the restart continuation; shutdown fails the run first.
+          if (
+            input.status !== "interrupted" &&
+            !promptDropped &&
+            input.context.prompt !== undefined
+          ) {
             yield* forgetSentPrompt(input.context.run.agentId);
           }
           yield* emitProviderEvent({
@@ -3047,7 +3052,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const interrupted =
               remembered?.agent === agent.nativeThreadId
                 ? remembered
-                : yield* readSentPrompt(agent.nativeThreadId);
+                : turnInput.restartContinuationOfRunId !== undefined
+                  ? yield* readSentPrompt(agent.nativeThreadId)
+                  : null;
             const runCheckpointed = (runId?: string) =>
               agent.session.runCheckpointed?.(runId) ?? Effect.succeed(false);
             const dropped =
