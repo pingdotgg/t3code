@@ -748,11 +748,24 @@ function ThreadDetailBody(
     props.selectedThread.pendingBackgroundTasks,
     messages,
   );
+  const extensionProvider = props.extensionStatuses?.length
+    ? props.serverConfig?.providers.find(
+        (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
+      )
+    : undefined;
   const extensionStatus = props.extensionStatuses?.length
     ? {
-        label: `Pi · ${props.extensionStatuses.map((status) => status.text).join(" · ")}`,
+        label: [
+          extensionProvider?.displayName,
+          ...props.extensionStatuses.map((status) => status.text),
+        ]
+          .filter(Boolean)
+          .join(" · "),
         onPress: () =>
-          Dialog.alert("Pi", props.extensionStatuses?.map((status) => status.text).join("\n\n")),
+          Dialog.alert(
+            extensionProvider?.displayName ?? gt("Provider"),
+            props.extensionStatuses?.map((status) => status.text).join("\n\n"),
+          ),
       }
     : null;
   const backgroundLine = ((): ThreadStatusLineModel | null => {

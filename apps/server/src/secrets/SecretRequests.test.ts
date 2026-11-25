@@ -5,6 +5,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   OrchestratorMcpRequestSecretInput,
   ProjectId,
+  ProviderSessionId,
+  ProviderThreadId,
   type OrchestrationV2ServerCommand,
   SecretProviderId,
   SecretProviderKind,
@@ -27,9 +29,11 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "./SecretRequests.ts";
 
@@ -76,7 +80,10 @@ const withService = <A, E>(
   }) => Effect.Effect<A, E>,
   options: {
     readonly threadId?: ThreadId;
-    readonly delivery?: "file";
+    readonly delivery?: "file" | "provider";
+    readonly onProviderAnswer?: NonNullable<
+      import("@t3tools/provider-core/server/ProviderAdapter").ProviderAdapterV2SessionRuntime["respondToPrivateInput"]
+    >;
     readonly fields?: ReadonlyArray<{ readonly name: string; readonly label: string }>;
     readonly directory?: string;
     readonly runStatus?: string;
@@ -93,10 +100,20 @@ const withService = <A, E>(
     let secretStatus = "pending";
     let failedRecords = options.failedRecords ?? 0;
     const requestThreadId = options.threadId ?? threadId;
+    const providerThreadId = ProviderThreadId.make("secret-provider-thread");
+    const providerSessionId = ProviderSessionId.make("secret-provider-session");
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       NodeServices.layer,
       options.resolver ?? fakeVault().layer,
+      Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+        get: (id) =>
+          Effect.succeed(
+            id === providerSessionId && options.onProviderAnswer
+              ? Option.some({ respondToPrivateInput: options.onProviderAnswer } as never)
+              : Option.none(),
+          ),
+      }),
       Layer.succeed(
         ServerSecretStore.ServerSecretStore,
         ServerSecretStore.ServerSecretStore.of({
@@ -146,12 +163,14 @@ const withService = <A, E>(
             Effect.as({
               thread: { projectId },
               runs: [{ id: "run-1", status: options.runStatus ?? "running" }],
+              providerThreads: [{ id: providerThreadId, providerSessionId }],
               turnItems: [
                 {
                   id: turnItemId,
                   threadId: requestThreadId,
                   runId: "run-1",
                   nodeId: "node-root",
+                  providerThreadId,
                   type: "secret_request",
                   label: "GitHub token",
                   reason: "Used as GH_TOKEN.",
@@ -193,6 +212,36 @@ const valuesOf = (stored: Map<string, Uint8Array>) =>
   Array.from(stored.entries())
     .filter(([name]) => name !== "secret-request-salt")
     .map(([, bytes]) => new TextDecoder().decode(bytes));
+
+it.effect(
+  "delivers provider form values only to the owning session without storing or dispatching them",
+  () => {
+    const submitted = { token: " private-fixture ", choices: ["a", "b"] };
+    const received: unknown[] = [];
+    return withService(
+      ({ service, stored, dispatched }) =>
+        Effect.gen(function* () {
+          const input = {
+            threadId,
+            turnItemId,
+            answer: { type: "provider" as const, values: Redacted.make(submitted) },
+          };
+          const rejected = yield* service
+            .answer({ ...input, answer: { type: "save", secret: "wrong channel" } })
+            .pipe(Effect.flip);
+          assert.equal(rejected.reason, "fields_mismatch");
+          yield* service.answer(input);
+          assert.deepEqual(received, [{ itemId: turnItemId, values: submitted }]);
+          assert.deepEqual(valuesOf(stored), []);
+          assert.deepEqual(dispatched, []);
+        }),
+      {
+        delivery: "provider",
+        onProviderAnswer: (answer) => Effect.sync(() => void received.push(answer)),
+      },
+    );
+  },
+);
 
 it.effect("a saved answer becomes a one-use ref, and the thread only learns it was saved", () =>
   withService(({ service, stored, dispatched }) =>

@@ -23,12 +23,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as Metrics from "../observability/Metrics.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 
 const SECRET_REF_PREFIX = "secret-ref:";
@@ -53,7 +55,7 @@ const fieldNames = (item: SecretRequestItem): ReadonlyArray<FieldName> =>
 /** The answer's value per field, or undefined when it does not answer exactly those fields. */
 function answerValues(
   item: SecretRequestItem,
-  answer: Exclude<SecretRequestAnswerInput["answer"], { readonly type: "decline" }>,
+  answer: Extract<SecretRequestAnswerInput["answer"], { readonly type: "save" }>,
 ): ReadonlyArray<readonly [FieldName, string]> | undefined {
   if (item.fields === undefined)
     return "secret" in answer ? [[undefined, answer.secret]] : undefined;
@@ -105,6 +107,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+  const sessions = yield* Effect.serviceOption(ProviderSessionManager.ProviderSessionManagerV2);
   const resolver = yield* SecretResolver.SecretResolver;
   // Beside the store's own files so the same owner-only directory and cleanup rules apply.
   const filesDir = store.directory === undefined ? undefined : path.join(store.directory, "files");
@@ -162,7 +165,7 @@ const make = Effect.gen(function* () {
       "secret_request.answer": input.answer.type,
     });
     const records = yield* threadManagement
-      .getThreadRecords(input.threadId, ["runs", "turnItems"], {
+      .getThreadRecords(input.threadId, ["runs", "turnItems", "providerThreads"], {
         turnItemTypes: ["secret_request"],
         messageRoles: [],
       })
@@ -178,13 +181,40 @@ const make = Effect.gen(function* () {
     if (run === undefined || ThreadManagementService.isTerminalRunStatus(run.status)) {
       return yield* new SecretRequestError({ reason: "agent_stopped" });
     }
+    if (item.delivery === "provider") {
+      const answer = input.answer;
+      if (answer.type !== "provider" && answer.type !== "decline") {
+        return yield* new SecretRequestError({ reason: "fields_mismatch" });
+      }
+      const providerThread = records.providerThreads.find(
+        (thread) => thread.id === item.providerThreadId,
+      );
+      const sessionId = providerThread?.providerSessionId;
+      if (!sessionId || Option.isNone(sessions)) {
+        return yield* new SecretRequestError({ reason: "agent_stopped" });
+      }
+      const session = yield* sessions.value
+        .get(sessionId)
+        .pipe(Effect.mapError(() => new SecretRequestError({ reason: "agent_stopped" })));
+      const respond = Option.isSome(session) ? session.value.respondToPrivateInput : undefined;
+      if (!respond) return yield* new SecretRequestError({ reason: "agent_stopped" });
+      return yield* respond({
+        itemId: item.id,
+        ...(answer.type === "provider" ? { values: Redacted.value(answer.values) } : {}),
+      }).pipe(Effect.mapError(() => new SecretRequestError({ reason: "provider_rejected" })));
+    }
+    if (input.answer.type === "provider") {
+      return yield* new SecretRequestError({ reason: "fields_mismatch" });
+    }
     // Create before recording so racing answers cannot overwrite values or show saved before storage.
     // Existing values on pending cards finish earlier saves whose recording failed.
     const values =
       input.answer.type === "decline"
         ? undefined
-        : input.answer.type === "reference" && item.fields === undefined
-          ? [[undefined, yield* readReference(input.answer.reference)] as const]
+        : input.answer.type === "reference"
+          ? item.fields === undefined
+            ? [[undefined, yield* readReference(input.answer.reference)] as const]
+            : yield* new SecretRequestError({ reason: "fields_mismatch" })
           : (answerValues(item, input.answer) ??
             (yield* new SecretRequestError({ reason: "fields_mismatch" })));
     if (values !== undefined) {

@@ -330,7 +330,7 @@ const layerWorkflowsProvided = WorkflowRuntime.layer.pipe(
   Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
 );
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
-  Layer.provide(layerThreadManagementProvided),
+  Layer.provide(Layer.merge(layerThreadManagementProvided, layerProviderSessionManagerProvided)),
 );
 // Cards are shown from /mcp and answered over WebSocket; one instance serializes both.
 const layerFeedbackStoreProvided = FeedbackStore.layer.pipe(

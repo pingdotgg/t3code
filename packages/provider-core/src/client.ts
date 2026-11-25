@@ -44,6 +44,8 @@ export interface ProviderClientDefinition {
   readonly badgeLabel?: string;
   /** `false` lists the provider under Add provider's "Show more" instead of up front. */
   readonly featured?: boolean;
+  /** Keep client metadata for saved instances without offering the driver in Add provider. */
+  readonly legacyOnly?: boolean;
   /** ACP Registry entries for this same agent, left out of Add provider's Registry list. */
   readonly acpRegistryAgentIds?: ReadonlyArray<string>;
 }

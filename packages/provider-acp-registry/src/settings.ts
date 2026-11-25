@@ -1,4 +1,10 @@
-import { CustomModelSetting, TrimmedString, makeProviderSettingsSchema } from "@t3tools/contracts";
+import {
+  CustomModelSetting,
+  ProviderDriverKind,
+  TrimmedString,
+  makeBinaryPathSetting,
+  makeProviderSettingsSchema,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -68,3 +74,23 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
   },
 );
 export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;
+
+export const OMP_PROVIDER = ProviderDriverKind.make("omp");
+
+export const OmpSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("omp").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        providerSettingsForm: { placeholder: "omp", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: AcpRegistrySettings.fields.customModels,
+  },
+  { order: ["binaryPath"] },
+);
+export type OmpSettings = typeof OmpSettings.Type;

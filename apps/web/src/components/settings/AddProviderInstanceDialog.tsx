@@ -71,7 +71,7 @@ const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const DEFAULT_DRIVER_OPTION = providerClients.definitions[0]!;
 const DRIVER_OPTIONS = providerClients.definitions.filter(
-  (option) => option.driverKind !== ACP_REGISTRY_DRIVER_KIND,
+  (option) => option.driverKind !== ACP_REGISTRY_DRIVER_KIND && !option.legacyOnly,
 );
 const FEATURED_DRIVER_OPTIONS = DRIVER_OPTIONS.filter((option) => option.featured !== false);
 const MORE_DRIVER_OPTIONS = DRIVER_OPTIONS.filter((option) => option.featured === false);

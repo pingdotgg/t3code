@@ -9,6 +9,26 @@ Agents that T3 Code supports as their own providers, such as Codex, Claude, Curs
 Pi, and [Antigravity](./providers-antigravity.md), don't appear in the Registry list. Enable them in
 **Settings → Providers** instead.
 
+## Oh My Pi
+
+Add **Oh My Pi** in **Settings → Providers**. New threads use native RPC and require `omp` 19.1
+or later on the machine hosting your T3 Code server. Sign in from the provider settings or run
+`omp login` on that machine. Existing Oh My Pi ACP instances and their threads continue to use ACP.
+
+Use `/goal <objective>` to start, `/goal` to show the current goal, and `/goal pause`, `/goal resume`,
+or `/goal clear` to manage it. To set a token budget, use `/goal --budget <tokens> <objective>`.
+In the same thread, type `/skill:` to find and run a Skill available in that workspace.
+
+Type `/omp:` in the composer to find Oh My Pi controls for side questions, subagents, and todos.
+While a turn is running, use **Steer now** to send subagent instructions or manage Oh My Pi's
+native queue. Regular **Queue** keeps messages in T3 Code until the turn finishes. Stopping an Oh My Pi
+turn withdraws its pending native messages. Select **Restore to draft** on the recovery card to append
+the messages and available images to your draft.
+
+Extensions can open forms and masked password inputs in the thread. Submit only to extensions you
+trust. T3 Code sends the entered values directly to the requesting extension and keeps them out of
+chat history.
+
 T3 Code prefers the current ACP v2 preview protocol and uses its richer messages, usage, plans,
 configuration, compaction, and agent-terminal updates when the agent supports them. It also
 negotiates ACP v1 for Registry agents that have not migrated yet, so they continue to work through
@@ -96,10 +116,10 @@ running. Commands the agent names with a `$` prefix appear in T3 Code's `$` skil
 
 ## Native sessions
 
-When an agent advertises ACP session listing and import support, expand its provider card,
-choose a project, and select **List sessions**. Importing one creates a deterministic T3 thread
-backed by that native session. Importing the same agent session again returns the existing thread,
-including when another client performs the import.
+When an agent supports native session import, expand its provider card, choose a project, and
+select **List sessions**. Oh My Pi lists saved RPC sessions from the selected project. Importing a
+session opens it as a T3 thread with its existing history. Importing it again returns the same
+thread, including when another client performs the import.
 
 The thread keeps the native session's title and last-update value as provider metadata without
 overwriting a title you set in T3 Code. Agents that report ACP context usage drive the thread details

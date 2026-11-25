@@ -48,7 +48,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import { AuthMcpClientAccess } from "./auth.ts";
-import { ChatAttachment } from "./chatAttachment.ts";
+import { ChatAttachment, ChatImageAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import { ThreadTitleRegenerationOutcome } from "./threadTitle.ts";
@@ -1765,6 +1765,18 @@ export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
 
 /** Notices without a level predate it and are warnings. */
+export const OrchestrationV2RecoveredQueue = Schema.Struct({
+  entries: Schema.Array(
+    Schema.Struct({
+      text: Schema.String,
+      attachments: Schema.Array(ChatImageAttachment),
+    }),
+  ),
+  imagesDropped: Schema.Boolean,
+  truncated: Schema.Boolean,
+});
+export type OrchestrationV2RecoveredQueue = typeof OrchestrationV2RecoveredQueue.Type;
+
 const OrchestrationV2SystemNoticeLevel = Schema.Literals(["info", "warning", "error"]);
 
 /** A notice about an MCP server that a sign-in from the thread would fix. */
@@ -1832,7 +1844,7 @@ export const OrchestrationV2SecretRequestStatus = Schema.Literals([
 export type OrchestrationV2SecretRequestStatus = typeof OrchestrationV2SecretRequestStatus.Type;
 
 /** `file`: the value goes to an owner-only file the agent's shell commands can read. */
-export const OrchestrationV2SecretRequestDelivery = Schema.Literal("file");
+export const OrchestrationV2SecretRequestDelivery = Schema.Literals(["file", "provider"]);
 
 /** One input of a multi-value card. `secret: false` shows what the user types, such as an email. */
 export const OrchestrationV2SecretRequestField = Schema.Struct({
@@ -1840,6 +1852,19 @@ export const OrchestrationV2SecretRequestField = Schema.Struct({
   label: TrimmedNonEmptyString,
   placeholder: Schema.optional(Schema.String),
   secret: Schema.optional(Schema.Boolean),
+  required: Schema.optional(Schema.Boolean),
+  multiline: Schema.optional(Schema.Boolean),
+  initialValue: Schema.optional(Schema.String),
+  initialChoices: Schema.optional(Schema.Array(Schema.String)),
+  multiple: Schema.optional(Schema.Boolean),
+  choices: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        label: Schema.String,
+        value: Schema.String,
+      }),
+    ),
+  ),
 });
 export type OrchestrationV2SecretRequestField = typeof OrchestrationV2SecretRequestField.Type;
 
@@ -2044,6 +2069,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("system_notice"),
     message: Schema.String,
     level: Schema.optional(OrchestrationV2SystemNoticeLevel),
+    recoveredQueue: Schema.optional(OrchestrationV2RecoveredQueue),
     mcpSignIn: Schema.optional(OrchestrationV2McpSignIn),
   }),
   Schema.Struct({
@@ -2941,6 +2967,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("system_notice"),
     message: Schema.String,
     level: Schema.optional(OrchestrationV2SystemNoticeLevel),
+    recoveredQueue: Schema.optional(OrchestrationV2RecoveredQueue),
     mcpSignIn: Schema.optional(OrchestrationV2McpSignIn),
   }),
   Schema.Struct({

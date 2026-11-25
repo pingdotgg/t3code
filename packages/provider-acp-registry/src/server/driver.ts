@@ -8,7 +8,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { AcpRegistrySettings } from "../settings.ts";
+import { AcpRegistrySettings, OMP_PROVIDER, OmpSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Clock from "effect/Clock";
@@ -27,11 +27,16 @@ import * as Semaphore from "effect/Semaphore";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import { AcpRegistryAdapterV2Driver, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
+import {
+  ACP_REGISTRY_PROVIDER,
+  createAcpRegistryAdapter,
+  type AcpRegistryAdapterV2DriverEnv,
+} from "./adapter.ts";
 import { makeAcpRegistryTextGeneration } from "./textGeneration.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -72,8 +77,8 @@ import {
   withAcpRegistryLearnedModelOptions,
 } from "./learnedModelOptions.ts";
 
-const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
+const decodeOmpSettings = Schema.decodeSync(OmpSettings);
 // Cache only successful authenticated probes so sign-in changes remain visible.
 const PROBE_SUCCESS_TTL_MS = 15 * 60 * 1_000;
 const PROBE_PROVISIONAL_TTL_MS = 30 * 1_000;
@@ -140,10 +145,6 @@ export function updateAcpRegistryEnrichmentCache(input: {
   };
 }
 const EMPTY_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
-const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
-  provider: DRIVER_KIND,
-  packageName: null,
-});
 
 function modelsFromDiscovery(
   discovery:
@@ -263,6 +264,7 @@ function acpRegistrySnapshotReadiness(
 }
 
 interface SnapshotIdentity {
+  readonly driverKind?: ProviderDriverKind;
   readonly instanceId: ProviderInstance["instanceId"];
   readonly displayName: string | undefined;
   readonly accentColor: string | undefined;
@@ -290,7 +292,7 @@ function baseSnapshot(
         officialAcpRegistryIconUrlForAgentId(input.settings.agentId));
   return {
     instanceId: input.instanceId,
-    driver: DRIVER_KIND,
+    driver: input.driverKind ?? ACP_REGISTRY_PROVIDER,
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     ...(iconUrl ? { iconUrl } : {}),
@@ -433,8 +435,8 @@ const buildInitialAcpRegistrySnapshot = Effect.fn("AcpRegistryDriver.buildInitia
       status: "warning",
       auth: { status: "unknown" },
       message: input.settings.enabled
-        ? "Checking ACP Registry agent readiness..."
-        : "ACP Registry is disabled in T3 Code settings.",
+        ? `Checking ${input.driverKind === OMP_PROVIDER ? "Oh My Pi" : "ACP Registry agent"} readiness...`
+        : `${input.driverKind === OMP_PROVIDER ? "Oh My Pi" : "ACP Registry"} is disabled in T3 Code settings.`,
     });
   },
 );
@@ -612,14 +614,12 @@ export type AcpRegistryDriverEnv =
   | Digest.Digest
   | ProviderHost.ProviderHost;
 
-export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryDriverEnv> = {
-  driverKind: DRIVER_KIND,
-  metadata: {
-    displayName: "ACP Registry",
-    snapshotOmitsDisplayName: true,
-    supportsMultipleInstances: true,
-    hasDefaultInstance: false,
-  },
+const makeAcpProviderDriver = (
+  driverKind: ProviderDriverKind,
+  metadata: ProviderDriver<AcpRegistrySettings>["metadata"],
+): ProviderDriver<AcpRegistrySettings, AcpRegistryDriverEnv> => ({
+  driverKind,
+  metadata,
   configSchema: AcpRegistrySettings,
   defaultConfig: () => decodeSettings({}),
   create: Effect.fn("AcpRegistryDriver.create")(function* ({
@@ -649,11 +649,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const path = yield* Path.Path;
     const hostEnvironment = yield* HostProcess.Environment;
     const host = yield* ProviderHost.ProviderHost;
-    const continuationIdentity = defaultProviderContinuationIdentity({
-      driverKind: DRIVER_KIND,
-      instanceId,
-    });
+    const continuationIdentity = defaultProviderContinuationIdentity({ driverKind, instanceId });
     const identity = {
+      driverKind,
       instanceId,
       displayName,
       accentColor,
@@ -664,18 +662,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       environment,
       hostEnvironment,
     );
-    const orchestrationAdapter = yield* AcpRegistryAdapterV2Driver.create({
-      instanceId,
-      displayName,
-      accentColor,
-      environment,
-      enabled,
-      config,
-    }).pipe(
+    const orchestrationAdapter = yield* createAcpRegistryAdapter(
+      { instanceId, displayName, accentColor, environment, enabled, config },
+      driverKind,
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new ProviderDriverError({
-            driver: DRIVER_KIND,
+            driver: driverKind,
             instanceId,
             detail: "Failed to build ACP Registry orchestration adapter.",
             cause,
@@ -988,7 +982,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const snapshot = yield* makeManagedServerProvider<
       ProviderSnapshotSettings<AcpRegistrySettings>
     >({
-      resolveMaintenance: () => Effect.succeed(MAINTENANCE),
+      resolveMaintenance: () =>
+        Effect.succeed(
+          makeManualOnlyProviderMaintenanceCapabilities({
+            provider: driverKind,
+            packageName: null,
+          }),
+        ),
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
@@ -1164,7 +1164,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       Effect.mapError(
         (cause) =>
           new ProviderDriverError({
-            driver: DRIVER_KIND,
+            driver: driverKind,
             instanceId,
             detail: "Failed to build the ACP Registry provider snapshot.",
             cause,
@@ -1228,7 +1228,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
 
     return {
       instanceId,
-      driverKind: DRIVER_KIND,
+      driverKind,
       continuationIdentity,
       displayName,
       accentColor,
@@ -1375,5 +1375,37 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         },
       },
     } satisfies ProviderInstance;
+  }),
+});
+
+export const AcpRegistryDriver = makeAcpProviderDriver(ACP_REGISTRY_PROVIDER, {
+  displayName: "ACP Registry",
+  snapshotOmitsDisplayName: true,
+  supportsMultipleInstances: true,
+  hasDefaultInstance: false,
+});
+
+const ompAcpDriver = makeAcpProviderDriver(OMP_PROVIDER, {
+  displayName: "Oh My Pi (ACP)",
+  supportsMultipleInstances: true,
+  hasDefaultInstance: false,
+});
+
+export const OmpDriver: ProviderDriver<OmpSettings, AcpRegistryDriverEnv> = {
+  driverKind: ompAcpDriver.driverKind,
+  metadata: ompAcpDriver.metadata,
+  configSchema: OmpSettings,
+  defaultConfig: () => decodeOmpSettings({}),
+  create: Effect.fn("OmpDriver.create")(function* (input) {
+    const home = yield* HostProcess.HomeDirectory;
+    return yield* ompAcpDriver.create({
+      ...input,
+      config: decodeSettings({
+        source: "local",
+        commandPath: expandHomePath(input.config.binaryPath, home),
+        commandArgs: ["acp"],
+        customModels: input.config.customModels,
+      }),
+    });
   }),
 };

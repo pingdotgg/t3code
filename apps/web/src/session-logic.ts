@@ -261,7 +261,10 @@ const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"
 
 export function timelineEntryIsPersistentResourceCard(entry: TimelineEntry): boolean {
   return (
-    entry.kind === "event" && PERSISTENT_RESOURCE_V2_ITEM_TYPES.has(entry.projectedItem.item.type)
+    entry.kind === "event" &&
+    (PERSISTENT_RESOURCE_V2_ITEM_TYPES.has(entry.projectedItem.item.type) ||
+      (entry.projectedItem.item.type === "system_notice" &&
+        entry.projectedItem.item.recoveredQueue !== undefined))
   );
 }
 
@@ -725,7 +728,10 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       continue;
     }
 
-    if (STANDALONE_V2_ITEM_TYPES.has(item.type)) {
+    if (
+      STANDALONE_V2_ITEM_TYPES.has(item.type) ||
+      (item.type === "system_notice" && item.recoveredQueue)
+    ) {
       entries.push({
         id: item.id,
         kind: "event",

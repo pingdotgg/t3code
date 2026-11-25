@@ -860,6 +860,10 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly respondToRuntimeRequest: (
     input: ProviderAdapterV2RuntimeRequestResponseInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  readonly respondToPrivateInput?: (input: {
+    readonly itemId: OrchestrationV2TurnItem["id"];
+    readonly values?: Readonly<Record<string, string | ReadonlyArray<string>>>;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly readThreadSnapshot: (
     input: ProviderAdapterV2ReadThreadSnapshotInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;

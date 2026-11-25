@@ -7,6 +7,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  AcpRegistryOperationError,
   AuthAccessReadScope,
   AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
@@ -3032,16 +3033,17 @@ const makeAcpRegistryClient = Effect.fn("test.makeAcpRegistryClient")(function* 
     }),
     Layer.mock(AcpRegistrySessions.AcpRegistrySessions)({
       project: () => Effect.succeed({ workspaceRoot: "/workspace/acp" } as never),
-      sessionManager: () =>
-        Effect.succeed({
-          instance,
-          manager: {
-            listSessions: () =>
-              Effect.sync(() => calls.push("listSessions")).pipe(
-                Effect.as({ sessions: [], nextCursor: null }),
-              ),
-          } as unknown as NonNullable<ProviderInstance["acpSessionManagement"]>,
-        }),
+      listSessions: () =>
+        options.nativeSessions?.canList
+          ? Effect.sync(() => calls.push("listSessions")).pipe(
+              Effect.as({ instance, listed: { sessions: [], nextCursor: null } }),
+            )
+          : Effect.fail(
+              new AcpRegistryOperationError({
+                reason: "session_list_unsupported",
+                message: "The provider does not advertise native session listing.",
+              }),
+            ),
     }),
   );
   return yield* RpcTest.makeClient(acpSessionRpcs).pipe(

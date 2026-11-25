@@ -4,6 +4,8 @@ import {
   AcpRegistryOperationError,
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -34,6 +36,7 @@ import {
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
   isAcpRegistryCacheValid,
+  OmpDriver,
   updateAcpRegistryEnrichmentCache,
 } from "./driver.ts";
 import {
@@ -952,13 +955,27 @@ import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
 createInterface({ input: process.stdin }).on("line", (line) => {
-  const { id, method } = JSON.parse(line);
+  const { id, method, params } = JSON.parse(line);
   if (id === undefined) return;
   if (method === "initialize") {
+    const agentCapabilities = process.argv[3] === "resume" ? { loadSession: true } : {};
     send({
       id,
-      result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [], agentInfo: { name: "fake", version: "1.5.9" } },
+      result: { protocolVersion: 1, agentCapabilities, authMethods: [], agentInfo: { name: "fake", version: "1.5.9" } },
     });
+  } else if (method === "session/load") {
+    if (params.sessionId !== "saved-omp-acp-session") {
+      send({ id, error: { code: -32602, message: "Unknown fixture session" } });
+    } else {
+      send({ id, result: {} });
+      send({
+        method: "session/update",
+        params: {
+          sessionId: params.sessionId,
+          update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "Saved ACP transcript" } },
+        },
+      });
+    }
   } else if (method === "session/new") {
     const modelIds = JSON.parse(readFileSync(process.argv[2], "utf8"));
     send({
@@ -1070,6 +1087,80 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       expect(yield* instance.snapshot.getSnapshot).toMatchObject({
         installed: false,
         message: "Checking ACP Registry agent readiness...",
+      });
+    }),
+  );
+
+  it.effect("keeps model discovery and session resume for a saved Oh My Pi ACP instance", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "omp-driver-" });
+      const agentPath = path.join(directory, "agent.mjs");
+      const modelsPath = path.join(directory, "models.json");
+      const binaryPath = path.join(directory, "omp");
+      yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["test-model", "other-model"]));
+      const instanceId = ProviderInstanceId.make("omp");
+      const instance = yield* OmpDriver.create({
+        instanceId,
+        displayName: undefined,
+        enabled: true,
+        environment: [],
+        config: { ...OmpDriver.defaultConfig(), binaryPath },
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: binaryPath,
+            version: null,
+            distribution: "local",
+          }),
+          resolve: (settings) =>
+            Effect.sync(() => {
+              expect(settings).toMatchObject({
+                source: "local",
+                commandPath: binaryPath,
+                commandArgs: ["acp"],
+              });
+              return {
+                distribution: "local" as const,
+                spawn: { command: process.execPath, args: [agentPath, modelsPath, "resume"] },
+              };
+            }),
+        }),
+      );
+      const discovery = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.models.some((model) => model.slug === "test-model")),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.snapshot.refresh;
+      expect(Option.getOrThrow(yield* Fiber.join(discovery))).toMatchObject({
+        instanceId,
+        driver: "omp",
+        continuation: { groupKey: "omp:instance:omp" },
+        models: [
+          expect.objectContaining({ slug: "test-model" }),
+          expect.objectContaining({ slug: "other-model" }),
+        ],
+      });
+      const input = {
+        threadId: ThreadId.make("legacy-omp-thread"),
+        providerSessionId: ProviderSessionId.make("legacy-omp-runtime"),
+        modelSelection: { instanceId, model: "default" },
+        runtimePolicy: {
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: directory,
+        },
+        initialNativeThreadId: "saved-omp-acp-session",
+      } as const;
+      const runtime = yield* instance.orchestrationAdapter.openSession(input);
+      const thread = yield* runtime.ensureThread(input);
+      expect(thread.nativeThreadRef).toMatchObject({
+        driver: "omp",
+        nativeId: input.initialNativeThreadId,
       });
     }),
   );

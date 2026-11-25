@@ -286,7 +286,7 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
-const decodeSecretRequestAnswer = Schema.decodeUnknownSync(SecretRequestAnswerInput);
+const decodeSecretRequestAnswer = Schema.decodeUnknownSync(Schema.toType(SecretRequestAnswerInput));
 
 /**
  * A queued edit that omits `attachments` keeps the queued ones, which a payload cannot show;

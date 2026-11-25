@@ -66,6 +66,16 @@ export interface ProviderInstance {
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
   readonly auth?: ProviderAuthController;
+  readonly nativeSessionCatalog?: {
+    readonly listSessions: (input: {
+      readonly cwd: string;
+      readonly cursor?: string;
+    }) => Effect.Effect<AcpRegistryListSessionsResult, AcpRegistryOperationError>;
+    readonly validateSession: (input: {
+      readonly cwd: string;
+      readonly sessionId: string;
+    }) => Effect.Effect<void, AcpRegistryOperationError>;
+  };
   readonly acpSessionManagement?: {
     readonly listSessions: (input: {
       readonly cwd: string;

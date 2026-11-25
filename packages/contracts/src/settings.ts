@@ -1656,8 +1656,8 @@ export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | un
 
 // Must match each driver's enabled decoding default.
 const DEFAULT_DISABLED_PROVIDER_DRIVERS: ReadonlySet<ProviderDriverKind> = new Set(
-  ["cursor", "grok", "fx", "kiro", "muse", "pi", "opencode", "antigravity"].map((driver) =>
-    ProviderDriverKind.make(driver),
+  ["cursor", "grok", "fx", "kiro", "muse", "pi", "omp", "ompRpc", "opencode", "antigravity"].map(
+    (driver) => ProviderDriverKind.make(driver),
   ),
 );
 

@@ -25,6 +25,12 @@ export const SecretRequestAnswerInput = Schema.Struct({
       type: Schema.Literal("save"),
       values: Schema.Record(Schema.String, TrimmedNonEmptyString),
     }),
+    Schema.Struct({
+      type: Schema.Literal("provider"),
+      values: Schema.RedactedFromValue(
+        Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+      ),
+    }),
     Schema.Struct({ type: Schema.Literal("decline") }),
     /** Read once through a configured secret provider; only servers advertising `secretRequestReferences` accept it. */
     Schema.Struct({ type: Schema.Literal("reference"), reference: SecretReference }),
@@ -49,6 +55,7 @@ const SECRET_REQUEST_FAILURE_MESSAGES = {
   fields_mismatch: "This request asks for different values. Update the app and try again.",
   agent_stopped: "The agent that asked has stopped, so this secret can't be used.",
   store_failed: "Could not store the secret.",
+  provider_rejected: "The extension could not accept this answer. Check the fields and try again.",
   reference_unreadable: "Could not read the secret from the secret provider.",
   record_failed: "Saved the secret, but could not update the request.",
   invalid_ref: "That secretRef is not valid.",

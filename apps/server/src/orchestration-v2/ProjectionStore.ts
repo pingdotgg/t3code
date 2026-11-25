@@ -6911,7 +6911,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       from: number,
       through: number,
     ) {
-      const [messages, renders, answerFiles] = yield* Effect.all([
+      const [messages, renders, answerFiles, recoveredImages] = yield* Effect.all([
         sql<{ id: string }>`
       SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
       FROM orchestration_v2_projection_messages AS message,
@@ -6938,10 +6938,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         AND item.type = 'user_input_request'
         AND ${runOrdinalBetween("item.run_id", from, through)}
     `,
+        sql<{ id: string }>`
+      SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
+      FROM orchestration_v2_projection_turn_items AS item,
+        json_each(item.payload_json, '$.recoveredQueue.entries') AS entry,
+        json_each(entry.value, '$.attachments') AS attachment
+      WHERE item.thread_id = ${threadId}
+        AND item.type = 'system_notice'
+        AND ${runOrdinalBetween("item.run_id", from, through)}
+    `,
       ]);
       return [
         ...messages.map((row) => row.id),
         ...answerFiles.map((row) => row.id),
+        ...recoveredImages.map((row) => row.id),
         ...threadHtmlRenderAttachmentIds(
           threadId,
           renders.map((row) => {

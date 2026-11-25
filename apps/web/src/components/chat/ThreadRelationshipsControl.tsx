@@ -159,11 +159,13 @@ type RemoteSubagent = OrchestrationV2Subagent & {
   readonly remoteChild: OrchestrationV2RemoteTaskChild;
 };
 
-/** A task delegated to a linked environment has no thread here, so it gets its own row kind. */
-type LineageRow = ThreadRelationshipWalkRow | { readonly remote: RemoteSubagent };
+type LineageRow =
+  | ThreadRelationshipWalkRow
+  | { readonly remote: RemoteSubagent }
+  | { readonly native: OrchestrationV2Subagent };
 
 const lineageRowStatus = (row: LineageRow) =>
-  "remote" in row ? row.remote.status : row.edge.status;
+  "remote" in row ? row.remote.status : "native" in row ? row.native.status : row.edge.status;
 
 const isFinishedAgentStatus = (status: string | null | undefined) =>
   ["completed", "failed", "error", "cancelled", "interrupted", "idle"].includes(status ?? "");
@@ -653,6 +655,17 @@ export function ThreadRelationshipsPanel(props: {
       .map((remote) => ({ remote })),
     ({ remote }) => (isFinishedAgentStatus(remote.status) ? "remotePrevious" : "remoteActive"),
   );
+  const { nativeActive = [], nativePrevious = [] } = groupBy(
+    projected
+      .filter(
+        (agent) =>
+          agent.driver === "ompRpc" &&
+          agent.childThreadId === null &&
+          agent.remoteChild === undefined,
+      )
+      .map((native) => ({ native })),
+    ({ native }) => (isFinishedAgentStatus(native.status) ? "nativePrevious" : "nativeActive"),
+  );
   const groups: ReadonlyArray<{
     id: string;
     label: string | null;
@@ -660,11 +673,16 @@ export function ThreadRelationshipsPanel(props: {
     expanded: boolean;
   }> = [
     { id: "related", label: null, rows: related, expanded: true },
-    { id: "active", label: null, rows: [...active, ...remoteActive], expanded: true },
+    {
+      id: "active",
+      label: null,
+      rows: [...active, ...nativeActive, ...remoteActive],
+      expanded: true,
+    },
     {
       id: "previous",
       label: gt("Previous agents"),
-      rows: [...previous, ...remotePrevious],
+      rows: [...previous, ...nativePrevious, ...remotePrevious],
       expanded: false,
     },
   ];
@@ -684,6 +702,8 @@ export function ThreadRelationshipsPanel(props: {
       runningCount > 0 ||
       remoteActive.length > 0 ||
       remotePrevious.length > 0 ||
+      nativeActive.length > 0 ||
+      nativePrevious.length > 0 ||
       delegatedFrom !== undefined ||
       // Disconnect lives in this heading, so a thread with only side chats still shows it.
       (canDetach && sideChats.length > 0));
@@ -768,11 +788,11 @@ export function ThreadRelationshipsPanel(props: {
   };
 
   const stopSubagent = async (
-    childThreadId: ThreadId,
+    rowId: string,
     agent: Pick<OrchestrationV2Subagent, "id" | "threadId">,
   ) => {
     if (stoppingId !== null) return;
-    setStoppingId(childThreadId);
+    setStoppingId(rowId);
     const result = await interruptTurn({
       environmentId: props.environmentId,
       input: { threadId: agent.threadId, subagentId: agent.id },
@@ -794,6 +814,52 @@ export function ThreadRelationshipsPanel(props: {
     if (result._tag === "Failure") {
       toastManager.add({ type: "error", title: gt("Could not stop workflow") });
     }
+  };
+
+  const renderNativeSubagentRow = (agent: OrchestrationV2Subagent) => {
+    const title = formatSubagentDisplayTitle(agent.title || agent.prompt) || gt("Subagent");
+    const canStop =
+      !isFinishedAgentStatus(agent.status) &&
+      agent.runId !== null &&
+      agent.startedAt !== null &&
+      agent.nativeTaskRef?.strength === "strong" &&
+      agent.nativeTaskRef.nativeId !== null;
+    return (
+      <li
+        key={agent.id}
+        className={cn("flex h-8 items-center gap-2", THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS)}
+      >
+        <ThreadRelationshipIcon
+          driver={agent.driver}
+          provider={providers?.find((provider) => provider.instanceId === agent.providerInstanceId)}
+          providerEntries={providerEntries}
+          status={agent.status}
+        />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground/85">
+          {title}
+        </span>
+        <span className="shrink-0 text-2xs text-muted-foreground">
+          {threadRelationshipStatusLabel(agent.status, m)}
+        </span>
+        {canStop ? (
+          <ThreadDetailsControl
+            size="icon-xs"
+            variant="ghost"
+            part="icon"
+            tone="destructive"
+            aria-label={gt("Stop subagent {threadTitle}", { threadTitle: title })}
+            disabled={stoppingId !== null}
+            onClick={() => void stopSubagent(agent.id, agent)}
+          >
+            {stoppingId === agent.id ? (
+              <Spinner aria-hidden size="xs" />
+            ) : (
+              <SquareIcon aria-hidden className="size-3 fill-current" />
+            )}
+          </ThreadDetailsControl>
+        ) : null}
+      </li>
+    );
   };
 
   const parentTitle =
@@ -829,7 +895,7 @@ export function ThreadRelationshipsPanel(props: {
       agent &&
       (agent.origin === "app_owned" ||
         (agent.origin === "provider_native" &&
-          agent.driver === "claudeAgent" &&
+          (agent.driver === "claudeAgent" || agent.driver === "ompRpc") &&
           agent.runId != null &&
           agent.nativeTaskRef?.strength === "strong" &&
           agent.nativeTaskRef.nativeId !== null &&
@@ -1074,6 +1140,7 @@ export function ThreadRelationshipsPanel(props: {
             related.length > 0 ||
             active.length > 0 ||
             remoteActive.length > 0 ||
+            nativeActive.length > 0 ||
             delegatedFrom !== undefined
           }
           data-thread-relationships-panel
@@ -1127,6 +1194,8 @@ export function ThreadRelationshipsPanel(props: {
                         ?.find((entry) => entry.instanceId === row.remote.providerInstanceId)}
                       anyInstanceBadge={hasInstanceBadge(providerEntries)}
                     />
+                  ) : "native" in row ? (
+                    renderNativeSubagentRow(row.native)
                   ) : (
                     renderRelationshipRow(row)
                   ),

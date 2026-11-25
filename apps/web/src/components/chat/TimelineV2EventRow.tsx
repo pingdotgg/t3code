@@ -14,6 +14,7 @@ import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collaps
 import { EnvironmentSubagentAvatar, SubagentElapsed, V2LifecycleRow } from "./V2LifecycleRow";
 import { FeedbackRequestCard } from "./FeedbackRequestCard";
 import { LinkRequestCard } from "./LinkRequestCard";
+import { RecoveredProviderQueue } from "./RecoveredProviderQueue";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TimelineRowCtx, type TimelineRow } from "./timelineRowContext";
 import { subagentGroupTiming } from "./TimelineV2EventRow.logic";
@@ -23,6 +24,15 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const { item, visibility } = row.projectedItem;
   if (item.type === "subagent" && (row.subagents?.length ?? 1) > 1) {
     return <V2SubagentGroup key={row.id} row={row} />;
+  }
+  if (item.type === "system_notice" && item.recoveredQueue) {
+    return (
+      <RecoveredProviderQueue
+        item={item}
+        environmentId={ctx.activeThreadEnvironmentId}
+        canRestore={ctx.canOperateThread && visibility === "local"}
+      />
+    );
   }
   if (item.type === "secret_request") {
     return (

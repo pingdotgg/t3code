@@ -44,6 +44,7 @@ import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { LinkRequestCard } from "./LinkRequestCard";
 import { FeedbackRequestCard } from "./FeedbackRequestCard";
+import { RecoveredProviderQueue } from "./RecoveredProviderQueue";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import {
@@ -249,6 +250,7 @@ import {
   isLinkRequestActivityGroup,
   isFeedbackRequestActivityGroup,
   isSecretRequestActivityGroup,
+  isRecoveredProviderQueueActivityGroup,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
   messageFoldRunId,
@@ -2192,6 +2194,19 @@ function renderFeedEntry(
         surfaceColor={props.screenColor}
       />
     );
+  }
+
+  if (entry.type === "activity-group" && isRecoveredProviderQueueActivityGroup(entry)) {
+    const { item, visibility } = entry.activities[0]!.projectedItem;
+    if (item.type === "system_notice") {
+      return (
+        <RecoveredProviderQueue
+          item={item}
+          environmentId={props.environmentId}
+          canRestore={visibility === "local" && item.threadId === props.threadId}
+        />
+      );
+    }
   }
 
   if (entry.type === "activity-group" && isSecretRequestActivityGroup(entry)) {

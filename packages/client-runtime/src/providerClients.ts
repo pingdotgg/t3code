@@ -5,7 +5,7 @@ import {
   isProviderDriverKind,
   ProviderDriverKind,
 } from "@t3tools/contracts";
-import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
+import { acpRegistryClient, ompClient } from "@t3tools/provider-acp-registry/client";
 import { makeProviderClientRegistry, type ProviderIcon } from "@t3tools/provider-core/client";
 import { modelShortName } from "@t3tools/provider-core/modelShortName";
 import { cursorClient } from "@t3tools/provider-cursor/client";
@@ -14,6 +14,7 @@ import { grokClient } from "@t3tools/provider-grok/client";
 import { kiroClient } from "@t3tools/provider-kiro/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
+import { ompRpcClient } from "@t3tools/provider-omp/client";
 import { piClient } from "@t3tools/provider-pi/client";
 
 // OpenRouter's Ink and Cloud glyphs from https://openrouter.ai/brand.
@@ -56,6 +57,8 @@ export const providerClients = makeProviderClientRegistry([
   kiroClient,
   museClient,
   piClient,
+  ompRpcClient,
+  ompClient,
   acpRegistryClient,
 ]);
 

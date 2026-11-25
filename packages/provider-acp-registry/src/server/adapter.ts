@@ -22,7 +22,7 @@ import {
 import { prefersHttpMcpTransport } from "./mcpTransport.ts";
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
 import { readCustomModelEntries } from "@t3tools/shared/model";
-import { AcpRegistrySettings } from "../settings.ts";
+import { AcpRegistrySettings, OMP_PROVIDER } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -74,6 +74,7 @@ const DEFAULT_ACP_REGISTRY_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({})
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
 export interface AcpRegistryAdapterV2Options {
+  readonly driverKind?: ProviderDriverKind;
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
   readonly settings: AcpRegistrySettings;
   readonly environment: NodeJS.ProcessEnv;
@@ -201,9 +202,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const isAntigravityCli =
     options.settings.source === "local" &&
     /^agy(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
+  const driverKind = options.driverKind ?? ACP_REGISTRY_PROVIDER;
   const isOmp =
-    options.settings.source === "local" &&
-    /^omp(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
+    driverKind === OMP_PROVIDER ||
+    (options.settings.source === "local" &&
+      /^omp(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? ""));
   const isOpenCode =
     registryAgentId === "opencode" ||
     registryAgentId === "opencode-v2" ||
@@ -262,9 +265,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   // start the stdio bridge on Windows (it spawns MCP commands through cmd.exe, which splits
   // the unquoted "T3 Code (Beta).exe" path). Both take T3's MCP endpoint over ACP HTTP.
   const useHttpMcpServers =
-    copilotRouting !== undefined || prefersHttpMcpTransport(options.settings);
+    isOmp || copilotRouting !== undefined || prefersHttpMcpTransport(options.settings);
   const flavor: AcpAdapterV2Flavor = {
-    driver: ACP_REGISTRY_PROVIDER,
+    driver: driverKind,
     // Cancelling a Copilot prompt also kills the background agents it started.
     capabilities: isCopilot
       ? {
@@ -447,37 +450,43 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
   driverKind: ACP_REGISTRY_PROVIDER,
   configSchema: AcpRegistrySettings,
   defaultConfig: (): AcpRegistrySettings => DEFAULT_ACP_REGISTRY_SETTINGS,
-  create: Effect.fn("AcpRegistryAdapterV2Driver.create")(
-    function* (input: ProviderAdapterDriverCreateInput<AcpRegistrySettings>) {
-      const hostEnvironment = yield* HostProcess.Environment;
-      const selfInvocation = yield* resolveSelfInvocation();
-      const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
-      return yield* makeAcpRegistryAdapterV2({
-        instanceId: input.instanceId,
-        settings: { ...input.config, enabled: input.enabled },
-        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-        selfInvocation,
-        continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
-        nativeLogging: (threadId) =>
-          makeNativeLogger({
-            nativeEventLogger: providerEventLoggers.native,
-            provider: ACP_REGISTRY_PROVIDER,
-            threadId,
-          }),
-      });
-    },
-    (effect, input) =>
-      effect.pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapterDriverCreateError({
-              driver: ACP_REGISTRY_PROVIDER,
-              instanceId: input.instanceId,
-              detail: "Failed to create ACP Registry adapter.",
-              cause,
-            }),
-        ),
-      ),
-  ),
+  create: (input) => createAcpRegistryAdapter(input, ACP_REGISTRY_PROVIDER),
 };
+
+export const createAcpRegistryAdapter = Effect.fn("AcpRegistryAdapterV2Driver.create")(
+  function* (
+    input: ProviderAdapterDriverCreateInput<AcpRegistrySettings>,
+    driverKind: ProviderDriverKind,
+  ) {
+    const hostEnvironment = yield* HostProcess.Environment;
+    const selfInvocation = yield* resolveSelfInvocation();
+    const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+    const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
+    return yield* makeAcpRegistryAdapterV2({
+      driverKind,
+      instanceId: input.instanceId,
+      settings: { ...input.config, enabled: input.enabled },
+      environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+      selfInvocation,
+      continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
+      nativeLogging: (threadId) =>
+        makeNativeLogger({
+          nativeEventLogger: providerEventLoggers.native,
+          provider: driverKind,
+          threadId,
+        }),
+    });
+  },
+  (effect, input, driverKind) =>
+    effect.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterDriverCreateError({
+            driver: driverKind,
+            instanceId: input.instanceId,
+            detail: "Failed to create ACP adapter.",
+            cause,
+          }),
+      ),
+    ),
+);

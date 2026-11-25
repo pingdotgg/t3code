@@ -1,6 +1,6 @@
 import "~/index.css";
 import * as DateTime from "effect/DateTime";
-import { EnvironmentId, NodeId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, NodeId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
@@ -174,6 +174,52 @@ it.each([
   if (action === "disconnect") {
     await expect.element(screen.getByRole("button", { name: "More thread actions" })).toBeEnabled();
   }
+});
+
+it("offers Stop for an OMP subagent without a separate T3 thread", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  state.projection = {
+    ...projection,
+    subagents: [
+      {
+        id: NodeId.make("omp-task"),
+        threadId: projection.thread.id,
+        runId: RunId.make("omp-run"),
+        parentNodeId: NodeId.make("omp-parent"),
+        origin: "provider_native",
+        createdBy: "agent",
+        driver: "ompRpc",
+        providerInstanceId: "ompRpc",
+        providerThreadId: null,
+        childThreadId: null,
+        nativeTaskRef: { driver: "ompRpc", strength: "strong", nativeId: "omp-task" },
+        prompt: "Inspect local fixtures",
+        title: "Fixture agent",
+        model: null,
+        status: "running",
+        result: null,
+        startedAt: projection.thread.updatedAt,
+        completedAt: null,
+        updatedAt: projection.thread.updatedAt,
+      },
+    ],
+  };
+  await using screen = await render(
+    <ToastProvider>
+      <ThreadRelationshipsPanel
+        environmentId={environmentId}
+        threadId={projection.thread.id}
+        showLineage
+        showSideChats
+      />
+    </ToastProvider>,
+  );
+  await expect.element(screen.getByText("Fixture agent", { exact: true })).toBeVisible();
+  const stop = screen.getByRole("button", { name: "Stop subagent Fixture agent" });
+  await expect.element(stop).toBeEnabled();
+  await stop.click();
+  await expect.element(page.getByText("Could not stop subagent")).toBeVisible();
 });
 
 it("opens an idle child beside the thread, and in its place with the modifier", async () => {

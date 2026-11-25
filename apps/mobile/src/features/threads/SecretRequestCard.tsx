@@ -8,6 +8,9 @@ import {
   secretRequestReference,
   secretRequestSources,
   secretRequestValue,
+  secretRequestSelection,
+  toggleSecretRequestChoice,
+  type SecretRequestValues,
   type SecretRequestItem,
   type SecretRequestReply,
   type SecretRequestSource,
@@ -92,17 +95,18 @@ function PendingSecretRequestForm(props: {
   });
   const inputs = secretRequestInputs(item, m);
   const multiple = item.fields !== undefined;
+  const provider = item.delivery === "provider";
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   // The server accepts a reference answer only with this scope; without it the card is typed.
   const canUseReferences = useEnvironmentScope(props.environmentId, AuthProvidersManageScope);
   // A reference answers one value, so a card with fields is always typed.
   const sources =
-    multiple || !canUseReferences
+    multiple || provider || !canUseReferences
       ? NO_SOURCES
       : secretRequestSources(config, config?.settings.secretProviders ?? {}, m);
   const [sourceId, setSourceId] = useState<SecretProviderId | null>(null);
   const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
-  const [values, setValues] = useState<Readonly<Record<string, string>>>({});
+  const [values, setValues] = useState<SecretRequestValues>({});
   const [reference, setReference] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +137,7 @@ function PendingSecretRequestForm(props: {
       setError(secretRequestFailureMessage(squashAtomCommandFailure(result), m));
     }
   };
-  const save = (typed: Readonly<Record<string, string>>) => {
+  const save = (typed: SecretRequestValues) => {
     if (source === null) {
       void send({ type: "save", values: typed });
     } else if (secretRequestReference(source, reference) === undefined) {
@@ -146,7 +150,7 @@ function PendingSecretRequestForm(props: {
     source === null
       ? secretRequestAnswerInput(item, { type: "save", values }) !== null
       : reference.trim().length > 0;
-  const link = secretRequestLink(item);
+  const link = provider ? null : secretRequestLink(item);
 
   return (
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
@@ -203,6 +207,46 @@ function PendingSecretRequestForm(props: {
       ) : null}
       {source === null ? (
         inputs.map((input, index) => {
+          if (input.choices !== undefined) {
+            return (
+              <View key={input.key} className="gap-1.5">
+                <Text className="font-t3-medium text-sm text-foreground-muted">{input.label}</Text>
+                <View className="flex-row flex-wrap gap-2">
+                  {input.choices.map((choice) => (
+                    <Chip
+                      key={choice.value}
+                      label={choice.label}
+                      size="small"
+                      disabled={submitting}
+                      selected={secretRequestSelection(values, input).includes(choice.value)}
+                      onPress={() =>
+                        setValues((current) =>
+                          toggleSecretRequestChoice(current, input, choice.value),
+                        )
+                      }
+                    />
+                  ))}
+                </View>
+              </View>
+            );
+          }
+          if (input.multiline && !input.secret) {
+            return (
+              <View key={input.key} className="gap-1.5">
+                <Text className="font-t3-medium text-sm text-foreground-muted">{input.label}</Text>
+                <TextInput
+                  accessibilityLabel={input.label}
+                  multiline
+                  editable={!submitting}
+                  placeholder={input.placeholder}
+                  value={secretRequestValue(values, input.key, input.initialValue)}
+                  onChangeText={(value) =>
+                    setValues((current) => ({ ...current, [input.key]: value }))
+                  }
+                />
+              </View>
+            );
+          }
           const last = index === inputs.length - 1;
           const field = (
             <SecretTextInput
@@ -214,7 +258,7 @@ function PendingSecretRequestForm(props: {
                 inputRefs.current[index] = handle;
               }}
               placeholder={input.placeholder}
-              value={secretRequestValue(values, input.key)}
+              value={secretRequestValue(values, input.key, submitting ? "" : input.initialValue)}
               onChangeText={(value) => setValues((current) => ({ ...current, [input.key]: value }))}
               editable={!submitting}
               returnKeyType={last ? "done" : "next"}
@@ -268,7 +312,7 @@ function PendingSecretRequestForm(props: {
         </Text>
       ) : null}
       <Button
-        label={gt("Save securely")}
+        label={provider ? gt("Submit") : gt("Save securely")}
         tone="primary"
         fullWidth
         disabled={submitting || !canSave}

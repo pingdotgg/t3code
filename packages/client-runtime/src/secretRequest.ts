@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { builtInSecretProviderDefinitions } from "@t3tools/secret-provider-definitions/registry";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -24,15 +25,17 @@ export const secretRequestPrivacyNote = (
   item: Pick<SecretRequestItem, "delivery" | "fields">,
   resolve: MFunctionType = mFallback,
 ) =>
-  item.delivery !== "file"
-    ? resolve(msg("Stored securely, never shown to the agent"))
-    : item.fields === undefined
-      ? resolve(
-          msg("Kept out of chat, in a private file this agent's commands can read for 24 hours"),
-        )
-      : resolve(
-          msg("Kept out of chat, in private files this agent's commands can read for 24 hours"),
-        );
+  item.delivery === "provider"
+    ? resolve(msg("Sent directly to the extension that requested it"))
+    : item.delivery !== "file"
+      ? resolve(msg("Stored securely, never shown to the agent"))
+      : item.fields === undefined
+        ? resolve(
+            msg("Kept out of chat, in a private file this agent's commands can read for 24 hours"),
+          )
+        : resolve(
+            msg("Kept out of chat, in private files this agent's commands can read for 24 hours"),
+          );
 const SECRET_REQUEST_DEFAULT_PLACEHOLDER = msg("Paste the secret");
 
 export interface SecretRequestInput {
@@ -42,6 +45,12 @@ export interface SecretRequestInput {
   readonly placeholder: string;
   /** Masked, with a toggle to show it. */
   readonly secret: boolean;
+  readonly required?: boolean | undefined;
+  readonly multiline?: boolean | undefined;
+  readonly initialValue?: string | undefined;
+  readonly initialChoices?: ReadonlyArray<string> | undefined;
+  readonly multiple?: boolean | undefined;
+  readonly choices?: ReadonlyArray<{ readonly label: string; readonly value: string }> | undefined;
 }
 
 export function secretRequestInputs(
@@ -63,6 +72,12 @@ export function secretRequestInputs(
     label: field.label,
     placeholder: field.placeholder ?? "",
     secret: field.secret !== false,
+    required: field.required,
+    multiline: field.multiline,
+    initialValue: field.initialValue,
+    initialChoices: field.initialChoices,
+    multiple: field.multiple,
+    choices: field.choices,
   }));
 }
 
@@ -247,24 +262,70 @@ export function secretRequestReference(
     : undefined;
 }
 
-/** A card value by input key. Own keys only: a field may be named `constructor`. */
-export const secretRequestValue = (values: Readonly<Record<string, string>>, key: string) =>
-  Object.hasOwn(values, key) ? (values[key] ?? "") : "";
+export type SecretRequestValues = Readonly<Record<string, string | ReadonlyArray<string>>>;
+
+export function secretRequestSelection(values: SecretRequestValues, input: SecretRequestInput) {
+  const value = Object.hasOwn(values, input.key) ? values[input.key] : undefined;
+  return typeof value === "string" ? [value] : (value ?? input.initialChoices ?? []);
+}
+
+export function toggleSecretRequestChoice(
+  values: SecretRequestValues,
+  input: SecretRequestInput,
+  value: string,
+): SecretRequestValues {
+  const selected = secretRequestSelection(values, input);
+  return {
+    ...values,
+    [input.key]: selected.includes(value)
+      ? selected.filter((entry) => entry !== value)
+      : input.multiple
+        ? [...selected, value]
+        : [value],
+  };
+}
+
+export function secretRequestValue(values: SecretRequestValues, key: string, fallback = "") {
+  const value = Object.hasOwn(values, key) ? values[key] : undefined;
+  return typeof value === "string" ? value : fallback;
+}
 
 export type SecretRequestReply =
   /** Keyed by `SecretRequestInput.key`. */
-  | { readonly type: "save"; readonly values: Readonly<Record<string, string>> }
+  | { readonly type: "save"; readonly values: SecretRequestValues }
   /** Single-value cards only: the server reads it through `source`. */
   | { readonly type: "reference"; readonly source: SecretRequestSource; readonly reference: string }
   | { readonly type: "decline" };
 
 /** Null until every input has a value, or while a reference is not `source`'s syntax. */
 export function secretRequestAnswerInput(
-  item: Pick<SecretRequestItem, "id" | "threadId" | "label" | "placeholder" | "fields">,
+  item: Pick<
+    SecretRequestItem,
+    "id" | "threadId" | "label" | "placeholder" | "fields" | "delivery"
+  >,
   answer: SecretRequestReply,
 ): SecretRequestAnswerInput | null {
   const base = { threadId: item.threadId, turnItemId: item.id };
   if (answer.type === "decline") return { ...base, answer: { type: "decline" } };
+  if (item.delivery === "provider") {
+    if (answer.type !== "save") return null;
+    const entries: Array<[string, string | ReadonlyArray<string>]> = [];
+    for (const input of secretRequestInputs(item)) {
+      if (input.choices !== undefined) {
+        const selected = secretRequestSelection(answer.values, input);
+        if (input.required && selected.length === 0) return null;
+        entries.push([input.key, selected]);
+      } else {
+        const value = secretRequestValue(answer.values, input.key, input.initialValue);
+        if ((item.fields === undefined || input.required) && value.trim() === "") return null;
+        entries.push([input.key, value]);
+      }
+    }
+    return {
+      ...base,
+      answer: { type: "provider", values: Redacted.make(Object.fromEntries(entries)) },
+    };
+  }
   if (answer.type === "reference") {
     const reference =
       item.fields === undefined

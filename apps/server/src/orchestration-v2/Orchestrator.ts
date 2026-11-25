@@ -1707,11 +1707,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     const adapter = yield* providerAdapters.get(providerInstanceId).pipe(mapDispatchError(command));
     const { driver } = adapter;
-    if (driver === "opencode" || driver === "antigravity") {
-      const capabilities = yield* adapter.getCapabilities().pipe(mapDispatchError(command));
-      return capabilities.turns.supportsNativeGoals === true ? driver : undefined;
-    }
-    return driver === "codex" || driver === "claudeAgent" ? driver : undefined;
+    if (driver === "codex" || driver === "claudeAgent") return driver;
+    const capabilities = yield* adapter.getCapabilities().pipe(mapDispatchError(command));
+    return capabilities.turns.supportsNativeGoals === true ? driver : undefined;
   });
 
   /** Unsupported goal controls can become new objectives in native providers. */
@@ -13965,7 +13963,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       subagent === undefined ||
       subagent.runId !== command.runId ||
       subagent.origin !== "provider_native" ||
-      subagent.driver !== "claudeAgent" ||
+      (subagent.driver !== "claudeAgent" && subagent.driver !== "ompRpc") ||
       subagent.nativeTaskRef?.strength !== "strong" ||
       subagent.nativeTaskRef.nativeId === null
     ) {

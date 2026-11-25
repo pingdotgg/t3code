@@ -611,6 +611,10 @@
       "types": "./src/mcpResponsePayloads.ts",
       "import": "./src/mcpResponsePayloads.ts"
     },
+    "./mcpToolSession": {
+      "types": "./src/mcpToolSession.ts",
+      "import": "./src/mcpToolSession.ts"
+    },
     "./PtyAdapter": {
       "types": "./src/PtyAdapter.ts",
       "import": "./src/PtyAdapter.ts"

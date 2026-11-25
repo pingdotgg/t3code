@@ -1474,7 +1474,8 @@ export function ProviderInstanceCard({
           />
         </div>
       </SettingsSection>
-      {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
+      {environmentId !== undefined &&
+      (liveProvider?.nativeSessions?.canList || liveProvider?.configurableProviders) ? (
         <AcpSessionManagementSection
           environmentId={environmentId}
           instanceId={instanceId}

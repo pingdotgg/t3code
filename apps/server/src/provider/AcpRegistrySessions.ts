@@ -4,6 +4,7 @@ import {
   ThreadId,
   type AcpRegistryImportSessionInput,
   type AcpRegistryImportSessionResult,
+  type AcpRegistryListSessionsResult,
   type Project,
   type ProjectId,
   type ProviderDriverKind,
@@ -46,6 +47,17 @@ export class AcpRegistrySessions extends Context.Service<
       {
         readonly instance: ProviderInstance;
         readonly manager: NonNullable<ProviderInstance["acpSessionManagement"]>;
+      },
+      AcpRegistryOperationError
+    >;
+    readonly listSessions: (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly cwd: string;
+      readonly cursor?: string;
+    }) => Effect.Effect<
+      {
+        readonly instance: ProviderInstance;
+        readonly listed: AcpRegistryListSessionsResult;
       },
       AcpRegistryOperationError
     >;
@@ -125,7 +137,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const sessionManager = Effect.fn("AcpRegistrySessions.sessionManager")(function* (
+  const providerInstance = Effect.fn("AcpRegistrySessions.providerInstance")(function* (
     instanceId: ProviderInstanceId,
   ) {
     const instance = yield* providerInstances.getInstance(instanceId);
@@ -135,6 +147,13 @@ const make = Effect.gen(function* () {
         message: `Provider instance ${instanceId} was not found.`,
       });
     }
+    return instance;
+  });
+
+  const sessionManager = Effect.fn("AcpRegistrySessions.sessionManager")(function* (
+    instanceId: ProviderInstanceId,
+  ) {
+    const instance = yield* providerInstance(instanceId);
     if (instance.acpSessionManagement === undefined) {
       return yield* new AcpRegistryOperationError({
         reason: "session_list_unsupported",
@@ -144,21 +163,47 @@ const make = Effect.gen(function* () {
     return { instance, manager: instance.acpSessionManagement };
   });
 
+  const listSessions = Effect.fn("AcpRegistrySessions.listSessions")(function* (input: {
+    instanceId: ProviderInstanceId;
+    cwd: string;
+    cursor?: string;
+  }) {
+    const instance = yield* providerInstance(input.instanceId);
+    const catalog = instance.nativeSessionCatalog ?? instance.acpSessionManagement;
+    const snapshot = yield* instance.snapshot.getSnapshot;
+    if (catalog === undefined || snapshot.nativeSessions?.canList !== true) {
+      return yield* new AcpRegistryOperationError({
+        reason: "session_list_unsupported",
+        message: "The provider does not advertise native session listing.",
+      });
+    }
+    const listed = yield* catalog.listSessions(input);
+    return { instance, listed };
+  });
+
   const importSession = Effect.fn("AcpRegistrySessions.importSession")(function* (
     input: AcpRegistryImportSessionInput,
   ) {
     const { workspaceRoot } = yield* project(input.projectId);
-    const { instance } = yield* sessionManager(input.instanceId);
+    const instance = yield* providerInstance(input.instanceId);
     const providerSnapshot = yield* instance.snapshot.getSnapshot;
     if (
-      providerSnapshot.nativeSessions?.canLoad !== true &&
-      providerSnapshot.nativeSessions?.canResume !== true
+      (instance.nativeSessionCatalog === undefined &&
+        instance.acpSessionManagement === undefined) ||
+      (providerSnapshot.nativeSessions?.canLoad !== true &&
+        providerSnapshot.nativeSessions?.canResume !== true)
     ) {
       return yield* new AcpRegistryOperationError({
         reason: "session_resume_unsupported",
-        message: "The ACP agent cannot load or resume native sessions.",
+        message: "The provider cannot load or resume native sessions.",
       });
     }
+    yield* (
+      instance.nativeSessionCatalog?.validateSession({
+        cwd: workspaceRoot,
+        sessionId: input.sessionId,
+      }) ?? Effect.void
+    );
     const threadId = importedThreadId({
       driver: instance.driverKind,
       instanceId: input.instanceId,
@@ -265,7 +310,13 @@ const make = Effect.gen(function* () {
     return { threadId, imported: true } as const;
   }, coordinator.withSessionMutation);
 
-  return AcpRegistrySessions.of({ project, sessionManager, findOwner, importSession });
+  return AcpRegistrySessions.of({
+    project,
+    sessionManager,
+    listSessions,
+    findOwner,
+    importSession,
+  });
 });
 
 export const layer = Layer.effect(AcpRegistrySessions, make);

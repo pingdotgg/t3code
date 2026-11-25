@@ -444,6 +444,15 @@ export function isContextHandoffActivityGroup(entry: ThreadFeedActivityGroup): b
   );
 }
 
+export function isRecoveredProviderQueueActivityGroup(entry: ThreadFeedActivityGroup): boolean {
+  const item = entry.activities[0]?.projectedItem.item;
+  return (
+    entry.activities.length === 1 &&
+    item?.type === "system_notice" &&
+    item.recoveredQueue !== undefined
+  );
+}
+
 export function isSecretRequestActivityGroup(entry: ThreadFeedActivityGroup): boolean {
   return (
     entry.activities.length === 1 &&
@@ -2157,6 +2166,7 @@ function appendPresentedFeedEntry(
   if (
     isContextCompactionActivityGroup(entry) ||
     isContextHandoffActivityGroup(entry) ||
+    isRecoveredProviderQueueActivityGroup(entry) ||
     isUserInputActivityGroup(entry) ||
     entry.activities[0]?.projectedItem.item.type === "subagent"
   ) {

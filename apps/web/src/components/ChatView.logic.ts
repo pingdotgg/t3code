@@ -648,8 +648,10 @@ export async function resolveFileAttachmentUrl(input: {
   return url;
 }
 
-export async function prepareRevertedMessageAttachments(input: {
-  message: ChatMessage;
+export async function prepareRevertedMessageAttachments<
+  T extends Pick<ChatMessage, "attachments">,
+>(input: {
+  message: T;
   environmentId: EnvironmentId;
   httpBaseUrl: string;
   createAssetUrl: Parameters<typeof resolveFileAttachmentUrl>[0]["createAssetUrl"];

@@ -1,7 +1,17 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { defineProviderClient } from "@t3tools/provider-core/client";
+import { ompRpcClient } from "@t3tools/provider-omp/client";
 
-import { AcpRegistrySettings } from "./settings.ts";
+import { AcpRegistrySettings, OMP_PROVIDER, OmpSettings } from "./settings.ts";
+
+export const ompClient = defineProviderClient({
+  driverKind: OMP_PROVIDER,
+  label: "Oh My Pi (ACP)",
+  legacyOnly: true,
+  hasDefaultInstance: false,
+  settingsSchema: OmpSettings,
+  icon: ompRpcClient.icon,
+});
 
 export const acpRegistryClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("acpRegistry"),

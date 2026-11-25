@@ -211,7 +211,7 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     );
   }
 
-  if (provider.driver === ProviderDriverKind.make("acpRegistry")) {
+  if (provider.driver === "acpRegistry" || provider.driver === "omp") {
     // Only completed ACP discovery provides nativeSessions and inventory; placeholder probes cannot establish auth for agents without sign-in.
     return !(
       provider.installed &&

@@ -40,6 +40,21 @@ function settingsWith(overrides: Partial<ServerSettings>): ServerSettings {
 }
 
 describe("deriveProviderInstanceConfigMap", () => {
+  it("defaults Oh My Pi to RPC and preserves an explicitly configured ACP instance", () => {
+    const rpc = ProviderInstanceId.make("ompRpc");
+    const acp = ProviderInstanceId.make("omp");
+    const defaults = deriveProviderInstanceConfigMap(DEFAULT_SERVER_SETTINGS);
+    expect(defaults[rpc]).toEqual({ driver: "ompRpc" });
+    expect(defaults[acp]).toBeUndefined();
+
+    const legacy = { driver: ProviderDriverKind.make("omp"), enabled: true };
+    const saved = deriveProviderInstanceConfigMap(
+      settingsWith({ providerInstances: { [acp]: legacy } }),
+    );
+    expect(saved[acp]).toBe(legacy);
+    expect(saved[rpc]).toEqual({ driver: "ompRpc" });
+  });
+
   it("turns a machine-disabled instance on when a project enables it", () => {
     const settings = settingsWith({
       providerInstances: {

@@ -210,6 +210,26 @@ describe("AddProviderInstanceDialog environment routing", () => {
     });
   });
 
+  it("offers one Oh My Pi provider and adds it with native RPC", async () => {
+    setup();
+    await using screen = await render(dialog());
+    const omp = screen.getByRole("radio", { name: "Oh My Pi", exact: true });
+    expect(omp.element().querySelector("[data-provider-package-icon]")).not.toBeNull();
+    expect(radio("Oh My Pi (ACP)")).toBeUndefined();
+    expect(radio("Oh My Pi (RPC)")).toBeUndefined();
+    await click("Show more");
+    expect(radio("Oh My Pi (ACP)")).toBeUndefined();
+    await userEvent.click(omp);
+    await click("Next");
+    await click("Next");
+    await click("Add instance");
+    expect(settingsHooks.mutate).toHaveBeenCalledWith({
+      operation: "create",
+      instanceId: "ompRpc",
+      instance: { driver: "ompRpc", enabled: true, displayName: "Oh My Pi" },
+    });
+  });
+
   it("awaits an atomic create before closing and retains prepared ACP metadata", async () => {
     setup();
     const mutation = deferred<{ readonly _tag: "Success"; readonly value: unknown }>();

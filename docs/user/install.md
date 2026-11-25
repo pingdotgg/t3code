@@ -205,6 +205,7 @@ computer.
 | OpenCode            | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
 | Antigravity         | Install and sign in with Google from T3 Code's provider settings.                                                                                         |
 | Pi                  | Install [Pi](./providers-pi.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                                                        |
+| Oh My Pi            | Install [Oh My Pi](https://omp.sh/) on the server, run `omp login`, then enable **Oh My Pi** in Settings → Providers.                                     |
 | Muse Code           | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
 | fx                  | Install [fx](https://fx.sh) with `curl -fsSL https://fx.sh/setup.sh \| bash`, then run `fx login`.                                                        |
 | ACP Registry agents | Add GitHub Copilot and other [ACP agents](./providers-acp.md#add-an-agent) from **Settings → Providers → Add provider → Show more**.                      |

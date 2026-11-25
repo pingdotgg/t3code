@@ -273,7 +273,7 @@ export function resolveSubagentStopTarget(
   }
   if (
     subagent.origin === "provider_native" &&
-    subagent.driver === "claudeAgent" &&
+    (subagent.driver === "claudeAgent" || subagent.driver === "ompRpc") &&
     subagent.runId !== null &&
     subagent.nativeTaskRef?.strength === "strong" &&
     subagent.nativeTaskRef.nativeId !== null
