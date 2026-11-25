@@ -9,6 +9,8 @@ import {
   type TeamStateStreamEvent,
   type TeamThreadAttribution,
   type TeamTurnAttribution,
+  type TeamView,
+  type TeamViewId,
   type TeamWorkspace,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -44,12 +46,14 @@ export interface TeamEnvironmentState {
   readonly team: TeamWorkspace | null;
   readonly currentMember: TeamMember | null;
   readonly members: ReadonlyArray<TeamMember>;
+  readonly views: ReadonlyArray<TeamView>;
   readonly invites: ReadonlyArray<TeamInvite>;
   readonly threadAttributions: ReadonlyArray<TeamThreadAttribution>;
   readonly followedThreadIds: ReadonlySet<ThreadId>;
   readonly latestTurnByThreadId: ReadonlyMap<ThreadId, TeamTurnAttribution>;
   readonly turnAuthorByTurnId: ReadonlyMap<string, TeamTurnAttribution>;
   readonly memberById: ReadonlyMap<TeamMemberId, TeamMember>;
+  readonly viewById: ReadonlyMap<TeamViewId, TeamView>;
   readonly attributionByThreadId: ReadonlyMap<ThreadId, TeamThreadAttribution>;
 }
 
@@ -57,19 +61,32 @@ export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
   team: null,
   currentMember: null,
   members: [],
+  views: [],
   invites: [],
   threadAttributions: [],
   followedThreadIds: new Set(),
   latestTurnByThreadId: new Map(),
   turnAuthorByTurnId: new Map(),
   memberById: new Map(),
+  viewById: new Map(),
   attributionByThreadId: new Map(),
 };
+
+function sortTeamViews(views: Iterable<TeamView>): ReadonlyArray<TeamView> {
+  return [...views].sort((a, b) => {
+    if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+    const byName = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    if (byName !== 0) return byName;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
+}
 
 function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentState {
   const memberById = new Map<TeamMemberId, TeamMember>(
     snapshot.members.map((member) => [member.id, member] as const),
   );
+  const views = sortTeamViews(snapshot.views);
+  const viewById = new Map<TeamViewId, TeamView>(views.map((view) => [view.id, view] as const));
   const attributionByThreadId = new Map<ThreadId, TeamThreadAttribution>(
     snapshot.threadAttributions.map((attribution) => [attribution.threadId, attribution] as const),
   );
@@ -84,12 +101,14 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
     team: snapshot.team,
     currentMember: snapshot.currentMember,
     members: snapshot.members,
+    views,
     invites: snapshot.invites,
     threadAttributions: snapshot.threadAttributions,
     followedThreadIds,
     latestTurnByThreadId,
     turnAuthorByTurnId,
     memberById,
+    viewById,
     attributionByThreadId,
   };
 }
@@ -194,6 +213,74 @@ export function applyTeamStreamEvent(
       };
     }
 
+    case "viewUpserted": {
+      const view = event.payload;
+      const viewById = new Map(current.viewById);
+      viewById.set(view.id, view);
+      return {
+        ...current,
+        views: sortTeamViews(viewById.values()),
+        viewById,
+      };
+    }
+
+    case "viewDeleted": {
+      const { viewId, fallbackViewId } = event.payload;
+      const viewById = new Map(current.viewById);
+      viewById.delete(viewId);
+      const attributionByThreadId = new Map(current.attributionByThreadId);
+      let attributionsChanged = false;
+      for (const [threadId, attribution] of attributionByThreadId) {
+        if (attribution.viewId === viewId) {
+          attributionByThreadId.set(threadId, { ...attribution, viewId: fallbackViewId });
+          attributionsChanged = true;
+        }
+      }
+      return {
+        ...current,
+        views: sortTeamViews(viewById.values()),
+        viewById,
+        ...(attributionsChanged
+          ? {
+              threadAttributions: [...attributionByThreadId.values()],
+              attributionByThreadId,
+            }
+          : {}),
+      };
+    }
+
+    case "threadRemoved": {
+      const { threadId } = event.payload;
+      const attributionByThreadId = new Map(current.attributionByThreadId);
+      const hadAttribution = attributionByThreadId.delete(threadId);
+      const followedThreadIds = new Set(current.followedThreadIds);
+      const hadFollow = followedThreadIds.delete(threadId);
+      const latestTurnByThreadId = new Map(current.latestTurnByThreadId);
+      const hadLatestTurn = latestTurnByThreadId.delete(threadId);
+      const turnAuthorByTurnId = new Map(current.turnAuthorByTurnId);
+      let turnsChanged = hadLatestTurn;
+      for (const [turnId, turn] of turnAuthorByTurnId) {
+        if (turn.threadId === threadId) {
+          turnAuthorByTurnId.delete(turnId);
+          turnsChanged = true;
+        }
+      }
+      if (!hadAttribution && !hadFollow && !turnsChanged) {
+        return current;
+      }
+      return {
+        ...current,
+        ...(hadAttribution
+          ? {
+              threadAttributions: [...attributionByThreadId.values()],
+              attributionByThreadId,
+            }
+          : {}),
+        ...(hadFollow ? { followedThreadIds } : {}),
+        ...(turnsChanged ? { latestTurnByThreadId, turnAuthorByTurnId } : {}),
+      };
+    }
+
     case "threadFollowChanged": {
       const change = event.payload;
       if (current.currentMember?.id !== change.memberId) {
@@ -266,6 +353,34 @@ export function createTeamEnvironmentAtoms<R, E>(
     unfollowThread: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:unfollow-thread",
       tag: TEAM_WS_METHODS.teamUnfollowThread,
+    }),
+    updateMemberRole: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:update-member-role",
+      tag: TEAM_WS_METHODS.teamUpdateMemberRole,
+    }),
+    updateMemberStatus: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:update-member-status",
+      tag: TEAM_WS_METHODS.teamUpdateMemberStatus,
+    }),
+    createView: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:create-view",
+      tag: TEAM_WS_METHODS.teamCreateView,
+    }),
+    updateView: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:update-view",
+      tag: TEAM_WS_METHODS.teamUpdateView,
+    }),
+    deleteView: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:delete-view",
+      tag: TEAM_WS_METHODS.teamDeleteView,
+    }),
+    setThreadView: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:set-thread-view",
+      tag: TEAM_WS_METHODS.teamSetThreadView,
+    }),
+    setThreadLocked: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:set-thread-locked",
+      tag: TEAM_WS_METHODS.teamSetThreadLocked,
     }),
   };
 }

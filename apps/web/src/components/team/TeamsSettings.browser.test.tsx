@@ -1,4 +1,5 @@
 import {
+  ALL_TEAM_ROLES,
   EnvironmentId,
   TeamId,
   TeamInviteId,
@@ -6,6 +7,7 @@ import {
   TeamViewId,
   type TeamInviteCreatedResult,
   type TeamPseudo,
+  type TeamView,
 } from "@t3tools/contracts";
 import type { TeamEnvironmentState } from "@t3tools/client-runtime/team";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -32,22 +34,36 @@ const makeTeamState = (id: string, name: string, pseudo: string): TeamEnvironmen
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
+  const defaultViewId = TeamViewId.make(`view-${id}`);
+  const defaultView: TeamView = {
+    id: defaultViewId,
+    teamId,
+    name: "Default",
+    description: null,
+    isDefault: true,
+    readRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+    postRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
   return {
     team: {
       id: teamId,
       name,
-      defaultViewId: TeamViewId.make(`view-${id}`),
+      defaultViewId,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     },
     currentMember: member,
     members: [member],
+    views: [defaultView],
     invites: [],
     threadAttributions: [],
     followedThreadIds: new Set(),
     latestTurnByThreadId: new Map(),
     turnAuthorByTurnId: new Map(),
     memberById: new Map([[memberId, member]]),
+    viewById: new Map([[defaultViewId, defaultView]]),
     attributionByThreadId: new Map(),
   };
 };
@@ -105,6 +121,13 @@ vi.mock(import("../../state/team"), async (original) => ({
     updateMyPseudo: { permissionAtom: () => alwaysAllowedAtom },
     createInvite: { permissionAtom: () => alwaysAllowedAtom },
     revokeInvite: { permissionAtom: () => alwaysAllowedAtom },
+    updateMemberRole: { permissionAtom: () => alwaysAllowedAtom },
+    updateMemberStatus: { permissionAtom: () => alwaysAllowedAtom },
+    createView: { permissionAtom: () => alwaysAllowedAtom },
+    updateView: { permissionAtom: () => alwaysAllowedAtom },
+    deleteView: { permissionAtom: () => alwaysAllowedAtom },
+    setThreadView: { permissionAtom: () => alwaysAllowedAtom },
+    setThreadLocked: { permissionAtom: () => alwaysAllowedAtom },
   } as never,
 }));
 

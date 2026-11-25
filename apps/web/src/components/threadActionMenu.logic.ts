@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, TeamViewId } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import { msg } from "gt-react";
 
@@ -12,6 +12,10 @@ export type ThreadActionMenuId =
   | "project-settings"
   | "follow"
   | "unfollow"
+  | "team-view"
+  | `team-view:${string}`
+  | "team-lock"
+  | "team-unlock"
   | "pin"
   | "unpin"
   | "settle"
@@ -131,16 +135,27 @@ export interface ThreadActionMenuState {
   readonly canTurnIntoProject?: boolean;
   /** Non-null only for colleagues' threads in an active team environment. */
   readonly teamFollow?: { readonly isFollowing: boolean } | null;
+  /** Non-null when the actor can move this team thread between accessible views. */
+  readonly teamView?: {
+    readonly currentViewId: TeamViewId | null;
+    readonly views: ReadonlyArray<{ readonly id: TeamViewId; readonly name: string }>;
+  } | null;
+  /** Non-null when the actor (owner/admin) can lock or unlock this team thread. */
+  readonly teamLock?: { readonly isLocked: boolean } | null;
 }
 
 /** Local navigation, read markers, follow preferences, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
+  if (action.startsWith("team-view:")) return false;
   return ![
     "find",
     "new-thread-on-branch",
     "project-settings",
     "follow",
     "unfollow",
+    "team-view",
+    "team-lock",
+    "team-unlock",
     "mark-unread",
     "share-guest",
     "copy",
@@ -190,6 +205,35 @@ export function buildThreadActionMenuItems(
                 id: "follow" as const,
                 label: resolve(msg("Follow thread")),
                 icon: "bell",
+              },
+        ]
+      : []),
+    ...(state.teamView && state.teamView.views.length > 0
+      ? [
+          {
+            id: "team-view" as const,
+            label: resolve(msg("Move to view")),
+            icon: "layers",
+            children: state.teamView.views.map((view) => ({
+              id: `team-view:${view.id}` as const,
+              label: view.name,
+              checked: state.teamView?.currentViewId === view.id,
+            })),
+          },
+        ]
+      : []),
+    ...(state.teamLock
+      ? [
+          state.teamLock.isLocked
+            ? {
+                id: "team-unlock" as const,
+                label: resolve(msg("Unlock thread")),
+                icon: "unlock",
+              }
+            : {
+                id: "team-lock" as const,
+                label: resolve(msg("Lock thread")),
+                icon: "lock",
               },
         ]
       : []),

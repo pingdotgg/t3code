@@ -107,6 +107,17 @@ export const layer: Layer.Layer<
                   _tag: "missing",
                 } satisfies ThreadSnapshotLoader.ThreadSnapshotLoadResult),
               ),
+            EnvironmentOperationForbiddenError: (error) =>
+              error.reason === "team_thread_access_denied"
+                ? Effect.logDebug(
+                    "Bounded thread snapshot denied by team view policy; treating the thread as missing.",
+                  ).pipe(
+                    Effect.annotateLogs({ threadId }),
+                    Effect.as({
+                      _tag: "missing",
+                    } satisfies ThreadSnapshotLoader.ThreadSnapshotLoadResult),
+                  )
+                : Effect.fail(error),
           }),
           Effect.catchCause((cause) =>
             Effect.logWarning(

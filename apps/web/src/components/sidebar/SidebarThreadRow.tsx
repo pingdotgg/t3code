@@ -144,6 +144,7 @@ import { useTeamThreadCreatorPseudo } from "../../state/team";
 import { TeamPseudoPrefix } from "../team/TeamPseudoPrefix";
 import { TeamThreadFollowedBadge } from "../team/TeamThreadFollowedBadge";
 import { useThreadIntentPrefetch } from "./useThreadIntentPrefetch";
+import { TeamThreadStatusBadges } from "../team/TeamThreadStatusBadges";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -1395,6 +1396,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {draftIndicator}
               {title}
               {multiline ? titleLineIcons : null}
+              <TeamThreadStatusBadges environmentId={thread.environmentId} threadId={thread.id} />
               <TeamThreadFollowedBadge environmentId={thread.environmentId} threadId={thread.id} />
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
@@ -1597,6 +1599,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : null}
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
+              <TeamThreadStatusBadges environmentId={thread.environmentId} threadId={thread.id} />
               <TeamThreadFollowedBadge environmentId={thread.environmentId} threadId={thread.id} />
               {pinIndicator}
               {props.projectDisplayName ? (

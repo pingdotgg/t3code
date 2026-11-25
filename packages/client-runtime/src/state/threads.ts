@@ -1211,7 +1211,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           yield* Queue.offer(resubscribes, undefined);
         }),
         onExpectedFailure: Effect.fn("EnvironmentThreadState.onExpectedFailure")(function* (cause) {
-          const retryOverHttp = !isAuthorizationFailure(cause) && (yield* failedSocketOnlyOpen);
+          if (isAuthorizationFailure(cause)) {
+            yield* setDeleted();
+            if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
+            return;
+          }
+          const retryOverHttp = yield* failedSocketOnlyOpen;
           if (!retryOverHttp) yield* setStreamError(formatThreadError(cause));
         }),
         retryExpectedFailureAfter: THREAD_SUBSCRIPTION_RETRY_DELAY,
