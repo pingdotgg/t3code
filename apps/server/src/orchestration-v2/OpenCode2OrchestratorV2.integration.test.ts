@@ -425,7 +425,8 @@ describe("OpenCode 2 through the orchestrator", () => {
         ],
         commands: [
           thread.create,
-          thread.message("plan"),
+          // A stored agent must not outrank Plan while Plan mode is on.
+          thread.message("plan", { ...bigPickle, options: [{ id: "agent", value: "researcher" }] }),
           {
             type: "thread.interaction-mode.set",
             commandId: thread.command("default"),

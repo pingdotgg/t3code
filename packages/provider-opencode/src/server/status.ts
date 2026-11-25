@@ -18,6 +18,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
@@ -36,6 +37,7 @@ import {
 } from "@t3tools/provider-core/server/snapshotProbe";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import type { ProbedOpenCode } from "./versionProbe.ts";
+import type { Agent as OpenCode2Agent } from "@opencode/schema/agent";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 import { ServiceUnavailableError } from "@opencode/protocol/errors";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
@@ -162,7 +164,7 @@ function formatOpenCodeProbeError(input: {
 
 // The status check owns the span; keep handled failures visible without adding another span.
 const logDiscoveryFailure = Effect.fnUntraced(function* (input: {
-  readonly phase: "version" | "inventory" | "models";
+  readonly phase: "version" | "inventory" | "models" | "agents";
   readonly isExternalServer: boolean;
   readonly version?: string;
   readonly cause?: Cause.Cause<unknown>;
@@ -905,18 +907,98 @@ const OPENCODE_2_PRESENTATION = {
   supportedRuntimeModes: ["approval-required", "auto-accept-edits", "auto", "full-access"],
 } as const;
 
-function openCode2ModelCapabilities(model: OpenCode2Model): ModelCapabilities {
-  return createModelCapabilities({
-    optionDescriptors: openCodeVariantDescriptors(
-      model.providerID,
-      model.variants.map((variant) => variant.id),
+export interface OpenCode2AgentCatalog {
+  readonly agents: ReadonlyArray<OpenCode2Agent.Info>;
+  readonly failure?: Cause.Cause<OpenCodeRuntime.OpenCodeRuntimeError>;
+}
+
+/**
+ * A failed agent read keeps the choices from the last success: dropping them would silently
+ * remove the picker from every model until a manual refresh.
+ */
+export interface OpenCode2AgentLoader {
+  readonly read: Effect.Effect<OpenCode2AgentCatalog>;
+  /** Reuses the last successful list, loading it first if a workspace beats the status probe. */
+  readonly latest: Effect.Effect<ReadonlyArray<OpenCode2Agent.Info>>;
+}
+
+export const makeOpenCode2AgentLoader = Effect.fn("OpenCodeStatus.makeAgentLoader")(function* (
+  list: Effect.Effect<ReadonlyArray<OpenCode2Agent.Info>, OpenCodeRuntime.OpenCodeRuntimeError>,
+): Effect.fn.Return<OpenCode2AgentLoader> {
+  const lock = yield* Semaphore.make(1);
+  let agents: ReadonlyArray<OpenCode2Agent.Info> = [];
+  let loaded = false;
+  const read = Effect.gen(function* () {
+    const result = yield* Effect.exit(list);
+    if (result._tag === "Success") {
+      agents = result.value;
+      loaded = true;
+    }
+    return { agents, ...(result._tag === "Failure" ? { failure: result.cause } : {}) };
+  });
+  return {
+    read: lock.withPermit(read),
+    latest: lock.withPermit(
+      Effect.suspend(() =>
+        loaded ? Effect.succeed(agents) : Effect.map(read, (result) => result.agents),
+      ),
     ),
+  };
+});
+
+function openCodeAgentDescriptor(
+  agents: ReadonlyArray<OpenCode2Agent.Info>,
+): ProviderOptionDescriptor | undefined {
+  const primaryAgents = agents.filter((agent) => !agent.hidden && agent.mode !== "subagent");
+  if (primaryAgents.length === 0) return undefined;
+  return {
+    id: "agent",
+    label: "Agent",
+    type: "select",
+    options: primaryAgents.map((agent) => ({
+      id: agent.id,
+      label: agent.name,
+      ...(agent.id === "build" ? { isDefault: true } : {}),
+    })),
+    ...(primaryAgents.some((agent) => agent.id === "build") ? { currentValue: "build" } : {}),
+  };
+}
+
+/** A model without capabilities of its own still offers every agent the server discovered. */
+function withDiscoveredAgents(
+  capabilities: ModelCapabilities,
+  agents: ReadonlyArray<OpenCode2Agent.Info>,
+): ModelCapabilities {
+  const descriptor = openCodeAgentDescriptor(agents);
+  if (descriptor === undefined) return capabilities;
+  return createModelCapabilities({
+    optionDescriptors: [
+      ...(capabilities.optionDescriptors ?? []).filter((option) => option.id !== "agent"),
+      descriptor,
+    ],
+  });
+}
+
+function openCode2ModelCapabilities(
+  model: OpenCode2Model,
+  agents: ReadonlyArray<OpenCode2Agent.Info>,
+): ModelCapabilities {
+  const descriptor = openCodeAgentDescriptor(agents);
+  return createModelCapabilities({
+    optionDescriptors: [
+      ...openCodeVariantDescriptors(
+        model.providerID,
+        model.variants.map((variant) => variant.id),
+      ),
+      ...(descriptor === undefined ? [] : [descriptor]),
+    ],
   });
 }
 
 export function openCode2ProviderModels(
   settings: Pick<OpenCodeSettings, "customModels">,
   catalog: ReadonlyArray<OpenCode2Model>,
+  agents: ReadonlyArray<OpenCode2Agent.Info> = [],
 ): ReadonlyArray<ServerProviderModel> {
   return providerModelsFromSettings(
     markOpenCodeLegacy(
@@ -928,14 +1010,14 @@ export function openCode2ProviderModels(
             name: model.name,
             ...(subProvider ? { subProvider } : {}),
             isCustom: false,
-            capabilities: openCode2ModelCapabilities(model),
+            capabilities: openCode2ModelCapabilities(model, agents),
           },
           release: model,
         };
       }),
     ).toSorted((left, right) => left.name.localeCompare(right.name)),
     settings.customModels,
-    DEFAULT_OPENCODE_MODEL_CAPABILITIES,
+    withDiscoveredAgents(DEFAULT_OPENCODE_MODEL_CAPABILITIES, agents),
   );
 }
 
@@ -944,6 +1026,7 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
   version: string,
   checkedAt: string,
   loadModels: Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError>,
+  loadAgents: Effect.Effect<OpenCode2AgentCatalog>,
 ) {
   const result = yield* Effect.exit(loadModels);
   const probe = (status: "ready" | "warning" | "error", message: string) => ({
@@ -980,11 +1063,20 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
       version,
     });
   }
+  const agentCatalog = yield* loadAgents;
+  if (agentCatalog.failure !== undefined) {
+    yield* logDiscoveryFailure({
+      phase: "agents",
+      isExternalServer: settings.serverUrl.trim().length > 0,
+      version,
+      cause: agentCatalog.failure,
+    });
+  }
   return buildServerProvider({
     presentation: OPENCODE_2_PRESENTATION,
     enabled: true,
     checkedAt,
-    models: openCode2ProviderModels(settings, result.value),
+    models: openCode2ProviderModels(settings, result.value, agentCatalog.agents),
     slashCommands: [COMPACT_SLASH_COMMAND],
     probe:
       result.value.length > 0
@@ -1003,6 +1095,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   >,
   environment?: NodeJS.ProcessEnv,
   compatibility: ProviderCompatibilityLookup = noCompatibilityPolicy,
+  loadOpenCode2Agents: Effect.Effect<OpenCode2AgentCatalog> = Effect.succeed({ agents: [] }),
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -1075,7 +1168,13 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   }
   const probed = probedExit.value;
   if (probed.generation === "v2") {
-    return yield* checkOpenCode2(openCodeSettings, probed.version, checkedAt, loadOpenCode2Models);
+    return yield* checkOpenCode2(
+      openCodeSettings,
+      probed.version,
+      checkedAt,
+      loadOpenCode2Models,
+      loadOpenCode2Agents,
+    );
   }
   const refuseBroken = Effect.fnUntraced(function* (detected: string) {
     const broken = brokenVersionDetail({

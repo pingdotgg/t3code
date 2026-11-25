@@ -20,6 +20,12 @@ OpenCode 2 converts the shared OpenCode database to its own format the first tim
 runs. Don't run OpenCode 1.x and 2.x side by side on the same machine. Threads you
 started on 1.x continue on 2.x.
 
+Use a model option's **Agent** selector to choose a visible primary OpenCode agent,
+such as Coder, Researcher, or Reviewer. Subagent-only and hidden agents do not appear.
+Discovery reads the environment server's working directory, so agents defined in
+another project's `opencode.json` may not appear. With no agent selected, T3 Code
+uses `build`, and the Plan toggle still chooses `plan` while it is on.
+
 ## Compaction
 
 OpenCode compacts long conversations itself, and T3 Code has no setting for it. On
