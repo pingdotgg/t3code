@@ -11555,6 +11555,10 @@ describe("AcpAdapterV2", () => {
           capabilities: AcpProviderCapabilitiesV2,
           enablePostSettleContinuation: true,
           deferFinalizeForBackgroundWork: true,
+          extractContextUsage: (notification) =>
+            typeof notification._meta?.totalTokens === "number"
+              ? { usedTokens: notification._meta.totalTokens }
+              : undefined,
           registerExtensions: (context) =>
             Effect.sync(() => {
               applyMutation = context.applyBackgroundTaskMutation;
@@ -11595,8 +11599,16 @@ describe("AcpAdapterV2", () => {
         runtimePolicy,
       });
       const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      const observedContextUsages: Array<unknown> = [];
       yield* runtime.events.pipe(
-        Stream.runForEach((event) => Queue.offer(events, event)),
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            if (event.type === "provider_thread.updated") {
+              observedContextUsages.push(event.providerThread.contextUsage);
+            }
+            yield* Queue.offer(events, event);
+          }),
+        ),
         Effect.forkScoped,
       );
       const providerThread = yield* runtime.ensureThread({
@@ -11633,24 +11645,29 @@ describe("AcpAdapterV2", () => {
       if (applyMutation === undefined || sessionUpdateHandler === undefined) {
         return yield* Effect.die("extensions and session handler must be wired");
       }
-      const endCommand = (taskId: string, label: string) =>
+      const updateCommand = (taskId: string, status: "running" | "completed") =>
         applyMutation!({
           sessionId: "mock-session-1",
           taskId,
-          status: "completed",
-          report: { kind: "command", label },
+          status,
+          ...(status === "completed"
+            ? { report: { kind: "command" as const, label: taskId } }
+            : {}),
         });
-      const agentText = (text: string) =>
+      const agentText = (text: string, totalTokens: number) =>
         sessionUpdateHandler!({
           sessionId: "mock-session-1",
           update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+          _meta: { totalTokens },
         });
 
-      yield* endCommand("task-a", "sleep a");
-      yield* agentText("A_DONE");
+      yield* updateCommand("task-a", "running");
+      yield* updateCommand("task-a", "completed");
+      yield* agentText("A_DONE", 100);
       assert.lengthOf(continuationRequests, 1);
-      assert.equal(continuationRequests[0]?.notification?.summary, 'Command "sleep a" finished');
-      yield* endCommand("task-b", "sleep b");
+      assert.equal(continuationRequests[0]?.notification?.summary, 'Command "task-a" finished');
+      yield* updateCommand("task-b", "running");
+      yield* agentText("NEWER_LIVE", 200);
       assert.lengthOf(continuationRequests, 1);
 
       yield* runtime.startTurn(
@@ -11669,12 +11686,18 @@ describe("AcpAdapterV2", () => {
       yield* TestClock.adjust("3 seconds");
       assert.equal(yield* awaitTerminal(2), "completed");
 
-      yield* agentText("B_DONE");
+      assert.deepEqual(
+        observedContextUsages.at(-1),
+        { usedTokens: 200 },
+        "draining the buffered wake must not republish its older usage",
+      );
+      yield* updateCommand("task-b", "completed");
+      yield* agentText("B_DONE", 300);
       assert.lengthOf(continuationRequests, 2);
       assert.deepEqual(continuationRequests[1]?.notification, {
         source: { kind: "command" },
         outcome: "completed",
-        summary: 'Command "sleep b" finished',
+        summary: 'Command "task-b" finished',
       });
     }).pipe(Effect.provide(layerTest)),
   );
