@@ -452,12 +452,12 @@ function terminalContextMenuItems(options: {
   ];
 }
 
+const isTerminalProcessChanged = Schema.is(TerminalProcessChangedError);
+
 /**
  * A writable session's output generation. A new one is a fresh PTY (or a
  * reconnect) that has not seen the surface's grid yet.
  */
-const isTerminalProcessChanged = Schema.is(TerminalProcessChangedError);
-
 function writableSessionGeneration(
   session: TerminalSessionState,
   canOperate: boolean,
