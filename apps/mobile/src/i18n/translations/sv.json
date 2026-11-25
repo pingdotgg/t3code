@@ -5654,5 +5654,29 @@
   ],
   "7e1fd2eb570a372b": "{who} svarade {choice}",
   "a3c43735e1a81498": "Skäl för {title}",
-  "bfad234f016cfa3f": "Varför, i en mening. Det följer med vilket svar du än väljer."
+  "bfad234f016cfa3f": "Varför, i en mening. Det följer med vilket svar du än väljer.",
+  "3759768c5d342c22": [
+    "besvarad",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "av ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ]
 }

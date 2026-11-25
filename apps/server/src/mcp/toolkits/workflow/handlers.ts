@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Workflows from "../../../workflows/Workflows.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -14,6 +15,17 @@ const required = <A>(value: A | undefined, name: string) =>
     ? Effect.fail(invalid(`This action needs \`${name}\`.`))
     : Effect.succeed(value);
 const refused = (error: Workflows.WorkflowError) => invalid(error.message);
+/** Who an answer sent through this tool came from: the client's label, or the calling thread. */
+const callerName = Effect.gen(function* () {
+  const scope = yield* McpInvocationContext.McpInvocationContext;
+  if (scope.thread === undefined) return scope.client?.label;
+  const threadId = scope.thread.threadId;
+  const shell = yield* ThreadManagementService.ThreadManagementService.pipe(
+    Effect.flatMap((threads) => threads.getThreadShell(threadId)),
+    Effect.orElseSucceed(() => null),
+  );
+  return shell === null || shell.title.trim() === "" ? threadId : shell.title;
+});
 const isRead = (action: string): action is (typeof WORKFLOW_READ_ACTIONS)[number] =>
   (WORKFLOW_READ_ACTIONS as ReadonlyArray<string>).includes(action);
 
@@ -88,8 +100,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
           }
           const random = yield* SecureRandom.SecureRandom;
           const id = input.signalId ?? (yield* random.uuidV4());
-          const scope = yield* McpInvocationContext.McpInvocationContext;
-          const answeredBy = scope.client?.label;
+          const answeredBy = yield* callerName;
           const delivery = yield* workflows
             .signal(address, value, { id, ...(answeredBy === undefined ? {} : { answeredBy }) })
             .pipe(Effect.mapError(refused));

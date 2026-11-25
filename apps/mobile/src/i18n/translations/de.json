@@ -5654,5 +5654,29 @@
   ],
   "7e1fd2eb570a372b": "{who} hat {choice} geantwortet",
   "a3c43735e1a81498": "Begründung für {title}",
-  "bfad234f016cfa3f": "Warum, in einem Satz. Gilt für die Antwort, die du wählst."
+  "bfad234f016cfa3f": "Warum, in einem Satz. Gilt für die Antwort, die du wählst.",
+  "3759768c5d342c22": [
+    "beantwortet",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "von ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ]
 }

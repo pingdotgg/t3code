@@ -1320,8 +1320,8 @@ it.effect(
           const answeredAt = yield* DateTime.now;
           yield* Effect.all(
             [
-              workflows.answer(runId, "merge", { choice: "Merge" }),
-              workflows.answer(runId, "merge", { choice: "Merge" }),
+              workflows.answer(runId, "merge", { choice: "Merge" }, "Laptop"),
+              workflows.answer(runId, "merge", { choice: "Merge" }, "Laptop"),
             ],
             { concurrency: "unbounded" },
           );
@@ -1341,7 +1341,14 @@ it.effect(
             steps.map((step) => [step.name, step.result]),
             [
               ["write", { branch: "fix/1" }],
-              ["merge", { choice: "Merge", answeredAt: DateTime.formatIso(answeredAt) }],
+              [
+                "merge",
+                {
+                  choice: "Merge",
+                  answeredBy: "Laptop",
+                  answeredAt: DateTime.formatIso(answeredAt),
+                },
+              ],
               ["land", "merged as abc123"],
             ],
           );

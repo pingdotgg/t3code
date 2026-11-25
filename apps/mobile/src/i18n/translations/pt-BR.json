@@ -5648,5 +5648,29 @@
   ],
   "7e1fd2eb570a372b": "{who} respondeu {choice}",
   "a3c43735e1a81498": "Motivo para {title}",
-  "bfad234f016cfa3f": "O motivo, em uma frase. Ele acompanha a resposta que você escolher."
+  "bfad234f016cfa3f": "O motivo, em uma frase. Ele acompanha a resposta que você escolher.",
+  "3759768c5d342c22": [
+    "respondida",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "por ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ]
 }

@@ -1925,7 +1925,7 @@ function WorkflowQuestionCard({
       )}
       <div className="mt-2.5 flex flex-wrap items-start gap-2">
         {view.choices.map((choice, index) => (
-          <div key={choice.value} className="flex max-w-60 flex-col gap-1">
+          <div key={choice.value} className="flex flex-col items-start gap-1">
             <Button
               size="sm"
               variant={index === 0 ? "default" : "outline"}
@@ -1935,7 +1935,7 @@ function WorkflowQuestionCard({
               {choice.value}
             </Button>
             {choice.description === null ? null : (
-              <span className="text-xs text-muted-foreground">{choice.description}</span>
+              <span className="max-w-60 text-xs text-muted-foreground">{choice.description}</span>
             )}
           </div>
         ))}

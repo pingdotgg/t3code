@@ -111,6 +111,8 @@ export class Workflows extends Context.Service<
       runId: string,
       name: string,
       value: Schema.Json,
+      /** Who answered, as the server knows them; kept with the answer. */
+      answeredBy?: string,
     ) => Effect.Effect<void, WorkflowInputError>;
     /** Run a paused run's failed step again. */
     readonly resume: (runId: string) => Effect.Effect<void, WorkflowError>;

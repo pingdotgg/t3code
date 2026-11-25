@@ -252,7 +252,7 @@ describe("WorkflowRunsView", () => {
             ...question,
             request: {
               title: "Ship release 1.2?",
-              choices: ["Ship", "Hold"],
+              choices: ["Ship", "Hold", "Close as a duplicate of the earlier request"],
               choiceDetails: [
                 { value: "Hold", description: "It waits a week", requireReason: true },
               ],
@@ -267,6 +267,11 @@ describe("WorkflowRunsView", () => {
     await using screen = await render(page());
 
     await expect.element(screen.getByText("It waits a week")).toBeVisible();
+    // A long label keeps a button as wide as itself, as before choices could say more.
+    const long = screen
+      .getByRole("button", { name: "Close as a duplicate of the earlier request" })
+      .element();
+    expect(long.scrollWidth).toBeLessThanOrEqual(long.clientWidth);
     await expect
       .element(screen.getByRole("link", { name: "The diff" }))
       .toHaveAttribute("href", "https://example.com/diff");
