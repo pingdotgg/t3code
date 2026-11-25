@@ -509,6 +509,27 @@ describe("VoiceInputController", () => {
     expect(harness.deleted).toEqual(["file:///voice.m4a"]);
   });
 
+  it("tells the user when the recording limit, not the user, ended the recording", async () => {
+    const userStates = vi.fn<VoiceInputControllerDependencies["onStateChange"]>();
+    const userStopped = createHarness({ onStateChange: userStates });
+    await userStopped.controller.start();
+    await userStopped.controller.stop();
+
+    resetVoiceInputGlobalsForTests();
+    const limitStates = vi.fn<VoiceInputControllerDependencies["onStateChange"]>();
+    const limitReached = createHarness({ onStateChange: limitStates });
+    await limitReached.controller.start();
+    await limitReached.controller.handleRecorderStatus({
+      isFinished: true,
+      hasError: false,
+      error: null,
+      url: "file:///voice.m4a",
+    });
+
+    expect(limitReached.commits).toEqual(userStopped.commits);
+    expect(limitStates.mock.calls).not.toEqual(userStates.mock.calls);
+  });
+
   it.each(["cancel", "dispose", "ownerChanged"] as const)(
     "queues the next recording after %s until transcription and audio cleanup settle",
     async (action) => {
