@@ -4,12 +4,14 @@ import {
   AuthAccessTokenType,
   connectDeviceVerificationCode,
   type ClientConnectionMethod,
+  type EnvironmentConnectApprovalPendingError,
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import { RelayEnvironmentConnectScope } from "@t3tools/contracts/relay";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
+import { connectDeviceVerificationCodeV2 } from "@t3tools/shared/secureChannelPeer";
 import {
   exchangeRemoteDpopAccessToken,
   type RemoteEnvironmentAuthError,
@@ -18,6 +20,7 @@ import {
 } from "./remote.ts";
 import {
   credentialMissingError,
+  environmentIdentityChangedError,
   environmentMismatchError,
   mapManagedRelayError,
   mapRemoteDpopEnvironmentError,
@@ -35,11 +38,13 @@ import { isNearbyAddress } from "../connection/routes.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as Persistence from "../platform/persistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import * as TokenStore from "./tokenStore.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -146,8 +151,7 @@ function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemp
     : mapRemoteDpopEnvironmentError(error);
 }
 
-function approvalPendingError(hostLabel: string, thumbprint: string, traceId: string) {
-  const verificationCode = connectDeviceVerificationCode(thumbprint);
+function approvalPendingError(hostLabel: string, verificationCode: string, traceId: string) {
   return new ConnectionTransientError({
     reason: "approval-pending",
     ...translatableDetail(
@@ -184,6 +188,7 @@ export const make = Effect.gen(function* () {
   const presentation = yield* ClientCapabilities.ClientPresentation;
   const tokenStore = yield* TokenStore.RemoteDpopAccessTokenStore;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const registrations = yield* Persistence.ConnectionRegistrationStore;
   const httpClient = yield* HttpClient.HttpClient;
   // A platform that can run the secure channel asks for it on every DPoP RPC socket, so a server
   // that supports it demands the handshake even when a tunnel hides its capability.
@@ -381,6 +386,54 @@ export const make = Effect.gen(function* () {
     return connected;
   });
 
+  const pinStoreError = (error: Persistence.ConnectionPersistenceError) =>
+    new ConnectionBlockedError({ reason: "configuration", detail: error.message, hop: "device" });
+
+  /**
+   * The code this device shows while it waits. With the environment's key and nonce it is the v2
+   * code, and the key it covers is pinned now, so the approval the human gives also vouches for
+   * the key the first secure handshake will enforce. An older host sends neither: v1.
+   */
+  const approvalPending = Effect.fn("clientRuntime.connection.remote.approvalPending")(function* (
+    environmentId: EnvironmentId,
+    hostLabel: string,
+    thumbprint: string,
+    pending: EnvironmentConnectApprovalPendingError,
+  ) {
+    const decode = (value: string | undefined, length: number) =>
+      Option.filter(
+        value === undefined ? Option.none() : Result.getSuccess(Base64Url.decode(value)),
+        (bytes) => bytes.length === length,
+      );
+    const environmentPublicKey = decode(pending.environmentPublicKey, 32);
+    const nonce = decode(pending.verificationNonce, 16);
+    if (Option.isNone(environmentPublicKey) || Option.isNone(nonce)) {
+      return approvalPendingError(
+        hostLabel,
+        connectDeviceVerificationCode(thumbprint),
+        pending.traceId,
+      );
+    }
+    const key = environmentPublicKey.value;
+    const pinned = yield* registrations.environmentKey(environmentId);
+    if (Option.isSome(pinned)) {
+      if (!(pinned.value.length === key.length && pinned.value.every((b, i) => b === key[i]))) {
+        return environmentIdentityChangedError({ host: hostLabel, via: "relay" });
+      }
+    } else {
+      yield* registrations.pinEnvironmentKey(environmentId, key);
+    }
+    return approvalPendingError(
+      hostLabel,
+      connectDeviceVerificationCodeV2({
+        proofKeyThumbprint: thumbprint,
+        environmentPublicKey: key,
+        nonce: nonce.value,
+      }),
+      pending.traceId,
+    );
+  }, Effect.mapError(pinStoreError));
+
   const exchangeDpopToken = Effect.fn("clientRuntime.connection.remote.exchangeDpopToken")(
     function* (
       environmentId: EnvironmentId,
@@ -418,12 +471,15 @@ export const make = Effect.gen(function* () {
         credential: bootstrap.credential,
         dpopProof: bootstrapProof,
         clientMetadata: presentation.metadata,
+        connectDeviceCodeV2: true,
       }).pipe(
-        Effect.mapError((error) =>
-          error._tag === "EnvironmentConnectApprovalPendingError"
-            ? approvalPendingError(descriptor.label, thumbprint, error.traceId)
-            : mapRemoteDpopEnvironmentError(error),
-        ),
+        Effect.catchTags({
+          EnvironmentConnectApprovalPendingError: (pending) =>
+            approvalPending(environmentId, descriptor.label, thumbprint, pending).pipe(
+              Effect.flatMap(Effect.fail),
+            ),
+        }),
+        Effect.mapError(mapDpopSocketError),
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.withSpan("environment.authorization.accessToken.exchange"),
       );

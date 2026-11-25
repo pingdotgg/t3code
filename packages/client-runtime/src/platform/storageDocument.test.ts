@@ -29,6 +29,7 @@ import {
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   catalogEnvironmentKey,
   catalogRoutes,
+  forgetEnvironmentKeyInCatalog,
   pinEnvironmentKeyInCatalog,
   setRoutesInCatalog,
   putRemoteDpopTokenInCatalog,
@@ -307,6 +308,18 @@ describe("ConnectionCatalogDocument", () => {
     expect(pinEnvironmentKeyInCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT, ENVIRONMENT_ID, key)).toBe(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,
     );
+  });
+
+  it("forgets a pinned identity key but keeps the environment registered", () => {
+    const registered = registerConnectionInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      new RelayConnectionRegistration({ target: RELAY_TARGET }),
+    );
+    const pinned = pinEnvironmentKeyInCatalog(registered, ENVIRONMENT_ID, new Uint8Array(32));
+    const forgotten = forgetEnvironmentKeyInCatalog(pinned, ENVIRONMENT_ID);
+
+    expect(catalogEnvironmentKey(forgotten, ENVIRONMENT_ID)).toEqual(Option.none());
+    expect(forgotten.targets).toEqual(pinned.targets);
   });
 
   it("decodes a document written before the disabled list existed", () => {

@@ -436,7 +436,14 @@ export const layer = HttpApiBuilder.group(
                   ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
                 },
               }),
-              proof ? { proofKeyThumbprint: proof.thumbprint } : undefined,
+              proof
+                ? {
+                    proofKeyThumbprint: proof.thumbprint,
+                    ...(args.payload.connect_device_code === "v2"
+                      ? { connectDeviceCodeV2: true }
+                      : {}),
+                  }
+                : undefined,
             );
           },
           traceRelayRequest,
@@ -447,13 +454,20 @@ export const layer = HttpApiBuilder.group(
             ),
           ),
           Effect.catchTags({
-            ServerAuthConnectApprovalPendingError: () =>
+            ServerAuthConnectApprovalPendingError: (pending) =>
               currentEnvironmentTraceId.pipe(
                 Effect.flatMap((traceId) =>
                   Effect.fail(
                     new EnvironmentConnectApprovalPendingError({
                       code: "connect_approval_pending",
                       traceId,
+                      ...(pending.environmentPublicKey !== undefined &&
+                      pending.verificationNonce !== undefined
+                        ? {
+                            environmentPublicKey: pending.environmentPublicKey,
+                            verificationNonce: pending.verificationNonce,
+                          }
+                        : {}),
                     }),
                   ),
                 ),

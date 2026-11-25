@@ -213,7 +213,11 @@ const connectDeviceListCommand = Command.make("list", {
 );
 
 const verificationCodeArgument = Argument.String("code").pipe(
-  Argument.withDescription("The code the device shows, such as `K7QM-2XFD`."),
+  Argument.withDescription("The code the device shows, such as `K7QM-2XFD-8RWN-4CTB`."),
+);
+
+const trustedDeviceCodeArgument = Argument.String("code").pipe(
+  Argument.withDescription("The code `t3 auth connect-device list` shows, such as `K7QM-2XFD`."),
 );
 
 const connectDeviceApproveCommand = Command.make("approve", {
@@ -250,7 +254,7 @@ const connectDeviceApproveCommand = Command.make("approve", {
 
 const connectDeviceRevokeCommand = Command.make("revoke", {
   ...authLocationFlags,
-  code: verificationCodeArgument,
+  code: trustedDeviceCodeArgument,
 }).pipe(
   Command.withDescription("Stop trusting a T3 Connect device and end its sessions."),
   Command.withHandler((flags) =>

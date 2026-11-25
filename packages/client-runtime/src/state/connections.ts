@@ -191,6 +191,15 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.retryNow(environmentId)),
       ),
   });
+  const forgetIdentity = createRuntimeCommand(runtime, {
+    label: "environment-catalog:forget-identity",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (environmentId: EnvironmentIdType) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.forgetIdentity(environmentId)),
+      ),
+  });
 
   return {
     catalogAtom,
@@ -207,6 +216,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
     reorderRoutes,
     removeRelayEnvironments,
     retryNow,
+    forgetIdentity,
     setEnabled,
   };
 }

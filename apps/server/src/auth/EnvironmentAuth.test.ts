@@ -6,10 +6,13 @@ import {
   connectDeviceVerificationCode,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import { connectDeviceVerificationCodeV2 } from "@t3tools/shared/secureChannelPeer";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
@@ -421,6 +424,77 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           expect(
             (yield* serverAuth.listPairingLinks()).some((link) => link.connectDeviceRequest),
           ).toBe(false);
+        }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect(
+      "shows a v2 device and its approver a code bound to the environment key and a fixed nonce",
+      () =>
+        Effect.gen(function* () {
+          const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+          const newDevice = "Kq3vZ8sYbTn0eW1pLr5uXc7dHf9gJm2aQs4tVw6yBzE";
+          const oldDevice = "Zp8wQ2nVcX4rT6yU1iO3aS5dF7gH9jK0lM2bN4vC6xE";
+          const ask = (proofKeyThumbprint: string, connectDeviceCodeV2: boolean) =>
+            serverAuth.issueConnectCredential({ proofKeyThumbprint, requireApproval: true }).pipe(
+              Effect.flatMap(({ credential }) =>
+                serverAuth.exchangeBootstrapCredentialForAccessToken(
+                  credential,
+                  undefined,
+                  requestMetadata,
+                  { proofKeyThumbprint, connectDeviceCodeV2 },
+                ),
+              ),
+              Effect.flip,
+              Effect.filterOrFail(
+                (error) => error._tag === "ServerAuthConnectApprovalPendingError",
+              ),
+            );
+
+          // Until the device asks, it shows no code, so approvers see no request either.
+          yield* serverAuth.issueConnectCredential({
+            proofKeyThumbprint: newDevice,
+            requireApproval: true,
+          });
+          expect(
+            (yield* serverAuth.listPairingLinks()).some((link) => link.connectDeviceRequest),
+          ).toBe(false);
+          const first = yield* ask(newDevice, true);
+          const retry = yield* ask(newDevice, true);
+          expect(first.environmentPublicKey).toBeDefined();
+          // The nonce belongs to the request, so retries see the same one.
+          expect(retry.verificationNonce).toBe(first.verificationNonce);
+          expect(retry.environmentPublicKey).toBe(first.environmentPublicKey);
+          const environmentPublicKey = Result.getOrThrow(
+            Base64Url.decode(first.environmentPublicKey!),
+          );
+          const nonce = Result.getOrThrow(Base64Url.decode(first.verificationNonce!));
+          expect([environmentPublicKey.length, nonce.length]).toEqual([32, 16]);
+          const v2Code = connectDeviceVerificationCodeV2({
+            proofKeyThumbprint: newDevice,
+            environmentPublicKey,
+            nonce,
+          });
+
+          yield* ask(oldDevice, false);
+          const codes = (yield* serverAuth.listPairingLinks()).flatMap((link) =>
+            link.connectDeviceRequest ? [link.connectDeviceRequest.verificationCode] : [],
+          );
+          expect(codes.toSorted()).toEqual(
+            [v2Code, connectDeviceVerificationCode(oldDevice)].toSorted(),
+          );
+
+          // The CLI matches the whole code, in any case and grouping, never a prefix.
+          expect(
+            yield* serverAuth.connectRequestsShowingCode(v2Code.replaceAll("-", "").toLowerCase()),
+          ).toHaveLength(1);
+          expect(yield* serverAuth.connectRequestsShowingCode(v2Code.slice(0, 9))).toEqual([]);
+          const [pairingLinkId] = yield* serverAuth.connectRequestsShowingCode(v2Code);
+          expect(yield* serverAuth.approveConnectDevice(pairingLinkId!)).toBe(true);
+          // An approved device keeps the short code it has always been listed and revoked by.
+          const [approved] = yield* serverAuth.connectDevicesShowingCode(
+            connectDeviceVerificationCode(newDevice),
+          );
+          expect(approved?.proofKeyThumbprint).toBe(newDevice);
         }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 

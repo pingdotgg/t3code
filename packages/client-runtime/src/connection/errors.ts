@@ -63,8 +63,8 @@ export function environmentMismatchError(input: {
 }
 
 /**
- * The environment's secure channel key differs from the one pinned on its first secure
- * connection. Retrying cannot fix it, and removing the environment drops the pin.
+ * The environment's secure channel key differs from the one pinned for it. Retrying cannot fix it;
+ * forgetting the pin (Trust new identity) or removing the environment drops it.
  */
 export function environmentIdentityChangedError(input: {
   readonly host: string;
@@ -74,7 +74,7 @@ export function environmentIdentityChangedError(input: {
     reason: "configuration",
     ...translatableDetail(
       msg(
-        "{host}'s identity changed since this device first connected. If you expected this, remove {host} from this device and add it again to trust its new identity.",
+        "{host}'s identity changed since this device first trusted it. If T3 Code on {host} was reinstalled or reset, choose Trust new identity in its connection details.",
         { host: input.host },
       ),
     ),

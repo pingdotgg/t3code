@@ -502,6 +502,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("requires T3 Connect device approval unless a stored choice turned it off", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      assert.isTrue((yield* serverSettings.getSettings).requireConnectDeviceApproval);
+      yield* serverSettings.updateSettings({ requireConnectDeviceApproval: false });
+      assert.deepInclude(JSON.parse(yield* fs.readFileString(config.settingsPath)), {
+        requireConnectDeviceApproval: false,
+      });
+      assert.isFalse((yield* serverSettings.getSettings).requireConnectDeviceApproval);
+      assert.isFalse(
+        (yield* decodeServerSettings({ requireConnectDeviceApproval: false }))
+          .requireConnectDeviceApproval,
+      );
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("refuses to save over a settings file it cannot parse", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

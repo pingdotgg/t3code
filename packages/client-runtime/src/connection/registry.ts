@@ -160,6 +160,13 @@ export class EnvironmentRegistry extends Context.Service<
       | PlatformEnvironmentRemovalError
     >;
     readonly retryNow: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    /**
+     * Forgets the identity key pinned for the environment, then retries, so the next connection
+     * trusts the key the environment presents. Only for a machine that was reinstalled or reset.
+     */
+    readonly forgetIdentity: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
     readonly setEnabled: (
       environmentId: EnvironmentId,
       enabled: boolean,
@@ -1064,6 +1071,13 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
       Effect.withSpan("EnvironmentRegistry.retryNow"),
     );
+  const forgetIdentity = (environmentId: EnvironmentId) =>
+    registrations
+      .forgetEnvironmentKey(environmentId)
+      .pipe(
+        Effect.andThen(retryNow(environmentId)),
+        Effect.withSpan("EnvironmentRegistry.forgetIdentity"),
+      );
   const setEnabled = Effect.fn("EnvironmentRegistry.setEnabled")(function* (
     environmentId: EnvironmentId,
     enabled: boolean,
@@ -1206,6 +1220,7 @@ export const make = Effect.gen(function* () {
     reorderRoutes,
     removeRelayEnvironments,
     retryNow,
+    forgetIdentity,
     setEnabled,
     setCompatibility,
     state,

@@ -115,7 +115,7 @@ function ConfiguredConnectOnboardingDialog() {
   const [step, setStep] = useState<OnboardingStep>("devices");
   const [exposeEnvironment, setExposeEnvironment] = useState(true);
   const [publishAgentActivity, setPublishAgentActivity] = useState(true);
-  const [requireDeviceApproval, setRequireDeviceApproval] = useState(false);
+  const [requireDeviceApproval, setRequireDeviceApproval] = useState(true);
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [prefilledFromLinkState, setPrefilledFromLinkState] = useState(false);
@@ -158,7 +158,7 @@ function ConfiguredConnectOnboardingDialog() {
       setPrefilledFromLinkState(false);
       setExposeEnvironment(true);
       setPublishAgentActivity(true);
-      setRequireDeviceApproval(false);
+      setRequireDeviceApproval(true);
       setDontShowAgain(false);
       setStep(canManageRelay && controller.linkState.target !== null ? "publish" : "devices");
       setOpenForAccount(requestedAccount);

@@ -472,7 +472,10 @@ export const serverAuthInvalidRequestReason = (
 /** The credential is fine, but the host has not approved this T3 Connect device yet. */
 export class ServerAuthConnectApprovalPendingError extends Schema.TaggedError<ServerAuthConnectApprovalPendingError>()(
   "ServerAuthConnectApprovalPendingError",
-  {},
+  {
+    environmentPublicKey: Schema.optional(Schema.String),
+    verificationNonce: Schema.optional(Schema.String),
+  },
 ) {
   override get message(): string {
     return "This T3 Connect device is waiting for approval.";
@@ -527,6 +530,8 @@ export class EnvironmentAuth extends Context.Service<
       requestMetadata: AuthClientMetadata,
       input?: {
         readonly proofKeyThumbprint?: string;
+        /** A waiting T3 Connect device shows the v2 code. */
+        readonly connectDeviceCodeV2?: boolean;
       },
     ) => Effect.Effect<
       AuthAccessTokenResult,
@@ -1060,6 +1065,7 @@ export const make = Effect.gen(function* () {
       readonly allowedSubject?: string;
       /** Shown to approvers when the credential waits on T3 Connect device approval. */
       readonly requestMetadata?: AuthClientMetadata;
+      readonly connectDeviceCodeV2?: boolean;
     },
   ): Effect.Effect<
     ResolvedBootstrapGrant,
@@ -1072,8 +1078,19 @@ export const make = Effect.gen(function* () {
       return bootstrapCredentials.consume(credential, input).pipe(
         Effect.catchTags({
           BootstrapCredentialConnectApprovalPendingError: (pending) =>
-            recordConnectRequest(pending.pairingLinkId, input?.requestMetadata).pipe(
-              Effect.andThen(Effect.fail(new ServerAuthConnectApprovalPendingError({}))),
+            recordConnectRequest(
+              pending.pairingLinkId,
+              input?.requestMetadata,
+              input?.connectDeviceCodeV2 === true,
+            ).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ServerAuthConnectApprovalPendingError({
+                    environmentPublicKey: pending.environmentPublicKey,
+                    verificationNonce: pending.verificationNonce,
+                  }),
+                ),
+              ),
             ),
         }),
         Effect.mapError((cause) =>
@@ -1286,11 +1303,15 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.revokePairingLink"),
     );
 
-  const recordConnectRequest = (pairingLinkId: string, client: AuthClientMetadata | undefined) =>
+  const recordConnectRequest = (
+    pairingLinkId: string,
+    client: AuthClientMetadata | undefined,
+    connectCodeV2: boolean,
+  ) =>
     client === undefined
       ? Effect.void
       : bootstrapCredentials
-          .recordConnectRequestClient(pairingLinkId, client)
+          .recordConnectRequestClient(pairingLinkId, client, connectCodeV2)
           .pipe(Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })));
 
   const issueConnectCredential: EnvironmentAuth["Service"]["issueConnectCredential"] = Effect.fn(

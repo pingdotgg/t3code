@@ -409,7 +409,7 @@ describe("RpcSessionFactory", () => {
         _tag: "ConnectionBlockedError",
         failureCause: "identity_changed",
         detail:
-          "Test environment's identity changed since this device first connected. If you expected this, remove Test environment from this device and add it again to trust its new identity.",
+          "Test environment's identity changed since this device first trusted it. If T3 Code on Test environment was reinstalled or reset, choose Trust new identity in its connection details.",
       });
       expect(session.secureChannel).toBe(true);
     }).pipe(Effect.scoped),

@@ -1,5 +1,6 @@
 import {
   catalogEnvironmentKey,
+  forgetEnvironmentKeyInCatalog,
   pinEnvironmentKeyInCatalog,
   putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
@@ -105,6 +106,13 @@ export const layer = Layer.effectContext(
           catalog
             .update((document) => pinEnvironmentKeyInCatalog(document, environmentId, publicKey))
             .pipe(Effect.mapError((error) => targetPersistenceError("pin-environment-key", error))),
+      ),
+      forgetEnvironmentKey: Effect.fn(
+        "Persistence.ConnectionRegistrationStore.forgetEnvironmentKey",
+      )((environmentId) =>
+        catalog
+          .update((document) => forgetEnvironmentKeyInCatalog(document, environmentId))
+          .pipe(Effect.mapError((error) => targetPersistenceError("pin-environment-key", error))),
       ),
     });
     const profileStore = ProfileStore.make({

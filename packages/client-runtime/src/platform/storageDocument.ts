@@ -246,6 +246,22 @@ export function catalogEnvironmentKey(
     : Result.getSuccess(Base64Url.decode(stored.publicKey));
 }
 
+export function forgetEnvironmentKeyInCatalog(
+  document: ConnectionCatalogDocument,
+  environmentId: EnvironmentId,
+): ConnectionCatalogDocument {
+  return document.environmentKeys === undefined
+    ? document
+    : {
+        ...document,
+        environmentKeys: removeCatalogValue(
+          document.environmentKeys,
+          (value) => value.environmentId,
+          environmentId,
+        ),
+      };
+}
+
 /** A key for an environment that is no longer registered is dropped, as removal would drop it. */
 export function pinEnvironmentKeyInCatalog(
   document: ConnectionCatalogDocument,

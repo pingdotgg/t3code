@@ -19,6 +19,7 @@ import {
   makeStoredShellSnapshotEncoder,
   makeStoredThreadSnapshotEncoder,
   makeThreadCacheWriteOrder,
+  forgetEnvironmentKeyInCatalog,
   pinEnvironmentKeyInCatalog,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
@@ -817,6 +818,13 @@ export const layer = Layer.effectContext(
             .pipe(Effect.mapError((cause) => persistenceError("pin-environment-key", cause)));
         },
       ),
+      forgetEnvironmentKey: Effect.fn(
+        "Persistence.ConnectionRegistrationStore.forgetEnvironmentKey",
+      )(function (environmentId) {
+        return catalog
+          .update((document) => forgetEnvironmentKeyInCatalog(document, environmentId))
+          .pipe(Effect.mapError((cause) => persistenceError("pin-environment-key", cause)));
+      }),
     });
     const profileStore = ProfileStore.make({
       get: (connectionId) =>

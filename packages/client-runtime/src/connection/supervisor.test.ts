@@ -29,6 +29,7 @@ import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as Persistence from "../platform/persistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
@@ -2051,6 +2052,15 @@ describe("EnvironmentSupervisor", () => {
             }),
             Layer.succeed(ClientCapabilities.ClientPresentation, {
               metadata: { label: "Test client", deviceType: "desktop" },
+            }),
+            Layer.succeed(Persistence.ConnectionRegistrationStore, {
+              register: unused,
+              setRoutes: unused,
+              remove: unused,
+              setEnabled: unused,
+              environmentKey: () => Effect.succeedNone,
+              pinEnvironmentKey: unused,
+              forgetEnvironmentKey: unused,
             }),
             ConnectionCredentialStore.layerMemory(),
           ),

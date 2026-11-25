@@ -57,6 +57,7 @@ import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
 import { environmentCatalog } from "~/connection/catalog";
+import { requestConfirmDialog } from "~/confirmDialog";
 import { readEnvironmentScope } from "~/state/session";
 import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
 import { APP_VERSION } from "~/branding";
@@ -214,6 +215,17 @@ export function SavedBackendListRow({
     setLastRelayHttpBaseUrl(discoveredRelayHttpBaseUrl);
   }
   const retryNow = useAtomCommand(environmentCatalog.retryNow);
+  const forgetIdentity = useAtomCommand(environmentCatalog.forgetIdentity);
+  const trustNewIdentity = async () => {
+    const confirmed = await requestConfirmDialog(
+      gt(
+        "Trust {host}'s new identity?\nOnly do this if T3 Code on {host} was reinstalled or reset. Otherwise something between this device and {host} may be intercepting the connection, and trusting it would let it see and change what you do on {host}.",
+        { host: environment.label },
+      ),
+      { variant: "destructive" },
+    );
+    if (confirmed === true) await forgetIdentity(environmentId);
+  };
   const {
     diagnosis: currentDiagnosis,
     state: connectionState,
@@ -359,6 +371,11 @@ export function SavedBackendListRow({
               diagnosis={diagnosis}
               onRetry={() => void retryNow(environmentId)}
               onAddRoute={relayOnly ? () => onAddRoute(environment) : null}
+              onTrustNewIdentity={
+                connectionState.lastFailure?.failureCause === "identity_changed"
+                  ? () => void trustNewIdentity()
+                  : null
+              }
             />
           ) : null}
           {routesOpen && (

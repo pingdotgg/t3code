@@ -470,6 +470,7 @@
   "6671e2adfb0e35b3": "Verifique se {host} está ativo e com o T3 Code em execução.",
   "3c988e8ceac72484": "Uma VPN ou um exit node do Tailscale em {host} pode bloquear o túnel (porta 7844). Desative-o ou libere o túnel.",
   "b5aacc0b9163c0e3": "Abra ou reinicie o T3 Code em {host}.",
+  "ca4336a91c7b0d64": "Se o T3 Code em {host} foi reinstalado ou redefinido, escolha Confiar na nova identidade abaixo.",
   "a80f88e893129bd9": "Verifique se {host} está ativo e online.",
   "a11d4c010567faac": "Reinicie o T3 Code neste dispositivo.",
   "6a1d53c7bee371aa": "Se continuar falhando, remova {host} deste dispositivo e adicione-o novamente.",
@@ -498,6 +499,7 @@
   "b0dd3cd876937ca8": "O perfil de conexão {connectionId} não está disponível.",
   "5ce46783e79ca9d1": "A credencial de conexão {connectionId} não está disponível.",
   "b39d1428ec8b23f5": "Este endereço agora executa outra instalação do T3 Code ({actual}, não {expected}). Remova esta conexão e adicione-a novamente.",
+  "f75348042f6e8265": "A identidade de {host} mudou desde que este dispositivo confiou nela pela primeira vez. Se o T3 Code em {host} foi reinstalado ou redefinido, escolha Confiar na nova identidade nos detalhes da conexão.",
   "ea0d3e4e51d5706f": "A credencial do ambiente é inválida.",
   "7283ebfd16d09677": "A credencial do ambiente não concede o acesso necessário.",
   "d3e9a9cb543b4b7b": "O ambiente rejeitou a solicitação de autenticação.",
@@ -5694,9 +5696,7 @@
   "201490988858b511": "retirada por {by}",
   "58d7d08ed2365aac": "A identidade de {host} mudou",
   "2c10f5e2a843f038": "Não foi possível estabelecer uma conexão criptografada com {host}",
-  "dcf6f4ea88e6d6f2": "Se o T3 Code em {host} foi reinstalado ou redefinido, remova {host} deste dispositivo e adicione-o novamente para confiar na nova identidade.",
   "cd8c60ecfa5238ed": "Caso contrário, algo entre este dispositivo e {host} pode estar interceptando a conexão.",
   "0c749dab5288ee9f": "Algo entre este dispositivo e {host} pode estar alterando a conexão.",
-  "405ee04d8c932c58": "A identidade de {host} mudou desde que este dispositivo se conectou pela primeira vez. Se você esperava isso, remova {host} deste dispositivo e adicione-o novamente para confiar na nova identidade.",
   "f9f9ed1dc0b45f72": "Não foi possível estabelecer a conexão criptografada com {host}."
 }

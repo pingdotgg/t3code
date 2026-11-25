@@ -138,11 +138,14 @@ export function ConnectionDiagnosisPanel({
   diagnosis,
   onRetry,
   onAddRoute,
+  onTrustNewIdentity,
 }: {
   readonly hostLabel: string;
   readonly diagnosis: ConnectionDiagnosis;
   readonly onRetry: () => void;
   readonly onAddRoute: (() => void) | null;
+  /** Set only when the machine's identity changed. */
+  readonly onTrustNewIdentity: (() => void) | null;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -212,6 +215,16 @@ export function ConnectionDiagnosisPanel({
         <Button type="button" size="xs" variant="outline" onClick={onRetry}>
           <T>Retry now</T>
         </Button>
+        {onTrustNewIdentity ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="destructive-outline"
+            onClick={onTrustNewIdentity}
+          >
+            <T>Trust new identity</T>
+          </Button>
+        ) : null}
         <Button
           type="button"
           size="xs"

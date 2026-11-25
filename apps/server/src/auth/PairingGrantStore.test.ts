@@ -18,6 +18,7 @@ import * as ServerConfig from "../config.ts";
 import { MCP_APPROVAL_SUBJECT_PREFIX } from "../persistence/AuthPairingLinks.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
+import * as ServerSecretStore from "./ServerSecretStore.ts";
 
 const layerServerConfig = (
   overrides?: Partial<
@@ -44,6 +45,7 @@ const layerPairingGrantStore = (
 ) =>
   PairingGrantStore.layer.pipe(
     Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provide(ServerSecretStore.layer),
     Layer.provide(layerServerConfig(overrides)),
   );
 

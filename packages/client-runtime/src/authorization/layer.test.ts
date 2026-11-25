@@ -1,13 +1,16 @@
 import {
   AuthStandardClientScopes,
+  connectDeviceVerificationCode,
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import { type RelayEnvironmentConnectResponse } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
+import { connectDeviceVerificationCodeV2 } from "@t3tools/shared/secureChannelPeer";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -18,6 +21,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as Persistence from "../platform/persistence.ts";
 import * as RemoteEnvironmentAuthorization from "./service.ts";
 import * as TokenStore from "./tokenStore.ts";
 import {
@@ -128,6 +132,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   readonly beforePut?: Effect.Effect<void>;
   readonly clerkToken?: ClientCapabilities.CloudSession["Service"]["clerkToken"];
   readonly credentials?: ReadonlyArray<readonly [string, ConnectionCredential]>;
+  readonly pinnedKeys?: ReadonlyArray<readonly [EnvironmentId, Uint8Array]>;
 }) {
   const tokens = yield* Ref.make(
     new Map(
@@ -153,6 +158,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     }>
   >([]);
   const fetch = recordedFetch(input.responses, input.descriptor);
+  const pinnedKeys = yield* Ref.make(new Map<EnvironmentId, Uint8Array>(input.pinnedKeys ?? []));
 
   const tokenStore = TokenStore.RemoteDpopAccessTokenStore.of({
     get: (environmentId) =>
@@ -223,6 +229,24 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
           deviceId: Effect.succeedSome("device-1"),
         }),
         Layer.succeed(TokenStore.RemoteDpopAccessTokenStore, tokenStore),
+        Layer.succeed(Persistence.ConnectionRegistrationStore, {
+          register: () => Effect.die("unused"),
+          setRoutes: () => Effect.die("unused"),
+          remove: () => Effect.die("unused"),
+          setEnabled: () => Effect.die("unused"),
+          environmentKey: (environmentId) =>
+            Ref.get(pinnedKeys).pipe(
+              Effect.map((keys) => Option.fromUndefinedOr(keys.get(environmentId))),
+            ),
+          pinEnvironmentKey: (environmentId, publicKey) =>
+            Ref.update(pinnedKeys, (keys) => new Map(keys).set(environmentId, publicKey)),
+          forgetEnvironmentKey: (environmentId) =>
+            Ref.update(pinnedKeys, (keys) => {
+              const next = new Map(keys);
+              next.delete(environmentId);
+              return next;
+            }),
+        }),
         ConnectionCredentialStore.layerMemory(input.credentials),
         Layer.succeed(
           ClientCapabilities.ClientPresentation,
@@ -247,6 +271,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     session,
     thumbprint,
     tokenReads,
+    pinnedKeys,
   };
 });
 
@@ -755,6 +780,85 @@ describe("RemoteEnvironmentAuthorization", () => {
       expect(harness.fetch.calls).toHaveLength(3);
     }),
   );
+
+  describe("while the host waits to approve this device", () => {
+    const environmentKey = new Uint8Array(32).fill(7);
+    const nonce = new Uint8Array(16).fill(9);
+    const approvalPending = (fields: object) =>
+      Response.json(
+        {
+          _tag: "EnvironmentConnectApprovalPendingError",
+          code: "connect_approval_pending",
+          traceId: "trace-approval",
+          ...fields,
+        },
+        { status: 403 },
+      );
+    const v2Fields = {
+      environmentPublicKey: Base64Url.encode(environmentKey),
+      verificationNonce: Base64Url.encode(nonce),
+    };
+    const attempt = (harness: Effect.Success<ReturnType<typeof makeHarness>>) =>
+      Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote
+          .authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(harness.layer));
+
+    it.effect("shows the v2 code and pins the key it covers", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          responses: [Response.json(DESCRIPTOR), approvalPending(v2Fields)],
+        });
+        const error = yield* attempt(harness);
+        expect(error).toMatchObject({
+          reason: "approval-pending",
+          verificationCode: connectDeviceVerificationCodeV2({
+            proofKeyThumbprint: "thumbprint-1",
+            environmentPublicKey: environmentKey,
+            nonce,
+          }),
+        });
+        expect((yield* Ref.get(harness.pinnedKeys)).get(ENVIRONMENT_ID)).toEqual(environmentKey);
+        const [, exchange] = harness.fetch.calls.find(([url]) =>
+          String(url).endsWith("/oauth/token"),
+        )!;
+        expect(String(exchange.body)).toContain("connect_device_code=v2");
+      }),
+    );
+
+    it.effect("shows no code when a different key is already pinned", () =>
+      Effect.gen(function* () {
+        const pinned = new Uint8Array(32).fill(1);
+        const harness = yield* makeHarness({
+          responses: [Response.json(DESCRIPTOR), approvalPending(v2Fields)],
+          pinnedKeys: [[ENVIRONMENT_ID, pinned]],
+        });
+        const error = yield* attempt(harness);
+        expect(error).toMatchObject({
+          _tag: "ConnectionBlockedError",
+          failureCause: "identity_changed",
+        });
+        expect("verificationCode" in error).toBe(false);
+        expect((yield* Ref.get(harness.pinnedKeys)).get(ENVIRONMENT_ID)).toEqual(pinned);
+      }),
+    );
+
+    it.effect("falls back to the v1 code for a host that sends no key", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          responses: [Response.json(DESCRIPTOR), approvalPending({})],
+        });
+        const error = yield* attempt(harness);
+        expect(error).toMatchObject({
+          reason: "approval-pending",
+          verificationCode: connectDeviceVerificationCode("thumbprint-1"),
+        });
+        expect(yield* Ref.get(harness.pinnedKeys)).toEqual(new Map());
+      }),
+    );
+  });
 
   it.effect.each([
     { name: "read-only", grantScopes: ["orchestration:read"] },

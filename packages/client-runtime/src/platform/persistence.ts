@@ -92,6 +92,10 @@ export class ConnectionRegistrationStore extends Context.Service<
       environmentId: EnvironmentId,
       publicKey: Uint8Array,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
+    /** Drops the pin, so the next secure connection or approval pins whatever key it sees. */
+    readonly forgetEnvironmentKey: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/platform/persistence/ConnectionRegistrationStore") {}
 

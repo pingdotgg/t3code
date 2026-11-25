@@ -277,6 +277,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       }),
     environmentKey: () => Effect.succeedNone,
     pinEnvironmentKey: () => Effect.void,
+    forgetEnvironmentKey: () => Effect.void,
   });
   const cacheStore = Persistence.EnvironmentCacheStore.of({
     loadShell: (environmentId) =>

@@ -68,7 +68,7 @@ describe("presentConnectionDiagnosis", () => {
     const failed = diagnose(backoff(secureChannelFailedError({ host: "Mac mini", via: "relay" })));
 
     expect(changed?.headline).toBe("Mac mini's identity changed");
-    expect(changed?.steps[0]).toContain("remove Mac mini from this device and add it again");
+    expect(changed?.steps[0]).toContain("choose Trust new identity below");
     expect(failed?.headline).toBe("Could not set up an encrypted connection to Mac mini");
   });
 

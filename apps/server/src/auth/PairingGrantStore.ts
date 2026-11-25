@@ -13,6 +13,7 @@ import {
   type ServerAuthBootstrapMethod,
   connectDeviceVerificationCode,
 } from "@t3tools/contracts";
+import { connectDeviceVerificationCodeV2 } from "@t3tools/shared/secureChannelPeer";
 import {
   DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS,
   isValidDesktopBootstrapToken,
@@ -23,13 +24,16 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as EnvironmentKeys from "../cloud/environmentKeys.ts";
 import * as ServerConfig from "../config.ts";
 import * as AuthConnectDevices from "../persistence/AuthConnectDevices.ts";
 import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
@@ -93,6 +97,9 @@ export class BootstrapCredentialConnectApprovalPendingError extends Schema.Tagge
   "BootstrapCredentialConnectApprovalPendingError",
   {
     pairingLinkId: Schema.String,
+    /** Base64url inputs to the device's v2 code. Absent for requests made before v2 codes. */
+    environmentPublicKey: Schema.optional(Schema.String),
+    verificationNonce: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
@@ -149,7 +156,7 @@ export class PairingCredentialIssueError extends Schema.TaggedError<PairingCrede
 export class PairingCredentialRandomGenerationError extends Schema.TaggedError<PairingCredentialRandomGenerationError>()(
   "PairingCredentialRandomGenerationError",
   {
-    operation: Schema.Literals(["generate-id", "generate-token"]),
+    operation: Schema.Literals(["generate-id", "generate-token", "generate-nonce"]),
     cause: Schema.Defect(),
   },
 ) {
@@ -263,10 +270,14 @@ export class PairingGrantStore extends Context.Service<
     readonly findPendingConnect: (
       proofKeyThumbprint: string,
     ) => Effect.Effect<Option.Option<IssuedBootstrapCredential>, BootstrapCredentialInternalError>;
-    /** Shows approvers what a waiting device says it is. Only its first description sticks. */
+    /**
+     * Shows approvers what a waiting device says it is, and which code it shows. Only its first
+     * description sticks.
+     */
     readonly recordConnectRequestClient: (
       pairingLinkId: string,
       client: AuthClientMetadata,
+      connectCodeV2: boolean,
     ) => Effect.Effect<void, BootstrapCredentialInternalError>;
     /** Trusts the device key behind a waiting request. False when it is gone or not a request. */
     readonly approveConnectRequest: (
@@ -325,7 +336,29 @@ type ConsumeResult =
 
 const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
 
-const toPairingLink = (row: AuthPairingLinks.AuthPairingLinkRecord): AuthPairingLink => ({
+/** What the waiting device shows: v2 when it said it can and the request has a nonce. */
+const connectRequestCode = (
+  row: AuthPairingLinks.AuthPairingLinkRecord,
+  proofKeyThumbprint: string,
+  environmentPublicKey: Uint8Array | undefined,
+) => {
+  const nonce =
+    row.connectCodeV2 === 1 && row.connectCodeNonce !== null
+      ? Result.getSuccess(Base64Url.decode(row.connectCodeNonce))
+      : Option.none();
+  return Option.isSome(nonce) && environmentPublicKey !== undefined
+    ? connectDeviceVerificationCodeV2({
+        proofKeyThumbprint,
+        environmentPublicKey,
+        nonce: nonce.value,
+      })
+    : connectDeviceVerificationCode(proofKeyThumbprint);
+};
+
+const toPairingLink = (
+  row: AuthPairingLinks.AuthPairingLinkRecord,
+  environmentPublicKey: Uint8Array | undefined,
+): AuthPairingLink => ({
   id: row.id,
   scopes: row.scopes,
   subject: row.subject,
@@ -335,7 +368,7 @@ const toPairingLink = (row: AuthPairingLinks.AuthPairingLinkRecord): AuthPairing
   ...(row.requiresConnectApproval === 1 && row.proofKeyThumbprint
     ? {
         connectDeviceRequest: {
-          verificationCode: connectDeviceVerificationCode(row.proofKeyThumbprint),
+          verificationCode: connectRequestCode(row, row.proofKeyThumbprint, environmentPublicKey),
           ...(row.requestedClient ? { client: row.requestedClient } : {}),
         },
       }
@@ -358,6 +391,13 @@ const make = Effect.gen(function* () {
   const connectDevices = yield* AuthConnectDevices.AuthConnectDeviceRepository;
   const seededGrantsRef = yield* Ref.make(new Map<string, StoredBootstrapGrant>());
   const changesPubSub = yield* PubSub.unbounded<BootstrapCredentialChange>();
+  const signingKey = yield* EnvironmentKeys.EnvironmentSigningKey;
+  // Unreadable key material leaves v2 devices on a code that cannot match, which fails closed.
+  const environmentPublicKey = signingKey.secureChannelIdentity.pipe(
+    Effect.map((identity) => identity.publicKey),
+    Effect.option,
+    Effect.map(Option.getOrUndefined),
+  );
   const generatePairingToken = Effect.gen(function* () {
     let credential = "";
     while (credential.length < PAIRING_CODE_LENGTH) {
@@ -431,10 +471,16 @@ const make = Effect.gen(function* () {
     function* () {
       const now = yield* DateTime.now;
       const rows = yield* pairingLinks.listActive({ now });
-      // An approved request only waits for its device to come back and spend it.
+      const key = yield* environmentPublicKey;
+      // A request shows once its device asked, which fixes the code it shows; an approved one
+      // only waits for the device to come back and spend it.
       return rows
-        .filter((row) => !(row.requiresConnectApproval === 1 && row.connectApproved === 1))
-        .map(toPairingLink);
+        .filter(
+          (row) =>
+            row.requiresConnectApproval === 0 ||
+            (row.requestedClient !== null && row.connectApproved === 0),
+        )
+        .map((row) => toPairingLink(row, key));
     },
     Effect.mapError((cause) => new ActivePairingLinksLoadError({ cause })),
   );
@@ -467,6 +513,20 @@ const make = Effect.gen(function* () {
         ),
       );
     const token = yield* generatePairingToken;
+    // Fixed now, after the device key is recorded, so a path attacker cannot pick keys around it.
+    const connectCodeNonce = input?.requiresConnectApproval
+      ? Base64Url.encode(
+          yield* random.randomBytes(16).pipe(
+            Effect.mapError(
+              (cause) =>
+                new PairingCredentialRandomGenerationError({
+                  operation: "generate-nonce",
+                  cause,
+                }),
+            ),
+          ),
+        )
+      : undefined;
     const mcpApproval = input?.mcpApproval;
     const credential = mcpApproval ? mcpApprovalCode(mcpApproval, token) : token;
     const isDevStartupToken = config.devUrl !== undefined && input?.purpose === "startup";
@@ -495,6 +555,7 @@ const make = Effect.gen(function* () {
         label: input?.label ?? null,
         proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
         ...(input?.requiresConnectApproval ? { requiresConnectApproval: true } : {}),
+        ...(connectCodeNonce ? { connectCodeNonce } : {}),
         createdAt: now,
         expiresAt: expiresAt,
       })
@@ -509,8 +570,12 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-    // Purpose-bound codes stay out of the pairing links and QR codes that clients show.
-    if (!subject.startsWith(AuthPairingLinks.MCP_APPROVAL_SUBJECT_PREFIX)) {
+    // Purpose-bound codes stay out of the pairing links and QR codes that clients show. An
+    // approval request appears when its device first asks (recordConnectRequestClient).
+    if (
+      !subject.startsWith(AuthPairingLinks.MCP_APPROVAL_SUBJECT_PREFIX) &&
+      !input?.requiresConnectApproval
+    ) {
       yield* emitUpsert({
         id,
         scopes: input?.scopes ?? AuthStandardClientScopes,
@@ -518,13 +583,6 @@ const make = Effect.gen(function* () {
         ...(input?.label ? { label: input.label } : {}),
         createdAt: now,
         expiresAt,
-        ...(input?.requiresConnectApproval && input.proofKeyThumbprint
-          ? {
-              connectDeviceRequest: {
-                verificationCode: connectDeviceVerificationCode(input.proofKeyThumbprint),
-              },
-            }
-          : {}),
       });
     }
     return issued;
@@ -710,8 +768,13 @@ const make = Effect.gen(function* () {
       }
 
       if (matching.value.requiresConnectApproval === 1 && matching.value.connectApproved === 0) {
+        const key = yield* environmentPublicKey;
+        const nonce = matching.value.connectCodeNonce;
         return yield* new BootstrapCredentialConnectApprovalPendingError({
           pairingLinkId: matching.value.id,
+          ...(key !== undefined && nonce !== null
+            ? { environmentPublicKey: Base64Url.encode(key), verificationNonce: nonce }
+            : {}),
         });
       }
 
@@ -741,21 +804,24 @@ const make = Effect.gen(function* () {
   );
 
   const recordConnectRequestClient: PairingGrantStore["Service"]["recordConnectRequestClient"] =
-    Effect.fn("PairingGrantStore.recordConnectRequestClient")(function* (pairingLinkId, client) {
-      const recorded = yield* pairingLinks
-        .recordConnectRequestClient({ id: pairingLinkId, client })
-        .pipe(
-          Effect.mapError(
-            (cause) => new ConnectDevicesError({ operation: "record-request", cause }),
-          ),
-        );
-      if (!recorded) return;
-      const now = yield* DateTime.now;
-      const row = yield* pairingLinks
-        .getActiveById({ id: pairingLinkId, now })
-        .pipe(Effect.mapError((cause) => new BootstrapCredentialLookupError({ cause })));
-      if (Option.isSome(row)) yield* emitUpsert(toPairingLink(row.value));
-    });
+    Effect.fn("PairingGrantStore.recordConnectRequestClient")(
+      function* (pairingLinkId, client, connectCodeV2) {
+        const recorded = yield* pairingLinks
+          .recordConnectRequestClient({ id: pairingLinkId, client, connectCodeV2 })
+          .pipe(
+            Effect.mapError(
+              (cause) => new ConnectDevicesError({ operation: "record-request", cause }),
+            ),
+          );
+        if (!recorded) return;
+        const now = yield* DateTime.now;
+        const row = yield* pairingLinks
+          .getActiveById({ id: pairingLinkId, now })
+          .pipe(Effect.mapError((cause) => new BootstrapCredentialLookupError({ cause })));
+        if (Option.isSome(row))
+          yield* emitUpsert(toPairingLink(row.value, yield* environmentPublicKey));
+      },
+    );
 
   const trustConnectDevice: PairingGrantStore["Service"]["trustConnectDevice"] = Effect.fn(
     "PairingGrantStore.trustConnectDevice",
@@ -877,4 +943,5 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effect(PairingGrantStore, make).pipe(
   Layer.provideMerge(AuthPairingLinks.layer),
   Layer.provideMerge(AuthConnectDevices.layer),
+  Layer.provide(EnvironmentKeys.layer),
 );

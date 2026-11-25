@@ -470,6 +470,7 @@
   "6671e2adfb0e35b3": "Se till att {host} är vaken och att T3 Code körs på den.",
   "3c988e8ceac72484": "Ett VPN eller en Tailscale-exitnod på {host} kan blockera tunneln (port 7844). Stäng av det eller tillåt tunneln.",
   "b5aacc0b9163c0e3": "Öppna eller starta om T3 Code på {host}.",
+  "ca4336a91c7b0d64": "Om T3 Code på {host} har installerats om eller återställts väljer du Lita på ny identitet nedan.",
   "a80f88e893129bd9": "Se till att {host} är vaken och online.",
   "a11d4c010567faac": "Starta om T3 Code på den här enheten.",
   "6a1d53c7bee371aa": "Om det fortsätter att misslyckas, ta bort {host} från den här enheten och lägg till den igen.",
@@ -498,6 +499,7 @@
   "b0dd3cd876937ca8": "Anslutningsprofilen {connectionId} är inte tillgänglig.",
   "5ce46783e79ca9d1": "Autentiseringsuppgiften för anslutningen {connectionId} är inte tillgänglig.",
   "b39d1428ec8b23f5": "Den här adressen kör nu en annan T3 Code-installation ({actual}, inte {expected}). Ta bort anslutningen och lägg till den igen.",
+  "f75348042f6e8265": "Identiteten för {host} har ändrats sedan den här enheten först litade på den. Om T3 Code på {host} har installerats om eller återställts väljer du Lita på ny identitet i anslutningens detaljer.",
   "ea0d3e4e51d5706f": "Miljöns autentiseringsuppgift är ogiltig.",
   "7283ebfd16d09677": "Miljöns autentiseringsuppgift ger inte den åtkomst som krävs.",
   "d3e9a9cb543b4b7b": "Miljön avvisade autentiseringsbegäran.",
@@ -5700,9 +5702,7 @@
   "201490988858b511": "återkallad av {by}",
   "58d7d08ed2365aac": "Identiteten för {host} har ändrats",
   "2c10f5e2a843f038": "Kunde inte upprätta en krypterad anslutning till {host}",
-  "dcf6f4ea88e6d6f2": "Om T3 Code på {host} har installerats om eller återställts tar du bort {host} från den här enheten och lägger till den igen för att lita på dess nya identitet.",
   "cd8c60ecfa5238ed": "Om inte kan något mellan den här enheten och {host} avlyssna anslutningen.",
   "0c749dab5288ee9f": "Något mellan den här enheten och {host} kan ändra anslutningen.",
-  "405ee04d8c932c58": "Identiteten för {host} har ändrats sedan den här enheten anslöt första gången. Om du väntade dig det tar du bort {host} från den här enheten och lägger till den igen för att lita på dess nya identitet.",
   "f9f9ed1dc0b45f72": "Kunde inte upprätta den krypterade anslutningen till {host}."
 }

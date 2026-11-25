@@ -221,6 +221,9 @@ export class EnvironmentConnectApprovalPendingError extends Schema.TaggedError<E
   {
     code: Schema.Literal("connect_approval_pending"),
     traceId: TrimmedNonEmptyString,
+    /** Inputs to the device's verification code: base64url raw Ed25519 key and request nonce. */
+    environmentPublicKey: Schema.optionalKey(TrimmedNonEmptyString),
+    verificationNonce: Schema.optionalKey(TrimmedNonEmptyString),
   },
   { httpApiStatus: 403 },
 ) {

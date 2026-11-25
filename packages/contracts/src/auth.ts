@@ -238,6 +238,8 @@ export const AuthTokenExchangeRequest = Schema.Struct({
   client_label: Schema.optionalKey(TrimmedNonEmptyString),
   client_device_type: Schema.optionalKey(AuthClientMetadataDeviceType),
   client_os: Schema.optionalKey(TrimmedNonEmptyString),
+  /** The device shows the code that also binds the environment's identity key. */
+  connect_device_code: Schema.optionalKey(Schema.Literal("v2")),
 }).pipe(HttpApiSchema.asFormUrlEncoded());
 export type AuthTokenExchangeRequest = typeof AuthTokenExchangeRequest.Type;
 
@@ -337,8 +339,8 @@ export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Typ
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /**
- * A short code both sides show for a T3 Connect device, read from its proof key thumbprint.
- * The waiting device and the approver compare it so an approval lands on the device in hand.
+ * A short code read from a T3 Connect device's proof key thumbprint. Old devices compare it during
+ * approval (newer ones use `connectDeviceVerificationCodeV2`), and it names approved devices.
  */
 export function connectDeviceVerificationCode(proofKeyThumbprint: string): string {
   let code = "";

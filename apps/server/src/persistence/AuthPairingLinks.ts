@@ -41,6 +41,10 @@ export const AuthPairingLinkRecord = Schema.Struct({
   requiresConnectApproval: SqliteFlag,
   connectApproved: SqliteFlag,
   requestedClient: Schema.NullOr(Schema.fromJsonString(AuthClientMetadata)),
+  /** Base64url bytes an approval request binds into its v2 code; fixed when the request is made. */
+  connectCodeNonce: Schema.NullOr(Schema.String),
+  /** The waiting device said it shows the v2 code. Recorded with its first description. */
+  connectCodeV2: SqliteFlag,
 });
 export type AuthPairingLinkRecord = typeof AuthPairingLinkRecord.Type;
 
@@ -53,6 +57,7 @@ export const CreateAuthPairingLinkInput = Schema.Struct({
   label: Schema.NullOr(Schema.String),
   proofKeyThumbprint: Schema.NullOr(Schema.String),
   requiresConnectApproval: Schema.optionalKey(Schema.Boolean),
+  connectCodeNonce: Schema.optionalKey(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
 });
@@ -113,6 +118,7 @@ export type RevokeUnspentByProofKeyInput = typeof RevokeUnspentByProofKeyInput.T
 export const RecordConnectRequestClientInput = Schema.Struct({
   id: Schema.String,
   client: Schema.fromJsonString(AuthClientMetadata),
+  connectCodeV2: Schema.Boolean,
 });
 export type RecordConnectRequestClientInput = typeof RecordConnectRequestClientInput.Type;
 
@@ -131,6 +137,8 @@ const AuthPairingLinkRawDbRow = Schema.Struct({
   requiresConnectApproval: Schema.Unknown,
   connectApproved: Schema.Unknown,
   requestedClient: Schema.Unknown,
+  connectCodeNonce: Schema.Unknown,
+  connectCodeV2: Schema.Unknown,
 });
 
 const decodeAuthPairingLinkDbRow = Schema.decodeUnknownEffect(AuthPairingLinkRecord);
@@ -202,6 +210,7 @@ export const make = Effect.gen(function* () {
           label,
           proof_key_thumbprint,
           requires_connect_approval,
+          connect_code_nonce,
           created_at,
           expires_at,
           consumed_at,
@@ -216,6 +225,7 @@ export const make = Effect.gen(function* () {
           ${input.label},
           ${input.proofKeyThumbprint},
           ${input.requiresConnectApproval ? 1 : 0},
+          ${input.connectCodeNonce ?? null},
           ${input.createdAt},
           ${input.expiresAt},
           NULL,
@@ -286,7 +296,9 @@ export const make = Effect.gen(function* () {
             SELECT 1 FROM auth_connect_devices
             WHERE auth_connect_devices.proof_key_thumbprint = auth_pairing_links.proof_key_thumbprint
           ) AS "connectApproved",
-          requested_client_json AS "requestedClient"
+          requested_client_json AS "requestedClient",
+          connect_code_nonce AS "connectCodeNonce",
+          connect_code_v2 AS "connectCodeV2"
       `,
   });
 
@@ -312,7 +324,9 @@ export const make = Effect.gen(function* () {
             SELECT 1 FROM auth_connect_devices
             WHERE auth_connect_devices.proof_key_thumbprint = auth_pairing_links.proof_key_thumbprint
           ) AS "connectApproved",
-          requested_client_json AS "requestedClient"
+          requested_client_json AS "requestedClient",
+          connect_code_nonce AS "connectCodeNonce",
+          connect_code_v2 AS "connectCodeV2"
         FROM auth_pairing_links
         WHERE revoked_at IS NULL
           AND consumed_at IS NULL
@@ -364,7 +378,9 @@ export const make = Effect.gen(function* () {
             SELECT 1 FROM auth_connect_devices
             WHERE auth_connect_devices.proof_key_thumbprint = auth_pairing_links.proof_key_thumbprint
           ) AS "connectApproved",
-          requested_client_json AS "requestedClient"
+          requested_client_json AS "requestedClient",
+          connect_code_nonce AS "connectCodeNonce",
+          connect_code_v2 AS "connectCodeV2"
         FROM auth_pairing_links
         WHERE credential = ${credential}
       `,
@@ -388,7 +404,9 @@ export const make = Effect.gen(function* () {
         SELECT 1 FROM auth_connect_devices
         WHERE auth_connect_devices.proof_key_thumbprint = auth_pairing_links.proof_key_thumbprint
       ) AS "connectApproved",
-      requested_client_json AS "requestedClient"
+      requested_client_json AS "requestedClient",
+      connect_code_nonce AS "connectCodeNonce",
+      connect_code_v2 AS "connectCodeV2"
     FROM auth_pairing_links
   `;
 
@@ -426,10 +444,11 @@ export const make = Effect.gen(function* () {
   const recordConnectRequestClientRow = SqlSchema.findAll({
     Request: RecordConnectRequestClientInput,
     Result: Schema.Struct({ id: Schema.String }),
-    execute: ({ id, client }) =>
+    execute: ({ id, client, connectCodeV2 }) =>
       sql`
         UPDATE auth_pairing_links
-        SET requested_client_json = ${client}
+        SET requested_client_json = ${client},
+          connect_code_v2 = ${connectCodeV2 ? 1 : 0}
         WHERE id = ${id}
           AND requires_connect_approval = 1
           AND requested_client_json IS NULL

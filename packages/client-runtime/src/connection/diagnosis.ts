@@ -258,10 +258,9 @@ function steps(
     case "identity_changed":
       return [
         resolve(
-          msg(
-            "If T3 Code on {host} was reinstalled or reset, remove {host} from this device and add it again to trust its new identity.",
-            { host },
-          ),
+          msg("If T3 Code on {host} was reinstalled or reset, choose Trust new identity below.", {
+            host,
+          }),
         ),
         resolve(
           msg(
