@@ -702,6 +702,12 @@
       </div>
     </div>
     <script>
+      // Fork: match the splash icon to the theme the head script resolved.
+      if (document.documentElement.classList.contains("dark")) {
+        document.getElementById("boot-shell-logo").src = "/apple-touch-icon-dark.png";
+      }
+    </script>
+    <script>
       const migrationLabel = document.getElementById("boot-shell-progress");
       const readMigrationProgress = window.desktopBridge?.getDatabaseMigrationProgress;
       if (readMigrationProgress && migrationLabel) {

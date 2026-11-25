@@ -46,6 +46,7 @@ export const BRAND_ASSET_PATHS = {
   localWebFavicon16Png: "assets/local/kaluwa-web-favicon-16x16.png",
   localWebFavicon32Png: "assets/local/kaluwa-web-favicon-32x32.png",
   localWebAppleTouchIconPng: "assets/local/kaluwa-web-apple-touch-180.png",
+  localWebAppleTouchIconDarkPng: "assets/local/kaluwa-web-apple-touch-dark-180.png",
   localWebIcon192Png: "assets/local/kaluwa-web-icon-192x192.png",
   localWebIcon512Png: "assets/local/kaluwa-web-icon-512x512.png",
 } as const;
@@ -70,6 +71,8 @@ const WEB_ICON_TARGET_FILENAMES = {
   favicon16Png: "favicon-16x16.png",
   favicon32Png: "favicon-32x32.png",
   appleTouchIconPng: "apple-touch-icon.png",
+  // Fork: the boot splash swaps to this in dark mode; only the local brand has a distinct one.
+  appleTouchIconDarkPng: "apple-touch-icon-dark.png",
   icon192Png: "icon-192x192.png",
   icon512Png: "icon-512x512.png",
 } as const;
@@ -80,6 +83,7 @@ const WEB_ICON_SOURCE_PATHS_BY_BRAND = {
     favicon16Png: BRAND_ASSET_PATHS.developmentWebFavicon16Png,
     favicon32Png: BRAND_ASSET_PATHS.developmentWebFavicon32Png,
     appleTouchIconPng: BRAND_ASSET_PATHS.developmentWebAppleTouchIconPng,
+    appleTouchIconDarkPng: BRAND_ASSET_PATHS.developmentWebAppleTouchIconPng,
     icon192Png: BRAND_ASSET_PATHS.developmentWebIcon192Png,
     icon512Png: BRAND_ASSET_PATHS.developmentWebIcon512Png,
   },
@@ -88,6 +92,7 @@ const WEB_ICON_SOURCE_PATHS_BY_BRAND = {
     favicon16Png: BRAND_ASSET_PATHS.localWebFavicon16Png,
     favicon32Png: BRAND_ASSET_PATHS.localWebFavicon32Png,
     appleTouchIconPng: BRAND_ASSET_PATHS.localWebAppleTouchIconPng,
+    appleTouchIconDarkPng: BRAND_ASSET_PATHS.localWebAppleTouchIconDarkPng,
     icon192Png: BRAND_ASSET_PATHS.localWebIcon192Png,
     icon512Png: BRAND_ASSET_PATHS.localWebIcon512Png,
   },
@@ -96,6 +101,7 @@ const WEB_ICON_SOURCE_PATHS_BY_BRAND = {
     favicon16Png: BRAND_ASSET_PATHS.nightlyWebFavicon16Png,
     favicon32Png: BRAND_ASSET_PATHS.nightlyWebFavicon32Png,
     appleTouchIconPng: BRAND_ASSET_PATHS.nightlyWebAppleTouchIconPng,
+    appleTouchIconDarkPng: BRAND_ASSET_PATHS.nightlyWebAppleTouchIconPng,
     icon192Png: BRAND_ASSET_PATHS.nightlyWebIcon192Png,
     icon512Png: BRAND_ASSET_PATHS.nightlyWebIcon512Png,
   },
@@ -104,6 +110,7 @@ const WEB_ICON_SOURCE_PATHS_BY_BRAND = {
     favicon16Png: BRAND_ASSET_PATHS.productionWebFavicon16Png,
     favicon32Png: BRAND_ASSET_PATHS.productionWebFavicon32Png,
     appleTouchIconPng: BRAND_ASSET_PATHS.productionWebAppleTouchIconPng,
+    appleTouchIconDarkPng: BRAND_ASSET_PATHS.productionWebAppleTouchIconPng,
     icon192Png: BRAND_ASSET_PATHS.productionWebIcon192Png,
     icon512Png: BRAND_ASSET_PATHS.productionWebIcon512Png,
   },
@@ -130,6 +137,10 @@ export function resolveWebIconOverrides(
     {
       sourceRelativePath: sourcePaths.appleTouchIconPng,
       targetRelativePath: `${targetDirectory}/${WEB_ICON_TARGET_FILENAMES.appleTouchIconPng}`,
+    },
+    {
+      sourceRelativePath: sourcePaths.appleTouchIconDarkPng,
+      targetRelativePath: `${targetDirectory}/${WEB_ICON_TARGET_FILENAMES.appleTouchIconDarkPng}`,
     },
     {
       sourceRelativePath: sourcePaths.icon192Png,
