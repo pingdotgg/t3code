@@ -148,7 +148,15 @@ function xml(source: string, extension: string): XmlNode {
     }
     if (node.name === "Fallback" && !retainCompatibilityFallback(parent, node)) return;
     const alt = tag.attributes.alt;
-    if (extension === ".epub" && node.name === "img" && stack[1]?.name === "html" && alt?.trim()) {
+    if (
+      extension === ".epub" &&
+      node.name === "img" &&
+      stack[1]?.name === "html" &&
+      alt?.trim() &&
+      !/(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse))\s*(?:!important\s*)?(?:;|$)/i.test(
+        String(tag.attributes.style ?? ""),
+      )
+    ) {
       node.children.push(alt);
       node.hasText = true;
     }
