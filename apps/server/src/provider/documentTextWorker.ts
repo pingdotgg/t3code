@@ -19,6 +19,7 @@ type TextPart =
   | typeof CELL_START
   | typeof CELL_END
   | typeof LINE_START
+  | { imageDescription: string }
   | { fallback: string };
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
@@ -59,6 +60,7 @@ interface XmlNode {
   name: string;
   attrs: Record<string, string>;
   children: Array<XmlNode | string>;
+  imageDescription?: string;
   spaceCount?: number;
   hasText?: boolean;
   hasTextChoice?: boolean;
@@ -193,7 +195,7 @@ function xml(source: string, extension: string): XmlNode {
         String(tag.attributes.style ?? ""),
       )
     ) {
-      node.children.push(alt);
+      node.imageDescription = alt;
       node.hasText = true;
     }
     if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
@@ -271,6 +273,10 @@ function* all(
 }
 function* text(node: XmlNode): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
+  if (node.imageDescription !== undefined) {
+    yield { imageDescription: node.imageDescription };
+    return;
+  }
   // Word text boxes hold their own paragraphs inside the anchoring paragraph.
   if (node.name === "txbxContent") yield* paragraphs(node);
   else if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
@@ -304,6 +310,10 @@ function* xstringText(node: XmlNode): Generator<string, void> {
 }
 function* paragraphs(node: XmlNode): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
+  if (node.imageDescription !== undefined) {
+    yield* text(node);
+    return;
+  }
   for (const child of node.children) {
     if (typeof child === "string") yield child;
     else if (["br", "line-break", "cr"].includes(child.name)) yield "\n";
@@ -374,7 +384,8 @@ function odfValue(cell: XmlNode): string {
 const covered = (cell: XmlNode) => cell.name === "covered-table-cell";
 function hasCellText(cell: XmlNode): boolean {
   if (covered(cell)) return false;
-  if (odfValue(cell).trim() || cell.name === "noBreakHyphen") return true;
+  if (cell.imageDescription !== undefined || odfValue(cell).trim() || cell.name === "noBreakHyphen")
+    return true;
   // Space markers can have enormous repeat counts; emptiness never requires expanding them.
   if (HIDDEN.has(cell.name) || cell.spaceCount !== undefined) return false;
   return cell.children.some((child) =>
@@ -1038,11 +1049,13 @@ export async function extractDocumentText(path: string, extension: string): Prom
   let started = false;
   let space = false;
   let midLine = false;
+  let afterImageDescription = false;
   let truncated = false;
   try {
     // Charge raw text before normalization so repeated whitespace also exhausts the budget.
     for await (let part of document(path, extension)) {
       if (part === CELL_START) {
+        afterImageDescription = false;
         if (cellDepth++ === 0) {
           started = false;
           space = false;
@@ -1050,6 +1063,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
         continue;
       }
       if (part === CELL_END) {
+        afterImageDescription = false;
         cellDepth--;
         if (cellDepth > 0 && started) space = true;
         continue;
@@ -1059,8 +1073,22 @@ export async function extractDocumentText(path: string, extension: string): Prom
         if (!midLine) continue;
         part = "\n";
       }
-      if (typeof part !== "string" && started) continue;
-      const raw = typeof part === "string" ? part : part.fallback;
+      const isImageDescription = typeof part !== "string" && "imageDescription" in part;
+      if (typeof part !== "string" && !isImageDescription && started) continue;
+      let raw =
+        typeof part === "string"
+          ? part
+          : isImageDescription
+            ? part.imageDescription
+            : part.fallback;
+      // Resolve image boundaries here, after inline markup has been flattened.
+      if (
+        (isImageDescription || afterImageDescription) &&
+        /[\p{L}\p{M}\p{N}_]$/u.test(result.slice(-2)) &&
+        /^[\p{L}\p{M}\p{N}_]/u.test(raw)
+      )
+        raw = " " + raw;
+      if (raw) afterImageDescription = isImageDescription;
       let value = raw.slice(0, remaining).replaceAll("\0", "");
       remaining -= Math.min(raw.length, remaining);
       if (cellDepth) {
