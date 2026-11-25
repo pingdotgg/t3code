@@ -85,7 +85,7 @@ const runtimeEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boo
 const withLivePresentation = (
   instance: ProviderInstance,
   created: ProviderInstanceConfig,
-  defaultSnapshotDisplayName: string | null,
+  defaultSnapshotDisplayName: string | undefined,
 ) => {
   let current = created;
   const restamp = <S extends ServerProvider>(snapshot: S): S => {
@@ -408,9 +408,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   const { instance, setPresentation } = withLivePresentation(
     createResult.success,
     entry,
-    driver.metadata.defaultSnapshotDisplayName === undefined
-      ? driver.metadata.displayName
-      : driver.metadata.defaultSnapshotDisplayName,
+    driver.metadata.snapshotOmitsDisplayName ? undefined : driver.metadata.displayName,
   );
   return {
     kind: "live" as const,
