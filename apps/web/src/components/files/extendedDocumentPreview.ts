@@ -242,15 +242,48 @@ const HTML_TAGS = new Set([
   "dt",
   "dd",
 ]);
-async function epubHtml(node: XmlNode, archive: JSZip, base: string): Promise<string> {
-  if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
-  const tag =
-    node.name
+const EPUB_SKIP_TAGS = new Set([
+  "head",
+  "script",
+  "style",
+  "iframe",
+  "object",
+  "embed",
+  "svg",
+  "math",
+  "form",
+]);
+function epubTag(name: string) {
+  return (
+    name
       .replace(/^\{[^}]*\}/, "")
       .split(":")
-      .at(-1) ?? "";
-  if (["head", "script", "style", "iframe", "object", "embed", "svg", "math", "form"].includes(tag))
-    return "";
+      .at(-1) ?? ""
+  );
+}
+function epubVisibleText(node: XmlNode): string {
+  if (node.name === "#text") return node.text;
+  if (EPUB_SKIP_TAGS.has(epubTag(node.name))) return "";
+  return node.children.map(epubVisibleText).join("");
+}
+function epubFirstTagText(node: XmlNode, target: string): string {
+  for (const child of node.children) {
+    const tag = epubTag(child.name);
+    if (EPUB_SKIP_TAGS.has(tag)) continue;
+    const value = tag === target ? epubVisibleText(child).trim() : epubFirstTagText(child, target);
+    if (value) return value;
+  }
+  return "";
+}
+function epubHeadTitle(chapter: XmlNode) {
+  const html = chapter.children.find((node) => epubTag(node.name) === "html") ?? chapter;
+  const head = html.children.find((node) => epubTag(node.name) === "head");
+  return head ? epubFirstTagText(head, "title") : "";
+}
+async function epubHtml(node: XmlNode, archive: JSZip, base: string): Promise<string> {
+  if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
+  const tag = epubTag(node.name);
+  if (EPUB_SKIP_TAGS.has(tag)) return "";
   if (tag === "br" || tag === "hr") return boundedMarkup(`<${tag}>`);
   if (tag === "img") {
     const src = await imageData(archive, archivePath(base, node.attrs.src ?? ""));
@@ -465,7 +498,8 @@ export async function openEpub(archive: JSZip): Promise<OfficeWorkerResult> {
     const entry = path ? archive.file(path) : null;
     if (!entry || !path) continue;
     const chapter = parseXml(await entry.async("string"));
-    const title = text(find(chapter, "title")[0] ?? find(chapter, "h1")[0] ?? chapter).trim();
+    const title =
+      epubHeadTitle(chapter) || epubFirstTagText(chapter, "h1") || epubVisibleText(chapter).trim();
     const last = title.charCodeAt(119);
     pages.push({
       title: title.slice(0, last >= 0xd800 && last <= 0xdbff ? 119 : 120) || undefined,

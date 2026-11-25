@@ -729,6 +729,42 @@ Third}`;
     expect(result.pages[1]!.html).not.toMatch(/https:|script|alert/);
   });
 
+  it("falls back past blank EPUB titles and skips non-visible tags", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="a" href="empty-title.xhtml" media-type="application/xhtml+xml"/><item id="b" href="blank-title.xhtml" media-type="application/xhtml+xml"/><item id="c" href="fallback.xhtml" media-type="application/xhtml+xml"/><item id="d" href="skipped-subtrees.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/><itemref idref="b"/><itemref idref="c"/><itemref idref="d"/></spine></package>',
+      )
+      .file(
+        "empty-title.xhtml",
+        "<html><head><title></title></head><body><h1>Second Heading</h1><p>Body</p></body></html>",
+      )
+      .file(
+        "blank-title.xhtml",
+        "<html><head><title>  </title></head><body><h1>Blank Title Heading</h1><p>Body</p></body></html>",
+      )
+      .file(
+        "fallback.xhtml",
+        "<html><head><style>body { color: #333; }</style><script>x()</script></head><body><style>p{}</style><script>y()</script><p>Welcome text</p></body></html>",
+      )
+      .file(
+        "skipped-subtrees.xhtml",
+        "<html><head><title></title></head><body><svg><title>Logo</title></svg><object><h1>Embedded fallback</h1></object><form><h1>Form heading</h1></form><h1>Real Chapter</h1><p>Body</p></body></html>",
+      );
+    const result = await openEpub(archive);
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages.map((page) => page.title)).toEqual([
+      "Second Heading",
+      "Blank Title Heading",
+      "Welcome text",
+      "Real Chapter",
+    ]);
+  });
+
   it.each([
     ["percent-encoded", "My%20Book/book%201.opf", "My Book/book 1.opf", "My Book/one.xhtml"],
     ["literal percent", "My%20Book/book.opf", "My%20Book/book.opf", "My%20Book/one.xhtml"],
