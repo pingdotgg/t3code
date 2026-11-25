@@ -15,6 +15,19 @@ describe("maskMarkdownFrontmatter", () => {
     expect(maskMarkdownFrontmatter("\uFEFF---\na: 1\n---\n# Body")).toBe("    \n    \n   \n# Body");
     expect(maskMarkdownFrontmatter("---\ra: 1\r...\r# Body")).toBe("   \r    \r   \r# Body");
     expect(maskMarkdownFrontmatter("---\n---\n# Body")).toBe("   \n   \n# Body");
+
+    for (const newline of ["\n", "\r\n", "\r"]) {
+      for (const bom of ["", "\uFEFF"]) {
+        for (const closer of ["---", "..."]) {
+          const body = ["# Visible heading", "", "---", "Visible paragraph"].join(newline);
+          const markdown = `${bom}---${newline}${closer}${newline}${body}`;
+
+          expect(maskMarkdownFrontmatter(markdown)).toBe(
+            `${" ".repeat(bom.length)}   ${newline}   ${newline}${body}`,
+          );
+        }
+      }
+    }
   });
 
   it("leaves unterminated or non-leading fences alone", () => {
