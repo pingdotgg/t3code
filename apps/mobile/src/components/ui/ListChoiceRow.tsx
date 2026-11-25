@@ -13,13 +13,15 @@ export function ListChoiceRow(props: {
   readonly leading?: ReactNode;
   readonly description?: string;
   readonly meta?: ReactNode;
+  readonly trailingAction?: ReactNode;
   readonly selected: boolean;
   readonly separated?: boolean;
   readonly disabled?: boolean;
   readonly onPress: () => void;
 }) {
   const rippleStyle = useResolveClassNames("bg-subtle-strong");
-  return (
+  const rowClassName = cn("bg-grouped-card", props.separated && "border-t border-border-subtle");
+  const choice = (
     <RowPressable
       accessibilityRole="radio"
       accessibilityLabel={props.label}
@@ -30,7 +32,7 @@ export function ListChoiceRow(props: {
       android_ripple={{ color: rippleStyle.backgroundColor }}
       unstable_pressDelay={Platform.OS === "android" ? 50 : undefined}
       // Like UIKit and Material lists, only the checkmark or radio marks the selected row.
-      className={cn("bg-grouped-card", props.separated && "border-t border-border-subtle")}
+      className={props.trailingAction ? "min-w-0 flex-1" : rowClassName}
     >
       <ListRowLayout
         label={props.label}
@@ -59,5 +61,13 @@ export function ListChoiceRow(props: {
         }
       />
     </RowPressable>
+  );
+  return props.trailingAction ? (
+    <View className={cn("flex-row items-center", rowClassName)}>
+      {choice}
+      {props.trailingAction}
+    </View>
+  ) : (
+    choice
   );
 }

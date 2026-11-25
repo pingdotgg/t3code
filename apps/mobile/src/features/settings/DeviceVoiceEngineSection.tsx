@@ -71,17 +71,8 @@ export function useDeviceVoiceModels() {
     select: (model) => void select(model.id),
     cancel: (model) =>
       void actions?.cancel(model.id).catch(() => Dialog.alert(gt("Could not cancel the download"))),
-    remove: (model) => {
-      if (!actions) return;
-      Dialog.confirm({
-        title: gt("Remove {model}?", { model: model.name }),
-        message: gt("Download the model again to use it for dictation."),
-        confirmText: gt("Remove", { $context: "verb" }),
-        destructive: true,
-        onConfirm: () =>
-          void actions.remove(model.id).catch(() => Dialog.alert(gt("Could not remove the model"))),
-      });
-    },
+    remove: (model) =>
+      void actions?.remove(model.id).catch(() => Dialog.alert(gt("Could not remove the model"))),
   };
   return { voice, activeId, select };
 }

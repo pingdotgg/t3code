@@ -5,7 +5,9 @@ export function preserveReadingPosition(
   scroller: HTMLElement,
   enabled: () => boolean = () => true,
 ): () => void {
-  let width = scroller.clientWidth;
+  // Seeded by the observer's first report, which follows the browser's own layout; reading it
+  // here would force a layout mid-commit.
+  let width: number | null = null;
   let anchor: { range: Range; top: number } | null = null;
   let frame: number | null = null;
 
@@ -71,6 +73,7 @@ export function preserveReadingPosition(
   };
   const stop = observeResize(scroller, () => {
     const nextWidth = scroller.clientWidth;
+    if (width === null) width = nextWidth;
     if (nextWidth === width) {
       capture();
       return;

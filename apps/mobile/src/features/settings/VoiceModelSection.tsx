@@ -5,6 +5,7 @@ import { useNavigation } from "@react-navigation/native";
 import {
   cancelEnvironmentSpeechModelDownload,
   installEnvironmentSpeechModel,
+  removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
 } from "@t3tools/client-runtime/voice-input";
 import {
@@ -14,7 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactNode, useEffect, useState } from "react";
-import { Platform, Text as NativeText, View } from "react-native";
+import { Platform, Pressable, Text as NativeText, View } from "react-native";
 import { m } from "../../i18n/messages";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -35,7 +36,15 @@ import {
 
 export type VoiceModel = Pick<
   EnvironmentSpeechModel,
-  "id" | "name" | "description" | "size" | "languages" | "benchmark" | "active" | "downloaded"
+  | "id"
+  | "name"
+  | "description"
+  | "size"
+  | "languages"
+  | "benchmark"
+  | "active"
+  | "downloaded"
+  | "linkedFrom"
 > & {
   readonly state: EnvironmentSpeechModel["state"] | "cancelling" | "failed";
 };
@@ -50,7 +59,7 @@ export type VoiceModelList = {
   download(model: VoiceModel): void;
   select(model: VoiceModel): void;
   cancel(model: VoiceModel): void;
-  remove?(model: VoiceModel): void;
+  remove(model: VoiceModel): void;
 };
 
 export const isDownloading = (model: VoiceModel) =>
@@ -133,6 +142,12 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
       if (!ready) return;
       void run(gt("Could not cancel the download"), () =>
         runSpeech(cancelEnvironmentSpeechModelDownload(connection, model.id)),
+      );
+    },
+    remove: (model: VoiceModel) => {
+      if (!ready) return;
+      void run(gt("Could not remove the model"), () =>
+        runSpeech(removeEnvironmentSpeechModel(connection, model.id)),
       );
     },
   };
@@ -253,8 +268,10 @@ export function VoiceModelRow(props: {
   const gt = useGT();
   const { model, voice, separated } = props;
   const meta = <ModelStats model={model} language={props.language} />;
+  const disabled = !voice.canManage || voice.busy || voice.downloading;
   if (model.state === "installed") {
-    const choice = (
+    const linked = Boolean(model.linkedFrom);
+    return (
       <ListChoiceRow
         leading={<DownloadedGlyph />}
         label={model.name}
@@ -262,25 +279,43 @@ export function VoiceModelRow(props: {
         meta={meta}
         selected={model.active}
         separated={separated}
-        disabled={!voice.canManage || voice.busy || voice.downloading}
+        disabled={disabled}
         onPress={() => voice.select(model)}
+        trailingAction={
+          voice.canManage ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                linked
+                  ? gt("Unlink {model}", { model: model.name })
+                  : gt("Remove {model}", { model: model.name })
+              }
+              disabled={disabled}
+              onPress={() =>
+                Dialog.confirm({
+                  title: linked
+                    ? gt("Unlink {model}?", { model: model.name })
+                    : gt("Remove {model}?", { model: model.name }),
+                  message: linked
+                    ? gt("Your model file stays on disk.")
+                    : gt("Download the model again to use it for dictation."),
+                  confirmText: linked ? gt("Unlink") : gt("Remove", { $context: "verb" }),
+                  destructive: !linked,
+                  onConfirm: () => voice.remove(model),
+                })
+              }
+              className="mr-2 size-11 shrink-0 items-center justify-center rounded-lg active:bg-row-hover disabled:opacity-45"
+            >
+              <SymbolView
+                name={linked ? "link" : "trash"}
+                size={18}
+                tintColorClassName="accent-icon-muted"
+                type="monochrome"
+              />
+            </Pressable>
+          ) : undefined
+        }
       />
-    );
-    return voice.remove ? (
-      <View>
-        {choice}
-        <View className="border-t border-border-subtle">
-          <ListActionRow
-            icon="trash"
-            label={gt("Remove {model}", { model: model.name })}
-            tone="danger"
-            disabled={!voice.canManage || voice.busy}
-            onPress={() => voice.remove?.(model)}
-          />
-        </View>
-      </View>
-    ) : (
-      choice
     );
   }
   const progress = model.downloaded === undefined ? undefined : model.downloaded / model.size;
@@ -318,7 +353,7 @@ export function VoiceModelRow(props: {
           model.state === "failed" ? gt("Download failed. Try again.") : model.description
         }
         meta={meta}
-        disabled={!voice.canManage || voice.busy || voice.downloading}
+        disabled={disabled}
         onPress={() => voice.download(model)}
       />
     </View>

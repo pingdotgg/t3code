@@ -6,8 +6,9 @@ uses, the server also sends a hashed identifier for your T3 Connect account when
 to one, and a random identifier for each device that connects. The endpoint keeps a copy of each
 event and forwards events to PostHog. Events include the provider, model, reasoning effort,
 permission mode, turn and request results, duration, release channel, and token counts when
-available. Child-agent token counts are reported separately from the main agent's. Events include
-the model ID the provider used, including custom models and models served by a custom endpoint.
+available. Child-agent token counts are reported separately from the main agent's. Models from a
+provider's catalog are reported by name, even when a custom endpoint serves them. Any other
+model, such as a local or fine-tuned one, is reported only as a custom model of that provider.
 
 Product events do not include prompts, responses, file contents, authentication tokens, conversation IDs,
 raw provider events, child-agent output, or identifiers from your provider accounts. The one exception is [agent feedback](#agent-feedback),
@@ -71,15 +72,21 @@ thread identifiers, and error types. They omit machine addresses, query strings,
 error messages, and stack frames.
 
 To disable product events and relay tracing from the server, set
-`T3CODE_TELEMETRY_ENABLED=false` in its environment before starting it. Relay tracing also stops
+`T3CODE_TELEMETRY_ENABLED=false` or `DO_NOT_TRACK=1` in its environment before starting it.
+`DO_NOT_TRACK=1` wins over `T3CODE_TELEMETRY_ENABLED=true`. Relay tracing also stops
 when `T3CODE_OTEL_SDK_DISABLED` or `OTEL_SDK_DISABLED` turns OpenTelemetry export off.
+
+On a CI runner, the server sends no product events or relay traces by default. It treats a run as
+CI when a common CI variable is set, such as `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, or `JENKINS_URL`.
+`CI=false` and `CI=0` do not count. To send them from CI anyway, set
+`T3CODE_TELEMETRY_ENABLED=true`.
 
 An administrator can turn product events and relay tracing off in the server and desktop app with
 a [managed policy](./managed-policy.md#other-capabilities). This does not control traces sent by
 the hosted web app or mobile clients.
 
-The desktop app reads `T3CODE_TELEMETRY_ENABLED` from your shell profile (for example `~/.zshrc`) on macOS and
-Linux, so export it there and restart the app. On Windows, set it as a user environment variable.
+The desktop app reads `T3CODE_TELEMETRY_ENABLED` and `DO_NOT_TRACK` from your shell profile (for example `~/.zshrc`) on macOS and
+Linux, so export them there and restart the app. On Windows, set them as user environment variables.
 
 A browser opened from a T3 Code server sends relay traces only while connected and allowed by that
 server's policy. The hosted web app sends relay traces when configured and has no tracing toggle.
