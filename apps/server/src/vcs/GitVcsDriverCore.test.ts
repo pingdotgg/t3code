@@ -705,6 +705,51 @@ it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"
     ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("a worktree launch discovers each repository's common directory once", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawnedArgs: Array<ReadonlyArray<string>> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command)) spawnedArgs.push(command.args.map(String));
+        return delegate.spawn(command);
+      });
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      const remoteDir = yield* makeTmpDir("git-remote-");
+      yield* git(cwd, ["clone", "--bare", cwd, remoteDir]);
+      yield* git(cwd, ["remote", "add", "origin", remoteDir]);
+      const path = yield* Path.Path;
+      const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "launch");
+
+      // The same driver calls ThreadLaunchService makes to prepare a worktree thread.
+      const remote = yield* driver.resolveWorktreeBaseRemote({ cwd, refName: initialBranch });
+      assert.isNotNull(remote);
+      const base = yield* driver.fetchWorktreeBaseCommit({ cwd, refName: initialBranch, remote });
+      assert.isNotNull(base);
+      yield* driver.createWorktree({
+        cwd,
+        path: worktreePath,
+        refName: base!.commitSha,
+        newRefName: "t3code/launch",
+        baseRefName: `refs/remotes/${base!.remoteRefName}`,
+      });
+      yield* driver.renameBranch({
+        cwd: worktreePath,
+        oldBranch: "t3code/launch",
+        newBranch: "t3code/renamed",
+      });
+
+      // One lookup for the project and one for the new worktree.
+      assert.isAtMost(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 2);
+      assert.equal(spawnedArgs.filter((args) => args.at(-1) === "remote").length, 1);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["bare", "unborn"] as const)(
   "invalidates a %s repository after worktree creation",
   (state) =>
