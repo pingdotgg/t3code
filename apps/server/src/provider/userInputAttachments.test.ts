@@ -375,6 +375,11 @@ describe("question answer paths", () => {
       "{\\rtf1\\ansi\\ansicpg936 \\'c4\n\\'e3\\'ba\\'c3}",
       "你好",
     ],
+    [
+      "GB18030 code page",
+      String.raw`{\rtf1\ansi\ansicpg54936 \'d6\'d0\'ce\'c4 \'95\'32\'82\'36}`,
+      "中文 𠀀",
+    ],
     ["Big5 code page", String.raw`{\rtf1\ansi\ansicpg950 \'a7A\'a6n}`, "你好"],
     [
       "multibyte font charsets and font code pages",
@@ -431,6 +436,27 @@ describe("question answer paths", () => {
       expect(yield* Effect.promise(() => extractDocumentText(path, ".rtf"))).toBe(expected);
       expect(yield* (yield* DocumentText.DocumentText).ensure(path)).toBe(path + ".txt");
       expect(NodeFS.readFileSync(path + ".txt", "utf8")).toBe(expected);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps long GB18030 four-byte RTF runs intact up to the output limit", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const path = NodePath.join(config.attachmentsDir, "gb18030-long.rtf");
+      NodeFS.writeFileSync(
+        path,
+        Buffer.concat([
+          Buffer.from(String.raw`{\rtf1\ansi\ansicpg54936 `, "latin1"),
+          Buffer.from([0xd6, 0xd0]),
+          Buffer.alloc(1_050_000 * 4, Buffer.from([0x81, 0x39, 0xee, 0x39])),
+          Buffer.from("}", "latin1"),
+        ]),
+      );
+      const text = yield* Effect.promise(() => extractDocumentText(path, ".rtf"));
+      expect(text.search(/[^中㐀]/u)).toBe(1_000_000);
+      expect(text.slice(1_000_000)).toBe(
+        "\n\n[Extracted text truncated at document extraction limits.]",
+      );
     }).pipe(Effect.provide(layer)),
   );
 
