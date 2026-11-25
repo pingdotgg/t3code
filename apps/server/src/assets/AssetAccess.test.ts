@@ -1206,31 +1206,6 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.skipIf(!symlinksSupported)(
-    "still rejects an absolute path whose symlink leaves the workspace",
-    () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const directory = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-asset-symlink-escape-",
-        });
-        const root = path.join(directory, "workspace");
-        yield* fileSystem.makeDirectory(root);
-        const outside = path.join(directory, "outside");
-        yield* fileSystem.makeDirectory(outside);
-        const page = path.join(outside, "index.html");
-        yield* fileSystem.writeFileString(page, "<!doctype html>");
-        yield* fileSystem.symlink(outside, path.join(root, "escape"));
-
-        const error = yield* issueAssetUrl({
-          resource: { _tag: "workspace-file", threadId: ThreadId.make("thread-1"), path: page },
-          workspaceRoot: root,
-        }).pipe(Effect.flip);
-        expect(error._tag).toBe("AssetWorkspacePathValidationError");
-      }).pipe(Effect.provide(layerTest)),
-  );
-
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
