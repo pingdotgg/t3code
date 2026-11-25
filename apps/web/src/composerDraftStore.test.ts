@@ -2133,6 +2133,63 @@ describe("composerDraftStore sticky composer settings", () => {
     );
   });
 
+  it("keeps Ultracode on the draft it was chosen in but never seeds it into new drafts", () => {
+    const store = useComposerDraftStore.getState();
+    const chosenId = ThreadId.make("thread-ultracode-chosen");
+    const chosenRef = scopeThreadRef(TEST_ENVIRONMENT_ID, chosenId);
+    const nextId = ThreadId.make("thread-ultracode-next");
+
+    store.setModelSelection(chosenRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"));
+    store.setProviderModelOptions(
+      chosenRef,
+      CLAUDE_AGENT_DRIVER,
+      toSelections({ effort: "high", ultracode: true }),
+      { persistSticky: true },
+    );
+    store.applyStickyState(scopeThreadRef(TEST_ENVIRONMENT_ID, nextId));
+
+    expect(
+      draftFor(chosenId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+    ).toEqual(
+      modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "high", ultracode: true }),
+    );
+    expect(
+      draftFor(nextId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+    ).toEqual(modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "high" }));
+    expect(
+      useComposerDraftStore.getState().stickyOptionsByModelByProvider[CLAUDE_AGENT_INSTANCE]?.[
+        "claude-opus-4-6"
+      ],
+    ).toEqual(toSelections({ effort: "high" }));
+  });
+
+  it("drops Ultracode that an earlier version remembered when it reloads", () => {
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    const remembered = modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", {
+      effort: "high",
+      ultracode: true,
+    });
+    const state = merge(
+      JSON.parse(
+        JSON.stringify({
+          ...partializeComposerDraftStoreState(useComposerDraftStore.getState()),
+          stickyModelSelectionByProvider: { [CLAUDE_AGENT_INSTANCE]: remembered },
+          stickyOptionsByModelByProvider: {
+            [CLAUDE_AGENT_INSTANCE]: { "claude-opus-4-6": remembered.options },
+          },
+        }),
+      ),
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(state.stickyModelSelectionByProvider[CLAUDE_AGENT_INSTANCE]).toEqual(
+      modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "high" }),
+    );
+    expect(
+      state.stickyOptionsByModelByProvider[CLAUDE_AGENT_INSTANCE]?.["claude-opus-4-6"],
+    ).toEqual(toSelections({ effort: "high" }));
+  });
+
   it("applies sticky activeProvider to new drafts", () => {
     const store = useComposerDraftStore.getState();
     const threadId = ThreadId.make("thread-sticky-active-provider");

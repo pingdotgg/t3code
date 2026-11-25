@@ -241,6 +241,36 @@ export function withLegacyUltracodeEffort<
   ];
 }
 
+// Ultracode is opted into per thread. Remembered composer options, delegated tasks and scheduled
+// tasks must not carry it into another thread; the legacy effort level keeps its xhigh effort.
+export function withoutUltracode<
+  Selections extends ReadonlyArray<ProviderOptionSelection> | null | undefined,
+>(selections: Selections): Selections | Array<ProviderOptionSelection> {
+  if (
+    !selections?.some(
+      (selection) =>
+        (selection.id === "ultracode" && selection.value === true) ||
+        (selection.id === "effort" && selection.value === "ultracode"),
+    )
+  ) {
+    return selections;
+  }
+  return selections.flatMap((selection) =>
+    selection.id === "ultracode" && selection.value === true
+      ? []
+      : selection.id === "effort" && selection.value === "ultracode"
+        ? [{ id: "effort", value: "xhigh" }]
+        : [selection],
+  );
+}
+
+export function modelSelectionWithoutUltracode(selection: ModelSelection): ModelSelection {
+  const options = withoutUltracode(selection.options);
+  return options === selection.options
+    ? selection
+    : createModelSelection(selection.instanceId, selection.model, options);
+}
+
 export function getProviderOptionDescriptors(input: {
   caps: ModelCapabilities;
   selections?: ReadonlyArray<ProviderOptionSelection> | null | undefined;

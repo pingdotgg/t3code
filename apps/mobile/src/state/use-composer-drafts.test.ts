@@ -236,6 +236,7 @@ import {
   undoComposerDraftMergeState,
   updateComposerDraftSettings,
 } from "./use-composer-drafts";
+import { rememberModelOptions, withRememberedModelOptions } from "./use-model-option-memory";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
 
 const DRAFT: ComposerDraft = {
@@ -2204,6 +2205,75 @@ describe("mobile composer drafts", () => {
         "openai/gpt-5.4": [{ id: "thinking", value: "medium" }],
       },
     });
+  });
+
+  it("never remembers Ultracode for the next task", async () => {
+    composerDraftFileMocks.setDocument({
+      schemaVersion: 1,
+      drafts: {},
+      stickyModelSelection: {
+        instanceId: "claudeAgent",
+        model: "claude-opus-5-5",
+        options: [
+          { id: "effort", value: "medium" },
+          { id: "ultracode", value: true },
+        ],
+      },
+      modelOptionMemory: {
+        claudeAgent: {
+          "claude-opus-5-5": [
+            { id: "effort", value: "medium" },
+            { id: "ultracode", value: true },
+          ],
+        },
+      },
+    });
+
+    ensureComposerDraftsLoaded();
+    await waitForComposerDraftsLoaded();
+
+    expect(appAtomRegistry.get(stickyComposerModelSelectionAtom)).toEqual({
+      instanceId: "claudeAgent",
+      model: "claude-opus-5-5",
+      options: [{ id: "effort", value: "medium" }],
+    });
+    expect(appAtomRegistry.get(modelOptionMemoryAtom)).toEqual({
+      claudeAgent: { "claude-opus-5-5": [{ id: "effort", value: "medium" }] },
+    });
+
+    setStickyComposerModelSelection({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+      options: [
+        { id: "effort", value: "high" },
+        { id: "ultracode", value: true },
+      ],
+    });
+    expect(appAtomRegistry.get(stickyComposerModelSelectionAtom)?.options).toEqual([
+      { id: "effort", value: "high" },
+    ]);
+
+    // A model picked with Ultracode on keeps it when its remembered options are restored.
+    const picked = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+      options: [
+        { id: "effort", value: "high" },
+        { id: "ultracode", value: true },
+      ],
+    };
+    rememberModelOptions(picked.instanceId, picked.model, picked.options);
+    expect(withRememberedModelOptions(picked).options).toEqual(picked.options);
+    expect(withRememberedModelOptions({ ...picked, options: [] }).options).toEqual([
+      { id: "effort", value: "high" },
+    ]);
+    expect(
+      withRememberedModelOptions({ ...picked, options: [{ id: "ultracode", value: false }] })
+        .options,
+    ).toEqual([
+      { id: "effort", value: "high" },
+      { id: "ultracode", value: false },
+    ]);
   });
 
   it("flush waits for pending hydration instead of clobbering disk", async () => {

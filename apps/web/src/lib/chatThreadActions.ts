@@ -6,6 +6,7 @@ import type {
   ProjectId,
   ScopedProjectRef,
 } from "@t3tools/contracts";
+import { modelSelectionWithoutUltracode } from "@t3tools/shared/model";
 import type { ComposerThreadDraftState, DraftThreadEnvMode } from "../composerDraftStore";
 
 type ComposerModelSelectionState = Pick<
@@ -52,7 +53,9 @@ export function resolveNewThreadModelSelectionOverride(input: {
 }): ModelSelection | null {
   return (
     input.projectDefaultSelection ??
-    (input.carrySourceDraftId === input.destinationDraftId ? null : input.carrySelection)
+    (input.carrySourceDraftId === input.destinationDraftId || input.carrySelection === null
+      ? null
+      : modelSelectionWithoutUltracode(input.carrySelection))
   );
 }
 

@@ -23,6 +23,23 @@ describe("chatThreadActions", () => {
     ).toBeNull();
   });
 
+  it("carries the current model into a new thread without its Ultracode", () => {
+    expect(
+      resolveNewThreadModelSelectionOverride({
+        projectDefaultSelection: null,
+        carrySelection: {
+          ...CARRIED_SELECTION,
+          options: [
+            { id: "effort", value: "high" },
+            { id: "ultracode", value: true },
+          ],
+        },
+        carrySourceDraftId: "draft-a",
+        destinationDraftId: "draft-b",
+      }),
+    ).toEqual({ ...CARRIED_SELECTION, options: [{ id: "effort", value: "high" }] });
+  });
+
   it("keeps the project default above any carried selection", () => {
     expect(
       resolveNewThreadModelSelectionOverride({

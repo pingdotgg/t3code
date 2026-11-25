@@ -31,6 +31,7 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
+import { modelSelectionWithoutUltracode } from "@t3tools/shared/model";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import {
   resolveProjectFileBackedSetting,
@@ -420,7 +421,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const modelSelection =
           validatedModelSelection ??
           launchedModel ??
-          caller?.modelSelection ??
+          (caller && modelSelectionWithoutUltracode(caller.modelSelection)) ??
           (projectDefaults
             ? resolveNewThreadModelSelection({
                 defaultSelection: projectDefaults.defaultModelSelection,

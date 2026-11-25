@@ -5074,7 +5074,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
-  it.effect("accepts the inherited options it reports back as a delegate target", () =>
+  it.effect("accepts the inherited options it reports back, never inheriting Ultracode", () =>
     Effect.gen(function* () {
       // t3_thread_launch keeps a model selection as given, so a thread can hold an option its model lacks.
       const inherited = {
@@ -5083,6 +5083,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         options: [
           { id: "reasoningEffort", value: "low" },
           { id: "fastMode", value: false },
+          { id: "ultracode", value: true },
         ],
       } as const;
       const commands: Array<{ readonly modelSelection?: unknown }> = [];
@@ -5137,6 +5138,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                       type: "select",
                       options: [{ id: "low", label: "Low" }],
                     },
+                    { id: "ultracode", label: "Ultracode", type: "boolean" },
                   ],
                 },
               },
@@ -5152,14 +5154,24 @@ describe("OrchestratorMcpService provider resolution", () => {
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         const { inheritedOptions } = yield* service.capabilities(scope);
+        assert.deepEqual(inheritedOptions, [inherited.options[0]]);
         yield* service.delegateTask(scope, {
           task: "Review the change.",
           target: yield* decodeTarget({ options: inheritedOptions }),
           mode: "async",
         });
-        assert.deepEqual(commands[0]?.modelSelection, {
+        yield* service.delegateTask(scope, { task: "Review the change.", mode: "async" });
+        yield* service.delegateTask(scope, {
+          task: "Review the change with Ultracode.",
+          target: yield* decodeTarget({ options: [{ id: "ultracode", value: true }] }),
+          mode: "async",
+        });
+        const withoutUltracode = { ...inherited, options: [inherited.options[0]] };
+        assert.deepEqual(commands[0]?.modelSelection, withoutUltracode);
+        assert.deepEqual(commands[1]?.modelSelection, withoutUltracode);
+        assert.deepEqual(commands[2]?.modelSelection, {
           ...inherited,
-          options: [inherited.options[0]],
+          options: [inherited.options[0], inherited.options[2]],
         });
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
     }),

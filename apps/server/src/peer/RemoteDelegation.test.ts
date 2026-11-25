@@ -1280,14 +1280,17 @@ it.effect("a task named only by environment inherits the parent's model, within 
           { id: "cyberAccessProgram", value: "standard" },
         ],
       };
-      yield* seedParent(a, parentModelSelection);
+      yield* seedParent(a, {
+        ...parentModelSelection,
+        options: [...parentModelSelection.options, { id: "ultracode", value: true }],
+      });
 
       const result = yield* a.call("delegate_task", {
         task: "Run the suite on the box.",
         target: { environmentId: box.environmentId },
       });
       expect(result.isError, JSON.stringify(result.content)).toBe(false);
-      // The parent's model and options, and the link's modes rather than the parent's.
+      // The parent's model and options without Ultracode, and the link's modes rather than the parent's.
       expect(yield* Ref.get(thread.launchedWith)).toEqual({
         modelSelection: parentModelSelection,
         runtimeMode: "auto-accept-edits",

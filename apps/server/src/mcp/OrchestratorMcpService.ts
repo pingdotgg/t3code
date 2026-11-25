@@ -67,7 +67,12 @@ import {
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
-import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
+import {
+  getProviderOptionCurrentValue,
+  modelSelectionWithoutUltracode,
+  withLegacyUltracodeEffort,
+  withoutUltracode,
+} from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -1812,7 +1817,7 @@ const make = Effect.gen(function* () {
         (advertisedModel(provider, inheritedSelection.model)?.slug ?? inheritedSelection.model);
     let options = inheritsOptions
       ? knownOptions(
-          withLegacyUltracodeEffort(descriptors, inheritedSelection.options),
+          withoutUltracode(withLegacyUltracodeEffort(descriptors, inheritedSelection.options)),
           descriptors,
         )
       : undefined;
@@ -2458,8 +2463,9 @@ const make = Effect.gen(function* () {
             : "bindToCurrentThread binds to this thread, which belongs to a different project.",
         );
       }
-      const modelSelection =
-        parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+      const modelSelection = parent
+        ? modelSelectionWithoutUltracode(parent.thread.modelSelection)
+        : yield* projectDefaultModelSelection(project);
       // Never end on a lone high surrogate, which renders as a broken character.
       const derivedTitle = (input.prompt.split("\n")[0]?.trim() ?? "")
         .slice(0, 80)
@@ -2841,7 +2847,7 @@ const make = Effect.gen(function* () {
         inheritedModel: inherited?.model ?? null,
         inheritedOptions:
           knownOptions(
-            inherited?.options,
+            withoutUltracode(inherited?.options),
             providers
               .find((provider) => provider.instanceId === inherited?.instanceId)
               ?.models.find((model) => model.slug === inherited?.model)?.capabilities
