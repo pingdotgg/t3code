@@ -438,7 +438,7 @@ it.layer(
 
   // A killed `npm view` leaves its partial packument in npm's cache tmp dir.
   it.effect.skipIf(!symlinksSupported || windowsHost)(
-    "a refresh that interrupts the latest-version check neither kills npm nor starts another download",
+    "neither a refresh nor the probe timeout kills a slow npm version check or starts another download",
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-interrupted-npm-view");
@@ -494,6 +494,8 @@ it.layer(
         yield* Fiber.interrupt(first);
         const second = yield* Effect.forkChild(check);
         yield* Effect.yieldNow;
+        // A slow registry outlasts the probe timeout.
+        yield* TestClock.adjust("1 minute");
         downloaded = true;
         yield* Deferred.succeed(download, undefined);
         const snapshot = yield* Fiber.join(second);
