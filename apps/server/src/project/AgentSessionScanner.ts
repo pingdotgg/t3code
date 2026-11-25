@@ -72,8 +72,7 @@ class CodexStateReadError extends Schema.TaggedError<CodexStateReadError>()("Cod
 }
 const METADATA_READ_BYTES = 8 * 1024;
 const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
-// Allow for inline images ahead of cwd without increasing the retained metadata limit.
-const MAX_CLAUDE_TRANSCRIPT_SCAN_BYTES = 8 * 1024 * 1024;
+const cwdBeyondPrefix = Symbol("cwdBeyondPrefix");
 const MAX_CODEX_SESSION_INDEX_BYTES = 1024 * 1024;
 const MAX_CODEX_PROJECT_ROOT_ROWS = 100_000;
 
@@ -1219,6 +1218,7 @@ export const make = Effect.gen(function* () {
     source: AgentSessionSource,
     transcript: TranscriptCandidate,
     budget: MetadataReadBudget,
+    scanLimit = MAX_TRANSCRIPT_SCAN_BYTES,
   ) {
     if (transcript.identity.size === 0) return null;
     if (
@@ -1308,12 +1308,7 @@ export const make = Effect.gen(function* () {
             const readLastRecord = () =>
               !recordStarted || !reserveRecord() ? null : finishRecord();
 
-            const maxBytes = Math.min(
-              source === "claudeAgent"
-                ? MAX_CLAUDE_TRANSCRIPT_SCAN_BYTES
-                : MAX_TRANSCRIPT_SCAN_BYTES,
-              size,
-            );
+            const maxBytes = Math.min(scanLimit, size);
             while (bytesRead < maxBytes) {
               if (budget.bytesRemaining === 0 || budget.operationsRemaining === 0) {
                 budget.truncated = true;
@@ -1337,6 +1332,9 @@ export const make = Effect.gen(function* () {
             }
 
             if (bytesRead < size) {
+              if (source === "claudeAgent" && scanLimit === MAX_TRANSCRIPT_SCAN_BYTES) {
+                return cwdBeyondPrefix;
+              }
               budget.truncated = true;
               return null;
             }
@@ -1797,20 +1795,32 @@ export const make = Effect.gen(function* () {
       }
     >();
 
-    for (const transcript of transcripts) {
+    const prefixes = yield* Effect.forEach(transcripts, (transcript) => {
       // Unchanged imported transcripts keep their import cwd, so they never spend the read budget.
       // Codex is excluded: its first record carries the cwd and the subagent marker, and
       // rollouts imported before subagents were skipped must still be excluded by it.
-      const rolloutCwd =
-        (source === "codex"
+      const importedCwd = (
+        source === "codex"
           ? undefined
           : importedByFile.get(`${transcript.providerInstanceId}\0${transcript.filePath}`)
-        )?.find(
-          (imported) =>
-            imported.source.provider === source &&
-            sameTranscriptIdentity(imported.source, transcript.identity),
-        )?.cwd ?? (yield* readCwd(source, transcript, budget));
-      if (rolloutCwd === null || rolloutCwd === false) continue;
+      )?.find(
+        (imported) =>
+          imported.source.provider === source &&
+          sameTranscriptIdentity(imported.source, transcript.identity),
+      )?.cwd;
+      return importedCwd === undefined
+        ? readCwd(source, transcript, budget)
+        : Effect.succeed(importedCwd);
+    });
+
+    // Give every candidate its usual prefix scan before spending budget on large Claude records.
+    for (const [index, transcript] of transcripts.entries()) {
+      const prefix = prefixes[index]!;
+      const rolloutCwd =
+        prefix === cwdBeyondPrefix
+          ? yield* readCwd(source, transcript, budget, MAX_METADATA_BYTES_PER_SOURCE)
+          : prefix;
+      if (typeof rolloutCwd !== "string") continue;
       const cwd = yield* projectCwd(rolloutCwd, transcript.projectRoots);
       const key = `${transcript.providerInstanceId}\0${cwd}`;
       const existing = byOwnerAndCwd.get(key);
