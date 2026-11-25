@@ -997,6 +997,27 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
+  it.effect(
+    "keeps a scanned folder's own commands when another folder reports different ones",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* harness.provider.onAvailableCommands(commands, "/a");
+        yield* harness.provider.snapshotForCwd("/a", []);
+        yield* harness.provider.onAvailableCommands(commands.slice(1), "/b");
+        expect((yield* harness.provider.snapshotForCwd("/a", [])).slashCommands).toEqual(
+          expectedCommands,
+        );
+        yield* harness.provider.onSessionStarted(started, "/a");
+        expect(
+          (yield* harness.provider.snapshot.getSnapshot).workspaceSnapshots?.find(
+            (entry) => entry.cwd === "/a",
+          )?.slashCommands,
+        ).toEqual(expectedCommands);
+      }),
+  );
+
   it.effect("bounds workspace metadata without starting sessions for workspace lookup", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

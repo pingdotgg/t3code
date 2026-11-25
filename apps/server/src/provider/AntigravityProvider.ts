@@ -275,6 +275,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   });
   // Skills from the registry's last scan of each folder. A folder without them stays pending so it is scanned.
   const discoveredSkills = new Map<string, ServerProvider["skills"]>();
+  // Commands of folders whose draft entry a skill scan dropped, so later scans still report them.
+  const workspaceCommands = new Map<string, ServerProvider["slashCommands"]>();
   const thinkingLevels = new Map<string, ThinkingConfig | null>();
   let defaultModelSlug: string | undefined;
   const observeThinkingLevels = (
@@ -501,7 +503,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
                   {
                     cwd,
                     checkedAt: updatedAt,
-                    slashCommands: workspace?.slashCommands ?? draft.slashCommands,
+                    slashCommands:
+                      workspace?.slashCommands ?? workspaceCommands.get(cwd) ?? draft.slashCommands,
                     skills: skills ?? workspace?.skills ?? [],
                     ...(skills ? {} : { slashCommandsPending: true }),
                   },
@@ -601,6 +604,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     ]);
     yield* rememberRuntimeModes(previousModes, RUNTIME_MODES_WITHOUT_AUTO);
     discoveredSkills.clear();
+    workspaceCommands.clear();
     thinkingLevels.clear();
     defaultModelSlug = undefined;
   });
@@ -613,6 +617,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const workspace = snapshot.workspaceSnapshots?.find((entry) => entry.cwd === cwd);
     if (skills) {
       discoveredSkills.set(cwd, skills);
+      if (workspace) workspaceCommands.set(cwd, workspace.slashCommands);
       // The registry keeps the folder it scans. Changing the entry mid-scan would discard the scan.
       yield* SubscriptionRef.updateSome(metadata, (state) =>
         state.draft.workspaceSnapshots?.some((entry) => entry.cwd === cwd)
@@ -629,8 +634,9 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       );
     }
     const resolvedSkills = skills ?? workspace?.skills ?? discoveredSkills.get(cwd) ?? [];
-    return workspace
-      ? { ...snapshot, slashCommands: workspace.slashCommands, skills: resolvedSkills }
+    const slashCommands = workspace?.slashCommands ?? workspaceCommands.get(cwd);
+    return slashCommands
+      ? { ...snapshot, slashCommands, skills: resolvedSkills }
       : { ...snapshot, skills: resolvedSkills };
   });
 
