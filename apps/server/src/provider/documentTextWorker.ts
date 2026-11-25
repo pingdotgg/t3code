@@ -434,6 +434,12 @@ function* table(node: XmlNode): Generator<TextPart, void> {
   }
 }
 
+function xhtmlSpan(value: string | undefined, max: number): number {
+  const digits = /^[ \t\n\f\r]*([+-]?[0-9]+)/.exec(value ?? "")?.[1];
+  const span = Number(digits);
+  return span >= 0 ? Math.min(span, max) : 1;
+}
+
 function* xhtmlTableRows(table: XmlNode): Generator<TextPart, void> {
   const groups: XmlNode[][] = [];
   let implicit: XmlNode[] | undefined;
@@ -465,9 +471,9 @@ function* xhtmlTableRows(table: XmlNode): Generator<TextPart, void> {
           if (index <= lastTextCell) throw new Truncation("Column limit");
           break;
         }
-        const width = Math.max(1, Number.parseInt(cell.attrs.colspan ?? "", 10) || 1);
+        const width = Math.max(1, xhtmlSpan(cell.attrs.colspan, 1_000));
         const end = column + width;
-        const height = Number.parseInt(cell.attrs.rowspan ?? "", 10);
+        const height = xhtmlSpan(cell.attrs.rowspan, 65_534);
         const until = height === 0 ? rows.length : rowIndex + height;
         if (until > rowIndex + 1) {
           for (let i = column; i < Math.min(end, columnLimit); i++)
