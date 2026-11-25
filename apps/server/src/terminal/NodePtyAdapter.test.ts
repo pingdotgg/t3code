@@ -151,7 +151,7 @@ it.effect("cancels the Windows connection without waiting for output", () =>
 
 const managerTestLayer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
 
-it.effect.each(["linux", "win32"] as const)(
+it.live.each(["linux", "win32"] as const)(
   "cancels a newly acquired %s PTY before publishing startup",
   (platform) =>
     Effect.gen(function* () {
@@ -167,19 +167,24 @@ it.effect.each(["linux", "win32"] as const)(
           nativeProcess.events.once("data", nativeProcess._agent.kill);
         });
       } else {
-        spawn.mockImplementationOnce(() => {
-          Fiber.getCurrent()?.interruptUnsafe();
-          return nativeProcess;
-        });
+        spawn.mockReturnValueOnce(nativeProcess);
       }
 
       const fs = yield* FileSystem.FileSystem;
       const cwd = yield* fs.makeTempDirectoryScoped();
-      const ptyAdapter = yield* PtyAdapter.PtyAdapter;
+      const adapter = yield* PtyAdapter.PtyAdapter;
       const manager = yield* TerminalManager.makeWithOptions({
         logsDir: cwd,
-        ptyAdapter,
+        ptyAdapter: pending
+          ? adapter
+          : {
+              spawn: (input, takeOwnership) =>
+                adapter
+                  .spawn(input, takeOwnership)
+                  .pipe(Effect.tap(() => Effect.sync(() => Fiber.getCurrent()?.interruptUnsafe()))),
+            },
         shellResolver: () => spawnInput.shell,
+        processKillGraceMs: 1,
       });
       const input = { cwd, threadId: ThreadId.make("thread"), terminalId: DEFAULT_TERMINAL_ID };
       const events: string[] = [];

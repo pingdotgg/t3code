@@ -2923,6 +2923,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     let startupPending = false;
     let ptyProcess: PtyAdapter.PtyProcess | null = null;
     let startedShell: string | null = null;
+    const cancelStartup = Effect.suspend(() =>
+      ptyProcess === null
+        ? Effect.void
+        : (ptyProcess.cancelStartup?.() ??
+          startKillEscalation(ptyProcess, session.threadId, session.terminalId)),
+    );
 
     yield* increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
       Effect.andThen(
@@ -3058,9 +3064,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       ),
       Effect.catch((error) =>
         Effect.gen(function* () {
-          if (ptyProcess !== null) {
-            yield* startKillEscalation(ptyProcess, session.threadId, session.terminalId);
-          }
+          yield* cancelStartup;
           yield* failStartup(session, error.message);
           startupPending = false;
           yield* Effect.logError("failed to start terminal", {
@@ -3074,9 +3078,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.onInterrupt(() =>
         Effect.gen(function* () {
           if (!startupPending) return;
-          if (ptyProcess !== null) {
-            yield* startKillEscalation(ptyProcess, session.threadId, session.terminalId);
-          }
+          yield* cancelStartup;
           yield* failStartup(session, "Terminal startup was interrupted.");
         }),
       ),
