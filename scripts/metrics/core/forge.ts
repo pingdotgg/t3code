@@ -24,7 +24,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 
-import { run, ScenarioError } from "./scenarios/shell.ts";
+import { run, ScenarioError } from "../../scenarios/shell.ts";
 
 const OWNER = "bench";
 const REPO = "project";

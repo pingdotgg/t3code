@@ -1,10 +1,9 @@
-// The pure half of scripts/mobile-metrics.ts: what one probe window measured, the JSON a run
+// The pure half of mobile-metrics.ts: what one probe window measured, the JSON a run
 // writes, its tables, and the series `compare` and `noise` share with client-metrics.
 import * as Schema from "effect/Schema";
 
-import { median, percentile, slope, topCounts } from "../client-metrics-report.ts";
-import { frameStats } from "../mobile-behavior/grade.ts";
-import { MachineState, round } from "../server-metrics-report.ts";
+import { frameStats } from "../../mobile-behavior/grade.ts";
+import { MachineState, median, percentile, round, slope, topCounts } from "../core/report.ts";
 
 /** One perf window as the probe's `perfStop` returns it (see behavior-probe.ts). */
 export interface PerfWindow {

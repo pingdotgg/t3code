@@ -1,7 +1,8 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { rendersOf } from "./client-metrics-probes.ts";
+import { slope } from "../core/report.ts";
+import { rendersOf } from "./probes.ts";
 import {
   CASES,
   ClientMetrics,
@@ -10,16 +11,14 @@ import {
   INTERACTION_CASES,
   noiseReport,
   parseCases,
-  percentile,
   PROBE_KEYS,
-  slope,
   soakLeaks,
   soakSlopes,
   summaryTable,
   workloadDifferences,
   type Step,
   type Switch,
-} from "./client-metrics-report.ts";
+} from "./report.ts";
 import {
   analyzeTrace,
   END_LABEL,
@@ -27,7 +26,7 @@ import {
   normalizeSource,
   packageOf,
   type TraceEvent,
-} from "./client-metrics-trace.ts";
+} from "./trace.ts";
 
 const decode = Schema.decodeSync(ClientMetrics);
 
@@ -115,12 +114,6 @@ describe("parseCases", () => {
 });
 
 describe("report math", () => {
-  it("takes the nearest-rank p90, a value that was measured", () => {
-    expect(percentile([10, 20, 30, 40, 50, 60, 70, 80, 90, 100], 90)).toBe(90);
-    expect(percentile([5, 1, 3], 90)).toBe(5);
-    expect(percentile([], 90)).toBeNull();
-  });
-
   it("keeps a first-frame miss share per run, and counts paints under 16 ms as 16", () => {
     const metrics = decode({
       meta: { commit: "a" },

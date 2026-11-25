@@ -1,8 +1,8 @@
-// Scripts scripts/client-metrics.ts runs inside the page. They are strings because they run in
+// Scripts client-metrics.ts runs inside the page. They are strings because they run in
 // Chromium, not Node; the shapes they return are decoded with the schemas below.
 import * as Schema from "effect/Schema";
 
-import type { Renders } from "./client-metrics-report.ts";
+import type { Renders } from "./report.ts";
 
 /**
  * Installed before the app loads (`--renders`): a minimal DevTools hook makes production React
