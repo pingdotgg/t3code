@@ -5,7 +5,6 @@ import type { ContextPresentationCapability } from "../contextPresentationRegist
 import { ContextChipPopover, ContextChipShell } from "../contextChipParts";
 
 interface TerminalContextInlineChipProps {
-  label: string;
   terminalLabel: string;
   lineStart: number;
   lineEnd: number;
@@ -15,8 +14,13 @@ interface TerminalContextInlineChipProps {
 }
 
 export function TerminalContextInlineChip(props: TerminalContextInlineChipProps) {
-  const { label, terminalLabel, lineStart, lineEnd, text, detailsMode, expired = false } = props;
+  const { terminalLabel, lineStart, lineEnd, text, detailsMode, expired = false } = props;
   const gt = useGT();
+  const lineRange =
+    lineStart === lineEnd
+      ? gt("Line {lineStart}", { lineStart })
+      : gt("Lines {lineStart}–{lineEnd}", { lineStart, lineEnd });
+  const label = `${terminalLabel} ${lineRange}`;
 
   if (!expired && text.length > 0 && detailsMode === "popover") {
     return (
@@ -32,11 +36,7 @@ export function TerminalContextInlineChip(props: TerminalContextInlineChipProps)
             <span className="min-w-0 truncate text-sm font-medium text-foreground">
               {terminalLabel}
             </span>
-            <span className="ml-auto shrink-0 text-secondary-label text-xs">
-              {lineStart === lineEnd
-                ? gt("Line {lineStart}", { lineStart })
-                : gt("Lines {lineStart}–{lineEnd}", { lineStart, lineEnd })}
-            </span>
+            <span className="ml-auto shrink-0 text-secondary-label text-xs">{lineRange}</span>
           </div>
           <pre
             className="max-h-80 overflow-auto whitespace-pre bg-muted p-3 font-mono text-foreground text-xs leading-relaxed outline-none [tab-size:4] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
