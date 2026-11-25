@@ -1028,7 +1028,7 @@ describe("FORK_RENAME_RULES", () => {
     [
       "packages/shared/src/desktopReadinessProof.ts",
       "  return Hex.encode(yield* mac.sign(key, utf8(`t3-desktop-readiness:${challenge}`)));",
-      "kept",
+      "identifier",
     ],
     [
       "packages/shared/src/mcpApp.ts",
@@ -1058,17 +1058,17 @@ describe("FORK_RENAME_RULES", () => {
     [
       "apps/server/src/workspace/TaskFolders.ts",
       "              T3_PROJECT_ROOT: taskFolder.projectRoot,",
-      "kept",
+      "persisted",
     ],
     [
       "apps/server/src/workspace/TaskFolders.ts",
       "              T3_WORKTREE_PROJECT_PATH: taskFolder.projectPath,",
-      "kept",
+      "persisted",
     ],
     [
       "docs/user/multi-repo-projects.md",
       '    "create": "(git worktree add \\"$T3_WORKTREE_PROJECT_PATH\\" \\"$T3_WORKTREE_BRANCH\\")"',
-      "kept",
+      "persisted",
     ],
     // A t3Tools field in a test follows the renamed code; it is not the t3tools repository owner.
     ["apps/server/src/feedback/FeedbackService.test.ts", "      t3Tools: [],", "identifier"],
@@ -1098,6 +1098,17 @@ describe("FORK_RENAME_RULES", () => {
       "apps/server/src/feedback/scrubFeedback.test.ts",
       '      "[redacted] t3_environment_preferences_update apps/server/src/persistence/Migrations/088",',
       "agent-facing",
+    ],
+    // A worktree's own state folder is Lathe's, whatever script the same line of a doc names.
+    [
+      "docs/operations/00_development.md",
+      "Linked worktrees default to `<worktree>/.t3/userdata`; `vp run migrate-dev-db` moves an old one.",
+      "display",
+    ],
+    [
+      "scripts/migrate-dev-db.ts",
+      '  const upstreamHome = path.join(home, ".t3", "userdata");',
+      "kept",
     ],
     // The older exported names stay persisted: both spellings are exported.
     ["apps/server/src/x.ts", "      T3CODE_PROJECT_ROOT: root,", "persisted"],

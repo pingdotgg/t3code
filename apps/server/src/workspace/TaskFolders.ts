@@ -52,6 +52,7 @@ import {
   type RemoveEmptyDirectoryError,
 } from "../vcs/removeEmptyDirectory.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
+import { withUpstreamLayoutNames } from "./forkLegacyLayoutEnv.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
 import * as LayoutCommandApprovals from "./LayoutCommandApprovals.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
@@ -486,12 +487,14 @@ const make = Effect.gen(function* () {
               ...hostEnvironment,
               // A `GIT_DIR` the server inherited would point the command's Git at another repository.
               ...VcsProcess.unsetInheritedRepositoryEnv(hostEnvironment, hostPlatform),
-              T3_PROJECT_ROOT: taskFolder.projectRoot,
-              T3_WORKTREE_ROOT: taskFolder.root,
-              T3_WORKTREE_PROJECT_PATH: taskFolder.projectPath,
-              T3_WORKTREE_BRANCH: branch,
-              T3_WORKTREE_BASE: baseBranch ?? "",
-              T3_WORKTREE_REPOSITORIES: repositories.join("\n"),
+              ...withUpstreamLayoutNames({
+                LATHE_PROJECT_ROOT: taskFolder.projectRoot,
+                LATHE_WORKTREE_ROOT: taskFolder.root,
+                LATHE_WORKTREE_PROJECT_PATH: taskFolder.projectPath,
+                LATHE_WORKTREE_BRANCH: branch,
+                LATHE_WORKTREE_BASE: baseBranch ?? "",
+                LATHE_WORKTREE_REPOSITORIES: repositories.join("\n"),
+              }),
             },
             timeoutMs: LAYOUT_COMMAND_TIMEOUT_MS,
           })

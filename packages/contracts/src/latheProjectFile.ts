@@ -114,7 +114,7 @@ export const LatheProjectFile = Schema.Struct({
       create: trimmedNonEmpty(
         {
           description:
-            "Shell command that lays out a thread's folder for a project tracking several repositories, in place of Lathe's own worktrees and links. It runs in the project folder with T3_WORKTREE_ROOT (the folder to fill), T3_WORKTREE_PROJECT_PATH (where the project folder goes inside it), T3_WORKTREE_BRANCH, T3_WORKTREE_BASE, T3_WORKTREE_REPOSITORIES (the chosen repositories, one path per line) and T3_PROJECT_ROOT set. Each of the project's repositories it checks out at the same relative place is adopted as the thread's checkout of it, and must be a git worktree of that repository on T3_WORKTREE_BRANCH. It runs again when the folder goes missing, so it must cope with the branch already existing. It has ten minutes.",
+            "Shell command that lays out a thread's folder for a project tracking several repositories, in place of Lathe's own worktrees and links. It runs in the project folder with LATHE_WORKTREE_ROOT (the folder to fill), LATHE_WORKTREE_PROJECT_PATH (where the project folder goes inside it), LATHE_WORKTREE_BRANCH, LATHE_WORKTREE_BASE, LATHE_WORKTREE_REPOSITORIES (the chosen repositories, one path per line) and LATHE_PROJECT_ROOT set. Each of the project's repositories it checks out at the same relative place is adopted as the thread's checkout of it, and must be a git worktree of that repository on LATHE_WORKTREE_BRANCH. It runs again when the folder goes missing, so it must cope with the branch already existing. It has ten minutes.",
         },
         LATHE_PROJECT_FILE_COMMAND_MAX_LENGTH,
       ),

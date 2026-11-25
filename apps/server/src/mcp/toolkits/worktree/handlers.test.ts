@@ -212,7 +212,7 @@ const handoffFrom = <A, E>(
           path.join(project, "lathe.json"),
           JSON.stringify({
             worktreeLayout: {
-              create: `touch "${marker}" && git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH"`,
+              create: `touch "${marker}" && git worktree add -q -b "$LATHE_WORKTREE_BRANCH" "$LATHE_WORKTREE_PROJECT_PATH"`,
             },
           }),
         )

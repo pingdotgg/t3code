@@ -15,7 +15,7 @@ export const desktopReadinessProof = Effect.fn("desktopReadinessProof.derive")(f
 ) {
   const mac = yield* Mac.Mac;
   const key = yield* Mac.key(Mac.hmacSha256, utf8(secret));
-  return Hex.encode(yield* mac.sign(key, utf8(`t3-desktop-readiness:${challenge}`)));
+  return Hex.encode(yield* mac.sign(key, utf8(`lathe-desktop-readiness:${challenge}`)));
 }, Effect.orDie);
 
 export const isValidDesktopReadinessProof = Effect.fn("desktopReadinessProof.isValid")(function* (

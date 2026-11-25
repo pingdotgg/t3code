@@ -3039,7 +3039,7 @@ const withLayoutProject = <A, E>(
       path.join(shop, "lathe.json"),
       JSON.stringify({
         worktreeLayout: {
-          create: `echo create >> "${ran}" && git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH"`,
+          create: `echo create >> "${ran}" && git worktree add -q -b "$LATHE_WORKTREE_BRANCH" "$LATHE_WORKTREE_PROJECT_PATH"`,
         },
       }),
     );

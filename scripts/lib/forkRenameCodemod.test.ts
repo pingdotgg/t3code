@@ -27,6 +27,16 @@ describe("renameForkText", () => {
       "const latheHome = resolveLatheHome();",
     ],
     [
+      "apps/server/src/workspace/TaskFolders.ts",
+      "              T3_WORKTREE_BRANCH: branch,",
+      "              LATHE_WORKTREE_BRANCH: branch,",
+    ],
+    [
+      "docs/user/multi-repo-projects.md",
+      "| `T3_PROJECT_ROOT`          | The project folder.                                        |",
+      "| `LATHE_PROJECT_ROOT`          | The project folder.                                        |",
+    ],
+    [
       "apps/web/src/a.ts",
       'const message = "Restart T3 Code?";',
       'const message = "Restart Lathe?";',

@@ -718,6 +718,7 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     reason: "~/.t3 as upstream's install, read by project sync and the dev-data scripts.",
     test: (o) =>
       /(?:^|[/~"'`])\.t3(?:$|[/"'`])/.test(o.token) &&
+      !/\.mdx?$/.test(o.path) &&
       /projectSync|migrate-dev-db|(?:t3|lathe)-sqlite-state|upstream/i.test(o.path + o.line),
   },
   {
@@ -805,8 +806,8 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     id: "kept-cross-version-ipc",
     class: "kept",
     reason:
-      "Names two different versions must agree on: the desktop control socket, bootstrap token label, readiness proof label, clipboard MIME.",
-    token: /t3code-app-|t3-desktop-bootstrap|t3-desktop-readiness|(?:x|data)-t3-context-fragment/,
+      "Names two different versions must agree on: the desktop control socket, bootstrap token label, clipboard MIME.",
+    token: /t3code-app-|t3-desktop-bootstrap|(?:x|data)-t3-context-fragment/,
   },
   {
     id: "kept-desktop-state",
@@ -855,15 +856,9 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     id: "persisted-exported-env",
     class: "persisted",
     reason:
-      "T3CODE_PROJECT_ROOT and T3CODE_WORKTREE_PATH are set for users' project scripts: export both names, not read both.",
-    token: /T3CODE_(?:PROJECT_ROOT|WORKTREE_PATH)/,
-  },
-  {
-    id: "kept-layout-command-env",
-    class: "kept",
-    reason:
-      "T3_PROJECT_ROOT and T3_WORKTREE_* are set for the worktree layout commands in users' project files, which upstream users share; a renamed variable would reach those commands empty.",
+      "T3CODE_PROJECT_ROOT and T3CODE_WORKTREE_PATH are set for users' project scripts, and T3_PROJECT_ROOT and T3_WORKTREE_* for a project's worktree layout command: export both names, not read both.",
     test: (o) =>
+      /T3CODE_(?:PROJECT_ROOT|WORKTREE_PATH)/.test(o.token) ||
       /^T3_(?:PROJECT_ROOT|WORKTREE_(?:ROOT|PROJECT_PATH|BRANCH|BASE|REPOSITORIES))(?![A-Z0-9_])/.test(
         o.token.slice(o.offset),
       ),
@@ -1396,7 +1391,7 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     reason:
       "Runtime ids, temp and socket prefixes, log tags, MIME types, CSS transition and highlight names, FFI library labels, AudioWorklet and IPC message names, headers between the server and its own provider sessions, asset files and test identities; nothing reads them across versions.",
     test: (o) =>
-      /t3(?:code)?-\$|t3_\$|t3-(?:cli|token|math|bench-gone)-\$|^t3-claude$|t3code-startup-warmup|t3-(?:host|mermaid|term|orchestrator-v2|preview|ghostty-input|permission-check|acp-cli|acp-mock|collab-mock|pi-mcp|markdown-inline-prefix|mobile-|draft-hero|snap-shot|agent|black-|iris|checkpoint-index|kde-bus|browser-launch|darwin|advapi32|kernel32|libsystem|pcm-capture|cut-line-note|speech-reply|tool-exposure|service-tier|prompt-\$|create-\$)|tmp_objdir-t3(?:code)?-|__t3codeStartupModuleProfiler|t3code-(?:desktop|git-trace2|review-index|ssh-askpass|pierre)|\.t3-(?:capture|icon-export|replaced-|rule-copies\.json|setup-)|\/\.t3\.X{6}|t3_capture_|t3ssh-|\/tmp\/t3-|x-t3code-|t3continue-|t3-xai-prompt-|msg_t3_|refs\/t3code\/|\.cache\/t3code\/|^t3\.export\.|^\[t3-|^t3:jsonrpc|\$t3:|t3code_no_provider|t3_dev_session_|noreply@t3\.codes|t3code@users\.noreply|t3code-test@|-t3\.\d+|dist-exe\/t3|npm-launcher\/t3\.mjs|release\/t3-|\/t3\.tgz|^\/t3\/$|\.\{t3,lathe,t3f\}|\\\.t3\b|t3\/[a-z0-9-]+\/[A-Z]|^\/?t3-connect$|^\[t3-|^["'`]t3\/orchestration-v2\/|t3-page\.localhost|t3-sqlite-state|not-a-t3-server|app-t3code-agents/.test(
+      /t3(?:code)?-\$|t3_\$|t3-(?:cli|token|math|bench-gone)-\$|t3-desktop-readiness|^t3-claude$|t3code-startup-warmup|t3-(?:host|mermaid|term|orchestrator-v2|preview|ghostty-input|permission-check|acp-cli|acp-mock|collab-mock|pi-mcp|markdown-inline-prefix|mobile-|draft-hero|snap-shot|agent|black-|iris|checkpoint-index|kde-bus|browser-launch|darwin|advapi32|kernel32|libsystem|pcm-capture|cut-line-note|speech-reply|tool-exposure|service-tier|prompt-\$|create-\$)|tmp_objdir-t3(?:code)?-|__t3codeStartupModuleProfiler|t3code-(?:desktop|git-trace2|review-index|ssh-askpass|pierre)|\.t3-(?:capture|icon-export|replaced-|rule-copies\.json|setup-)|\/\.t3\.X{6}|t3_capture_|t3ssh-|\/tmp\/t3-|x-t3code-|t3continue-|t3-xai-prompt-|msg_t3_|refs\/t3code\/|\.cache\/t3code\/|^t3\.export\.|^\[t3-|^t3:jsonrpc|\$t3:|t3code_no_provider|t3_dev_session_|noreply@t3\.codes|t3code@users\.noreply|t3code-test@|-t3\.\d+|dist-exe\/t3|npm-launcher\/t3\.mjs|release\/t3-|\/t3\.tgz|^\/t3\/$|\.\{t3,lathe,t3f\}|\\\.t3\b|t3\/[a-z0-9-]+\/[A-Z]|^\/?t3-connect$|^\[t3-|^["'`]t3\/orchestration-v2\/|t3-page\.localhost|t3-sqlite-state|not-a-t3-server|app-t3code-agents/.test(
         o.token,
       ) ||
       (/^t3[.:]?$/.test(o.token) &&

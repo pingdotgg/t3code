@@ -115,14 +115,14 @@ create the folder with its own command. Add this to the `lathe.json` in the proj
 `create` runs in the project folder and must leave the thread's copy of the project folder in
 place. It receives these environment variables:
 
-| Variable                   | Value                                                      |
-| -------------------------- | ---------------------------------------------------------- |
-| `T3_PROJECT_ROOT`          | The project folder.                                        |
-| `T3_WORKTREE_ROOT`         | The empty folder to fill for this thread.                  |
-| `T3_WORKTREE_PROJECT_PATH` | Where the project folder goes inside it.                   |
-| `T3_WORKTREE_BRANCH`       | The thread's branch name.                                  |
-| `T3_WORKTREE_BASE`         | The base branch, or empty when the thread has none.        |
-| `T3_WORKTREE_REPOSITORIES` | The repositories chosen for the thread, one path per line. |
+| Variable                      | Value                                                      |
+| ----------------------------- | ---------------------------------------------------------- |
+| `LATHE_PROJECT_ROOT`          | The project folder.                                        |
+| `LATHE_WORKTREE_ROOT`         | The empty folder to fill for this thread.                  |
+| `LATHE_WORKTREE_PROJECT_PATH` | Where the project folder goes inside it.                   |
+| `LATHE_WORKTREE_BRANCH`       | The thread's branch name.                                  |
+| `LATHE_WORKTREE_BASE`         | The base branch, or empty when the thread has none.        |
+| `LATHE_WORKTREE_REPOSITORIES` | The repositories chosen for the thread, one path per line. |
 
 Every repository of the project that the command checks out at the same relative place becomes the
 thread's checkout of it. `remove` is optional and runs before Lathe removes whatever is left.
@@ -130,7 +130,7 @@ thread's checkout of it. `remove` is optional and runs before Lathe removes what
 What the commands can rely on, and what they must do:
 
 - **Checkouts are linked worktrees on the thread's branch.** Make each one with
-  `git worktree add` from the repository it belongs to, on `T3_WORKTREE_BRANCH`. Lathe later
+  `git worktree add` from the repository it belongs to, on `LATHE_WORKTREE_BRANCH`. Lathe later
   removes, restores, and renames these through Git, so it refuses a clone or a checkout on another
   branch and the thread does not start.
 - **`create` can run more than once.** It runs again when a thread's folder has gone missing, by
@@ -188,7 +188,7 @@ so write it for the shell of the machine the project is on; this one is for `sh`
 ```json
 {
   "worktreeLayout": {
-    "create": "(git worktree add \"$T3_WORKTREE_PROJECT_PATH\" \"$T3_WORKTREE_BRANCH\" 2>/dev/null || git worktree add -b \"$T3_WORKTREE_BRANCH\" \"$T3_WORKTREE_PROJECT_PATH\" ${T3_WORKTREE_BASE:-HEAD}) && git -C \"$T3_WORKTREE_PROJECT_PATH\" submodule update --init"
+    "create": "(git worktree add \"$LATHE_WORKTREE_PROJECT_PATH\" \"$LATHE_WORKTREE_BRANCH\" 2>/dev/null || git worktree add -b \"$LATHE_WORKTREE_BRANCH\" \"$LATHE_WORKTREE_PROJECT_PATH\" ${LATHE_WORKTREE_BASE:-HEAD}) && git -C \"$LATHE_WORKTREE_PROJECT_PATH\" submodule update --init"
   }
 }
 ```
