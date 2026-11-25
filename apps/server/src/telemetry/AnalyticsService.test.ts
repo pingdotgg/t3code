@@ -211,6 +211,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
     }),
   );
 
+  it.effect("sends nothing while DO_NOT_TRACK is set", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { DO_NOT_TRACK: "1" };
+      const batches = yield* sendFor(
+        0,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          yield* analytics.record("test.do-not-track");
+          yield* analytics.flush;
+          env.DO_NOT_TRACK = "0";
+          yield* analytics.record("test.allowed");
+          yield* analytics.flush;
+        }),
+      ).pipe(Effect.provideService(HostProcess.Environment, env));
+      assert.deepEqual(
+        batches.flat().map((event) => event.event),
+        ["test.allowed"],
+      );
+    }),
+  );
+
   it.effect("sends an anonymous event under its own id and without the install id", () =>
     Effect.gen(function* () {
       const batches = yield* sendFor(

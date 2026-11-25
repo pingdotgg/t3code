@@ -400,6 +400,18 @@ describe("isCiEnvironment", () => {
 });
 
 describe("isRelayTracingEnabled", () => {
+  it("turns off for DO_NOT_TRACK, even when T3 telemetry is on", () => {
+    assert.isFalse(OtelEnvironment.isRelayTracingEnabled({ DO_NOT_TRACK: "1" }));
+    assert.isFalse(
+      OtelEnvironment.isRelayTracingEnabled({
+        DO_NOT_TRACK: "true",
+        T3CODE_TELEMETRY_ENABLED: "1",
+      }),
+    );
+    assert.isTrue(OtelEnvironment.isRelayTracingEnabled({ DO_NOT_TRACK: "0" }));
+    assert.isTrue(OtelEnvironment.isRelayTracingEnabled({ DO_NOT_TRACK: "" }));
+  });
+
   it("defaults on and respects the T3CODE SDK override of the standard kill switch", () => {
     assert.isTrue(OtelEnvironment.isRelayTracingEnabled({}));
     assert.isFalse(OtelEnvironment.isRelayTracingEnabled({ OTEL_SDK_DISABLED: "true" }));
