@@ -140,6 +140,7 @@ import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 import { ThreadDetailsIssueRows } from "../chat/ThreadDetailsIssueRows";
 import { IssueGlyph, issueStatePresentation } from "../issue/issuePresentation";
 import { useThreadIntentPrefetch } from "./useThreadIntentPrefetch";
+import { KaluwaThreadAvatar } from "./KaluwaThreadAvatar";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -1304,15 +1305,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           <span className="text-diff-deletion-foreground">−{formatDiffCount(diff.deletions)}</span>
         </span>
       ) : null}
-      <span
-        aria-hidden
-        className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-      >
-        <SidebarProviderStack
-          thread={thread}
-          providerEntryByInstanceId={props.providerEntryByInstanceId}
-        />
-      </span>
+      {/* Fork: folder rows show the provider as their leading avatar instead. */}
+      {variant === "card" ? (
+        <span
+          aria-hidden
+          className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+        >
+          <SidebarProviderStack
+            thread={thread}
+            providerEntryByInstanceId={props.providerEntryByInstanceId}
+          />
+        </span>
+      ) : null}
     </div>
   );
   const titleLineIcons = metaLineEmpty ? (
@@ -1356,8 +1360,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   multiline
                     ? "flex flex-col justify-center px-2.5 py-1.5"
                     : "flex h-9 items-center gap-2.5 px-2.5",
-                  // Lines titles up with the folder name, past its chevron and icon.
-                  inFolder && "ps-9",
+                  // Fork: folder rows lead with the provider avatar, under the folder's icon,
+                  // so titles still line up with the folder name.
                 )}
                 onClick={handleClick}
                 onPointerEnter={intentPrefetch.onPointerEnter}
@@ -1371,7 +1375,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           >
             {/* `contents` keeps one-line rows a single flex row. */}
             <div className={multiline ? "flex h-6 min-w-0 items-center gap-2.5" : "contents"}>
-              {inFolder ? null : (
+              {inFolder ? (
+                <KaluwaThreadAvatar
+                  providerEntry={providerEntry}
+                  showInstanceBadge={showInstanceBadge}
+                  status={topStatus?.icon ?? null}
+                  recede={shouldRecede}
+                />
+              ) : (
                 <span
                   className={cn(
                     "flex shrink-0 items-center transition-opacity",
@@ -1386,7 +1397,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {draftIndicator}
               {title}
-              {multiline ? titleLineIcons : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
               {multiline ? null : issueBadge}
@@ -1530,7 +1540,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {props.sweepAction !== null ? dragDestination : null}
             </div>
-            {multiline ? metaLine : null}
+            {/* Fork: the meta line starts under the title, past the avatar column. */}
+            {multiline ? <div className="ps-6.5">{metaLine}</div> : null}
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
