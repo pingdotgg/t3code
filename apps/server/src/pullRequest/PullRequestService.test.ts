@@ -1117,6 +1117,43 @@ it.effect("reads a repository once when several worktrees share it", () =>
   }),
 );
 
+it.effect(
+  "lists pull requests from a project's tracked repositories when its root is no repository",
+  () =>
+    Effect.gen(function* () {
+      const tracked = project({
+        id: "workspace",
+        title: "workspace",
+        workspaceRoot: "/workspace/web",
+        repository: "acme/web",
+      });
+      const service = yield* makeService({
+        projects: [
+          {
+            ...project({ id: "workspace", title: "workspace", workspaceRoot: "/workspace" }),
+            trackedFolders: [{ path: "/workspace/web", name: "web", discovered: true }],
+          },
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            listChangeRequests: () =>
+              Effect.succeed({
+                items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: true,
+              }),
+          }),
+        ],
+        resolveRepositoryIdentity: (cwd) =>
+          Effect.succeed(cwd === "/workspace/web" ? (tracked.repositoryIdentity ?? null) : null),
+      });
+
+      const result = yield* service.list({ state: "open" });
+
+      assert.strictEqual(result.entries.length, 1);
+    }),
+);
+
 it.effect("keeps healthy repositories when one of them cannot be read", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
