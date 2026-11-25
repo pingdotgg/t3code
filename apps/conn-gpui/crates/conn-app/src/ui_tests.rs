@@ -5048,14 +5048,12 @@ fn a_linked_threads_sql_never_uses_this_macs_env(cx: &mut TestAppContext) {
         "no connection is chosen"
     );
 
-    // The same checkout for a thread on this Mac offers its .env, so the fixture is a real one.
     cx.update(|cx| {
-        database.update(cx, |db, cx| {
+        database.update(cx, |db, _| {
             db.set_linked_environment(None);
-            db.set_project(Some("proj-mini".into()), Some(root_text.clone()), cx);
+            assert!(db.local_env_connection().is_some(), "valid local .env");
         })
     });
-    assert!(cx.update(|cx| database.read(cx).offers_env_connection_for_test()));
     let _ = std::fs::remove_dir_all(root);
 }
 

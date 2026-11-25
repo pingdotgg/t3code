@@ -372,7 +372,7 @@ impl DatabasePanel {
     }
 
     /// The project's `.env` connection, read from this Mac's checkout: only for the primary.
-    fn local_env_connection(&self) -> Option<PanelConnection> {
+    pub(crate) fn local_env_connection(&self) -> Option<PanelConnection> {
         if self.linked_environment.is_some() {
             return None;
         }
