@@ -521,8 +521,9 @@ const pooled = [
   /** Holds two places in `q` side by side, and fails in one of them while `fanFailures` lasts. */
   workflow("fan", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, (payload) =>
     Effect.asVoid(
-      Effect.all(
-        ["x", "y"].map((side) =>
+      Effect.forEach(
+        ["x", "y"],
+        (side) =>
           within(
             "q",
             { limit: 2 },
@@ -543,7 +544,6 @@ const pooled = [
               yield* wait(`done ${side}`, { returns: Schema.Null });
             }),
           ),
-        ),
         { concurrency: "unbounded" },
       ),
     ),
