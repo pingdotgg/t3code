@@ -502,9 +502,22 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     const path = yield* Path.Path;
     const fileSystem = yield* FileSystem.FileSystem;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
-    const relativePath = path.isAbsolute(input.requestedPath)
-      ? path.relative(input.workspaceRoot, input.requestedPath)
-      : input.requestedPath;
+    const canonicalWorkspaceRoot = yield* fileSystem.realPath(input.workspaceRoot).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AssetWorkspaceResolutionError({
+            resource: input.resource,
+            cause,
+          }),
+      ),
+    );
+    // A root registered through a symlink also contains files linked by their real path.
+    const relativePath = !path.isAbsolute(input.requestedPath)
+      ? input.requestedPath
+      : !isWithinRoot(path, input.requestedPath, input.workspaceRoot) &&
+          isWithinRoot(path, input.requestedPath, canonicalWorkspaceRoot)
+        ? path.relative(canonicalWorkspaceRoot, input.requestedPath)
+        : path.relative(input.workspaceRoot, input.requestedPath);
     const resolved = yield* workspacePaths
       .resolveRelativePathWithinRoot({ workspaceRoot: input.workspaceRoot, relativePath })
       .pipe(
@@ -556,15 +569,6 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
         resource: input.resource,
       });
     }
-    const canonicalWorkspaceRoot = yield* fileSystem.realPath(input.workspaceRoot).pipe(
-      Effect.mapError(
-        (cause) =>
-          new AssetWorkspaceResolutionError({
-            resource: input.resource,
-            cause,
-          }),
-      ),
-    );
     const imageDimensions = HEADER_IMAGE_EXTENSIONS.has(
       path.extname(resolved.relativePath).toLowerCase(),
     )
@@ -640,6 +644,34 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             ),
           );
         requestedPath = path.resolve(workspaceRoot, requestedPath);
+      }
+      // The client matches roots as strings, so a page inside the project through a symlink
+      // arrives here; it still needs the workspace grant that serves its relative CSS and JS.
+      if (
+        input.workspaceRoot &&
+        input.resource.disposition !== "attachment" &&
+        /\.html?$/i.test(requestedPath)
+      ) {
+        const workspacePage = yield* workspacePaths
+          .normalizeWorkspaceRoot(input.workspaceRoot)
+          .pipe(
+            Effect.flatMap((workspaceRoot) =>
+              finalizeWorkspaceFileAsset({
+                workspaceRoot,
+                requestedPath,
+                resource: input.resource,
+                expiresAt,
+              }),
+            ),
+            Effect.option,
+          );
+        if (Option.isSome(workspacePage)) {
+          claims = workspacePage.value.claims;
+          fileName = workspacePage.value.fileName;
+          imageDimensions = workspacePage.value.imageDimensions;
+          fileRevision = workspacePage.value.fileRevision;
+          break;
+        }
       }
       const finalized = yield* finalizeAbsoluteMediaFileAsset({
         requestedPath,
