@@ -425,6 +425,12 @@ describe("PiProvider", () => {
             ],
           },
           { provider: "anthropic", id: "claude-sonnet-4", reasoning: true },
+          {
+            provider: "anthropic",
+            api: "anthropic-messages",
+            id: "claude-opus-5-5",
+            reasoning: true,
+          },
         ],
       });
       const snapshot = yield* checkPiProviderStatus(settings).pipe(
@@ -451,6 +457,16 @@ describe("PiProvider", () => {
         descriptors("anthropic/claude-sonnet-4").map((descriptor) => descriptor.id),
         ["thinking"],
       );
+      assert.deepEqual(descriptors("anthropic/claude-opus-5-5")[1], {
+        id: "serviceTier",
+        label: "Service Tier",
+        type: "select",
+        options: [
+          { id: "default", label: "Standard", isDefault: true },
+          { id: "fast", label: "Fast" },
+        ],
+        currentValue: "default",
+      });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

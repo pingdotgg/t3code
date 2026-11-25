@@ -9,6 +9,12 @@ export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
+// Anthropic models with fast mode (the \`speed\` field, no beta header); Pi's catalog lists no tiers for them.
+export const PI_ANTHROPIC_FAST_MODE_MODELS = [
+  "claude-fable-5-2",
+  "claude-mythos-5-2",
+  "claude-opus-5-5",
+] as const;
 
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
@@ -27,6 +33,7 @@ const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const PULL_REQUEST_LINKING_INSTRUCTIONS = ${JSON.stringify(PULL_REQUEST_LINKING_INSTRUCTIONS)};
 const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
+const ANTHROPIC_FAST_MODE_MODELS = new Set(${JSON.stringify(PI_ANTHROPIC_FAST_MODE_MODELS)});
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -300,7 +307,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   });
 
   // Pi has no service tier setting, so T3 sets one through this command before each turn.
-  // Only a tier the active model advertises is sent; Standard sends none.
+  // Only a tier the active model offers is sent; Standard sends none.
   let serviceTier: string | undefined;
   pi.registerCommand(SERVICE_TIER_COMMAND, {
     description: "Set the service tier T3 Code sends with provider requests",
@@ -329,11 +336,17 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       }
     }
     const tiers = (ctx.model as { serviceTiers?: unknown } | undefined)?.serviceTiers;
-    if (
+    const advertised =
       serviceTier !== undefined &&
       Array.isArray(tiers) &&
-      tiers.some((tier) => tier?.id === serviceTier)
-    ) {
+      tiers.some((tier) => tier?.id === serviceTier);
+    // Anthropic's fast mode is the \`speed\` field; its \`service_tier\` means Priority Tier.
+    if (serviceTier === "fast" && ctx.model?.api === "anthropic-messages") {
+      if (advertised || ANTHROPIC_FAST_MODE_MODELS.has(ctx.model.id)) {
+        replacement.speed = "fast";
+        changed = true;
+      }
+    } else if (advertised) {
       replacement.service_tier = serviceTier;
       changed = true;
     }
