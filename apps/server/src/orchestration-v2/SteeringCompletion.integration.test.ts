@@ -1875,6 +1875,121 @@ it.effect("queues a delegated completion wake whose steer the provider declined"
   }),
 );
 
+// regression: an ACP agent refuses a prompt while its running prompt waits for an answer
+it.effect("queues a delegated completion wake while the running turn waits for an answer", () =>
+  Effect.gen(function* () {
+    const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+      "steering-question-pending-delegated-completion",
+    );
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = yield* startFirstTurn;
+      const first = started[0]!;
+      const messageId = MessageId.make("message:question-wake");
+      const taskId = NodeId.make("task:question-wake");
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const parentRun = projection.runs.find((run) => run.id === first.runId)!;
+      const turn = projection.providerTurns[0]!;
+      const now = yield* DateTime.now;
+      yield* (yield* EventSink.EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("event:question-wake:question"),
+            type: "runtime-request.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: RuntimeRequestId.make("request:question-wake"),
+              nodeId: first.rootNodeId,
+              providerTurnId: turn.id,
+              nativeRequestRef: null,
+              kind: "user_input",
+              status: "pending",
+              responseCapability: {
+                type: "live",
+                providerSessionId: projection.providerSessions[0]!.id,
+              },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          },
+          {
+            id: EventId.make("event:question-wake:cohort"),
+            type: "run.updated",
+            threadId,
+            runId: first.runId,
+            occurredAt: now,
+            payload: {
+              ...parentRun,
+              delegatedCompletion: {
+                disposition: "open",
+                nextGeneration: 2,
+                delivery: { generation: 1, messageId, taskIds: [taskId] },
+              },
+            },
+          },
+          {
+            id: EventId.make("event:question-wake:task"),
+            type: "subagent.updated",
+            threadId,
+            runId: first.runId,
+            nodeId: taskId,
+            occurredAt: now,
+            payload: {
+              id: taskId,
+              threadId,
+              runId: first.runId,
+              parentNodeId: first.rootNodeId,
+              origin: "app_owned",
+              createdBy: "agent",
+              driver,
+              providerInstanceId: instanceId,
+              providerThreadId: null,
+              childThreadId: null,
+              nativeTaskRef: null,
+              prompt: "Do background work",
+              title: "Background test",
+              model: null,
+              completionWake: "always",
+              completionDelivery: { state: "claimed", observedByRunId: null },
+              status: "completed",
+              result: "done",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("question-wake"),
+        threadId,
+        messageId,
+        text: "Delegated task completed",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        delegatedCompletion: { parentRunId: first.runId, generation: 1, taskIds: [taskId] },
+        createdBy: "agent",
+        creationSource: "server",
+      });
+      yield* worker.drain();
+      assert.deepEqual(steered, []);
+      const effects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
+        CommandId.make("question-wake"),
+      );
+      assert.notOk(effects.some((effect) => effect.request.type === "provider-turn.steer"));
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(after.runs.find((run) => run.id === first.runId)?.status, "running");
+      assert.equal(
+        after.runs.find((run) => run.userMessageId === messageId && run.id !== first.runId)?.status,
+        "queued",
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 // regression: #26695 cancelling a Copilot prompt to steer it kills its background agents
 it.effect("queues a steer until the turn ends when the provider cannot steer it", () =>
   Effect.gen(function* () {

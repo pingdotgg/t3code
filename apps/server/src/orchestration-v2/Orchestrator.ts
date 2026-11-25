@@ -642,6 +642,26 @@ export function threadHasUnfinishedWork(records: {
   );
 }
 
+// A provider turn blocked on a question or approval cannot take another prompt: ACP agents
+// refuse it, and others may abort the request and lose the user's typed answer.
+function runAwaitsUser(
+  projection: Pick<OrchestrationV2ThreadProjection, "providerTurns" | "runtimeRequests">,
+  run: OrchestrationV2Run,
+): boolean {
+  const turnIds = new Set(
+    projection.providerTurns
+      .filter((turn) => turn.runAttemptId === run.activeAttemptId)
+      .map((turn) => turn.id),
+  );
+  return projection.runtimeRequests.some(
+    (request) =>
+      request.status === "pending" &&
+      request.responseCapability.type === "live" &&
+      request.providerTurnId !== null &&
+      turnIds.has(request.providerTurnId),
+  );
+}
+
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
     case "thread.create":
@@ -7908,7 +7928,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         activeTurn !== undefined &&
         providerThread?.providerSessionId != null &&
         (!commandNotice || providerThread.goal?.status === "active") &&
-        (activeMessage === undefined || !isNativeMaintenanceCommand(activeMessage))
+        (activeMessage === undefined || !isNativeMaintenanceCommand(activeMessage)) &&
+        !runAwaitsUser(projection, active)
       ) {
         const session = yield* providerSessions
           .get(providerThread.providerSessionId)
