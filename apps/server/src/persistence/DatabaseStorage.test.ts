@@ -205,3 +205,62 @@ it.effect(
       yield* Deferred.await(restarted);
     }).pipe(Effect.provide(testConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
+
+it.effect(
+  "purges threads deleted before upgrading without waiting for the next six-hour pass",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(startupTime);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      yield* fs.makeDirectory(path.dirname(config.dbPath), { recursive: true });
+      // The previous version compacted a minute ago, but never purged deleted threads.
+      yield* fs.writeFileString(
+        path.join(path.dirname(config.dbPath), "compacted-at"),
+        String(startupTime - minute),
+      );
+      const contentRows = Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) => sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM orchestration_v2_projection_messages
+        WHERE thread_id = 'thread:deleted-before-upgrade'
+      `,
+      ).pipe(Effect.map((rows) => rows[0]?.count ?? 0));
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const at = new Date(startupTime - 2 * minute).toISOString();
+        yield* sql`
+        INSERT INTO orchestration_v2_projection_threads (
+          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+          created_at, updated_at, deleted_at, payload_json
+        ) VALUES (
+          'thread:deleted-before-upgrade', 'project:upgrade', 'private title', 'codex',
+          'full-access', 'default', ${at}, ${at}, ${at}, '{"title":"private title"}'
+        )
+      `;
+        yield* sql`
+        INSERT INTO orchestration_v2_projection_messages (
+          message_id, thread_id, role, streaming, created_at, updated_at, payload_json
+        ) VALUES (
+          'message:deleted-before-upgrade', 'thread:deleted-before-upgrade', 'user', 0,
+          ${at}, ${at}, '{"text":"private message"}'
+        )
+      `;
+        assert.equal(yield* contentRows, 1);
+        yield* DatabaseStorage.DatabaseStorage;
+
+        yield* TestClock.adjust(5 * minute);
+
+        assert.equal(yield* contentRows, 0);
+      }).pipe(
+        Effect.provide(
+          DatabaseStorage.layer.pipe(
+            Layer.provide(ProjectionMaintenance.layer),
+            Layer.provideMerge(Sqlite.layerMemory),
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(testConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
