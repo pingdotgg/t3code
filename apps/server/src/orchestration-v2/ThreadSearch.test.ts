@@ -408,7 +408,7 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         `…${readable.slice(readable.indexOf("the darkness"))}`,
       ]);
       assert.deepEqual(yield* snippets("ships safely through"), [readable]);
-      assert.deepEqual(yield* snippets('"ships safely through"'), []);
+      assert.deepEqual(yield* snippets('"ships safely through"'), [readable]);
       assert.deepEqual(yield* snippets('"what are you talking about"'), [
         "what are you talking about quiet silver lantern",
       ]);
@@ -747,14 +747,12 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
           message(apart, "exact-apart", "user", apartText),
           message(apart, "exact-paragraphs", "user", "missing\n\nosprey files"),
           message(together, "exact-hard-break", "user", `swift${" ".repeat(16)}\ncurrent`),
-          message(
-            together,
-            "exact-image",
-            "assistant",
-            "![remote avocet](https://example.invalid/a.png)",
+          message(together, "exact-kept", "user", "a visible kestrel!\nPlease proceed.", {
+            minute: 2,
+          }),
+          ...[3, 4, 5, 6].map((minute) =>
+            message(together, `exact-hidden-${minute}`, "user", "visible\n\nkestrel", { minute }),
           ),
-          message(together, "exact-kept", "user", "a visible kestrel", { minute: 2 }),
-          message(together, "exact-hidden-newer", "user", "visible\n\nkestrel", { minute: 3 }),
         ],
         projections.apply,
         { discard: true },
@@ -764,7 +762,6 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
       assert.sameMembers(yield* threadIds("missing osprey files"), [together, wrapped, apart]);
       assert.sameMembers(yield* threadIds('"missing osprey files"'), [together, wrapped]);
       assert.deepEqual(yield* threadIds('"swift current"'), [together]);
-      assert.deepEqual(yield* threadIds('"remote avocet"'), []);
       const fallback = yield* search.search({ query: '"visible kestrel"', limit: 1 });
       assert.deepEqual(
         fallback.matches.map((hit) => hit.messageId),

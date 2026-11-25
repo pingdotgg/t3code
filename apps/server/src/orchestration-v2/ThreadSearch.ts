@@ -119,7 +119,6 @@ const MESSAGE_CANDIDATE_LIMIT = 10_000;
 const MESSAGE_SCAN_LIMIT = 20_000;
 // Reserve room for rejected snippets without parsing an entire candidate window.
 const RENDER_CHECKS_PER_RESULT = 4;
-const PLAIN_MESSAGE = /^\p{L}[\p{L}\p{M}\p{N} .'’,!?-]*$/u;
 const NON_ASCII = /[\u0080-\uffff]/;
 
 /** SQLite's lower() folds ASCII only, so a short word is checked as each spelling it can match. */
@@ -568,6 +567,7 @@ export const make = Effect.gen(function* () {
       readonly quality: number;
       readonly offset: number;
       readonly needsRender: boolean;
+      readonly indexMatch: boolean;
     };
     const newer = (left: Hit, right: Hit) =>
       (right.row.messageCreatedAt ?? "").localeCompare(left.row.messageCreatedAt ?? "");
@@ -604,11 +604,16 @@ export const make = Effect.gen(function* () {
       // Webhook URL tokens are withheld before matching, so a snippet cut inside the URL has none.
       const text = withoutWebhookUrlToken(row.text.replace(MARKDOWN_LINK, "$1"));
       const match = matchMessage(text);
-      const needsRender = quotedPhrase && (row.rawText !== null || !PLAIN_MESSAGE.test(row.text));
+      // Only a line break can join or split a phrase between source and render.
+      const needsRender = quotedPhrase && row.text.includes("\n");
       if (match === null && !needsRender) continue;
-      // A source gap may shrink in Markdown, so proximity in the index is
-      // enough to make such a row a candidate for the rendered check.
-      const hit = { row, text, needsRender, ...(match ?? { quality: 1, offset: 0 }) };
+      const hit = {
+        row,
+        text,
+        needsRender,
+        indexMatch: match !== null,
+        ...(match ?? { quality: 1, offset: 0 }),
+      };
       if (quotedPhrase) {
         const hits = alternates.get(row.threadId);
         if (hits) hits.push(hit);
@@ -661,21 +666,30 @@ export const make = Effect.gen(function* () {
           selected.push(candidate);
           break;
         }
-        if (renderChecks === 0 || threadRenderChecks === 0) continue;
+        if (renderChecks === 0 || threadRenderChecks === 0) {
+          // Out of render budget: fall back to the index match, as unquoted search does.
+          if (!candidate.indexMatch) continue;
+          selected.push(candidate);
+          break;
+        }
         renderChecks--;
         threadRenderChecks--;
         yield* Effect.yieldNow;
         const { row } = candidate;
-        const segments = searchableMessageSegments(
-          {
-            role: row.source,
-            text: withoutWebhookUrlToken(row.rawText ?? row.text),
-            streaming: row.streaming !== 0,
-            context: row.hasContext ? { version: 1, records: [] } : undefined,
-          },
-          cwdByThreadId.get(row.threadId),
-        );
-        for (const segment of segments ?? []) {
+        const render = (text: string) =>
+          searchableMessageSegments(
+            {
+              role: row.source,
+              text: withoutWebhookUrlToken(text),
+              streaming: row.streaming !== 0,
+              context: row.hasContext ? { version: 1, records: [] } : undefined,
+            },
+            cwdByThreadId.get(row.threadId),
+          ) ?? [];
+        // Quotes render as chips the segments leave out; their readable text still counts.
+        const segments =
+          row.rawText === null ? render(row.text) : [...render(row.rawText), ...render(row.text)];
+        for (const segment of segments) {
           const text = withoutWebhookUrlToken(segment);
           const match = matchMessage(text);
           if (match === null) continue;
