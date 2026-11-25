@@ -120,8 +120,9 @@ const UpstreamError = Schema.Struct({
 const decodeUpstreamError = Schema.decodeUnknownEffect(Schema.fromJsonString(UpstreamError));
 
 // OpenRouter words a 404 for "no endpoint satisfies the data policy" like "No endpoints found
-// matching your data policy (Zero data retention)"; the upstream 403 says "ZRM mode".
-const zeroRetentionMarker = /zdr|zrm|zero[\s-]*(data[\s-]*)?retention|data policy/i;
+// matching your data policy (Zero data retention)"; the upstream 403 says "ZRM mode". A bare
+// "data policy" also covers other filters, such as free model training, so it is not a marker.
+const zeroRetentionMarker = /zdr|zrm|zero[\s-]*(data[\s-]*)?retention/i;
 
 /**
  * Whether OpenRouter refused the request because zero data retention is unavailable. Only this
@@ -131,7 +132,8 @@ const refusedZeroRetention = Effect.fn("CloudSpeech.refusedZeroRetention")(funct
   response: HttpClientResponse.HttpClientResponse,
 ) {
   const { error } = yield* HttpClientResponse.schemaBodyJson(OpenRouterError)(response);
-  if (response.status === 404) return zeroRetentionMarker.test(error.message ?? "");
+  if (zeroRetentionMarker.test(error.message ?? "")) return true;
+  if (response.status === 404) return false;
   const raw = yield* decodeUpstreamError(error.metadata?.raw);
   return [raw.detail, raw.error, raw.message].some((value) =>
     zeroRetentionMarker.test(typeof value === "string" ? value : (value?.message ?? "")),

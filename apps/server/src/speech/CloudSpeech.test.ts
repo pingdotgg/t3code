@@ -248,6 +248,11 @@ it.effect("classifies OpenRouter zero-retention refusals without echoing upstrea
       reason: "model-unavailable",
       refusal: "zero-retention-unavailable",
     });
+    const topLevel = yield* refuse(403, { error: { message: "This key may not use ZDR" } });
+    expect(topLevel).toMatchObject({
+      reason: "rejected-key",
+      refusal: "zero-retention-unavailable",
+    });
     // Unrelated refusals keep their old copy and carry no category.
     for (const [status, body, reason] of [
       [
@@ -265,7 +270,13 @@ it.effect("classifies OpenRouter zero-retention refusals without echoing upstrea
         },
         "rejected-key",
       ],
-      [403, { error: { message: "This key may not use ZDR" } }, "rejected-key"],
+      [
+        404,
+        {
+          error: { message: "No endpoints found matching your data policy (Free model training)." },
+        },
+        "model-unavailable",
+      ],
       [404, { error: { message: "No such model" } }, "model-unavailable"],
       [403, "not json", "rejected-key"],
     ] as const) {
