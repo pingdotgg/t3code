@@ -53,7 +53,7 @@ jobs:
   # without it and checks the variable itself.
   resolve_commit:
     name: Resolve release commit
-    if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'schedule' || vars.PAUSE_NIGHTLY != 'true')
+    if: github.repository == 'penouc/tix' && (github.event_name != 'schedule' || vars.PAUSE_NIGHTLY != 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
     outputs:
@@ -390,7 +390,7 @@ jobs:
         run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
 
       - name: Test
-        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+        run: vp run --filter tix test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
   relay_public_config:
     name: Resolve T3 Connect public config
@@ -598,7 +598,7 @@ jobs:
       # other repositories report "dev" telemetry.
       - name: Build JS bundle
         env:
-          T3CODE_TELEMETRY_CHANNEL: ${{ github.repository == 'pingdotgg/t3code' && needs.preflight.outputs.release_channel || 'dev' }}
+          T3CODE_TELEMETRY_CHANNEL: ${{ github.repository == 'penouc/tix' && needs.preflight.outputs.release_channel || 'dev' }}
         run: vp run ${{ steps.bundle_build.outputs.script }}
 
       # Two paths under apps/ so the artifact root is apps/; consumers download
@@ -844,7 +844,7 @@ jobs:
         timeout-minutes: 5
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-          PACKAGE_NAME: com.t3tools.t3code
+          PACKAGE_NAME: com.penouc.tix
           APK_OUTPUT_DIR: ${{ runner.temp }}/android-apk
         run: |
           if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
@@ -973,7 +973,7 @@ jobs:
           > [!WARNING]
           > **This is a preview build. Do not install it unless you know exactly why you are here.**
           >
-          > Preview builds are cut by maintainers from unreleased branches to exercise the release pipeline. They can be broken, receive no fixes, are never offered as updates, and are not supported. If you want T3 Code, install the [latest release](https://github.com/pingdotgg/t3code/releases/latest) or a nightly instead.
+          > Preview builds are cut by maintainers from unreleased branches to exercise the release pipeline. They can be broken, receive no fixes, are never offered as updates, and are not supported. If you want tix, install the [latest release](https://github.com/penouc/tix/releases/latest) or a nightly instead.
 
           Built from `${{ needs.preflight.outputs.ref }}`.
           EOF
@@ -1031,7 +1031,7 @@ jobs:
   update_feed:
     name: Check the update feed
     needs: [preflight, release]
-    if: ${{ !cancelled() && github.repository == 'pingdotgg/t3code' && ((github.event_name == 'schedule' && vars.PAUSE_NIGHTLY != 'true') || needs.preflight.outputs.release_channel == 'nightly') }}
+    if: ${{ !cancelled() && github.repository == 'penouc/tix' && ((github.event_name == 'schedule' && vars.PAUSE_NIGHTLY != 'true') || needs.preflight.outputs.release_channel == 'nightly') }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:

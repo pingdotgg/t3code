@@ -60,7 +60,7 @@ permissions:
 jobs:
   android:
     name: Android ${{ matrix.abi }}
-    if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'android')
+    if: github.repository == 'penouc/tix' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'android')
     runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 45
     strategy:
@@ -218,7 +218,7 @@ jobs:
 
   ios:
     name: iOS simulator
-    if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'ios')
+    if: github.repository == 'penouc/tix' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'ios')
     runs-on: blacksmith-12vcpu-macos-27
     timeout-minutes: 60
     concurrency:

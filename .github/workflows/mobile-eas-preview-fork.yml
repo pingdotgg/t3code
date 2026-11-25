@@ -376,7 +376,7 @@ jobs:
           profile: preview:dev
           environment: preview
           expo-token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-          output: ${{ runner.temp }}/t3code-preview.apk
+          output: ${{ runner.temp }}/tix-preview.apk
           cache: "false"
 
       - id: build
@@ -386,7 +386,7 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
         run: |
-          eas upload --platform android --build-path "$RUNNER_TEMP/t3code-preview.apk" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
+          eas upload --platform android --build-path "$RUNNER_TEMP/tix-preview.apk" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
           link="$(sed -n '/^{/,$p' "$RUNNER_TEMP/upload.json" | jq -r '.url // empty')"
           if [ -z "$link" ]; then
             echo "::error::eas upload returned no install link"
@@ -451,7 +451,7 @@ jobs:
           profile: preview:dev
           environment: preview
           expo-token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-          output: ${{ runner.temp }}/t3code-preview.ipa
+          output: ${{ runner.temp }}/tix-preview.ipa
           cache: "false"
 
       - id: build
@@ -461,7 +461,7 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
         run: |
-          eas upload --platform ios --build-path "$RUNNER_TEMP/t3code-preview.ipa" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
+          eas upload --platform ios --build-path "$RUNNER_TEMP/tix-preview.ipa" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
           link="$(sed -n '/^{/,$p' "$RUNNER_TEMP/upload.json" | jq -r '.url // empty')"
           if [ -z "$link" ]; then
             echo "::error::eas upload returned no install link"
