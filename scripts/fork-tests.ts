@@ -18,6 +18,8 @@ export interface KnownFailure {
 
 const root = NodePath.resolve(import.meta.dirname, "..");
 const IDLE_LIMIT_MS = 30_000;
+const nodeTestFiles = ".github/scripts/*.test.cjs";
+const vitePlus = NodePath.join(root, "node_modules/.bin/vp");
 
 function escapeRegExp(text: string): string {
   return text.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -55,23 +57,19 @@ function requireEnginesNode(): void {
   }
 }
 
-function runVitest(args: ReadonlyArray<string>): Promise<number> {
-  return new Promise((resolve) => {
-    const child = NodeChildProcess.spawn(
-      NodePath.join(root, "node_modules/.bin/vp"),
-      ["test", "run", "--reporter=verbose", "--testTimeout=30000", ...args],
-      {
-        cwd: root,
-        detached: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          T3CODE_RENDER_REPORT_DIR: NodeFS.mkdtempSync(
-            NodePath.join(NodeOS.tmpdir(), "t3-renders-"),
-          ),
-        },
-      },
-    );
+function runTests(
+  command: string,
+  args: ReadonlyArray<string>,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = NodeChildProcess.spawn(command, args, {
+      cwd: root,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+    });
+    child.on("error", reject);
     let lastOutput = Date.now();
     child.stdout.on("data", (chunk) => {
       lastOutput = Date.now();
@@ -93,6 +91,25 @@ function runVitest(args: ReadonlyArray<string>): Promise<number> {
   });
 }
 
+function runVitest(args: ReadonlyArray<string>): Promise<number> {
+  return runTests(
+    vitePlus,
+    [
+      "test",
+      "run",
+      "--reporter=verbose",
+      "--testTimeout=30000",
+      "--exclude",
+      nodeTestFiles,
+      ...args,
+    ],
+    {
+      ...process.env,
+      T3CODE_RENDER_REPORT_DIR: NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-renders-")),
+    },
+  );
+}
+
 async function main(argv: ReadonlyArray<string>): Promise<number> {
   requireEnginesNode();
   const failures = readKnownFailures(
@@ -111,6 +128,10 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
   }
   if (argv.some((arg) => arg === "-t" || arg.startsWith("--testNamePattern"))) {
     throw new Error("fork-tests sets -t itself; run vp test directly to filter by name.");
+  }
+  if (argv.length === 0) {
+    const nodeCode = await runTests(process.execPath, ["--test", nodeTestFiles]);
+    if (nodeCode !== 0) return nodeCode;
   }
   return runVitest(failures.length === 0 ? argv : [...argv, "-t", skipPattern(failures)]);
 }
