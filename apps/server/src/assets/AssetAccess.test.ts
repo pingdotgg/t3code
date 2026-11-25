@@ -1429,6 +1429,42 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "serves an HTML page's sibling files when it is linked by its real path below a symlinked root",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-asset-linked-root-",
+        });
+        const realRoot = path.join(directory, "real", "project");
+        const linkedRoot = path.join(directory, "linked");
+        yield* fileSystem.makeDirectory(path.join(realRoot, "report"), { recursive: true });
+        yield* fileSystem.symlink(path.join(directory, "real"), linkedRoot);
+        const htmlPath = path.join(realRoot, "report", "index.html");
+        const cssPath = path.join(realRoot, "report", "style.css");
+        yield* fileSystem.writeFileString(htmlPath, '<link rel="stylesheet" href="style.css">');
+        yield* fileSystem.writeFileString(cssPath, "body { color: red; }");
+        const canonicalCssPath = yield* fileSystem.realPath(cssPath);
+
+        // The web client picks the resource by comparing path strings, so a real path
+        // below a symlinked root arrives as media-file; either kind must serve siblings.
+        for (const _tag of ["media-file", "workspace-file"] as const) {
+          const result = yield* issueAssetUrl({
+            resource: { _tag, threadId: ThreadId.make("thread-1"), path: htmlPath },
+            workspaceRoot: path.join(linkedRoot, "project"),
+          });
+          const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const token = suffix.slice(0, suffix.indexOf("/"));
+          expect(yield* resolveAsset(token, "style.css")).toMatchObject({
+            kind: "file",
+            path: canonicalCssPath,
+          });
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("issues exact workspace URLs for every non-HTML preview", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
