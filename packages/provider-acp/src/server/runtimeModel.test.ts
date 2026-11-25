@@ -8,6 +8,8 @@ import {
   acpContentBlockDisplayText,
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
+  makeAcpUnreadToolCalls,
+  MAX_UNREAD_TOOL_CALLS,
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionModeState,
@@ -17,9 +19,14 @@ import {
   sessionUpdateIsReplay,
   syntheticLoadSessionResponseFromInitialize,
   toolCallProgressLength,
+  toolCallVisibleOutputChanged,
+  unreadToolCallUpdate,
+  withTrackedChangedPaths,
   withTrackedPermissionToolCall,
+  withUnknownChangedPaths,
   type AcpToolCallState,
 } from "./runtimeModel.ts";
+import { acpChangedPathsOfToolCall } from "./clientPolicy.ts";
 
 describe("AcpRuntimeModel", () => {
   it("parses session mode state from typed ACP session setup responses", () => {
@@ -335,7 +342,6 @@ describe("AcpRuntimeModel", () => {
         update: {
           sessionUpdate: "tool_call_update",
           toolCallId: "read-1",
-          kind: "read",
           ...(locations === undefined ? {} : { locations }),
         },
       } satisfies EffectAcpSchema.SessionNotification);
@@ -351,14 +357,21 @@ describe("AcpRuntimeModel", () => {
     const cleared = mergeToolCallState(created, toolCall([]));
     expect(cleared.data.locations).toEqual([]);
     expect(mergeToolCallState(created, toolCall(null)).data.locations).toEqual([]);
-    expect(
+    const emits = (previous: AcpToolCallState, next: AcpToolCallState) =>
       decideToolCallUpdateEmission({
-        previous: created,
-        next: cleared,
+        previous,
+        next,
         lastEmittedDetailLength: 0,
         skippedSinceEmit: 0,
-      }).emit,
-    ).toBe(true);
+      }).emit;
+    expect(emits(created, cleared)).toBe(true);
+    expect(toolCallVisibleOutputChanged(created, cleared)).toBe(true);
+    const relocated = mergeToolCallState(cleared, toolCall([{ path: "/workspace/src/app.ts" }]));
+    expect(emits(cleared, relocated)).toBe(true);
+    expect(toolCallVisibleOutputChanged(cleared, relocated)).toBe(true);
+    const repeated = mergeToolCallState(relocated, toolCall([{ path: "/workspace/src/app.ts" }]));
+    expect(emits(relocated, repeated)).toBe(false);
+    expect(toolCallVisibleOutputChanged(relocated, repeated)).toBe(false);
   });
 
   it("clears explicitly nulled ACP v2 tool call fields and replaces raw input", () => {
@@ -570,6 +583,202 @@ describe("AcpRuntimeModel", () => {
     );
 
     expect(parsePermissionRequest(request).kind).toBe("unknown");
+  });
+
+  const trackedToolCall = (
+    ...updates: ReadonlyArray<Record<string, unknown>>
+  ): AcpToolCallState | undefined => {
+    let tracked: AcpToolCallState | undefined;
+    for (const [index, update] of updates.entries()) {
+      // Shapes the wire accepts through the schema's open variants, so the types do not name them.
+      const notification = {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: index === 0 ? "tool_call" : "tool_call_update",
+          toolCallId: "tool-1",
+          ...(index === 0 ? { title: "Edit", kind: "edit" } : {}),
+          ...update,
+        },
+      } as EffectAcpSchema.SessionNotification;
+      for (const event of parseSessionUpdateEvent(notification).events) {
+        if ("toolCall" in event && event.toolCall !== undefined) {
+          tracked = mergeToolCallState(tracked, event.toolCall);
+        }
+      }
+    }
+    return tracked;
+  };
+  const idOnlyRequest: EffectAcpSchema.RequestPermissionRequest = {
+    sessionId: "session-1",
+    options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+    toolCall: { toolCallId: "tool-1" },
+  };
+  const changedPathsWith = (
+    tracked: AcpToolCallState | undefined,
+    request: EffectAcpSchema.RequestPermissionRequest = idOnlyRequest,
+  ) => acpChangedPathsOfToolCall(withTrackedChangedPaths(request, tracked).toolCall);
+
+  it("gives an id-only permission request every path its tool call's notifications named", () => {
+    const tracked = trackedToolCall({
+      locations: [{ path: "/work/a.ts", line: 3 }],
+      content: [{ type: "diff", path: "/elsewhere/b.ts", newText: "b" }],
+      rawInput: { file_path: "/elsewhere/c.ts" },
+    });
+    expect(changedPathsWith(tracked)).toEqual(["/work/a.ts", "/elsewhere/b.ts", "/elsewhere/c.ts"]);
+    expect(
+      changedPathsWith(tracked, {
+        ...idOnlyRequest,
+        toolCall: { toolCallId: "tool-1", locations: [{ path: "/work/d.ts" }] },
+      }),
+    ).toEqual(["/work/d.ts", "/work/a.ts", "/elsewhere/b.ts", "/elsewhere/c.ts"]);
+    expect(withTrackedChangedPaths(idOnlyRequest, undefined)).toBe(idOnlyRequest);
+    expect(withTrackedChangedPaths(idOnlyRequest, trackedToolCall({}))).toBe(idOnlyRequest);
+  });
+
+  it("reads the session and tool call of a dropped tool-call notification", () => {
+    const dropped = (update: unknown, sessionId: unknown = "session-1") =>
+      unreadToolCallUpdate("session/update", { sessionId, update });
+    for (const sessionUpdate of ["tool_call", "tool_call_update", "tool_call_content_chunk"]) {
+      expect(dropped({ sessionUpdate, toolCallId: "tool-1", locations: [{ path: 7 }] })).toEqual({
+        sessionId: "session-1",
+        toolCallId: "tool-1",
+      });
+    }
+    // An id or session that is not a non-empty string is not read.
+    expect(dropped({ sessionUpdate: "tool_call_update", toolCallId: 7 })).toEqual({
+      sessionId: "session-1",
+    });
+    expect(dropped({ sessionUpdate: "tool_call", toolCallId: "" }, 7)).toEqual({});
+    // A kind that cannot be read may have been a tool call.
+    expect(dropped({ toolCallId: "tool-1" })).toEqual({
+      sessionId: "session-1",
+      toolCallId: "tool-1",
+    });
+    expect(dropped("not an update")).toEqual({ sessionId: "session-1" });
+    expect(unreadToolCallUpdate("session/update", null)).toEqual({});
+    // Other kinds and other methods are not tool-call notifications.
+    expect(dropped({ sessionUpdate: "usage_update", toolCallId: "tool-1" })).toBeUndefined();
+    expect(dropped({ sessionUpdate: "a_later_kind" })).toBeUndefined();
+    expect(
+      unreadToolCallUpdate("elicitation/complete", {
+        sessionId: "session-1",
+        update: { sessionUpdate: "tool_call", toolCallId: "tool-1" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("records the tool calls a dropped notification may have described", () => {
+    const unread = makeAcpUnreadToolCalls();
+    unread.add({ sessionId: "session-1", toolCallId: "tool-1" }, ["tool-9"]);
+    expect(unread.has("session-1", "tool-1")).toBe(true);
+    expect(unread.has("session-1", "tool-9")).toBe(false);
+    // Tool ids are only unique within a session.
+    expect(unread.has("session-2", "tool-1")).toBe(false);
+
+    // Without a tool call id, every tool call tracked for the session is recorded.
+    unread.add({ sessionId: "session-1" }, ["tool-2", "tool-3"]);
+    expect(unread.has("session-1", "tool-2")).toBe(true);
+    expect(unread.has("session-1", "tool-3")).toBe(true);
+    expect(unread.has("session-1", "tool-4")).toBe(false);
+
+    // Without a session, the tool call is recorded for every session.
+    unread.add({ toolCallId: "tool-5" }, []);
+    expect(unread.has("session-1", "tool-5")).toBe(true);
+    expect(unread.has("session-2", "tool-5")).toBe(true);
+  });
+
+  it("counts every tool call as unread once too many are recorded", () => {
+    const unread = makeAcpUnreadToolCalls();
+    for (let index = 0; index < MAX_UNREAD_TOOL_CALLS; index += 1) {
+      unread.add({ sessionId: "session-1", toolCallId: `tool-${index}` }, []);
+    }
+    unread.add({ sessionId: "session-1", toolCallId: "tool-0" }, []);
+    expect(unread.has("session-1", "never-named")).toBe(false);
+    unread.add({ sessionId: "session-1", toolCallId: "one-more" }, []);
+    expect(unread.has("session-1", "one-more")).toBe(true);
+    expect(unread.has("session-2", "never-named")).toBe(true);
+  });
+
+  it("makes the paths of a tool call with a dropped notification unknown", () => {
+    const tracked = trackedToolCall({ locations: [{ path: "/work/a.ts" }] });
+    expect(changedPathsWith(tracked)).toEqual(["/work/a.ts"]);
+    expect(changedPathsWith(withUnknownChangedPaths(tracked, "tool-1"))).toBe("unknown");
+    // A tool call none of whose notifications was read is unknown too.
+    expect(changedPathsWith(withUnknownChangedPaths(undefined, "tool-1"))).toBe("unknown");
+    expect(
+      changedPathsWith(withUnknownChangedPaths(undefined, "tool-1"), {
+        ...idOnlyRequest,
+        toolCall: { toolCallId: "tool-1", locations: [{ path: "/work/d.ts" }] },
+      }),
+    ).toBe("unknown");
+  });
+
+  it("keeps a tracked tool call's paths as sent while its card shows them trimmed", () => {
+    const tracked = trackedToolCall({ locations: [{ path: "/work/target " }] });
+    expect(tracked?.data.locations).toEqual([{ path: "/work/target" }]);
+    expect(changedPathsWith(tracked)).toEqual(["/work/target "]);
+  });
+
+  it("remembers that a tracked tool call's paths were incomplete", () => {
+    const inside = [{ path: "/work/a.ts" }];
+    for (const update of [
+      { locations: [...inside, { path: " " }] },
+      { locations: [...inside, { path: "" }] },
+      { locations: [...inside, { path: 7 }] },
+      { locations: [...inside, {}] },
+      { locations: inside, rawInput: { path: 7 } },
+      { locations: inside, content: [{ type: "diff", changes: [{ operation: "_swap" }] }] },
+      { locations: inside, content: [{ type: "_t3_unknown", originalType: "_patch", raw: {} }] },
+    ]) {
+      const tracked = trackedToolCall(update);
+      // The card still lists the paths it can show.
+      expect(tracked?.data.locations).toEqual(inside);
+      expect(changedPathsWith(tracked)).toBe("unknown");
+      // A request that names complete paths itself does not make the call's own set complete.
+      expect(
+        changedPathsWith(tracked, {
+          ...idOnlyRequest,
+          toolCall: { toolCallId: "tool-1", locations: inside },
+        }),
+      ).toBe("unknown");
+      // Nor does a later update that names only readable paths.
+      expect(changedPathsWith(trackedToolCall(update, { locations: inside }))).toBe("unknown");
+    }
+  });
+
+  it("keeps a tracked tool call's earlier paths when a later update replaces or clears them", () => {
+    const replaced = trackedToolCall(
+      { locations: [{ path: "/elsewhere/a.ts" }] },
+      { locations: [{ path: "/work/a.ts" }] },
+    );
+    expect(replaced?.data.locations).toEqual([{ path: "/work/a.ts" }]);
+    expect(changedPathsWith(replaced)).toEqual(["/elsewhere/a.ts", "/work/a.ts"]);
+
+    const cleared = trackedToolCall(
+      { locations: [{ path: "/elsewhere/a.ts" }], rawInput: { path: "/elsewhere/b.ts" } },
+      { locations: null, rawInput: null, content: null },
+      { status: "in_progress" },
+    );
+    expect(cleared?.data.locations).toEqual([]);
+    expect(changedPathsWith(cleared)).toEqual(["/elsewhere/a.ts", "/elsewhere/b.ts"]);
+
+    const added = trackedToolCall(
+      { locations: [{ path: "/work/a.ts" }] },
+      { content: [{ type: "diff", path: "/elsewhere/b.ts", newText: "b" }] },
+    );
+    expect(changedPathsWith(added)).toEqual(["/work/a.ts", "/elsewhere/b.ts"]);
+  });
+
+  it("treats a tracked tool call that names very many paths as unknown", () => {
+    const paths = (count: number, prefix: string) =>
+      Array.from({ length: count }, (_, index) => ({ path: `/work/${prefix}-${index}.ts` }));
+    expect(changedPathsWith(trackedToolCall({ locations: paths(256, "a") }))).toHaveLength(256);
+    expect(changedPathsWith(trackedToolCall({ locations: paths(257, "a") }))).toBe("unknown");
+    expect(
+      changedPathsWith(
+        trackedToolCall({ locations: paths(200, "a") }, { locations: paths(200, "b") }),
+      ),
+    ).toBe("unknown");
   });
 
   it("bounds an oversized cumulative tool_call_update content buffer to a tail window", () => {
@@ -1092,6 +1301,65 @@ describe("AcpRuntimeModel", () => {
       },
     });
     expect(idle.events).toEqual([]);
+
+    const toolCall = (update: EffectAcpSchema.SessionUpdate) => {
+      const event = parseSessionUpdateEvent({ sessionId: "session-1", update }).events[0];
+      if (event?._tag !== "ToolCallUpdated") throw new Error("expected a compaction tool call");
+      return event.toolCall;
+    };
+    const draft = toolCall({
+      sessionUpdate: "compaction_summary_chunk",
+      compactionId: "compact-1",
+      content: { type: "text", text: "Draft summary" },
+    });
+    const finish = (summary?: ReadonlyArray<EffectAcpSchema.ContentBlock> | null) =>
+      mergeToolCallState(
+        draft,
+        toolCall({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-1",
+          status: "completed",
+          ...(summary === undefined ? {} : { summary }),
+        }),
+      ).data.rawOutput;
+
+    expect(finish()).toBe("Draft summary");
+    expect([finish(null), finish([]), finish([{ type: "text", text: "" }])]).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+
+    const fail = (
+      previous: ReturnType<typeof toolCall>,
+      patch: Pick<
+        Extract<EffectAcpSchema.SessionUpdate, { sessionUpdate: "compaction_update" }>,
+        "summary" | "error"
+      >,
+    ) =>
+      mergeToolCallState(
+        previous,
+        toolCall({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-1",
+          status: "failed",
+          ...patch,
+        }),
+      );
+    const failed = fail(draft, { error: "Budget exhausted" });
+    const summaryCleared = fail(failed, { summary: null });
+    const errorCleared = fail(summaryCleared, { error: null });
+    const fields = (state: ReturnType<typeof toolCall>) => [
+      state.data.rawOutput,
+      state.data.compactionError,
+    ];
+    expect(fields(failed)).toEqual(["Draft summary", "Budget exhausted"]);
+    expect(fields(summaryCleared)).toEqual([undefined, "Budget exhausted"]);
+    expect(fields(errorCleared)).toEqual([undefined, undefined]);
+    expect(fields(fail(draft, { summary: null, error: "Budget exhausted" }))).toEqual([
+      undefined,
+      "Budget exhausted",
+    ]);
   });
 
   it("applies ACP v2 agent-owned terminal snapshots and output chunks", () => {
@@ -1141,9 +1409,27 @@ describe("AcpRuntimeModel", () => {
     expect(second.pendingOutputBytes).toBeUndefined();
   });
 
-  it("trims full ACP terminal output by a further 1 MiB at a UTF-8 boundary", () => {
-    const cap = 16 * 1024 * 1024;
-    const step = 1024 * 1024;
+  it("retains only the terminal output tail the projection reads", () => {
+    const projectedChars = 320 * 1024;
+    let state: ReturnType<typeof applyAcpAgentTerminalUpdate> | undefined;
+    let full = "";
+    for (let index = 0; index < 64; index += 1) {
+      const text = `${index % 10}`.repeat(64 * 1024 - 1) + "é";
+      full += text;
+      state = applyAcpAgentTerminalUpdate(state, {
+        sessionUpdate: "terminal_output_chunk",
+        terminalId: "terminal-tail",
+        data: Buffer.from(text).toString("base64"),
+      });
+    }
+    expect(state!.outputBytes).toBeLessThanOrEqual(4 * projectedChars);
+    expect(state!.outputBytes).toBe(Buffer.byteLength(state!.output));
+    expect(state!.output.slice(-projectedChars)).toBe(full.slice(-projectedChars));
+  });
+
+  it("trims full ACP terminal output by a further 256 KiB at a UTF-8 boundary", () => {
+    const cap = 1280 * 1024;
+    const step = 256 * 1024;
     const chunk = (text: string | Uint8Array) => ({
       sessionUpdate: "terminal_output_chunk" as const,
       terminalId: "terminal-cap",
@@ -1162,7 +1448,7 @@ describe("AcpRuntimeModel", () => {
     expect(full.outputBytes).toBe(cap);
     expect(full.output.length).toBe(cap - 1);
 
-    // The cut at one byte past the cap plus 1 MiB falls inside "é", so the whole character goes.
+    // The cut at one byte past the cap plus 256 KiB falls inside "é", so the whole character goes.
     const trimmed = applyAcpAgentTerminalUpdate(full, chunk("c"));
     expect(trimmed.outputBytes).toBe(cap - step - 1);
     expect(trimmed.output.length).toBe(cap - step - 1);
@@ -1315,6 +1601,28 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  it("recovers server, tool, and arguments from Antigravity call_mcp_tool calls", () => {
+    // agy 1.5.12 reaches MCP tools its context budget left out through call_mcp_tool.
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "call_13347576314095519317",
+      kind: "execute",
+      title: "MCP Tool navigate_page",
+      status: "in_progress",
+      rawInput: {
+        ServerName: "chrome-devtools",
+        ToolName: "navigate_page",
+        Arguments: { url: "https://example.com" },
+      },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "chrome-devtools",
+      tool: "navigate_page",
+      input: { url: "https://example.com" },
+    });
+  });
+
   it("recovers T3 identity from acp-mcp-call fallback commands", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
@@ -1376,6 +1684,7 @@ describe("extractMcpToolCallIdentity", () => {
     });
     const merged = mergeToolCallState(created, completed);
 
+    expect(merged.title).toBe(created.title);
     expect(extractMcpToolCallIdentity(merged)).toEqual({
       server: "t3-code",
       tool: "orchestrator_capabilities",
@@ -1395,6 +1704,10 @@ describe("extractMcpToolCallIdentity", () => {
       // Kimi retitles with partial JSON and middle-truncates args over 50 characters.
       'delegate_task: {"mode":"async","task":"Ru',
       'delegate_task: {"mode":"async","task":"Ru...cho child-result-42\'"}',
+      // Antigravity: "Running <tool>" before agy 1.5.8, "Run mcp_<server>_<tool>" since, "?" on prompts.
+      "Running delegate_task",
+      "Run mcp_t3-code_delegate_task",
+      "Run mcp_t3-code_delegate_task?",
     ]) {
       const toolCall = toolCallFromUpdate({
         sessionUpdate: "tool_call",
@@ -1612,7 +1925,12 @@ describe("extractMcpToolCallIdentity", () => {
   });
 
   it("does not brand path-like or unknown-tool titles", () => {
-    for (const title of ["t3-code/README.md", "t3-code_not_a_real_tool"]) {
+    for (const title of [
+      "t3-code/README.md",
+      "t3-code_not_a_real_tool",
+      "Run mcp_t3-code_not_a_real_tool",
+      "Run manage_task",
+    ]) {
       const toolCall = toolCallFromUpdate({
         sessionUpdate: "tool_call",
         toolCallId: "path-1",

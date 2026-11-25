@@ -32,6 +32,7 @@ const TAP_SLOP_PX = 8;
 const MULTI_CLICK_MS = 500;
 const MULTI_CLICK_SLOP_PX = 4;
 const WHEEL_LINE_PX = 16;
+const SCROLL_REPORT_PX = 24;
 const MAX_PIXEL_RATIO = 2;
 // Reuse nearby probe answers: slow replies arrive too late after touch-end to raise the iOS keyboard.
 const PROBE_REUSE_PX = 24;
@@ -175,6 +176,7 @@ export function start(configuration: PreviewStreamConfiguration) {
         onClipboard: (text) => post({ type: "clipboard", text }),
         onDownload: (download) => post({ type: "download", ...download }),
         onFileChooser: (chooser) => post({ type: "fileChooser", chooser }),
+        onSelectMenu: (menu) => post({ type: "selectMenu", menu }),
         onViewport: (page) => {
           if (viewport?.width === page.width && viewport.height === page.height) return;
           viewport = page;
@@ -307,12 +309,20 @@ export function start(configuration: PreviewStreamConfiguration) {
     };
   };
 
+  let scrolled = 0;
   const flushWheel = () => {
     if (wheelFrame !== null) cancelAnimationFrame(wheelFrame);
     wheelFrame = null;
     const wheel = pendingWheel;
     pendingWheel = null;
-    if (wheel) send(wheel);
+    if (!wheel) return;
+    send(wheel);
+    // The app shrinks its bar while the page scrolls down, so it only needs the direction.
+    scrolled =
+      Math.sign(scrolled) === Math.sign(wheel.deltaY) ? scrolled + wheel.deltaY : wheel.deltaY;
+    if (Math.abs(scrolled) < SCROLL_REPORT_PX) return;
+    post({ type: "scroll", direction: scrolled > 0 ? "down" : "up" });
+    scrolled = 0;
   };
   const queueWheel = (point: { x: number; y: number }, deltaX: number, deltaY: number) => {
     pendingWheel = {

@@ -20,10 +20,9 @@ import {
 import { Badge } from "../ui/badge";
 import { Kbd } from "../ui/kbd";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
-import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
+import { ThreadHoverCard, ThreadHoverCardTrigger } from "../ThreadHoverCard";
 import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { retainedModelWhileProviderLocked } from "./ProviderModelPicker.logic";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
@@ -35,6 +34,7 @@ import { takeOpenTarget, useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 /** Holds the page still behind the open picker; its lifetime is the popup element's. */
 function lockBackgroundScroll(popup: HTMLElement | null) {
@@ -337,6 +337,130 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     />
   );
 
+  // Same card as the agents panel, so the thread's instance reads the same way.
+  const activeInstanceCard =
+    activeInstanceLabel && activeEntry ? (
+      <ThreadHoverCard title={props.triggerLabel ?? triggerLabel}>
+        <div className="flex min-w-0 items-center gap-2">
+          <ProviderInstanceIcon
+            driverKind={activeEntry.driverKind}
+            displayName={activeEntry.displayName}
+            accentColor={activeEntry.accentColor}
+            acpRegistryAgentId={activeEntry.acpRegistryAgentId}
+            acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}
+            showBadge
+            badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
+            className="size-4"
+            iconClassName="size-4"
+          />
+          <span className="min-w-0 truncate text-foreground/75">{activeInstanceLabel}</span>
+        </div>
+        {props.triggerDetail ? (
+          <span className="min-w-0 truncate">{props.triggerDetail}</span>
+        ) : null}
+        {shortcutLabel ? (
+          <div className="flex min-w-0 items-center justify-between gap-4">
+            <span className="min-w-0 truncate">{gt("Model picker")}</span>
+            <Kbd>{shortcutLabel}</Kbd>
+          </div>
+        ) : null}
+      </ThreadHoverCard>
+    ) : null;
+  const triggerControl = (
+    <ComposerControl
+      ref={triggerRef}
+      aria-label={[
+        props.triggerAriaLabel ?? props.triggerLabel ?? allModelNames ?? triggerLabel,
+        props.triggerDetail,
+        activeInstanceLabel,
+      ]
+        .filter(Boolean)
+        .join(", ")}
+      size={size}
+      data-chat-provider-model-picker="true"
+      data-composer-shortcut={props.triggerShortcuts}
+      onClick={(event) => {
+        if (!isMenuOpen || !docked) return;
+        const target = takeOpenTarget(triggerRef.current);
+        if (!target) return;
+        // A shortcut aimed at the open picker moves within it instead of closing it.
+        (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+        openTarget(target);
+      }}
+      className={cn(
+        "min-w-0 shrink justify-between whitespace-nowrap",
+        props.compact ? "max-w-42 shrink-0" : !props.isComposerOwned && "max-w-48 sm:max-w-56",
+        props.triggerClassName,
+      )}
+      disabled={props.disabled}
+    />
+  );
+  const triggerBody = (
+    <span className={cn("flex min-w-0 flex-1 items-center", size === "xs" ? "gap-1" : "gap-1.5")}>
+      {selectedEntries && props.triggerLabel === undefined ? (
+        <span
+          data-chat-provider-model-picker-icon
+          className="flex shrink-0 items-center -space-x-1"
+          aria-hidden="true"
+        >
+          {selectedEntries
+            .slice(0, 3)
+            .map((selection) =>
+              selection.entry ? (
+                <ProviderInstanceIcon
+                  key={`${selection.instanceId}:${selection.model}`}
+                  driverKind={selection.entry.driverKind}
+                  displayName={selection.entry.displayName}
+                  accentColor={selection.entry.accentColor}
+                  acpRegistryAgentId={selection.entry.acpRegistryAgentId}
+                  acpRegistryIconUrl={selection.entry.acpRegistryIconUrl}
+                  className="size-4 rounded-full bg-(--chat-composer-glass-surface,var(--background)) ring-2 ring-(--chat-composer-glass-surface,var(--background))"
+                  iconClassName="size-4"
+                />
+              ) : null,
+            )}
+          {selectedEntries.length > 3 ? (
+            <span className="relative z-30 flex size-4 items-center justify-center rounded-full bg-(--chat-composer-glass-surface,var(--background)) text-3xs ring-2 ring-(--chat-composer-glass-surface,var(--background))">
+              +{selectedEntries.length - 3}
+            </span>
+          ) : null}
+        </span>
+      ) : activeEntry && props.triggerLabel === undefined ? (
+        // Narrow compacted composers hide the provider icon before truncating the name.
+        <span data-chat-provider-model-picker-icon className="contents">
+          <ProviderInstanceIcon
+            driverKind={activeEntry.driverKind}
+            displayName={activeEntry.displayName}
+            accentColor={activeEntry.accentColor}
+            acpRegistryAgentId={activeEntry.acpRegistryAgentId}
+            acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}
+            showBadge={showInstanceBadge}
+            className="size-4"
+            iconClassName={cn("size-4", props.activeProviderIconClassName)}
+            indicatorBackground={props.instanceIndicatorBackground ?? "var(--contrast-input)"}
+            badgeClassName={cn(
+              "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs",
+              size === "xs" && "shadow-none",
+            )}
+          />
+        </span>
+      ) : null}
+      {props.isComposerOwned || activeInstanceCard ? (
+        <span {...triggerTextProps}>{triggerText}</span>
+      ) : (
+        <SharedTooltipTrigger render={<span {...triggerTextProps} />} label={triggerTooltipContent}>
+          {triggerText}
+        </SharedTooltipTrigger>
+      )}
+      {props.triggerSuffix}
+      {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
+        <Badge variant="outline" size="sm">
+          <T context="badge on a model that cannot be selected">Unavailable</T>
+        </Badge>
+      ) : null}
+    </span>
+  );
+
   return (
     <Popover
       open={isMenuOpen}
@@ -352,141 +476,18 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         if (open && docked && target) openTarget(target);
       }}
     >
-      <PopoverTrigger
-        render={
-          <ComposerControl
-            ref={triggerRef}
-            aria-label={[
-              props.triggerAriaLabel ?? props.triggerLabel ?? allModelNames ?? triggerLabel,
-              props.triggerDetail,
-              activeInstanceLabel,
-            ]
-              .filter(Boolean)
-              .join(", ")}
-            size={size}
-            data-chat-provider-model-picker="true"
-            data-composer-shortcut={props.triggerShortcuts}
-            onClick={(event) => {
-              if (!isMenuOpen || !docked) return;
-              const target = takeOpenTarget(triggerRef.current);
-              if (!target) return;
-              // A shortcut aimed at the open picker moves within it instead of closing it.
-              (
-                event as typeof event & { preventBaseUIHandler?: () => void }
-              ).preventBaseUIHandler?.();
-              openTarget(target);
-            }}
-            className={cn(
-              "min-w-0 shrink justify-between whitespace-nowrap",
-              props.compact
-                ? "max-w-42 shrink-0"
-                : !props.isComposerOwned && "max-w-48 sm:max-w-56",
-              props.triggerClassName,
-            )}
-            disabled={props.disabled}
-          />
-        }
-      >
-        <span
-          className={cn("flex min-w-0 flex-1 items-center", size === "xs" ? "gap-1" : "gap-1.5")}
+      {activeInstanceCard ? (
+        <ThreadHoverCardTrigger
+          render={<PopoverTrigger render={triggerControl} />}
+          card={activeInstanceCard}
+          side="top"
+          align="center"
         >
-          {selectedEntries && props.triggerLabel === undefined ? (
-            <span
-              data-chat-provider-model-picker-icon
-              className="flex shrink-0 items-center -space-x-1"
-              aria-hidden="true"
-            >
-              {selectedEntries
-                .slice(0, 3)
-                .map((selection) =>
-                  selection.entry ? (
-                    <ProviderInstanceIcon
-                      key={`${selection.instanceId}:${selection.model}`}
-                      driverKind={selection.entry.driverKind}
-                      displayName={selection.entry.displayName}
-                      accentColor={selection.entry.accentColor}
-                      acpRegistryAgentId={selection.entry.acpRegistryAgentId}
-                      acpRegistryIconUrl={selection.entry.acpRegistryIconUrl}
-                      className="size-4 rounded-full bg-(--chat-composer-glass-surface,var(--background)) ring-2 ring-(--chat-composer-glass-surface,var(--background))"
-                      iconClassName="size-4"
-                    />
-                  ) : null,
-                )}
-              {selectedEntries.length > 3 ? (
-                <span className="relative z-30 flex size-4 items-center justify-center rounded-full bg-(--chat-composer-glass-surface,var(--background)) text-3xs ring-2 ring-(--chat-composer-glass-surface,var(--background))">
-                  +{selectedEntries.length - 3}
-                </span>
-              ) : null}
-            </span>
-          ) : activeEntry && props.triggerLabel === undefined ? (
-            // Narrow compacted composers hide the provider icon before truncating the name.
-            <span data-chat-provider-model-picker-icon className="contents">
-              <ProviderInstanceIcon
-                driverKind={activeEntry.driverKind}
-                displayName={activeEntry.displayName}
-                accentColor={activeEntry.accentColor}
-                acpRegistryAgentId={activeEntry.acpRegistryAgentId}
-                acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}
-                showBadge={showInstanceBadge}
-                className="size-4"
-                iconClassName={cn("size-4", props.activeProviderIconClassName)}
-                indicatorBackground={props.instanceIndicatorBackground ?? "var(--contrast-input)"}
-                badgeClassName={cn(
-                  "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs",
-                  size === "xs" && "shadow-none",
-                )}
-              />
-            </span>
-          ) : null}
-          {props.isComposerOwned && !activeInstanceLabel ? (
-            <span {...triggerTextProps}>{triggerText}</span>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger render={<span {...triggerTextProps} />}>{triggerText}</TooltipTrigger>
-              {activeInstanceLabel && activeEntry ? (
-                // Same card as the agents panel, so the thread's instance reads the same way.
-                <ThreadHoverCardPopup side="top">
-                  <ThreadHoverCard title={props.triggerLabel ?? triggerLabel}>
-                    <div className="flex min-w-0 items-center gap-2">
-                      <ProviderInstanceIcon
-                        driverKind={activeEntry.driverKind}
-                        displayName={activeEntry.displayName}
-                        accentColor={activeEntry.accentColor}
-                        acpRegistryAgentId={activeEntry.acpRegistryAgentId}
-                        acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}
-                        showBadge
-                        badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
-                        className="size-4"
-                        iconClassName="size-4"
-                      />
-                      <span className="min-w-0 truncate text-foreground/75">
-                        {activeInstanceLabel}
-                      </span>
-                    </div>
-                    {props.triggerDetail ? (
-                      <span className="min-w-0 truncate">{props.triggerDetail}</span>
-                    ) : null}
-                    {shortcutLabel ? (
-                      <div className="flex min-w-0 items-center justify-between gap-4">
-                        <span className="min-w-0 truncate">{gt("Model picker")}</span>
-                        <Kbd>{shortcutLabel}</Kbd>
-                      </div>
-                    ) : null}
-                  </ThreadHoverCard>
-                </ThreadHoverCardPopup>
-              ) : (
-                <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
-              )}
-            </Tooltip>
-          )}
-          {props.triggerSuffix}
-          {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
-            <Badge variant="outline" size="sm">
-              <T context="badge on a model that cannot be selected">Unavailable</T>
-            </Badge>
-          ) : null}
-        </span>
-      </PopoverTrigger>
+          {triggerBody}
+        </ThreadHoverCardTrigger>
+      ) : (
+        <PopoverTrigger render={triggerControl}>{triggerBody}</PopoverTrigger>
+      )}
       <PopoverPopup
         {...(props.isComposerOwned ? composerFloatingLayerProps : {})}
         ref={(popup) => {

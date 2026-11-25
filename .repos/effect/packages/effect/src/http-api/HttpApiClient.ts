@@ -19,13 +19,14 @@ import * as Effect from "../Effect.ts"
 import * as Ndjson from "../encoding/Ndjson.ts"
 import * as Sse from "../encoding/Sse.ts"
 import { identity } from "../Function.ts"
-import type * as Headers from "../http/Headers.ts"
+import * as Headers from "../http/Headers.ts"
 import * as HttpBody from "../http/HttpBody.ts"
 import * as HttpClient from "../http/HttpClient.ts"
 import * as HttpClientError from "../http/HttpClientError.ts"
 import * as HttpClientRequest from "../http/HttpClientRequest.ts"
 import type * as HttpClientResponse from "../http/HttpClientResponse.ts"
 import * as HttpMethod from "../http/HttpMethod.ts"
+import * as MediaType from "../http/internal/mediaType.ts"
 import * as internalUrlParams from "../http/internal/urlParams.ts"
 import * as UrlParams from "../http/UrlParams.ts"
 import * as InternalRecord from "../internal/record.ts"
@@ -43,7 +44,6 @@ import * as HttpApiEndpoint from "./HttpApiEndpoint.ts"
 import type * as HttpApiGroup from "./HttpApiGroup.ts"
 import type * as HttpApiMiddleware from "./HttpApiMiddleware.ts"
 import * as HttpApiSchema from "./HttpApiSchema.ts"
-import * as MediaType from "./internal/mediaType.ts"
 import * as HttpApiPath from "./internal/path.ts"
 
 /**
@@ -507,6 +507,7 @@ export const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Con
         )
 
         const middlewareKeys = Array.from(onEndpointOptions.middleware, (tag) => `${tag.key}/Client`)
+        const redactedNames = HttpApi.getEndpointRedactedNames(api, group, endpoint)
 
         const endpointFn = Effect.fnUntraced(function*(
           request: {
@@ -575,13 +576,14 @@ export const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Con
             httpRequest = HttpClientRequest.upgrade(httpRequest, upgrade.protocol)
           }
 
-          const response = yield* executeMiddleware(
+          const execute = executeMiddleware(
             group,
             endpoint,
             httpRequest,
             middlewareKeys,
             middlewareKeys.length - 1
           )
+          const response = yield* (redactedNames === undefined ? execute : withRedactedNames(execute, redactedNames))
 
           if (request?.responseMode === "response-only") {
             return response
@@ -602,6 +604,15 @@ export const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Con
       }
     })
   })
+
+const withRedactedNames = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  redactedNames: HttpApi.EndpointRedactedNames
+): Effect.Effect<A, E, R> =>
+  effect.pipe(
+    Effect.updateService(UrlParams.CurrentRedactedNames, (names) => [...names, ...redactedNames.query]),
+    Effect.updateService(Headers.CurrentRedactedNames, (names) => [...names, ...redactedNames.headers])
+  )
 
 /**
  * Constructs a type-safe client for an HTTP API using the `HttpClient` service,
@@ -1017,7 +1028,7 @@ function toCodecArrayBufferWithHeaders(
     : HttpApiSchema.isWithHeaders(schema)
     ? { body: schema.schema, headers: schema.headers, toValue: HttpApiSchema.withHeaders }
     : { body: schema, headers: Schema.Unknown, toValue: (pair) => pair.body }
-  const decodeBody = Schema.decodeUnknownEffect(fromArrayBuffer(parts.body).pipe(Schema.decodeTo(parts.body)), options)
+  const decodeBody = Schema.decodeUnknownEffect(toBodyCodec(parts.body), options)
   const decodeHeaders = Schema.decodeUnknownEffect(parts.headers, headersOptions)
   return ResponsePair.pipe(Schema.decodeTo(
     HttpApiSchema.isWithHeaders(schema) ? schema : Schema.toType(schema),
@@ -1407,11 +1418,15 @@ const UnknownFromArrayBuffer = StringFromArrayBuffer.pipe(Schema.decodeTo(
 ))
 
 function toCodecArrayBuffer(schemas: readonly [Schema.Constraint, ...Array<Schema.Constraint>]): Schema.Top {
-  return Schema.Union(schemas.map(onSchema))
+  return Schema.Union(schemas.map(toBodyCodec))
+}
 
-  function onSchema(schema: Schema.Constraint) {
-    return fromArrayBuffer(schema).pipe(Schema.decodeTo(schema))
-  }
+function toBodyCodec(schema: Schema.Constraint): Schema.Top {
+  return fromArrayBuffer(schema).pipe(Schema.decodeTo(
+    HttpApiSchema.getResponseEncoding(schema.ast)._tag === "FormUrlEncoded"
+      ? Schema.toCodecArrayFromSingle(schema)
+      : schema
+  ))
 }
 
 function fromArrayBuffer(schema: Schema.Constraint): Schema.Top {

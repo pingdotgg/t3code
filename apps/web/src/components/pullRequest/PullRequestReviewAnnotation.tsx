@@ -25,7 +25,6 @@ import { cn } from "~/lib/utils";
 import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import {
@@ -42,6 +41,7 @@ import {
   PullRequestMarkdownTextarea,
   type PullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const CARD_CLASS =
   "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
@@ -54,6 +54,11 @@ function submitKeys(input: {
   readonly onCancel?: (() => void) | undefined;
 }) {
   return (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Unclaimed, an IME Escape would reach the pull requests page and leave it.
+    if (event.nativeEvent.isComposing || event.keyCode === 229) {
+      event.stopPropagation();
+      return;
+    }
     if (event.key === "Escape" && input.onCancel) {
       event.preventDefault();
       input.onCancel();
@@ -149,34 +154,29 @@ export function InlineReviewThreads({
   return (
     <>
       {resolved.length > 0 ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                data-resolved-threads
-                aria-label={label}
-                aria-expanded={expanded}
-                // Sits on the commented line, which is the row above this annotation.
-                className="absolute right-3 bottom-full flex h-[var(--diffs-line-height,20px)] cursor-pointer items-center -space-x-1 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                contentEditable={false}
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={() =>
-                  setShown(new Set((expanded ? open : threads).map((thread) => thread.id)))
-                }
-              />
-            }
-          >
-            {[...authors].slice(0, 3).map(([login, author]) => (
-              <PullRequestActorAvatar
-                key={login}
-                actor={author}
-                className="ring-1 ring-background"
-              />
-            ))}
-          </TooltipTrigger>
-          <TooltipPopup side="left">{label}</TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <button
+              type="button"
+              data-resolved-threads
+              aria-label={label}
+              aria-expanded={expanded}
+              // Sits on the commented line, which is the row above this annotation.
+              className="absolute right-3 bottom-full flex h-[var(--diffs-line-height,20px)] cursor-pointer items-center -space-x-1 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+              contentEditable={false}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() =>
+                setShown(new Set((expanded ? open : threads).map((thread) => thread.id)))
+              }
+            />
+          }
+          label={label}
+          side="left"
+        >
+          {[...authors].slice(0, 3).map(([login, author]) => (
+            <PullRequestActorAvatar key={login} actor={author} className="ring-1 ring-background" />
+          ))}
+        </SharedTooltipTrigger>
       ) : null}
       {threads.map((thread) => renderThread(thread, thread.isResolved && !shown.has(thread.id)))}
     </>

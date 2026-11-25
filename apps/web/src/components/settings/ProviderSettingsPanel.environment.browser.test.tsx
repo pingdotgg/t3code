@@ -483,6 +483,34 @@ describe("EnvironmentProviderSettings provider list", () => {
   });
 });
 
+describe("EnvironmentProviderSettings account email", () => {
+  it("keeps the real email until the hide blur finishes", async () => {
+    await setup();
+    const email = "developer@example.com";
+    await setProviders([{ ...provider(), auth: { status: "authenticated", email } }]);
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
+    const toggle = page.getByRole("button", { name: "Toggle account email visibility" });
+    const button = toggle.element() as HTMLButtonElement;
+
+    await act(() => button.click());
+    for (const animation of button.getAnimations()) animation.finish();
+    await expect.element(toggle).toHaveTextContent(email);
+
+    await act(() => button.click());
+    const blur = button
+      .getAnimations()
+      .find(
+        (animation) =>
+          animation instanceof CSSTransition && animation.transitionProperty === "filter",
+      )!;
+    blur.pause();
+    expect(button.textContent).toBe(email);
+
+    await act(() => blur.finish());
+    await expect.element(toggle).not.toHaveTextContent(email);
+  });
+});
+
 describe("EnvironmentProviderSettings instance removal", () => {
   it("resets a configured default instance only once the user confirms", async () => {
     await setup();
@@ -568,7 +596,7 @@ describe("EnvironmentProviderSettings instance removal", () => {
 });
 
 describe("EnvironmentProviderSettings health check interval", () => {
-  it("commits interval drafts and allows retrying rejected edits", async () => {
+  it("commits interval drafts on blur and Enter and allows retrying rejected edits", async () => {
     await setup();
     await using _screen = await render(panel());
     const input = page.getByRole("textbox", { name: "Provider health check interval in seconds" });
@@ -596,7 +624,25 @@ describe("EnvironmentProviderSettings health check interval", () => {
     await act(() => state.updateSettings.mock.calls.at(-1)?.[1]?.onFailed?.());
     await expect.element(input).toHaveValue("300");
     await userEvent.type(input, "{Backspace}{Backspace}{Backspace}120");
-    await userEvent.tab();
+    // An Enter that confirms an IME candidate must not commit.
+    for (const composition of [
+      { isComposing: true, keyCode: 13 },
+      { isComposing: false, keyCode: 229 },
+    ]) {
+      await act(() =>
+        input.element().dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            ...composition,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+      );
+    }
+    expect(state.updateSettings).toHaveBeenCalledTimes(1);
+    await userEvent.keyboard("{Enter}");
+    await expect.element(input).toHaveFocus();
     expect(
       state.updateSettings.mock.calls.map(([patch]) =>
         Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),

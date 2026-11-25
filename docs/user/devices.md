@@ -1,6 +1,6 @@
 # Devices
 
-The Device panel shows a live iOS Simulator or Android Emulator next to a
+The Device panel shows a live iOS Simulator or Android device next to a
 thread, so you can watch an agent verify mobile work and tap the device
 yourself. Agents get the same device through `device_*` tools and the
 `agent-device` command line, which T3 Code sets up for them.
@@ -33,6 +33,15 @@ Studio's Device Manager. T3 Code detects standard SDK locations; set
 `ANDROID_HOME` for a custom location. The panel explains missing dependencies.
 After installing SDK tools, restart the environment server and refresh devices.
 
+Physical Android devices connected to the machine that hosts the environment
+server need only SDK Platform-Tools. Turn on **USB debugging** in the phone's
+Developer options, connect it over USB, and approve the prompt on the phone. For
+wireless debugging, turn on **Wireless debugging** instead. Once, choose **Pair
+device with pairing code** and run `adb pair <address>:<pairing port>` on that
+machine with the code it shows. Then run `adb connect <address>:<port>` with the
+address and port shown on the **Wireless debugging** screen, which differ from
+the pairing ones. Refresh devices afterward.
+
 Android emulator video also needs `ffmpeg` with the libx264 encoder on the device
 host's PATH, or an executable selected by `SERVE_EMU_FFMPEG` on that host. If
 opening an emulator reports an ffmpeg problem, install or fix the executable
@@ -43,7 +52,8 @@ devices and iOS do not need ffmpeg.
 
 The screen is interactive: click and drag to touch, type while the screen is
 focused, and use the toolbar for Home, Back, and Recents on Android, rotate on
-iOS, and power off. Close the tab to stop watching; the device keeps running
+iOS, and power off. Some Xiaomi phones ignore touch and keys until **USB
+debugging (Security settings)** is on in Developer options. Close the tab to stop watching; the device keeps running
 unless you power it off. Closed tabs stay closed after a reload. To watch the
 device again, choose it from **+ → Device**.
 
@@ -113,8 +123,9 @@ machine, run T3 Code on that machine and connect to its environment.
 Node 22.12 or newer and npm must be available to non-interactive SSH commands.
 T3 checks common Homebrew and Android SDK locations; custom installations need
 the appropriate PATH and `ANDROID_HOME` or `ANDROID_SDK_ROOT` on the host.
-Android on an SSH host needs the same SDK tools as a local environment; adb on
-the PATH alone does not enable it. Android emulator video needs
+Android on an SSH host needs the SDK Platform-Tools, Android Emulator, and
+Command-line Tools (latest), even for physical devices; adb on the PATH alone
+does not enable it. Android emulator video needs
 `ffmpeg` with libx264 on that host; physical Android devices use scrcpy and do
 not need ffmpeg.
 

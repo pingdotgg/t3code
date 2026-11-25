@@ -134,19 +134,19 @@ export function AttachmentFilePreview(props: {
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: namedClipboardTarget(props.name),
   });
-  // useAssetUrlRefresh keys its callback on these objects, so they must stay cached.
-  const resource =
-    props.asset && "resource" in props.asset
-      ? props.asset.resource
-      : attachmentId
-        ? {
-            _tag: "attachment" as const,
-            attachmentId,
-            fileName: props.name,
-            mimeType: props.mimeType,
-            disposition: "inline" as const,
-          }
-        : null;
+  // useAssetUrlRefresh keys its callback on these objects, so they must stay cached. Parents
+  // rebuild `asset` on every render, so the attachment resource derives only from its fields.
+  const assetResource = props.asset && "resource" in props.asset ? props.asset.resource : null;
+  const attachmentResource = attachmentId
+    ? {
+        _tag: "attachment" as const,
+        attachmentId,
+        fileName: props.name,
+        mimeType: props.mimeType,
+        disposition: "inline" as const,
+      }
+    : null;
+  const resource = assetResource ?? attachmentResource;
   const downloadResource = resource
     ? resource._tag === "draft-workspace-file"
       ? resource
@@ -284,6 +284,11 @@ export function AttachmentFilePreview(props: {
     });
   };
 
+  const basename = props.name.split(/[\\/]/).at(-1) ?? "";
+  const dotIndex = basename.lastIndexOf(".");
+  const extension =
+    dotIndex > 0 && dotIndex < basename.length - 1 ? basename.slice(dotIndex + 1) : null;
+
   const body = failure ? (
     <FileSurfaceFailure
       message={failure}
@@ -396,12 +401,12 @@ export function AttachmentFilePreview(props: {
         <T>No preview for this file</T>
       </p>
       <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-        {props.name.split(".").at(-1) ? (
+        {extension ? (
           <T>
-            Save it to open in an app that supports <Var>{props.name.split(".").at(-1)}</Var> files.
+            Save it to open in an app that supports <Var>{extension}</Var> files.
           </T>
         ) : (
-          <T>Save it to open in an app that supports this format files.</T>
+          <T>Save it to open in an app that supports this format.</T>
         )}
       </p>
     </div>

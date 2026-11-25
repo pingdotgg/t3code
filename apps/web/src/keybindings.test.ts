@@ -15,6 +15,7 @@ import {
   effectiveShortcutsForCommand,
   formatShortcutLabel,
   isRichTextBoldShortcut,
+  isSidebarToggleShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   resolveChatShortcutCommand,
@@ -644,7 +645,7 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
-  it("navigates history with mod+[ and mod+] outside the terminal", () => {
+  it("uses terminal cycling shortcuts without changing bracket history shortcuts", () => {
     const back = event({ key: "[", code: "BracketLeft", metaKey: true });
     const forward = event({ key: "]", code: "BracketRight", ctrlKey: true });
     assert.strictEqual(
@@ -655,12 +656,58 @@ describe("resolveShortcutCommand", () => {
       resolveShortcutCommand(forward, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "Linux" }),
       "navigation.forward",
     );
-    assert.isNull(
-      resolveShortcutCommand(back, DEFAULT_RESOLVED_KEYBINDINGS, {
-        platform: "MacIntel",
-        context: { terminalFocus: true },
-      }),
-    );
+    for (const platform of ["MacIntel", "Win32", "Linux"]) {
+      const mac = platform === "MacIntel";
+      for (const [key, shiftedKey, code, direction] of [
+        ["[", "{", "BracketLeft", "previous"],
+        ["]", "}", "BracketRight", "next"],
+      ] as const) {
+        const shortcut = event({
+          key: mac ? shiftedKey : key,
+          code,
+          metaKey: mac,
+          ctrlKey: !mac,
+          altKey: !mac,
+          shiftKey: mac,
+        });
+        assert.strictEqual(
+          resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+            platform,
+            context: { terminalFocus: true },
+          }),
+          `terminal.${direction}`,
+        );
+        if (mac) {
+          assert.strictEqual(
+            resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+              platform,
+              context: { terminalFocus: false },
+            }),
+            `thread.${direction}`,
+          );
+        }
+      }
+      if (mac) {
+        for (const key of ["[", "]"]) {
+          const command = resolveShortcutCommand(
+            event({ key, metaKey: true }),
+            DEFAULT_RESOLVED_KEYBINDINGS,
+            {
+              platform,
+              context: { terminalFocus: true },
+            },
+          );
+          assert.notStrictEqual(command, "terminal.previous");
+          assert.notStrictEqual(command, "terminal.next");
+        }
+      }
+      assert.isNull(
+        resolveShortcutCommand(event({ key: "[", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: true },
+        }),
+      );
+    }
   });
 
   it("matches punctuation shortcuts by physical key across keyboard layouts", () => {
@@ -757,6 +804,77 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("matches Option symbols against the active Latin layout rather than the US position", () => {
+    const keybindings = compile([
+      { shortcut: modShortcut("a", { altKey: true, shiftKey: true }), command: "appearance.cycle" },
+      { shortcut: modShortcut("q", { altKey: true, shiftKey: true }), command: "sidebar.toggle" },
+    ]);
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "Æ", code: "KeyQ", metaKey: true, altKey: true, shiftKey: true }),
+        keybindings,
+        { platform: "MacIntel", keyboardLayoutMap: new Map([["KeyQ", "a"]]) },
+      ),
+      "appearance.cycle",
+    );
+  });
+
+  it("preserves physical punctuation alongside an Option-modified mapped letter", () => {
+    for (const key of [";", "m"]) {
+      const keybindings = compile([
+        { shortcut: modShortcut(key, { altKey: true }), command: "diff.toggle" },
+      ]);
+      assert.strictEqual(
+        resolveShortcutCommand(
+          event({ key: "µ", code: "Semicolon", metaKey: true, altKey: true }),
+          keybindings,
+          { platform: "MacIntel", keyboardLayoutMap: new Map([["Semicolon", "m"]]) },
+        ),
+        "diff.toggle",
+      );
+    }
+  });
+
+  it("keeps Latin event keys and unsupported layout fallbacks", () => {
+    const keybindings = compile([
+      { shortcut: modShortcut("a", { altKey: true }), command: "appearance.cycle" },
+      { shortcut: modShortcut("q", { altKey: true }), command: "sidebar.toggle" },
+    ]);
+    const options = { platform: "MacIntel", keyboardLayoutMap: new Map([["KeyQ", "a"]]) };
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "q", code: "KeyQ", metaKey: true, altKey: true }),
+        keybindings,
+        options,
+      ),
+      "sidebar.toggle",
+    );
+    for (const keyboardLayoutMap of [new Map<string, string>(), new Map([["KeyQ", "й"]])]) {
+      assert.strictEqual(
+        resolveShortcutCommand(
+          event({ key: "Æ", code: "KeyQ", metaKey: true, altKey: true }),
+          keybindings,
+          { ...options, keyboardLayoutMap },
+        ),
+        "sidebar.toggle",
+      );
+    }
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({
+          key: "Æ",
+          code: "KeyQ",
+          ctrlKey: true,
+          altKey: true,
+          getModifierState: () => true,
+        }),
+        keybindings,
+        { ...options, platform: "Win32" },
+      ),
+      null,
+    );
+  });
+
   it("matches non-Latin layout letters using the physical key code", () => {
     const keybindings = compile([{ shortcut: modShortcut("d"), command: "diff.toggle" }]);
 
@@ -810,6 +928,33 @@ describe("isRichTextBoldShortcut", () => {
     const modB = event({ key: "b", metaKey: true });
     assert.isFalse(isRichTextBoldShortcut(modB, { isCollapsed: true }));
     assert.isFalse(isRichTextBoldShortcut(modB, null));
+  });
+});
+
+describe("isSidebarToggleShortcut", () => {
+  it("leaves Ctrl+B to a focused terminal, where it is the tmux prefix", () => {
+    const ctrlB = event({ key: "b", ctrlKey: true });
+    assert.isFalse(
+      isSidebarToggleShortcut(ctrlB, DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+    assert.isTrue(
+      isSidebarToggleShortcut(ctrlB, DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+    );
+  });
+
+  it("keeps Cmd+B toggling the sidebar from a focused terminal on macOS", () => {
+    assert.isTrue(
+      isSidebarToggleShortcut(event({ key: "b", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
   });
 });
 
