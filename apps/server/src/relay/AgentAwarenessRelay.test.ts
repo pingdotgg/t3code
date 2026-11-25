@@ -843,6 +843,38 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("gives a coalesced continuation its own completion window", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(
+        currentShell,
+        shell({ status: "completed", latestRunId: RunId.make("initial-run") }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("4 seconds");
+
+      yield* Ref.set(
+        currentShell,
+        shell({ status: "completed", latestRunId: RunId.make("fast-background-wake") }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("1 second");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map(({ state }) => state?.phase),
+        ["running"],
+      );
+
+      yield* TestClock.adjust("4 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map(({ state }) => state?.phase),
+        ["running", "completed"],
+      );
+    }),
+  );
+
   it.effect(
     "clears a completion that landed while snoozed, even when processed after the wake",
     () =>

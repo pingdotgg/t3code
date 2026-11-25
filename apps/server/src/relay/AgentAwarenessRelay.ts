@@ -5,6 +5,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2TurnItem,
   type Project,
+  type RunId,
   type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -479,7 +480,7 @@ export const make = Effect.gen(function* () {
   // Confirm through the same worker so tombstones cannot race live updates; recovery clears the deadline.
   const publishConfirmDeadlines = new Map<ThreadId, number>();
   // Threads whose confirmation holds a completion, so a thread that settles during the hold still alerts.
-  const heldCompletions = new Set<ThreadId>();
+  const heldCompletions = new Map<ThreadId, RunId | null>();
   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const publishRetries = new Map<
     ThreadId,
@@ -604,6 +605,8 @@ export const make = Effect.gen(function* () {
       pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
+    const latestRunId = Option.getOrNull(thread)?.latestRunId ?? null;
+    const holdsLatestCompletion = heldCompletions.get(threadId) === latestRunId;
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
@@ -614,7 +617,7 @@ export const make = Effect.gen(function* () {
     if (
       publishedStateByThread.get(threadId) === publishIdentity &&
       // A held completion settled after an earlier clear still has to alert.
-      !(snapshot.state === null && heldCompletions.has(threadId))
+      !(snapshot.state === null && holdsLatestCompletion)
     ) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
@@ -632,7 +635,10 @@ export const make = Effect.gen(function* () {
     // alerts on every move into completed.
     const requiresConfirmation = snapshot.state === null || snapshot.state?.phase === "completed";
     if (requiresConfirmation) {
-      if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
+      if (snapshot.state?.phase === "completed" && !holdsLatestCompletion) {
+        heldCompletions.set(threadId, latestRunId);
+        publishConfirmDeadlines.delete(threadId);
+      }
       const nowMs = (yield* DateTime.now).epochMilliseconds;
       const deadline = publishConfirmDeadlines.get(threadId);
       if (deadline === undefined) {
@@ -661,7 +667,7 @@ export const make = Effect.gen(function* () {
       // on a new window. Only settlement may hide it; queued or silent runs also project to null.
       const unsettled =
         snapshot.state === null &&
-        heldCompletions.has(threadId) &&
+        holdsLatestCompletion &&
         Option.isSome(thread) &&
         thread.value.settledOverride === "settled"
           ? resolveAgentAwarenessRelayPublishSnapshot({
