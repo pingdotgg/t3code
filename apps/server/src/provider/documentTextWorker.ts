@@ -12,7 +12,13 @@ const MAX_EXPANDED = 32 * 1024 * 1024;
 const MAX_OUTPUT = 1_000_000;
 const CELL_START = Symbol("cell-start");
 const CELL_END = Symbol("cell-end");
-type TextPart = string | typeof CELL_START | typeof CELL_END | { fallback: string };
+const LINE_START = Symbol("line-start");
+type TextPart =
+  | string
+  | typeof CELL_START
+  | typeof CELL_END
+  | typeof LINE_START
+  | { fallback: string };
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
 // Parts the document never displays: the XHTML head, tracked deletions and moves, field codes,
@@ -253,6 +259,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield "\n";
     } else {
+      if (node.name === "li" && ["ol", "ul"].includes(child.name)) yield LINE_START;
       yield* paragraphs(child);
       if (["li", "div", "section", "dt", "dd"].includes(child.name)) yield "\n";
     }
@@ -948,10 +955,11 @@ export async function extractDocumentText(path: string, extension: string): Prom
   let cellDepth = 0;
   let started = false;
   let space = false;
+  let lineHasText = false;
   let truncated = false;
   try {
     // Charge raw text before normalization so repeated whitespace also exhausts the budget.
-    for await (const part of document(path, extension)) {
+    for await (let part of document(path, extension)) {
       if (part === CELL_START) {
         if (cellDepth++ === 0) {
           started = false;
@@ -964,6 +972,10 @@ export async function extractDocumentText(path: string, extension: string): Prom
         if (cellDepth > 0 && started) space = true;
         continue;
       }
+      if (part === LINE_START) {
+        if (extension !== ".epub" || (!cellDepth && !lineHasText)) continue;
+        part = "\n";
+      }
       if (typeof part !== "string" && started) continue;
       const raw = typeof part === "string" ? part : part.fallback;
       let value = raw.slice(0, remaining).replaceAll("\0", "");
@@ -974,9 +986,17 @@ export async function extractDocumentText(path: string, extension: string): Prom
         if (trimmed) {
           result += (started && (space || value.startsWith(" ")) ? " " : "") + trimmed;
           started = true;
+          lineHasText = true;
         }
         space = value.endsWith(" ") || (!value && space);
-      } else result += value;
+      } else {
+        result += value;
+        if (extension === ".epub") {
+          const lastNewline = value.lastIndexOf("\n");
+          lineHasText =
+            (lastNewline < 0 && lineHasText) || value.trimEnd().length > lastNewline + 1;
+        }
+      }
       if (remaining === 0) throw new Truncation("Output budget");
     }
   } catch (error) {
