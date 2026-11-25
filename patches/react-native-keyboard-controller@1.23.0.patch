@@ -19,7 +19,7 @@ diff --git a/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.
 index 545a5b20f6caac289afdfd11cd7596d57de14122..fbdc9840113ee8caaac685d6f14d7d9f3c725c75 100644
 --- a/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
 +++ b/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
-@@ -8,6 +8,12 @@
+@@ -8,11 +8,17 @@
  extension KeyboardMovementObserver {
    @objc func keyboardWillAppear(_ notification: Notification) {
      guard !UIResponder.isKeyboardPreloading else { return }
@@ -32,7 +32,13 @@ index 545a5b20f6caac289afdfd11cd7596d57de14122..fbdc9840113ee8caaac685d6f14d7d9f
  
      let (duration, frame) = notification.keyboardMetaData()
      if let keyboardFrame = frame {
-@@ -36,8 +42,40 @@ extension KeyboardMovementObserver {
+       tag = UIResponder.current.reactViewTag
+-      let keyboardHeight = keyboardFrame.cgRectValue.size.height
++      let keyboardHeight = heightOverlappingWindow(keyboardFrame.cgRectValue)
+       self.keyboardHeight = keyboardHeight
+       self.notification = notification
+ 
+@@ -36,8 +42,47 @@ extension KeyboardMovementObserver {
      }
    }
  
@@ -60,6 +66,13 @@ index 545a5b20f6caac289afdfd11cd7596d57de14122..fbdc9840113ee8caaac685d6f14d7d9f
 +    return frame.width.rounded() < screen.width.rounded() || frame.maxY.rounded() < dockedBottom.rounded()
 +  }
 +
++  // the frame is screen-relative; a resized iPadOS window ends above the screen's bottom and covers only part of it
++  private func heightOverlappingWindow(_ frame: CGRect) -> CGFloat {
++    guard let window = UIApplication.shared.activeWindow else { return frame.height }
++    let windowFrame = window.convert(window.bounds, to: window.screen.coordinateSpace)
++    return max(0, min(frame.maxY, windowFrame.maxY) - max(frame.minY, windowFrame.minY))
++  }
++
 +  private func hideIfKeyboardShown(_ notification: Notification) {
 +    let targetHeight = self.notification?.keyboardMetaData().1?.cgRectValue.height ?? 0
 +    if targetHeight > 0 {
@@ -73,6 +86,15 @@ index 545a5b20f6caac289afdfd11cd7596d57de14122..fbdc9840113ee8caaac685d6f14d7d9f
      let (duration, _) = notification.keyboardMetaData()
      tag = UIResponder.current.reactViewTag
      self.notification = notification
+@@ -62,7 +107,7 @@ extension KeyboardMovementObserver {
+ 
+     let (duration, frame) = notification.keyboardMetaData()
+     if let keyboardFrame = frame {
+-      let keyboardHeight = keyboardFrame.cgRectValue.size.height
++      let keyboardHeight = heightOverlappingWindow(keyboardFrame.cgRectValue)
+       tag = UIResponder.current.reactViewTag
+       self.keyboardHeight = keyboardHeight
+ 
 diff --git a/ios/observers/movement/observer/KeyboardMovementObserver.swift b/ios/observers/movement/observer/KeyboardMovementObserver.swift
 index ae97d611a7f727ebbb0e17eabbb3294e1cc76a2f..2ea1d2ddd3fac6ad418d97c700ab885fe645951f 100644
 --- a/ios/observers/movement/observer/KeyboardMovementObserver.swift
@@ -135,9 +157,9 @@ index 0b78ff38d8f0a2360632df3d9988c0c32bd56b99..9600d6c8ac857a3f56753f49b5a52e3e
    const totalPadding = (0, _reanimated.useDerivedValue)(() => Math.min(layout.value.height, Math.max(blankSpace.value, padding.value + extraContentPadding.value)));
  
 +  // iOS applies the destination contentInset and contentOffset together at
-+  // keyboard-animation start. Keep that native target behavior, but report
-+  // the presentation height so virtualized-list layout follows the keyboard.
-+  const reportedPadding = (0, _reanimated.useDerivedValue)(() => _reactNative.Platform.OS === "ios" ? Math.min(layout.value.height, Math.max(blankSpace.value, currentHeight.value + extraContentPadding.value)) : totalPadding.value);
++  // keyboard-animation start. Report the presentation height only while it is larger
++  // (closing): a smaller one sends end-following short of the native end, so it bounces.
++  const reportedPadding = (0, _reanimated.useDerivedValue)(() => _reactNative.Platform.OS === "ios" ? Math.max(totalPadding.value, Math.min(layout.value.height, Math.max(blankSpace.value, currentHeight.value + extraContentPadding.value))) : totalPadding.value);
 +
 +  // Mirror the effective bottom padding (keyboard + composer + blank floor)
 +  // to the consumer - a virtualized list needs it in its own scroll math or
@@ -448,9 +470,9 @@ index e0c83918d9569e2ff541e45d31460121c73ec225..724c62e2892f75f6bb53844b84c1ade1
    const totalPadding = useDerivedValue(() => Math.min(layout.value.height, Math.max(blankSpace.value, padding.value + extraContentPadding.value)));
  
 +  // iOS applies the destination contentInset and contentOffset together at
-+  // keyboard-animation start. Keep that native target behavior, but report
-+  // the presentation height so virtualized-list layout follows the keyboard.
-+  const reportedPadding = useDerivedValue(() => Platform.OS === "ios" ? Math.min(layout.value.height, Math.max(blankSpace.value, currentHeight.value + extraContentPadding.value)) : totalPadding.value);
++  // keyboard-animation start. Report the presentation height only while it is larger
++  // (closing): a smaller one sends end-following short of the native end, so it bounces.
++  const reportedPadding = useDerivedValue(() => Platform.OS === "ios" ? Math.max(totalPadding.value, Math.min(layout.value.height, Math.max(blankSpace.value, currentHeight.value + extraContentPadding.value))) : totalPadding.value);
 +
 +  // Mirror the effective bottom padding (keyboard + composer + blank floor)
 +  // to the consumer - a virtualized list needs it in its own scroll math or
@@ -842,15 +864,15 @@ index 935bc71dabad6cd5c82bab77f64b5b6e1e5dc9b6..5306506e791c64e6c64abc91499c8974
 -    const indicatorPadding = useDerivedValue(
 -      () => padding.value + extraContentPadding.value,
 +    // iOS applies the destination contentInset and contentOffset together at
-+    // keyboard-animation start. Keep that native target behavior, but report
-+    // the presentation height so virtualized-list layout follows the keyboard.
++    // keyboard-animation start. Report the presentation height only while it is larger
++    // (closing): a smaller one sends end-following short of the native end, so it bounces.
 +    const reportedPadding = useDerivedValue(() =>
 +      Platform.OS === "ios"
-+        ? Math.min(
-+            layout.value.height,
-+            Math.max(
-+              blankSpace.value,
-+              currentHeight.value + extraContentPadding.value,
++        ? Math.max(
++            totalPadding.value,
++            Math.min(
++              layout.value.height,
++              Math.max(blankSpace.value, currentHeight.value + extraContentPadding.value),
 +            ),
 +          )
 +        : totalPadding.value,

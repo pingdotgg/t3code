@@ -223,26 +223,32 @@ export function cli(home, args) {
   );
 }
 
-/** A git repository under `home` registered as a project. Returns { projectId, workspace }. */
-export async function createProject(environment, title, files = { "README.md": "" }) {
+/**
+ * A folder under `home` registered as a project. Returns { projectId, workspace }. The folder is
+ * one git repository, or with `repos` (folders relative to it) a plain folder holding those.
+ */
+export async function createProject(
+  environment,
+  title,
+  files = { "README.md": "" },
+  { repos = ["."] } = {},
+) {
   const workspace = NodePath.join(environment.home, "workspaces", title);
   for (const [file, content] of Object.entries(files)) {
     NodeFS.mkdirSync(NodePath.dirname(NodePath.join(workspace, file)), { recursive: true });
     NodeFS.writeFileSync(NodePath.join(workspace, file), content);
   }
-  const git = (...args) => NodeChildProcess.execFileSync("git", args, { cwd: workspace });
-  git("init", "--quiet", "--initial-branch=main");
-  git("add", "--all");
-  git(
-    "-c",
-    "user.name=Staging",
-    "-c",
-    "user.email=staging@example.invalid",
-    "commit",
-    "--quiet",
-    "-m",
-    "Initial commit",
-  );
+  for (const repo of repos) {
+    const cwd = NodePath.join(workspace, repo);
+    NodeFS.mkdirSync(cwd, { recursive: true });
+    const git = (...args) => NodeChildProcess.execFileSync("git", args, { cwd });
+    git("init", "--quiet", "--initial-branch=main");
+    // A fictional author, so commits made on camera work and never carry a real name.
+    git("config", "user.name", "Dana Reyes");
+    git("config", "user.email", "dana@example.com");
+    git("add", "--all");
+    git("commit", "--quiet", "--allow-empty", "-m", "Initial commit");
+  }
   const bearer = cli(environment.home, [
     "auth",
     "session",

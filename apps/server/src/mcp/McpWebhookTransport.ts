@@ -1,7 +1,7 @@
 import * as NodeDns from "node:dns";
 import * as NodeNet from "node:net";
 
-import { NodeHttpClient } from "@effect/platform-node";
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -122,6 +122,7 @@ export const make = (hosts: ReadonlyArray<string>) => {
   return {
     check,
     allowsPlaintext: (url: URL) => allowed.has(hostOf(url)),
-    layerClient: NodeHttpClient.layerUndiciOptions({ connect: { lookup } }),
+    // The Undici client statically imports undici, which a single-executable cannot load.
+    layerClient: NodeHttpClient.layerNodeHttpOptions({ lookup }),
   };
 };
