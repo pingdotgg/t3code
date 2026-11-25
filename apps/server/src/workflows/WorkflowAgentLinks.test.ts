@@ -317,6 +317,19 @@ it.effect("keeps the latest matching reply when paging a legacy peer forward", (
   }),
 );
 
+it.effect("keeps the reply when a legacy peer's forward cursor stops advancing", () =>
+  Effect.gen(function* () {
+    for (const position of [2, 1]) {
+      const { result, reads } = yield* readReply(
+        page([assistant(2, "turn-1", "Done.")], undefined, true),
+        page([assistant(position, "turn-2", "other turn")], undefined, true),
+      );
+      assert.strictEqual(result.reply, "Done.");
+      assert.deepStrictEqual(reads, [messageRead, { ...messageRead, afterPosition: 2 }]);
+    }
+  }),
+);
+
 it.effect(
   "returns an empty reply when older pages are exhausted or their cursor stops advancing",
   () =>
