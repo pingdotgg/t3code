@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { type MarkedText, markedTextEnglish } from "../errors/translatable.ts";
 import {
   type EnvironmentId,
   ProjectId,
@@ -74,7 +76,13 @@ export class ScratchProjectNotLoadedError extends Schema.TaggedError<ScratchProj
   { projectId: ProjectId },
 ) {
   override get message(): string {
-    return "The folder for threads without a project has not reached this device yet. Try again.";
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [
+      msg("The folder for threads without a project has not reached this device yet. Try again."),
+    ];
   }
 }
 
@@ -107,12 +115,10 @@ export function createProjectEnvironmentAtoms<R, E>(
           registry.set(atom, null);
       }),
     execute: (input) =>
-      fileMetadata.seedAfterRead(
-        request(WS_METHODS.projectsReadFile, input),
-        (result, isCurrent) =>
-          result.exists === false
-            ? Effect.void
-            : fileMetadata.rememberFile(input.cwd, result, isCurrent),
+      fileMetadata.seedAfterRead(request(WS_METHODS.projectsReadFile, input), (result, isCurrent) =>
+        result.exists === false
+          ? Effect.void
+          : fileMetadata.rememberFile(input.cwd, result, isCurrent),
       ),
   });
   const projectConcurrency = {

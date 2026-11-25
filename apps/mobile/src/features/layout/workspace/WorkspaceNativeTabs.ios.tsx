@@ -1,3 +1,4 @@
+import { useGT, useMessages } from "gt-react-native";
 import {
   WORKSPACE_TAB_LABELS,
   NAVIGATION_TAB_ICONS,
@@ -12,7 +13,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
-import { View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
+import { View, type NativeSyntheticEvent } from "react-native";
 import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
 
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -28,18 +29,15 @@ import {
   WorkspaceSlotOptionsContext,
 } from "../../../native/v5-workspace-context";
 import type { NativeLayoutMetrics } from "../../../lib/reserved-regions";
-import {
-  useCompactWorkspaceTabs,
-  useFloatingWorkspaceTabs,
-  useSystemWorkspaceTabBar,
-} from "./useSystemWorkspaceTabBar";
+import { useCompactWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
 import { useControlTheme } from "../../../components/ui/useControlTheme";
 import { useDeviceType } from "../../../native/native-layout-metrics";
-import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
+import { WorkspaceTabDock } from "./WorkspaceTabDock";
 import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "../AdaptiveWorkspaceLayout";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
 const PULL_REQUEST_ICON = require("../../../../assets/icons/pull-request.png");
+const ISSUE_ICON = require("../../../../assets/icons/issue.png");
 
 /** Retain each native controller tree; removing its root can leave RNS's stack empty. */
 function RetainedWorkspaceTab(props: {
@@ -145,6 +143,8 @@ export function WorkspaceNativeTabs(props: {
   /** The sidebar column draws the tabs itself, so they leave with it. */
   readonly tabsInSidebarColumn?: boolean;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const workspace = useWorkspaceTabs()!;
   const order = useEnabledNavigationTabs();
   const primaryTabs = order.slice(0, 4);
@@ -162,8 +162,6 @@ export function WorkspaceNativeTabs(props: {
     layout.usesSplitView &&
     workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen) &&
     !panes.primarySidebarVisible;
-  const floatingTabs = useFloatingWorkspaceTabs();
-  const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
@@ -216,7 +214,7 @@ export function WorkspaceNativeTabs(props: {
           }
           onTabSelected={({ nativeEvent }: NativeSyntheticEvent<TabSelectedEvent>) => {
             setProvenance(nativeEvent.provenance);
-            if (nativeEvent.actionOrigin === "programmatic-js") return;
+            if (nativeEvent.actionOrigin === "programmaticJs") return;
             const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.selectedScreenKey);
             if (tab) selectTab(tab);
           }}
@@ -231,15 +229,27 @@ export function WorkspaceNativeTabs(props: {
                 key={slot}
                 screenKey={slot}
                 title=""
-                tabBarItemAccessibilityLabel={settings ? "Settings" : WORKSPACE_TAB_LABELS[tab]}
+                tabBarItemAccessibilityLabel={
+                  settings ? gt("Settings") : m(WORKSPACE_TAB_LABELS[tab])
+                }
                 ios={{
                   prewarmRequest: prewarmRequests.get(slot) ?? 0,
                   contentReady: mountedSlots.has(slot),
                   icon: settings
                     ? { type: "sfSymbol", name: "gearshape" }
                     : tab === "pullRequests"
-                      ? { type: "templateSource", templateSource: PULL_REQUEST_ICON }
-                      : { type: "sfSymbol", name: NAVIGATION_TAB_ICONS[tab] },
+                      ? {
+                          type: "imageSource",
+                          imageSource: PULL_REQUEST_ICON,
+                          renderingMode: "template",
+                        }
+                      : tab === "issues"
+                        ? {
+                            type: "imageSource",
+                            imageSource: ISSUE_ICON,
+                            renderingMode: "template",
+                          }
+                        : { type: "sfSymbol", name: NAVIGATION_TAB_ICONS[tab] },
                   selectedIcon:
                     !settings && tab === "threads"
                       ? { type: "sfSymbol", name: "text.bubble.fill" }
@@ -269,41 +279,8 @@ export function WorkspaceNativeTabs(props: {
       !props.hidden &&
       !props.tabsInSidebarColumn &&
       !hiddenWithSidebar ? (
-        <View
-          pointerEvents="box-none"
-          style={{
-            position: "absolute",
-            left: 0,
-            bottom: 0,
-            // UIKit can shrink the sidebar to 280pt independently of its preferred width.
-            width:
-              deviceType === "pad" && (floatingTabs || layout.usesSplitView)
-                ? Math.min(280, layout.listPaneWidth ?? width, width)
-                : (layout.listPaneWidth ?? width),
-            height: 128,
-          }}
-        >
-          <WorkspaceSidebarTabsFooter />
-        </View>
+        <WorkspaceTabDock placement="window" />
       ) : null}
     </View>
-  );
-}
-
-/** The workspace tabs at the foot of the sidebar. */
-export function WorkspaceSidebarTabsFooter() {
-  const workspace = useWorkspaceTabs()!;
-  const { startNewTask } = useAdaptiveWorkspaceLayout();
-  const compact = useFloatingWorkspaceTabs();
-  return (
-    <WorkspaceSidebarTabs
-      compact={compact}
-      reserveComposeSpace={compact}
-      onNewTask={
-        compact && !workspace.settingsOpen && workspace.state.selectedTab === "threads"
-          ? startNewTask
-          : undefined
-      }
-    />
   );
 }

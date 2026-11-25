@@ -32,10 +32,10 @@ describe("previewPdfAssetUrl", () => {
   });
 
   it.each(["another-environment.test", "127.0.0.2.example.com", "128.0.0.1"])(
-    "preserves matching PDF URLs on unrelated host %s",
+    "leaves a matching PDF path on unrelated host %s on its browser session",
     (host) => {
       const source = `https://${host}/api/assets/token/guide.pdf?revision=2#page=3`;
-      expect(previewPdfAssetUrl(source, "https://environment.test")).toBe(source);
+      expect(previewPdfAssetUrl(source, "https://environment.test")).toBeNull();
     },
   );
 

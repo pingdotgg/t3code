@@ -1,7 +1,9 @@
 import * as Dialog from "./Dialog";
 import { requireNativeModule } from "expo";
+import { msg, useGT } from "gt-react-native";
 import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 
+import { m } from "../../i18n/messages";
 import type {
   FilePreviewImage,
   FilePreviewModalProps,
@@ -38,6 +40,7 @@ const NativeControls = requireNativeModule<{
 const nativeUri = (image: FilePreviewImage) => (image.failed ? null : image.uri);
 
 function NativeFilePreview(props: FilePreviewViewerProps) {
+  const gt = useGT();
   const identifier = useId();
   // Later URLs reach the native presentation through updateFile instead of presenting again.
   const [presented] = useState(props.source);
@@ -46,7 +49,11 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
   const onPresent = useEffectEvent((isFinished: () => boolean) => props.onPresent?.(isFinished));
   const onOpenError = useEffectEvent((error: unknown) => {
     if (props.onOpenError) props.onOpenError(error);
-    else Dialog.alert("Could not open preview", "The file could not be loaded. Please try again.");
+    else
+      Dialog.alert(
+        gt("Could not open preview"),
+        gt("The file could not be loaded. Please try again."),
+      );
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- presents the native file preview and dismisses it on cleanup
@@ -59,7 +66,9 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
       delivered.current = images.map((image) => image.uri);
       presentation = NativeControls.presentFiles(
         images.map((image) => image.uri ?? null),
-        images.map((image) => image.name ?? "Preview"),
+        images.map(
+          (image) => image.name ?? m(msg("Preview", { $context: "noun, preview window title" })),
+        ),
         selectedIndex,
         images.map((image) => image.sourceIdentifier ?? ""),
         identifier,
@@ -68,7 +77,7 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
       const { uri, name, sourceIdentifier } = presented;
       presentation = NativeControls.presentFile(
         uri,
-        name ?? "Preview",
+        name ?? m(msg("Preview", { $context: "noun, preview window title" })),
         sourceIdentifier ?? "",
         identifier,
       );

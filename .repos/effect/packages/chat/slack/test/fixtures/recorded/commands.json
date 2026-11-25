@@ -1,0 +1,682 @@
+{
+  "case": "Slash commands on Slack, as Slack sent them to the Request URL and as the adapter answered, with the clicks and submits that followed and what each response_url answered",
+  "provenance": {
+    "kind": "recorded",
+    "source": "The adapter at 53b4d54024 behind a logging proxy (eff-3802-capture.ts), with Tim running /chat-capture on janitor2 (A0CCHBHDK7X)",
+    "where": "Private channel test-janitor (C0CJMJ5UMUY) in T05479Z6JBW, over the Request URL. Not over Socket Mode",
+    "recordedAt": "2026-11-14T20:07Z to 20:46Z, during EFF-3802",
+    "body": "Form fields and payloads verbatim, apart from the verification token, the response_url path and trigger_id, which are replaced with <redacted>. Network headers are left out. Each answer is the adapter's response body verbatim",
+    "signature": "Not verified against Slack's secret: the proxy re-signed each request with a throwaway key, so the adapter's verifier ran on the proxy's signature",
+    "seenButNotInLog": [
+      "Every answer here rendered on desktop: a markdown block and an actions block, privately and publicly, in the response body and through response_url",
+      "The mention answer showed <@U080YLYB277> as literal text, so it mentioned nobody",
+      "chat.update on the ts of two private answers answered message_not_found, and conversations.history did not list them",
+      "A late command (503 at 2,505 ms) showed Slackbot's private failure notice on desktop and nothing on iOS",
+      "The command is not offered inside a thread"
+    ]
+  },
+  "commands": {
+    "private": {
+      "token": "<redacted>",
+      "team_id": "T05479Z6JBW",
+      "team_domain": "effectfulworkspace",
+      "channel_id": "C0CJMJ5UMUY",
+      "channel_name": "test-janitor",
+      "user_id": "U080YLYB277",
+      "user_name": "tim.smart",
+      "command": "/chat-capture",
+      "text": "",
+      "api_app_id": "A0CCHBHDK7X",
+      "is_enterprise_install": "false",
+      "response_url": "https://hooks.slack.com/commands/T05479Z6JBW/<redacted>",
+      "trigger_id": "<redacted>"
+    },
+    "modal": {
+      "token": "<redacted>",
+      "team_id": "T05479Z6JBW",
+      "team_domain": "effectfulworkspace",
+      "channel_id": "C0CJMJ5UMUY",
+      "channel_name": "test-janitor",
+      "user_id": "U080YLYB277",
+      "user_name": "tim.smart",
+      "command": "/chat-capture",
+      "text": "modal",
+      "api_app_id": "A0CCHBHDK7X",
+      "is_enterprise_install": "false",
+      "response_url": "https://hooks.slack.com/commands/T05479Z6JBW/<redacted>",
+      "trigger_id": "<redacted>"
+    },
+    "mention": {
+      "token": "<redacted>",
+      "team_id": "T05479Z6JBW",
+      "team_domain": "effectfulworkspace",
+      "channel_id": "C0CJMJ5UMUY",
+      "channel_name": "test-janitor",
+      "user_id": "U080YLYB277",
+      "user_name": "tim.smart",
+      "command": "/chat-capture",
+      "text": "mention",
+      "api_app_id": "A0CCHBHDK7X",
+      "is_enterprise_install": "false",
+      "response_url": "https://hooks.slack.com/commands/T05479Z6JBW/<redacted>",
+      "trigger_id": "<redacted>"
+    },
+    "public": {
+      "token": "<redacted>",
+      "team_id": "T05479Z6JBW",
+      "team_domain": "effectfulworkspace",
+      "channel_id": "C0CJMJ5UMUY",
+      "channel_name": "test-janitor",
+      "user_id": "U080YLYB277",
+      "user_name": "tim.smart",
+      "command": "/chat-capture",
+      "text": "public",
+      "api_app_id": "A0CCHBHDK7X",
+      "is_enterprise_install": "false",
+      "response_url": "https://hooks.slack.com/commands/T05479Z6JBW/<redacted>",
+      "trigger_id": "<redacted>"
+    },
+    "defer": {
+      "token": "<redacted>",
+      "team_id": "T05479Z6JBW",
+      "team_domain": "effectfulworkspace",
+      "channel_id": "C0CJMJ5UMUY",
+      "channel_name": "test-janitor",
+      "user_id": "U080YLYB277",
+      "user_name": "tim.smart",
+      "command": "/chat-capture",
+      "text": "defer",
+      "api_app_id": "A0CCHBHDK7X",
+      "is_enterprise_install": "false",
+      "response_url": "https://hooks.slack.com/commands/T05479Z6JBW/<redacted>",
+      "trigger_id": "<redacted>"
+    },
+    "spent": {
+      "token": "<redacted>",
+      "team_id": "T05479Z6JBW",
+      "team_domain": "effectfulworkspace",
+      "channel_id": "C0CJMJ5UMUY",
+      "channel_name": "test-janitor",
+      "user_id": "U080YLYB277",
+      "user_name": "tim.smart",
+      "command": "/chat-capture",
+      "text": "spent",
+      "api_app_id": "A0CCHBHDK7X",
+      "is_enterprise_install": "false",
+      "response_url": "https://hooks.slack.com/commands/T05479Z6JBW/<redacted>",
+      "trigger_id": "<redacted>"
+    }
+  },
+  "answers": {
+    "private": {
+      "response_type": "ephemeral",
+      "blocks": [
+        {
+          "type": "markdown",
+          "text": "**Private answer** with _Markdown_, a list:\n\n- one\n- two\n\nand buttons"
+        },
+        {
+          "type": "actions",
+          "block_id": "chat1",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "cap-ack",
+              "text": {
+                "type": "plain_text",
+                "text": "Ack"
+              }
+            },
+            {
+              "type": "button",
+              "action_id": "cap-open",
+              "text": {
+                "type": "plain_text",
+                "text": "Open modal"
+              },
+              "style": "primary"
+            }
+          ]
+        }
+      ],
+      "text": "**Private answer** with _Markdown_, a list:\n\n- one\n- two\n\nand buttons",
+      "unfurl_links": false,
+      "unfurl_media": false
+    },
+    "mention": {
+      "response_type": "ephemeral",
+      "blocks": [
+        {
+          "type": "markdown",
+          "text": "Private answer mentioning &lt;@U080YLYB277>"
+        }
+      ],
+      "text": "Private answer mentioning &lt;@U080YLYB277&gt;",
+      "unfurl_links": false,
+      "unfurl_media": false
+    },
+    "public": {
+      "response_type": "in_channel",
+      "blocks": [
+        {
+          "type": "markdown",
+          "text": "**Public answer** with _Markdown_ and buttons"
+        },
+        {
+          "type": "actions",
+          "block_id": "chat1",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "cap-ack",
+              "text": {
+                "type": "plain_text",
+                "text": "Ack"
+              }
+            },
+            {
+              "type": "button",
+              "action_id": "cap-open",
+              "text": {
+                "type": "plain_text",
+                "text": "Open modal"
+              },
+              "style": "primary"
+            }
+          ]
+        }
+      ],
+      "text": "**Public answer** with _Markdown_ and buttons",
+      "unfurl_links": false,
+      "unfurl_media": false
+    },
+    "defer": null
+  },
+  "clicks": {
+    "privateAnswer": {
+      "type": "block_actions",
+      "user": {
+        "id": "U080YLYB277",
+        "username": "tim.smart",
+        "name": "tim.smart",
+        "team_id": "T05479Z6JBW"
+      },
+      "api_app_id": "A0CCHBHDK7X",
+      "token": "<redacted>",
+      "container": {
+        "type": "message",
+        "message_ts": "1794686832.000300",
+        "channel_id": "C0CJMJ5UMUY",
+        "is_ephemeral": true
+      },
+      "trigger_id": "<redacted>",
+      "team": {
+        "id": "T05479Z6JBW",
+        "domain": "effectfulworkspace"
+      },
+      "enterprise": null,
+      "is_enterprise_install": false,
+      "channel": {
+        "id": "C0CJMJ5UMUY",
+        "name": "privategroup"
+      },
+      "state": {
+        "values": {}
+      },
+      "response_url": "https://hooks.slack.com/actions/T05479Z6JBW/<redacted>",
+      "actions": [
+        {
+          "type": "button",
+          "block_id": "chat1",
+          "action_id": "cap-ack",
+          "text": {
+            "type": "plain_text",
+            "text": "Ack",
+            "emoji": true
+          },
+          "action_ts": "1794686835.443730"
+        }
+      ]
+    },
+    "publicAnswer": {
+      "type": "block_actions",
+      "user": {
+        "id": "U080YLYB277",
+        "username": "tim.smart",
+        "name": "tim.smart",
+        "team_id": "T05479Z6JBW"
+      },
+      "api_app_id": "A0CCHBHDK7X",
+      "token": "<redacted>",
+      "container": {
+        "type": "message",
+        "message_ts": "1794686949.699459",
+        "channel_id": "C0CJMJ5UMUY",
+        "is_ephemeral": false
+      },
+      "trigger_id": "<redacted>",
+      "team": {
+        "id": "T05479Z6JBW",
+        "domain": "effectfulworkspace"
+      },
+      "enterprise": null,
+      "is_enterprise_install": false,
+      "channel": {
+        "id": "C0CJMJ5UMUY",
+        "name": "privategroup"
+      },
+      "message": {
+        "subtype": "bot_message",
+        "text": "**Public answer** with _Markdown_ and buttons",
+        "type": "message",
+        "ts": "1794686949.699459",
+        "bot_id": "B0CHV4Y8LLR",
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "D5Nptu",
+            "elements": [
+              {
+                "type": "rich_text_section",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "Public answer",
+                    "style": {
+                      "bold": true
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " with "
+                  },
+                  {
+                    "type": "text",
+                    "text": "Markdown",
+                    "style": {
+                      "italic": true
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " and buttons"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "actions",
+            "block_id": "chat1",
+            "elements": [
+              {
+                "type": "button",
+                "action_id": "cap-ack",
+                "text": {
+                  "type": "plain_text",
+                  "text": "Ack",
+                  "emoji": true
+                }
+              },
+              {
+                "type": "button",
+                "action_id": "cap-open",
+                "text": {
+                  "type": "plain_text",
+                  "text": "Open modal",
+                  "emoji": true
+                },
+                "style": "primary"
+              }
+            ]
+          }
+        ]
+      },
+      "state": {
+        "values": {}
+      },
+      "response_url": "https://hooks.slack.com/actions/T05479Z6JBW/<redacted>",
+      "actions": [
+        {
+          "type": "button",
+          "block_id": "chat1",
+          "action_id": "cap-ack",
+          "text": {
+            "type": "plain_text",
+            "text": "Ack",
+            "emoji": true
+          },
+          "action_ts": "1794686972.679850"
+        }
+      ]
+    },
+    "privateFollowUp": {
+      "type": "block_actions",
+      "user": {
+        "id": "U080YLYB277",
+        "username": "tim.smart",
+        "name": "tim.smart",
+        "team_id": "T05479Z6JBW"
+      },
+      "api_app_id": "A0CCHBHDK7X",
+      "token": "<redacted>",
+      "container": {
+        "type": "message",
+        "message_ts": "1794687008.000500",
+        "channel_id": "C0CJMJ5UMUY",
+        "is_ephemeral": true
+      },
+      "trigger_id": "<redacted>",
+      "team": {
+        "id": "T05479Z6JBW",
+        "domain": "effectfulworkspace"
+      },
+      "enterprise": null,
+      "is_enterprise_install": false,
+      "channel": {
+        "id": "C0CJMJ5UMUY",
+        "name": "privategroup"
+      },
+      "state": {
+        "values": {}
+      },
+      "response_url": "https://hooks.slack.com/actions/T05479Z6JBW/<redacted>",
+      "actions": [
+        {
+          "type": "button",
+          "block_id": "chat1",
+          "action_id": "cap-ack",
+          "text": {
+            "type": "plain_text",
+            "text": "Ack",
+            "emoji": true
+          },
+          "action_ts": "1794687011.299505"
+        }
+      ]
+    }
+  },
+  "commandModal": {
+    "viewsOpen": {
+      "trigger_id": "<redacted>",
+      "view": {
+        "type": "modal",
+        "callback_id": "cap-modal",
+        "title": {
+          "type": "plain_text",
+          "text": "Capture"
+        },
+        "submit": {
+          "type": "plain_text",
+          "text": "Send"
+        },
+        "private_metadata": "chat1␟C0CJMJ5UMUY␟␟",
+        "blocks": [
+          {
+            "type": "input",
+            "block_id": "note",
+            "label": {
+              "type": "plain_text",
+              "text": "Note (type err for a field error)"
+            },
+            "optional": false,
+            "element": {
+              "type": "plain_text_input",
+              "action_id": "note",
+              "multiline": false
+            }
+          }
+        ]
+      }
+    },
+    "submitErrors": {
+      "type": "view_submission",
+      "team": {
+        "id": "T05479Z6JBW",
+        "domain": "effectfulworkspace"
+      },
+      "user": {
+        "id": "U080YLYB277",
+        "username": "tim.smart",
+        "name": "tim.smart",
+        "team_id": "T05479Z6JBW"
+      },
+      "api_app_id": "A0CCHBHDK7X",
+      "token": "<redacted>",
+      "trigger_id": "<redacted>",
+      "view": {
+        "id": "V0CHM1EJ691",
+        "team_id": "T05479Z6JBW",
+        "type": "modal",
+        "blocks": [
+          {
+            "type": "input",
+            "block_id": "note",
+            "label": {
+              "type": "plain_text",
+              "text": "Note (type err for a field error)",
+              "emoji": true
+            },
+            "optional": false,
+            "dispatch_action": false,
+            "element": {
+              "type": "plain_text_input",
+              "action_id": "note",
+              "multiline": false,
+              "dispatch_action_config": {
+                "trigger_actions_on": [
+                  "on_enter_pressed"
+                ]
+              }
+            }
+          }
+        ],
+        "private_metadata": "chat1␟C0CJMJ5UMUY␟␟",
+        "callback_id": "cap-modal",
+        "state": {
+          "values": {
+            "note": {
+              "note": {
+                "type": "plain_text_input",
+                "value": "err"
+              }
+            }
+          }
+        },
+        "hash": "1794686859.YVYq8DJX",
+        "title": {
+          "type": "plain_text",
+          "text": "Capture",
+          "emoji": true
+        },
+        "clear_on_close": false,
+        "notify_on_close": false,
+        "close": null,
+        "submit": {
+          "type": "plain_text",
+          "text": "Send",
+          "emoji": true
+        },
+        "previous_view_id": null,
+        "root_view_id": "V0CHM1EJ691",
+        "app_id": "A0CCHBHDK7X",
+        "external_id": "",
+        "app_installed_team_id": "T05479Z6JBW",
+        "bot_id": "B0CCQH77VA5"
+      },
+      "response_urls": [],
+      "is_enterprise_install": false,
+      "enterprise": null
+    },
+    "errorsAnswer": {
+      "response_action": "errors",
+      "errors": {
+        "note": "That is the error you asked for"
+      }
+    },
+    "submitClose": {
+      "type": "view_submission",
+      "team": {
+        "id": "T05479Z6JBW",
+        "domain": "effectfulworkspace"
+      },
+      "user": {
+        "id": "U080YLYB277",
+        "username": "tim.smart",
+        "name": "tim.smart",
+        "team_id": "T05479Z6JBW"
+      },
+      "api_app_id": "A0CCHBHDK7X",
+      "token": "<redacted>",
+      "trigger_id": "<redacted>",
+      "view": {
+        "id": "V0CHM1EJ691",
+        "team_id": "T05479Z6JBW",
+        "type": "modal",
+        "blocks": [
+          {
+            "type": "input",
+            "block_id": "note",
+            "label": {
+              "type": "plain_text",
+              "text": "Note (type err for a field error)",
+              "emoji": true
+            },
+            "optional": false,
+            "dispatch_action": false,
+            "element": {
+              "type": "plain_text_input",
+              "action_id": "note",
+              "multiline": false,
+              "dispatch_action_config": {
+                "trigger_actions_on": [
+                  "on_enter_pressed"
+                ]
+              }
+            }
+          }
+        ],
+        "private_metadata": "chat1␟C0CJMJ5UMUY␟␟",
+        "callback_id": "cap-modal",
+        "state": {
+          "values": {
+            "note": {
+              "note": {
+                "type": "plain_text_input",
+                "value": "Hi"
+              }
+            }
+          }
+        },
+        "hash": "1794686859.YVYq8DJX",
+        "title": {
+          "type": "plain_text",
+          "text": "Capture",
+          "emoji": true
+        },
+        "clear_on_close": false,
+        "notify_on_close": false,
+        "close": null,
+        "submit": {
+          "type": "plain_text",
+          "text": "Send",
+          "emoji": true
+        },
+        "previous_view_id": null,
+        "root_view_id": "V0CHM1EJ691",
+        "app_id": "A0CCHBHDK7X",
+        "external_id": "",
+        "app_installed_team_id": "T05479Z6JBW",
+        "bot_id": "B0CCQH77VA5"
+      },
+      "response_urls": [],
+      "is_enterprise_install": false,
+      "enterprise": null
+    },
+    "closeAnswer": null
+  },
+  "responseUrl": {
+    "followUp": {
+      "request": {
+        "response_type": "ephemeral",
+        "blocks": [
+          {
+            "type": "markdown",
+            "text": "**Deferred answer** to defer, with buttons"
+          },
+          {
+            "type": "actions",
+            "block_id": "chat1",
+            "elements": [
+              {
+                "type": "button",
+                "action_id": "cap-ack",
+                "text": {
+                  "type": "plain_text",
+                  "text": "Ack"
+                }
+              },
+              {
+                "type": "button",
+                "action_id": "cap-open",
+                "text": {
+                  "type": "plain_text",
+                  "text": "Open modal"
+                },
+                "style": "primary"
+              }
+            ]
+          }
+        ],
+        "text": "**Deferred answer** to defer, with buttons",
+        "unfurl_links": false,
+        "unfurl_media": false
+      },
+      "response": {
+        "status": 200,
+        "contentType": "text/html",
+        "body": "ok"
+      }
+    },
+    "spent": {
+      "note": "Seven posts on the spent command's deferral, one a second: 1 to 5 answered 200 ok, 6 and 7 this",
+      "okStatuses": [
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "response": {
+        "status": 404,
+        "contentType": "text/html",
+        "body": "used_url"
+      }
+    },
+    "expired": {
+      "note": "30.5 minutes after the command, on all three deferrals",
+      "responses": [
+        {
+          "status": 404,
+          "contentType": "text/html",
+          "body": "expired_url"
+        },
+        {
+          "status": 404,
+          "contentType": "text/html",
+          "body": "expired_url"
+        },
+        {
+          "status": 404,
+          "contentType": "text/html",
+          "body": "expired_url"
+        }
+      ]
+    }
+  },
+  "late": {
+    "status": 503,
+    "ms": 2505,
+    "body": ""
+  }
+}

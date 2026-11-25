@@ -9,6 +9,7 @@ import type {
   PullRequestCheck,
   PullRequestComment,
   PullRequestInvolvement,
+  PullRequestLabel,
   PullRequestListState,
   PullRequestMergeMethod,
 } from "@t3tools/contracts";
@@ -21,6 +22,7 @@ import {
   decodeItemContentJson,
   decodeIterationChangesJson,
   decodeIterationsJson,
+  decodeLabelsJson,
   decodePolicyChecksJson,
   decodePullRequestJson,
   decodePullRequestListJson,
@@ -185,6 +187,13 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
+
+    /** `az repos pr show` returns null labels, so the detail reads them here. */
+    readonly listLabels: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+    }) => Effect.Effect<ReadonlyArray<PullRequestLabel>, AzureDevOpsPullRequestCliError>;
 
     readonly listIterations: (input: {
       readonly cwd: string;
@@ -624,6 +633,16 @@ export const make = Effect.gen(function* () {
         routeParameters: pullRequestRoute(input),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
         decode: decodeThreadsJson,
+      });
+    }),
+
+    listLabels: Effect.fn("AzureDevOpsPullRequestCli.listLabels")(function (input) {
+      return invoke({
+        cwd: input.cwd,
+        operation: "listLabels",
+        resource: "pullRequestLabels",
+        routeParameters: pullRequestRoute(input),
+        decode: decodeLabelsJson,
       });
     }),
 

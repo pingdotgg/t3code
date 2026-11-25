@@ -290,6 +290,8 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
         truncated: false,
       });
       expect(grep).toHaveBeenCalledTimes(2);
+      expect(grep.mock.calls[0]?.[0]).toBe(String.raw`(?-u)\bneedle\b`);
+      expect(grep.mock.calls[0]?.[1]?.mode).toBe("regex");
       expect(grep.mock.calls[1]?.[1]?.cursor).toBe(nextCursor);
     }),
   ).pipe(Effect.provide(testLayer)),
@@ -300,8 +302,24 @@ it.live("answers content searches with git grep while a slow content index build
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const vcsProcess = yield* VcsProcess.VcsProcess;
-    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-content-warmup-" });
-    yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+    const repoRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-content-warmup-" });
+    yield* vcsProcess.run({
+      operation: "test.gitInit",
+      command: "git",
+      args: ["init"],
+      cwd: repoRoot,
+    });
+    // User git config must not change git grep's records or make it refuse --untracked.
+    for (const setting of ["grep.column", "grep.fullName", "submodule.recurse"]) {
+      yield* vcsProcess.run({
+        operation: "test.gitConfig",
+        command: "git",
+        args: ["config", setting, "true"],
+        cwd: repoRoot,
+      });
+    }
+    const cwd = path.join(repoRoot, "project");
+    yield* fileSystem.makeDirectory(cwd);
     yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "ignored.txt\n");
     yield* fileSystem.makeDirectory(path.join(cwd, "src"));
     yield* fileSystem.writeFileString(
@@ -718,6 +736,36 @@ it.effect("finds symlinks in folders past the first page of the index", () =>
   ).pipe(Effect.provide(testLayer)),
 );
 
+it.effect("keeps symlinks Git does not ignore when a link's name looks like a git pathspec", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) === "win32") return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const vcsProcess = yield* VcsProcess.VcsProcess;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-symlink-pathspec-" });
+      yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+      yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "ignored-link\n");
+      yield* fileSystem.writeFileString(path.join(cwd, "a.ts"), "");
+      yield* fileSystem.symlink("a.ts", path.join(cwd, "docs-link"));
+      yield* fileSystem.symlink("a.ts", path.join(cwd, ":(link)"));
+      yield* fileSystem.symlink("a.ts", path.join(cwd, "ignored-link"));
+      // Stage so `ls-files --others` skips it and `listGitIgnored` must hide it.
+      yield* vcsProcess.run({
+        operation: "test.gitAdd",
+        command: "git",
+        args: ["add", "-f", "ignored-link"],
+        cwd,
+      });
+      fakeSymlinkFinder([]);
+
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+
+      expect(yield* listedPaths(searchIndex)).toEqual([":(link)", "docs-link"]);
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
 // fff reads HOME on Linux and macOS but the user profile on Windows, so a temp HOME cannot stand in there.
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "refuses to index a workspace rooted at the home directory",
@@ -747,4 +795,69 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         expect(result).toBe("WorkspaceSearchIndexCreateFailed");
       }),
     ).pipe(Effect.provide(testLayer)),
+);
+
+// ripgrep and fff let a matching `.ignore` decide ahead of `.gitignore`, so Git's list must not hide it.
+it.live("finds Git-ignored files that a root .ignore re-includes", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const vcsProcess = yield* VcsProcess.VcsProcess;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-search-reinclude-" });
+    yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+    yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "notes/\n");
+    yield* fileSystem.writeFileString(
+      path.join(cwd, ".ignore"),
+      "!notes/\nnotes/**/*\n!notes/**/\n!notes/**/*.md\n",
+    );
+    yield* fileSystem.makeDirectory(path.join(cwd, "notes", "daily"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(cwd, "notes", "daily", "standup.md"), "");
+    yield* fileSystem.writeFileString(path.join(cwd, "notes", "daily", "standup.txt"), "");
+
+    const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+    const result = yield* searchIndex.search("standup", 50, "file");
+
+    expect(result.entries).toEqual([{ kind: "file", path: "notes/daily/standup.md" }]);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+// Real fff: the native whole-word pattern must return what the plain search and the JS word check did.
+it.live.each([
+  { query: "needle", caseSensitive: true, expected: ["notes.md:1:0-6", "words.ts:2:0-6,8-14"] },
+  { query: "NEEDLE", caseSensitive: false, expected: ["notes.md:1:0-6", "words.ts:2:0-6,8-14"] },
+  // fff reads `*.ts` as a file constraint, which a regex built around the whole query would lose.
+  { query: "*.ts needle", caseSensitive: true, expected: ["words.ts:2:0-6,8-14"] },
+  // Plain search folds ASCII case only: `ſ` is not an `s`, and the Kelvin sign is not a `k`.
+  { query: "s", caseSensitive: false, expected: ["fold.txt:2:0-1"] },
+  { query: "k", caseSensitive: false, expected: ["fold.txt:4:0-1"] },
+])("matches whole words in a real workspace for $query", ({ query, caseSensitive, expected }) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-search-whole-word-" });
+    yield* fileSystem.writeFileString(
+      path.join(cwd, "words.ts"),
+      "needleSuffix\nneedle, needle.\n\u00e9needle\n",
+    );
+    yield* fileSystem.writeFileString(path.join(cwd, "notes.md"), "needle *.ts\n");
+    yield* fileSystem.writeFileString(path.join(cwd, "fold.txt"), "\u017f\ns\n\u212a\nk\n");
+
+    const searchIndex = yield* WorkspaceSearchIndex.make(cwd, "content");
+    const result = yield* searchIndex.searchContents({
+      query,
+      limit: 500,
+      caseSensitive,
+      wholeWord: true,
+      useRegex: false,
+    });
+
+    expect(
+      result.matches
+        .map(
+          (match) =>
+            `${match.path}:${match.lineNumber}:${match.matchRanges.map((range) => `${range.start}-${range.end}`).join(",")}`,
+        )
+        .toSorted(),
+    ).toEqual(expected);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );

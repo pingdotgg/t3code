@@ -15,7 +15,9 @@ import {
   SecretProviderId,
   ServerSettings,
   ServerSettingsPatch,
+  UsageLimitSourceConfig,
   UsageLimitSourceId,
+  type SimlockDeviceHostConfig,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
@@ -31,6 +33,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { sourceControlHostSecretName } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as ServerConfig from "./config.ts";
@@ -40,6 +43,15 @@ import * as ServerSettingsModule from "./serverSettings.ts";
 import { SECRET_REDACTED } from "./settingsSecrets.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
+
+const encodeServerSettings = Schema.encodeSync(ServerSettings);
+// Clients from before HTTP sources decode only "cliproxy" and reject the whole settings payload.
+const decodePreHttpUsageLimitSources = Schema.decodeUnknownSync(
+  Schema.Record(
+    UsageLimitSourceId,
+    Schema.Struct({ ...UsageLimitSourceConfig.fields, kind: Schema.Literal("cliproxy") }),
+  ),
+);
 
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
@@ -1063,6 +1075,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("falls back to the defaults when only a legacy field is rejected", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const raw = '{"agentFeedback":{"mode":"auto"},"providers":1}';
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, raw);
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.equal(settings.agentFeedback.mode, "off");
+      assert.isFalse(settings.continueThreadsAfterServerUpdate);
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("keeps a default-off provider's new instance disabled and sparse on disk", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
@@ -1763,6 +1791,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const antigravity = ProviderInstanceId.make("antigravity");
         const openCode = ProviderInstanceId.make("opencode");
         const hub = UsageLimitSourceId.make("hub");
+        const quota = UsageLimitSourceId.make("quota");
         const router = ProviderInstanceId.make("openrouter");
         const withUsage = yield* serverSettings.updateSettings({
           cloudSpeechCredentials: { openai: usageReference, xai: "literal-fixture" },
@@ -1779,6 +1808,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
               kind: "cliproxy",
               url: "https://hub.test",
               managementKey: usageReference,
+              enabled: true,
+            },
+            [quota]: {
+              kind: "http",
+              url: "https://quota.test/v1",
+              managementKey: "",
               enabled: true,
             },
           },
@@ -1826,6 +1861,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         assert.equal(legacy.sourceControlHosts.bitbucket?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.usageLimitSources[hub]?.managementKey, SECRET_REDACTED);
+        assert.deepEqual(
+          Object.keys(
+            decodePreHttpUsageLimitSources(encodeServerSettings(legacy).usageLimitSources),
+          ),
+          [hub],
+        );
+        assert.equal(
+          ServerSettingsModule.redactServerSettingsForClient(withUsage, {
+            secretReferences: false,
+            httpUsageLimitSources: true,
+          }).usageLimitSources[quota]?.kind,
+          "http",
+        );
         assert.equal(legacy.textGenerators[router]?.apiKey, SECRET_REDACTED);
         assert.equal(legacy.easDeviceHosts[0]?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.simlockDeviceHosts[0]?.agentToken, SECRET_REDACTED);
@@ -1848,6 +1896,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           "ghe.acme.test": "ghp_ghe",
         });
         assert.deepEqual(echoed.usageLimitSources[hub]?.managementKey, usageReference);
+        assert.equal(echoed.usageLimitSources[quota]?.kind, "http");
         assert.deepEqual(echoed.textGenerators[router]?.apiKey, usageReference);
         assert.deepEqual(echoed.cloudSpeechCredentials, {
           openai: usageReference,
@@ -1859,6 +1908,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.deepEqual(configOf(echoed, antigravity)?.apiKey, antigravityReference);
         assert.deepEqual(configOf(echoed, openCode)?.serverPassword, openCodeReference);
         assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
+        // A saved token goes only to the gateway it was saved for, however it is echoed.
+        const moved = (agentToken: SimlockDeviceHostConfig["agentToken"]) =>
+          serverSettings.updateSettings({
+            simlockDeviceHosts: [
+              {
+                ...echoed.simlockDeviceHosts[0]!,
+                gatewayUrl: "https://elsewhere.test",
+                agentToken,
+              },
+            ],
+          });
+        assert.equal((yield* moved(SECRET_REDACTED)).simlockDeviceHosts[0]?.agentToken, "");
+        yield* serverSettings.updateSettings({ simlockDeviceHosts: echoed.simlockDeviceHosts });
+        assert.equal((yield* moved(simlockReference)).simlockDeviceHosts[0]?.agentToken, "");
+        assert.equal(
+          (yield* moved("typed-token")).simlockDeviceHosts[0]?.agentToken,
+          "typed-token",
+        );
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
@@ -2365,7 +2432,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("leaves an unreadable settings.json untouched instead of folding over it", () =>
+  it.effect.each([
+    { label: "malformed JSON", broken: '{"defaultAutoPull": tru' },
+    { label: "invalid retention", broken: '{"usageHistoryRetentionDays": 0}' },
+  ])("leaves settings.json with $label untouched and disables destructive defaults", ({ broken }) =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2380,12 +2450,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           ${"2026-08-25T00:00:00.000Z"}, ${"2026-08-25T00:00:00.000Z"}
         )
       `;
-      const broken = '{"defaultAutoPull": tru';
       yield* fileSystem.writeFileString(serverConfig.settingsPath, broken);
 
       const settings = yield* serverSettings.getSettings;
       assert.isFalse(settings.projectSettingsFolded);
       assert.isFalse(settings.continueThreadsAfterServerUpdate);
+      assert.equal(settings.usageHistoryRetentionDays, "unlimited");
+      assert.isTrue(settings.requireConnectDeviceApproval);
+      assert.isFalse(settings.enablePreviewTunnel);
+      assert.isFalse(settings.enableAgentBrowserAccess);
+      assert.equal(settings.defaultRuntimeMode, "approval-required");
       assert.deepEqual(settings.projectSettingsOverrides, {});
 
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), broken);
@@ -3098,4 +3172,176 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }).pipe(Effect.provide(layerServerSettings(policy))),
     );
   },
+);
+
+it.live("reloads a symlinked settings file after its target directory is replaced", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const service = yield* ServerSettingsModule.ServerSettingsService;
+    const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+    const active = path.join(dotfiles, "active");
+    const restored = path.join(dotfiles, "restored");
+    yield* fs.makeDirectory(active);
+    yield* fs.makeDirectory(restored);
+    yield* fs.writeFileString(
+      path.join(active, "settings.json"),
+      `{ "responseStreamingMode": "turn" }`,
+    );
+    yield* fs.writeFileString(
+      path.join(restored, "settings.json"),
+      `{ "responseStreamingMode": "turn" }`,
+    );
+    yield* fs.remove(config.settingsPath, { force: true });
+    yield* fs.symlink(path.join(active, "settings.json"), config.settingsPath);
+    yield* service.start;
+    const changes = yield* service.subscribeChanges;
+
+    yield* fs.writeFileString(
+      path.join(restored, "settings.json"),
+      `{ "responseStreamingMode": "turn", "defaultAutoPull": true }`,
+    );
+    yield* fs.rename(active, path.join(dotfiles, "previous"));
+    yield* fs.rename(restored, active);
+
+    const restoredSettings = yield* changes.pipe(
+      Stream.filter((settings) => settings.defaultAutoPull),
+      Stream.runHead,
+    );
+    assert.isTrue(Option.isSome(restoredSettings));
+
+    yield* fs.writeFileString(
+      path.join(active, "settings.json"),
+      `{ "responseStreamingMode": "paragraph" }`,
+    );
+
+    const reloaded = yield* changes.pipe(
+      Stream.filter((settings) => settings.responseStreamingMode === "paragraph"),
+      Stream.runHead,
+    );
+    assert.isTrue(Option.isSome(reloaded));
+  }).pipe(
+    Effect.scoped,
+    // @effect-diagnostics-next-line multipleEffectProvide:off -- the settings layer reads the Node services provided below.
+    Effect.provide(layerServerSettings()),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  ),
+);
+
+it.effect("starts with symlinked settings when the settings directory watch fails", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    let settingsDirectory: string | undefined;
+    const watchFailure = PlatformError.systemError({
+      _tag: "Unknown",
+      module: "FileSystem",
+      method: "watch",
+      description: "No file watches available.",
+    });
+    const failingFileSystem = FileSystem.FileSystem.of({
+      ...fs,
+      watch: (directory, options) =>
+        directory === settingsDirectory ? Stream.fail(watchFailure) : fs.watch(directory, options),
+    });
+    const settingsLayer = layerServerSettings().pipe(
+      Layer.provide(Layer.succeed(FileSystem.FileSystem, failingFileSystem)),
+    );
+
+    yield* Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      settingsDirectory = path.dirname(config.settingsPath);
+      const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+      const target = path.join(dotfiles, "settings.json");
+      yield* fs.writeFileString(target, `{ "responseStreamingMode": "paragraph" }`);
+      yield* fs.remove(config.settingsPath, { force: true });
+      yield* fs.symlink(target, config.settingsPath);
+
+      yield* service.start;
+
+      const settings = yield* service.getSettings;
+      assert.equal(settings.responseStreamingMode, "paragraph");
+    }).pipe(Effect.provide(settingsLayer));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("publishes edits made before the restored settings watch is registered", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+    const active = path.join(dotfiles, "active");
+    const restored = path.join(dotfiles, "restored");
+    const target = path.join(active, "settings.json");
+    yield* fs.makeDirectory(active);
+    yield* fs.makeDirectory(restored);
+    yield* fs.writeFileString(target, `{ "responseStreamingMode": "turn" }`);
+    yield* fs.writeFileString(
+      path.join(restored, "settings.json"),
+      `{ "responseStreamingMode": "turn" }`,
+    );
+
+    const replaced = yield* Deferred.make<void>();
+    const registering = yield* Deferred.make<void>();
+    const allowRegistration = yield* Deferred.make<void>();
+    const settingsLayer = layerServerSettings().pipe(
+      Layer.provide(
+        Layer.succeed(
+          FileSystem.FileSystem,
+          FileSystem.FileSystem.of({
+            ...fs,
+            watch: (directory, options) =>
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  if (directory === dotfiles) {
+                    options?.onReady?.();
+                    return Stream.fromEffect(Deferred.await(replaced)).pipe(
+                      Stream.as({ _tag: "Create", path: "active" } as const),
+                      Stream.concat(Stream.never),
+                    );
+                  }
+                  if (directory !== active) return fs.watch(directory, options);
+                  if (yield* Deferred.isDone(replaced)) {
+                    yield* Deferred.succeed(registering, undefined);
+                    yield* Deferred.await(allowRegistration);
+                  }
+                  options?.onReady?.();
+                  return Stream.never;
+                }),
+              ),
+          }),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fs.symlink(target, config.settingsPath);
+      yield* service.start;
+      const changes = yield* service.subscribeChanges;
+
+      yield* fs.rename(active, path.join(dotfiles, "previous"));
+      yield* fs.rename(restored, active);
+      // Deliver the event on the test clock so it drains the watcher and any eager debounce.
+      yield* Deferred.succeed(replaced, undefined).pipe(
+        Effect.delay(1),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.await(registering);
+      yield* service.withSettingsSnapshot(() => Effect.void);
+      yield* fs.writeFileString(target, `{ "responseStreamingMode": "paragraph" }`);
+      yield* Deferred.succeed(allowRegistration, undefined).pipe(
+        Effect.delay(1),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 second");
+
+      const published = yield* changes.pipe(Stream.runHead);
+      assert.equal(Option.getOrThrow(published).responseStreamingMode, "paragraph");
+    }).pipe(Effect.provide(settingsLayer));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
