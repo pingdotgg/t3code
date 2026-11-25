@@ -4140,6 +4140,18 @@ function isClaudeNonSubagentTask(message: SDKMessage): boolean {
   return isClaudeOpaqueBackgroundTaskType(claudeTaskTypeFromSdkMessage(message));
 }
 
+// A `context: fork` skill starts with no tool call; its transcript frames name `forked-command-<skill>`.
+const CLAUDE_FORKED_COMMAND_PREFIX = "forked-command-";
+
+function claudeTaskStartedToolUseId(message: {
+  readonly tool_use_id?: string | undefined;
+  readonly description: string;
+}): string | undefined {
+  if (message.tool_use_id !== undefined) return message.tool_use_id;
+  const skill = /^\/(\S+)$/u.exec(message.description.trim())?.[1];
+  return skill === undefined ? undefined : `${CLAUDE_FORKED_COMMAND_PREFIX}${skill}`;
+}
+
 function isClaudeBackgroundTasksChangedMessage(message: SDKMessage): boolean {
   return message.type === "system" && (message.subtype as string) === "background_tasks_changed";
 }
@@ -12002,12 +12014,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const isWorkflow =
                 claudeTaskTypeFromSdkMessage(message) === CLAUDE_WORKFLOW_TASK_TYPE;
               const workflowName = isWorkflow ? text(field(message, "workflow_name")) : undefined;
+              const toolUseId = claudeTaskStartedToolUseId(message);
 
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.task_type === undefined ? {} : { nativeTaskType: message.task_type }),
-                ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+                ...(toolUseId === undefined ? {} : { toolUseId }),
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
                 ...(model === undefined ? {} : { model }),
                 ...(launch?.effort === undefined ? {} : { effort: launch.effort }),
@@ -12173,13 +12186,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               !context.ignoredTaskIds.has(message.task_id) &&
               !appliedSubagentOutcomes.has(message)
             ) {
+              // A forked skill's summary repeats its command name; its transcript carries the reply.
+              const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id);
+              const summaryIsTitle =
+                registered?.runToolUseId?.startsWith(CLAUDE_FORKED_COMMAND_PREFIX) === true &&
+                registered.task.title === message.summary;
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 workflowFrame: message,
                 nativeOutcome: message,
-                result: message.summary,
+                ...(summaryIsTitle ? {} : { result: message.summary }),
                 status:
                   message.status === "completed"
                     ? "completed"
@@ -14532,6 +14550,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const toolUseId = subagent.runToolUseId;
             if (
               toolUseId === null ||
+              // A forked skill has no tool call for Claude to move to the background.
+              toolUseId.startsWith(CLAUDE_FORKED_COMMAND_PREFIX) ||
               subagent.task.status !== "running" ||
               subagent.task.parentNodeId !== subagent.rootNodeId ||
               live.subagentsFromEarlierProcesses.has(subagent) ||

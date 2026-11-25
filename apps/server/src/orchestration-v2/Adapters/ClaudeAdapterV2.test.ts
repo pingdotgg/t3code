@@ -22119,8 +22119,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     {
       launch: "forked skill",
       text: "/fork-probe go",
-      // A `context: fork` skill has no Agent call and streams none of its own replies:
-      // task_started carries no tool_use_id, and only its prompt echo names the fork.
+      // A `context: fork` skill has no Agent call and streams no model: task_started carries
+      // no tool_use_id, and its frames arrive after it finishes, under `forked-command-<skill>`.
       frames: [
         claudeSdkFrame({
           type: "system",
@@ -22239,6 +22239,89 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("shows a forked skill's work in its subagent thread", () =>
+    Effect.gen(function* () {
+      const FORK_TOOL_USE_ID = "forked-command-fork-probe";
+      const BASH_TOOL_USE_ID = "toolu-forked-skill-bash";
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-forked-skill-work"),
+          text: "/fork-probe",
+          attachments: [],
+        }),
+      );
+      for (const frame of [
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-forked-skill-work",
+          description: "/fork-probe",
+          prompt: "Review the diff.",
+          subagent_type: "general-purpose",
+          task_type: "local_agent",
+          skip_transcript: true,
+          ambient: true,
+          uuid: "00000000-0000-4000-8000-000000000241",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "task-forked-skill-work",
+          status: "completed",
+          summary: "/fork-probe",
+          output_file: "",
+          skip_transcript: true,
+          ambient: true,
+          uuid: "00000000-0000-4000-8000-000000000242",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        // Claude Code sends the fork's transcript only after it finishes.
+        ...makeSubagentAssistantFrames({
+          parentToolUseId: FORK_TOOL_USE_ID,
+          uuid: "00000000-0000-4000-8000-000000000243",
+          bashToolUseId: BASH_TOOL_USE_ID,
+        }),
+        makeSubagentToolResultFrame({
+          parentToolUseId: FORK_TOOL_USE_ID,
+          uuid: "00000000-0000-4000-8000-000000000244",
+          toolUseId: BASH_TOOL_USE_ID,
+        }),
+        ...makeSubagentAssistantFrames({
+          parentToolUseId: FORK_TOOL_USE_ID,
+          uuid: "00000000-0000-4000-8000-000000000245",
+          text: "No findings.",
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000246", result: "No findings." }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.awaitTerminal(1);
+
+      const routing = subagentRouting(harness.events, [BASH_TOOL_USE_ID]);
+      assert.isDefined(routing.childThreadId);
+      assert.deepEqual(
+        [...(routing.toolThreadIds.get(BASH_TOOL_USE_ID) ?? [])],
+        [routing.childThreadId],
+      );
+      assert.deepEqual(routing.assistantTexts(routing.childThreadId), ["No findings."]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   it.effect.each([
