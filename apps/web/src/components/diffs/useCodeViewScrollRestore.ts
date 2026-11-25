@@ -38,8 +38,13 @@ export function createCodeViewScrollRestore() {
     }
     const scrollTop = Math.min(pending.scrollTop, maxScrollTop);
     pending = null;
-    // Pierre lands a position target one sticky header (32px) above it, unless it clamps it.
-    if (scrollTop > 0) handle.scrollTo({ type: "position", position: scrollTop + 32 });
+    // Pierre lands an in-range position target one sticky header (32px) above it and clamps one
+    // past the end, so the last 32px is reachable only at its two ends: take the nearer.
+    const position =
+      scrollTop + 32 <= maxScrollTop || maxScrollTop - scrollTop < 16
+        ? scrollTop + 32
+        : maxScrollTop;
+    if (scrollTop > 0) handle.scrollTo({ type: "position", position });
   };
   return {
     update(
@@ -70,9 +75,11 @@ export function createCodeViewScrollRestore() {
       if (source !== viewer || pending !== null || scopeKey === null) return;
       savedByScopeKey.set(scopeKey, { scrollTop, loaded });
     },
-    /** The reader scrolled before the saved position was reached; their scroll wins. */
+    /** The reader acted before the saved position was reached; reports whether one was pending. */
     cancel() {
+      const interrupted = pending !== null;
       pending = null;
+      return interrupted;
     },
     /** Something else positions the viewer, such as a file reveal or collapsing every file. */
     discard() {

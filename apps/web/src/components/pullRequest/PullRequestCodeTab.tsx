@@ -1070,6 +1070,8 @@ function PullRequestCodeTab({
   };
   const attachCodeView = useStableCallback(
     (handle: CodeViewHandle<ReviewAnnotationGroup, undefined> | null) => {
+      // Each scope gets its own viewer, which the reader has not scrolled yet.
+      if (handle !== null) scrolledByReader.current = false;
       codeViewScroll.attach(handle);
       codeViewReveal.attach(handle);
     },
@@ -1133,7 +1135,10 @@ function PullRequestCodeTab({
   };
 
   const toggleAllFiles = () => {
-    codeViewScroll.cancel();
+    // A restore still loading pages never reached its offset, and these folds replace its layout.
+    if (codeViewScroll.cancel()) codeViewScroll.discard();
+    // Where the viewer settles after the folds is the reader's doing.
+    scrolledByReader.current = true;
     const shownTestKeys = annotatedFiles.flatMap((file) =>
       isTestChangedFile(file.path) ? [file.foldKey] : [],
     );
@@ -2094,6 +2099,8 @@ function PullRequestCodeTab({
           {/* The viewer must own its scroll element to position virtual rows within it. */}
           <FileViewedToggleContext value={fileViewedToggle}>
             <StyledDiffCodeView<ReviewAnnotationGroup>
+              // A kept viewer would restore against the outgoing diff's height.
+              key={scopeKey}
               className="@container h-full overflow-auto [scrollbar-gutter:stable]"
               containerRef={(node) => {
                 // Pierre sets tabIndex -1 on this root and forwards no data attributes.

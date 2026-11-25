@@ -566,6 +566,15 @@ export function PullRequestDetailPanel({
     summary: summaryCondensedByScopeKey.get(tabScopeKey) ?? false,
     code: codeCondensedByScopeKey.get(codeScopeKey) ?? false,
   }));
+  // Picking a commit gives the Code tab a fresh viewer at that commit's own position.
+  const [condensedCodeScopeKey, setCondensedCodeScopeKey] = useState(codeScopeKey);
+  if (condensedCodeScopeKey !== codeScopeKey) {
+    setCondensedCodeScopeKey(codeScopeKey);
+    setCondensedByTab({
+      ...condensedByTab,
+      code: codeCondensedByScopeKey.get(codeScopeKey) ?? false,
+    });
+  }
   const condensed = condensedByTab[tab] ?? false;
   const scrollerByTab = useRef<Partial<Record<PullRequestDetailTab, HTMLElement | null>>>({});
   // Fresh ref callbacks would detach and reattach every scroller on each render.
