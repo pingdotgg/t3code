@@ -755,6 +755,7 @@ export type ClaudeAgentSdkQueryOptions = Omit<
 
 export interface ClaudeAgentSdkQueryOpenInput {
   readonly resume?: true;
+  readonly deniedSkills?: readonly string[];
   readonly options: ClaudeAgentSdkQueryOptions;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
@@ -1871,6 +1872,38 @@ export const layerQueryRunner: Layer.Layer<
                     });
                   }
                 }
+                const deniedSkills = input.deniedSkills;
+                if (deniedSkills?.length) {
+                  const commands = yield* Effect.tryPromise({
+                    try: () => queryRuntime.supportedCommands(),
+                    catch: (cause) => queryRunnerError(cause, "verifySkillDenials"),
+                  }).pipe(
+                    Effect.timeoutOrElse({
+                      duration: CLAUDE_BOOT_TIMEOUT,
+                      orElse: () =>
+                        Effect.fail(
+                          queryRunnerError(
+                            new Error(
+                              `Claude did not verify skill denials: ${deniedSkills.join(", ")}.`,
+                            ),
+                            "verifySkillDenials",
+                          ),
+                        ),
+                    }),
+                  );
+                  const denied = new Set(deniedSkills);
+                  const visible = commands.find(
+                    (command) =>
+                      denied.has(command.name) ||
+                      command.aliases?.some((alias) => denied.has(alias)),
+                  );
+                  if (visible !== undefined) {
+                    return yield* queryRunnerError(
+                      new Error(`Claude still advertises a denied skill as /${visible.name}.`),
+                      "verifySkillDenials",
+                    );
+                  }
+                }
                 yield* logProtocolEvent({
                   direction: "outgoing",
                   stage: "decoded",
@@ -2519,6 +2552,11 @@ const subagentDeviceInstructions: HookCallback = () =>
     },
   });
 
+interface ClaudeSkillDenyPolicy {
+  readonly names: readonly string[];
+  readonly readRules: readonly string[];
+}
+
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
   readonly modelCatalog?: ClaudeModelCatalog;
@@ -2533,6 +2571,7 @@ export function makeClaudeQueryOptions(input: {
   readonly settings?: ClaudeSettings;
   readonly promptSuggestions?: boolean;
   readonly sdkSettings?: string | ClaudeSdkSettings;
+  readonly skillDeny?: ClaudeSkillDenyPolicy;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   readonly tools?: ClaudeAgentSdkQueryTools;
@@ -2637,6 +2676,25 @@ export function makeClaudeQueryOptions(input: {
               : { ENABLE_TOOL_SEARCH: input.toolSearchOverride }),
           },
         } as ClaudeSdkSettings);
+  const skillRules = input.skillDeny?.names.map((name) => `Skill(${name})`) ?? [];
+  const denyRules = [...skillRules, ...(input.skillDeny?.readRules ?? [])];
+  const disallowedTools = [...(input.disallowedTools ?? []), ...denyRules];
+  const flagSettings =
+    typeof effectiveQuerySettings === "object" ? effectiveQuerySettings : undefined;
+  const enforcedSettings =
+    input.skillDeny === undefined
+      ? effectiveQuerySettings
+      : {
+          ...flagSettings,
+          skillOverrides: {
+            ...flagSettings?.skillOverrides,
+            ...Object.fromEntries(input.skillDeny.names.map((name) => [name, "off" as const])),
+          },
+          permissions: {
+            ...flagSettings?.permissions,
+            deny: [...new Set([...(flagSettings?.permissions?.deny ?? []), ...denyRules])],
+          },
+        };
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     // T3 names threads; a supplied title skips Claude's redundant naming request.
@@ -2657,7 +2715,9 @@ export function makeClaudeQueryOptions(input: {
     ...threadIdentity,
     ...(input.resumeSessionAt === undefined ? {} : { resumeSessionAt: input.resumeSessionAt }),
     ...(input.allowedTools === undefined ? {} : { allowedTools: [...input.allowedTools] }),
-    ...(input.disallowedTools === undefined ? {} : { disallowedTools: [...input.disallowedTools] }),
+    ...(input.disallowedTools === undefined && disallowedTools.length === 0
+      ? {}
+      : { disallowedTools }),
     ...(input.canUseTool === undefined ? {} : { canUseTool: input.canUseTool }),
     ...(input.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
@@ -2666,16 +2726,16 @@ export function makeClaudeQueryOptions(input: {
       ? {
           thinking: { type: "adaptive" as const, display: "summarized" as const },
           settings:
-            typeof effectiveQuerySettings === "string"
-              ? effectiveQuerySettings
+            typeof enforcedSettings === "string"
+              ? enforcedSettings
               : {
-                  ...effectiveQuerySettings,
+                  ...enforcedSettings,
                   showThinkingSummaries: true,
                 },
         }
-      : effectiveQuerySettings === undefined
+      : enforcedSettings === undefined
         ? {}
-        : { settings: effectiveQuerySettings }),
+        : { settings: enforcedSettings }),
     ...(input.onUserDialog === undefined ? {} : { onUserDialog: input.onUserDialog }),
     ...(input.onElicitation === undefined ? {} : { onElicitation: input.onElicitation }),
     ...(input.supportedDialogKinds === undefined
@@ -6150,7 +6210,100 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       Effect.map(claudeToolSearchOverride),
     );
 
-  const userInvocableSkills = (cwd: string | null) =>
+  const resolveSkillDeny = Effect.fn("ClaudeAdapterV2.resolveSkillDeny")(function* (
+    names: readonly string[],
+    cwd: string | null,
+  ) {
+    if (names.length === 0) return undefined;
+    const refuse = (name: string, source: string) =>
+      new ProviderAdapter.ProviderAdapterProtocolError({
+        driver: CLAUDE_PROVIDER,
+        detail: `Cannot deny Claude skill "${name}" (source: ${source}).`,
+      });
+    for (const name of names) {
+      if (/^mcp__.+__.+$/.test(name)) return yield* refuse(name, "MCP");
+      if (name.includes(":")) return yield* refuse(name, "plugin or MCP namespace");
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(name)) return yield* refuse(name, "unknown");
+    }
+    const workingDirectory = path.resolve(cwd ?? ".");
+    const configDirectory = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim();
+    const resolvedHome =
+      configDirectory && adapterOptions.settings.homePath.trim() === ""
+        ? path.resolve(workingDirectory, configDirectory)
+        : homePath;
+    const managedDirectory =
+      hostPlatform === "darwin"
+        ? "/Library/Application Support/ClaudeCode"
+        : hostPlatform === "win32"
+          ? path.join(adapterOptions.environment.ProgramFiles ?? "C:/Program Files", "ClaudeCode")
+          : "/etc/claude-code";
+    const roots = new Set([resolvedHome, path.join(managedDirectory, ".claude")]);
+    const checkoutRoot = yield* claudeLocalSettingsDirectory(workingDirectory).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+    roots.add(path.join(checkoutRoot, ".claude"));
+    for (const start of [
+      workingDirectory,
+      attachmentsDir,
+      ...claudeLaunchArgDirectories(adapterOptions.settings.launchArgs),
+    ]) {
+      for (
+        let directory = path.resolve(workingDirectory, start);
+        ;
+        directory = path.dirname(directory)
+      ) {
+        roots.add(path.join(directory, ".claude"));
+        if (
+          path.dirname(directory) === directory ||
+          (yield* fileSystem.exists(path.join(directory, ".git")))
+        )
+          break;
+      }
+    }
+    const readRules = new Set<string>();
+    for (const name of names) {
+      let found = false;
+      for (const root of roots) {
+        const directory = path.join(root, "skills", name);
+        const legacyCommand = path.join(root, "commands", `${name}.md`);
+        for (const candidate of [path.join(directory, "SKILL.md"), legacyCommand]) {
+          if (!(yield* fileSystem.exists(candidate))) continue;
+          found = true;
+          const isDirectorySkill = candidate !== legacyCommand;
+          if (
+            isDirectorySkill &&
+            (yield* fileSystem.exists(path.join(directory, ".claude-plugin", "plugin.json")))
+          ) {
+            return yield* refuse(name, "skill-directory plugin");
+          }
+          const deniedPath = isDirectorySkill ? directory : candidate;
+          const canonicalPath = yield* fileSystem.realPath(deniedPath);
+          const canonicalFile = yield* fileSystem.realPath(candidate);
+          for (const absolute of [deniedPath, canonicalPath, canonicalFile]) {
+            const normalized =
+              hostPlatform === "win32"
+                ? absolute
+                    .replaceAll("\\", "/")
+                    .replace(/^([a-zA-Z]):/, (_drive, letter: string) => `/${letter.toLowerCase()}`)
+                : absolute;
+            if (!normalized.startsWith("/") || /[\\*?()[\]{}]/.test(normalized)) {
+              return yield* refuse(name, `unsupported permission path ${absolute}`);
+            }
+            const suffix = isDirectorySkill && absolute !== canonicalFile ? "/**" : "";
+            readRules.add(`Read(/${normalized}${suffix})`);
+          }
+        }
+      }
+      if (!found)
+        return yield* refuse(name, "unknown; no personal or project skill file was found");
+      readRules.add(`Read(.claude/skills/${name}/**)`);
+      readRules.add(`Read(.claude/commands/${name}.md)`);
+    }
+    return { names, readRules: [...readRules] } satisfies ClaudeSkillDenyPolicy;
+  });
+
+  const userInvocableSkills = (cwd: string | null, deniedSkills: ReadonlySet<string>) =>
     discoverClaudeSkills(
       adapterOptions.settings,
       cwd ?? undefined,
@@ -6160,7 +6313,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         (skills) =>
           new Map(
             skills
-              .filter((skill) => skill.enabled && skill.userInvocable !== false)
+              .filter(
+                (skill) =>
+                  skill.enabled && skill.userInvocable !== false && !deniedSkills.has(skill.name),
+              )
               .map((skill) => [skill.name, skill]),
           ),
       ),
@@ -6177,6 +6333,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
     driver: CLAUDE_PROVIDER,
+    supportsSkillDenyList: true,
     getCapabilities: Effect.fn("ClaudeAdapterV2.getCapabilities")(function () {
       return Effect.succeed(ClaudeProviderCapabilitiesV2);
     }),
@@ -6185,6 +6342,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     }),
     openSession: Effect.fn("ClaudeAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
+        const sessionDeniedSkills = input.runtimePolicy.deniedSkills ?? [];
+        yield* resolveSkillDeny(sessionDeniedSkills, input.runtimePolicy.cwd);
+        const deniedSkillsForTurn = (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+          new Set([...sessionDeniedSkills, ...(turnInput.runtimePolicy.deniedSkills ?? [])]);
         const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
         const sessionScope = yield* Effect.scope;
         const now = yield* DateTime.now;
@@ -13454,11 +13615,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
-          const queryPolicyKey = claudeEffectiveQueryPolicyKey(
-            queryPolicy,
-            mcpOverrides,
-            turnInput.runtimePolicy.workspace,
-          );
+          const deniedSkills = [...deniedSkillsForTurn(turnInput)].sort();
+          const skillDeny = yield* resolveSkillDeny(deniedSkills, turnInput.runtimePolicy.cwd);
+          const queryPolicyKey = encodeClaudeJson([
+            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides, turnInput.runtimePolicy.workspace),
+            skillDeny,
+          ]);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
           // Continuations drain existing output without prompting; retain the live process regardless of selection.
@@ -13466,6 +13628,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
             !existing.stopping &&
+            (skillDeny === undefined || existing.queryPolicyKey === queryPolicyKey) &&
             isClaudeProviderContinuationTurn(turnInput)
           ) {
             return existing;
@@ -13642,6 +13805,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { workspace: turnInput.runtimePolicy.workspace }),
             attachmentsDir,
             settings: adapterOptions.settings,
+            ...(skillDeny === undefined ? {} : { skillDeny }),
             // Delegated threads have no one typing, so they never ask for suggestions.
             promptSuggestions:
               !isDelegatedAppThread(turnInput.appThread) && (yield* promptSuggestionsEnabled),
@@ -13689,6 +13853,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   providerSessionId: input.providerSessionId,
                   options: queryOptions,
                   ...(turnInput.resume ? { resume: true } : {}),
+                  ...(skillDeny === undefined ? {} : { deniedSkills: skillDeny.names }),
                   onStartupPhase: reportStartupPhase,
                 })
                 .pipe(
@@ -13979,7 +14144,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               [
                 promptUuid === null
                   ? Effect.undefined
-                  : userInvocableSkills(turnInput.runtimePolicy.cwd),
+                  : userInvocableSkills(
+                      turnInput.runtimePolicy.cwd,
+                      deniedSkillsForTurn(turnInput),
+                    ),
                 queryPolicyForTurn(turnInput),
               ],
               { concurrency: "unbounded" },
@@ -14597,7 +14765,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               attachmentsDir,
               fileSystem,
               pdfReservation,
-              skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
+              skills: yield* userInvocableSkills(
+                currentTurn.input.runtimePolicy.cwd,
+                deniedSkillsForTurn(currentTurn.input),
+              ),
             }).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),

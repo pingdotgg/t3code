@@ -14,6 +14,7 @@ import type {
   SDKMessage,
   SDKResultMessage,
   SDKUserMessage,
+  SlashCommand,
   SpawnedProcess,
   SpawnOptions,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -3291,7 +3292,7 @@ describe("ClaudeAdapterV2 native fork", () => {
   );
 });
 
-function makeFakeClaudeCli(answerSetServers = true) {
+function makeFakeClaudeCli(answerSetServers = true, commands: readonly SlashCommand[] = []) {
   const spawns: Array<SpawnOptions> = [];
   const controlRequests: Array<object> = [];
   const stdins: Array<NodeStream.PassThrough> = [];
@@ -3324,7 +3325,7 @@ function makeFakeClaudeCli(answerSetServers = true) {
         const response = {
           subtype: "success",
           request_id: frame.request_id,
-          response: setServers ? { added: [], removed: [], errors: {} } : {},
+          response: setServers ? { added: [], removed: [], errors: {} } : { commands },
         };
         stdout.write(`${JSON.stringify({ type: "control_response", response })}\n`);
       }
@@ -3348,12 +3349,14 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
   const openWith = (
     cli: ReturnType<typeof makeFakeClaudeCli>,
     native?: ProviderEventLoggers.EventNdjsonLogger,
+    deniedSkills?: readonly string[],
   ) =>
     Effect.gen(function* () {
       const runner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner;
       return yield* runner.open({
         threadId: ThreadId.make("thread-claude-mcp-channel"),
         providerSessionId: ProviderSessionId.make("provider-session-claude-mcp-channel"),
+        ...(deniedSkills === undefined ? {} : { deniedSkills }),
         options: {
           ...ClaudeAdapterV2.makeClaudeQueryOptions({
             modelSelection: CLAUDE_TEST_MODEL_SELECTION,
@@ -3376,6 +3379,18 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
       }),
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
+
+  it.effect("closes the CLI before sending a prompt if it advertises a denied command", () =>
+    Effect.gen(function* () {
+      const cli = makeFakeClaudeCli(true, [
+        { name: "denied-fixture", description: "Fixture", argumentHint: "" },
+      ]);
+      const error = yield* Effect.flip(openWith(cli, undefined, ["denied-fixture"]));
+      assert.equal(error.method, "verifySkillDenials");
+      assert.include(String(error.cause), "/denied-fixture");
+      assert.isTrue(cli.closed());
+    }),
+  );
 
   it.effect("commits queued delivery before interruptible protocol logging", () =>
     Effect.gen(function* () {
@@ -3434,6 +3449,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
     providerTurnOrdinal: number,
     nativeThreadHasTurns?: boolean,
     importedNativeThreadId?: string,
+    skillPolicy?: { readonly deniedSkills: readonly string[]; readonly buildFixture?: boolean },
   ) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -3456,10 +3472,37 @@ describe("ClaudeAdapterV2 native session identity", () => {
             `{"type":"user","message":{"role":"user","content":"hello"},"sessionId":"${importedNativeThreadId}"}\n`,
           );
         }
+        const runtimePolicy =
+          skillPolicy === undefined
+            ? CLAUDE_TEST_RUNTIME_POLICY
+            : {
+                ...CLAUDE_TEST_RUNTIME_POLICY,
+                cwd: attachmentsDir,
+                deniedSkills: skillPolicy.deniedSkills,
+              };
+        if (skillPolicy?.buildFixture === true) {
+          for (const root of [attachmentsDir, path.join(attachmentsDir, ".claude")]) {
+            for (const name of ["allowed-fixture", "denied-fixture"]) {
+              const directory = path.join(root, "skills", name);
+              yield* fileSystem.makeDirectory(directory, { recursive: true });
+              yield* fileSystem.writeFileString(
+                path.join(directory, "SKILL.md"),
+                "Fixture skill body",
+              );
+            }
+          }
+        }
+        const prompts: SDKUserMessage[] = [];
         const openedQueries: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOpenInput> = [];
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-          settings: DEFAULT_CLAUDE_SETTINGS,
+          settings:
+            skillPolicy === undefined
+              ? DEFAULT_CLAUDE_SETTINGS
+              : {
+                  ...DEFAULT_CLAUDE_SETTINGS,
+                  launchArgs: `--settings '{"skillOverrides":{"allowed-fixture":"name-only","denied-fixture":"on"},"env":{"FIXTURE_SETTING":"kept"}}'`,
+                },
           environment: { CLAUDE_CONFIG_DIR: attachmentsDir },
           attachmentsDir,
           fileSystem,
@@ -3473,7 +3516,10 @@ describe("ClaudeAdapterV2 native session identity", () => {
                 openedQueries.push(input);
                 return {
                   messages: Stream.never,
-                  offer: () => Effect.void,
+                  offer: (prompt) =>
+                    Effect.sync(() => {
+                      prompts.push(prompt);
+                    }),
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
@@ -3500,11 +3546,12 @@ describe("ClaudeAdapterV2 native session identity", () => {
         });
         const threadId = ThreadId.make("thread-claude-session-identity");
         const providerSessionId = ProviderSessionId.make("provider-session-claude-identity");
+        assert.isTrue(adapter.supportsSkillDenyList);
         const runtime = yield* adapter.openSession({
           threadId,
           providerSessionId,
           modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          runtimePolicy,
         });
         const now = yield* DateTime.now;
         // Mirrors the provider thread a session import records: a strong native
@@ -3555,13 +3602,17 @@ describe("ClaudeAdapterV2 native session identity", () => {
             providerThread,
             now,
             attemptId: RunAttemptId.make("run-attempt-claude-session-identity"),
-            text: "Respond with identity ok",
+            text:
+              skillPolicy === undefined
+                ? "Respond with identity ok"
+                : "Use $allowed-fixture and $denied-fixture",
             attachments: [],
+            runtimePolicy,
             providerTurnOrdinal,
             ...(nativeThreadHasTurns === undefined ? {} : { nativeThreadHasTurns }),
           }),
         );
-        return openedQueries;
+        return { openedQueries, prompts, attachmentsDir, path };
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -3574,11 +3625,59 @@ describe("ClaudeAdapterV2 native session identity", () => {
       ),
     );
 
+  it.effect.each([
+    { ordinal: 1, scenario: "starting" },
+    { ordinal: 2, scenario: "resuming" },
+  ])("enforces denied skills when $scenario", ({ ordinal }) =>
+    Effect.gen(function* () {
+      const { openedQueries, prompts, attachmentsDir, path } = yield* openTurnWithOrdinal(
+        ordinal,
+        undefined,
+        undefined,
+        { deniedSkills: ["denied-fixture"], buildFixture: true },
+      );
+      const options = openedQueries[0]?.options;
+      assert.exists(options);
+      assert.equal(options?.resume !== undefined, ordinal === 2);
+      assert.deepInclude(options?.settings, {
+        skillOverrides: { "allowed-fixture": "name-only", "denied-fixture": "off" },
+        env: { FIXTURE_SETTING: "kept" },
+      });
+      assert.includeMembers(options?.disallowedTools ?? [], [
+        "Skill(denied-fixture)",
+        `Read(/${path.join(attachmentsDir, "skills", "denied-fixture")}/**)`,
+        `Read(/${path.join(attachmentsDir, ".claude", "skills", "denied-fixture")}/**)`,
+      ]);
+      const prompt = JSON.stringify(prompts[0]?.message.content);
+      assert.include(prompt, "/allowed-fixture");
+      assert.notInclude(prompt, "/denied-fixture");
+    }),
+  );
+
+  it.effect.each([
+    { name: "unknown-fixture", source: "unknown" },
+    { name: "fixture-plugin:skill", source: "plugin" },
+    { name: "mcp__fixture__skill", source: "MCP" },
+  ])("refuses a denied skill from $source", ({ name, source }) =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        openTurnWithOrdinal(1, undefined, undefined, {
+          deniedSkills: [name],
+        }),
+      );
+      assert.equal(error._tag, "ProviderAdapterOpenSessionError");
+      if (error._tag === "ProviderAdapterOpenSessionError") {
+        assert.include(String(error.cause), name);
+        assert.include(String(error.cause), source);
+      }
+    }),
+  );
+
   it.effect(
     "resumes the native session on a fresh session instance when prior provider turns exist",
     () =>
       Effect.gen(function* () {
-        const openedQueries = yield* openTurnWithOrdinal(2);
+        const { openedQueries } = yield* openTurnWithOrdinal(2);
         assert.equal(openedQueries.length, 1);
         assert.equal(openedQueries[0]?.options.resume, "native-session-identity");
         assert.equal(openedQueries[0]?.options.sessionId, undefined);
@@ -3588,7 +3687,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
 
   it.effect("creates a fresh native session despite earlier provider-thread turns", () =>
     Effect.gen(function* () {
-      const openedQueries = yield* openTurnWithOrdinal(4, false);
+      const { openedQueries } = yield* openTurnWithOrdinal(4, false);
       assert.equal(openedQueries[0]?.options.sessionId, "native-session-identity");
       assert.equal(openedQueries[0]?.options.resume, undefined);
       assert.equal(openedQueries[0]?.options.title, "Claude attachment test");
@@ -3597,7 +3696,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
 
   it.effect("resumes an imported native session on its first T3 turn", () =>
     Effect.gen(function* () {
-      const openedQueries = yield* openTurnWithOrdinal(1, false, "imported-native-session");
+      const { openedQueries } = yield* openTurnWithOrdinal(1, false, "imported-native-session");
       assert.equal(openedQueries.length, 1);
       assert.equal(openedQueries[0]?.options.resume, "imported-native-session");
       assert.equal(openedQueries[0]?.options.sessionId, undefined);
