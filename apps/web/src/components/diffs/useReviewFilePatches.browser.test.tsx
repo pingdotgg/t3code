@@ -5,6 +5,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
+import { useLayoutEffect, useRef, useState } from "react";
 import { act, render } from "../../../test/render";
 
 type PatchAtom = Atom.Writable<AsyncResult.AsyncResult<ReviewDiffPreviewSource, Error>>;
@@ -27,6 +28,7 @@ vi.mock("~/state/review", () => ({
   },
 }));
 
+import { useCodeViewScrollRestore } from "./useCodeViewScrollRestore";
 import { useReviewFilePatches } from "./useReviewFilePatches";
 
 function source(paths: string[], hash: string): ReviewDiffPreviewSource {
@@ -150,4 +152,100 @@ it("preserves deletion and addition patches for a file replaced by a symlink", a
   await expect.element(screen.getByText("deleted", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("new", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("Pending files: 0")).toBeVisible();
+});
+
+const FILE_HEIGHT = 100;
+
+function RestoringViewer({
+  source,
+  onViewer,
+}: {
+  source: ReviewDiffPreviewSource;
+  onViewer: (view: { onScroll: (top: number) => void }) => void;
+}) {
+  const files = useReviewFilePatches({
+    environmentId: EnvironmentId.make("environment"),
+    cwd: "/project",
+    source,
+    baseRef: "HEAD",
+    ignoreWhitespace: false,
+    theme: "dark",
+    previewInput: { cwd: "/project", metadataOnly: true },
+    preview: null,
+  });
+  const loaded = files.renderableFiles.length - files.remainingFileCount;
+  const loadedRef = useRef(0);
+  const [viewer] = useState(() => ({
+    getHeight: () => 500,
+    getScrollHeight: () => loadedRef.current * FILE_HEIGHT,
+  }));
+  const restore = useCodeViewScrollRestore(
+    "big-diff",
+    !files.isPending && files.remainingFileCount === 0,
+    files.remainingFileCount > 0 ? files.loadNextFiles : null,
+  );
+  // Stands in for the code view's ref callback.
+  useLayoutEffect(() => {
+    restore.attach({ getInstance: () => viewer, scrollTo: () => {} });
+    onViewer({ onScroll: (top) => restore.onScroll(top, viewer) });
+  }, [restore, viewer, onViewer]);
+  // Stands in for onPostRender, which the code view calls in the commit that renders a batch.
+  useLayoutEffect(() => {
+    loadedRef.current = loaded;
+    restore.flush();
+  });
+  return <output>Loaded files: {loaded}</output>;
+}
+
+it("restores a deep scroll position in a large cached diff without an update loop", async () => {
+  state.patches.clear();
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  const paths = Array.from(
+    { length: 227 },
+    (_, index) => `file-${String(index).padStart(3, "0")}.txt`,
+  );
+  const metadata = source(paths, "large");
+  const cacheKey = JSON.stringify([
+    "environment",
+    "/project",
+    "working-tree",
+    "HEAD",
+    null,
+    "HEAD",
+    false,
+  ]);
+  for (const path of paths) {
+    state.patches.set(
+      JSON.stringify([cacheKey, path]),
+      Atom.make<AsyncResult.AsyncResult<ReviewDiffPreviewSource, Error>>(
+        AsyncResult.success({
+          ...metadata,
+          diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`,
+          files: metadata.files!.filter((file) => file.path === path),
+        }),
+      ).pipe(Atom.keepAlive),
+    );
+  }
+  let view: { onScroll: (top: number) => void } | undefined;
+  const onViewer = (next: { onScroll: (top: number) => void }) => {
+    view = next;
+  };
+  const errors: unknown[] = [];
+  const onError = (event: ErrorEvent) => errors.push(event.error);
+  window.addEventListener("error", onError);
+  using _listener = { [Symbol.dispose]: () => window.removeEventListener("error", onError) };
+  const tree = (mount: number) => (
+    <RegistryContext.Provider value={registry}>
+      <RestoringViewer key={mount} source={metadata} onViewer={onViewer} />
+    </RegistryContext.Provider>
+  );
+  await using screen = await render(tree(1));
+  await expect.element(screen.getByText("Loaded files: 4")).toBeVisible();
+  // Scrolled near the bottom of the diff, then the thread was left and shown again.
+  view!.onScroll(220 * FILE_HEIGHT);
+  await screen.rerender(tree(2));
+
+  await expect.element(screen.getByText(/Loaded files: (22[2-7])/)).toBeVisible();
+  expect(errors).toEqual([]);
 });
