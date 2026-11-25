@@ -96,7 +96,12 @@ export class Workflows extends Context.Service<
     readonly signal: (
       address: WorkflowStore.SignalAddress,
       value: Schema.Json,
-      options: { readonly id: string; readonly ttl?: Duration.Input },
+      options: {
+        readonly id: string;
+        readonly ttl?: Duration.Input;
+        /** Who sent it, kept with an answer to a question. */
+        readonly answeredBy?: string | undefined;
+      },
     ) => Effect.Effect<"delivered" | "buffered", WorkflowInputError>;
     /**
      * Answer the question a run asks a person. One answer per time it is asked: a second, a

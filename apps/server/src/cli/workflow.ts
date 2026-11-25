@@ -257,7 +257,8 @@ const signalCommand = Command.make("signal", {
         });
       }
       yield* withThreadTools(
-        { ...flags, json: false },
+        // Named on the answer to a question it sends.
+        { ...flags, json: false, clientLabel: "t3 workflow signal" },
         Effect.fn("cli.workflow.signal")(function* (tools) {
           const { delivery } = yield* tools.call(
             "t3_workflow",

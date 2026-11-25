@@ -50,7 +50,7 @@ import {
 import { issueReference, noteFor, stepReferences } from "./runReferences.ts";
 import { forStep, KeyValues, layerKeyValues, EngineLink, layerEngineLink } from "./stepServices.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
-import { settleTurn, TurnEnd, TurnWatch } from "./workflowAgent.ts";
+import { answerProblem, settleTurn, TurnEnd, TurnWatch } from "./workflowAgent.ts";
 import {
   type Issue,
   isSettled,
@@ -932,6 +932,31 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }),
   );
 
+  /**
+   * A signal to a question, as its wait receives it: with who sent it and when, which the sender
+   * does not get to say. Undefined for a wait that is not a question, or one asked before answers
+   * kept that, whose closed schema would refuse them.
+   */
+  const answerOf = Effect.fn("WorkflowEngine.answerOf")(function* (
+    wait: { readonly request_json: string | null; readonly schema_json: string },
+    value: Schema.Json,
+    answeredBy: string | undefined,
+  ) {
+    if (wait.request_json === null || typeof value !== "object" || value === null) return undefined;
+    if (Array.isArray(value)) return undefined;
+    const problem = answerProblem(WorkflowStore.jsonValue(wait.request_json), value);
+    if (problem !== undefined) return yield* new WorkflowInputError({ problem });
+    if (!wait.schema_json.includes('"answeredAt"')) return undefined;
+    const { answeredBy: _by, answeredAt: _at, ...given } = value as Schema.JsonObject;
+    return {
+      expired: false,
+      value: {
+        ...given,
+        ...(answeredBy === undefined ? {} : { answeredBy }),
+        answeredAt: DateTime.formatIso(yield* DateTime.now),
+      },
+    };
+  });
   const signal: Workflows["Service"]["signal"] = Effect.fn("Workflows.signal")(
     function* (address, value, options) {
       // A sender's retry of a signal that already woke a wait is not a second signal.
@@ -942,15 +967,19 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       while (true) {
         const wait = yield* store.waitAt(address);
         if (wait === undefined) break;
+        const answered = yield* answerOf(wait, value, options.answeredBy);
         const schema = WorkflowStore.jsonValue(wait.schema_json) as Record<string, Schema.Json>;
-        const checked = yield* checkOutput(schema, valueJson);
+        const checked = yield* checkOutput(
+          schema,
+          answered === undefined ? valueJson : WorkflowStore.jsonText(answered.value),
+        );
         if (Result.isFailure(checked)) {
           return yield* new WorkflowInputError({
             problem: `The value does not fit what ${wait.name} waits for. ${rejectionText(checked.failure)}`,
           });
         }
-        if (yield* store.waitSignalled(wait.run_id, wait.name, woke, options.id)) {
-          yield* wake(wait, woke);
+        if (yield* store.waitSignalled(wait.run_id, wait.name, answered ?? woke, options.id)) {
+          yield* wake(wait, answered ?? woke);
           return "delivered" as const;
         }
         // Refused for its id: the same signal, sent again at once, woke a wait.

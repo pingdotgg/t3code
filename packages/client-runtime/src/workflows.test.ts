@@ -559,11 +559,42 @@ describe("readWorkflowQuestion", () => {
       readWorkflowQuestion(
         question("r", { title: "Ship it?", choices: ["yes", 2], data: { body: "Diff is small." } }),
       ),
-    ).toEqual({ title: "Ship it?", choices: ["yes"], body: "Diff is small." });
+    ).toEqual({
+      title: "Ship it?",
+      choices: [{ value: "yes", description: null, requireReason: false }],
+      body: "Diff is small.",
+      links: [],
+    });
     expect(readWorkflowQuestion(question("r", null))).toEqual({
       title: "approve",
       choices: [],
       body: null,
+      links: [],
+    });
+  });
+
+  it("reads what each choice does, which need a reason, and the links that open on the web", () => {
+    expect(
+      readWorkflowQuestion(
+        question("r", {
+          title: "Build this?",
+          choices: ["Yes", "No"],
+          choiceDetails: [{ value: "No", description: "It is closed", requireReason: true }],
+          links: [
+            { label: "The request", url: "https://example.com/1" },
+            { label: "Script", url: "javascript:alert(1)" },
+            { label: " ", url: "https://example.com/2" },
+          ],
+        }),
+      ),
+    ).toEqual({
+      title: "Build this?",
+      choices: [
+        { value: "Yes", description: null, requireReason: false },
+        { value: "No", description: "It is closed", requireReason: true },
+      ],
+      body: null,
+      links: [{ label: "The request", url: "https://example.com/1" }],
     });
   });
 });
@@ -573,10 +604,21 @@ describe("workflowAnswer", () => {
     expect(workflowAnswer({ choice: "Ship", reason: " " })).toEqual({
       choice: "Ship",
       reason: null,
+      answeredBy: null,
+      answeredAt: null,
     });
-    expect(workflowAnswer({ choice: "Hold", reason: "Too risky" })).toEqual({
+    expect(
+      workflowAnswer({
+        choice: "Hold",
+        reason: "Too risky",
+        answeredBy: "t3 workflow signal",
+        answeredAt: "2026-11-24T10:00:00.000Z",
+      }),
+    ).toEqual({
       choice: "Hold",
       reason: "Too risky",
+      answeredBy: "t3 workflow signal",
+      answeredAt: "2026-11-24T10:00:00.000Z",
     });
     expect(workflowAnswer("done")).toBeNull();
     expect(workflowAnswer(null)).toBeNull();

@@ -243,6 +243,52 @@ describe("WorkflowRunsView", () => {
     );
   });
 
+  it("shows what choices do and the links, and sends a choice that needs a reason only with one", async () => {
+    setup(
+      {
+        runs: [run({ runId: "ship", title: "Release 1.2", status: "waiting", detail: "approve" })],
+        questions: [
+          {
+            ...question,
+            request: {
+              title: "Ship release 1.2?",
+              choices: ["Ship", "Hold"],
+              choiceDetails: [
+                { value: "Hold", description: "It waits a week", requireReason: true },
+              ],
+              links: [{ label: "The diff", url: "https://example.com/diff" }],
+            },
+          },
+        ],
+      },
+      { ship: [step({ name: "approve", kind: "ask", status: "running", endedAt: null })] },
+    );
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    await expect.element(screen.getByText("It waits a week")).toBeVisible();
+    await expect
+      .element(screen.getByRole("link", { name: "The diff" }))
+      .toHaveAttribute("href", "https://example.com/diff");
+    await screen.getByRole("button", { name: "Hold", exact: true }).click();
+    await expect.element(screen.getByText("Hold needs a reason.")).toBeVisible();
+    expect(state.commands).toEqual([]);
+
+    await userEvent.fill(
+      screen.getByRole("textbox", { name: "Reason for Ship release 1.2?" }),
+      "Not this week",
+    );
+    await screen.getByRole("button", { name: "Hold", exact: true }).click();
+    await vi.waitFor(() =>
+      expect(state.commands).toEqual([
+        [
+          "workflow answer",
+          { runId: "ship", name: "approve", choice: "Hold", reason: "Not this week" },
+        ],
+      ]),
+    );
+  });
+
   it("answers a question whose steps did not load, and says a linked run is not here", async () => {
     setup({
       runs: [run({ runId: "ship", title: "Release 1.2", status: "waiting", detail: "approve" })],

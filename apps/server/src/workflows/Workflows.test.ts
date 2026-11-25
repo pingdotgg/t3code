@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { ProjectId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -604,6 +605,23 @@ const sorted = [
         "sort",
         payload.kind === undefined ? question : { ...question, kind: payload.kind },
       );
+    }),
+  ),
+  /** Asks with choices that say what they do, one of them only with a reason, and a link. */
+  workflow(
+    "described",
+    { version: 1, payload: Schema.Struct({}), returns: Schema.Json },
+    Effect.fn(function* () {
+      const answer = yield* ask("wanted", {
+        title: "Build this?",
+        links: [{ label: "The request", url: "https://example.com/issues/1" }],
+        choices: [
+          "Later",
+          { value: "Yes", description: "Work starts on it" },
+          { value: "No", requireReason: true },
+        ],
+      });
+      return Option.getOrNull(answer);
     }),
   ),
   /** Finds runs by their tag, or by the kind of question they have open. */
@@ -1299,6 +1317,7 @@ it.effect(
             .pipe(Effect.flip);
           assert.include(refused.message, "merge waits for");
           // Clicked twice: one answer, and nothing kept to answer it again.
+          const answeredAt = yield* DateTime.now;
           yield* Effect.all(
             [
               workflows.answer(runId, "merge", { choice: "Merge" }),
@@ -1322,7 +1341,7 @@ it.effect(
             steps.map((step) => [step.name, step.result]),
             [
               ["write", { branch: "fix/1" }],
-              ["merge", { choice: "Merge" }],
+              ["merge", { choice: "Merge", answeredAt: DateTime.formatIso(answeredAt) }],
               ["land", "merged as abc123"],
             ],
           );
@@ -2350,6 +2369,59 @@ it.effect("questions carry their kind and runs their tags, and both can be filte
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "a question shows what its choices do and its links, wants a reason where asked, and keeps who answered",
+  () =>
+    Effect.gen(function* () {
+      const { boot } = yield* harness();
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const { runId } = yield* workflows.start("described", {}, { idempotencyKey: "d" });
+          yield* workflows.waitFor(runId, status("waiting"));
+          const [question] = yield* workflows.questions;
+          assert.deepStrictEqual(question?.request, {
+            title: "Build this?",
+            choices: ["Later", "Yes", "No"],
+            choiceDetails: [
+              { value: "Yes", description: "Work starts on it" },
+              { value: "No", requireReason: true },
+            ],
+            links: [{ label: "The request", url: "https://example.com/issues/1" }],
+          });
+          for (const reason of [undefined, "  "]) {
+            const refused = yield* workflows
+              .answer(runId, "wanted", {
+                choice: "No",
+                ...(reason === undefined ? {} : { reason }),
+              })
+              .pipe(Effect.flip);
+            assert.include(refused.message, '"No" needs a reason');
+          }
+          // Who answered is the server's to say, not the sender's.
+          const answeredAt = yield* DateTime.now;
+          yield* workflows.signal(
+            { runId, wait: "wanted" },
+            {
+              choice: "No",
+              reason: "Out of scope",
+              answeredBy: "someone else",
+              answeredAt: "never",
+            },
+            { id: "d0", answeredBy: "t3 workflow signal" },
+          );
+          const done = yield* workflows.waitFor(runId, status("completed"));
+          assert.deepStrictEqual(done.result, {
+            choice: "No",
+            reason: "Out of scope",
+            answeredBy: "t3 workflow signal",
+            answeredAt: DateTime.formatIso(answeredAt),
+          });
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect("a workflow can take an agent's failure as an answer and go on", () =>
