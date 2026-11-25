@@ -6,6 +6,22 @@ import {
   type BinaryWorkerResult,
 } from "./binaryPreviewProtocol";
 
+async function startWorker() {
+  const worker = new EventTarget();
+  let receive = (_result: BinaryWorkerResult) => {};
+  vi.stubGlobal(
+    "self",
+    Object.assign(worker, { postMessage: (result: BinaryWorkerResult) => receive(result) }),
+  );
+  vi.resetModules();
+  await import("./binaryPreview.worker");
+  return (input: BinaryWorkerRequest) =>
+    new Promise<BinaryWorkerResult>((resolve) => {
+      receive = resolve;
+      worker.dispatchEvent(new MessageEvent("message", { data: input }));
+    });
+}
+
 it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1])(
   "only copies previewable TAR payloads with a %i-byte entry",
   async (size) => {
@@ -47,20 +63,8 @@ it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1])(
       offset += 512 + Math.ceil(entry.bytes.length / 512) * 512;
     }
 
-    const worker = new EventTarget();
-    let receive = (_result: BinaryWorkerResult) => {};
-    vi.stubGlobal(
-      "self",
-      Object.assign(worker, { postMessage: (result: BinaryWorkerResult) => receive(result) }),
-    );
     try {
-      vi.resetModules();
-      await import("./binaryPreview.worker");
-      const request = (input: BinaryWorkerRequest) =>
-        new Promise<BinaryWorkerResult>((resolve) => {
-          receive = resolve;
-          worker.dispatchEvent(new MessageEvent("message", { data: input }));
-        });
+      const request = await startWorker();
       using copies = vi.spyOn(Uint8Array.prototype, "slice");
       expect(
         await request({ type: "open", kind: "archive", name: "mixed.tar", bytes: bytes.buffer }),
@@ -104,3 +108,28 @@ it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1])(
     }
   },
 );
+
+it("formats singular and plural byte labels for SQLite BLOB cells", async () => {
+  const { default: initSqlJs } = await import("sql.js");
+  const SQL = await initSqlJs();
+  const db = new SQL.Database();
+  db.run(
+    "CREATE TABLE blobs(empty BLOB, one BLOB, four BLOB); INSERT INTO blobs VALUES (X'', X'FF', X'DEADBEEF');",
+  );
+  const bytes = db.export().slice().buffer;
+  db.close();
+
+  try {
+    const request = await startWorker();
+    await request({ type: "open", kind: "sqlite", name: "blobs.sqlite", bytes });
+    expect(await request({ type: "rows", table: "blobs", page: 0 })).toEqual({
+      type: "rows",
+      table: "blobs",
+      page: 0,
+      columns: ["empty", "one", "four"],
+      rows: [["[blob: 0 bytes]", "[blob: 1 byte]", "[blob: 4 bytes]"]],
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
