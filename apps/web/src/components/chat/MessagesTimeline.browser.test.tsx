@@ -643,13 +643,11 @@ describe("MessagesTimeline messages", () => {
     screen.container.style.width = "900px";
     const viewport = props.listRef.current!.getScrollableNode()!;
     const target = page.getByText(paragraphs[15]!.trim(), { exact: true }).element();
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
     await vi.waitFor(() => {
       expect(viewport.scrollHeight).toBeGreaterThan(1000);
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
     });
+    using caret = vi.spyOn(document, "caretPositionFromPoint");
     await props.listRef.current!.scrollToOffset({
       offset:
         viewport.scrollTop +
@@ -658,7 +656,11 @@ describe("MessagesTimeline messages", () => {
         24,
       animated: false,
     });
-    viewport.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => {
+      caret.mockClear();
+      viewport.dispatchEvent(new Event("scroll"));
+      expect(caret).toHaveReturnedWith(expect.objectContaining({ offsetNode: target.firstChild }));
+    });
     const before = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
     expect(Math.abs(before - 24)).toBeLessThan(2);
     for (const width of [500, 900]) {
