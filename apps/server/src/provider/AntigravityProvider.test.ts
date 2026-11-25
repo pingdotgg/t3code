@@ -7,6 +7,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
+  type RuntimeMode,
   type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -31,6 +32,7 @@ import {
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,
 } from "./AntigravityProvider.ts";
+import { mergeProviderSnapshot } from "./ProviderRegistry.ts";
 
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const instanceId = ProviderInstanceId.make("antigravity-test");
@@ -138,8 +140,10 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     readonly enabled?: boolean;
     readonly safe?: boolean;
     readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
+    readonly rememberedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   } = {},
 ) {
+  const savedRuntimeModes = yield* Ref.make<ReadonlyArray<ReadonlyArray<RuntimeMode>>>([]);
   const initialProbe = yield* Deferred.make<EffectAcpSchema.InitializeResponse, ProbeError>();
   const probeCalls = yield* Ref.make(0);
   const safetyCalls = yield* Ref.make(0);
@@ -153,6 +157,10 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
       stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
       ...(options.auth ? { auth: options.auth } : {}),
       ...(options.probeUsage ? { probeUsage: options.probeUsage } : {}),
+      ...(options.rememberedRuntimeModes
+        ? { rememberedRuntimeModes: options.rememberedRuntimeModes }
+        : {}),
+      rememberRuntimeModes: (modes) => Ref.update(savedRuntimeModes, (saved) => [...saved, modes]),
       probe: Ref.update(probeCalls, (count) => count + 1).pipe(
         Effect.andThen(Ref.get(probe)),
         Effect.flatten,
@@ -187,6 +195,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     initialUpdate,
     initialize,
     nextPublish,
+    savedRuntimeModes,
   };
 });
 
@@ -247,7 +256,7 @@ describe("Antigravity model catalog", () => {
     ]);
   });
 
-  it("offers each model the thinking levels it reported when selected", () => {
+  it("offers each model only the thinking levels it reported when selected", () => {
     const thinking = (currentValue: string) =>
       ({
         id: "thinking_level",
@@ -287,8 +296,70 @@ describe("Antigravity model catalog", () => {
     expect(thinkingOf("gemini")).toMatchObject({ id: "thinking_level", currentValue: "high" });
     expect(thinkingOf("claude")).toMatchObject({ id: "thinking_level", currentValue: "low" });
     expect(thinkingOf("plain")).toBeUndefined();
-    expect(thinkingOf("unseen")).toMatchObject({ id: "thinking_level" });
-    expect(thinkingOf("unseen")).not.toHaveProperty("currentValue");
+    expect(thinkingOf("unseen")).toBeUndefined();
+  });
+
+  it("keeps each model's probed thinking levels after a restart observes only the active model", () => {
+    const thinking = (levels: ReadonlyArray<string>) =>
+      ({
+        id: "thinking_level",
+        name: "Thinking Level",
+        category: "thought_level",
+        type: "select",
+        currentValue: "low",
+        options: levels.map((value) => ({ value, name: value })),
+      }) satisfies EffectAcpSchema.SessionConfigOption;
+    const deep = thinking(["low", "medium", "high", "xhigh"]);
+    const models = {
+      ...modelConfig,
+      currentValue: "neon",
+      options: [
+        { value: "neon", name: "Neon" },
+        { value: "carbon", name: "Carbon" },
+        { value: "fixed", name: "Fixed effort" },
+      ],
+    } satisfies EffectAcpSchema.SessionConfigOption;
+    const setup = { configOptions: [models, deep] };
+    const provider = {
+      instanceId,
+      driver,
+      status: "ready",
+      enabled: true,
+      installed: true,
+      version: null,
+      auth: { status: "authenticated" },
+      checkedAt: "2026-11-23T00:00:00.000Z",
+      slashCommands: [],
+      skills: [],
+    } as const;
+    // Sign-in or Refresh models walks every model, so each reports its own levels.
+    const probed = {
+      ...provider,
+      models: buildAntigravityModelsFromSession(
+        setup,
+        new Map([
+          ["carbon", thinking(["low", "medium", "high"])],
+          ["fixed", null],
+        ]),
+      ),
+    } satisfies ServerProvider;
+    // After a restart the provider has observed only the session's model.
+    const restarted = {
+      ...provider,
+      checkedAt: "2026-11-23T01:00:00.000Z",
+      models: buildAntigravityModelsFromSession(setup, new Map([["neon", deep]])),
+    } satisfies ServerProvider;
+
+    const merged = mergeProviderSnapshot(probed, restarted);
+    const levelsOf = (slug: string) => {
+      const descriptor = merged.models.find((model) => model.slug === slug)?.capabilities
+        ?.optionDescriptors?.[0];
+      return descriptor?.type === "select" ? descriptor.options.map((option) => option.id) : [];
+    };
+
+    expect(levelsOf("neon")).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(levelsOf("carbon")).toEqual(["low", "medium", "high"]);
+    expect(levelsOf("fixed")).toEqual([]);
   });
 });
 
@@ -381,6 +452,25 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       yield* harness.provider.onSessionStarted(startedWithAuto);
       yield* harness.provider.onSignedOut;
       expect(yield* supportedModes).toEqual(withoutAuto);
+      const withAuto: ReadonlyArray<RuntimeMode> = [
+        "approval-required",
+        "auto-accept-edits",
+        "auto",
+        "full-access",
+      ];
+      expect(yield* Ref.get(harness.savedRuntimeModes)).toEqual([
+        withAuto,
+        withoutAuto,
+        withAuto,
+        withoutAuto,
+      ]);
+
+      // A restart offers what the last session advertised before any session starts.
+      const restarted = yield* makeHarness({ rememberedRuntimeModes: withAuto });
+      yield* restarted.initialize;
+      expect(yield* restarted.provider.snapshot.getSnapshot).toMatchObject({
+        supportedRuntimeModes: withAuto,
+      });
     }),
   );
 
@@ -497,6 +587,175 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       yield* harness.provider.onConfigOptionsUpdated([]);
       expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual([]);
     }),
+  );
+
+  it.effect(
+    "does not let live session thinking-level or model changes overwrite catalog defaults",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        const thinking = (
+          currentValue: string,
+          levels: ReadonlyArray<string> = ["low", "medium", "high", "xhigh"],
+        ) =>
+          ({
+            id: "thought_level",
+            name: "Thinking Level",
+            category: "thought_level",
+            type: "select",
+            currentValue,
+            options: levels.map((value) => ({ value, name: value })),
+          }) satisfies EffectAcpSchema.SessionConfigOption;
+        const catalogModels = {
+          ...modelConfig,
+          currentValue: "neon",
+          options: [
+            { value: "neon", name: "Neon" },
+            { value: "carbon", name: "Carbon" },
+          ],
+        } satisfies EffectAcpSchema.SessionConfigOption;
+        yield* harness.provider.onSessionStarted(
+          {
+            ...started,
+            sessionSetupResult: {
+              sessionId: "session-fresh",
+              configOptions: [catalogModels, thinking("high")],
+            },
+          },
+          "/workspace",
+        );
+
+        // A live chat session setting thought_level=xhigh must not pollute the catalog default.
+        yield* harness.provider.onConfigOptionsUpdated([catalogModels, thinking("xhigh")]);
+        // A live chat session switching to another model with a custom level must neither move
+        // isDefault nor overwrite cached thinking defaults for that model.
+        const switchedToCarbon = {
+          ...catalogModels,
+          currentValue: "carbon",
+        } satisfies EffectAcpSchema.SessionConfigOption;
+        yield* harness.provider.onConfigOptionsUpdated([
+          switchedToCarbon,
+          thinking("low", ["low", "medium", "high"]),
+        ]);
+
+        const snapshot = yield* harness.provider.snapshot.getSnapshot;
+        const neon = snapshot.models.find((model) => model.slug === "neon");
+        const carbon = snapshot.models.find((model) => model.slug === "carbon");
+        expect(neon?.isDefault).toBe(true);
+        expect(neon?.aliases).toContain(ANTIGRAVITY_DEFAULT_MODEL);
+        expect(neon?.capabilities?.optionDescriptors?.[0]).toMatchObject({
+          id: "thought_level",
+          currentValue: "high",
+        });
+        expect(carbon?.isDefault).toBeUndefined();
+        expect(carbon?.capabilities?.optionDescriptors).toEqual([]);
+
+        // Updating an observed model's choices keeps its recorded default while still offered,
+        // and falls back if the agent removes that default.
+        yield* harness.provider.onConfigOptionsUpdated([
+          catalogModels,
+          thinking("max", ["low", "medium", "high", "xhigh", "max"]),
+        ]);
+        const expanded = (yield* harness.provider.snapshot.getSnapshot).models.find(
+          (model) => model.slug === "neon",
+        )?.capabilities?.optionDescriptors?.[0];
+        expect(expanded).toMatchObject({
+          id: "thought_level",
+          currentValue: "high",
+          options: [
+            { id: "low" },
+            { id: "medium" },
+            { id: "high" },
+            { id: "xhigh" },
+            { id: "max" },
+          ],
+        });
+
+        yield* harness.provider.onConfigOptionsUpdated([
+          catalogModels,
+          thinking("medium", ["low", "medium"]),
+        ]);
+        const narrowed = (yield* harness.provider.snapshot.getSnapshot).models.find(
+          (model) => model.slug === "neon",
+        )?.capabilities?.optionDescriptors?.[0];
+        expect(narrowed).toMatchObject({
+          id: "thought_level",
+          currentValue: "medium",
+          options: [{ id: "low" }, { id: "medium" }],
+        });
+
+        // A catalog probe records each model's default level and keeps the default model intact.
+        yield* harness.provider.onConfigOptionsUpdated(
+          [switchedToCarbon, thinking("medium", ["low", "medium", "high"])],
+          { fromCatalogProbe: true },
+        );
+        const probed = yield* harness.provider.snapshot.getSnapshot;
+        expect(probed.models.find((model) => model.slug === "neon")?.isDefault).toBe(true);
+        expect(
+          probed.models.find((model) => model.slug === "carbon")?.capabilities
+            ?.optionDescriptors?.[0],
+        ).toMatchObject({ id: "thought_level", currentValue: "medium" });
+
+        // After a restart, resuming a session on another model at xhigh leaves unobserved
+        // models and default identity unset so the registry retains the cached defaults.
+        const restarted = yield* makeHarness();
+        yield* restarted.initialize;
+        yield* restarted.provider.onSessionStarted(
+          {
+            ...started,
+            sessionSetupResult: {
+              sessionId: "session-resumed",
+              configOptions: [switchedToCarbon, thinking("xhigh")],
+            },
+          },
+          "/workspace",
+          { resumed: true },
+        );
+        const merged = mergeProviderSnapshot(
+          probed,
+          yield* restarted.provider.snapshot.getSnapshot,
+        );
+        const mergedNeon = merged.models.find((model) => model.slug === "neon");
+        const mergedCarbon = merged.models.find((model) => model.slug === "carbon");
+        expect(mergedNeon?.isDefault).toBe(true);
+        expect(mergedNeon?.aliases).toContain(ANTIGRAVITY_DEFAULT_MODEL);
+        expect(mergedNeon?.capabilities?.optionDescriptors?.[0]).toMatchObject({
+          id: "thought_level",
+          currentValue: "medium",
+        });
+        expect(mergedCarbon?.isDefault).toBeUndefined();
+        expect(mergedCarbon?.aliases).toBeUndefined();
+        expect(mergedCarbon?.capabilities?.optionDescriptors?.[0]).toMatchObject({
+          id: "thought_level",
+          currentValue: "medium",
+        });
+
+        // A later authoritative session start replaces the cached default model.
+        yield* restarted.provider.onSessionStarted(
+          {
+            ...started,
+            sessionSetupResult: {
+              sessionId: "session-fresh-after-restart",
+              configOptions: [switchedToCarbon, thinking("low", ["low", "medium", "high"])],
+            },
+          },
+          "/workspace",
+        );
+        const updatedAfterFresh = mergeProviderSnapshot(
+          merged,
+          yield* restarted.provider.snapshot.getSnapshot,
+        );
+        expect(updatedAfterFresh.models.find((model) => model.slug === "neon")?.isDefault).toBe(
+          undefined,
+        );
+        expect(updatedAfterFresh.models.find((model) => model.slug === "carbon")?.isDefault).toBe(
+          true,
+        );
+        expect(
+          updatedAfterFresh.models.find((model) => model.slug === "carbon")?.aliases,
+        ).toContain(ANTIGRAVITY_DEFAULT_MODEL);
+      }),
   );
 
   it.effect("does not guess a version before a custom launcher's first handshake", () =>

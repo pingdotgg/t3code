@@ -46,6 +46,7 @@ github:jamesx0416
 github:jappyjan
 github:jasonLaster
 github:JoeEverest
+github:jschachter
 github:justsomelegs
 github:kridaydave
 github:lgwacker

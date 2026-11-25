@@ -110,6 +110,7 @@ export function projectWorkspaceMatchesSnapshot(
 }
 
 const BACKFILL_ATTEMPTS = 5;
+const BACKFILL_THREADS = 64;
 const REPOSITORY_LOOKUP_CONCURRENCY = 4;
 
 interface RefreshRequest {
@@ -237,13 +238,23 @@ export const make = Effect.gen(function* () {
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     if (request.backfill) {
-      for (const thread of snapshotThreads) {
-        if (
+      // Nothing records a lookup that found no pull request, so every start repeats this.
+      // Only the most recently updated threads are read; older ones wait for their own events.
+      const candidates = snapshotThreads.filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          thread.branch !== null &&
           (thread.settledOverride === "settled" || thread.settledAt !== null) &&
-          thread.branchPullRequest == null
-        ) {
-          pendingBackfill.set(thread.id, BACKFILL_ATTEMPTS);
-        }
+          thread.branchPullRequest == null,
+      );
+      const recent = candidates
+        .toSorted(
+          (left, right) =>
+            DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+        )
+        .slice(0, BACKFILL_THREADS);
+      for (const thread of recent) {
+        pendingBackfill.set(thread.id, BACKFILL_ATTEMPTS);
       }
     }
     const visibleThreadIds = new Set(
@@ -261,8 +272,28 @@ export const make = Effect.gen(function* () {
           pendingBackfill.has(thread.id)) &&
         (thread.branch !== null || thread.branchPullRequest != null),
     );
+    // Threads whose worktree is gone fall back to the project root, so they share its lookup.
+    // A worktree folder can outlive its .git, and git there fails with not_a_repository.
+    // An unreadable .git keeps the worktree rather than failing the whole group.
+    const lookupCwds = new Map<ThreadId, string | null>();
+    yield* Effect.forEach(
+      threads,
+      (thread) =>
+        Effect.gen(function* () {
+          const project = projects.get(thread.projectId);
+          const cwd =
+            thread.worktreePath !== null &&
+            (yield* fileSystem
+              .exists(path.join(thread.worktreePath, ".git"))
+              .pipe(Effect.orElseSucceed(() => true)))
+              ? thread.worktreePath
+              : (project?.workspaceRoot ?? null);
+          lookupCwds.set(thread.id, cwd);
+        }),
+      { concurrency: 32, discard: true },
+    );
     const groups = Map.groupBy(threads, (thread) =>
-      JSON.stringify([thread.projectId, thread.worktreePath, thread.branch]),
+      JSON.stringify([thread.projectId, lookupCwds.get(thread.id), thread.branch]),
     );
 
     // A thread's own events and a backfill read at once; only scheduled sweeps wait.
@@ -298,15 +329,7 @@ export const make = Effect.gen(function* () {
               refresh: request.refresh,
             });
           if (first.branch !== null && repository === null) return finishBackfill(group);
-          // A worktree folder can outlive its .git, and git there fails with not_a_repository.
-          // An unreadable .git keeps the worktree rather than failing the whole group.
-          const cwd =
-            first.worktreePath !== null &&
-            (yield* fileSystem
-              .exists(path.join(first.worktreePath, ".git"))
-              .pipe(Effect.orElseSucceed(() => true)))
-              ? first.worktreePath
-              : project.workspaceRoot;
+          const cwd = lookupCwds.get(first.id) ?? project.workspaceRoot;
           // A detected PR is confirmed against fresh git state before it is saved.
           const detected =
             first.branch === null
