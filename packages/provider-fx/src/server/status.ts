@@ -23,6 +23,7 @@ import {
   FX_FULL_ACCESS_MODE_ID,
   FX_SUPPORTED_RUNTIME_MODES,
   type FxModelChoice,
+  fxEffortOptionDescriptor,
   fxModelSlug,
 } from "./acpSupport.ts";
 import {
@@ -50,12 +51,27 @@ const FX_MODEL_CAPABILITIES = createModelCapabilities({
   optionDescriptors: [FX_EFFORT_OPTION_DESCRIPTOR],
 });
 
+const fxModelCapabilities = (efforts: ReadonlyArray<string> | undefined) => {
+  if (efforts === undefined) return FX_MODEL_CAPABILITIES;
+  const effort = fxEffortOptionDescriptor(efforts);
+  return createModelCapabilities({
+    optionDescriptors: effort === undefined ? [] : [effort],
+  });
+};
+
 /** fx's built-in backends, in the order its `provider` option lists them. */
 const FX_BUILT_IN_BACKENDS = [
   { id: "gateway", name: "Vercel AI Gateway", login: "fx login" },
   { id: "codex", name: "Codex subscription", login: "fx login codex" },
   { id: "grok", name: "Grok subscription", login: "fx login grok" },
 ] as const;
+
+interface FxListedModel {
+  readonly id: string;
+  readonly name: string;
+  /** Undefined when `fx models --json` omitted per-model effort levels (older fx). */
+  readonly efforts: ReadonlyArray<string> | undefined;
+}
 
 /** What `fx status` and `fx models` report for one backend. */
 interface FxBackendProbe {
@@ -64,7 +80,7 @@ interface FxBackendProbe {
   /** Undefined when its status could not be read. */
   readonly signedIn: boolean | undefined;
   readonly signInHint: string;
-  readonly models: ReadonlyArray<string> | undefined;
+  readonly models: ReadonlyArray<FxListedModel> | undefined;
 }
 
 /**
@@ -76,31 +92,42 @@ const fxModels = (
   settings: FxSettings,
   defaultModel?: string,
   backends: ReadonlyArray<FxBackendProbe> = [],
-): ReadonlyArray<ServerProviderModel> =>
-  providerModelsFromSettings(
+  defaultBackendId?: string,
+): ReadonlyArray<ServerProviderModel> => {
+  const defaultEntry =
+    defaultModel === undefined
+      ? undefined
+      : backends
+          .find((backend) => backend.id === defaultBackendId && backend.signedIn !== false)
+          ?.models?.find((model) => model.id === defaultModel);
+  return providerModelsFromSettings(
     [
       {
         slug: FX_DEFAULT_MODEL_SLUG,
-        name: defaultModel === undefined ? "Default" : `Default (${defaultModel})`,
+        name:
+          defaultModel === undefined
+            ? "Default"
+            : `Default (${defaultEntry?.name ?? defaultModel})`,
         isCustom: false,
         isDefault: true,
-        capabilities: FX_MODEL_CAPABILITIES,
+        capabilities: fxModelCapabilities(defaultEntry?.efforts),
       },
       ...backends.flatMap((backend) =>
-        backend.signedIn === false
+        backend.signedIn === false || backend.models === undefined
           ? []
-          : [...new Set(backend.models)].map((id) => ({
-              slug: fxModelSlug(backend.id, id),
-              name: id,
+          : backend.models.map((model) => ({
+              slug: fxModelSlug(backend.id, model.id),
+              name: model.name,
               subProvider: backend.name,
               isCustom: false,
-              capabilities: FX_MODEL_CAPABILITIES,
+              capabilities: fxModelCapabilities(model.efforts),
             })),
       ),
     ],
     settings.customModels,
     FX_MODEL_CAPABILITIES,
   );
+};
 
 const fxSubProviders = (
   backends: ReadonlyArray<FxBackendProbe>,
@@ -119,13 +146,14 @@ const snapshot = (
   defaultModel?: string,
   backends: ReadonlyArray<FxBackendProbe> = [],
   fullAccess = false,
+  defaultBackendId?: string,
 ): ServerProviderDraft => ({
   ...buildServerProvider({
     driver: FX_DRIVER_KIND,
     presentation: fxPresentation(fullAccess),
     enabled: settings.enabled,
     checkedAt,
-    models: fxModels(settings, defaultModel, backends),
+    models: fxModels(settings, defaultModel, backends, defaultBackendId),
     probe,
   }),
   ...(backends.length > 0 ? { subProviders: fxSubProviders(backends) } : {}),
@@ -197,8 +225,52 @@ const FxStatus = Schema.fromJsonString(
   }),
 );
 const decodeFxStatus = Schema.decodeUnknownOption(FxStatus);
-const FxModels = Schema.fromJsonString(Schema.Struct({ ids: Schema.Array(Schema.String) }));
+const FxModels = Schema.fromJsonString(
+  Schema.Struct({
+    ids: Schema.Array(Schema.String),
+    models: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          id: Schema.String,
+          name: Schema.optional(Schema.String),
+          efforts: Schema.optional(Schema.Array(Schema.String)),
+        }),
+      ),
+    ),
+  }),
+);
 const decodeFxModels = Schema.decodeUnknownOption(FxModels);
+
+const parseFxListedModels = (
+  decoded: Schema.Schema.Type<typeof FxModels>,
+): ReadonlyArray<FxListedModel> => {
+  const metadataById = new Map<
+    string,
+    { readonly name: string | undefined; readonly efforts: ReadonlyArray<string> | undefined }
+  >();
+  for (const entry of decoded.models ?? []) {
+    const id = nonEmptyTrimmed(entry.id);
+    if (id === undefined || metadataById.has(id)) continue;
+    metadataById.set(id, {
+      name: nonEmptyTrimmed(entry.name),
+      efforts: entry.efforts,
+    });
+  }
+  const seen = new Set<string>();
+  const listed: Array<FxListedModel> = [];
+  for (const rawId of decoded.ids) {
+    const id = nonEmptyTrimmed(rawId);
+    if (id === undefined || seen.has(id)) continue;
+    seen.add(id);
+    const metadata = metadataById.get(id);
+    listed.push({
+      id,
+      name: metadata?.name ?? id,
+      efforts: metadata?.efforts,
+    });
+  }
+  return listed;
+};
 const FxProfileSettings = Schema.fromJsonString(
   Schema.Struct({
     providers: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
@@ -265,8 +337,11 @@ const probeFxBackend = Effect.fn("probeFxBackend")(function* (
     signedIn === false
       ? undefined
       : Option.getOrUndefined(
-          Option.flatMap(yield* readFxCli(settings, ["models", "--json"], env), decodeFxModels),
-        )?.ids.flatMap((id) => nonEmptyTrimmed(id) ?? []);
+          Option.map(
+            Option.flatMap(yield* readFxCli(settings, ["models", "--json"], env), decodeFxModels),
+            parseFxListedModels,
+          ),
+        );
   return {
     id: backend.id,
     name: backend.name,
@@ -346,9 +421,8 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
     { concurrency: "unbounded" },
   );
   const defaultModel = nonEmptyTrimmed(status?.model);
-  const defaultBackend = backends.find(
-    (backend) => backend.id === fxStatusBackend(status?.model_source),
-  );
+  const defaultBackendId = fxStatusBackend(status?.model_source);
+  const defaultBackend = backends.find((backend) => backend.id === defaultBackendId);
   // A ready snapshot replaces the model list, so every backend that may be signed in must have listed.
   const listed = backends.filter((backend) => backend.signedIn !== false);
   const listingFailed =
@@ -386,6 +460,7 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
     defaultModel,
     backends,
     status?.modes?.some((mode) => mode.id === FX_FULL_ACCESS_MODE_ID) ?? false,
+    defaultBackendId,
   );
 });
 
