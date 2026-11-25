@@ -559,6 +559,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     recordingStartedAt: owns ? snapshot.recordingStartedAt : null,
     preparing: state.phase === "preparing",
     blocksSubmission: voiceInputBlocksSubmission(state),
+    submitQueued: owns && snapshot.submitQueuedOwnerKey === input.ownerKey,
     freezesEditor: voiceInputBlocksSubmission(state),
     start,
     submitAfterDictation,

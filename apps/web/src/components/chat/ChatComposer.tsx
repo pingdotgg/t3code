@@ -4107,7 +4107,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     )}
                     voiceInputActive={voiceInputActive}
                     isSendBusy={isSendBusy}
-                    isSendHeld={composerSendHeld}
+                    isSendHeld={composerSendHeld || speechInput.submitQueued}
                     sendDisabledReason={primaryActionSendDisabledReason}
                     isEnvironmentUnavailable={primaryActionEnvironmentUnavailable}
                     isPreparingWorktree={isPreparingWorktree}
