@@ -932,10 +932,24 @@ describe("question answer paths", () => {
           ext: "docx",
           bounded: true,
           parts: {
-            "word/document.xml":
-              '<w:document xmlns:w="urn:w" xmlns:mc="urn:mc"><w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p><w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Callout box</w:t></w:r></w:p><w:p><w:r><w:t>Second line</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>Callout box</w:t></w:r></w:p><w:p><w:r><w:t>Second line</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p></w:body></w:document>',
+            "word/document.xml": [
+              '<w:document xmlns:w="urn:w" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:q="urn:quiz"><w:body>',
+              "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+              '<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Callout box</w:t></w:r></w:p><w:p><w:r><w:t>Second line</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Choice Requires="w14"><w:r><w:t>Callout box</w:t></w:r></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>Callout box</w:t></w:r></w:p><w:p><w:r><w:t>Second line</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>',
+              '<w:p><w:r><w:t xml:space="preserve">Amount due: </w:t></w:r><mc:AlternateContent><mc:Choice Requires="cx"><w:drawing><cx:chart/></w:drawing></mc:Choice><mc:Choice Requires="w15"><w:r><w:t>$75</w:t></w:r><mc:AlternateContent><mc:Choice Requires="w16"><w:r><w:t xml:space="preserve"> USD</w:t></w:r></mc:Choice><mc:Choice Requires="w14"><w:r><w:t xml:space="preserve"> USD</w:t></w:r></mc:Choice></mc:AlternateContent></mc:Choice><mc:Choice Requires="w14"><w:r><w:t>$75</w:t></w:r></mc:Choice><mc:Fallback><w:r><w:t>$75</w:t></w:r></mc:Fallback></mc:AlternateContent><w:r><w:t>.</w:t></w:r></w:p>',
+              '<w:p><w:r><w:t>Amount:</w:t></w:r><mc:AlternateContent><mc:Choice Requires="w16"><w:r><w:tab/></w:r></mc:Choice><mc:Choice Requires="w15"><w:r><w:t xml:space="preserve"> </w:t></w:r></mc:Choice><mc:Choice Requires="w14"><w:r><w:t>$75</w:t></w:r></mc:Choice></mc:AlternateContent></w:p>',
+              "<w:p><q:AlternateContent><q:Choice><w:r><w:t>Alpha</w:t></w:r></q:Choice><q:Choice><w:r><w:t>Beta</w:t></w:r></q:Choice></q:AlternateContent></w:p>",
+              '<w:p><mc:AlternateContent><q:Choice><w:r><w:t>Extension</w:t></w:r></q:Choice><mc:Choice Requires="w14"><w:r><w:t>Invoice</w:t></w:r></mc:Choice></mc:AlternateContent></w:p>',
+              "</w:body></w:document>",
+            ].join(""),
           },
-          expected: ["Body\nCallout box\nSecond line"],
+          expected: [
+            "Body\nCallout box\nSecond line",
+            "Amount due: $75 USD.",
+            "Amount:$75",
+            "AlphaBeta",
+            "ExtensionInvoice",
+          ],
           occurrences: { text: "Callout box", count: 1 },
         },
         {
