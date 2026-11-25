@@ -18,7 +18,7 @@ import {
 } from "./chat/runtimeModeConfig";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Menu, MenuPopup, MenuTrigger } from "./ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 export function ComposerContextPermissions(props: {
   environmentId: EnvironmentId | null;
@@ -43,29 +43,29 @@ export function ComposerContextPermissions(props: {
   const label = messages(runtimeModeConfig[mode].label);
   return (
     <Menu open={open} onOpenChange={setOpen}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <ComposerControl
-                  size="xs"
-                  className="ms-auto min-w-0 shrink-0"
-                  aria-label={gt("Permissions: {label}", { label })}
-                  data-composer-context-control
-                />
-              }
-            />
-          }
-        >
-          <Icon aria-hidden="true" className="size-3" />
-          <ComposerContextLabel>{label}</ComposerContextLabel>
-        </TooltipTrigger>
-        <TooltipPopup>
-          <T>Permissions</T>
-          {shortcutLabel ? ` · ${shortcutLabel}` : null}
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <MenuTrigger
+            render={
+              <ComposerControl
+                size="xs"
+                className="ms-auto min-w-0 shrink-0"
+                aria-label={gt("Permissions: {label}", { label })}
+                data-composer-context-control
+              />
+            }
+          />
+        }
+        label={
+          <>
+            <T>Permissions</T>
+            {shortcutLabel ? ` · ${shortcutLabel}` : null}
+          </>
+        }
+      >
+        <Icon aria-hidden="true" className="size-3" />
+        <ComposerContextLabel>{label}</ComposerContextLabel>
+      </SharedTooltipTrigger>
       <MenuPopup side="top" align="end" {...composerMenuProps}>
         <ComposerPermissionsSection
           runtimeMode={mode}

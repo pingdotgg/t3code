@@ -100,7 +100,6 @@ import { ProviderPackageIcon } from "../chat/ProviderPackageIcon";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { VoiceInputSetup } from "../chat/VoiceInputSetup";
 import { Badge } from "../ui/badge";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { Input } from "../ui/input";
@@ -148,6 +147,7 @@ import { useSearchableSetting } from "./settingsSearch";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const OFF = "off";
 const DEVICE = "device";
@@ -213,13 +213,10 @@ type ModelCardProps = {
 
 function ModelBadge(props: { icon: ReactNode; label: string; tooltip: string }) {
   return (
-    <Tooltip>
-      <TooltipTrigger render={<Badge variant="outline" />}>
-        {props.icon}
-        {props.label}
-      </TooltipTrigger>
-      <TooltipPopup side="top">{props.tooltip}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger render={<Badge variant="outline" />} label={props.tooltip}>
+      {props.icon}
+      {props.label}
+    </SharedTooltipTrigger>
   );
 }
 
@@ -1462,24 +1459,24 @@ export function VoiceSettingsPanel() {
           title={gt("Microphone")}
           description={gt("Voice input uses the first connected microphone in this list.")}
           control={
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon-sm"
-                    aria-label={gt("Refresh microphones")}
-                    onClick={() => void refreshMicrophones()}
-                  >
-                    <RefreshCwIcon />
-                  </Button>
-                }
-              />
-              <TooltipPopup>
-                <T>Refresh microphones</T>
-              </TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label={gt("Refresh microphones")}
+                  onClick={() => void refreshMicrophones()}
+                >
+                  <RefreshCwIcon />
+                </Button>
+              }
+              label={
+                <>
+                  <T>Refresh microphones</T>
+                </>
+              }
+            />
           }
         >
           <div className="mt-3 pb-2">
@@ -1664,28 +1661,26 @@ export function VoiceSettingsPanel() {
               {destination.cloudProvider &&
                 chosenEnvironment &&
                 (canManageKey || destination.cloudProvider === "openrouter") && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          size="icon-sm"
-                          type="button"
-                          variant="ghost"
-                          aria-label={manageLabel}
-                          onClick={() => {
-                            if (destination.cloudProvider)
-                              setPendingCloud({
-                                provider: destination.cloudProvider,
-                                environmentId: chosenEnvironment.environmentId,
-                              });
-                          }}
-                        >
-                          <KeyRoundIcon aria-hidden className="size-4" />
-                        </Button>
-                      }
-                    />
-                    <TooltipPopup>{manageLabel}</TooltipPopup>
-                  </Tooltip>
+                  <SharedTooltipTrigger
+                    render={
+                      <Button
+                        size="icon-sm"
+                        type="button"
+                        variant="ghost"
+                        aria-label={manageLabel}
+                        onClick={() => {
+                          if (destination.cloudProvider)
+                            setPendingCloud({
+                              provider: destination.cloudProvider,
+                              environmentId: chosenEnvironment.environmentId,
+                            });
+                        }}
+                      >
+                        <KeyRoundIcon aria-hidden className="size-4" />
+                      </Button>
+                    }
+                    label={manageLabel}
+                  />
                 )}
             </div>
           }
