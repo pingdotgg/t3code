@@ -137,6 +137,7 @@ describe("citation comment source disappearance", () => {
     await using _screen = await mount(source.sourceAnchor, onSave);
     await typeComment("keep this draft");
     await removeSource();
+    await clickButton("Save");
 
     expect(onSave).toHaveBeenCalledWith("keep this draft");
     expect(textarea()?.value).toBe("keep this draft");
