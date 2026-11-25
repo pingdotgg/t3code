@@ -23,7 +23,9 @@ import {
 } from "@t3tools/client-runtime/handoff";
 import {
   formatSubagentDisplayTitle,
+  resolveSubagentDisplayStatus,
   subagentCardDetail,
+  type SubagentDisplayStatus,
 } from "@t3tools/client-runtime/state/subagent-display";
 import {
   ProviderDriverKind,
@@ -67,11 +69,7 @@ import { ProviderInstanceIcon, providerTextColor } from "./ProviderInstanceIcon"
 import { cn } from "~/lib/utils";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { isPendingThreadRelationshipStatus } from "./ThreadRelationshipIcon";
-import {
-  resolveSubagentDisplayStatus,
-  subagentResumedSince,
-  type SubagentDisplayStatus,
-} from "./V2LifecycleRow.logic";
+import { subagentResumedSince } from "./V2LifecycleRow.logic";
 import { Button, InlineButton } from "../ui/button";
 import { T3Wordmark } from "../T3Wordmark";
 

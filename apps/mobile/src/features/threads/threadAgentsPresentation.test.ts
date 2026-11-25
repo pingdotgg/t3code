@@ -42,6 +42,13 @@ describe("resolveSubagentRowPresentation", () => {
     expect(row.live).toBe(true);
   });
 
+  it("shows a child that has not started yet as starting, not working", () => {
+    const row = resolveSubagentRowPresentation({ ...base, status: "starting" });
+
+    expect(row.statusLabel).toBe("Starting");
+    expect(row.tone).toBe("working");
+  });
+
   it("leads with the result once the agent has settled", () => {
     const row = resolveSubagentRowPresentation({
       ...base,

@@ -9,6 +9,7 @@ import type {
 import {
   resolveSubagentMetadata,
   subagentDetailPreview,
+  type SubagentDisplayStatus,
 } from "@t3tools/client-runtime/state/subagent-display";
 import { readSelectedEffortValue } from "@t3tools/client-runtime/state/thread-execution";
 import { resolveSelectableModel } from "@t3tools/shared/model";
@@ -31,7 +32,6 @@ import {
   isActiveThreadRelationshipStatus,
   isPendingThreadRelationshipStatus,
 } from "./ThreadRelationshipIcon";
-import type { SubagentDisplayStatus } from "./V2LifecycleRow.logic";
 import { cn } from "~/lib/utils";
 import { deriveProviderInstanceEntries, shouldShowInstanceBadge } from "../../providerInstances";
 

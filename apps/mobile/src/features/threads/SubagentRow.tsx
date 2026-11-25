@@ -5,6 +5,8 @@ import {
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
+  isSubagentStartPending,
+  resolveSubagentDisplayStatus,
   resolveSubagentMetadata,
   subagentCardDetail,
 } from "@t3tools/client-runtime/state/subagent-display";
@@ -18,7 +20,12 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
-import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
+import {
+  useEnvironmentServerConfig,
+  useProject,
+  useQuietThreadShell,
+  useThreadShell,
+} from "../../state/entities";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
 import { resolveSubagentRowPresentation } from "./threadAgentsPresentation";
 
@@ -46,8 +53,13 @@ export function SubagentRow(props: {
   readonly canOpenRemote?: boolean;
 }) {
   const messages = useMessages();
+  const childThreadId = props.subagent.childThreadId;
+  const child = useQuietThreadShell(
+    childThreadId === null ? null : scopeThreadRef(props.environmentId, childThreadId),
+  )?.source;
+  const status = resolveSubagentDisplayStatus(props.subagent.status, child);
   const presentation = resolveSubagentRowPresentation(
-    props.subagent,
+    { ...props.subagent, status },
     props.canOpenRemote,
     messages,
   );
@@ -89,7 +101,7 @@ export function SubagentRow(props: {
               </Text>
             ) : null}
           </View>
-          {props.elapsed}
+          {isSubagentStartPending(status) ? null : props.elapsed}
           {presentation.canOpenThread ? (
             <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
           ) : null}

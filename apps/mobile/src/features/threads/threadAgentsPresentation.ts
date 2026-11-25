@@ -1,9 +1,11 @@
 import { resolveLinkedThreadOpen } from "@t3tools/client-runtime/linked-thread";
 import {
   formatSubagentDisplayTitle,
+  isSubagentStartPending,
   resolveSubagentMetadata,
   subagentCardDetail,
   subagentDetailPreview,
+  type SubagentDisplayStatus,
 } from "@t3tools/client-runtime/state/subagent-display";
 import {
   isActiveSubagentStatus,
@@ -84,18 +86,20 @@ function rowTitle(
   return promptTitle(prompt);
 }
 
-function rowTone(status: OrchestrationV2Subagent["status"]): SubagentRowTone {
-  if (isActiveSubagentStatus(status)) return "working";
+function rowTone(status: SubagentDisplayStatus): SubagentRowTone {
+  if (isSubagentStartPending(status) || isActiveSubagentStatus(status)) return "working";
   if (status === "completed") return "completed";
   if (status === "failed") return "failed";
   return "stopped";
 }
 
-function rowStatusLabel(
-  status: OrchestrationV2Subagent["status"],
-  resolve: MessageResolver,
-): string {
+function rowStatusLabel(status: SubagentDisplayStatus, resolve: MessageResolver): string {
   switch (status) {
+    case "preparing":
+    case "starting":
+      return resolve(msg("Starting", { $context: "agent status" }));
+    case "queued":
+      return resolve(msg("Queued", { $context: "agent status" }));
     case "pending":
     case "running":
       return resolve(msg("Working", { $context: "agent status" }));
@@ -117,18 +121,22 @@ function rowStatusLabel(
 export function resolveSubagentRowPresentation(
   subagent: Pick<
     OrchestrationV2Subagent,
-    "title" | "prompt" | "status" | "progress" | "result" | "childThreadId" | "remoteChild"
-  >,
+    "title" | "prompt" | "progress" | "result" | "childThreadId" | "remoteChild"
+  > & { readonly status: SubagentDisplayStatus },
   canOpenRemote = false,
   resolve: MessageResolver = m,
 ): SubagentRowPresentation {
-  const live = isActiveSubagentStatus(subagent.status);
+  const status = subagent.status;
+  const tone = rowTone(status);
   return {
     title: rowTitle(subagent, resolve),
-    detail: subagentDetailPreview(subagent),
-    statusLabel: rowStatusLabel(subagent.status, resolve),
-    tone: rowTone(subagent.status),
-    live,
+    detail: subagentDetailPreview({
+      ...subagent,
+      status: isSubagentStartPending(status) ? "pending" : status,
+    }),
+    statusLabel: rowStatusLabel(status, resolve),
+    tone,
+    live: tone === "working",
     canOpenThread:
       subagent.childThreadId !== null || (subagent.remoteChild !== undefined && canOpenRemote),
     runsOn: subagent.remoteChild?.label ?? null,

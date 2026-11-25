@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { subagentCardDetail, subagentDetailPreview } from "./subagentDisplay.js";
+import {
+  resolveSubagentDisplayStatus,
+  subagentCardDetail,
+  subagentDetailPreview,
+} from "./subagentDisplay.js";
 
 describe("subagentDetailPreview", () => {
   it("prefers progress for live work and results for settled work", () => {
@@ -48,5 +52,31 @@ describe("subagentCardDetail", () => {
     ["[report](outputs/report\\(final.md)", "report"],
   ])("strips image and link markup from %s", (detail, expected) => {
     expect(subagentCardDetail(detail)).toBe(expected);
+  });
+});
+
+describe("resolveSubagentDisplayStatus", () => {
+  it.each([
+    { activityRunStatus: "starting", status: "starting", expected: "starting" },
+    { activityRunStatus: "preparing", status: "preparing", expected: "preparing" },
+    { activityRunStatus: null, status: "queued", expected: "queued" },
+  ] as const)(
+    "reflects child $expected status while the parent subagent is active",
+    ({ activityRunStatus, status, expected }) => {
+      expect(resolveSubagentDisplayStatus("running", { activityRunStatus, status })).toBe(expected);
+    },
+  );
+
+  it("keeps the parent status once the child is running, missing, or the subagent is settled", () => {
+    expect(
+      resolveSubagentDisplayStatus("running", { activityRunStatus: "running", status: "running" }),
+    ).toBe("running");
+    expect(resolveSubagentDisplayStatus("running", null)).toBe("running");
+    expect(
+      resolveSubagentDisplayStatus("completed", {
+        activityRunStatus: "starting",
+        status: "starting",
+      }),
+    ).toBe("completed");
   });
 });

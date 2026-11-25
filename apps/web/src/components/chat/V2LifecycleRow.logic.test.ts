@@ -1,7 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveSubagentDisplayStatus, subagentResumedSince } from "./V2LifecycleRow.logic";
+import { subagentResumedSince } from "./V2LifecycleRow.logic";
 
 const failedAt = "2026-10-09T12:21:00.000Z";
 const beforeFailure = DateTime.makeUnsafe("2026-10-09T12:05:00.000Z");
@@ -28,31 +28,5 @@ describe("subagentResumedSince", () => {
     expect(subagentResumedSince({ status: "failed", startedAt: beforeFailure }, failedAt)).toBe(
       false,
     );
-  });
-});
-
-describe("resolveSubagentDisplayStatus", () => {
-  it.each([
-    { activityRunStatus: "starting", status: "starting", expected: "starting" },
-    { activityRunStatus: "preparing", status: "preparing", expected: "preparing" },
-    { activityRunStatus: null, status: "queued", expected: "queued" },
-  ] as const)(
-    "reflects child $expected status while the parent subagent is active",
-    ({ activityRunStatus, status, expected }) => {
-      expect(resolveSubagentDisplayStatus("running", { activityRunStatus, status })).toBe(expected);
-    },
-  );
-
-  it("keeps the parent status once the child is running, missing, or the subagent is settled", () => {
-    expect(
-      resolveSubagentDisplayStatus("running", { activityRunStatus: "running", status: "running" }),
-    ).toBe("running");
-    expect(resolveSubagentDisplayStatus("running", null)).toBe("running");
-    expect(
-      resolveSubagentDisplayStatus("completed", {
-        activityRunStatus: "starting",
-        status: "starting",
-      }),
-    ).toBe("completed");
   });
 });

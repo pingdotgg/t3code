@@ -1,9 +1,10 @@
-import type {
-  ModelSelection,
-  OrchestrationV2TurnItemStatus,
-  OrchestrationV2ThreadShell,
-  OrchestrationProjectShell,
-  ServerProvider,
+import {
+  isOrchestrationV2WorkActive,
+  type ModelSelection,
+  type OrchestrationV2TurnItemStatus,
+  type OrchestrationV2ThreadShell,
+  type OrchestrationProjectShell,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { fileDisplayName } from "@t3tools/shared/path";
@@ -11,6 +12,31 @@ import { resolveModelShortName } from "../providerClients.ts";
 import { isTerminalSubagentStatus } from "./subagentRuntime.ts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
+
+export type SubagentDisplayStatus =
+  | OrchestrationV2TurnItemStatus
+  | "preparing"
+  | "starting"
+  | "queued";
+
+/** The parent marks a delegate running on dispatch; its child thread knows whether it has started. */
+export function resolveSubagentDisplayStatus(
+  status: OrchestrationV2TurnItemStatus,
+  child: Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "status"> | null | undefined,
+): SubagentDisplayStatus {
+  if (!child || !isOrchestrationV2WorkActive(status)) return status;
+  const childStatus = child.activityRunStatus ?? (child.status === "queued" ? "queued" : null);
+  if (childStatus === "preparing" || childStatus === "starting" || childStatus === "queued") {
+    return childStatus;
+  }
+  return status;
+}
+
+export function isSubagentStartPending(
+  status: SubagentDisplayStatus,
+): status is "preparing" | "starting" | "queued" {
+  return status === "preparing" || status === "starting" || status === "queued";
+}
 
 export function subagentGroupSummary(
   members: ReadonlyArray<{ readonly status: OrchestrationV2TurnItemStatus }>,
