@@ -50,7 +50,7 @@ import { workspaceUsesColumns } from "./workspace/workspace-tabs-state";
 import { useWorkspaceCompose } from "./workspace/useWorkspaceCompose";
 import { selectedIssueKeyOf } from "../issues/issueParams";
 import { isSettingsRoute, settingsOpenIn } from "../settings/settings-navigation";
-import { workspaceRoutesOf } from "./workspace-overlay-routes";
+import { isWorkspaceOverlayRoute, workspaceRoutesOf } from "./workspace-overlay-routes";
 import { setNativelyPoppingWorkspaceRoute } from "./workspace/workspace-detail-selection";
 import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
@@ -219,7 +219,7 @@ function EmptyDetailHeader(props: { readonly onCompose: (() => void) | undefined
   );
 }
 
-function WorkspaceColumns(
+export function WorkspaceColumns(
   props: ViewProps & { readonly primary: Route; readonly detail: Route[] },
 ) {
   const gt = useGT();
@@ -279,7 +279,9 @@ function WorkspaceColumns(
   const compose = useWorkspaceCompose();
   const detailCompose = deviceType === "duo-unfolded" ? compose?.onPress : undefined;
   // Pages a hidden tab opens as it's shown belong to the tab, so they appear in place.
-  const headerOnly = use(NativeWorkspaceTabActivityContext)?.headerOnly === true;
+  const tabActivity = use(NativeWorkspaceTabActivityContext);
+  const tabActive = tabActivity?.active !== false;
+  const headerOnly = tabActivity?.headerOnly === true;
   const [shownPages, setShownPages] = useState({ headerOnly, keys: new Set<string>() });
   if (shownPages.headerOnly !== headerOnly)
     setShownPages({
@@ -291,9 +293,13 @@ function WorkspaceColumns(
     if (inspector.visible) toggleAuxiliaryPane();
   };
   const hostRef = useRef<SplitHostCommands>(null);
-  const activeDetailKey = props.detail.at(-1)?.key;
+  const activeDetail = props.detail.at(-1);
+  const activeDetailKey = activeDetail?.key;
   const compactColumn = activeDetailKey ? "secondary" : "primary";
   const collapsed = useRef(!layout.usesSplitView);
+  const previousUsesSplitView = useRef(layout.usesSplitView);
+  const primaryPresented = useRef(false);
+  const presentedDetails = useRef<Set<string>>(new Set());
   const collapsedColumn = useRef<CollapsedSplitColumn>({ visible: compactColumn, leaving: null });
   const threadParams = props.detail.findLast((route) => route.name === "Thread")?.params;
   const pullRequestParams = props.detail.findLast(isPullRequestRoute)?.params;
@@ -322,6 +328,7 @@ function WorkspaceColumns(
         )
       : null;
   const handleNativeDismiss = (key: string, native: boolean) => {
+    presentedDetails.current.delete(key);
     setScreens((current) => ({
       ...current,
       routes: current.routes.filter((route) => route.key !== key),
@@ -337,24 +344,100 @@ function WorkspaceColumns(
     type: "willAppear" | "didAppear" | "willDisappear" | "didDisappear",
     key: string,
   ) => {
+    if (key === props.primary.key) {
+      if (type === "didAppear") primaryPresented.current = true;
+      else if (type === "didDisappear") primaryPresented.current = false;
+    } else {
+      if (type === "didAppear") presentedDetails.current.add(key);
+      else if (type === "didDisappear") presentedDetails.current.delete(key);
+    }
     if (!collapsed.current || layout.usesSplitView) return;
+    if (tabActivity?.isActive() === false || headerOnly) {
+      if (type === "didAppear") {
+        collapsedColumn.current = {
+          visible: key === props.primary.key ? "primary" : "secondary",
+          leaving: null,
+          entering: null,
+        };
+      } else if (type === "didDisappear" && collapsedColumn.current.leaving === key) {
+        collapsedColumn.current = { ...collapsedColumn.current, leaving: null };
+        setNativelyPoppingWorkspaceRoute(null);
+      }
+      return;
+    }
+    const state = props.navigation.getState();
     const transition = collapsedSplitTransition(
       collapsedColumn.current,
       { type, key },
-      props.navigation.getState(),
+      state,
       props.primary.key,
     );
-    collapsedColumn.current = transition.column;
-    setNativelyPoppingWorkspaceRoute(transition.column.leaving);
-    if (transition.pop) props.navigation.dispatch(transition.pop);
+    let nextColumn = transition.column;
+    // Collapsing from two visible columns onto primary removes the detail without re-firing primary's didAppear.
+    if (
+      type === "didDisappear" &&
+      key !== props.primary.key &&
+      !nextColumn.leaving &&
+      primaryPresented.current &&
+      presentedDetails.current.size === 0
+    ) {
+      nextColumn = { visible: "primary", leaving: null, entering: null };
+    }
+    collapsedColumn.current = nextColumn;
+    setNativelyPoppingWorkspaceRoute(nextColumn.leaving);
+    if (transition.pop) {
+      props.navigation.dispatch(transition.pop);
+      return;
+    }
+    // Reconcile if the column that settled no longer matches the live destination
+    // (e.g. cold link, a row tapped mid-Back, or a detail cleared before its push finished).
+    if (type === "didAppear") {
+      const expectedColumn = liveHasWorkspaceDetail(state, props.descriptors)
+        ? "secondary"
+        : "primary";
+      if (nextColumn.visible !== expectedColumn) {
+        hostRef.current?.show(expectedColumn);
+      }
+    }
   };
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the native split host which column to show while collapsed
   useEffect(() => {
-    if (layout.usesSplitView || collapsedColumn.current.visible === compactColumn) return;
-    collapsedColumn.current = { ...collapsedColumn.current, visible: compactColumn };
-    hostRef.current?.show(compactColumn);
-  }, [compactColumn, layout.usesSplitView]);
+    const wasSplit = previousUsesSplitView.current;
+    previousUsesSplitView.current = layout.usesSplitView;
+    if (layout.usesSplitView) {
+      collapsed.current = false;
+      if (collapsedColumn.current.leaving) {
+        setNativelyPoppingWorkspaceRoute(null);
+      }
+      collapsedColumn.current = { ...collapsedColumn.current, leaving: null, entering: null };
+      return;
+    }
+    // An inactive tab misses onCollapse while off-window; sync its collapsed flag when the layout folds.
+    if (wasSplit) {
+      collapsed.current = true;
+      if (primaryPresented.current && presentedDetails.current.size === 0) {
+        collapsedColumn.current = { visible: "primary", leaving: null, entering: null };
+      } else if (!primaryPresented.current && presentedDetails.current.size > 0) {
+        collapsedColumn.current = { visible: "secondary", leaving: null, entering: null };
+      } else {
+        collapsedColumn.current = { ...collapsedColumn.current, leaving: null, entering: null };
+      }
+    }
+    if (!tabActive || headerOnly) {
+      if (collapsedColumn.current.leaving) {
+        collapsedColumn.current = { ...collapsedColumn.current, leaving: null };
+        setNativelyPoppingWorkspaceRoute(null);
+      }
+      return;
+    }
+    const targetColumn = activeDetail ? "secondary" : "primary";
+    const activeColumn = collapsedColumn.current.entering ?? collapsedColumn.current.visible;
+    if (activeColumn === targetColumn) {
+      return;
+    }
+    hostRef.current?.show(targetColumn);
+  }, [activeDetail, headerOnly, layout.usesSplitView, tabActive]);
 
   const primary = props.descriptors[props.primary.key];
   if (!primary) return null;
@@ -374,12 +457,23 @@ function WorkspaceColumns(
       topColumnForCollapsing={compactColumn}
       onCollapse={() => {
         collapsed.current = true;
-        collapsedColumn.current = { visible: compactColumn, leaving: null };
+        const visible =
+          primaryPresented.current && presentedDetails.current.size === 0
+            ? "primary"
+            : !primaryPresented.current && presentedDetails.current.size > 0
+              ? "secondary"
+              : compactColumn;
+        collapsedColumn.current = { visible, leaving: null, entering: null };
         setNativelyPoppingWorkspaceRoute(null);
+        if (tabActivity?.isActive() !== false && !headerOnly && visible !== compactColumn) {
+          hostRef.current?.show(compactColumn);
+        }
       }}
       onExpand={() => {
         collapsed.current = false;
+        collapsedColumn.current = { ...collapsedColumn.current, leaving: null, entering: null };
         setNativelyPoppingWorkspaceRoute(null);
+        if (tabActivity?.isActive() === false || headerOnly) return;
         // Native callbacks can outlive the render that created them, so decide from the live
         // router state. An expanded split has columns, so its tab gets a page beside the list.
         const live = props.navigation.getState();
@@ -716,6 +810,19 @@ export function createWorkspaceStackNavigator<
   const Config extends StaticConfig<TypeBag> = StaticConfig<TypeBag>,
 >(config?: Config): TypedNavigator<TypeBag, Config> {
   return createNavigatorFactory(WorkspaceStackNavigator)(config);
+}
+
+function liveHasWorkspaceDetail(
+  state: Pick<ViewProps["state"], "index" | "routes">,
+  descriptors: ViewProps["descriptors"],
+) {
+  const routes = state.routes.slice(0, state.index + 1);
+  const firstOverlay = routes.findIndex((route) => {
+    const options = descriptors[route.key]?.options;
+    return options ? isPresentedRoute(options) : isWorkspaceOverlayRoute(route.name);
+  });
+  const workspace = firstOverlay < 0 ? routes : routes.slice(0, firstOverlay);
+  return workspace.some((route) => route.name !== "Home" && route.name !== "Settings");
 }
 
 function sidebarDisplayMode(visible: boolean, overlay: boolean) {

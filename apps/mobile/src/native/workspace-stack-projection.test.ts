@@ -367,6 +367,44 @@ describe("collapsed split Back", () => {
       pop: null,
     });
   });
+
+  it("tracks entering column until didAppear confirms it without interfering with Back", () => {
+    const state = history([home, thread]);
+    const appearing = collapsedSplitTransition(
+      { visible: "primary", leaving: null },
+      { type: "willAppear", key: thread.key },
+      state,
+      home.key,
+    );
+    expect(appearing).toEqual({
+      column: { visible: "primary", leaving: null, entering: "secondary" },
+      pop: null,
+    });
+    const confirmed = collapsedSplitTransition(
+      appearing.column,
+      { type: "didAppear", key: thread.key },
+      state,
+      home.key,
+    );
+    expect(confirmed).toEqual({
+      column: { visible: "secondary", leaving: null, entering: null },
+      pop: null,
+    });
+    // Native Back reveals Home while leaving is active; entering stays unset so Back isn't mistaken for show("primary").
+    const leaving = collapsedSplitTransition(
+      confirmed.column,
+      { type: "willDisappear", key: thread.key },
+      state,
+      home.key,
+    );
+    const homeRevealed = collapsedSplitTransition(
+      leaving.column,
+      { type: "willAppear", key: home.key },
+      state,
+      home.key,
+    );
+    expect(homeRevealed.column.entering).toBeNull();
+  });
 });
 
 describe("v5 stack handoff", () => {
