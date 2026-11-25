@@ -119,6 +119,7 @@ const tab = (value = detail) => (
     threadRef={null}
     reference={value}
     detail={value}
+    observedAt={value.observedAt}
     activityPending={false}
     activityError={null}
     onRefresh={() => {}}
@@ -239,6 +240,7 @@ it("fixes an overview thread as its opening remark, since it has no line to atta
       threadRef={null}
       reference={value}
       detail={value}
+      observedAt={value.observedAt}
       activityPending={false}
       activityError={null}
       onRefresh={() => {}}

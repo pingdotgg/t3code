@@ -20,6 +20,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
 import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
+import WorkflowMailSenderMigration from "../persistence/Migrations/117_WorkflowMailSender.ts";
+import WorkflowPoolsMigration from "../persistence/Migrations/118_WorkflowPools.ts";
 import { type AgentResult, WorkflowAgents } from "./WorkflowAgents.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowRuntime from "./WorkflowRuntime.ts";
@@ -57,6 +59,8 @@ const setup = Effect.fn("setup")(function* (
   yield* Effect.provide(
     Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration).pipe(
       Effect.andThen(WorkflowRunTagsMigration),
+      Effect.andThen(WorkflowMailSenderMigration),
+      Effect.andThen(WorkflowPoolsMigration),
     ),
     database,
   );
@@ -145,7 +149,7 @@ it.effect(
         // The same change made outside the app is refused as a whole: the file still reads as the
         // version that runs, until it is put back.
         const told = (wanted: boolean) =>
-          workflows.watch.pipe(
+          Workflows.wholeLists(workflows.watch).pipe(
             Stream.filter((snapshot) => (snapshot.definition?.problem != null) === wanted),
             Stream.runHead,
           );
@@ -199,7 +203,7 @@ it.effect(
         // Someone breaks a file outside the app: its last good version keeps running, and the
         // other files go on changing.
         const problem = (wanted: boolean) =>
-          workflows.watch.pipe(
+          Workflows.wholeLists(workflows.watch).pipe(
             Stream.filter((snapshot) => (snapshot.definition?.problem != null) === wanted),
             Stream.runHead,
           );
@@ -287,7 +291,7 @@ it.effect(
         const workflows = yield* Workflows.Workflows;
         const definitions = yield* WorkflowRuntime.WorkflowDefinitions;
         const revision = Effect.map(
-          Stream.runHead(workflows.watch),
+          Stream.runHead(Workflows.wholeLists(workflows.watch)),
           (snapshot) => Option.getOrThrow(snapshot).definition?.revision ?? 0,
         );
         refuse = true;
@@ -300,7 +304,7 @@ it.effect(
         const before = yield* revision;
         refuse = false;
         yield* TestClock.adjust("30 seconds");
-        yield* workflows.watch.pipe(
+        yield* Workflows.wholeLists(workflows.watch).pipe(
           Stream.filter((snapshot) => (snapshot.definition?.revision ?? 0) > before),
           Stream.runHead,
         );
@@ -319,8 +323,8 @@ it.effect(
           ["greet@1", "hold@1"],
         ]);
         assert.include(
-          (yield* Stream.runHead(workflows.watch)).pipe(Option.getOrThrow).definition?.problem ??
-            "",
+          (yield* Stream.runHead(Workflows.wholeLists(workflows.watch))).pipe(Option.getOrThrow)
+            .definition?.problem ?? "",
           "did not start",
         );
       }).pipe(Effect.provide(runtime), Effect.scoped);
@@ -439,7 +443,7 @@ it.effect("a change held back by a run goes in once that run ends, with no furth
       const held = yield* workflows.start("hold", {}, { idempotencyKey: "h" });
       yield* workflows.waitFor(held.runId, (run) => run.status === "waiting");
       const problem = (wanted: boolean) =>
-        workflows.watch.pipe(
+        Workflows.wholeLists(workflows.watch).pipe(
           Stream.filter((snapshot) => (snapshot.definition?.problem != null) === wanted),
           Stream.runHead,
         );

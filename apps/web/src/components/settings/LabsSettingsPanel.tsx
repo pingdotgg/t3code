@@ -15,6 +15,7 @@ import { Button } from "../ui/button";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { commitNumberFieldOnEnter } from "./commitNumberFieldOnEnter";
 import { ScopedSwitch } from "./ScopedSwitch";
 import {
   SettingResetButton,
@@ -276,6 +277,7 @@ export function WorkflowSkippedRunsRow() {
               <NumberFieldInput
                 aria-label={gt("Skipped runs kept")}
                 placeholder={mixed ? gt("Mixed") : undefined}
+                onKeyDown={commitNumberFieldOnEnter}
               />
             </NumberFieldGroup>
           </NumberField>
