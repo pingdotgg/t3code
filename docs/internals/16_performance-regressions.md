@@ -48,6 +48,86 @@ heap, and first-request latency against a fake Anthropic API and the real `claud
 - Test macOS, Windows, and Linux with `--no-agent-scope`: Linux systemd agent scopes mask
   per-process polling paths that other platforms run.
 
+## Client switch metrics
+
+[`scripts/client-metrics.ts`](../../scripts/client-metrics.ts) (`vp run report:client`) builds
+the web app for production, seeds a server with replayed threads (no paid model), a large diff, a
+pull request on a fake GitHub and a local page, and drives headless Chromium like a person.
+`client-metrics --help` lists the cases and groups `--cases` takes. It launches Playwright's
+Chromium headless shell, which installing dependencies does not download; install it once per
+machine for the pinned `playwright-core` with
+`node scripts/node_modules/playwright-core/cli.js install --only-shell chromium`.
+
+- `run` measures one checkout; `ab <checkoutA> <checkoutB>` alternates them (A B, then B A) and
+  `compare` gates the result. Isolated runs on a loaded machine say nothing; trust only `ab`. The
+  harness, seed and replay agent come from the script, so an older checkout works as A; a case it
+  cannot run is skipped and named. `compare` refuses files whose workload (cases, rounds, long
+  thread length) differs, and takes each run's median as one sample: samples from one page are not
+  independent, so it gates only with 2+ runs a side.
+- **Switches** are sidebar clicks from a small hub thread. A case's first visit and its revisits
+  are separate metrics, since a first visit is the thread's first open in that page. Paints under
+  Event Timing's 16 ms threshold count as 16 ms.
+- The Device surface has no device stream in the harness, so its case measures the empty state, not
+  a streaming device. Panel cases also record the open surface's DOM size, which is deterministic;
+  `*.census.json` in the artifacts says what dominates it.
+- Memory (heap and DOM after GC) is sampled on load, after the first visits, and after every
+  measured round has run, not per switch. Renderer CPU is sampled while the working thread streams
+  its replayed turn; a window the turn ended before or during is skipped and named. `--soak <n>` repeats every
+  case n times and fits heap, DOM and listener growth per iteration over the soak's later half. It
+  runs in a second browser with V8's compiling tiers off: compiled code keeps growing for dozens of
+  iterations as more functions get hot, which reads as a leak when it is only warm-up.
+
+`--renders` counts React commits and component renders per step, the subtrees React bailed out
+of not counted, with the top components and a cause per render (`mount`, `state#<hook slot>`,
+`props:<changed keys>`, `parent-same-props<-Parent`, `context`). Counts barely move between runs,
+so `compare` gates on them and they catch what timing noise hides. The probe slows commits, so
+compare renders runs with renders runs. Names need `--unminified`; `--slot-diff A,B` diffs those
+components' changed hook slots into `renders.ndjson`.
+
+`--trace` traces one extra round with a CPU profile and maps it through the build's sourcemaps.
+Per step, the task that ran its input splits into forced style and layout (top call sites at the
+end) and JS: self time by package, then inclusive time by source file and by library, each counted
+once per sample, since summing nested frames counts a library many times. Long tasks before the
+step settled follow with their top sources. A keyboard shortcut usually renders in a later task,
+so read its long tasks, not its input task.
+
+`noise <ab dirs of one checkout against itself> --out floors.json` measures each metric's A/A
+spread and writes a floor per metric, and which are too noisy to gate on; pass it to `compare` or
+`ab` with `--floors`. Calibrate per machine; without floors, defaults apply.
+
+## Mobile switch metrics
+
+[`scripts/mobile-metrics.ts`](../../scripts/mobile-metrics.ts) (`vp run mobile:metrics`) is the
+mobile counterpart, built on [mobile:behavior](../../scripts/mobile-behavior/README.md)'s stack: a
+Simlock iOS simulator, a server whose only provider is the scripted `evalbot`, a Metro serving the
+checkout with the behavior probe, and client-metrics' 40-file branch with its pull request
+on the fake GitHub. Every step is a real tap, swipe or typed string through agent-device inside a
+probe window that records the app's touches, React commits, the commit that first shows the target
+thread's rows, composer keys, and JS and UI frames. `mobile-metrics --help` lists the cases.
+
+- The pool installs only the dev client. `--build dev` (default) runs the development bundle:
+  commit and render counts (`--renders`) and A/B differences are representative, absolute times
+  are not. `--build release` runs the production bundle as `hermesc -O` bytecode on that same
+  client ([release-bytecode.ts](../../scripts/mobile-behavior/release-bytecode.ts)), with the
+  probe kept by its env flag rather than `__DEV__`. It has no commit ms (React's profiling
+  fields), no `--renders`, and minified component names in soak retention.
+- `run`, `ab <checkoutA> <checkoutB>` and `compare` work like client-metrics' and share its gate:
+  each app launch's median is one sample, so gate only with `--ab-rounds 2` or more, on one
+  simulator model. `noise` calibrates floors from A/A runs.
+- Latency counts from the touch's end as JS sees it, so a JS thread too busy to take the touch
+  hides part of the delay. A tap on a native menu item (the Git controls' Review changes, the
+  list switcher's Issues) never reaches JS as a touch, so it counts from the item's JS handler,
+  which the shared `Menu` and native header menu report to the probe: later than the finger.
+- A side chat is seeded with one exchange, since an empty one shows a placeholder rather than a
+  timeline and would never count as content.
+- `--soak <n>` repeats the switch cases and samples the Hermes heap after each one, with growth
+  per iteration after warm-up and per case. Each sample follows a full Hermes `gc()`. Soak with
+  `--build release`: the dev build grows about 5 MB an iteration with no leak, all of it the
+  DevTools backend, the debugger-enabled Hermes keeping closure locals alive, react-refresh, and
+  React's dev debug stacks.
+- `settled` is the last commit before a second of quiet. Any streaming thread keeps Home
+  committing, so only `switch-working` streams, and it stops its thread when done.
+
 ## Persistence and background work invariants
 
 - Event-store sequence cursors and startup recovery candidate selection must seek indexes rather

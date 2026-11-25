@@ -9,7 +9,6 @@ import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
@@ -22,6 +21,7 @@ import {
   settingsScopeEnvironmentLabels,
   settingsScopeProjectMachines,
 } from "./settingsScopeAxis";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ScopeChoice {
   label: string;
@@ -151,14 +151,12 @@ export function SettingsScopeNotice({
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium">{choice.label}</span>
           {choice.secondary ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={<span className="block truncate text-xs text-muted-foreground" />}
-              >
-                {choice.secondary}
-              </TooltipTrigger>
-              <TooltipPopup>{choice.secondary}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={<span className="block truncate text-xs text-muted-foreground" />}
+              label={choice.secondary}
+            >
+              {choice.secondary}
+            </SharedTooltipTrigger>
           ) : null}
         </span>
         <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
