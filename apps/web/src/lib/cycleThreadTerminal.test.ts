@@ -11,6 +11,7 @@ function setup() {
   useTerminalUiStateStore.setState({
     terminalUiStateByThreadKey: {},
     suppressedTerminalIdsByThreadKey: {},
+    serverObservationsByThreadKey: {},
   });
   useRightPanelStore.setState({ byThreadKey: {} });
   return scopeThreadRef(EnvironmentId.make("local"), ThreadId.make("cycle"));
@@ -19,12 +20,12 @@ function setup() {
 it("cycles drawer tabs and split panes in display order, wraps both ways, and focuses the target", () => {
   const ref = setup();
   const drawer = useTerminalUiStateStore.getState();
-  drawer.newTerminal(ref, "b");
   drawer.newTerminal(ref, "a");
+  drawer.newTerminal(ref, "b");
   drawer.setActiveTerminal(ref, "a");
   drawer.splitTerminal(ref, "c");
   drawer.newTerminal(ref, "z");
-  drawer.reconcileTerminalIds(ref, ["a", "b", "c", "z"]);
+  drawer.reconcileTerminalIds(ref, ["z", "c", "b", "a"]);
   let focused: string | null = null;
   const unregister = ["a", "c", "b", "z"].map((terminalId) =>
     registerTerminalFocusTarget({
