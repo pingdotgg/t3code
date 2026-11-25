@@ -61,6 +61,7 @@ const PREVIEW_FORWARDED_COMMANDS = [
   "workspace.focusNext",
   "workspace.focusPrevious",
   "sidebar.toggle",
+  "sidebar.projectFilter",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
   "rightPanel.new",

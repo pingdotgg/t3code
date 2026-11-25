@@ -2986,6 +2986,24 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for thread navigation and project filter shortcuts
   useEffect(() => {
+    const toggleProjectFilter = () => {
+      if (!projectScopeMenuState.open) {
+        if (isMobile) setOpenMobile(true);
+        else if (!sidebarOpen) setSidebarOpen(true);
+        suppressNextScopeChangeRef.current = false;
+        projectScopeReturnFocusRef.current =
+          document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        dispatchProjectScopeMenu({ type: "open-changed", open: true });
+        return;
+      }
+      dispatchProjectScopeMenu({ type: "open-changed", open: false });
+      const returnFocus = projectScopeReturnFocusRef.current;
+      projectScopeReturnFocusRef.current = null;
+      // The mobile sheet stays open, so focus must stay inside it.
+      const target = !isMobile && returnFocus?.isConnected ? returnFocus : null;
+      target?.focus();
+      if (document.activeElement !== target) projectScopeTriggerRef.current?.focus();
+    };
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
         return;
@@ -3009,22 +3027,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       if (command === "sidebar.projectFilter" && projectGroups.length > 0) {
         event.preventDefault();
         event.stopPropagation();
-        if (!projectScopeMenuState.open) {
-          if (isMobile) setOpenMobile(true);
-          else if (!sidebarOpen) setSidebarOpen(true);
-          suppressNextScopeChangeRef.current = false;
-          projectScopeReturnFocusRef.current =
-            document.activeElement instanceof HTMLElement ? document.activeElement : null;
-          dispatchProjectScopeMenu({ type: "open-changed", open: true });
-          return;
-        }
-        dispatchProjectScopeMenu({ type: "open-changed", open: false });
-        const returnFocus = projectScopeReturnFocusRef.current;
-        projectScopeReturnFocusRef.current = null;
-        // The mobile sheet stays open, so focus must stay inside it.
-        const target = !isMobile && returnFocus?.isConnected ? returnFocus : null;
-        target?.focus();
-        if (document.activeElement !== target) projectScopeTriggerRef.current?.focus();
+        toggleProjectFilter();
         return;
       }
       const traversalDirection = threadTraversalDirectionFromCommand(command);
@@ -3043,7 +3046,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       navigateToRowKey(orderedRowKeys[jumpIndex] ?? null);
     };
     window.addEventListener("keydown", onWindowKeyDown);
-    return () => window.removeEventListener("keydown", onWindowKeyDown);
+    const unsubscribe = window.desktopBridge?.onMenuAction((action) => {
+      if (action === "sidebar.projectFilter" && projectGroups.length > 0) toggleProjectFilter();
+    });
+    return () => {
+      window.removeEventListener("keydown", onWindowKeyDown);
+      unsubscribe?.();
+    };
   }, [
     draftIdByRowKey,
     isMobile,
