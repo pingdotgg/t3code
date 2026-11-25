@@ -227,7 +227,11 @@ const handlers = {
       }
       const hostId = yield* resolveHostId(state.hosts, input?.hostId);
       const open = state.sessions
-        .filter((session) => session.threadId === scope.thread.threadId)
+        .filter(
+          (session) =>
+            session.threadId === scope.thread.threadId &&
+            (hostId === undefined || session.hostId === hostId),
+        )
         .map((session) => ({ hostId: session.hostId, deviceId: session.deviceId }));
       return {
         hostStatuses: Object.fromEntries(
