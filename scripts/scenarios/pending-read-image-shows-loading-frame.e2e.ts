@@ -108,7 +108,16 @@ test(
         .waitFor({ timeout: 8_000 })
         .then(
           () => true,
-          () => false,
+          (error: unknown) => {
+            // Only "never showed up" means absent; any other failure is the test's own.
+            const notFound =
+              typeof error === "object" &&
+              error !== null &&
+              "code" in error &&
+              error.code === "LOCATOR_NOT_FOUND";
+            if (!notFound) throw error;
+            return false;
+          },
         );
       await app.screenshot("while-reading");
       expect(unavailable).toBe(false);

@@ -368,6 +368,8 @@ export function assetMediaActionsSource(input: {
   readonly workspaceRoot?: string | undefined;
   readonly originalUrl?: string | undefined;
   readonly downloadable?: boolean | undefined;
+  /** The file may not exist yet: keep only actions that do not read it. */
+  readonly pending?: boolean | undefined;
 }): MediaActionSource {
   const { environmentId, resource } = input;
   const path =
@@ -386,9 +388,13 @@ export function assetMediaActionsSource(input: {
     kind: input.kind,
     name: input.name,
     src: input.src,
-    ...(input.downloadable === false ? {} : { asset: { environmentId, resource } }),
+    ...(input.downloadable === false || input.pending
+      ? {}
+      : { asset: { environmentId, resource } }),
     ...(reference ? { reference } : {}),
-    ...(relativePath && (resource._tag === "media-file" || resource._tag === "workspace-file")
+    ...(relativePath &&
+    !input.pending &&
+    (resource._tag === "media-file" || resource._tag === "workspace-file")
       ? {
           onOpenFile: () =>
             useRightPanelStore
@@ -470,7 +476,8 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     src,
     workspaceRoot: props.workspaceRoot,
     originalUrl: props.originalUrl,
-    downloadable: fallbackSrc === undefined && !props.pending,
+    downloadable: fallbackSrc === undefined,
+    pending: props.pending,
   });
 
   if (props.kind === "video") {
