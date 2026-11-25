@@ -19,11 +19,11 @@ const items = [
 ];
 
 const pickers = {
-  combobox: () => (
+  combobox: (scrollAreaClassName: string) => (
     <Combobox defaultOpen items={items}>
       <ComboboxInput aria-label="Search options" />
       <ComboboxPopup>
-        <ComboboxList>
+        <ComboboxList scrollAreaClassName={scrollAreaClassName}>
           {(item: string) => (
             <ComboboxItem key={item} value={item}>
               {item}
@@ -33,11 +33,11 @@ const pickers = {
       </ComboboxPopup>
     </Combobox>
   ),
-  autocomplete: () => (
+  autocomplete: (scrollAreaClassName: string) => (
     <Autocomplete defaultOpen items={items}>
       <AutocompleteInput aria-label="Search options" />
       <AutocompletePopup>
-        <AutocompleteList>
+        <AutocompleteList scrollAreaClassName={scrollAreaClassName}>
           {(item: string) => (
             <AutocompleteItem key={item} value={item}>
               {item}
@@ -49,10 +49,15 @@ const pickers = {
   ),
 };
 
-it.each(["combobox", "autocomplete"] as const)(
-  "resizes the %s scrollbar thumb when filtering shortens the list",
-  async (kind) => {
-    await using _screen = await render(pickers[kind](), {
+it.each([
+  ["combobox", "max-h-none"],
+  ["combobox", "max-h-72"],
+  ["autocomplete", "max-h-none"],
+  ["autocomplete", "max-h-72"],
+] as const)(
+  "resizes the %s scrollbar thumb when filtering shortens the list (cap: %s)",
+  async (kind, scrollAreaClassName) => {
+    await using _screen = await render(pickers[kind](scrollAreaClassName), {
       router: false /* filtering a popup list does not involve routing */,
     });
 
@@ -61,6 +66,7 @@ it.each(["combobox", "autocomplete"] as const)(
       .element()
       .closest("[data-slot=scroll-area-viewport]");
     if (!viewport) throw new Error("List is not inside a scroll area");
+    if (scrollAreaClassName === "max-h-72") expect(viewport.clientHeight).toBeLessThanOrEqual(288);
     const thumbHeight = () =>
       document
         .querySelector(
