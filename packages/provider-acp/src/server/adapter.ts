@@ -2850,7 +2850,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           sessionId: string,
           usage: ThreadTokenUsageSnapshot,
         ) {
-          if (usage.maxTokens !== undefined) return usage;
           if (sessionId !== (yield* Ref.get(activeSessionId))) return usage;
           const selection = yield* Ref.get(activeSelection);
           const setup = yield* Ref.get(activeSessionSetup);
