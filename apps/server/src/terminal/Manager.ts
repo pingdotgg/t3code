@@ -1428,7 +1428,7 @@ function unfinishedSequenceReplay(session: TerminalSessionState): string {
 
 function retainedSnapshotHistory(history: string, maxBytes: number): string {
   const retained = retainedTerminalHistory(history, maxBytes);
-  if (retained.length > 0 || maxBytes === 0) return retained;
+  if (retained.length > 0) return retained;
 
   // A cut can discard the unfinished sequence along with the preceding history.
   // The last ESC starts it independently of the state of the discarded prefix.
