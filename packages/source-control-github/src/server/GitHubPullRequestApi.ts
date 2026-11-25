@@ -2927,7 +2927,7 @@ export const make = Effect.gen(function* () {
         const { owner, name } = parseRepositorySelector(input.repository);
         // Fresh head and merge-queue state determine the mutation's revision and route.
         const target = { ...input, operation: "runPullRequestAction" };
-        const state = yield* client
+        const actionState = yield* client
           .PullRequestActionState({
             owner,
             name,
@@ -2937,9 +2937,17 @@ export const make = Effect.gen(function* () {
           .pipe(
             toleratingMissingPullRef(decodePullRequestActionState),
             graphql({ ...target, allowReserve: true }),
-            Effect.map((result) => result.repository?.pullRequest ?? null),
+            Effect.map((result) =>
+              result.repository?.pullRequest == null
+                ? null
+                : {
+                    autoMergeAllowed: result.repository.autoMergeAllowed,
+                    pullRequest: result.repository.pullRequest,
+                  },
+            ),
             Effect.flatMap(found(target)),
           );
+        const state = actionState.pullRequest;
         if (action === "update-branch") {
           if (state.baseRef?.compare?.behindBy === 0) return;
           return yield* client
@@ -2978,18 +2986,36 @@ export const make = Effect.gen(function* () {
             }
           }
         }
-        // Merge queues always use auto-merge. A PR that became ready since detail loaded
-        // merges directly, matching `gh pr merge --auto`.
+        const readyNow = IMMEDIATELY_MERGEABLE.has(state.mergeStateStatus?.toUpperCase() ?? "");
+        const expectedHeadOid = input.expectedHeadSha ?? expectedHead;
+        // Merge queues accept `enqueuePullRequest` directly even when repository auto-merge is
+        // disabled. When auto-merge is allowed, `enablePullRequestAutoMerge` also handles PRs that
+        // are still waiting on checks or reviews.
+        if (
+          state.isMergeQueueEnabled === true &&
+          actionState.autoMergeAllowed === false &&
+          (action === "merge" || readyNow)
+        ) {
+          return yield* actionSummary(
+            client
+              .EnqueuePullRequest({
+                input: {
+                  pullRequestId: state.id,
+                  ...(expectedHeadOid === undefined ? {} : { expectedHeadOid }),
+                },
+              })
+              .pipe(
+                Effect.map((result) => result.enqueuePullRequest?.mergeQueueEntry?.pullRequest),
+              ),
+          ).pipe(graphql(target));
+        }
+        // A PR that became ready since detail loaded merges directly, matching `gh pr merge --auto`.
         const auto =
-          state.isMergeQueueEnabled === true ||
-          (action === "enable-auto-merge" &&
-            !IMMEDIATELY_MERGEABLE.has(state.mergeStateStatus?.toUpperCase() ?? ""));
+          state.isMergeQueueEnabled === true || (action === "enable-auto-merge" && !readyNow);
         const merge = {
           pullRequestId: state.id,
           mergeMethod: GRAPHQL_MERGE_METHODS[input.mergeMethod ?? "merge"] ?? "MERGE",
-          ...((input.expectedHeadSha ?? expectedHead) === undefined
-            ? {}
-            : { expectedHeadOid: input.expectedHeadSha ?? expectedHead }),
+          ...(expectedHeadOid === undefined ? {} : { expectedHeadOid }),
           ...(body === undefined ? {} : { commitBody: body }),
         };
         return yield* actionSummary(

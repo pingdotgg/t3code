@@ -1705,6 +1705,8 @@ export interface PullRequestActionStateRepositoryPullRequestPullRequest extends 
 
 /** A repository contains the content for a project. */
 export const PullRequestActionStateRepositoryRepository = Schema.Struct({
+  /** Whether or not Auto-merge can be enabled on pull requests in this repository. */
+  autoMergeAllowed: Schema.Boolean,
   /** Returns a single pull request from the current repository by number. */
   pullRequest: Schema.NullOr(PullRequestActionStateRepositoryPullRequestPullRequest)
 })
@@ -1720,7 +1722,7 @@ export const PullRequestActionState = GraphQL.query("PullRequestActionState", {
       { name: "headRef", body: "String!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){id headRefOid isMergeQueueEnabled mergeStateStatus baseRef{compare(headRef:$", "headRef", "){behindBy}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){autoMergeAllowed pullRequest(number:$", "number", "){id headRefOid isMergeQueueEnabled mergeStateStatus baseRef{compare(headRef:$", "headRef", "){behindBy}}}}"] }
     ],
     fragments: []
   },
