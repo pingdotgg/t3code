@@ -43,6 +43,14 @@ function repositoryKeyFromRemote(key: string): string | null {
   return canonicalRepositoryKey(key)?.replace(/\.git$/u, "") ?? null;
 }
 
+// Saved identities reach the predicates as written, so a key from before this mapping still matches.
+function withCanonicalKey<Identity extends { readonly canonicalKey: string }>(
+  identity: Identity,
+): Identity {
+  const canonicalKey = canonicalRepositoryKey(identity.canonicalKey);
+  return canonicalKey === null ? identity : { ...identity, canonicalKey };
+}
+
 export const definition = defineSourceControl({
   kind: KIND,
   label: "GitLab",
@@ -110,8 +118,16 @@ export const definition = defineSourceControl({
         : null,
   repositoryKeyFromRemote,
   canonicalRepositoryKey,
-  isChangeRequestInRepository: (identity, link) =>
-    isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
-  canReadChangeRequestOnHost: (identity, link) =>
-    isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
+  isChangeRequestInRepository: (saved, link) => {
+    const identity = withCanonicalKey(saved);
+    return isChangeRequestInProjectRepository(
+      projectChangeRequestHost(identity, KIND),
+      identity,
+      link,
+    );
+  },
+  canReadChangeRequestOnHost: (saved, link) => {
+    const identity = withCanonicalKey(saved);
+    return isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link);
+  },
 });

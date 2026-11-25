@@ -187,10 +187,21 @@ describe("GitLab repository keys", () => {
     expect(registry.changeRequestHost({ canonicalKey }, "gitlab")).toBe("gitlab.com");
   });
 
-  it("reads a key saved under altssh.gitlab.com as its gitlab.com key", () => {
-    expect(registry.canonicalRepositoryKey("altssh.gitlab.com/group/sub/project")).toBe(
-      "gitlab.com/group/sub/project",
-    );
+  it("matches merge requests for a key saved under altssh.gitlab.com", () => {
+    const canonicalKey = "altssh.gitlab.com/group/sub/project";
+    expect(registry.canonicalRepositoryKey(canonicalKey)).toBe("gitlab.com/group/sub/project");
+    const identity = {
+      canonicalKey,
+      displayName: "group/sub/project",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "ssh://git@altssh.gitlab.com:443/group/sub/project.git",
+      },
+    };
+    const link = parse("https://gitlab.com/group/sub/project/-/merge_requests/5")!;
+    expect(definition.isChangeRequestInRepository(identity, link)).toBe(true);
+    expect(definition.canReadChangeRequestOnHost(identity, link)).toBe(true);
   });
 
   it.each([
