@@ -2340,7 +2340,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           flavor.extractSubagentSessionEvent !== undefined && !followsAgentWorkState
             ? undefined
             : flavor.extractSubagentUpdate?.(tool);
-        let turnAttached = yield* Deferred.make<boolean>();
+        let turnAttached = yield* Deferred.make<"attached" | "unattached" | "cancelled">();
+        const resolveTurnAttached = Effect.fnUntraced(function* (
+          outcome: "attached" | "unattached" | "cancelled",
+        ) {
+          const waiting = turnAttached;
+          turnAttached = yield* Deferred.make<"attached" | "unattached" | "cancelled">();
+          yield* Deferred.succeed(waiting, outcome);
+        });
         const activeSessionId = yield* Ref.make<string | null>(null);
         // session/load replays history before activeSessionId names the loaded session.
         const loadingSessionId = yield* Ref.make<string | null>(null);
@@ -5546,28 +5553,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
           });
+          const clearIfOwner = Effect.gen(function* () {
+            if ((yield* Ref.get(continuationGeneration)) === generation) {
+              yield* Ref.set(continuationRequested, false);
+              yield* resolveTurnAttached(
+                (yield* Ref.get(stoppedRunQuarantine)) ? "cancelled" : "unattached",
+              );
+            }
+          });
+          const clearIfCurrent = () => continuationPermit.withPermit(clearIfOwner);
           yield* continuationRequests.offer({
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
             driver,
             detail: null,
             ...(notification === null ? {} : { notification }),
-            clearIfCurrent: () =>
-              continuationPermit.withPermit(
-                Effect.gen(function* () {
-                  if ((yield* Ref.get(continuationGeneration)) === generation) {
-                    yield* Ref.set(continuationRequested, false);
-                  }
-                }),
-              ),
+            clearIfCurrent,
+            onRunEndedWithoutStarting: clearIfCurrent,
             dispatchIfCurrent: (effect) =>
               continuationPermit.withPermit(
                 Effect.gen(function* () {
-                  const clearIfOwner = Effect.gen(function* () {
-                    if ((yield* Ref.get(continuationGeneration)) === generation) {
-                      yield* Ref.set(continuationRequested, false);
-                    }
-                  });
                   if (yield* Ref.get(stoppedRunQuarantine)) {
                     yield* clearIfOwner;
                     return Option.none();
@@ -5924,22 +5929,37 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             !followsAgentWorkState &&
             !(postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
           )
-            return true;
+            return "attached" as const;
           while (true) {
             const waiting = yield* runRuntimeCallbackAtGeneration(
               generation,
               Effect.gen(function* () {
-                if (yield* Ref.get(stoppedRunQuarantine)) return false;
-                if ((yield* Ref.get(activeTurn)) !== null) return null;
+                if (
+                  (yield* Ref.get(stoppedRunQuarantine)) ||
+                  (yield* Ref.get(continuationClosed))
+                ) {
+                  return "cancelled" as const;
+                }
+                if ((yield* Ref.get(activeTurn)) !== null) return "attached" as const;
+                const pendingAttach = turnAttached;
                 const sessionId = yield* Ref.get(activeSessionId);
                 if (sessionId !== null) yield* offerContinuationRun(sessionId);
-                return turnAttached;
+                if ((yield* Ref.get(activeTurn)) !== null) return "attached" as const;
+                if (
+                  !followsAgentWorkState &&
+                  (continuationRequests === undefined ||
+                    sessionId === null ||
+                    (yield* Ref.get(lastTurnRoute)) === null)
+                ) {
+                  return "unattached" as const;
+                }
+                return pendingAttach;
               }),
             );
             if (Option.isNone(waiting)) return yield* Effect.never;
-            if (waiting.value === false) return false;
-            if (waiting.value === null) return true;
-            if (!(yield* Deferred.await(waiting.value))) return false;
+            if (typeof waiting.value === "string") return waiting.value;
+            const result = yield* Deferred.await(waiting.value);
+            if (result !== "attached") return result;
           }
         });
 
@@ -6865,7 +6885,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             request: Effect.Effect<AcpAdapterV2UserInputRequest>,
             transportRequestId: string,
           ) {
-            if (!(yield* awaitRequestTurn(generation))) {
+            if ((yield* awaitRequestTurn(generation)) !== "attached") {
               return { answers: null, acknowledgeNativeResponse: Effect.void };
             }
             return yield* runRuntimeCallbackAtGeneration(
@@ -6921,9 +6941,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const cancelPendingRuntimeRequests = Effect.fnUntraced(function* (
           options: { readonly stopMcpCalls: boolean } = { stopMcpCalls: true },
         ) {
-          const waiting = turnAttached;
-          turnAttached = yield* Deferred.make<boolean>();
-          yield* Deferred.succeed(waiting, false);
+          yield* resolveTurnAttached("cancelled");
           // session/cancel does not end the agent's MCP calls; T3 runs them, so it stops them.
           if (options.stopMcpCalls && runtimeMcpBridge !== undefined) {
             yield* runtimeMcpBridge.stopCalls;
@@ -7638,78 +7656,71 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") ||
                 (postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
               ) {
-                if (!(yield* awaitRequestTurn(handlerGeneration)))
+                if ((yield* awaitRequestTurn(handlerGeneration)) === "cancelled")
                   return { outcome: { outcome: "cancelled" } } as const;
               }
               const admitted = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.gen(function* () {
-                  const context = followsAgentWorkState
-                    ? yield* Ref.get(activeTurn)
-                    : yield* activeContext;
-                  // Kiro sends the tool's kind on its `tool_call` and leaves it
-                  // off the permission request for that call; take it from the
-                  // tool already seen under the same id so policy can tell a
-                  // read from a write.
-                  const knownKind = context?.tools.get(params.toolCall.toolCallId)?.kind;
-                  const disposition = dispositionFor(
-                    context?.input.runtimePolicy ?? latestRuntimePolicy,
-                    params.toolCall.kind == null && knownKind !== undefined
-                      ? { ...params, toolCall: { ...params.toolCall, kind: knownKind } }
-                      : params,
+                  let immediateResponse: EffectAcpSchema.RequestPermissionResponse | undefined;
+                  if (yield* Ref.get(stoppedRunQuarantine)) {
+                    immediateResponse = { outcome: { outcome: "cancelled" } };
+                  } else {
+                    const context = yield* Ref.get(activeTurn);
+                    // Kiro sends the tool's kind on its `tool_call` and leaves it
+                    // off the permission request for that call; take it from the
+                    // tool already seen under the same id so policy can tell a
+                    // read from a write.
+                    const knownKind = context?.tools.get(params.toolCall.toolCallId)?.kind;
+                    const disposition = dispositionFor(
+                      context?.input.runtimePolicy ?? latestRuntimePolicy,
+                      params.toolCall.kind == null && knownKind !== undefined
+                        ? { ...params, toolCall: { ...params.toolCall, kind: knownKind } }
+                        : params,
+                    );
+                    if (disposition === "allow") {
+                      const optionId = selectAutoApprovedPermissionOption(answerableParams);
+                      immediateResponse =
+                        optionId === undefined
+                          ? { outcome: { outcome: "cancelled" } }
+                          : { outcome: { outcome: "selected", optionId } };
+                    } else if (disposition === "deny") {
+                      const optionId = selectPermissionOptionId(answerableParams, "decline");
+                      immediateResponse =
+                        optionId === undefined
+                          ? { outcome: { outcome: "cancelled" } }
+                          : { outcome: { outcome: "selected", optionId } };
+                    } else if (context === null) {
+                      immediateResponse = { outcome: { outcome: "cancelled" } };
+                    } else {
+                      return {
+                        _tag: "Pending" as const,
+                        pending: yield* beginApprovalRequest(
+                          context,
+                          params,
+                          handlerGeneration,
+                          transportRequestId,
+                        ),
+                      };
+                    }
+                  }
+                  const nativeResponseAcknowledgement = yield* Deferred.make<
+                    void,
+                    EffectAcpErrors.AcpError
+                  >();
+                  yield* registerNativeResponseAcknowledgement(
+                    handlerGeneration,
+                    transportRequestId,
+                    nativeResponseAcknowledgement,
                   );
-                  if (disposition === "allow") {
-                    const optionId = selectAutoApprovedPermissionOption(answerableParams);
-                    return {
-                      _tag: "Immediate" as const,
-                      response:
-                        optionId === undefined
-                          ? ({ outcome: { outcome: "cancelled" } } as const)
-                          : ({ outcome: { outcome: "selected", optionId } } as const),
-                    };
-                  }
-                  if (disposition === "deny") {
-                    const optionId = selectPermissionOptionId(answerableParams, "decline");
-                    return {
-                      _tag: "Immediate" as const,
-                      response:
-                        optionId === undefined
-                          ? ({ outcome: { outcome: "cancelled" } } as const)
-                          : ({ outcome: { outcome: "selected", optionId } } as const),
-                    };
-                  }
-                  return {
-                    _tag: "Pending" as const,
-                    pending: yield* beginApprovalRequest(
-                      yield* activeContext,
-                      params,
-                      handlerGeneration,
-                      transportRequestId,
-                    ),
-                  };
+                  return { _tag: "Immediate" as const, response: immediateResponse };
                 }),
               );
               if (Option.isNone(admitted)) {
                 return yield* Effect.never;
               }
               if (admitted.value._tag === "Immediate") {
-                const response = admitted.value.response;
-                const checked = yield* runRuntimeCallbackAtGeneration(
-                  handlerGeneration,
-                  Effect.gen(function* () {
-                    const nativeResponseAcknowledgement = yield* Deferred.make<
-                      void,
-                      EffectAcpErrors.AcpError
-                    >();
-                    yield* registerNativeResponseAcknowledgement(
-                      handlerGeneration,
-                      transportRequestId,
-                      nativeResponseAcknowledgement,
-                    );
-                    return response;
-                  }),
-                );
-                return Option.isSome(checked) ? checked.value : yield* Effect.never;
+                return admitted.value.response;
               }
               const {
                 context,
@@ -10013,9 +10024,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
             if (followsAgentWorkState)
               yield* runtimeCallbackPermit.withPermit(syncNativeChildren(context));
-            const attached = turnAttached;
-            turnAttached = yield* Deferred.make<boolean>();
-            yield* Deferred.succeed(attached, true);
+            yield* resolveTurnAttached("attached");
             // Every attach ends the deferred-terminal contract, but only the
             // queued provider continuation owns wake traffic. A user turn may
             // start before that continuation and must leave its buffer intact.

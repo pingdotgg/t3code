@@ -83,7 +83,8 @@ export const layer = Layer.effectDiscard(
         return [Math.min(100 * 2 ** Math.min(attempt, 6), 5_000), updated] as const;
       });
 
-    // Cancelling or stopping a queued continuation ends it unstarted; only the request can release the adapter's wake latch.
+    // Cancelling a queued continuation or failing a started run before a provider turn attaches leaves only the
+    // request able to release the adapter's wake latch; adapters guard by generation/token once a turn attaches.
     const releaseIfNeverStarted = Effect.fn("ProviderContinuationService.releaseIfNeverStarted")(
       function* (
         request: ProviderContinuationRequests.ProviderContinuationRequest,
@@ -113,11 +114,7 @@ export const layer = Layer.effectDiscard(
             ),
             Stream.runHead,
             Effect.flatMap((ended) =>
-              Option.isSome(ended) &&
-              ended.value.event.type === "run.updated" &&
-              ended.value.event.payload.startedAt === null
-                ? onRunEndedWithoutStarting()
-                : Effect.void,
+              Option.isSome(ended) ? onRunEndedWithoutStarting() : Effect.void,
             ),
             Effect.catchCause((cause) =>
               Effect.logWarning("orchestration-v2.provider-continuation.run-watch-failed", {
