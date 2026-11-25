@@ -2812,19 +2812,19 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         },
       ]);
 
-      const title = yield* outbox.claimNext({
-        workerId: "title-lane-worker",
-      });
-      assert.isTrue(Option.isSome(title));
-      if (Option.isNone(title)) return;
-      assert.equal(title.value.id, titleEffectId);
-
       const provider = yield* outbox.claimNext({
         workerId: "critical-lane-worker",
       });
       assert.isTrue(Option.isSome(provider));
       if (Option.isNone(provider)) return;
       assert.equal(provider.value.id, providerEffectId);
+
+      const title = yield* outbox.claimNext({
+        workerId: "title-lane-worker",
+      });
+      assert.isTrue(Option.isSome(title));
+      if (Option.isNone(title)) return;
+      assert.equal(title.value.id, titleEffectId);
 
       assert.isTrue(
         Option.isNone(
@@ -3382,10 +3382,101 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  it.effect("holds pending titles at the running-title cap without waking idle workers", () =>
+  const priorityEffect = (
+    name: string,
+    type: "checkpoint.capture" | "thread-title.generate" | "provider-turn.start",
+    threadName = name,
+  ) => ({
+    id: `effect:foundation-priority:${name}`,
+    commandId: CommandId.make(`command:foundation-priority:${name}`),
+    threadId: ThreadId.make(`thread:foundation-priority:${threadName}`),
+    request:
+      type === "checkpoint.capture"
+        ? {
+            type,
+            runId: RunId.make(`run:foundation-priority:${name}`),
+            scopeId: CheckpointScopeId.make(`scope:foundation-priority:${name}`),
+          }
+        : type === "provider-turn.start"
+          ? { type, runId: RunId.make(`run:foundation-priority:${name}`) }
+          : { type, kind: { type: "regenerate" as const } },
+  });
+  const claimAll = (outbox: EffectOutbox.EffectOutboxV2Shape, limits = {}) =>
+    Effect.gen(function* () {
+      const claimed: Array<string> = [];
+      while (true) {
+        const next = yield* outbox.claimNext({ workerId: "priority-worker", ...limits });
+        if (Option.isNone(next)) return claimed;
+        claimed.push(next.value.id.replace("effect:foundation-priority:", ""));
+      }
+    });
+  const settlePriority = (outbox: EffectOutbox.EffectOutboxV2Shape, names: ReadonlyArray<string>) =>
+    Effect.forEach(names, (name) =>
+      outbox.succeed({
+        effectId: `effect:foundation-priority:${name}`,
+        workerId: "priority-worker",
+      }),
+    );
+
+  it.effect("starts a provider turn while checkpoint captures fill the background cap", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const cap = { maxRunningTitleGenerations: 1 };
+      const startedCaptures = yield* Ref.make(0);
+      const fourCapturesStarted = yield* Deferred.make<void>();
+      const turnStarted = yield* Deferred.make<void>();
+      const releaseCaptures = yield* Deferred.make<void>();
+      const captures = Array.from({ length: 6 }, (_, index) =>
+        priorityEffect(`daemon-capture-${index}`, "checkpoint.capture"),
+      );
+      const layerWorker = EffectWorker.layerWithOptions({
+        workerId: "capture-cap-worker",
+      }).pipe(
+        Layer.provide(
+          Layer.merge(
+            Layer.succeed(EffectOutbox.EffectOutboxV2, outbox),
+            Layer.succeed(
+              EffectWorker.OrchestrationEffectExecutorV2,
+              EffectWorker.OrchestrationEffectExecutorV2.of({
+                execute: (effect) =>
+                  effect.request.type === "checkpoint.capture"
+                    ? Ref.updateAndGet(startedCaptures, (count) => count + 1).pipe(
+                        Effect.flatMap((count) =>
+                          count === 4
+                            ? Deferred.succeed(fourCapturesStarted, undefined)
+                            : Effect.void,
+                        ),
+                        Effect.andThen(Deferred.await(releaseCaptures)),
+                      )
+                    : Deferred.succeed(turnStarted, undefined).pipe(Effect.asVoid),
+              }),
+            ),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        yield* EffectWorker.runDaemonWithOptions({ concurrency: 6 }).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        yield* outbox.enqueue(captures);
+        yield* outbox.notifyAvailable(captures.length);
+        yield* Deferred.await(fourCapturesStarted);
+
+        yield* outbox.enqueue([priorityEffect("daemon-turn", "provider-turn.start")]);
+        yield* outbox.notifyAvailable();
+        yield* Deferred.await(turnStarted);
+        assert.strictEqual(yield* Ref.get(startedCaptures), 4);
+
+        yield* Deferred.succeed(releaseCaptures, undefined);
+        yield* Effect.forEach(captures, (capture) => outbox.awaitSettled(capture.id));
+        assert.strictEqual(yield* Ref.get(startedCaptures), 6);
+      }).pipe(Effect.provide(layerWorker), Effect.scoped);
+    }),
+  );
+
+  it.effect("holds pending work at a running cap without waking idle workers", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const cap = { maxRunningNonInteractive: 1 };
       const title = (name: string) => ({
         id: `effect:foundation-title-cap:${name}`,
         commandId: CommandId.make(`command:foundation-title-cap:${name}`),
@@ -3409,6 +3500,89 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const second = yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap });
       assert.strictEqual(Option.getOrUndefined(second)?.id, title("second").id);
       yield* outbox.succeed({ effectId: title("second").id, workerId: "title-cap-worker" });
+    }),
+  );
+
+  it.effect("claims interactive work first, then normal, then background, FIFO in a level", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      yield* outbox.enqueue([
+        priorityEffect("order-capture-1", "checkpoint.capture"),
+        priorityEffect("order-title-1", "thread-title.generate"),
+        priorityEffect("order-turn-1", "provider-turn.start"),
+        priorityEffect("order-capture-2", "checkpoint.capture"),
+        priorityEffect("order-turn-2", "provider-turn.start"),
+        priorityEffect("order-title-2", "thread-title.generate"),
+      ]);
+      const claimed = yield* claimAll(outbox);
+      assert.deepStrictEqual(claimed, [
+        "order-turn-1",
+        "order-turn-2",
+        "order-title-1",
+        "order-title-2",
+        "order-capture-1",
+        "order-capture-2",
+      ]);
+      yield* settlePriority(outbox, claimed);
+    }),
+  );
+
+  it.effect("starts interactive work at once while captures hold the background cap", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const limits = { maxRunningNonInteractive: 5, maxRunningBackground: 4 };
+      yield* outbox.enqueue(
+        Array.from({ length: 6 }, (_, index) =>
+          priorityEffect(`cap-capture-${index}`, "checkpoint.capture"),
+        ),
+      );
+      const captures = yield* claimAll(outbox, limits);
+      assert.deepStrictEqual(captures, [
+        "cap-capture-0",
+        "cap-capture-1",
+        "cap-capture-2",
+        "cap-capture-3",
+      ]);
+      assert.isTrue(Option.isNone(yield* outbox.nextClaimableAt(limits)));
+
+      yield* outbox.enqueue([priorityEffect("cap-turn", "provider-turn.start")]);
+      assert.deepStrictEqual(yield* claimAll(outbox, limits), ["cap-turn"]);
+
+      yield* settlePriority(outbox, ["cap-capture-0"]);
+      assert.deepStrictEqual(yield* claimAll(outbox, limits), ["cap-capture-4"]);
+      yield* settlePriority(outbox, [...captures.slice(1), "cap-turn", "cap-capture-4"]);
+      assert.deepStrictEqual(yield* claimAll(outbox, limits), ["cap-capture-5"]);
+      yield* settlePriority(outbox, ["cap-capture-5"]);
+    }),
+  );
+
+  it.effect("lets work that waited past the aging window compete FIFO with interactive work", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      yield* outbox.enqueue([priorityEffect("aging-old-capture", "checkpoint.capture")]);
+      yield* TestClock.adjust(EffectOutbox.EFFECT_PRIORITY_AGING);
+      yield* outbox.enqueue([
+        priorityEffect("aging-fresh-capture", "checkpoint.capture"),
+        priorityEffect("aging-turn", "provider-turn.start"),
+      ]);
+      const claimed = yield* claimAll(outbox);
+      assert.deepStrictEqual(claimed, ["aging-old-capture", "aging-turn", "aging-fresh-capture"]);
+      yield* settlePriority(outbox, claimed);
+    }),
+  );
+
+  it.effect("keeps a thread's own order when its later effect has a higher priority", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      yield* outbox.enqueue([
+        priorityEffect("lane-other-capture", "checkpoint.capture"),
+        priorityEffect("lane-own-capture", "checkpoint.capture", "lane-held"),
+        priorityEffect("lane-held-turn", "provider-turn.start", "lane-held"),
+      ]);
+      assert.deepStrictEqual(yield* claimAll(outbox), ["lane-other-capture", "lane-own-capture"]);
+      yield* settlePriority(outbox, ["lane-own-capture"]);
+      assert.deepStrictEqual(yield* claimAll(outbox), ["lane-held-turn"]);
+      yield* settlePriority(outbox, ["lane-other-capture", "lane-held-turn"]);
     }),
   );
 

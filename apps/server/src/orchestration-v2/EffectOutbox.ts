@@ -164,6 +164,49 @@ export const PROCESS_BOUND_EFFECT_TYPES = [
   "runtime-request.respond",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
+// Interactive work is what a user waits on; background work is git-bound or cleanup.
+const EFFECT_PRIORITY = {
+  "provider-turn.start": "interactive",
+  "provider-turn.restart": "interactive",
+  "provider-turn.steer": "interactive",
+  "provider-turn.interrupt": "interactive",
+  "runtime-request.respond": "interactive",
+  "provider-thread.rollback": "interactive",
+  "provider-runtime.continue": "normal",
+  "provider-session.apply-model-selection": "normal",
+  "provider-session.apply-thread-title": "normal",
+  "thread-title.generate": "normal",
+  "delegated-tasks.stop": "normal",
+  "checkpoint.capture": "background",
+  "provider-session.detach": "background",
+  "scheduled-tasks.cleanup": "background",
+  "terminal.cleanup": "background",
+  "preview.cleanup": "background",
+  "attachment.cleanup": "background",
+} as const satisfies Record<
+  OrchestrationEffectRequestV2["type"],
+  "interactive" | "normal" | "background"
+>;
+const effectTypesWithPriority = (
+  priority: (typeof EFFECT_PRIORITY)[keyof typeof EFFECT_PRIORITY],
+) => Object.entries(EFFECT_PRIORITY).flatMap(([type, level]) => (level === priority ? [type] : []));
+const INTERACTIVE_EFFECT_TYPES = effectTypesWithPriority("interactive");
+const BACKGROUND_EFFECT_TYPES = effectTypesWithPriority("background");
+const NON_INTERACTIVE_EFFECT_TYPES = Object.keys(EFFECT_PRIORITY).filter(
+  (type) => !INTERACTIVE_EFFECT_TYPES.includes(type),
+);
+// Strict priority alone lets a steady stream of turn starts starve captures and cleanups.
+// Work that has waited this long competes FIFO with fresh interactive work instead.
+export const EFFECT_PRIORITY_AGING = Duration.seconds(10);
+
+/** Caps on running rows, which outlive a worker slot that stopped waiting on its execution. */
+export interface EffectClaimLimits {
+  /** Keeps headroom so interactive work never waits for normal or background work. */
+  readonly maxRunningNonInteractive?: number;
+  /** Background work is mostly git-bound checkpoint captures, which gain nothing past a few. */
+  readonly maxRunningBackground?: number;
+}
+
 export const OrchestrationEffectStatusV2 = Schema.Literals([
   "pending",
   "running",
@@ -247,14 +290,15 @@ export interface EffectOutboxV2Shape {
     { readonly requeued: number; readonly cancelled: number },
     EffectOutboxError
   >;
-  readonly claimNext: (input: {
-    readonly workerId: string;
-    readonly excludeRestartContinuations?: boolean;
-    readonly maxRunningTitleGenerations?: number;
-  }) => Effect.Effect<Option.Option<OrchestrationEffectV2>, EffectOutboxError>;
-  readonly nextClaimableAt: (input?: {
-    readonly maxRunningTitleGenerations?: number;
-  }) => Effect.Effect<Option.Option<DateTime.Utc>, EffectOutboxError>;
+  readonly claimNext: (
+    input: EffectClaimLimits & {
+      readonly workerId: string;
+      readonly excludeRestartContinuations?: boolean;
+    },
+  ) => Effect.Effect<Option.Option<OrchestrationEffectV2>, EffectOutboxError>;
+  readonly nextClaimableAt: (
+    input?: EffectClaimLimits,
+  ) => Effect.Effect<Option.Option<DateTime.Utc>, EffectOutboxError>;
   readonly succeed: (input: {
     readonly effectId: string;
     readonly workerId: string;
@@ -339,11 +383,23 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
+    const runningCap = (effectTypes: ReadonlyArray<string>, max: number | undefined) =>
+      max === undefined
+        ? sql`1 = 1`
+        : sql`(
+            candidate.effect_type NOT IN ${sql.in(effectTypes)}
+            OR (
+              SELECT COUNT(*)
+              FROM orchestration_v2_effect_outbox AS running_effect
+              WHERE running_effect.status = 'running'
+                AND running_effect.effect_type IN ${sql.in(effectTypes)}
+            ) < ${max}
+          )`;
     // Retry backoff must block later effects so turns cannot race a pending rollback.
     const claimableCandidatePredicate = (
       availableBefore?: string,
       excludeRestartContinuations = false,
-      maxRunningTitleGenerations?: number,
+      limits: EffectClaimLimits = {},
     ) =>
       sql`
         ${
@@ -380,19 +436,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               )
             )
         )
-        AND ${
-          maxRunningTitleGenerations === undefined
-            ? sql`1 = 1`
-            : sql`(
-                candidate.effect_type != 'thread-title.generate'
-                OR (
-                  SELECT COUNT(*)
-                  FROM orchestration_v2_effect_outbox AS running_title
-                  WHERE running_title.status = 'running'
-                    AND running_title.effect_type = 'thread-title.generate'
-                ) < ${maxRunningTitleGenerations}
-              )`
-        }
+        AND ${runningCap(NON_INTERACTIVE_EFFECT_TYPES, limits.maxRunningNonInteractive)}
+        AND ${runningCap(BACKGROUND_EFFECT_TYPES, limits.maxRunningBackground)}
       `;
 
     const cancellationSignal = (effectId: string) => {
@@ -581,9 +626,12 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
       ),
       // The worker polls for the next effect even when there is no work to claim.
       claimNext: Effect.fnUntraced(
-        function* ({ workerId, excludeRestartContinuations = false, maxRunningTitleGenerations }) {
+        function* ({ workerId, excludeRestartContinuations = false, ...limits }) {
           const now = yield* DateTime.now;
           const nowIso = DateTime.formatIso(now);
+          const agedBefore = DateTime.formatIso(
+            DateTime.subtract(now, { milliseconds: Duration.toMillis(EFFECT_PRIORITY_AGING) }),
+          );
           // Idle claims return empty; tracing their full SQL on every poll overwhelms useful traces.
           const claimStatement = sql<EffectRow>`
             UPDATE orchestration_v2_effect_outbox
@@ -596,13 +644,18 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             WHERE effect_id = (
               SELECT candidate.effect_id
               FROM orchestration_v2_effect_outbox AS candidate
-              WHERE ${claimableCandidatePredicate(
-                nowIso,
-                excludeRestartContinuations,
-                maxRunningTitleGenerations,
-              )}
+              WHERE ${claimableCandidatePredicate(nowIso, excludeRestartContinuations, limits)}
                 AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
-              ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
+              ORDER BY
+                CASE
+                  WHEN candidate.available_at <= ${agedBefore} THEN 0
+                  WHEN candidate.effect_type IN ${sql.in(INTERACTIVE_EFFECT_TYPES)} THEN 0
+                  WHEN candidate.effect_type IN ${sql.in(BACKGROUND_EFFECT_TYPES)} THEN 2
+                  ELSE 1
+                END ASC,
+                candidate.available_at ASC,
+                candidate.created_at ASC,
+                candidate.effect_id ASC
               LIMIT 1
             )
             RETURNING *
@@ -634,13 +687,11 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         ),
       ),
       nextClaimableAt: Effect.fnUntraced(
-        function* ({
-          maxRunningTitleGenerations,
-        }: { readonly maxRunningTitleGenerations?: number } = {}) {
+        function* (limits: EffectClaimLimits = {}) {
           const rows = yield* sql<{ readonly available_at: string | null }>`
             SELECT MIN(candidate.available_at) AS available_at
             FROM orchestration_v2_effect_outbox AS candidate
-            WHERE ${claimableCandidatePredicate(undefined, false, maxRunningTitleGenerations)}
+            WHERE ${claimableCandidatePredicate(undefined, false, limits)}
           `.pipe(NodeSqliteClient.readOnly, Effect.withTracerEnabled(false));
           const availableAt = rows[0]?.available_at;
           if (availableAt === undefined || availableAt === null) return Option.none();

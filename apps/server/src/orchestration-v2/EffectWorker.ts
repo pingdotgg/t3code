@@ -767,13 +767,13 @@ type ClaimFilter = Omit<Parameters<EffectOutbox.EffectOutboxV2Shape["claimNext"]
 
 export interface OrchestrationEffectWorkerV2Shape {
   readonly awaitWork: Effect.Effect<void>;
-  readonly runOnce: (input?: {
-    readonly maxRunningTitleGenerations?: number;
-  }) => Effect.Effect<boolean, OrchestrationEffectWorkerError>;
+  readonly runOnce: (
+    input?: EffectOutbox.EffectClaimLimits,
+  ) => Effect.Effect<boolean, OrchestrationEffectWorkerError>;
   readonly runRecoveryOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
-  readonly nextClaimableAt: (input?: {
-    readonly maxRunningTitleGenerations?: number;
-  }) => Effect.Effect<Option.Option<DateTime.Utc>, OrchestrationEffectWorkerError>;
+  readonly nextClaimableAt: (
+    input?: EffectOutbox.EffectClaimLimits,
+  ) => Effect.Effect<Option.Option<DateTime.Utc>, OrchestrationEffectWorkerError>;
   readonly drain: (maxEffects?: number) => Effect.Effect<number, OrchestrationEffectWorkerError>;
 }
 
@@ -1041,7 +1041,10 @@ export interface OrchestrationEffectDaemonOptions {
   readonly livenessPollIntervalMs?: number;
 }
 
-const DEFAULT_EFFECT_WORKER_CONCURRENCY = 4;
+// Background work keeps the four slots it always had; the extra slots exist only for interactive
+// work. More capture concurrency made turn ends slower because git throughput is the limit.
+const DEFAULT_EFFECT_WORKER_CONCURRENCY = 6;
+const MAX_RUNNING_BACKGROUND_EFFECTS = 4;
 const DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS = 30_000;
 // A provider request can go unanswered indefinitely. After this wait the slot claims other work
 // while the execution keeps its running row (which blocks its own thread) and settles it later.
@@ -1061,8 +1064,13 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
       const livenessPollIntervalMs = Number.isFinite(requestedLivenessPollIntervalMs)
         ? Math.max(1, Math.floor(requestedLivenessPollIntervalMs))
         : DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS;
-      // Title generation can run for minutes; leave at least one worker free for turn work.
-      const claimLimits = concurrency > 1 ? { maxRunningTitleGenerations: concurrency - 1 } : {};
+      const claimLimits: EffectOutbox.EffectClaimLimits =
+        concurrency > 1
+          ? {
+              maxRunningNonInteractive: concurrency - 1,
+              maxRunningBackground: Math.min(MAX_RUNNING_BACKGROUND_EFFECTS, concurrency - 1),
+            }
+          : {};
       // Notifications wake promptly; availableAt persists retry timing, and liveness polling recovers missed wakeups.
       const runWorker = Effect.gen(function* () {
         while (true) {
