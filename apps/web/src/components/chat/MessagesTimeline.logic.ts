@@ -96,6 +96,15 @@ export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   return entry.kind === "work" ? (entry.entry.runId ?? null) : null;
 }
 
+// A running provider retry stays out of live tool groups: there its row repeats the
+// group header and reads as a second attempt.
+function workEntryIsStandaloneError(entry: WorkLogEntry): boolean {
+  return (
+    entry.itemType === "error" &&
+    (entry.toolLifecycleStatus === "failed" || entry.toolLifecycleStatus === "inProgress")
+  );
+}
+
 function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
   return (
     entry.toolLifecycleStatus === "inProgress" ||
@@ -1750,6 +1759,7 @@ export function deriveMessagesTimelineRows(
       const entry = timelineEntries[index]!;
       if (
         entry.kind !== "work" ||
+        workEntryIsStandaloneError(entry.entry) ||
         entry.entry.tone === "error" ||
         entry.entry.sourceActivityKind === "runtime.error" ||
         entry.entry.itemType === "system_notice" ||
@@ -2064,8 +2074,7 @@ export function deriveMessagesTimelineRows(
       if (
         isPendingApproval(timelineEntry.entry) ||
         (timelineEntry.entry.runId != null && itemizedRunIds.has(timelineEntry.entry.runId)) ||
-        (timelineEntry.entry.itemType === "error" &&
-          timelineEntry.entry.toolLifecycleStatus === "failed") ||
+        workEntryIsStandaloneError(timelineEntry.entry) ||
         timelineEntry.entry.tone === "error" ||
         timelineEntry.entry.sourceActivityKind === "runtime.error" ||
         timelineEntry.entry.itemType === "system_notice" ||
@@ -2090,8 +2099,7 @@ export function deriveMessagesTimelineRows(
           !nextEntry ||
           nextEntry.kind !== "work" ||
           nextEntry.entry.sourceActivityKind === "context-compaction" ||
-          (nextEntry.entry.itemType === "error" &&
-            nextEntry.entry.toolLifecycleStatus === "failed") ||
+          workEntryIsStandaloneError(nextEntry.entry) ||
           nextEntry.entry.tone === "error" ||
           nextEntry.entry.sourceActivityKind === "runtime.error" ||
           nextEntry.entry.itemType === "system_notice" ||
