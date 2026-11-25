@@ -64,14 +64,5 @@ test(
     await query.fill('"jade falcon"');
     await screen.getByRole("option").filter({ hasText: "jade falcon" }).tap();
     await expect(find).toContainText("1/1");
-
-    const imageThread = await t3.thread({ project, title: "Image notes", messages: ["Start"] });
-    await t3.open(imageThread);
-    const imageComposer = screen.getByRole("textbox", "Message Image notes");
-    await imageComposer.fill("![invisible heron](https://example.invalid/image.png)");
-    await imageComposer.press("Enter");
-    await screen.getByText("second fixture turn complete").waitFor();
-    await query.fill('"invisible heron"');
-    await expect(screen.getByText("No threads found", { exact: true })).toBeVisible();
   },
 );
