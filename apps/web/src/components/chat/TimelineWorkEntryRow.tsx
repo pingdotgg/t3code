@@ -27,7 +27,15 @@ import {
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { memo, use, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import {
+  memo,
+  use,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import {
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
@@ -193,6 +201,36 @@ export function ThreadReadLabel({
       )}
     </span>
   );
+}
+
+const PATH_TOKEN_PATTERN = /(^|[\s־([{'"`])((?:~\/|\.{1,2}\/|\/|[A-Za-z]:\\)[^\s"'`<>()[\]{}]+)/g;
+
+function renderWorkEntryLabel(text: string) {
+  PATH_TOKEN_PATTERN.lastIndex = 0;
+  let match = PATH_TOKEN_PATTERN.exec(text);
+  if (!match) return text;
+
+  const parts: Array<ReactNode> = [];
+  let cursor = 0;
+  while (match) {
+    const prefix = match[1] ?? "";
+    const token = match[2] ?? "";
+    const tokenStart = match.index + prefix.length;
+    if (tokenStart > cursor) {
+      parts.push(text.slice(cursor, tokenStart));
+    }
+    parts.push(
+      <bdi key={tokenStart} dir="ltr">
+        {token}
+      </bdi>,
+    );
+    cursor = tokenStart + token.length;
+    match = PATH_TOKEN_PATTERN.exec(text);
+  }
+  if (cursor < text.length) {
+    parts.push(text.slice(cursor));
+  }
+  return parts;
 }
 
 const toolCallExpandedBodyClassName =
@@ -621,7 +659,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   linked
                 />
               ) : (
-                previewText
+                renderWorkEntryLabel(previewText)
               )}
             </span>
             {answerPreview ? (

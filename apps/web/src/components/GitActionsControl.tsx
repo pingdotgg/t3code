@@ -1754,7 +1754,10 @@ function CheckoutGitActionsControl({
                   {changesBaseLabel}
                 </SharedTooltipTrigger>
               ) : null}
-              <span className="ml-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
+              <span
+                dir="ltr"
+                className="ms-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums"
+              >
                 <span
                   className={
                     changesTotals.insertions
@@ -1916,7 +1919,7 @@ function CheckoutGitActionsControl({
                                         <T>Excluded</T>
                                       </span>
                                     ) : (
-                                      <>
+                                      <span dir="ltr" className="inline-block">
                                         <span className="text-diff-addition">
                                           +{formatDiffCount(file.insertions)}
                                         </span>
@@ -1924,7 +1927,7 @@ function CheckoutGitActionsControl({
                                         <span className="text-diff-deletion">
                                           -{formatDiffCount(file.deletions)}
                                         </span>
-                                      </>
+                                      </span>
                                     )}
                                   </span>
                                 </button>
@@ -1934,7 +1937,7 @@ function CheckoutGitActionsControl({
                         </div>
                       </ScrollArea>
                     </div>
-                    <div className="flex justify-end font-mono">
+                    <div dir="ltr" className="flex justify-end font-mono">
                       <span className="text-diff-addition">
                         +{formatDiffCount(selectedFiles.reduce((sum, f) => sum + f.insertions, 0))}
                       </span>

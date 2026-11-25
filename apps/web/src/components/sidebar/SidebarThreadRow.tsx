@@ -1096,7 +1096,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     destinationVerb !== null ? (
       <span
         role="status"
-        className="pointer-events-none ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-1.5 text-2xs font-medium text-primary"
+        className="pointer-events-none ms-auto inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-1.5 text-2xs font-medium text-primary"
       >
         {dropVerbBadge[destinationVerb]}
       </span>
@@ -1336,14 +1336,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       {prBadge}
       {issueBadge}
       {diff ? (
-        <span className="shrink-0 font-mono">
+        <span dir="ltr" className="shrink-0 font-mono">
           <span className="text-diff-addition-foreground">+{formatDiffCount(diff.insertions)}</span>{" "}
           <span className="text-diff-deletion-foreground">−{formatDiffCount(diff.deletions)}</span>
         </span>
       ) : null}
       <span
         aria-hidden
-        className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+        className="pointer-events-none ms-auto inline-flex shrink-0 items-center gap-1"
       >
         <SidebarProviderIcon
           thread={thread}

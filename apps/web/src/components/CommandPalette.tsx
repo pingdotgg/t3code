@@ -1235,7 +1235,7 @@ function OpenCommandPaletteDialog(props: {
       const disabledHint = readiness.hint;
 
       const titleTrailingContent = readiness.ready ? undefined : (
-        <span className="ml-auto">
+        <span className="ms-auto">
           <SharedTooltipTrigger
             render={
               <Button

@@ -1228,7 +1228,7 @@ export function ProviderInstanceCard({
       >
         <div
           className={cn(
-            "pointer-events-none flex min-w-0 flex-1 items-start gap-3 rounded-md text-left transition-opacity",
+            "pointer-events-none flex min-w-0 flex-1 items-start gap-3 rounded-md text-start transition-opacity",
             !enabled && !selected && "opacity-60 group-hover:opacity-100",
           )}
         >
@@ -1244,7 +1244,10 @@ export function ProviderInstanceCard({
             <span className="flex min-w-0 items-center gap-2">
               <span className="truncate text-sm font-medium text-foreground">{displayName}</span>
               {versionLabel ? (
-                <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
+                <code
+                  dir="ltr"
+                  className="max-w-24 shrink-0 truncate text-xs text-muted-foreground"
+                >
                   {versionLabel}
                 </code>
               ) : null}
@@ -1258,14 +1261,19 @@ export function ProviderInstanceCard({
                 <span
                   tabIndex={statusDiagnostic ? 0 : undefined}
                   aria-live="polite"
-                  className="pointer-events-auto line-clamp-2 [overflow-wrap:anywhere]"
+                  className="pointer-events-auto min-w-0 line-clamp-2 [overflow-wrap:anywhere]"
                 >
                   {updateProgress ? (
                     gt("Updating · {progress}", { progress: updateProgress })
                   ) : (
                     <>
                       {summary.headline}
-                      {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+                      {needsAttention && inlineStatusDetail ? (
+                        <>
+                          {" · "}
+                          <bdi>{inlineStatusDetail}</bdi>
+                        </>
+                      ) : null}
                     </>
                   )}
                 </span>

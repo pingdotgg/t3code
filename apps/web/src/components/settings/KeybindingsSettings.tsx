@@ -962,7 +962,9 @@ function WhenClauseControl({
         }
         aria-label={editLabel}
       >
-        <span className="truncate font-mono">{expression || gt("Always")}</span>
+        <span dir={expression ? "ltr" : undefined} className="truncate font-mono">
+          {expression || gt("Always")}
+        </span>
         <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={6}>

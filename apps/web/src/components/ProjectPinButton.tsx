@@ -39,7 +39,7 @@ export function ProjectPinButton(props: {
   return (
     <span
       className={cn(
-        "group/pin ml-auto flex",
+        "group/pin ms-auto flex",
         !props.pinned && "opacity-0 in-data-highlighted:opacity-100 pointer-coarse:opacity-100",
       )}
     >

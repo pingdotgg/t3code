@@ -67,7 +67,7 @@ export function DiffFileHeaderSkeleton({
               : "h-3 w-3/5 max-w-72"
         }
       />
-      <div className="ml-auto flex shrink-0 items-center gap-2">
+      <div className="ms-auto flex shrink-0 items-center gap-2">
         <Skeleton shape="pill" className="h-3 w-5" />
         <Skeleton shape="pill" className="h-3 w-5" />
       </div>
