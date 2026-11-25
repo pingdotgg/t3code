@@ -59,6 +59,7 @@ catalog:
   "@noble/hashes": 1.8.0
   "@pierre/diffs": 1.7.0-beta.4
   "@pierre/highlights": 0.5.0
+  "@pierre/trees": 1.0.0
   "@tailwindcss/node": 4.3.3
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
@@ -174,8 +175,6 @@ overrides:
   expo-constants: 58.0.15
   "expo-sharing>@expo/config-plugins": 58.0.12
   "expo-sharing>@expo/config-types": 58.0.3
-  # @pierre/trees pins @pierre/theming 1.0.0, whose peer range predates @pierre/theme 2.
-  "@pierre/trees>@pierre/theming": 1.0.2
   # Resolve below remark-math so Vite, Metro and Node use the same tokenizer.
   "remark-math>micromark-extension-math": npm:micromark-extension-llm-math@3.1.0
   micromark-extension-gfm-table: 2.1.1
