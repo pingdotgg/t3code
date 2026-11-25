@@ -31,6 +31,14 @@
       "types": "./src/socketFrameParts.ts",
       "import": "./src/socketFrameParts.ts"
     },
+    "./secureChannel": {
+      "types": "./src/secureChannel.ts",
+      "import": "./src/secureChannel.ts"
+    },
+    "./secureChannelSocket": {
+      "types": "./src/secureChannelSocket.ts",
+      "import": "./src/secureChannelSocket.ts"
+    },
     "./composerPullRequestMatches": {
       "types": "./src/composerPullRequestMatches.ts",
       "import": "./src/composerPullRequestMatches.ts"
