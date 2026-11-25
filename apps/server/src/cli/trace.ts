@@ -36,7 +36,12 @@ const decodeTraceSpanLine = Schema.decodeUnknownOption(
   ),
 );
 
-export function makeTraceSpanSummary(sinceMs = -Infinity) {
+export function makeTraceSpanSummary(window?: { nowMs: number; duration: Duration.Duration }) {
+  const sinceMs = window ? window.nowMs - Duration.toMillis(window.duration) : -Infinity;
+  const sinceNanos =
+    window && Duration.isFinite(window.duration)
+      ? BigInt(window.nowMs) * 1_000_000n - Duration.toNanosUnsafe(window.duration)
+      : undefined;
   const byName = new Map<string, { durations: number[]; interrupted: number; failures: number }>();
   let spanCount = 0;
   let skippedLineCount = 0;
@@ -58,7 +63,11 @@ export function makeTraceSpanSummary(sinceMs = -Infinity) {
       skippedLineCount += 1;
       return;
     }
-    if (endMs < sinceMs) return;
+    const beforeWindow =
+      sinceNanos !== undefined && typeof span.endTimeUnixNano === "bigint"
+        ? span.endTimeUnixNano < sinceNanos
+        : endMs < sinceMs;
+    if (beforeWindow) return;
 
     spanCount += 1;
     firstEndMs = Math.min(firstEndMs, endMs);
@@ -185,10 +194,10 @@ const traceSummaryCommand = Command.make("summary", {
       const traceFilePath =
         (yield* traceFileConfig) ??
         (yield* ServerConfig.deriveServerPaths(baseDir, undefined)).serverTracePath;
-      const sinceMs = Option.isSome(flags.since)
-        ? (yield* Clock.currentTimeMillis) - Duration.toMillis(flags.since.value)
+      const window = Option.isSome(flags.since)
+        ? { nowMs: yield* Clock.currentTimeMillis, duration: flags.since.value }
         : undefined;
-      const summarizer = makeTraceSpanSummary(sinceMs);
+      const summarizer = makeTraceSpanSummary(window);
       yield* Effect.forEach(
         toRotatedTracePaths(traceFilePath, yield* traceMaxFilesConfig),
         (path) => streamTraceFileLines(fs, path, summarizer.addLine),
@@ -198,7 +207,7 @@ const traceSummaryCommand = Command.make("summary", {
 
       yield* Console.log(
         summary.spanCount === 0
-          ? `No spans found in ${traceFilePath} or its rotated files${sinceMs === undefined ? "" : " in that window"}.${summary.skippedLineCount > 0 ? ` Skipped ${summary.skippedLineCount} lines that are not spans.` : ""}`
+          ? `No spans found in ${traceFilePath} or its rotated files${window === undefined ? "" : " in that window"}.${summary.skippedLineCount > 0 ? ` Skipped ${summary.skippedLineCount} lines that are not spans.` : ""}`
           : formatTraceSummary(summary, flags.limit),
       );
     }),
