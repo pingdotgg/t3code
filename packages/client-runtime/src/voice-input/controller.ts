@@ -50,7 +50,8 @@ export type VoiceInputErrorCode =
   | "draft-changed"
   | "no-speech"
   | "microphone-failed"
-  | "microphone-disconnected";
+  | "microphone-disconnected"
+  | "recording-limit";
 
 export type VoiceInputState = {
   readonly phase: VoiceInputPhase;
@@ -468,6 +469,12 @@ export class VoiceInputController {
     return this.finishRecording(false, null);
   }
 
+  /** Finishes like `stop`, then tells the user the time limit ended the recording. */
+  stopAtLimit(): Promise<void> {
+    if (this.state.phase !== "recording") return Promise.resolve();
+    return this.finishRecording(false, null, true);
+  }
+
   cancel(): void {
     switch (this.state.phase) {
       case "idle":
@@ -538,7 +545,8 @@ export class VoiceInputController {
       if (!status.url) {
         return this.interruptRecording();
       }
-      return this.finishRecording(true, status.url);
+      // The native recorder only finishes on its own at `forDuration`.
+      return this.finishRecording(true, status.url, true);
     }
   }
 
@@ -566,6 +574,7 @@ export class VoiceInputController {
   private async finishRecording(
     alreadyStopped: boolean,
     completedUri: string | null,
+    reachedLimit = false,
   ): Promise<void> {
     if (this.finishing || (this.state.phase !== "recording" && this.state.phase !== "preparing"))
       return;
@@ -685,6 +694,18 @@ export class VoiceInputController {
       }
 
       this.dependencies.commitDraft(result.text, result.selection);
+      if (reachedLimit) {
+        this.setError(
+          this.resolve(
+            msg("Recording stopped at the {minutes}-minute limit.", {
+              minutes: VOICE_RECORDING_LIMIT_SECONDS / 60,
+            }),
+          ),
+          "retry",
+          "recording-limit",
+        );
+        return;
+      }
       this.setState(IDLE_STATE);
     } catch {
       if (this.isCurrent(operationToken)) {

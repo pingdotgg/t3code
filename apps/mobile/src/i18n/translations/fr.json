@@ -934,6 +934,7 @@
   "aa66362aa2dd762e": "L’accès au micro est nécessaire pour la saisie vocale.",
   "256e7ce429cf414f": "Impossible de démarrer l’enregistrement vocal.",
   "823b054fac9f7974": "L’enregistrement vocal a été interrompu.",
+  "322292158be45ff9": "Recording stopped at the {minutes}-minute limit.",
   "378dac5eae59ad4a": "La saisie vocale s’est arrêtée quand l’app est passée en arrière-plan.",
   "ae7d23ee8b5997f5": "Impossible de terminer l’enregistrement vocal.",
   "a86dd79861a8d4b1": "Le brouillon a changé pendant la saisie vocale. La transcription n’a pas été ajoutée.",

@@ -22,6 +22,7 @@ const VOICE_ERROR_LABELS: Readonly<Record<VoiceInputErrorCode, string>> = {
   "no-speech": msg("No speech heard"),
   "microphone-failed": msg("Mic failed"),
   "microphone-disconnected": msg("Mic disconnected"),
+  "recording-limit": msg("Time limit reached"),
 };
 
 export function VoiceInputErrorPill(props: {

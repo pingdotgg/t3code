@@ -934,6 +934,7 @@
   "aa66362aa2dd762e": "Mikrofonåtkomst krävs för röstinmatning.",
   "256e7ce429cf414f": "Kunde inte starta röstinspelningen.",
   "823b054fac9f7974": "Röstinspelningen avbröts.",
+  "322292158be45ff9": "Recording stopped at the {minutes}-minute limit.",
   "378dac5eae59ad4a": "Röstinmatningen stoppades när appen flyttades till bakgrunden.",
   "ae7d23ee8b5997f5": "Kunde inte slutföra röstinspelningen.",
   "a86dd79861a8d4b1": "Utkastet ändrades medan röstinmatningen pågick. Transkriptionen lades inte till.",

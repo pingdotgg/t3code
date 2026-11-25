@@ -175,7 +175,7 @@ export class VoiceInputSession {
       },
       getMicrophoneId: chooseRecordingMicrophone,
       onLevel: (level: number) => this.publishActivity({ ...this.activity, level }),
-      onDurationLimit: () => void this.controller.stop(),
+      onDurationLimit: () => void this.controller.stopAtLimit(),
       onError: (message: string, code?: VoiceInputErrorCode) => {
         if (!this.disposed) void this.controller.interruptRecording(message, null, code);
       },

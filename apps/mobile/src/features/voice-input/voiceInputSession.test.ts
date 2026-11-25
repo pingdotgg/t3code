@@ -279,7 +279,10 @@ describe("global voice input", () => {
       url: recorder.uri,
     });
     expect(commit).toHaveBeenCalledWith("first spoken text", { start: 17, end: 17 });
-    expect(session.controller.currentState.phase).toBe("idle");
+    expect(session.controller.currentState).toMatchObject({
+      phase: "error",
+      errorCode: "recording-limit",
+    });
   });
 
   it("stops recording when its queued edit is discarded", async () => {

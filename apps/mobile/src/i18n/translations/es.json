@@ -934,6 +934,7 @@
   "aa66362aa2dd762e": "La entrada de voz necesita acceso al micrófono.",
   "256e7ce429cf414f": "No se pudo iniciar la grabación de voz.",
   "823b054fac9f7974": "Se interrumpió la grabación de voz.",
+  "322292158be45ff9": "Recording stopped at the {minutes}-minute limit.",
   "378dac5eae59ad4a": "La entrada de voz se detuvo al pasar la app a segundo plano.",
   "ae7d23ee8b5997f5": "No se pudo terminar la grabación de voz.",
   "a86dd79861a8d4b1": "El borrador cambió mientras la entrada de voz estaba activa. No se añadió la transcripción.",
