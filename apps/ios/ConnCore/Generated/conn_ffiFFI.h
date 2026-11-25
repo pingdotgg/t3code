@@ -542,6 +542,11 @@ uint64_t uniffi_conn_ffi_fn_method_conncore_respond_user_input(uint64_t ptr, Rus
 uint64_t uniffi_conn_ffi_fn_method_conncore_save_thread_model(uint64_t ptr, RustBuffer thread_id, RustBuffer instance_id, RustBuffer model
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_CONNCORE_SAVE_THREAD_MODEL_OPTIONS
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_CONNCORE_SAVE_THREAD_MODEL_OPTIONS
+uint64_t uniffi_conn_ffi_fn_method_conncore_save_thread_model_options(uint64_t ptr, RustBuffer thread_id, RustBuffer instance_id, RustBuffer model, RustBuffer changes
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_CONNCORE_SCAN_THREAD_WORKSPACE_MODELS
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_CONNCORE_SCAN_THREAD_WORKSPACE_MODELS
 uint64_t uniffi_conn_ffi_fn_method_conncore_scan_thread_workspace_models(uint64_t ptr, RustBuffer thread_id
@@ -1062,6 +1067,11 @@ RustBuffer uniffi_conn_ffi_fn_func_changed_file_rows(RustBuffer files, RustBuffe
 RustBuffer uniffi_conn_ffi_fn_func_highlight_code(RustBuffer source, RustBuffer language, RustBuffer theme, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_PARSE_FILE_PATCHES
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_PARSE_FILE_PATCHES
+RustBuffer uniffi_conn_ffi_fn_func_parse_file_patches(RustBuffer patch, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_ORBIT_DERIVE_INSTANCE_NAME
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_ORBIT_DERIVE_INSTANCE_NAME
 RustBuffer uniffi_conn_ffi_fn_func_orbit_derive_instance_name(RustBuffer message, RustBuffer suffix, RustCallStatus *_Nonnull out_status
@@ -1406,6 +1416,12 @@ uint16_t uniffi_conn_ffi_checksum_func_highlight_code(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_PARSE_FILE_PATCHES
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_PARSE_FILE_PATCHES
+uint16_t uniffi_conn_ffi_checksum_func_parse_file_patches(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_ORBIT_DERIVE_INSTANCE_NAME
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_ORBIT_DERIVE_INSTANCE_NAME
 uint16_t uniffi_conn_ffi_checksum_func_orbit_derive_instance_name(void
@@ -1601,6 +1617,12 @@ uint16_t uniffi_conn_ffi_checksum_method_conncore_respond_user_input(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_CONNCORE_SAVE_THREAD_MODEL
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_CONNCORE_SAVE_THREAD_MODEL
 uint16_t uniffi_conn_ffi_checksum_method_conncore_save_thread_model(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_CONNCORE_SAVE_THREAD_MODEL_OPTIONS
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_CONNCORE_SAVE_THREAD_MODEL_OPTIONS
+uint16_t uniffi_conn_ffi_checksum_method_conncore_save_thread_model_options(void
     
 );
 #endif

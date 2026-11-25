@@ -384,7 +384,7 @@ impl Connection {
         &self,
         query: conn_contract::source::DefinitionRequest,
     ) -> Result<Vec<conn_contract::source::DefinitionTarget>, ClientError> {
-        self.navigation_request("api/files/definition", query).await
+        self.post_json("api/files/definition", query).await
     }
 
     pub async fn first_source_definition(
@@ -397,17 +397,21 @@ impl Connection {
         } else {
             "api/files/definition?mode=first"
         };
-        self.navigation_request(endpoint, query).await
+        self.post_json(endpoint, query).await
     }
 
     pub async fn prepare_php_navigation(
         &self,
         doc: conn_contract::source::PreparePhpNavigation,
     ) -> Result<(), ClientError> {
-        self.navigation_request("api/files/prepare-php", doc).await
+        self.post_json("api/files/prepare-php", doc).await
     }
 
-    async fn navigation_request<
+    pub async fn pull_request_diff(&self, input: Value) -> Result<Value, ClientError> {
+        self.post_json("api/pull-requests/diff", input).await
+    }
+
+    async fn post_json<
         Q: Serialize + Send + Sync + 'static,
         R: DeserializeOwned + Send + 'static,
     >(
@@ -436,7 +440,7 @@ impl Connection {
                     let status = res.status();
                     let message = res.text().await.unwrap_or_default();
                     return Err(ClientError::Connection(format!(
-                        "Definition lookup ({status}): {message}"
+                        "Request failed ({status}): {message}"
                     )));
                 }
                 res.json()

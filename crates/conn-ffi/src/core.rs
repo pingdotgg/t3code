@@ -121,6 +121,7 @@ enum PumpControl {
         thread_id: String,
         instance_id: String,
         model: String,
+        changes: std::collections::HashMap<String, String>,
         reply: oneshot::Sender<SaveDecision>,
     },
     PlanWorkspaceScan {
@@ -411,6 +412,7 @@ pub enum FfiPullRequestOperation {
     Detail,
     Activity,
     SubmitReview,
+    Diff,
 }
 
 #[uniffi::export]
@@ -421,15 +423,23 @@ impl ConnCore {
         operation: FfiPullRequestOperation,
         input: String,
     ) -> Result<String, FfiError> {
+        let payload = serde_json::from_str(&input).map_err(|error| FfiError::InvalidInput {
+            message: error.to_string(),
+        })?;
         let tag = match operation {
+            FfiPullRequestOperation::Diff => {
+                self.ensure_connected()?;
+                return Ok(self
+                    .connection
+                    .pull_request_diff(payload)
+                    .await?
+                    .to_string());
+            }
             FfiPullRequestOperation::List => "pullRequests.list",
             FfiPullRequestOperation::Detail => "pullRequests.detail",
             FfiPullRequestOperation::Activity => "pullRequests.activity",
             FfiPullRequestOperation::SubmitReview => "pullRequests.submitReview",
         };
-        let payload = serde_json::from_str(&input).map_err(|error| FfiError::InvalidInput {
-            message: error.to_string(),
-        })?;
         Ok(self.call_json(tag, payload).await?.to_string())
     }
 
@@ -712,6 +722,17 @@ impl ConnCore {
         instance_id: String,
         model: String,
     ) -> Result<FfiModelSave, FfiError> {
+        self.save_thread_model_options(thread_id, instance_id, model, Default::default())
+            .await
+    }
+
+    pub async fn save_thread_model_options(
+        &self,
+        thread_id: String,
+        instance_id: String,
+        model: String,
+        changes: std::collections::HashMap<String, String>,
+    ) -> Result<FfiModelSave, FfiError> {
         self.ensure_connected()?;
         let (reply, rx) = oneshot::channel();
         self.ctrl_tx
@@ -719,6 +740,7 @@ impl ConnCore {
                 thread_id: thread_id.clone(),
                 instance_id,
                 model,
+                changes,
                 reply,
             })
             .map_err(|_| FfiError::Closed)?;
@@ -726,12 +748,16 @@ impl ConnCore {
             SaveDecision::Unchanged => Ok(FfiModelSave::Unchanged),
             SaveDecision::Unavailable => Ok(FfiModelSave::Unavailable),
             SaveDecision::NotReady => Ok(FfiModelSave::NotReady),
-            SaveDecision::Send { instance_id, model } => {
+            SaveDecision::Send {
+                instance_id,
+                model,
+                options,
+            } => {
                 let command = conn_client::commands::set_model_selection(
                     &thread_id,
                     &instance_id,
                     &model,
-                    None,
+                    options.as_ref(),
                 )
                 .map_err(|err| map_build_error("thread.model-selection.set", err))?;
                 self.dispatch_command(command).await?;
@@ -1330,12 +1356,17 @@ impl PumpState {
                 thread_id,
                 instance_id,
                 model,
+                changes,
                 reply,
             } => {
                 let decision = match self.picker_thread(&thread_id) {
-                    Some(thread) => {
-                        model_to_save(&self.catalog_for(&thread), &thread, &instance_id, &model)
-                    }
+                    Some(thread) => model_to_save(
+                        &self.catalog_for(&thread),
+                        &thread,
+                        &instance_id,
+                        &model,
+                        &changes,
+                    ),
                     None => SaveDecision::NotReady,
                 };
                 let _ = reply.send(decision);

@@ -8,7 +8,7 @@ struct OrbitConnectView: View {
     let state: OrbitConnectState
 
     var body: some View {
-        if case .connecting = state {
+        if case let .connecting(message) = state {
             VStack {
                 Spacer()
                 Image("LaunchMark")
@@ -20,7 +20,7 @@ struct OrbitConnectView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .bottom) {
-                Text("Checking connection")
+                Text(message)
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(.secondary)
                     .padding(.bottom, 12)

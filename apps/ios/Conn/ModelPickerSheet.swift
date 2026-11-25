@@ -15,6 +15,8 @@ struct ModelPickerSheet: View {
     @State private var toggled: [String] = []
     @State private var pending: (instanceId: String, model: String)?
     @State private var picker: FfiModelPicker?
+    @State private var optionChanges: [String: String] = [:]
+    @State private var steer = false
     @State private var saving = false
     @State private var showingUnavailable = false
 
@@ -28,6 +30,10 @@ struct ModelPickerSheet: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    Picker("Follow-up messages", selection: $steer) {
+                        Text("Steer").tag(true)
+                        Text("Queue").tag(false)
+                    }.padding(.horizontal)
                     if let picker {
                         if !picker.loaded {
                             notice("Loading models…")
@@ -38,6 +44,21 @@ struct ModelPickerSheet: View {
                             header(section)
                             ForEach(Array(section.models.enumerated()), id: \.element.model) { index, row in
                                 modelRow(row, isFirst: index == 0, isLast: index == section.models.count - 1)
+                                if row.selected {
+                                    ForEach(row.controls, id: \.id) { control in
+                                        Picker(control.label, selection: Binding(
+                                            get: { optionChanges[control.id] ?? control.current },
+                                            set: { value in
+                                                pending = (row.instanceId, row.model)
+                                                optionChanges[control.id] = value == control.current ? nil : value
+                                            }
+                                        )) {
+                                            ForEach(Array(zip(control.values, control.labels)), id: \.0) { value, label in
+                                                Text(label).tag(value)
+                                            }
+                                        }.padding(.horizontal, 24)
+                                    }
+                                }
                             }
                         }
                     }
@@ -58,13 +79,14 @@ struct ModelPickerSheet: View {
                         .accessibilityLabel("Cancel thread settings")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(picker?.hasPending == true ? "Save" : "Done") { commitAndClose() }
+                    Button(picker?.hasPending == true || !optionChanges.isEmpty || steer != store.followUpSteers(threadId) ? "Save" : "Done") { commitAndClose() }
                         .fontWeight(.semibold)
                         .disabled(saving)
                         .accessibilityIdentifier("modelPicker.confirm")
                 }
             }
         }
+        .onAppear { steer = store.followUpSteers(threadId) }
         .alert("Model unavailable", isPresented: $showingUnavailable) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -92,7 +114,8 @@ struct ModelPickerSheet: View {
     /// `commitPendingModel`: the core sends the pick only while the catalog still offers it;
     /// otherwise the sheet stays open with mobile's "Model unavailable" alert.
     private func commitAndClose() {
-        guard let pending, picker?.hasPending == true else {
+        guard let pending, picker?.hasPending == true || !optionChanges.isEmpty else {
+            store.setFollowUpSteers(steer, threadId: threadId)
             dismiss()
             return
         }
@@ -101,11 +124,13 @@ struct ModelPickerSheet: View {
             let result = await store.saveThreadModel(
                 threadId: threadId,
                 instanceId: pending.instanceId,
-                model: pending.model
+                model: pending.model, changes: optionChanges
             )
             saving = false
             switch result {
-            case .saved?, .unchanged?: dismiss()
+            case .saved?, .unchanged?:
+                store.setFollowUpSteers(steer, threadId: threadId)
+                dismiss()
             case .unavailable?: showingUnavailable = true
             // The thread's scope is still loading; the sheet keeps its loading state.
             case .notReady?, nil: break
@@ -178,6 +203,7 @@ struct ModelPickerSheet: View {
         )
         return Button {
             UISelectionFeedbackGenerator().selectionChanged()
+            if !row.selected { optionChanges = [:] }
             pending = (row.instanceId, row.model)
         } label: {
             HStack(spacing: 7) {

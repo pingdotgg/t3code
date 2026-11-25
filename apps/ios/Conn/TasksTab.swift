@@ -220,9 +220,7 @@ struct TasksTabView: View {
                     .accessibilityIdentifier("tasks.empty")
             } else {
                 ForEach(view.rows, id: \.id) { row in
-                    NavigationLink {
-                        TaskRecordView(id: row.id, model: model)
-                    } label: {
+                    NavigationLink(value: WorkspaceRoute.task(row.id)) {
                         TaskRowView(row: row)
                     }
                     .buttonStyle(.plain)
@@ -351,7 +349,7 @@ struct TaskRowView: View {
 }
 
 /// Orbit projects carry no favicon, so a task row shows a lettered tile in a stable colour.
-struct ProjectTileView: View {
+private struct ProjectTileView: View {
     let letter: String
     let colorIndex: Int
 
@@ -430,7 +428,7 @@ extension Color {
     }
 }
 
-private struct TaskRecordView: View {
+struct TaskRecordView: View {
     enum Section: String, CaseIterable {
         case overview, steps, agents
 
@@ -468,15 +466,21 @@ private struct TaskRecordView: View {
                         Divider()
                         MarkdownView(source: detail.brief)
                     case .steps:
+                        Text("\(detail.summary.subtaskCounts.completed) of \(detail.subtasks.count) completed").font(.subheadline).foregroundStyle(.secondary)
                         if detail.subtasks.isEmpty { Text("No steps").foregroundStyle(.secondary) }
                         ForEach(detail.subtasks, id: \.id) { step in
                             DisclosureGroup {
                                 MarkdownView(source: step.brief)
+                                ForEach(step.deliverables, id: \.id) { item in
+                                    Label(item.description, systemImage: "doc.text")
+                                }
+                                if let usage = step.usageText { Text(usage).foregroundStyle(.secondary) }
                             } label: {
                                 LabeledContent(step.title, value: step.statusText)
                             }
                         }
                     case .agents:
+                        Text("\(detail.agents.count) assigned").font(.subheadline).foregroundStyle(.secondary)
                         if detail.agents.isEmpty { Text("No agents assigned").foregroundStyle(.secondary) }
                         ForEach(detail.agents, id: \.id) { agent in
                             VStack(alignment: .leading, spacing: 4) {

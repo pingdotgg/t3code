@@ -193,6 +193,96 @@ final class ConnSpikeUITests: XCTestCase {
 
     /// The question panel on a thread whose (fake Grok) run waits for three answers. With
     /// CONN_QUESTION_ANSWER=1 it answers every step, from the options and the composer.
+    func testWorkspaceRecords() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let pairing = env["CONN_PAIRING_URL"] else { throw XCTSkip("Requires an isolated Conn server") }
+        let appearance = env["CONN_APPEARANCE"] ?? "light"
+        XCUIDevice.shared.appearance = appearance == "dark" ? .dark : .light
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-session", "--manual-pairing"]
+        app.launch()
+        let field = app.textFields["pairing.urlField"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.tap()
+        field.typeText(pairing)
+        app.buttons["pairing.connectButton"].tap()
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = "\(appearance)-\(name)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        let threads = app.buttons["workspace.tab.threads"]
+        XCTAssertTrue(threads.waitForExistence(timeout: 25))
+        threads.tap()
+        let firstThread = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'inbox.thread.'")).firstMatch
+        XCTAssertTrue(firstThread.waitForExistence(timeout: 15))
+        capture("threads")
+        app.buttons["workspace.settingsButton"].tap()
+        XCTAssertTrue(app.staticTexts["Environments"].waitForExistence(timeout: 5))
+        capture("settings")
+        app.buttons["settings.closeButton"].tap()
+        app.buttons["inbox.newThreadButton"].tap()
+        XCTAssertTrue(app.staticTexts["What should we work on?"].waitForExistence(timeout: 5))
+        capture("general-draft")
+        app.navigationBars.buttons.firstMatch.tap()
+        firstThread.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["thread.composer"].waitForExistence(timeout: 10))
+        capture("thread")
+        app.buttons["composer.modelButton"].tap()
+        XCTAssertTrue(app.buttons["modelPicker.confirm"].waitForExistence(timeout: 8))
+        capture("thread-settings")
+        app.buttons["modelPicker.confirm"].tap()
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["workspace.tab.tasks"].tap()
+        let task = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'tasks.row.'")).firstMatch
+        if task.waitForExistence(timeout: 12) {
+            capture("tasks")
+            task.tap()
+            for section in ["Overview", "Steps", "Agents"] {
+                app.buttons[section].tap()
+                capture("task-" + section)
+            }
+            app.navigationBars.buttons.firstMatch.tap()
+        } else {
+            XCTAssertTrue(app.descendants(matching: .any)["tasks.error"].exists || app.staticTexts["tasks.empty"].exists)
+            capture("tasks-response")
+        }
+        app.buttons["workspace.tab.pullRequests"].tap()
+        let pr = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pr.row.'")).firstMatch
+        XCTAssertTrue(pr.waitForExistence(timeout: 40), "The test server should list at least one open pull request")
+        capture("pull-requests")
+        pr.tap()
+        for section in ["Overview", "Checks", "Timeline", "Files"] {
+            let tab = app.buttons[section]
+            XCTAssertTrue(tab.waitForExistence(timeout: 20))
+            tab.tap()
+            capture("pr-" + section)
+        }
+        app.navigationBars.buttons.firstMatch.tap()
+        threads.tap()
+        firstThread.tap()
+        app.terminate()
+        // Unsigned simulator builds cannot retain the bearer in the Keychain.
+        if let secondPairing = env["CONN_RESTORE_PAIRING_URL"] {
+            app.launchArguments = ["--manual-pairing"]
+            app.launch()
+            let field = app.textFields["pairing.urlField"]
+            XCTAssertTrue(field.waitForExistence(timeout: 10))
+            field.tap()
+            field.typeText(secondPairing)
+            app.buttons["pairing.connectButton"].tap()
+        } else {
+            app.launchArguments = []
+            app.launch()
+        }
+        let restored = app.descendants(matching: .any)["thread.composer"].waitForExistence(timeout: 15)
+        if !restored { capture("restore-failure") }
+        XCTAssertTrue(restored)
+        capture("restored-thread")
+
+    }
+
     func testQuestionPanelFlow() throws {
         let env = ProcessInfo.processInfo.environment
         guard let pairingURL = env["CONN_PAIRING_URL"], !pairingURL.isEmpty,
@@ -608,12 +698,14 @@ final class ConnSpikeUITests: XCTestCase {
         let screensDir = env["CONN_SCREENS_DIR"]
         let suffix = env["CONN_SCREEN_SUFFIX"] ?? ""
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-session"]
+        app.launchArguments = ["--reset-session", "--test-unreachable-gateway"]
         app.launch()
 
         let error = app.staticTexts["orbit.errorText"]
         XCTAssertTrue(error.waitForExistence(timeout: 60), "the Orbit failure shows")
         XCTAssertTrue(app.buttons["orbit.retryButton"].exists, "Try again shows")
+        app.buttons["orbit.retryButton"].tap()
+        XCTAssertTrue(error.waitForExistence(timeout: 15))
         saveScreenshot(named: "orbit-failed\(suffix)", dir: screensDir)
 
         app.buttons["orbit.manualButton"].tap()

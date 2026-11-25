@@ -152,7 +152,7 @@ private struct CheckpointReview: View {
     }
 }
 
-private struct PatchBody: View {
+struct PatchBody: View {
     let patch: FfiFilePatch
     @Environment(\.connTheme) private var theme
     @State private var colors: [AttributedString] = []

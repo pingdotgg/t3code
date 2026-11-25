@@ -806,6 +806,8 @@ public protocol ConnCoreProtocol: AnyObject, Sendable {
      */
     func saveThreadModel(threadId: String, instanceId: String, model: String) async throws  -> FfiModelSave
     
+    func saveThreadModelOptions(threadId: String, instanceId: String, model: String, changes: [String: String]) async throws  -> FfiModelSave
+    
     /**
      * Keeps the thread's workspace catalog fresh while the model picker is open
      * (`ProviderWorkspaceSnapshotScan`): asks the server to scan the thread's provider in the
@@ -1345,6 +1347,22 @@ open func saveThreadModel(threadId: String, instanceId: String, model: String)as
             rustFutureFunc: {
                 uniffi_conn_ffi_fn_method_conncore_save_thread_model(
                         self.uniffiCloneHandle(),FfiConverterString.lower(threadId),FfiConverterString.lower(instanceId),FfiConverterString.lower(model)
+                )
+            },
+            pollFunc: ffi_conn_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_conn_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_conn_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFfiModelSave_lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
+    
+open func saveThreadModelOptions(threadId: String, instanceId: String, model: String, changes: [String: String])async throws  -> FfiModelSave  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_conn_ffi_fn_method_conncore_save_thread_model_options(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(threadId),FfiConverterString.lower(instanceId),FfiConverterString.lower(model),FfiConverterDictionaryStringString.lower(changes)
                 )
             },
             pollFunc: ffi_conn_ffi_rust_future_poll_rust_buffer,
@@ -5456,6 +5474,76 @@ public func FfiConverterTypeFfiMcpToolInfo_lower(_ value: FfiMcpToolInfo) -> Rus
 }
 
 
+public struct FfiModelControl: Equatable, Hashable {
+    public var id: String
+    public var label: String
+    public var values: [String]
+    public var labels: [String]
+    public var current: String
+    public var toggle: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, label: String, values: [String], labels: [String], current: String, toggle: Bool) {
+        self.id = id
+        self.label = label
+        self.values = values
+        self.labels = labels
+        self.current = current
+        self.toggle = toggle
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiModelControl: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiModelControl: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiModelControl {
+        return
+            try FfiModelControl(
+                id: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                values: FfiConverterSequenceString.read(from: &buf), 
+                labels: FfiConverterSequenceString.read(from: &buf), 
+                current: FfiConverterString.read(from: &buf), 
+                toggle: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiModelControl, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterSequenceString.write(value.values, into: &buf)
+        FfiConverterSequenceString.write(value.labels, into: &buf)
+        FfiConverterString.write(value.current, into: &buf)
+        FfiConverterBool.write(value.toggle, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiModelControl_lift(_ buf: RustBuffer) throws -> FfiModelControl {
+    return try FfiConverterTypeFfiModelControl.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiModelControl_lower(_ value: FfiModelControl) -> RustBuffer {
+    return FfiConverterTypeFfiModelControl.lower(value)
+}
+
+
 /**
  * The chip and the sheet for one thread.
  */
@@ -5562,6 +5650,7 @@ public struct FfiModelPickerRow: Equatable, Hashable {
      * The sub-provider, or empty.
      */
     public var subtitle: String
+    public var controls: [FfiModelControl]
     public var isDefault: Bool
     public var isLegacy: Bool
     /**
@@ -5574,7 +5663,7 @@ public struct FfiModelPickerRow: Equatable, Hashable {
     public init(instanceId: String, model: String, label: String, 
         /**
          * The sub-provider, or empty.
-         */subtitle: String, isDefault: Bool, isLegacy: Bool, 
+         */subtitle: String, controls: [FfiModelControl], isDefault: Bool, isLegacy: Bool, 
         /**
          * The checkmark: the pending pick, else the thread's model.
          */selected: Bool) {
@@ -5582,6 +5671,7 @@ public struct FfiModelPickerRow: Equatable, Hashable {
         self.model = model
         self.label = label
         self.subtitle = subtitle
+        self.controls = controls
         self.isDefault = isDefault
         self.isLegacy = isLegacy
         self.selected = selected
@@ -5607,6 +5697,7 @@ public struct FfiConverterTypeFfiModelPickerRow: FfiConverterRustBuffer {
                 model: FfiConverterString.read(from: &buf), 
                 label: FfiConverterString.read(from: &buf), 
                 subtitle: FfiConverterString.read(from: &buf), 
+                controls: FfiConverterSequenceTypeFfiModelControl.read(from: &buf), 
                 isDefault: FfiConverterBool.read(from: &buf), 
                 isLegacy: FfiConverterBool.read(from: &buf), 
                 selected: FfiConverterBool.read(from: &buf)
@@ -5618,6 +5709,7 @@ public struct FfiConverterTypeFfiModelPickerRow: FfiConverterRustBuffer {
         FfiConverterString.write(value.model, into: &buf)
         FfiConverterString.write(value.label, into: &buf)
         FfiConverterString.write(value.subtitle, into: &buf)
+        FfiConverterSequenceTypeFfiModelControl.write(value.controls, into: &buf)
         FfiConverterBool.write(value.isDefault, into: &buf)
         FfiConverterBool.write(value.isLegacy, into: &buf)
         FfiConverterBool.write(value.selected, into: &buf)
@@ -11964,6 +12056,7 @@ public enum FfiImplementerMode: Equatable, Hashable {
     
     case perSubtask
     case shared
+    case task
 
 
 
@@ -11989,6 +12082,8 @@ public struct FfiConverterTypeFfiImplementerMode: FfiConverterRustBuffer {
         
         case 2: return .shared
         
+        case 3: return .task
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -12003,6 +12098,10 @@ public struct FfiConverterTypeFfiImplementerMode: FfiConverterRustBuffer {
         
         case .shared:
             writeInt(&buf, Int32(2))
+        
+        
+        case .task:
+            writeInt(&buf, Int32(3))
         
         }
     }
@@ -13498,6 +13597,7 @@ public enum FfiPullRequestOperation: Equatable, Hashable {
     case detail
     case activity
     case submitReview
+    case diff
 
 
 
@@ -13527,6 +13627,8 @@ public struct FfiConverterTypeFfiPullRequestOperation: FfiConverterRustBuffer {
         
         case 4: return .submitReview
         
+        case 5: return .diff
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -13549,6 +13651,10 @@ public struct FfiConverterTypeFfiPullRequestOperation: FfiConverterRustBuffer {
         
         case .submitReview:
             writeInt(&buf, Int32(4))
+        
+        
+        case .diff:
+            writeInt(&buf, Int32(5))
         
         }
     }
@@ -16382,6 +16488,31 @@ fileprivate struct FfiConverterSequenceTypeFfiInsightTrendPoint: FfiConverterRus
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiModelControl: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiModelControl]
+
+    public static func write(_ value: [FfiModelControl], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiModelControl.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiModelControl] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiModelControl]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiModelControl.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiModelPickerRow: FfiConverterRustBuffer {
     typealias SwiftType = [FfiModelPickerRow]
 
@@ -17414,6 +17545,14 @@ public func highlightCode(source: String, language: String, theme: String) -> [[
     )
 })
 }
+public func parseFilePatches(patch: String) -> [FfiFilePatch]  {
+    return try!  FfiConverterSequenceTypeFfiFilePatch.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_func_parse_file_patches(
+        FfiConverterString.lower(patch),uniffiCallStatus
+    )
+})
+}
 /**
  * Derives an Orbit clone Instance name from the thread's first message plus a suffix
  * (wrapping [`conn_orbit::orbit_thread_instance_name`]).
@@ -17605,6 +17744,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_conn_ffi_checksum_func_highlight_code() != 49332) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_conn_ffi_checksum_func_parse_file_patches() != 33357) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_conn_ffi_checksum_func_orbit_derive_instance_name() != 52176) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -17702,6 +17844,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_conncore_save_thread_model() != 11309) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_conncore_save_thread_model_options() != 65498) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_conncore_scan_thread_workspace_models() != 38954) {

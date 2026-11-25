@@ -479,6 +479,17 @@ mod tests {
 
     #[tokio::test]
     async fn orders_subtasks_and_never_passes_subtask_lines() {
+        let mut task_scoped = detail();
+        task_scoped["execution"]["implementer_mode"] = json!("task");
+        let task_scoped = client(Canned::new(200, json!({ "data": task_scoped })))
+            .get_task(5753)
+            .await
+            .expect("task-scoped implementation");
+        assert_eq!(
+            task_scoped.implementer_mode(),
+            super::super::tasks::ImplementerMode::Task
+        );
+
         let task = client(Canned::new(200, json!({ "data": detail() })))
             .get_task(5753)
             .await

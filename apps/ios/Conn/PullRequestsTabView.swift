@@ -1,6 +1,6 @@
 import SwiftUI
 
-private struct PullRequestRow: Decodable, Identifiable, Hashable {
+struct PullRequestRow: Codable, Identifiable, Hashable {
     let projectId, projectTitle, host, repository, title, url, headBranch, baseBranch: String
     let number: Int
     let isDraft: Bool
@@ -65,18 +65,21 @@ struct PullRequestsTabView: View {
                         .foregroundStyle(.secondary).padding()
                 }
                 ForEach(selected) { row in
-                    NavigationLink {
-                        PullRequestRecord(store: store, row: row)
-                    } label: {
+                    NavigationLink(value: WorkspaceRoute.pullRequest(row)) {
                         HStack(spacing: 12) {
-                            ProjectTileView(letter: String(row.projectTitle.prefix(1)).uppercased(), colorIndex: row.projectTitle.utf16.reduce(0) { ($0 + Int($1)) % 8 })
+                            ProjectFaviconView(title: row.projectTitle, size: 18)
+                                .overlay(alignment: .topTrailing) {
+                                    Circle().fill(row.checksState == "failing" ? theme.destructive : row.checksState == "passing" ? theme.success : row.checksState == "pending" ? theme.warning : theme.mutedForeground)
+                                        .frame(width: 6, height: 6).padding(2)
+                                        .background(theme.background, in: Circle()).offset(x: 4, y: -4)
+                                }
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(row.title).font(.system(size: 16, weight: .medium)).lineLimit(2)
                                 Text("\(row.projectTitle) · #\(row.number) · \(row.status)").font(.subheadline).foregroundStyle(.secondary)
                             }
                             Spacer()
                         }.padding(.vertical, 8).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(.plain).accessibilityIdentifier("pr.row.\(row.repository).\(row.number)")
                 }
             }.padding(.horizontal, 16)
         }
@@ -114,7 +117,7 @@ struct PullRequestsTabView: View {
     }
 }
 
-private struct PullRequestRecord: View {
+struct PullRequestRecord: View {
     struct Detail: Decodable {
         struct Check: Decodable { let name, status: String; let description: String?; let placeholder: Bool? }
         struct Permissions: Decodable { let verdicts: [String] }
@@ -131,6 +134,14 @@ private struct PullRequestRecord: View {
         let comments: [Comment]
         let commits: [Commit]
     }
+    struct DiffPage: Decodable {
+        struct Omitted: Decodable { let path: String }
+        let patch: String
+        let nextCursor: String?
+        let truncated: Bool
+        let omittedFileStats: [Omitted]?
+        let withheldFilesReadable: Bool?
+    }
     let store: CoreStore
     let row: PullRequestRow
     @State private var section = "Overview"
@@ -141,6 +152,10 @@ private struct PullRequestRecord: View {
     @State private var attempt = 0
     @State private var review: String?
     @State private var bodyText = ""
+    @State private var patches: [FfiFilePatch]?
+    @State private var omitted: [String] = []
+    @State private var canReadOmitted = false
+    @State private var truncated = false
     @State private var submitting = false
 
     var body: some View {
@@ -163,6 +178,22 @@ private struct PullRequestRecord: View {
                                 if let description = check.description { Text(description).foregroundStyle(.secondary) }
                             }
                         }
+                    case "Files":
+                        if let patches {
+                            ForEach(patches, id: \.path) { patch in
+                                NavigationLink(patch.path) {
+                                    ScrollView { PatchBody(patch: patch) }
+                                        .navigationTitle(patch.path)
+                                }
+                            }
+                            ForEach(omitted, id: \.self) { path in
+                                if canReadOmitted {
+                                    NavigationLink(path) { OmittedPatch(store: store, row: row, path: path) }
+                                } else { LabeledContent(path, value: "Diff unavailable") }
+                            }
+                            if truncated { Text("Some changes were omitted by the host.").foregroundStyle(.secondary) }
+                            if patches.isEmpty && omitted.isEmpty && !truncated { Text("No changed files") }
+                        } else if failure == nil { ProgressView() }
                     case "Timeline":
                         if let activity {
                             let events = activity.comments.map { ($0.createdAt, $0.id, $0.body) }
@@ -197,9 +228,9 @@ private struct PullRequestRecord: View {
         .toolbar(.visible, for: .navigationBar)
         .toolbar {
             ToolbarItemGroup(placement: .bottomBar) {
-                ForEach(["Overview", "Checks", "Timeline"], id: \.self) { name in
+                ForEach(["Overview", "Checks", "Timeline"] + (detail?.capabilities.diff == true ? ["Files"] : []), id: \.self) { name in
                     Button { section = name } label: {
-                        Image(systemName: name == "Overview" ? "doc.text" : name == "Checks" ? "checkmark.circle" : "clock")
+                        Image(systemName: name == "Overview" ? "doc.text" : name == "Checks" ? "checkmark.circle" : name == "Files" ? "doc.on.doc" : "clock")
                     }.accessibilityLabel(name).accessibilityAddTraits(name == section ? .isSelected : [])
                 }
             }
@@ -213,7 +244,7 @@ private struct PullRequestRecord: View {
                 Task {
                     defer { submitting = false }
                     do {
-                        struct Result: Decodable {}
+                        typealias Result = Bool?
                         var input = row.ref
                         input["verdict"] = verdict
                         input["body"] = bodyText
@@ -231,10 +262,56 @@ private struct PullRequestRecord: View {
                 if detail == nil || section == "Overview" {
                     detail = try await store.pullRequest(.detail, input: row.ref, as: Detail.self)
                 }
+                if section == "Files" && patches == nil {
+                    var input = row.ref
+                    var result: [FfiFilePatch] = []
+                    var paths = Set<String>()
+                    var incomplete = false
+                    var cursors = Set<String>()
+                    repeat {
+                        let page = try await store.pullRequest(.diff, input: input, as: DiffPage.self)
+                        try Task.checkCancellation()
+                        result += await Task.detached { parseFilePatches(patch: page.patch) }.value
+                        paths.formUnion(page.omittedFileStats?.map(\.path) ?? [])
+                        if let readable = page.withheldFilesReadable { canReadOmitted = readable }
+                        incomplete = incomplete || page.truncated
+                        guard let cursor = page.nextCursor, cursors.insert(cursor).inserted else { break }
+                        input["cursor"] = cursor
+                    } while true
+                    omitted = paths.subtracting(result.map(\.path)).sorted()
+                    truncated = incomplete
+                    patches = result
+                }
                 if section == "Timeline" {
                     activity = try await store.pullRequest(.activity, input: row.ref, as: Activity.self)
                 }
             } catch { if !Task.isCancelled { failure = error.localizedDescription } }
+        }
+    }
+}
+
+private struct OmittedPatch: View {
+    let store: CoreStore
+    let row: PullRequestRow
+    let path: String
+    @State private var patch: FfiFilePatch?
+    @State private var error: String?
+
+    var body: some View {
+        ScrollView {
+            if let patch { PatchBody(patch: patch) }
+            else if let error { Text(error) }
+            else { ProgressView() }
+        }
+        .navigationTitle(path)
+        .task {
+            do {
+                var input = row.ref
+                input["path"] = path
+                let page = try await store.pullRequest(.diff, input: input, as: PullRequestRecord.DiffPage.self)
+                patch = await Task.detached { parseFilePatches(patch: page.patch).first }.value
+                if patch == nil { error = "No diff available" }
+            } catch { self.error = error.localizedDescription }
         }
     }
 }

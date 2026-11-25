@@ -1017,6 +1017,7 @@ impl From<AgentState> for FfiAgentState {
 pub enum FfiImplementerMode {
     PerSubtask,
     Shared,
+    Task,
 }
 
 impl From<ImplementerMode> for FfiImplementerMode {
@@ -1024,6 +1025,7 @@ impl From<ImplementerMode> for FfiImplementerMode {
         match value {
             ImplementerMode::PerSubtask => Self::PerSubtask,
             ImplementerMode::Shared => Self::Shared,
+            ImplementerMode::Task => Self::Task,
         }
     }
 }

@@ -8,6 +8,7 @@ struct InboxView: View {
     let onSelectThread: (String, String) -> Void
 
     @Environment(\.connTheme) private var theme
+    @State private var environmentFilter: String?
     @State private var settledExpanded = false
     @State private var renameOwner: CoreStore?
     @State private var renamingThread: FfiThreadSummary?
@@ -51,7 +52,7 @@ struct InboxView: View {
     @ViewBuilder
     private func inboxList(shell: FfiShellSnapshot) -> some View {
         let projectsById = Dictionary(uniqueKeysWithValues: shell.projects.map { ($0.id, $0) })
-        let filtered = filteredThreads(in: shell, projectsById: projectsById)
+        let filtered = environmentFilter == nil || environmentFilter == "" ? filteredThreads(in: shell, projectsById: projectsById) : []
         let active = filtered
             .filter { !$0.settled }
             .sorted { lhs, rhs in
@@ -63,12 +64,33 @@ struct InboxView: View {
             .sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
 
         List {
-            // Top filter pills matching ThreadListFilters.tsx ("All environments ⌄" / "All projects ⌄")
-            ThreadListFiltersBar(
-                environmentLabel: store.serverURL.flatMap { URL(string: $0)?.host } ?? "Local",
-                projects: shell.projects.filter { !isScratchProjectTitle($0.title) },
-                selectedProjectFilter: $selectedProjectFilter
-            )
+            let remoteCount = store.linked.filter { environmentFilter == nil || environmentFilter == $0.key }.values.reduce(0) { count, owner in
+                guard let remote = owner.shell else { return count }
+                return count + filteredThreads(in: remote, projectsById: Dictionary(uniqueKeysWithValues: remote.projects.map { ($0.id, $0) })).count
+            }
+            ZStack(alignment: .trailing) {
+                VStack(spacing: 0) {
+                    Text("Threads").font(.system(size: 18, weight: .medium))
+                    Text("\(filtered.count + remoteCount) threads").font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity)
+                Menu {
+                    Picker("Environment", selection: $environmentFilter) {
+                        Text("All environments").tag(nil as String?)
+                        Text(store.serverURL.flatMap { URL(string: $0)?.host } ?? "Local").tag(Optional(""))
+                        ForEach(store.linked.keys.sorted(), id: \.self) { scope in
+                            Text(store.linked[scope]?.serverURL.flatMap { URL(string: $0)?.host } ?? scope).tag(Optional(scope))
+                        }
+                    }
+                    Picker("Project", selection: $selectedProjectFilter) {
+                        Text("All projects").tag(nil as String?)
+                        ForEach(shell.projects, id: \.id) { project in
+                            Text(project.title).tag(Optional(project.id))
+                        }
+                    }
+                } label: {
+                    Image(systemName: "line.3.horizontal.decrease").frame(width: 44, height: 44)
+                }.accessibilityLabel("Filter threads")
+            }.padding(.horizontal, 16).frame(height: 56)
             .listRowInsets(EdgeInsets())
             .listRowSeparator(.hidden)
             .listRowBackground(theme.background)
@@ -129,7 +151,7 @@ struct InboxView: View {
                 }
             }
             ForEach(store.linked.keys.sorted(), id: \.self) { id in
-                if let owner = store.linked[id], let remote = owner.shell {
+                if (environmentFilter == nil || environmentFilter == id), let owner = store.linked[id], let remote = owner.shell {
                     let projects = Dictionary(uniqueKeysWithValues: remote.projects.map { ($0.id, $0) })
                     Section(owner.serverURL.flatMap { URL(string: $0)?.host } ?? id) {
                         ForEach(filteredThreads(in: remote, projectsById: projects), id: \.id) { thread in
@@ -297,104 +319,6 @@ struct InboxView: View {
 }
 
 // MARK: - ThreadListFiltersBar (1:1 port of ThreadListFilters.tsx)
-
-private struct ThreadListFiltersBar: View {
-    let environmentLabel: String
-    let projects: [FfiProject]
-    @Binding var selectedProjectFilter: String?
-    @Environment(\.connTheme) private var theme
-
-    private var selectedProjectTitle: String? {
-        guard let id = selectedProjectFilter else { return nil }
-        return projects.first(where: { $0.id == id })?.title
-    }
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                Menu {
-                    Button {
-                    } label: {
-                        Label("All environments", systemImage: "checkmark")
-                    }
-                    Button {
-                    } label: {
-                        Text(environmentLabel)
-                    }
-                } label: {
-                    filterPill(label: "All environments", active: false)
-                }
-                .accessibilityLabel("Filter threads by environment")
-
-                Menu {
-                    Button {
-                        selectedProjectFilter = nil
-                    } label: {
-                        if selectedProjectFilter == nil {
-                            Label("All projects", systemImage: "checkmark")
-                        } else {
-                            Text("All projects")
-                        }
-                    }
-                    ForEach(projects, id: \.id) { project in
-                        Button {
-                            selectedProjectFilter = project.id
-                        } label: {
-                            if selectedProjectFilter == project.id {
-                                Label(project.title, systemImage: "checkmark")
-                            } else {
-                                Text(project.title)
-                            }
-                        }
-                    }
-                } label: {
-                    filterPill(label: selectedProjectTitle ?? "All projects", active: selectedProjectFilter != nil)
-                }
-                .accessibilityLabel("Filter threads by project")
-
-                if selectedProjectFilter != nil {
-                    Button {
-                        selectedProjectFilter = nil
-                    } label: {
-                        ConnIcon("xmark.circle.fill")
-                            .font(.system(size: 18))
-                            .foregroundStyle(theme.mutedForeground)
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Reset thread filters")
-                }
-            }
-            // `ThreadListFilters`: px-12, pt-2, pb-10, gap 8.
-            .padding(.horizontal, 12)
-            .padding(.top, 2)
-            .padding(.bottom, 10)
-        }
-    }
-
-    /// `Chip.tsx`: interactive glass, radius 14, min height 28, padding 10.5×5.25, a 14pt medium
-    /// muted label (max 180 wide) and an 11pt `chevron.down`; a selected chip is tinted primary.
-    private func filterPill(label: String, active: Bool) -> some View {
-        HStack(spacing: 5.25) {
-            Text(label)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(active ? theme.primaryForeground : theme.mutedForeground)
-                .lineLimit(1)
-                .frame(maxWidth: 180, alignment: .leading)
-                .fixedSize(horizontal: true, vertical: false)
-            ConnIcon("chevron.down")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(active ? theme.primaryForeground : theme.mutedForeground)
-        }
-        .padding(.horizontal, 10.5)
-        .padding(.vertical, 5.25)
-        .frame(minHeight: 28)
-        .glassEffect(
-            active ? .regular.tint(theme.primary).interactive() : .regular.interactive(),
-            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-        )
-    }
-}
 
 // MARK: - ThreadListV2RowView (1:1 port of ThreadListV2Row)
 

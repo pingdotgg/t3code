@@ -15,7 +15,9 @@ enum WorkspaceTab: String, Hashable, CaseIterable {
     }
 }
 
-enum WorkspaceRoute: Hashable {
+enum WorkspaceRoute: Hashable, Codable {
+    case task(Int64)
+    case pullRequest(PullRequestRow)
     case thread(String, scope: String)
     case newThreadDraft(projectId: String?, title: String, scope: String = "", prompt: String = "")
 }
@@ -26,6 +28,7 @@ struct WorkspaceRootView: View {
 
     @AppStorage("workspace.selectedTab") private var selectedTab: WorkspaceTab = .threads
     @State private var navigationPath: [WorkspaceRoute] = []
+    @State private var restoredEnvironment: String?
     @State private var showingSettings = false
     @State private var isSearching = false
     @State private var searchQuery = ""
@@ -106,6 +109,10 @@ struct WorkspaceRootView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
             .navigationDestination(for: WorkspaceRoute.self) { route in
                 switch route {
+                case let .task(id):
+                    TaskRecordView(id: id, model: tasks)
+                case let .pullRequest(row):
+                    PullRequestRecord(store: store, row: row)
                 case let .thread(threadId, scope):
                     if let owner = scope.isEmpty ? store : store.linked[scope] {
                         let summary = owner.shell?.threads.first(where: { $0.id == threadId })
@@ -153,6 +160,24 @@ struct WorkspaceRootView: View {
         .onAppear {
             showPendingLink()
             store.isInboxVisible = inboxOnScreen
+        }
+        .task(id: store.environmentId) {
+            guard let environment = store.environmentId, restoredEnvironment != environment else { return }
+            let switching = restoredEnvironment != nil
+            restoredEnvironment = environment
+            if switching { navigationPath = [] }
+            guard navigationPath.isEmpty, store.pendingLink == nil,
+                  let data = UserDefaults.standard.data(forKey: "workspace.route." + environment),
+                  let route = try? JSONDecoder().decode(WorkspaceRoute.self, from: data) else { return }
+            if case let .thread(_, scope) = route, !scope.isEmpty && store.linked[scope] == nil { return }
+            navigationPath = [route]
+        }
+        .onChange(of: navigationPath) { _, path in
+            guard let environment = restoredEnvironment, environment == store.environmentId else { return }
+            let key = "workspace.route." + environment
+            guard let route = path.last else { UserDefaults.standard.removeObject(forKey: key); return }
+            if case .newThreadDraft = route { return }
+            if let data = try? JSONEncoder().encode(route) { UserDefaults.standard.set(data, forKey: key) }
         }
         .onDisappear { store.isInboxVisible = false }
         .onChange(of: inboxOnScreen) { _, visible in store.isInboxVisible = visible }

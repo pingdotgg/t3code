@@ -197,6 +197,11 @@ pub struct FfiFilePatch {
     pub binary: bool,
 }
 
+#[uniffi::export]
+pub fn parse_file_patches(patch: String) -> Vec<FfiFilePatch> {
+    file_patches(&patch)
+}
+
 pub(crate) fn file_patches(diff: &str) -> Vec<FfiFilePatch> {
     use conn_state::diff_parser::{DiffLineKind, parse_unified_diff};
     parse_unified_diff(diff)

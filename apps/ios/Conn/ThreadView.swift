@@ -488,7 +488,7 @@ struct ThreadView: View {
                         Button("Back to latest") { latest() }
                     }
                     if store.status != .connected {
-                        Text("Offline · Viewing saved messages").font(.kitDetail)
+                        OfflinePill().frame(maxWidth: .infinity)
                     }
                     // Conn mobile pins the first pending approval above the composer.
                     if let approval = pendingApprovals.first {
