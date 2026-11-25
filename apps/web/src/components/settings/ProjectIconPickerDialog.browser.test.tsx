@@ -1,41 +1,71 @@
-import "~/index.css";
-
-import { expect, it } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
+import { expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { ProjectIconPickerDialog } from "./ProjectIconPickerDialog";
 
-function verticalPosition(element: HTMLElement | SVGElement): number {
-  return Math.round(element.getBoundingClientRect().top);
-}
+import "~/index.css";
 
-it("keeps the search field still while the result count changes", async () => {
-  const viewport = { width: window.innerWidth, height: window.innerHeight };
-  await page.viewport(1024, 800);
-  await using _viewport = {
-    [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
-  };
+it("Escape in the icon search clears it without closing the dialog", async () => {
+  const onOpenChange = vi.fn();
   await using _screen = await render(
     <ProjectIconPickerDialog
       current={null}
-      projectName="t3code"
+      projectName="Project"
+      open
+      onOpenChange={onOpenChange}
+      onSelect={() => {}}
+    />,
+  );
+  const search = page.getByRole("searchbox", { name: "Search Lucide icons" });
+  await expect.element(search).toHaveAttribute("type", "text");
+  await userEvent.fill(search, "rocket");
+  for (const composition of [
+    { key: "Escape", isComposing: true, keyCode: 27 },
+    { key: "Escape", isComposing: false, keyCode: 229 },
+  ]) {
+    // Safari ends the composition just before the Escape keydown.
+    await act(() => {
+      search.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      search
+        .element()
+        .dispatchEvent(new KeyboardEvent("keydown", { ...composition, bubbles: true }));
+    });
+    await expect.element(search).toHaveValue("rocket");
+  }
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(search).toHaveValue("");
+  await expect.element(search).toHaveFocus();
+  // Holding Escape repeats the keydown, which must not also close the dialog.
+  await act(() => {
+    search
+      .element()
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", repeat: true, bubbles: true }));
+  });
+  expect(onOpenChange).not.toHaveBeenCalled();
+
+  await userEvent.keyboard("{Escape}");
+  expect(onOpenChange.mock.calls.map(([open]) => open)).toEqual([false]);
+});
+
+it("keeps the search field still while the result count changes", async () => {
+  await using _screen = await render(
+    <ProjectIconPickerDialog
+      current={null}
+      projectName="Project"
       open
       onOpenChange={() => {}}
       onSelect={() => {}}
     />,
-    { router: false },
   );
-
   const search = page.getByRole("searchbox", { name: "Search Lucide icons" });
   await expect.element(search).toBeVisible();
-  const restingTop = verticalPosition(search.element());
+  const restingTop = search.element().getBoundingClientRect().top;
 
-  // One row, no results, and back to the full list.
   for (const query of ["folder-code", "zzzzzzzz", ""]) {
-    await userEvent.clear(search);
-    if (query) await userEvent.fill(search, query);
+    await userEvent.fill(search, query);
     await expect.element(search).toHaveValue(query);
-    expect(verticalPosition(search.element())).toBe(restingTop);
+    expect(search.element().getBoundingClientRect().top).toBe(restingTop);
   }
 });
