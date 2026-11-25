@@ -53,12 +53,13 @@ t3 workflow cancel <run> [--reason '<why>']
 t3 workflow questions [--kind <kind>]
 t3 workflow signal '{"choice":"yes"}' --run <run> --wait <name>
 t3 workflow signal '<json>' --workflow <name> --channel <channel>
+t3 workflow withdraw --run <run> --wait <name> [--reason '<why>']
 t3 workflow hooks
 t3 workflow store list
 t3 workflow store set <key> '<json>'
 ```
 
-Every start needs a `--key`: starting twice with the same key returns the same run — even after a version bump — so retries do not duplicate work. Use `signal` with `--run` and `--wait` to answer a question or wake a run, or with `--workflow` and `--channel` to wake whichever run waits on that channel. A signal for a question that is no longer open is kept for a later wait rather than refused, so check `t3 workflow questions` first. Use `store` to read or change state kept between runs.
+Every start needs a `--key`: starting twice with the same key returns the same run — even after a version bump — so retries do not duplicate work. Use `signal` with `--run` and `--wait` to answer a question or wake a run, or with `--workflow` and `--channel` to wake whichever run waits on that channel. A signal for a question that is no longer open is kept for a later wait rather than refused, so check `t3 workflow questions` first. Use `withdraw` when a question no longer needs an answer: its `ask` returns `None`, as on a timeout, and the run goes on; the step records who withdrew it and why. A workflow does the same from a step with `withdraw({ run, name, reason })`. Use `store` to read or change state kept between runs.
 
 ## Kinds of question and tags
 

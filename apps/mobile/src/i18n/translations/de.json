@@ -5690,5 +5690,8 @@
       "v": "v"
     }
   ],
-  "1a1beecff68a6e61": "Google-Konto bestätigen"
+  "1a1beecff68a6e61": "Google-Konto bestätigen",
+  "99451a5d2d40440f": "Zurückgezogen von {by}.",
+  "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
+  "201490988858b511": "zurückgezogen von {by}"
 }
