@@ -575,6 +575,10 @@ function nativeThreadId(providerThread: OrchestrationV2ProviderThread): string {
   return nativeId;
 }
 
+function isVisibleTextPart(part: Extract<OpenCodePart, { type: "text" | "reasoning" }>) {
+  return part.type !== "text" || (part.ignored !== true && part.synthetic !== true);
+}
+
 function dateTimeFromEpoch(value: number | undefined, fallback: DateTime.Utc): DateTime.Utc {
   if (value === undefined) return fallback;
   return Option.getOrElse(DateTime.make(value), () => fallback);
@@ -1348,7 +1352,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           part: Extract<OpenCodePart, { type: "text" | "reasoning" }>,
           forceCompleted = false,
         ) {
-          if (part.type === "text" && (part.ignored === true || part.synthetic === true)) return;
+          if (!isVisibleTextPart(part)) return;
           if (part.text.length === 0) return;
           const emittedAt = yield* DateTime.now;
           const isCompleted = forceCompleted || part.time?.end !== undefined;
@@ -2818,7 +2822,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           if (
             part.type === "tool"
               ? part.state.status !== "pending"
-              : (part.type === "text" || part.type === "reasoning") && part.text.length > 0
+              : (part.type === "text" || part.type === "reasoning") &&
+                part.text.length > 0 &&
+                isVisibleTextPart(part)
           )
             yield* completeRetry(part.sessionID);
           switch (part.type) {
@@ -2850,7 +2856,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           ) {
             return;
           }
-          if (event.properties.delta.length > 0) yield* completeRetry(event.properties.sessionID);
+          if (event.properties.delta.length > 0 && isVisibleTextPart(current))
+            yield* completeRetry(event.properties.sessionID);
           const updated = { ...current, text: current.text + event.properties.delta };
           turn.parts.set(updated.id, updated);
           yield* emitTextPart(state, turn, updated);

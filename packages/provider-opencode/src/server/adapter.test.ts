@@ -938,35 +938,49 @@ describe("OpenCodeAdapterV2", () => {
     properties: { sessionID: "root", part: { ...part, sessionID: "root", messageID: "assistant" } },
   });
 
+  const textDelta = (partID: string, delta: string) => ({
+    type: "message.part.delta",
+    properties: { sessionID: "root", messageID: "assistant", partID, field: "text", delta },
+  });
+
   it.effect.each([
     {
       output: "an empty text part",
-      event: assistantPart({ id: "text-2", type: "text", text: "", time: { start: 3 } }),
+      events: [assistantPart({ id: "text-2", type: "text", text: "", time: { start: 3 } })],
+    },
+    {
+      output: "a synthetic text part",
+      events: [
+        assistantPart({
+          id: "text-2",
+          type: "text",
+          text: "Note",
+          synthetic: true,
+          time: { start: 3 },
+        }),
+      ],
+    },
+    {
+      output: "a delta on an ignored text part",
+      events: [
+        assistantPart({ id: "text-2", type: "text", text: "", ignored: true, time: { start: 3 } }),
+        textDelta("text-2", "Note"),
+      ],
     },
     {
       output: "a pending tool call",
-      event: assistantPart({
-        id: "tool",
-        type: "tool",
-        tool: "read",
-        callID: "call_read",
-        state: { status: "pending", input: {}, raw: "" },
-      }),
+      events: [
+        assistantPart({
+          id: "tool",
+          type: "tool",
+          tool: "read",
+          callID: "call_read",
+          state: { status: "pending", input: {}, raw: "" },
+        }),
+      ],
     },
-    {
-      output: "an empty text delta",
-      event: {
-        type: "message.part.delta",
-        properties: {
-          sessionID: "root",
-          messageID: "assistant",
-          partID: "text",
-          field: "text",
-          delta: "",
-        },
-      },
-    },
-  ])("keeps the retry budget when an attempt opens $output", ({ event }) =>
+    { output: "an empty text delta", events: [textDelta("text", "")] },
+  ])("keeps the retry budget when an attempt opens $output", ({ events }) =>
     Effect.gen(function* () {
       const aborted: Array<string> = [];
       const { push, received } = yield* startRetryingTurn({
@@ -975,7 +989,7 @@ describe("OpenCodeAdapterV2", () => {
           return { data: true };
         },
       });
-      yield* push(event as never);
+      for (const event of events) yield* push(event as never);
       yield* TestClock.adjust(PROVIDER_RETRY_BUDGET_MS);
       const terminal = (yield* Fiber.join(received)).find(
         (event) => event.type === "turn.terminal",
