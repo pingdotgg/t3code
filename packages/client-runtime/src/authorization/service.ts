@@ -735,29 +735,30 @@ export const make = Effect.gen(function* () {
         environmentId: input.expectedEnvironmentId,
         httpBaseUrl: input.httpBaseUrl,
       };
-      const http = yield* environmentHttp(input.expectedEnvironmentId);
+      // Sealed or not is decided for each attempt: the key may be pinned before the retry.
       const openSocket = (credential: DpopConnectionCredential) =>
-        resolveRemoteDpopWebSocketConnectionUrl({
-          wsBaseUrl: input.wsBaseUrl,
-          httpBaseUrl: input.httpBaseUrl,
-          accessToken: credential.accessToken,
-          createProof: (proof) =>
-            signer
-              .createProof(proof)
-              .pipe(
-                Effect.mapError(
-                  proofError(msg("Could not create the websocket authorization proof.")),
+        Effect.flatMap(environmentHttp(input.expectedEnvironmentId), (http) =>
+          resolveRemoteDpopWebSocketConnectionUrl({
+            wsBaseUrl: input.wsBaseUrl,
+            httpBaseUrl: input.httpBaseUrl,
+            accessToken: credential.accessToken,
+            createProof: (proof) =>
+              signer
+                .createProof(proof)
+                .pipe(
+                  Effect.mapError(
+                    proofError(msg("Could not create the websocket authorization proof.")),
+                  ),
                 ),
-              ),
-          secureChannel,
-          sealedRequests: http.sealed,
-          clientMetadata: presentation.metadata,
-          connectionMethod: "direct",
-        }).pipe(
-          reportIdentityChange(descriptor.label, "direct"),
-          Effect.provideService(HttpClient.HttpClient, http.client),
-          Effect.result,
-        );
+            secureChannel,
+            sealedRequests: http.sealed,
+            clientMetadata: presentation.metadata,
+            connectionMethod: "direct",
+          }).pipe(
+            reportIdentityChange(descriptor.label, "direct"),
+            Effect.provideService(HttpClient.HttpClient, http.client),
+          ),
+        ).pipe(Effect.result);
       let credential = yield* directDpopToken(connection);
       let socket = yield* openSocket(credential);
       // A token the host refuses before its expiry, such as after a clock jump, renews once.
