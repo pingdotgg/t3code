@@ -355,7 +355,7 @@ describe("device hub proxy", () => {
     },
   );
 
-  it("answers the Android display viewport itself instead of asking the hub", async () => {
+  it("streams the Android display viewport itself instead of asking the hub", async () => {
     const { handler, requests, viewports } = fixture([AuthOrchestrationReadScope]);
     const response = await handler(
       new Request(
@@ -363,8 +363,12 @@ describe("device hub proxy", () => {
       ),
     );
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("no-store, no-transform");
-    expect(await response.json()).toEqual({
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    const reader = response.body!.getReader();
+    let text = "";
+    while (!text.includes("data: ")) text += new TextDecoder().decode((await reader.read()).value);
+    await reader.cancel();
+    expect(JSON.parse(/data: (.*)\n/.exec(text)![1]!)).toEqual({
       viewport: {
         width: 1080,
         height: 2400,

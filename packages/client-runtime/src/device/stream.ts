@@ -450,7 +450,6 @@ export function createDeviceStreamClient(
   let screen: DeviceScreenSize | null = null;
   let displayViewport: DeviceDisplayViewport | null = null;
   let viewportWatch: ReturnType<typeof watchDisplayViewport> | null = null;
-  let rawFrame = { width: 0, height: 0 };
   let region: FrameRegion | null = null;
   let touchRegion: FrameRegion | null = null;
   // A gesture keeps the mapping it started with, so a viewport change cannot move it mid-drag.
@@ -599,9 +598,6 @@ export function createDeviceStreamClient(
 
   const paint = (source: CanvasImageSource, width: number, height: number) => {
     if (stopped) return;
-    if (rawFrame.width !== 0 && (rawFrame.width !== width || rawFrame.height !== height))
-      viewportWatch?.refresh();
-    rawFrame = { width, height };
     region = displayRegion(displayViewport, width, height);
     touchRegion = touchArea(displayViewport, width, height);
     const shownWidth = region?.width ?? width;
@@ -1365,13 +1361,19 @@ export function createDeviceStreamClient(
       if (useWebCodecs) void readIosVideo();
       else fallBackToMjpeg();
     } else {
-      viewportWatch = watchDisplayViewport({
-        url: withDeviceHubQuery(`${access.httpBase}/t3/display-viewport?device=${device}`, access),
-        credentials: access.credentials,
-        onChange: (next) => {
-          displayViewport = next;
-        },
-      });
+      viewportWatch =
+        typeof EventSource === "undefined"
+          ? null
+          : watchDisplayViewport({
+              url: withDeviceHubQuery(
+                `${access.httpBase}/t3/display-viewport?device=${device}`,
+                access,
+              ),
+              credentials: access.credentials,
+              onChange: (next) => {
+                displayViewport = next;
+              },
+            });
       void startAndroid();
     }
   };

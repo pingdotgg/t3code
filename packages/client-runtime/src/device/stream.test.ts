@@ -605,7 +605,7 @@ describe("Android WebRTC device streams", () => {
     vi.unstubAllGlobals();
   });
 
-  function setup(viewports: ReadonlyArray<Response> = []) {
+  function setup() {
     vi.useFakeTimers();
     const sockets: Socket[] = [];
     class Socket {
@@ -665,14 +665,24 @@ describe("Android WebRTC device streams", () => {
     vi.stubGlobal("RTCPeerConnection", Peer);
     vi.stubGlobal("RTCRtpReceiver", { getCapabilities: () => ({ codecs: [] }) });
     vi.stubGlobal("document", { createElement: () => new Video(), body: { append: vi.fn() } });
-    const pendingViewports = [...viewports];
+    const viewportSources: ViewportSource[] = [];
+    class ViewportSource {
+      onmessage: ((event: { data: string }) => void) | null = null;
+      close = vi.fn();
+      readonly url: string;
+      constructor(url: string) {
+        this.url = url;
+        viewportSources.push(this);
+      }
+    }
+    vi.stubGlobal("EventSource", ViewportSource);
+    const pushViewport = (viewport: unknown) =>
+      viewportSources.at(-1)!.onmessage?.({ data: JSON.stringify({ viewport }) });
     const fetch = vi.fn((url: string, _init?: RequestInit) =>
       Promise.resolve(
-        url.includes("/t3/display-viewport?")
-          ? (pendingViewports.shift() ?? Response.json({ viewport: null }))
-          : url.includes("/api?")
-            ? Response.json({ serial: "emulator-5554", stream: { transport: "webrtc" } })
-            : Response.json({ type: "answer", sdp: "answer-sdp" }),
+        url.includes("/api?")
+          ? Response.json({ serial: "emulator-5554", stream: { transport: "webrtc" } })
+          : Response.json({ type: "answer", sdp: "answer-sdp" }),
       ),
     );
     vi.stubGlobal("fetch", fetch);
@@ -698,7 +708,17 @@ describe("Android WebRTC device streams", () => {
       { present },
       events,
     );
-    return { client, events, fetch, peers, videos, sockets, present };
+    return {
+      client,
+      events,
+      fetch,
+      peers,
+      videos,
+      sockets,
+      present,
+      viewportSources,
+      pushViewport,
+    };
   }
 
   it("streams over WebRTC when serve-emu advertises it, with input that reconnects on its own", async () => {
@@ -706,7 +726,6 @@ describe("Android WebRTC device streams", () => {
     client.start();
     await vi.advanceTimersByTimeAsync(0);
     expect(fetch.mock.calls.map(([url]) => url)).toEqual([
-      "https://test/api/device-hub/t3/display-viewport?device=session-1&hostId=eas",
       "https://test/api/device-hub/vendor/serve-emu/api?device=session-1&hostId=eas",
       "https://test/api/device-hub/vendor/serve-emu/webrtc/offer?device=session-1&hostId=eas",
     ]);
@@ -735,26 +754,38 @@ describe("Android WebRTC device streams", () => {
     client.stop();
   });
 
-  it("crops a wm size letterbox and touches where the server says the display is", async () => {
-    const letterboxed = {
-      width: 1080,
-      height: 2400,
-      content: { x: 72, y: 0, width: 936, height: 2400 },
-      touch: { x: 72 / 1080, y: 0, width: 936 / 1080, height: 1 },
-    };
-    const { client, events, fetch, peers, videos, sockets, present } = setup([
-      Response.json({ viewport: letterboxed }),
-      Response.json({ viewport: null }),
-    ]);
-    client.start();
+  const letterboxed = {
+    width: 1080,
+    height: 2400,
+    content: { x: 72, y: 0, width: 936, height: 2400 },
+    touch: { x: 72 / 1080, y: 0, width: 936 / 1080, height: 1 },
+  };
+
+  async function streamFrame(fixture: ReturnType<typeof setup>, width: number, height: number) {
+    fixture.client.start();
     await vi.advanceTimersByTimeAsync(0);
-    peers[0]?.ontrack?.({ streams: [{}], track: {} });
-    const video = videos[0]!;
-    video.videoWidth = 540;
-    video.videoHeight = 1200;
+    fixture.peers.at(-1)?.ontrack?.({ streams: [{}], track: {} });
+    const video = fixture.videos.at(-1)!;
+    video.videoWidth = width;
+    video.videoHeight = height;
+    return video;
+  }
+
+  it("crops a wm size letterbox and touches where the server says the display is", async () => {
+    const fixture = setup();
+    const { client, events, sockets, present, viewportSources, pushViewport } = fixture;
+    const video = await streamFrame(fixture, 540, 1200);
+    expect(viewportSources.map((source) => source.url)).toEqual([
+      "https://test/api/device-hub/t3/display-viewport?device=session-1&hostId=eas",
+    ]);
+    pushViewport(letterboxed);
     video.callback?.();
-    const region = { x: 36, y: 0, width: 468, height: 1200 };
-    expect(present).toHaveBeenLastCalledWith(video, 468, 1200, region);
+    expect(present).toHaveBeenLastCalledWith(video, 468, 1200, {
+      x: 36,
+      y: 0,
+      width: 468,
+      height: 1200,
+    });
     expect(events.onScreen).toHaveBeenLastCalledWith({
       width: 468,
       height: 1200,
@@ -769,36 +800,35 @@ describe("Android WebRTC device streams", () => {
       { type: "touch", action: "up", x: 1008 / 1080, y: 0.5 },
     ]);
 
-    // `wm size reset` keeps the stream's size, so only the next poll sees it.
-    await vi.advanceTimersByTimeAsync(5_000);
+    // `wm size reset` keeps the stream's size; the server pushes the change.
+    pushViewport(null);
     video.callback?.();
     expect(present).toHaveBeenLastCalledWith(video, 540, 1200);
-    expect(fetch.mock.calls.filter(([url]) => url.includes("/t3/display-viewport?"))).toHaveLength(
-      2,
-    );
+    client.stop();
+    expect(viewportSources[0]!.close).toHaveBeenCalled();
+  });
+
+  it("drops a viewport from before a reconnect when the display now fills the panel", async () => {
+    const fixture = setup();
+    const { client, present, pushViewport } = fixture;
+    let video = await streamFrame(fixture, 540, 1200);
+    pushViewport(letterboxed);
+    video.callback?.();
+    client.stop();
+    video = await streamFrame(fixture, 540, 1200);
+    pushViewport(null);
+    video.callback?.();
+    expect(present).toHaveBeenLastCalledWith(video, 540, 1200);
     client.stop();
   });
 
   it("follows a touch area change that keeps the same geometry", async () => {
-    const geometry = {
-      width: 1080,
-      height: 2400,
-      content: { x: 72, y: 0, width: 936, height: 2400 },
-    };
-    const { client, peers, videos, sockets } = setup([
-      Response.json({
-        viewport: { ...geometry, touch: { x: 72 / 1080, y: 0, width: 936 / 1080, height: 1 } },
-      }),
-      Response.json({ viewport: { ...geometry, touch: { x: 0, y: 0, width: 0.5, height: 0.5 } } }),
-    ]);
-    client.start();
-    await vi.advanceTimersByTimeAsync(0);
-    peers[0]?.ontrack?.({ streams: [{}], track: {} });
-    const video = videos[0]!;
-    video.videoWidth = 540;
-    video.videoHeight = 1200;
+    const fixture = setup();
+    const { client, sockets, pushViewport } = fixture;
+    const video = await streamFrame(fixture, 540, 1200);
+    pushViewport(letterboxed);
     video.callback?.();
-    await vi.advanceTimersByTimeAsync(5_000);
+    pushViewport({ ...letterboxed, touch: { x: 0, y: 0, width: 0.5, height: 0.5 } });
     video.callback?.();
     sockets[0]!.onopen?.();
     client.sendTouch("begin", 1, 1);
@@ -812,22 +842,10 @@ describe("Android WebRTC device streams", () => {
   });
 
   it("sends a display-sized frame's touches as they are", async () => {
-    const { client, peers, videos, sockets } = setup([
-      Response.json({
-        viewport: {
-          width: 1080,
-          height: 2400,
-          content: { x: 72, y: 0, width: 936, height: 2400 },
-          touch: { x: 0, y: 0, width: 904 / 1080, height: 2316 / 2400 },
-        },
-      }),
-    ]);
-    client.start();
-    await vi.advanceTimersByTimeAsync(0);
-    peers[0]?.ontrack?.({ streams: [{}], track: {} });
-    const video = videos[0]!;
-    video.videoWidth = 904;
-    video.videoHeight = 2316;
+    const fixture = setup();
+    const { client, sockets, pushViewport } = fixture;
+    const video = await streamFrame(fixture, 904, 2316);
+    pushViewport({ ...letterboxed, touch: { x: 0, y: 0, width: 904 / 1080, height: 2316 / 2400 } });
     video.callback?.();
     sockets[0]!.onopen?.();
     client.sendTouch("begin", 1, 1);
@@ -837,16 +855,6 @@ describe("Android WebRTC device streams", () => {
       x: 1,
       y: 1,
     });
-    client.stop();
-  });
-
-  it("stops asking for the viewport when the server does not offer it", async () => {
-    const { client, fetch } = setup([new Response("Not Found", { status: 404 })]);
-    client.start();
-    await vi.advanceTimersByTimeAsync(20_000);
-    expect(fetch.mock.calls.filter(([url]) => url.includes("/t3/display-viewport?"))).toHaveLength(
-      1,
-    );
     client.stop();
   });
 });

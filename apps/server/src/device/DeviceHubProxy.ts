@@ -1,11 +1,18 @@
 import { requestUrl } from "../requestUrl.ts";
 // Loopback-only hubs expose shell execution or unauthenticated actions.
 // Proxy with environment read scope for streams and operate scope for input and tuning.
-import { AuthOrchestrationReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  DeviceDisplayViewport,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as Duration from "effect/Duration";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import {
   HttpClient,
   HttpClientRequest,
@@ -19,9 +26,15 @@ import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequ
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
 import { authenticateMediaRequest, failEnvironmentInternal } from "../auth/http.ts";
+import { eventStreamResponse } from "../eventStreamResponse.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as DeviceService from "./DeviceService.ts";
 import { repeatStillFrame } from "./mjpegStillFrame.ts";
+
+const VIEWPORT_READ_INTERVAL = Duration.seconds(5);
+const encodeViewportEvent = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Struct({ viewport: Schema.NullOr(DeviceDisplayViewport) })),
+);
 
 const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/api\/devices$/,
@@ -248,14 +261,18 @@ const handler = Effect.gen(function* () {
   }
   if (hubPath === "/t3/display-viewport") {
     if (!requestedDevice) return HttpServerResponse.text("Bad Request", { status: 400 });
-    const viewport = yield* devices.displayViewport({
-      hostId: ready.hostId,
-      deviceId: requestedDevice,
-    });
-    return HttpServerResponse.jsonUnsafe(
-      { viewport },
-      { headers: { "cache-control": "no-store, no-transform" } },
+    // A `wm size` change leaves the stream's size alone, so the viewport is read on a schedule.
+    // Pushing it keeps working after the media ticket expires, like the video socket.
+    const viewports = Stream.fromEffectSchedule(
+      devices
+        .displayViewport({ hostId: ready.hostId, deviceId: requestedDevice })
+        .pipe(Effect.orElseSucceed(() => null)),
+      Schedule.spaced(VIEWPORT_READ_INTERVAL),
+    ).pipe(
+      Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
+      Stream.interruptWhen(invalidated),
     );
+    return eventStreamResponse(viewports, (viewport) => encodeViewportEvent({ viewport }));
   }
   // Hosts with several upstreams (one per cloud session) route and authenticate requests themselves.
   const routed = ready.upstream ? yield* ready.upstream(hubPath, upstreamSearch) : undefined;

@@ -1014,18 +1014,21 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     },
   );
 
+  const FRAMEBUFFER_STREAM = { framebuffer: true, touchSpace: "framebuffer" } as const;
+
   const displayViewport: DeviceService["Service"]["displayViewport"] = Effect.fn(
     "DeviceService.displayViewport",
   )(function* (input) {
     const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
     // Physical devices and cloud hosts stream their display as it is, or have no ADB here.
     if (device.platform !== "android" || device.physical || ready.upstream) return null;
-    const touchSpace = ready.devices.androidTouchSpace
+    const stream = ready.devices.androidStream
       ? yield* ready.devices
-          .androidTouchSpace(device.id)
-          .pipe(Effect.orElseSucceed(() => "framebuffer" as const))
-      : "framebuffer";
-    return yield* readAndroidDisplayViewport(ready.run, device.id, touchSpace).pipe(
+          .androidStream(device.id)
+          .pipe(Effect.orElseSucceed(() => FRAMEBUFFER_STREAM))
+      : FRAMEBUFFER_STREAM;
+    if (!stream.framebuffer) return null;
+    return yield* readAndroidDisplayViewport(ready.run, device.id, stream.touchSpace).pipe(
       Effect.orElseSucceed(() => null),
     );
   });

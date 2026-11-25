@@ -105,11 +105,11 @@ it.effect.each([400, 500])(
 );
 
 it.effect.each([
-  ["grpc-screenshot", "scrcpy", "display"],
-  ["grpc-screenshot", "grpc", "framebuffer"],
-  ["scrcpy", "scrcpy", "framebuffer"],
+  ["grpc-screenshot", "scrcpy", { framebuffer: true, touchSpace: "display" }],
+  ["grpc-screenshot", "grpc", { framebuffer: true, touchSpace: "framebuffer" }],
+  ["scrcpy", "scrcpy", { framebuffer: false, touchSpace: "framebuffer" }],
 ] as const)(
-  "reads where a %s stream with %s input puts touches",
+  "reads what a %s stream with %s input shows and where it puts touches",
   ([streamMode, inputSource, expected]) =>
     Effect.gen(function* () {
       const requests: string[] = [];
@@ -127,7 +127,7 @@ it.effect.each([
       });
       // Pinned to the hub whose scrcpy scaling this compensates; recheck it when the hub changes.
       expect(DEVICE_HUB_VERSION).toBe("0.26.1");
-      expect(yield* operations.androidTouchSpace!("emulator-5554")).toBe(expected);
+      expect(yield* operations.androidStream!("emulator-5554")).toEqual(expected);
       expect(requests).toEqual(["http://device.test/vendor/serve-emu/api?device=emulator-5554"]);
     }),
 );

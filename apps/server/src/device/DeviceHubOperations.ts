@@ -427,23 +427,26 @@ export const makeDeviceHubOperations = (options: {
         Effect.withSpan("DeviceHubOperations.screenshot"),
       );
 
-  const androidTouchSpace: NonNullable<DeviceOperations["androidTouchSpace"]> = (serial) =>
+  const androidStream: NonNullable<DeviceOperations["androidStream"]> = (serial) =>
     hubJson(
       HttpClientRequest.get(
         `${origin}${vendorPrefix("android")}/api?device=${encodeURIComponent(serial)}`,
       ),
       HubStreamApi,
-      "input mode",
+      "stream mode",
       Duration.seconds(5),
     ).pipe(
-      Effect.map((api) =>
-        api.streamMode === "grpc-screenshot" &&
-        api.inputSource === "scrcpy" &&
-        SCRCPY_DISPLAY_TOUCH_HUBS.has(DEVICE_HUB_VERSION)
-          ? "display"
-          : "framebuffer",
-      ),
+      Effect.map((api) => ({
+        // scrcpy video captures the display itself, at its own size.
+        framebuffer: api.streamMode !== "scrcpy",
+        touchSpace:
+          api.streamMode === "grpc-screenshot" &&
+          api.inputSource === "scrcpy" &&
+          SCRCPY_DISPLAY_TOUCH_HUBS.has(DEVICE_HUB_VERSION)
+            ? ("display" as const)
+            : ("framebuffer" as const),
+      })),
     );
 
-  return { list, boot, attach, shutdown, screenshot, androidTouchSpace };
+  return { list, boot, attach, shutdown, screenshot, androidStream };
 };
