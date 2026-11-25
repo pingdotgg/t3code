@@ -138,6 +138,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import {
   SidebarRowLayoutEditingContext,
+  resolveSidebarRowLines,
   sidebarRowItemFlexClassName,
   type SidebarRowItemId,
   type SidebarRowLayout,
@@ -1398,11 +1399,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       .filter((item) => item.node !== null)
       .map((item) => <Fragment key={item.token.key}>{item.node}</Fragment>);
   };
-  // Agents and spacers carry no thread detail, so a line with nothing else folds into the title's line.
-  const hasDetail = (tokens: ReadonlyArray<SidebarRowToken>) =>
-    tokens.some(
-      (token) => token.id !== "agents" && token.id !== "spacer" && itemNode(token) !== null,
-    );
   const titleLine =
     (["top", "middle", "bottom"] as const).find((line) =>
       props.layout[line].some((token) => token.id === "title"),
@@ -1414,42 +1410,33 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     tokens.filter(
       (token) => token.id !== "projectIcon" && token.id !== "projectName" && token.id !== "title",
     );
-  const lineTokens: Record<
-    "top" | "middle" | "bottom",
-    ReadonlyArray<SidebarRowToken>
-  > = inFolderVariant
-    ? {
-        top: [],
-        middle: withoutFolderItems(props.layout[titleLine]),
-        bottom: (["top", "middle", "bottom"] as const)
-          .filter((line) => line !== titleLine)
-          .flatMap((line) => withoutFolderItems(props.layout[line])),
-      }
-    : props.layout;
-  // Folder rows merge the card's other lines into one, which keeps whenever any line is kept. A
-  // line with no items is never kept: it would only add an empty row to every card.
-  const kept = (line: "middle" | "bottom") =>
-    (inFolderVariant ? props.layout.keepLines.length > 0 : props.layout.keepLines.includes(line)) &&
-    lineTokens[line].some((token) => token.id !== "spacer");
-  const folds = (line: "middle" | "bottom") =>
-    layoutEditing === null &&
-    !kept(line) &&
-    (inFolderVariant ? line === "bottom" : line !== titleLine) &&
-    !hasDetail(lineTokens[line]);
-  const middleFolds = folds("middle");
-  const bottomFolds = folds("bottom");
-  const foldedAgents = [
-    ...(middleFolds ? lineTokens.middle : []),
-    ...(bottomFolds ? lineTokens.bottom : []),
-  ].filter((token) => token.id === "agents");
-  const tokensFor = (line: "top" | "middle" | "bottom") => {
-    const own =
-      (line === "middle" && middleFolds) || (line === "bottom" && bottomFolds)
-        ? []
-        : lineTokens[line];
-    const foldsHere = inFolderVariant ? line === "middle" : line === titleLine;
-    return foldsHere ? [...own, ...foldedAgents] : own;
-  };
+  const resolvedLines = resolveSidebarRowLines(
+    inFolderVariant
+      ? {
+          lines: {
+            top: [],
+            middle: withoutFolderItems(props.layout[titleLine]),
+            bottom: (["top", "middle", "bottom"] as const)
+              .filter((line) => line !== titleLine)
+              .flatMap((line) => withoutFolderItems(props.layout[line])),
+          },
+          titleLine: "middle",
+          // The merged line keeps whenever any of the card's lines is kept.
+          keepLines: props.layout.keepLines.length > 0 ? ["bottom"] : [],
+          hasContent: (token) => itemNode(token) !== null,
+          editing: layoutEditing !== null,
+        }
+      : {
+          lines: props.layout,
+          titleLine,
+          keepLines: props.layout.keepLines,
+          hasContent: (token) => itemNode(token) !== null,
+          editing: layoutEditing !== null,
+        },
+  );
+  const middleFolds = resolvedLines.middle === null;
+  const bottomFolds = resolvedLines.bottom === null;
+  const tokensFor = (line: "top" | "middle" | "bottom") => resolvedLines[line] ?? [];
   const metaLine = bottomFolds ? null : (
     <div
       className={cn(

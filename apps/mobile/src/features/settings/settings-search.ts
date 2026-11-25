@@ -47,6 +47,14 @@ const SETTINGS_SEARCH_TERMS = {
     msg("zen", { $context: "settings search keyword" }),
     msg("final answers only", { $context: "settings search keyword" }),
   ],
+  SettingsThreadRows: [
+    msg("thread list", { $context: "settings search keyword" }),
+    msg("layout", { $context: "settings search keyword" }),
+    msg("branch", { $context: "settings search keyword" }),
+    msg("project name", { $context: "settings search keyword" }),
+    msg("environment", { $context: "settings search keyword" }),
+    msg("row height", { $context: "settings search keyword" }),
+  ],
   SettingsNavigation: [
     msg("tabs", { $context: "settings search keyword" }),
     msg("tab order", { $context: "settings search keyword" }),
