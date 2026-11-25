@@ -2863,35 +2863,7 @@ export const layerWsRpc = (
               : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
             return ServerSettings.redactServerSettingsForClient(settings, settingsClient);
           }),
-        [WS_METHODS.serverDiscoverSourceControl]: Effect.fn("ws.sourceControl.discover")(
-          function* (input) {
-            if (input.projectId !== undefined) {
-              const project = yield* projectStore
-                .get(input.projectId)
-                .pipe(Effect.orElseSucceed(() => Option.none()));
-              if (Option.isSome(project)) {
-                return yield* sourceControlDiscovery.discoverForProject(
-                  project.value.workspaceRoot,
-                );
-              }
-            }
-            return yield* sourceControlDiscovery.discoverWithProjectRemotes(
-              Effect.gen(function* () {
-                const projects = yield* projectStore
-                  .listShells()
-                  .pipe(Effect.orElseSucceed(() => []));
-                const repositories = yield* Effect.forEach(
-                  projects.filter((project) => project.archivedAt === null),
-                  (project) => projectEnrichment.readRepositoryIdentity(project.workspaceRoot),
-                  { concurrency: 4 },
-                );
-                return repositories.flatMap((identity) =>
-                  identity ? [identity.locator.remoteUrl] : [],
-                );
-              }),
-            );
-          },
-        ),
+        [WS_METHODS.serverDiscoverSourceControl]: (input) => sourceControlDiscovery.discover(input),
         [WS_METHODS.serverCheckSecretSource]: (input) => secretCheck.check(input.source),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           TraceDiagnostics.readTraceDiagnostics({
