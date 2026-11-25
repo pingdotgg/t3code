@@ -5282,7 +5282,7 @@
   "0b363b02a7e17bcb": "Стоимость токенов без скидок",
   "ea4beda46b22b8b0": "Обработанные токены",
   "212d974007cacf3f": "* при оплате по полной цене API",
-  "82bc7f1cc5a039fc": "{count, plural, one {За {sessions} сеанс} few {За {sessions} сеанса} many {За {sessions} сеансов} other {За {sessions} сеанса}}",
+  "45340a7dc1f89d51": "{count, plural, one {За {sessions} сеанс} few {За {sessions} сеанса} many {За {sessions} сеансов} other {За {sessions} сеанса}}",
   "2a57181a9d128463": "{share} стоимости · {tokens} токенов",
   "d8a6a99fbdda0d3e": "{share} токенов · {cost}",
   "19a3f4f2ba09e787": "Итоги",

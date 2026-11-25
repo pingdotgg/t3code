@@ -5203,7 +5203,7 @@
   "0b363b02a7e17bcb": "Custo bruto de tokens",
   "ea4beda46b22b8b0": "Tokens processados",
   "212d974007cacf3f": "* se cobrado pela taxa cheia da API",
-  "82bc7f1cc5a039fc": "{count, plural, one {Em {sessions} sessões} other {Em {sessions} sessões}}",
+  "45340a7dc1f89d51": "{count, plural, one {Em {sessions} sessão} other {Em {sessions} sessões}}",
   "2a57181a9d128463": "{share} do custo · {tokens} tokens",
   "d8a6a99fbdda0d3e": "{share} dos tokens · {cost}",
   "19a3f4f2ba09e787": "Totais",

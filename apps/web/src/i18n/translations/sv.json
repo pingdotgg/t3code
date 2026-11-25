@@ -12348,7 +12348,6 @@
   "d2d071e45a2d6b89": "Välj en miljö för att se gränser.",
   "c9180daea905a0a6": "Välj en miljö för att se användning.",
   "f0297ec79e896a13": "{environment}: {error}",
-  "6dcbf651d51d4023": "{count, plural, one {{formatted} session} other {{formatted} sessioner}}",
   "b01bf98dd90ee819": "API-uppskattning",
   "bab34b28e9ee8e88": "Detaljer om användning utan pris",
   "61571f4542da9903": "{count, plural, one {{formatted} session} other {{formatted} sessioner}}",

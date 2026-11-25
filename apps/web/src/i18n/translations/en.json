@@ -12350,7 +12350,6 @@
   "d2d071e45a2d6b89": "Select an environment to see limits.",
   "c9180daea905a0a6": "Select an environment to see usage.",
   "f0297ec79e896a13": "{environment}: {error}",
-  "6dcbf651d51d4023": "{count, plural, one {{formatted} sessions} other {{formatted} sessions}}",
   "b01bf98dd90ee819": "API estimate",
   "bab34b28e9ee8e88": "Unpriced usage details",
   "61571f4542da9903": "{count, plural, one {{formatted} session} other {{formatted} sessions}}",
