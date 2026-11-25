@@ -36,6 +36,7 @@ function FaviconImageAttempt(props: {
       alt=""
       aria-hidden="true"
       draggable={false}
+      referrerPolicy="no-referrer"
       className={props.className}
       onError={() => setFailed((current) => new Set(current).add(source))}
     />
