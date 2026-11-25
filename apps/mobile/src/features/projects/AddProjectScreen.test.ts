@@ -36,6 +36,7 @@ const state = vi.hoisted(() => ({
   connectionStates: {} as Record<string, EnvironmentConnectionPhase>,
   newProjectsRoot: null as string | null,
   waitForProject: vi.fn(),
+  retargetSavedNewTaskDraft: vi.fn(async () => true),
   dispatch: vi.fn(),
   alert: vi.fn(),
   navigationState: undefined as NavigationState | undefined,
@@ -60,6 +61,7 @@ vi.mock("../layout/workspace/useSelectWorkspaceDetail", async () => {
       state.dispatch(selectWorkspaceDetail(detail)),
   };
 });
+vi.mock("../connection/useRetryEnvironment", () => ({ useRetryEnvironment: () => vi.fn() }));
 vi.mock("../../native/StackHeader", () => ({
   nativeHeaderScrollEdgeEffects: () => undefined,
 }));
@@ -80,6 +82,11 @@ vi.mock("@react-navigation/native", () => ({
   useRoute: () => state.navigationState?.routes[state.navigationState.index],
   useNavigation: () => ({
     dispatch: state.dispatch,
+    // The screen is already presented when these tests act on it.
+    addListener: (_event: string, listener: () => void) => {
+      listener();
+      return () => {};
+    },
     getState: () =>
       state.navigationState ?? {
         index: 4,
@@ -189,6 +196,7 @@ vi.mock("../../state/projects", () => ({
 vi.mock("../../state/use-composer-drafts", () => ({
   waitForComposerDraftsLoaded: async () => {},
   createNewTaskDraft: () => "prompt-draft",
+  retargetSavedNewTaskDraft: state.retargetSavedNewTaskDraft,
   setComposerDraftText: () => {},
 }));
 
@@ -340,13 +348,14 @@ it.each([
   },
 );
 
-function cloneAction() {
+function cloneAction(props: { readonly draftId?: string } = {}) {
   const action = findAction(
     renderScreen(() =>
       AddProjectDestinationScreen({
         environmentId: "environment",
         remoteUrl: "https://example.com/owner/repo.git",
         repositoryName: "repo",
+        ...props,
       }),
     ),
     "Clone project",
@@ -419,6 +428,30 @@ describe("clone project permissions", () => {
     } finally {
       state.existingProjects = [];
       state.startCloneResult = null;
+    }
+  });
+
+  it("moves the draft it was opened from onto the project instead of copying its text", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.retargetSavedNewTaskDraft.mockClear();
+    state.existingProjects = [
+      {
+        environmentId: "environment",
+        id: "existing",
+        title: "repo",
+        workspaceRoot: NodePath.join(state.baseDirectory, "repo"),
+        repositoryIdentity: { canonicalKey: "example.com/owner/repo" },
+      },
+    ];
+    try {
+      await cloneAction({ draftId: "new-task:source" })();
+
+      expect(state.retargetSavedNewTaskDraft).toHaveBeenCalledWith("new-task:source", {
+        environmentId: "environment",
+        projectId: "existing",
+      });
+    } finally {
+      state.existingProjects = [];
     }
   });
 });

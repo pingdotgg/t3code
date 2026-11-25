@@ -699,6 +699,49 @@ it.effect("strips embedded credentials from the remote URL it reports", () =>
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("reuses only a matching checked-out repository at an occupied clone destination", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-control-reuse-" });
+    const destinationPath = path.join(parent, "t3code");
+    yield* fs.makeDirectory(destinationPath);
+    const notesPath = path.join(destinationPath, "notes.txt");
+    yield* fs.writeFileString(notesPath, "keep my edits");
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const input = { remoteUrl: CLONE_URLS.sshUrl, destinationPath };
+      assert.isTrue((yield* service.prepareClone(input, { reuseCheckout: true })).existingCheckout);
+      const different = yield* Effect.flip(
+        service.prepareClone(
+          { ...input, remoteUrl: "https://github.com/octocat/other" },
+          {
+            reuseCheckout: true,
+          },
+        ),
+      );
+      assert.include(different.detail, "not empty");
+      assert.include((yield* Effect.flip(service.prepareClone(input))).detail, "not empty");
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            execute: ({ args }) =>
+              Effect.succeed({
+                ...processOutput(),
+                stdout: args.includes("--show-toplevel") ? destinationPath : "",
+              }),
+            resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+            readConfigValue: () => Effect.succeed(CLONE_URLS.url),
+          },
+        }),
+      ),
+    );
+    assert.equal(yield* fs.readFileString(notesPath), "keep my edits");
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("discards only a directory git wrote to", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

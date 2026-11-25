@@ -11,10 +11,13 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectCloneTracker from "./ProjectCloneTracker.ts";
 import { ProjectConflictError } from "./ProjectService.ts";
 import { parseGitCloneProgressLine } from "./gitCloneProgress.ts";
@@ -28,8 +31,25 @@ const startInput = {
   destinationPath: "/workspace/t3code",
 };
 
+function clonePersistence() {
+  let bytes: Uint8Array | undefined;
+  return Layer.mergeAll(
+    Layer.mock(ServerSecretStore.ServerSecretStore)({
+      get: () => Effect.sync(() => Option.fromUndefinedOr(bytes)),
+      set: (_name, value) =>
+        Effect.sync(() => {
+          bytes = value;
+        }),
+    }),
+    Layer.mock(ProjectStore.ProjectStoreV2)({
+      findActiveByWorkspaceRoot: () => Effect.succeedSome({ projectId } as ProjectStore.ProjectRow),
+    }),
+  );
+}
+
 function makeHarness(options?: {
   readonly clone?: SourceControlRepositoryService.SourceControlRepositoryService["Service"]["cloneRepository"];
+  readonly persistence?: ReturnType<typeof clonePersistence>;
 }) {
   const created: Array<{ projectId: ProjectId; workspaceRoot: string }> = [];
   const cloned: Array<ProjectId> = [];
@@ -42,6 +62,7 @@ function makeHarness(options?: {
     onCloned: (input) => Effect.sync(() => void cloned.push(input.projectId)),
   };
   const layer = ProjectCloneTracker.layer.pipe(
+    Layer.provide(options?.persistence ?? clonePersistence()),
     Layer.provide(
       Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
         prepareClone: (input) =>
@@ -67,6 +88,59 @@ function makeHarness(options?: {
 }
 
 describe("ProjectCloneTracker", () => {
+  it.effect(
+    "blocks thread creation and offers retry after an interrupted clone is restored",
+    () => {
+      let attempts = 0;
+      const cloning = Deferred.makeUnsafe<void>();
+      const harness = makeHarness({
+        persistence: clonePersistence(),
+        clone: (input) =>
+          Effect.suspend(() => {
+            attempts += 1;
+            if (attempts === 1)
+              return Deferred.succeed(cloning, undefined).pipe(Effect.andThen(Effect.never));
+            return Effect.succeed({
+              cwd: input.destinationPath,
+              remoteUrl: input.remoteUrl ?? "",
+              repository: null,
+            });
+          }),
+      });
+      const { layer } = harness;
+      return Effect.gen(function* () {
+        yield* Effect.gen(function* () {
+          const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+          yield* tracker.start(startInput, harness.hooks);
+          yield* Deferred.await(cloning);
+        }).pipe(Effect.provide(layer));
+
+        yield* Effect.gen(function* () {
+          const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+          expect(yield* tracker.get(projectId)).toMatchObject({
+            phase: "failed",
+            error: expect.stringContaining("restart"),
+          });
+          const rejected = yield* Effect.flip(
+            ProjectCloneTracker.rejectCommandsDuringClone(tracker, {
+              type: "thread.create",
+              projectId,
+            }),
+          );
+          expect(rejected.message).toContain("Retry the clone first");
+          const completed = yield* tracker.stream.pipe(
+            Stream.filter((clones) => clones.some((clone) => clone.phase === "done")),
+            Stream.runHead,
+            Effect.forkChild,
+          );
+          expect(yield* tracker.retry(projectId, harness.hooks.onCloned)).toBe(true);
+          expect(Option.isSome(yield* Fiber.join(completed))).toBe(true);
+          expect(harness.discarded).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      });
+    },
+  );
+
   it.effect("creates the project first and reports the clone through the stream", () => {
     const release = Deferred.makeUnsafe<void>();
     const harness = makeHarness({
@@ -245,6 +319,7 @@ describe("ProjectCloneTracker", () => {
         }),
     });
     const layer = ProjectCloneTracker.layer.pipe(
+      Layer.provide(clonePersistence()),
       Layer.provide(
         Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
           prepareClone: (input) =>
@@ -396,6 +471,7 @@ describe("ProjectCloneTracker", () => {
   it.effect("does not create a project when the clone cannot be prepared", () => {
     const harness = makeHarness();
     const layer = ProjectCloneTracker.layer.pipe(
+      Layer.provide(clonePersistence()),
       Layer.provide(
         Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
           prepareClone: () =>

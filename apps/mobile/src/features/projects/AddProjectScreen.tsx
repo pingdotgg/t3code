@@ -1,6 +1,7 @@
 import { errorDisplayMessage, type MarkedText } from "@t3tools/client-runtime/errors";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { useRetryEnvironment } from "../connection/useRetryEnvironment";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { NavigationRow } from "../../components/ui/NavigationRow";
@@ -514,8 +515,9 @@ function useSelectedEnvironment(requestedEnvironmentId: EnvironmentId | null): {
   };
 }
 
-function EmptyEnvironmentState() {
+function EmptyEnvironmentState({ pairedTargetId }: { readonly pairedTargetId?: EnvironmentId }) {
   const navigation = useNavigation();
+  const retryEnvironment = useRetryEnvironment();
   const gt = useGT();
 
   return (
@@ -526,9 +528,13 @@ function EmptyEnvironmentState() {
       </Text>
       <View className="mt-1">
         <Button
-          label={gt("Add environment")}
+          label={pairedTargetId ? gt("Reconnect") : gt("Add environment")}
           tone="primary"
-          onPress={() => navigation.dispatch(StackActions.replace("ConnectionsNew"))}
+          onPress={() =>
+            pairedTargetId
+              ? retryEnvironment(pairedTargetId)
+              : navigation.dispatch(StackActions.replace("ConnectionsNew"))
+          }
         />
       </View>
     </View>
@@ -805,15 +811,29 @@ function useOpenNewTaskDraft() {
   };
 }
 
-async function draftWithPrompt(
+type CarriedDraft = { readonly prompt: string | null; readonly draftId: string | null };
+
+/** Moves the draft being added from onto the project, or starts one with the prompt. */
+async function carryDraftTo(
   environmentId: EnvironmentId,
   projectId: ProjectId,
-  prompt: string,
-): Promise<string> {
-  await waitForComposerDraftsLoaded();
-  const draftId = createNewTaskDraft({ environmentId, projectId });
-  setComposerDraftText(draftId, prompt);
-  return draftId;
+  carried: CarriedDraft,
+): Promise<{ readonly draftId?: string }> {
+  try {
+    if (
+      carried.draftId &&
+      (await retargetSavedNewTaskDraft(carried.draftId, { environmentId, projectId }))
+    ) {
+      return { draftId: carried.draftId };
+    }
+    if (!carried.prompt) return {};
+    await waitForComposerDraftsLoaded();
+    const draftId = createNewTaskDraft({ environmentId, projectId });
+    setComposerDraftText(draftId, carried.prompt);
+    return { draftId };
+  } catch {
+    return {};
+  }
 }
 
 function useOpenExistingProject(environment: EnvironmentOption | null) {
@@ -826,7 +846,7 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
   return async (
     path: string,
     originRoute: ReturnType<typeof getActiveRoute>,
-    clone?: { readonly remoteUrl: string; readonly prompt: string | null },
+    clone?: { readonly remoteUrl: string } & CarriedDraft,
   ): Promise<boolean> => {
     if (!environment) return false;
     const existing = findExistingAddProject({
@@ -843,7 +863,6 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
     ) {
       return false;
     }
-    const prompt = clone?.prompt;
     // Adding an archived project's folder again brings the project back.
     const unarchived =
       existing.archivedAt == null ||
@@ -864,12 +883,7 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
         environmentId: existing.environmentId,
         projectId: existing.id,
         title: existing.title,
-        ...(prompt
-          ? await draftWithPrompt(existing.environmentId, existing.id, prompt).then(
-              (draftId) => ({ draftId }),
-              () => ({}),
-            )
-          : {}),
+        ...(clone ? await carryDraftTo(existing.environmentId, existing.id, clone) : {}),
       },
       originRoute,
     );
@@ -1566,6 +1580,8 @@ export function AddProjectDestinationScreen(props: {
   readonly repositoryTitle?: string | string[];
   readonly repositoryName?: string | string[];
   readonly prompt?: string | string[];
+  readonly projectTitle?: string | string[];
+  readonly draftId?: string | string[];
 }) {
   const openNewTaskDraft = useOpenNewTaskDraft();
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
@@ -1575,8 +1591,14 @@ export function AddProjectDestinationScreen(props: {
     reportFailure: false,
     reportDefect: false,
   });
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList>>();
+  // The row that opened this screen sits over Clone, so the second tap of a double tap would clone.
+  const [presented, setPresented] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks the native push transition
+  useEffect(() => navigation.addListener("transitionEnd", () => setPresented(true)), [navigation]);
   const environment = useEnvironmentFromParam(props.environmentId);
+  const { savedConnectionsById } = useSavedRemoteConnections();
+  const targetId = stringParam(props.environmentId) as EnvironmentId | undefined;
   const canWriteSourceControl = useEnvironmentScope(
     environment?.environmentId ?? null,
     AuthSourceControlWriteScope,
@@ -1588,7 +1610,11 @@ export function AddProjectDestinationScreen(props: {
   const canCloneProject = canWriteSourceControl && canCreateProject;
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
-  const prompt = stringParam(props.prompt);
+  const carried: CarriedDraft = {
+    prompt: stringParam(props.prompt) ?? null,
+    draftId: stringParam(props.draftId) ?? null,
+  };
+  const projectTitle = stringParam(props.projectTitle)?.trim();
   const repositoryName = stringParam(props.repositoryName)?.trim() ?? "";
   const ghqDirectoryPath =
     remoteUrl && environment?.ghqCloneLayout
@@ -1608,6 +1634,7 @@ export function AddProjectDestinationScreen(props: {
       !readEnvironmentScope(environment.environmentId, AuthSourceControlWriteScope) ||
       !readEnvironmentScope(environment.environmentId, AuthOrchestrationOperateScope) ||
       !remoteUrl ||
+      !presented ||
       isBrowseNavigating ||
       isSubmitting
     ) {
@@ -1632,13 +1659,13 @@ export function AddProjectDestinationScreen(props: {
     if (
       await openExistingProject(await resolveHomePath(resolved.path), originRoute, {
         remoteUrl,
-        prompt: prompt ?? null,
+        ...carried,
       })
     ) {
       setIsSubmitting(false);
       return;
     }
-    const title = inferProjectTitleFromPath(resolved.path);
+    const title = projectTitle || inferProjectTitleFromPath(resolved.path);
     const startResult = await startProjectClone({
       environmentId: environment.environmentId,
       input: {
@@ -1647,6 +1674,7 @@ export function AddProjectDestinationScreen(props: {
         createdAt: new Date().toISOString(),
         remoteUrl,
         destinationPath: resolved.path,
+        reuseExistingCheckout: true,
       },
     });
     if (AsyncResult.isFailure(startResult)) {
@@ -1674,12 +1702,7 @@ export function AddProjectDestinationScreen(props: {
             projectId,
             title,
             cloning: "1",
-            ...(prompt
-              ? await draftWithPrompt(environment.environmentId, projectId, prompt).then(
-                  (draftId) => ({ draftId }),
-                  () => ({}),
-                )
-              : {}),
+            ...(await carryDraftTo(environment.environmentId, projectId, carried)),
           },
           originRoute,
         );
@@ -1723,7 +1746,9 @@ export function AddProjectDestinationScreen(props: {
           />
         </>
       ) : (
-        <EmptyEnvironmentState />
+        <EmptyEnvironmentState
+          {...(targetId && savedConnectionsById[targetId] ? { pairedTargetId: targetId } : {})}
+        />
       )}
     </AddProjectShell>
   );

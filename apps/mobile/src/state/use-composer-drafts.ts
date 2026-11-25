@@ -2113,6 +2113,16 @@ export function findNewTaskDraftKeys(
     .map(([key]) => key);
 }
 
+export async function clearNewTaskDraftsForProject(project: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+}): Promise<void> {
+  await waitForComposerDraftsLoaded();
+  for (const key of findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), project)) {
+    clearComposerDraft(key);
+  }
+}
+
 export async function clearComposerDraftsEnvironment(environmentId: EnvironmentId): Promise<void> {
   ensureComposerDraftsLoaded();
   if (loadPromise !== null) {

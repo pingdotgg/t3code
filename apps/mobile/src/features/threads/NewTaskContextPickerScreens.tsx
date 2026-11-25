@@ -41,6 +41,8 @@ import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { useServerConfigs } from "../../state/entities";
+import { isNewTaskDraftKey } from "../../state/new-task-draft-key";
+import { useEnvironmentsCloningRemote } from "../../state/projectClones";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
 import { useRefreshBranchesOnFocus } from "./use-refresh-branches-on-focus";
@@ -229,6 +231,11 @@ function AddToMachineRow(props: {
   );
 }
 
+function addProjectRemoteUrl(project: EnvironmentProject | null): string | null {
+  const identity = project?.repositoryIdentity;
+  return identity?.origin?.remoteUrl ?? identity?.locator.remoteUrl ?? null;
+}
+
 /** Connected machines without the selected repository that can clone it. */
 function useAddProjectTargets() {
   const flow = useNewTaskFlow();
@@ -237,6 +244,11 @@ function useAddProjectTargets() {
   // The clone destination needs both: writing source control and creating the project.
   const canClone = useEnvironmentsWithScope(connectedEnvironments, AuthSourceControlWriteScope);
   const canOperate = useEnvironmentsWithScope(connectedEnvironments, AuthOrchestrationOperateScope);
+  // A machine still cloning this repository has no repository identity yet, so `flow.environments` misses it.
+  const cloning = useEnvironmentsCloningRemote(
+    connectedEnvironments.map((environment) => environment.environmentId),
+    addProjectRemoteUrl(flow.selectedProject),
+  );
   if (flow.isScratchDraft || !flow.selectedProject?.repositoryIdentity?.locator.remoteUrl) {
     return [];
   }
@@ -245,6 +257,7 @@ function useAddProjectTargets() {
     .filter(
       (environment) =>
         !hasProject.has(environment.environmentId) &&
+        !cloning.has(environment.environmentId) &&
         canClone.has(environment.environmentId) &&
         canOperate.has(environment.environmentId) &&
         canCreateProjectInEnvironment(environment.connectionState) &&
@@ -260,17 +273,23 @@ export function NewTaskEnvironmentPickerRouteScreen() {
   const insets = useSafeAreaInsets();
   const addTargets = useAddProjectTargets();
   const addToMachine = (environmentId: EnvironmentId) => {
-    const identity = flow.selectedProject?.repositoryIdentity;
-    const remoteUrl = identity?.origin?.remoteUrl ?? identity?.locator.remoteUrl;
-    if (!identity || !remoteUrl) return;
+    const project = flow.selectedProject;
+    const remoteUrl = addProjectRemoteUrl(project);
+    if (!project?.repositoryIdentity || !remoteUrl) return;
     navigation.dispatch(
       StackActions.push("AddProjectDestination", {
         environmentId,
         remoteUrl,
         repositoryTitle:
-          repositoryGroupingDisplayNameOf(identity) ?? flow.selectedProject?.title ?? remoteUrl,
+          repositoryGroupingDisplayNameOf(project.repositoryIdentity) ?? project.title,
         repositoryName: getCloneDirectoryName(remoteUrl),
-        ...(flow.prompt.trim() ? { prompt: flow.prompt } : {}),
+        projectTitle: project.title,
+        // The draft moves to the clone with everything in it, as a machine switch does.
+        ...(flow.draftKey !== null && isNewTaskDraftKey(flow.draftKey)
+          ? { draftId: flow.draftKey }
+          : flow.prompt.trim()
+            ? { prompt: flow.prompt }
+            : {}),
       }),
     );
   };

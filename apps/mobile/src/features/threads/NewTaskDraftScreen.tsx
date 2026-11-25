@@ -61,6 +61,7 @@ import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 
 import {
   clearComposerDraftContent,
+  clearNewTaskDraftsForProject,
   getComposerDraftSnapshot,
   updateComposerDraftSettings,
   scheduleUnusedComposerAttachmentCleanup,
@@ -255,6 +256,12 @@ export function NewTaskDraftScreen(props: {
       );
       return;
     }
+    await clearNewTaskDraftsForProject({
+      environmentId: removed.environmentId,
+      projectId: removed.id,
+    }).catch((error) => {
+      console.warn("[project-removal] could not clear composer drafts", error);
+    });
     if (flow.getSelectedProjectKey() === scopedProjectKey(removed.environmentId, removed.id)) {
       navigation.dispatch(StackActions.replace("Home"));
     }

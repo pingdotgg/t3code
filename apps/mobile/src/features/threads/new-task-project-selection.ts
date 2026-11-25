@@ -115,41 +115,19 @@ export function resolveEnvironmentProjectMatch(
   projectsOnTarget: ReadonlyArray<EnvironmentProject>,
   selectedProject: EnvironmentProject | null,
 ): EnvironmentProject | null {
-  const repositoryKey = selectedProject?.repositoryIdentity
-    ? repositoryGroupingKeyOf(selectedProject.repositoryIdentity)
-    : null;
-  const workspaceBasename = selectedProject
-    ? workspaceFolderName(selectedProject.workspaceRoot)
-    : null;
-  // Use weaker signals only when identity is unknown; different known repositories never match by basename or title.
-  const isKnownMismatch = (project: EnvironmentProject) => {
-    const projectKey = project.repositoryIdentity
-      ? repositoryGroupingKeyOf(project.repositoryIdentity)
-      : null;
-    return repositoryKey !== null && projectKey !== null && projectKey !== repositoryKey;
-  };
+  if (selectedProject === null) return projectsOnTarget[0] ?? null;
+  if (selectedProject.repositoryIdentity) {
+    return projectsOnTarget.find((project) => isSameRepository(project, selectedProject)) ?? null;
+  }
+  // Identity is unknown, so fall back to the folder name, then the title.
+  const workspaceBasename = workspaceFolderName(selectedProject.workspaceRoot);
   return (
-    (repositoryKey !== null
-      ? projectsOnTarget.find(
-          (project) =>
-            (project.repositoryIdentity
-              ? repositoryGroupingKeyOf(project.repositoryIdentity)
-              : null) === repositoryKey,
-        )
-      : undefined) ??
     (workspaceBasename !== null
       ? projectsOnTarget.find(
-          (project) =>
-            !isKnownMismatch(project) &&
-            workspaceFolderName(project.workspaceRoot) === workspaceBasename,
+          (project) => workspaceFolderName(project.workspaceRoot) === workspaceBasename,
         )
       : undefined) ??
-    (selectedProject !== null
-      ? projectsOnTarget.find(
-          (project) => !isKnownMismatch(project) && project.title === selectedProject.title,
-        )
-      : undefined) ??
-    projectsOnTarget[0] ??
+    projectsOnTarget.find((project) => project.title === selectedProject.title) ??
     null
   );
 }

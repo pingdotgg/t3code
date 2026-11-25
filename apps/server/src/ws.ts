@@ -1988,6 +1988,23 @@ export const layerWsRpc = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      const refreshClonedProject: ProjectCloneTracker.ProjectCloneHooks["onCloned"] = Effect.fn(
+        "ProjectCloneTracker.refreshClonedProject",
+      )(
+        function* (project) {
+          yield* repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true });
+          yield* projectService.update({
+            commandId: CommandId.make(`project-clone-done:${project.projectId}`),
+            projectId: project.projectId,
+          });
+          yield* refreshGitStatus(project.workspaceRoot);
+          // The initial enrichment may have looked at an empty directory.
+          yield* projectEnrichment.invalidate([project.workspaceRoot]);
+          yield* projectEnrichment.request(project.workspaceRoot);
+        },
+        Effect.ignoreCause({ log: true }),
+      );
+
       const getOrchestrationV2ArchivedShellSnapshot = Effect.gen(function* () {
         const { threads, projects, snapshotSequence } = yield* loadShellSnapshotParts({
           sql,
@@ -3066,21 +3083,7 @@ export const layerWsRpc = (
                         }),
                   ),
                 ),
-            onCloned: (project) =>
-              repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true }).pipe(
-                Effect.andThen(
-                  projectService.update({
-                    commandId: CommandId.make(`project-clone-done:${project.projectId}`),
-                    projectId: project.projectId,
-                  }),
-                ),
-                Effect.andThen(refreshGitStatus(project.workspaceRoot)),
-                // The folder was empty when the project was created, so the cached
-                // enrichment says "no repository" and clients cannot group it yet.
-                Effect.andThen(projectEnrichment.invalidate([project.workspaceRoot])),
-                Effect.andThen(projectEnrichment.request(project.workspaceRoot)),
-                Effect.ignoreCause({ log: true }),
-              ),
+            onCloned: refreshClonedProject,
           }),
         [WS_METHODS.projectsEnsureScratch]: () =>
           managedFolders.ensureScratchProject.pipe(
@@ -3107,7 +3110,9 @@ export const layerWsRpc = (
         [WS_METHODS.projectCloneCancel]: (input) =>
           projectCloneTracker.cancel(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.projectCloneRetry]: (input) =>
-          projectCloneTracker.retry(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
+          projectCloneTracker
+            .retry(input.projectId, refreshClonedProject)
+            .pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.subscribeProjectClones]: () => projectCloneTracker.stream,
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
           sourceControlRepositories.publishRepository(input).pipe(

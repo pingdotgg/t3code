@@ -37,6 +37,8 @@ import * as SourceControlProvider from "@t3tools/source-control-core/server/Sour
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { cloneUrlForProtocol, cloneUrlProtocol } from "@t3tools/shared/cloneUrl";
+import { parseGitRemoteRepository } from "@t3tools/shared/git";
+import { sourceControlDefinitions } from "./sourceControlDefinitions.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 const isGitCommandError = Schema.is(GitCommandError);
@@ -49,6 +51,7 @@ export class SourceControlRepositoryService extends Context.Service<
     ) => Effect.Effect<SourceControlRepositoryInfo, SourceControlRepositoryError>;
     readonly prepareClone: (
       input: SourceControlCloneRepositoryInput,
+      options?: { readonly reuseCheckout?: boolean },
     ) => Effect.Effect<SourceControlPreparedClone, SourceControlRepositoryError>;
     readonly cloneRepository: (
       input: SourceControlCloneRepositoryInput,
@@ -68,6 +71,7 @@ export interface SourceControlPreparedClone {
   readonly remoteUrl: string;
   readonly cloneUrl: string;
   readonly repository: SourceControlRepositoryInfo | null;
+  readonly existingCheckout?: boolean;
 }
 
 export interface SourceControlCloneOptions {
@@ -257,9 +261,39 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const isMatchingCheckout = Effect.fn("SourceControlRepositoryService.isMatchingCheckout")(
+    function* (cwd: string, remoteUrl: string) {
+      const root = yield* git.execute({
+        operation: "SourceControlRepositoryService.isMatchingCheckout",
+        cwd,
+        args: ["rev-parse", "--show-toplevel"],
+      });
+      if ((yield* fileSystem.realPath(cwd)) !== (yield* fileSystem.realPath(root.stdout.trim()))) {
+        return false;
+      }
+      const primary = yield* git.resolvePrimaryRemoteName(cwd);
+      const existingRemote = yield* git.readConfigValue(cwd, `remote.${primary}.url`);
+      if (!existingRemote) return false;
+      const existingUrl = redactRemoteUrl(existingRemote);
+      const matching =
+        existingUrl === remoteUrl ||
+        (parseGitRemoteRepository(existingUrl) !== null &&
+          parseGitRemoteRepository(remoteUrl) !== null &&
+          sourceControlDefinitions.repositoryKeyFromRemote(existingUrl) ===
+            sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl));
+      if (!matching) return false;
+      yield* git.execute({
+        operation: "SourceControlRepositoryService.isMatchingCheckout",
+        cwd,
+        args: ["rev-parse", "--verify", "HEAD^{commit}"],
+      });
+      return true;
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   const prepareDestination = Effect.fn("SourceControlRepositoryService.prepareDestination")(
-    function* (destinationPath: string) {
-      const normalizedDestination = yield* normalizeDestinationPath(destinationPath);
+    function* (normalizedDestination: string, reuseRemoteUrl?: string) {
       if (yield* fileSystem.exists(normalizedDestination)) {
         const entries = yield* fileSystem
           .readDirectory(normalizedDestination, { recursive: false })
@@ -275,6 +309,12 @@ export const make = Effect.gen(function* () {
             ),
           );
         if (entries.length > 0) {
+          if (
+            reuseRemoteUrl &&
+            (yield* isMatchingCheckout(normalizedDestination, reuseRemoteUrl))
+          ) {
+            return true;
+          }
           return yield* new SourceControlRepositoryError({
             operation: "cloneRepository",
             provider: SourceControlProviderKind.make("unknown"),
@@ -289,18 +329,17 @@ export const make = Effect.gen(function* () {
         }
       }
 
-      return {
-        destinationPath: normalizedDestination,
-        parentPath: path.dirname(normalizedDestination),
-        directoryName: path.basename(normalizedDestination),
-      };
+      return false;
     },
   );
 
   const prepareClone = Effect.fn("SourceControlRepositoryService.prepareClone")(function* (
     input: SourceControlCloneRepositoryInput,
+    options?: { readonly reuseCheckout?: boolean },
   ) {
-    const preparedDestination = yield* prepareDestination(input.destinationPath);
+    const destinationPath = yield* normalizeDestinationPath(input.destinationPath);
+    const reuseCheckout = options?.reuseCheckout && !(input.provider && input.repository);
+    if (!reuseCheckout) yield* prepareDestination(destinationPath);
     let repository: SourceControlRepositoryInfo | null = null;
     let remoteUrl = input.remoteUrl?.trim() ?? null;
     let provider: SourceControlProviderKind =
@@ -310,7 +349,7 @@ export const make = Effect.gen(function* () {
       repository = yield* lookupRepository({
         provider: input.provider,
         repository: input.repository,
-        cwd: preparedDestination.parentPath,
+        cwd: path.dirname(destinationPath),
       });
       remoteUrl = selectRemoteUrl(repository, input.protocol);
       provider = input.provider;
@@ -324,11 +363,16 @@ export const make = Effect.gen(function* () {
       });
     }
 
+    const redactedRemoteUrl = redactRemoteUrl(remoteUrl);
+    const existingCheckout = reuseCheckout
+      ? yield* prepareDestination(destinationPath, redactedRemoteUrl)
+      : false;
     return {
-      destinationPath: preparedDestination.destinationPath,
-      remoteUrl: redactRemoteUrl(remoteUrl),
+      destinationPath,
+      remoteUrl: redactedRemoteUrl,
       cloneUrl: remoteUrl,
       repository,
+      ...(existingCheckout ? { existingCheckout: true } : {}),
     } satisfies SourceControlPreparedClone;
   });
 
@@ -624,8 +668,8 @@ export const make = Effect.gen(function* () {
         mapRepositoryError("lookupRepository", input.provider),
       );
     }),
-    prepareClone: Effect.fnUntraced(function* (input) {
-      return yield* prepareClone(input).pipe(
+    prepareClone: Effect.fnUntraced(function* (input, options) {
+      return yield* prepareClone(input, options).pipe(
         mapRepositoryError(
           "cloneRepository",
           input.provider ?? SourceControlProviderKind.make("unknown"),

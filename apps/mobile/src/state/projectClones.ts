@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectCloneSnapshot, ScopedProjectRef } from "@t3tools/contracts";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { serverEnvironment } from "./server";
@@ -44,4 +45,37 @@ const projectCloneAtom = Atom.family((key: string) => {
 
 export function useProjectClone(ref: ScopedProjectRef | null): ProjectCloneState {
   return useAtomValue(ref === null ? EMPTY_CLONE_ATOM : projectCloneAtom(scopedProjectKey(ref)));
+}
+
+const NO_ENVIRONMENTS: ReadonlyArray<EnvironmentId> = [];
+
+/** Keyed by the repository key, then the environment ids, one per line. */
+const environmentsCloningRepositoryAtom = Atom.family((key: string) => {
+  const [repositoryKey, ...environmentIds] = key.split("\n") as [string, ...EnvironmentId[]];
+  return Atom.make((get): ReadonlyArray<EnvironmentId> =>
+    environmentIds.filter((environmentId) =>
+      get(environmentProjectCloneListAtom(environmentId)).some(
+        (clone) =>
+          (clone.phase === "running" || clone.phase === "done") &&
+          sourceControlClients.repositoryKeyFromRemote(clone.remoteUrl) === repositoryKey,
+      ),
+    ),
+  ).pipe(Atom.withLabel(`mobile-environments-cloning:${key}`));
+});
+const EMPTY_ENVIRONMENTS_ATOM = Atom.make(NO_ENVIRONMENTS).pipe(
+  Atom.withLabel("mobile-environments-cloning:empty"),
+);
+
+/** Includes completed clones while the shell catches up with repository identity. */
+export function useEnvironmentsCloningRemote(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  remoteUrl: string | null,
+): ReadonlySet<EnvironmentId> {
+  const repositoryKey = remoteUrl ? sourceControlClients.repositoryKeyFromRemote(remoteUrl) : null;
+  const environments = useAtomValue(
+    repositoryKey && environmentIds.length > 0
+      ? environmentsCloningRepositoryAtom([repositoryKey, ...environmentIds].join("\n"))
+      : EMPTY_ENVIRONMENTS_ATOM,
+  );
+  return new Set(environments);
 }
