@@ -132,8 +132,8 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
   - Immediate credential revocation when a turn completes, fails, or is cancelled.
 - **Cross-user turn isolation & mid-turn queueing:**
   - Automatic provider session recycle (stop warm process & resume fresh) whenever `authorMemberId` changes between turns in the same thread.
-  - Messages posted by non-creators while a turn is running enter the queue rendered with a **dashed border/style** (never auto-steered).
-  - **`Send now`** (mid-turn steering) is restricted strictly to the **thread creator only** (not even `owner`/`admin`); `owner`/`admin` receive an explicit **`Interrupt`** action that stops the active turn and immediately revokes its GitHub credential lease.
+  - Reuse upstream's native queued-run pipeline and UI (`apps/web/src/components/chat/QueuedRunsControl.tsx`) for messages posted by non-creators (and approved Notes) while a turn is running — dashed queued presentation, never auto-steered.
+  - Gate **`Send now`** (`promote_to_steer` / `steerNext`) strictly to the **thread creator only** on both server and UI (not even `owner`/`admin`); `owner`/`admin` receive an explicit **`Interrupt`** action that stops the active turn and immediately revokes its GitHub credential lease.
 
 ### Definition of Done
 

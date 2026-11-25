@@ -356,10 +356,11 @@ To prevent this, we combine **two layers of defense**:
 
 ### Mid-turn queueing, `Send now`, and steering isolation
 
+- **Reuse upstream's native queue UI (`apps/web/src/components/chat/QueuedRunsControl.tsx` & `ChatView.tsx`):** T3 Code already renders queued turns sent during an active run with dashed styling and a `Send now` (`promote_to_steer` / `steerNext`) action. Team mode must reuse this exact native queued-run pipeline and UI component (adding only author pseudo attribution and creator-only gating on `Send now`) rather than building a separate queue UI.
 - While a turn is actively running on a team thread:
-  - **Messages from another member (not the thread creator)** on a shared environment — as well as **approved Notes** accepted while a turn is still running — **never auto-steer** the ongoing turn. They are appended to the thread's **queue** and rendered with a **dashed border/style** (`en pointillé`) to clearly indicate queued status.
+  - **Messages from another member (not the thread creator)** on a shared environment — as well as **approved Notes** accepted while a turn is still running — **never auto-steer** the ongoing turn. They enter the native thread **queue** (rendered via `QueuedRunsControl.tsx` with its existing dashed border/style).
   - **`Send now` (promote to mid-turn steering):**
-    - Accessible **strictly to the thread creator only** (not to the colleague who sent the queued message, and **not** to `owner`/`admin` on someone else's thread).
+    - Accessible **strictly to the thread creator only** (enforced both on the server and by gating `Send now` / `steerNext` in `QueuedRunsControl.tsx` — hidden/disabled for the colleague who sent the queued message and for `owner`/`admin` on someone else's thread).
     - Clicking `Send now` promotes that queued message or approved note into mid-turn steering of the running turn. _(GitHub safety invariant: if the active turn was authored by someone other than the thread creator, steering immediately revokes that foreign turn's GitHub credential lease for the remainder of the turn.)_
   - **Explicit `Interrupt` for `owner` and `admin`:**
     - `owner` and `admin` cannot use `Send now` on another member's thread, but they have an explicit **`Interrupt`** control to stop an ongoing turn—immediately revoking the active turn's GitHub credential lease so queued turns or a fresh turn can then run cleanly under their respective authors' identities.
