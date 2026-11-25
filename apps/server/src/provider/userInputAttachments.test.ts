@@ -649,6 +649,18 @@ describe("question answer paths", () => {
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const cases = [
+        {
+          ext: "epub",
+          bounded: true,
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Guide</title></head><body><table><tr><th>January</th><th>February</th><th>March</th></tr><tr><td colspan="2">No sales</td><td>420</td></tr></table></body></html>',
+          },
+          expected: ["January\tFebruary\tMarch\nNo sales\t\t420"],
+        },
         // Word stores object layout and field data outside the visible document text.
         {
           ext: "docx",
