@@ -700,6 +700,19 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     );
   });
 
+  it("asks about tools Claude sends back in Auto", () => {
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "auto",
+          interactionMode: "default",
+          cwd: "/workspace",
+        }),
+      ),
+      { permissionMode: "auto", installPermissionCallback: true },
+    );
+  });
+
   it("keeps approval-required mode interactive with danger-full-access sandboxing", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
       ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -6079,6 +6092,78 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
   });
+
+  it.effect.each([
+    { reported: "auto", when: "runs in Auto" },
+    { reported: "default", when: "cannot run in Auto" },
+  ] as const)("asks about a tool Claude sends back when the thread $when", ({ reported }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-claude-auto-ask"),
+        text: "Run git status.",
+        attachments: [],
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "auto",
+          interactionMode: "default",
+          cwd: "/workspace",
+        }),
+      });
+      yield* harness.runtime.startTurn({
+        ...input,
+        appThread: { ...input.appThread, runtimeMode: "auto" },
+      });
+      const opened = harness.getOpenedOptions()!;
+      assert.equal(opened.permissionMode, "auto");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          permissionMode: reported,
+          uuid: "auto-ask-init",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      const decision = yield* Effect.promise(() =>
+        opened.canUseTool!(
+          "Bash",
+          { command: "git status" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "auto-ask-command",
+            requestId: "request-auto-ask-command",
+          },
+        ),
+      ).pipe(Effect.forkScoped);
+      const first = yield* Effect.raceFirst(
+        Queue.take(harness.runtimeRequestReceipts).pipe(
+          Effect.map((event) => ({ type: "request", event }) as const),
+        ),
+        Fiber.join(decision).pipe(Effect.map((result) => ({ type: "decision", result }) as const)),
+      );
+      assert.equal(first.type, "request", "Auto answered a tool request without asking");
+      if (first.type !== "request") return;
+      assert.equal(first.event.runtimeRequest.kind, "command");
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: first.event.runtimeRequest.id,
+        decision: "decline",
+      });
+      assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 
   it.effect(
     "carries earlier user-only skill instructions on sends and steering with attachments",
