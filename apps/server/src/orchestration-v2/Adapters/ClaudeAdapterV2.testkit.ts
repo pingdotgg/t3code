@@ -37,6 +37,7 @@ import {
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import { claudeTaskOutputRoot } from "./ClaudeTaskOutputTail.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ClaudeProjectHooks from "../../provider/ClaudeProjectHooks.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -1063,6 +1064,7 @@ function layerClaudeProviderAdapterRegistryReplay(
         layerClaudeAgentSdkReplay(transcript, options),
         IdAllocator.layer,
         ProviderInstallationGate.layer,
+        ClaudeProjectHooks.layerNoProjectHooks,
         NodeServices.layer,
         NodeCrypto.layer,
         layerServerConfig,

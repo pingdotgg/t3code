@@ -137,6 +137,69 @@ export const WorkspaceApproveLayoutCommandsInput = Schema.Struct({
 });
 export type WorkspaceApproveLayoutCommandsInput = typeof WorkspaceApproveLayoutCommandsInput.Type;
 
+/** One hook a folder's Claude Code settings declare, as the file holds it now. */
+export const ClaudeProjectHook = Schema.Struct({
+  /** `project` is `.claude/settings.json`; `local` is `.claude/settings.local.json`. */
+  source: Schema.Literals(["project", "local"]),
+  /** The Claude Code event the hook runs on, such as `SessionStart`. */
+  event: Schema.String,
+  /** The tools or sources the hook is limited to, when the file names any. */
+  matcher: Schema.optional(Schema.String),
+  /** What runs: the command, or the URL or prompt of a hook that is not a command. */
+  detail: Schema.String,
+});
+export type ClaudeProjectHook = typeof ClaudeProjectHook.Type;
+
+/**
+ * - `none`: the folder declares no hooks.
+ * - `approved`: a person approved exactly these hooks for this project.
+ * - `needs-approval`: nobody approved them as they are now.
+ * - `off`: the administrator's policy turns project hooks off.
+ */
+export const ClaudeProjectHooksStatus = Schema.Literals([
+  "none",
+  "approved",
+  "needs-approval",
+  "off",
+]);
+export type ClaudeProjectHooksStatus = typeof ClaudeProjectHooksStatus.Type;
+
+export const WorkspaceClaudeProjectHooksInput = Schema.Struct({
+  projectId: ProjectId,
+  /** Reads the folder this thread works in. Without it, the project's own folder. */
+  threadId: Schema.optional(ThreadId),
+});
+export type WorkspaceClaudeProjectHooksInput = typeof WorkspaceClaudeProjectHooksInput.Type;
+
+export const WorkspaceClaudeProjectHooksResult = Schema.Struct({
+  status: ClaudeProjectHooksStatus,
+  hooks: Schema.Array(ClaudeProjectHook),
+  /** Names the hooks shown, so an approval covers what the person saw and nothing newer. */
+  hooksHash: Schema.String,
+});
+export type WorkspaceClaudeProjectHooksResult = typeof WorkspaceClaudeProjectHooksResult.Type;
+
+export const WorkspaceApproveClaudeProjectHooksInput = Schema.Struct({
+  projectId: ProjectId,
+  threadId: Schema.optional(ThreadId),
+  /** `hooksHash` of the hooks the person was shown. Null withdraws every approval of the project. */
+  hooksHash: Schema.NullOr(Schema.String.check(Schema.isMaxLength(128))),
+});
+export type WorkspaceApproveClaudeProjectHooksInput =
+  typeof WorkspaceApproveClaudeProjectHooksInput.Type;
+
+export class ClaudeProjectHooksError extends Schema.TaggedError<ClaudeProjectHooksError>()(
+  "ClaudeProjectHooksError",
+  {
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export class TaskFolderError extends Schema.TaggedError<TaskFolderError>()("TaskFolderError", {
   operation: Schema.Literals(["plan", "create", "add-repository", "remove", "read", "approve"]),
   detail: Schema.String,

@@ -12993,5 +12993,19 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "92e129bf413a1220": "återkallad",
-  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…"
+  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…",
+  "da3df73fc1013ece": "Policyn för {organization} tillåter inte hooks från ett projekts Claude Code-inställningar.",
+  "8fd0deae41824867": "Från projektets inställningar",
+  "21d8eb828298171d": "Från dina lokala inställningar för det här projektet",
+  "d7bd2e22921e4b65": "Det gick inte att godkänna hooks",
+  "553ade44eb4389b9": "Det här projektets Claude-hooks väntar på ditt godkännande",
+  "77b22621cf31ece3": "Claude-sessioner här körs utan dem tills du godkänner.",
+  "6b3aca8bc724182b": "Låta det här projektet köra sina Claude-hooks?",
+  "e20e4a30d0836bac": "Det här projektets Claude Code-inställningar kör egna kommandon när en session startar, när du skickar en prompt och runt verktygsanrop. De körs på den här miljöns dator med dina behörigheter, utanför alla agentsandlådor. När de har godkänts körs de i alla Claude-trådar i det här projektet, från och med nästa session. Du får frågan igen varje gång de ändras.",
+  "65509806829a3fbd": "Den här anslutningen kan inte godkänna hooks. Använd en klient som får använda terminalen.",
+  "ecb3891f5b5871db": "Godkänn hooks",
+  "8a1952fca82d9d24": "Claude-hooks",
+  "c59b50989ff6b27b": "Ett godkännande börjar gälla när nästa Claude-session startar.",
+  "1a763785d1b9c100": "Det här projektets Claude Code-inställningar kör egna kommandon i Claude-trådar. De körs på den här miljöns dator med dina behörigheter. Under Full åtkomst körs de bara så som de godkänts här, och hooks som ändras behöver godkännas igen. Trådar med Full åtkomst kör dem utan att fråga.",
+  "04858a61b8f5376b": "Hooks från det här projektets mapp"
 }

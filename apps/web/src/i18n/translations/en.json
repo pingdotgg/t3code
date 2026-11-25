@@ -12995,5 +12995,19 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "92e129bf413a1220": "withdrawn",
-  "800966eb58181745": "Checking which languages the model supports…"
+  "800966eb58181745": "Checking which languages the model supports…",
+  "da3df73fc1013ece": "{organization}'s policy does not allow the hooks in a project's Claude Code settings.",
+  "8fd0deae41824867": "From the project's settings",
+  "21d8eb828298171d": "From your local settings for this project",
+  "d7bd2e22921e4b65": "Could not approve the hooks",
+  "553ade44eb4389b9": "This project's Claude hooks are waiting for your approval",
+  "77b22621cf31ece3": "Claude sessions here run without them until you approve.",
+  "6b3aca8bc724182b": "Let this project run its Claude hooks?",
+  "e20e4a30d0836bac": "This project's Claude Code settings run their own commands when a session starts, when you send a prompt, and around tool calls. They run on this environment's machine with your permissions, outside any agent sandbox. Once approved they run in every Claude thread of this project, starting with the next session. You are asked again whenever they change.",
+  "65509806829a3fbd": "This connection cannot approve hooks. Use a client that can use the terminal.",
+  "ecb3891f5b5871db": "Approve hooks",
+  "8a1952fca82d9d24": "Claude hooks",
+  "c59b50989ff6b27b": "An approval takes effect when the next Claude session starts.",
+  "1a763785d1b9c100": "This project's Claude Code settings run their own commands in Claude threads. They run on this environment's machine with your permissions. Below Full access they run only as approved here, and hooks that change need approval again. Threads in Full access run them without asking.",
+  "04858a61b8f5376b": "Hooks from this project's folder"
 }

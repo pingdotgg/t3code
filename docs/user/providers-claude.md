@@ -111,6 +111,40 @@ still be started by you. Invoke those one per message: Claude directly runs only
 the last named skill and may try to start earlier ones through its Skill tool,
 which refuses skills reserved for manual invocation.
 
+## Project hooks
+
+Claude Code runs the [hooks](https://code.claude.com/docs/en/hooks) a project folder declares in
+`.claude/settings.json` and `.claude/settings.local.json`: commands of the project's own that run
+when a session starts, when you send a prompt, and around tool calls. They run on the
+environment's machine with your permissions, and no approval request is shown for them.
+
+T3 Code runs them only after you have approved them for the project. A Claude thread in a project
+with hooks nobody approved shows a notice above the composer: **Review** lists every hook in
+full, and **Approve hooks** records the approval. You can also review, approve, and revoke them
+under **Claude hooks** in the project's settings. Approving needs a client that can use the
+terminal (`terminal:operate`). Agents never approve hooks.
+
+An approval is kept on the environment, not in the repository, and covers one project and the
+hooks exactly as the two files declare them. When they change, for example after a pull, they stop
+running until you approve them again. An approval covers the hook entries only: when a hook runs a
+script file, later changes to that file do not ask again. An approval takes effect when the next
+Claude session of a thread starts.
+
+While hooks are not approved, a thread below **Full access** starts without them and says so in
+the conversation. Everything else in the folder still applies: its other Claude Code settings,
+including the permission rules that deny or ask, `CLAUDE.md` and rules files, commands, skills,
+agents, and `.mcp.json`. Your own hooks from your Claude Code user settings keep running. In such
+a session `CLAUDE_PROJECT_DIR` names a folder T3 Code keeps for the session's settings instead of
+the project folder, so one of your own hooks that reads it does not find the project's files
+there.
+
+A thread in **Full access** runs the folder's hooks without asking, approved or not. Hooks that
+skills and agents declare in their own files, and hooks from plugins, are not part of this
+approval.
+
+An administrator can turn the folder's hooks off for a machine with
+[`claudeProjectHooks`](./managed-policy.md#other-capabilities).
+
 ## Task lists
 
 To show Claude task lists in the web and desktop apps, add

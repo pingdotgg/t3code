@@ -17,6 +17,18 @@ describe("t3code/no-layout-command-approval-writes", () => {
      export const writes = LayoutCommandApprovalWrites.LayoutCommandApprovalWrites;`,
   );
 
+  rule.valid(
+    "allows reading whether a project's Claude Code hooks are approved",
+    `import * as ClaudeProjectHooks from "../../provider/ClaudeProjectHooks.ts";
+     export const hooks = ClaudeProjectHooks.ClaudeProjectHooks;`,
+  );
+
+  rule.invalid(
+    "reports an MCP toolkit importing the write side of Claude Code hook approvals",
+    `import * as ClaudeProjectHookApprovalWrites from "../../../provider/ClaudeProjectHookApprovalWrites.ts";
+     export const writes = ClaudeProjectHookApprovalWrites.ClaudeProjectHookApprovalWrites;`,
+  );
+
   rule.invalid(
     "reports a type-only import, which would still name the service to yield",
     `import type { LayoutCommandApprovalWrites } from "./LayoutCommandApprovalWrites.ts";

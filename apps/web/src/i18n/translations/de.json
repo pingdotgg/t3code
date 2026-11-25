@@ -12986,5 +12986,19 @@
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "92e129bf413a1220": "zurückgezogen",
-  "800966eb58181745": "Prüfe, welche Sprachen das Modell unterstützt…"
+  "800966eb58181745": "Prüfe, welche Sprachen das Modell unterstützt…",
+  "da3df73fc1013ece": "Die Richtlinie von {organization} erlaubt keine Hooks aus den Claude-Code-Einstellungen von Projekten.",
+  "8fd0deae41824867": "Aus den Einstellungen des Projekts",
+  "21d8eb828298171d": "Aus deinen lokalen Einstellungen für dieses Projekt",
+  "d7bd2e22921e4b65": "Die Hooks konnten nicht genehmigt werden",
+  "553ade44eb4389b9": "Die Claude-Hooks dieses Projekts warten auf deine Genehmigung",
+  "77b22621cf31ece3": "Claude-Sitzungen laufen hier ohne sie, bis du sie genehmigst.",
+  "6b3aca8bc724182b": "Darf dieses Projekt seine Claude-Hooks ausführen?",
+  "e20e4a30d0836bac": "Die Claude-Code-Einstellungen dieses Projekts führen eigene Befehle aus, wenn eine Sitzung startet, wenn du einen Prompt sendest und rund um Tool-Aufrufe. Sie laufen auf dem Rechner dieser Umgebung mit deinen Berechtigungen, außerhalb jeder Agenten-Sandbox. Nach der Genehmigung laufen sie in jedem Claude-Thread dieses Projekts, ab der nächsten Sitzung. Du wirst erneut gefragt, sobald sie sich ändern.",
+  "65509806829a3fbd": "Über diese Verbindung lassen sich keine Hooks genehmigen. Verwende einen Client, der das Terminal verwenden darf.",
+  "ecb3891f5b5871db": "Hooks genehmigen",
+  "8a1952fca82d9d24": "Claude-Hooks",
+  "c59b50989ff6b27b": "Eine Genehmigung gilt ab dem Start der nächsten Claude-Sitzung.",
+  "1a763785d1b9c100": "Die Claude-Code-Einstellungen dieses Projekts führen in Claude-Threads eigene Befehle aus. Sie laufen auf dem Rechner dieser Umgebung mit deinen Berechtigungen. Unterhalb von Vollzugriff laufen sie nur wie hier genehmigt, und geänderte Hooks brauchen eine neue Genehmigung. Threads mit Vollzugriff führen sie ohne Nachfrage aus.",
+  "04858a61b8f5376b": "Hooks aus dem Ordner dieses Projekts"
 }

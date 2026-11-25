@@ -124,6 +124,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ClaudeProjectHooks from "../../provider/ClaudeProjectHooks.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
 import { withInlineContext } from "../ContextHandoffDelivery.ts";
@@ -1783,6 +1784,167 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
 });
 
 describe("ClaudeAdapterV2 provider installation gate", () => {
+  it.effect("a session reads its folder's hooks only where the project hooks check allows", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const random = yield* SecureRandom.SecureRandom;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const withoutHooks = {
+        projectConfigRoot: "/state/claude-project-config/abc",
+        notice: "Hooks did not run.",
+      };
+      const opened = Effect.fnUntraced(function* (
+        name: string,
+        modes: Pick<
+          ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+          "runtimeMode" | "interactionMode" | "maxRuntimeMode"
+        >,
+      ) {
+        const asked: Array<{ readonly cwd: string; readonly fullAccess: boolean }> = [];
+        let options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-hooks-" }),
+          fileSystem,
+          path,
+          random,
+          idAllocator,
+          projectHooks: {
+            read: () => Effect.die("unused"),
+            forSession: (input) =>
+              Effect.sync(() => {
+                asked.push({ cwd: input.cwd, fullAccess: input.fullAccess });
+                return input.fullAccess ? null : withoutHooks;
+              }),
+          },
+          queryRunner: {
+            allocateSessionId: Effect.succeed(`native-thread-claude-hooks-${name}`),
+            open: (input) =>
+              Effect.sync(() => {
+                options = input.options;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  renameSession: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                } satisfies ClaudeAdapterV2.ClaudeAgentSdkQuerySession;
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-hooks-cwd-" });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          ...modes,
+          cwd,
+        });
+        const threadId = ThreadId.make(`thread-claude-hooks-${name}`);
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`provider-session-claude-hooks-${name}`),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-claude-hooks-${name}`),
+            text: "Hello",
+            attachments: [],
+            runtimePolicy,
+          }),
+        );
+        // The turn is running once its provider turn is announced; a notice comes before that.
+        const started = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "provider_turn.updated"),
+          Stream.runCollect,
+        );
+        return {
+          asked: asked.map((input) => ({ ...input, cwd: input.cwd === cwd })),
+          projectConfigRoot: options?.projectConfigRoot,
+          notices: Array.from(started).flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+              ? [event.turnItem.message]
+              : [],
+          ),
+        };
+      });
+      const kept = {
+        asked: [{ cwd: true, fullAccess: true }],
+        projectConfigRoot: undefined,
+        notices: [],
+      };
+      const leftOut = {
+        asked: [{ cwd: true, fullAccess: false }],
+        projectConfigRoot: withoutHooks.projectConfigRoot,
+        notices: [withoutHooks.notice],
+      };
+
+      assert.deepStrictEqual(
+        yield* opened("full", { runtimeMode: "full-access", interactionMode: "default" }),
+        kept,
+      );
+      assert.deepStrictEqual(
+        yield* opened("supervised", {
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+        }),
+        leftOut,
+      );
+      assert.deepStrictEqual(
+        yield* opened("auto", { runtimeMode: "auto", interactionMode: "default" }),
+        leftOut,
+      );
+      assert.deepStrictEqual(
+        yield* opened("plan", { runtimeMode: "full-access", interactionMode: "plan" }),
+        leftOut,
+      );
+      // A thread recorded above the administrator's limit is not in Full access.
+      assert.deepStrictEqual(
+        yield* opened("capped", {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          maxRuntimeMode: "auto-accept-edits",
+        }),
+        leftOut,
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("opens each turn's Claude process inside the installation gate", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2092,6 +2254,7 @@ describe("ClaudeAdapterV2 executable path", () => {
           IdAllocator.layer,
           McpProviderSessions.layer,
           ProviderInstallationGate.layer,
+          ClaudeProjectHooks.layerNoProjectHooks,
           NodeServices.layer,
           NodeCrypto.layer,
         ),

@@ -5705,5 +5705,14 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "201490988858b511": "withdrawn by {by}",
-  "46d614fa7b4bf1e5": "Workflow runs"
+  "46d614fa7b4bf1e5": "Workflow runs",
+  "da3df73fc1013ece": "{organization}'s policy does not allow the hooks in a project's Claude Code settings.",
+  "16ffbb313c0e77c3": "Could not approve the hooks.",
+  "0da05691542c27ea": "These commands come from the project's Claude Code settings. They run on this environment's machine with your permissions, outside any agent sandbox. Once approved they run in every Claude thread of this project, starting with the next session. You are asked again whenever they change.",
+  "77b22621cf31ece3": "Claude sessions here run without them until you approve.",
+  "2b86f2154dcbfd5e": "Hide hooks",
+  "cbcd82a55f033a2b": "Review hooks",
+  "dd9319f0f38defae": "Approve hooks",
+  "c9446339c490f889": "This project's Claude hooks are waiting for your approval",
+  "65509806829a3fbd": "This connection cannot approve hooks. Use a client that can use the terminal."
 }

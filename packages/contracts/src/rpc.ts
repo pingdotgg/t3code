@@ -104,8 +104,12 @@ import {
   WorkspaceFoldersError,
   TaskFolder,
   TaskFolderError,
+  ClaudeProjectHooksError,
   WorkspaceAddTaskFolderRepositoryInput,
+  WorkspaceApproveClaudeProjectHooksInput,
   WorkspaceApproveLayoutCommandsInput,
+  WorkspaceClaudeProjectHooksInput,
+  WorkspaceClaudeProjectHooksResult,
   WorkspaceLayoutCommandsInput,
   WorkspaceLayoutCommandsResult,
   WorkspaceListFoldersInput,
@@ -509,6 +513,8 @@ export const WS_METHODS = {
   workspaceAddTaskFolderRepository: "workspace.addTaskFolderRepository",
   workspaceLayoutCommands: "workspace.layoutCommands",
   workspaceApproveLayoutCommands: "workspace.approveLayoutCommands",
+  workspaceClaudeProjectHooks: "workspace.claudeProjectHooks",
+  workspaceApproveClaudeProjectHooks: "workspace.approveClaudeProjectHooks",
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
@@ -1747,6 +1753,21 @@ const WsWorkspaceApproveLayoutCommandsRpc = Rpc.make(WS_METHODS.workspaceApprove
   error: Schema.Union([TaskFolderError, EnvironmentAuthorizationError]),
 });
 
+const WsWorkspaceClaudeProjectHooksRpc = Rpc.make(WS_METHODS.workspaceClaudeProjectHooks, {
+  payload: WorkspaceClaudeProjectHooksInput,
+  success: WorkspaceClaudeProjectHooksResult,
+  error: Schema.Union([ClaudeProjectHooksError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkspaceApproveClaudeProjectHooksRpc = Rpc.make(
+  WS_METHODS.workspaceApproveClaudeProjectHooks,
+  {
+    payload: WorkspaceApproveClaudeProjectHooksInput,
+    success: WorkspaceClaudeProjectHooksResult,
+    error: Schema.Union([ClaudeProjectHooksError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   payload: AgentSessionScanInput,
   success: AgentSessionScanResult,
@@ -2655,6 +2676,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsWorkspaceAddTaskFolderRepositoryRpc,
   WsWorkspaceLayoutCommandsRpc,
   WsWorkspaceApproveLayoutCommandsRpc,
+  WsWorkspaceClaudeProjectHooksRpc,
+  WsWorkspaceApproveClaudeProjectHooksRpc,
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,

@@ -175,6 +175,7 @@ import {
   claudeProgramWasReplaced,
   resolveClaudeSdkExecutablePath,
 } from "../../provider/Drivers/ClaudeExecutable.ts";
+import * as ClaudeProjectHooks from "../../provider/ClaudeProjectHooks.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import {
   planClaudeSkillDispatch,
@@ -196,6 +197,7 @@ import * as ServerConfig from "../../config.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { projectCommandsForAgent } from "../../workspace/ProjectCommands.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -2554,6 +2556,8 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly appendSystemPromptFileText?: string;
+  /** Where Claude Code reads project settings from in place of `cwd`: see `ClaudeProjectHooks`. */
+  readonly projectConfigRoot?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
 }): ClaudeAgentSdkQueryOptions {
@@ -2695,6 +2699,9 @@ export function makeClaudeQueryOptions(input: {
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
     ...(input.environment === undefined ? {} : { env: input.environment }),
+    ...(input.projectConfigRoot === undefined
+      ? {}
+      : { projectConfigRoot: input.projectConfigRoot }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     systemPrompt: {
       type: "preset" as const,
@@ -5598,6 +5605,8 @@ interface ClaudeLiveQueryContext {
   promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
   // The CLI may fall back from the requested mode on its first init frame.
   openedPermissionMode: PermissionMode;
+  // Set while this process runs without its folder's hooks and the thread has not been told.
+  projectHooksNotice: string | undefined;
   receivedInit: boolean;
   // Init listed a server still connecting or needing a sign-in; a result checks which it was.
   checkMcpSignIns: boolean;
@@ -6043,6 +6052,8 @@ export interface ClaudeAdapterV2Options {
     ) => Effect.Effect<void>;
   };
   readonly installationGate?: ProviderInstallationGate.ProviderInstallationGate["Service"];
+  /** Decides whether a session runs the hooks its folder's Claude Code settings declare. */
+  readonly projectHooks?: ClaudeProjectHooks.ClaudeProjectHooks["Service"];
 }
 
 export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
@@ -13936,6 +13947,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ],
             { concurrency: "unbounded" },
           );
+          // Asked for every process, so an approval or a mode change applies from the next one.
+          const withoutProjectHooks =
+            adapterOptions.projectHooks === undefined || turnInput.runtimePolicy.cwd === null
+              ? null
+              : yield* adapterOptions.projectHooks
+                  .forSession({
+                    projectId: turnInput.appThread.projectId,
+                    cwd: turnInput.runtimePolicy.cwd,
+                    fullAccess:
+                      projectCommandsForAgent(
+                        turnInput.appThread.linkOrigin,
+                        turnInput.runtimePolicy,
+                        turnInput.runtimePolicy.maxRuntimeMode,
+                      ) === "permitted",
+                  })
+                  .pipe(Effect.mapError((cause) => queryRunnerError(cause, "projectHooks")));
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           clearedNativeSessions.delete(nativeThreadId);
           if (existing !== null) {
@@ -14003,6 +14030,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             onStop,
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
+            ...(withoutProjectHooks === null
+              ? {}
+              : { projectConfigRoot: withoutProjectHooks.projectConfigRoot }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
           const resolvedTurnCwd = yield* fileSystem
@@ -14074,6 +14104,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             lastTurn: null,
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
+            projectHooksNotice: withoutProjectHooks?.notice,
             receivedInit: false,
             checkMcpSignIns: false,
             capabilities: new Set(),
@@ -14500,6 +14531,43 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     status: "completed",
                     title: notice,
                     message: notice,
+                    startedAt,
+                    completedAt: startedAt,
+                    updatedAt: startedAt,
+                  },
+                });
+              }
+              const projectHooksNotice = querySession.projectHooksNotice;
+              if (
+                projectHooksNotice !== undefined &&
+                !isClaudeProviderContinuationTurn(turnInput)
+              ) {
+                querySession.projectHooksNotice = undefined;
+                const nativeItemId = `project-hooks-not-run:${context.providerTurnId}`;
+                yield* emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CLAUDE_PROVIDER,
+                  turnItem: {
+                    id: idAllocator.derive.turnItemFromProviderItem({
+                      driver: CLAUDE_PROVIDER,
+                      nativeItemId,
+                    }),
+                    threadId: turnInput.threadId,
+                    runId: turnInput.runId,
+                    nodeId: turnInput.rootNodeId,
+                    providerThreadId: turnInput.providerThread.id,
+                    providerTurnId: context.providerTurnId,
+                    nativeItemRef: {
+                      driver: CLAUDE_PROVIDER,
+                      nativeId: nativeItemId,
+                      strength: "weak",
+                    },
+                    parentItemId: null,
+                    ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                    type: "system_notice",
+                    status: "completed",
+                    title: projectHooksNotice,
+                    message: projectHooksNotice,
                     startedAt,
                     completedAt: startedAt,
                     updatedAt: startedAt,
@@ -15824,6 +15892,7 @@ export type ClaudeAdapterV2DriverEnv =
   | McpProviderSessions.McpProviderSessions
   | Path.Path
   | ProviderInstallationGate.ProviderInstallationGate
+  | ClaudeProjectHooks.ClaudeProjectHooks
   | ServerConfig.ServerConfig;
 
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
@@ -15842,6 +15911,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
+    const projectHooks = yield* ClaudeProjectHooks.ClaudeProjectHooks;
     const baseEnvironment = yield* mergeClaudeProcessEnvironment(
       config,
       environment,
@@ -15866,6 +15936,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       queryRunner,
       continuationRequests,
       installationGate,
+      projectHooks,
       ...hooks,
     });
   },

@@ -259,5 +259,15 @@ export function createFilesystemEnvironmentAtoms<R, E>(
       label: "environment-data:workspace:approve-layout-commands",
       tag: WS_METHODS.workspaceApproveLayoutCommands,
     }),
+    /** The hooks a project's, or one thread's, folder declares for Claude Code now, and whether they may run. */
+    claudeProjectHooks: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:workspace:claude-project-hooks",
+      tag: WS_METHODS.workspaceClaudeProjectHooks,
+      staleTimeMs: 0,
+    }),
+    approveClaudeProjectHooks: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:workspace:approve-claude-project-hooks",
+      tag: WS_METHODS.workspaceApproveClaudeProjectHooks,
+    }),
   };
 }

@@ -12986,5 +12986,19 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "92e129bf413a1220": "retirada",
-  "800966eb58181745": "Verificando quais idiomas o modelo suporta…"
+  "800966eb58181745": "Verificando quais idiomas o modelo suporta…",
+  "da3df73fc1013ece": "A política de {organization} não permite os hooks das configurações do Claude Code de um projeto.",
+  "8fd0deae41824867": "Das configurações do projeto",
+  "21d8eb828298171d": "Das suas configurações locais para este projeto",
+  "d7bd2e22921e4b65": "Não foi possível aprovar os hooks",
+  "553ade44eb4389b9": "Os hooks do Claude deste projeto aguardam a sua aprovação",
+  "77b22621cf31ece3": "As sessões do Claude aqui são executadas sem eles até você aprovar.",
+  "6b3aca8bc724182b": "Permitir que este projeto execute seus hooks do Claude?",
+  "e20e4a30d0836bac": "As configurações do Claude Code deste projeto executam comandos próprios quando uma sessão começa, quando você envia um prompt e em torno das chamadas de ferramentas. Eles são executados na máquina deste ambiente com as suas permissões, fora de qualquer sandbox de agente. Depois de aprovados, são executados em todas as threads do Claude deste projeto, a partir da próxima sessão. Você será perguntado de novo sempre que eles mudarem.",
+  "65509806829a3fbd": "Esta conexão não pode aprovar hooks. Use um cliente que possa usar o terminal.",
+  "ecb3891f5b5871db": "Aprovar hooks",
+  "8a1952fca82d9d24": "Hooks do Claude",
+  "c59b50989ff6b27b": "Uma aprovação passa a valer quando a próxima sessão do Claude começa.",
+  "1a763785d1b9c100": "As configurações do Claude Code deste projeto executam comandos próprios nas threads do Claude. Eles são executados na máquina deste ambiente com as suas permissões. Abaixo de Acesso total, só são executados como aprovados aqui, e hooks que mudam precisam de nova aprovação. Threads em Acesso total os executam sem perguntar.",
+  "04858a61b8f5376b": "Hooks da pasta deste projeto"
 }

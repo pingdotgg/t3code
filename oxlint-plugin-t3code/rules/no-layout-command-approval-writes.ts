@@ -1,9 +1,10 @@
 import { defineRule } from "@oxlint/plugins";
 
-const WRITES_MODULE = /(?:^|\/)LayoutCommandApprovalWrites(?:\.ts)?$/u;
+const WRITES_MODULE =
+  /(?:^|\/)(?:LayoutCommandApprovalWrites|ClaudeProjectHookApprovalWrites)(?:\.ts)?$/u;
 
 const message =
-  "Only the client RPC a person's session calls records an approval of a project's worktree layout command (ws.ts). Nothing an agent can reach may import LayoutCommandApprovalWrites: read approvals through LayoutCommandApprovals instead.";
+  "Only the client RPC a person's session calls records an approval of a project's own commands: its worktree layout commands and its Claude Code hooks (ws.ts). Nothing an agent can reach may import LayoutCommandApprovalWrites or ClaudeProjectHookApprovalWrites: read approvals through LayoutCommandApprovals or ClaudeProjectHooks instead.";
 
 const importsWrites = (source: unknown) =>
   typeof source === "object" &&
@@ -17,7 +18,7 @@ export default defineRule({
     type: "problem",
     docs: {
       description:
-        "Keep the module that records worktree layout command approvals out of everything but the client RPC.",
+        "Keep the modules that record approvals of a project's own commands out of everything but the client RPC.",
     },
   },
   create(context) {

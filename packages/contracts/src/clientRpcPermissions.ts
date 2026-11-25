@@ -74,6 +74,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.workspaceAddTaskFolderRepository]: AuthSourceControlWriteScope,
   // The server runs an approved layout command: approving one is running code there, as a terminal does.
   [WS_METHODS.workspaceApproveLayoutCommands]: AuthTerminalOperateScope,
+  // Approved hooks run on the server at every Claude session of the project, as a terminal command does.
+  [WS_METHODS.workspaceApproveClaudeProjectHooks]: AuthTerminalOperateScope,
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,

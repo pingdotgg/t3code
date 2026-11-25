@@ -5697,5 +5697,14 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Execuções de workflow"
+  "46d614fa7b4bf1e5": "Execuções de workflow",
+  "da3df73fc1013ece": "A política de {organization} não permite os hooks das configurações do Claude Code de um projeto.",
+  "16ffbb313c0e77c3": "Não foi possível aprovar os hooks.",
+  "0da05691542c27ea": "Estes comandos vêm das configurações do Claude Code do projeto. Eles são executados na máquina deste ambiente com as suas permissões, fora de qualquer sandbox de agente. Depois de aprovados, são executados em todas as threads do Claude deste projeto, a partir da próxima sessão. Você será perguntado de novo sempre que eles mudarem.",
+  "77b22621cf31ece3": "As sessões do Claude aqui são executadas sem eles até você aprovar.",
+  "2b86f2154dcbfd5e": "Ocultar hooks",
+  "cbcd82a55f033a2b": "Revisar hooks",
+  "dd9319f0f38defae": "Aprovar hooks",
+  "c9446339c490f889": "Os hooks do Claude deste projeto aguardam a sua aprovação",
+  "65509806829a3fbd": "Esta conexão não pode aprovar hooks. Use um cliente que possa usar o terminal."
 }

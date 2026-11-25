@@ -126,6 +126,19 @@ model.
   there is and is taken as the person's answer.
   What those files go on to run, such as a package script or a file they source, is not part of
   the digest, so an approval is for the named files and not for everything the push executes.
+- **A project's Claude Code hooks run only as a person approved them, or in Full access.** The
+  hooks in a folder's `.claude/settings.json` and `.claude/settings.local.json` run as the server's
+  OS user and Claude Code shows no request for them, so
+  [`ClaudeProjectHooks`](../../apps/server/src/provider/ClaudeProjectHooks.ts) decides at every
+  session the Claude adapter opens: they run when a client session holding `terminal:operate`
+  approved exactly these hooks for the project, or when the thread is in Full access by the same
+  test the layout commands use. Otherwise the session gets Claude Code's `projectConfigRoot`: a
+  folder under the state directory with the folder's settings minus `hooks` and links to the rest
+  of its `.claude`, which keeps the user's own hooks, the project's deny and ask rules, memory
+  files, commands, and skills. The SDK has no switch for project hooks alone: `disableAllHooks`
+  and `allowManagedHooksOnly` also stop the user's hooks, and leaving the project sources out
+  drops `CLAUDE.md`. Recording an approval is a client RPC only, under the same lint rule as the
+  layout commands. Hooks in skill and agent frontmatter and plugin hooks are outside this check.
 - **Peer-link client pairing.** Only a full-access peer link may mint a one-time client pairing on
   the linked environment (since full-access agents can already run `t3 auth pairing create`). The
   linked side enforces this itself, and the operation stays a human-triggered RPC/HTTP route rather

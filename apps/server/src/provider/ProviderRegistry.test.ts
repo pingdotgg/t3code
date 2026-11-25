@@ -66,6 +66,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ClaudeProjectHooks from "./ClaudeProjectHooks.ts";
 import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHydration.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
@@ -4387,6 +4388,7 @@ it.layer(
                 Layer.mergeAll(
                   PortScanner.layerTest,
                   ProviderInstallationGate.layer,
+                  ClaudeProjectHooks.layerNoProjectHooks,
                   SqlitePersistence.layerMemory,
                 ),
               ),
@@ -4513,6 +4515,7 @@ it.layer(
                 Layer.mergeAll(
                   PortScanner.layerTest,
                   ProviderInstallationGate.layer,
+                  ClaudeProjectHooks.layerNoProjectHooks,
                   SqlitePersistence.layerMemory,
                 ),
               ),
@@ -4656,6 +4659,7 @@ it.layer(
             Layer.mergeAll(
               PortScanner.layerTest,
               ProviderInstallationGate.layer,
+              ClaudeProjectHooks.layerNoProjectHooks,
               SqlitePersistence.layerMemory,
             ),
           ),

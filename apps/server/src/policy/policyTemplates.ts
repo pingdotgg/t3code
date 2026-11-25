@@ -132,6 +132,12 @@ const policies = (): ReadonlyArray<Policy> => [
     toggle: "WorktreeLayoutCommands",
   },
   {
+    id: "ClaudeProjectHooks",
+    title: "Allow hooks from a project's Claude Code settings",
+    help: "Disabled stops Claude threads from running the hooks a project folder's .claude/settings.json and .claude/settings.local.json declare, whether or not a user approved them and in every permission mode. The user's own Claude Code hooks and the rest of the project's Claude Code settings still apply.",
+    toggle: "ClaudeProjectHooks",
+  },
+  {
     id: "Telemetry",
     title: "Allow usage data",
     help: "Disabled stops T3 Code from sending product usage data and relay connection traces. Enabled cannot turn them on for a user who turned them off.",

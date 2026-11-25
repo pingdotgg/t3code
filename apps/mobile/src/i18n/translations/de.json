@@ -5703,5 +5703,14 @@
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "201490988858b511": "zurückgezogen von {by}",
-  "46d614fa7b4bf1e5": "Workflow-Ausführungen"
+  "46d614fa7b4bf1e5": "Workflow-Ausführungen",
+  "da3df73fc1013ece": "Die Richtlinie von {organization} erlaubt keine Hooks aus den Claude-Code-Einstellungen von Projekten.",
+  "16ffbb313c0e77c3": "Die Hooks konnten nicht genehmigt werden.",
+  "0da05691542c27ea": "Diese Befehle stammen aus den Claude-Code-Einstellungen des Projekts. Sie laufen auf dem Rechner dieser Umgebung mit deinen Berechtigungen, außerhalb jeder Agenten-Sandbox. Nach der Genehmigung laufen sie in jedem Claude-Thread dieses Projekts, ab der nächsten Sitzung. Du wirst erneut gefragt, sobald sie sich ändern.",
+  "77b22621cf31ece3": "Claude-Sitzungen laufen hier ohne sie, bis du sie genehmigst.",
+  "2b86f2154dcbfd5e": "Hooks ausblenden",
+  "cbcd82a55f033a2b": "Hooks prüfen",
+  "dd9319f0f38defae": "Hooks genehmigen",
+  "c9446339c490f889": "Die Claude-Hooks dieses Projekts warten auf deine Genehmigung",
+  "65509806829a3fbd": "Über diese Verbindung lassen sich keine Hooks genehmigen. Verwende einen Client, der das Terminal verwenden darf."
 }

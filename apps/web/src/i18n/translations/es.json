@@ -12981,5 +12981,19 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "92e129bf413a1220": "retirada",
-  "800966eb58181745": "Comprobando qué idiomas admite el modelo…"
+  "800966eb58181745": "Comprobando qué idiomas admite el modelo…",
+  "da3df73fc1013ece": "La política de {organization} no permite los hooks de la configuración de Claude Code de un proyecto.",
+  "8fd0deae41824867": "De la configuración del proyecto",
+  "21d8eb828298171d": "De tu configuración local para este proyecto",
+  "d7bd2e22921e4b65": "No se pudieron aprobar los hooks",
+  "553ade44eb4389b9": "Los hooks de Claude de este proyecto esperan tu aprobación",
+  "77b22621cf31ece3": "Las sesiones de Claude aquí se ejecutan sin ellos hasta que los apruebes.",
+  "6b3aca8bc724182b": "¿Permitir que este proyecto ejecute sus hooks de Claude?",
+  "e20e4a30d0836bac": "La configuración de Claude Code de este proyecto ejecuta sus propios comandos cuando empieza una sesión, cuando envías un prompt y alrededor de las llamadas a herramientas. Se ejecutan en la máquina de este entorno con tus permisos, fuera de cualquier sandbox de agente. Una vez aprobados, se ejecutan en todos los hilos de Claude de este proyecto, a partir de la siguiente sesión. Se te volverá a preguntar cada vez que cambien.",
+  "65509806829a3fbd": "Esta conexión no puede aprobar hooks. Usa un cliente que pueda usar el terminal.",
+  "ecb3891f5b5871db": "Aprobar hooks",
+  "8a1952fca82d9d24": "Hooks de Claude",
+  "c59b50989ff6b27b": "Una aprobación surte efecto cuando empieza la siguiente sesión de Claude.",
+  "1a763785d1b9c100": "La configuración de Claude Code de este proyecto ejecuta sus propios comandos en los hilos de Claude. Se ejecutan en la máquina de este entorno con tus permisos. Por debajo de Acceso completo solo se ejecutan tal como se aprobaron aquí, y los hooks que cambian necesitan una nueva aprobación. Los hilos con Acceso completo los ejecutan sin preguntar.",
+  "04858a61b8f5376b": "Hooks de la carpeta de este proyecto"
 }
