@@ -234,7 +234,7 @@ function antigravityEnvironment(
       : {}),
     GEMINI_HOME: profile.geminiHome,
     AGY_ACP_FORCE_FILE_STORAGE: "1",
-    // agy disables its self-updater only for the exact lowercase string "true"; "1" is ignored.
+    // agy's troubleshooting docs specify "true"; the interactive CLI keeps self-updating with "1".
     AGY_CLI_DISABLE_AUTO_UPDATE: "true",
     BROWSER: profile.browserCommand,
     PYTHONUNBUFFERED: "1",
