@@ -92,7 +92,12 @@ import {
   resolveNewTaskBranchLabel,
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
-import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
+import {
+  handedShareIdAtom,
+  incomingShareImports,
+  noHandedShareIdAtom,
+  useIncomingShare,
+} from "../sharing/IncomingShareProvider";
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -321,9 +326,14 @@ export function NewTaskDraftScreen(props: {
     !incomingShare &&
     !hasImportedIncomingShare,
   );
-  const shareImportTarget = (() => {
-    if (!props.incomingShareId || flowKey === undefined || !flow.draftKey) return null;
-    if (!selectedProject || !incomingShare || isIncomingShareAwaitingServerConfig) return null;
+  const importTargetFor = (share: typeof incomingShare) => {
+    if (flowKey === undefined || !flow.draftKey || !selectedProject || !share) return null;
+    if (
+      share.attachments.some((attachment) => attachment.type === "file") &&
+      selectedEnvironmentServerConfig === null
+    ) {
+      return null;
+    }
     const initialEnvironmentId = props.initialProjectRef?.environmentId;
     const initialProjectId = props.initialProjectRef?.projectId;
     if (
@@ -342,9 +352,23 @@ export function NewTaskDraftScreen(props: {
         environmentId: String(selectedProject.environmentId),
         projectId: String(selectedProject.id),
       },
-      shareId: incomingShare.id,
+      shareId: share.id,
     };
-  })();
+  };
+  const shareImportTarget = props.incomingShareId ? importTargetFor(incomingShare) : null;
+  const handedShareId = useAtomValue(
+    flowKey === undefined ? noHandedShareIdAtom : handedShareIdAtom(flowKey),
+  );
+  // A share handed to this open draft merges in once the route's own share has finished.
+  const handedShareImportTarget =
+    handedShareId && handedShareId !== props.incomingShareId && !incomingShare
+      ? importTargetFor(getShare(handedShareId))
+      : null;
+  useAtomValue(
+    handedShareImportTarget === null
+      ? idleShareImportPhaseAtom
+      : incomingShareImports.phaseAtom(handedShareImportTarget),
+  );
   const shareImportPhase = useAtomValue(
     shareImportTarget === null
       ? idleShareImportPhaseAtom
