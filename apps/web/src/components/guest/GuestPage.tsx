@@ -188,6 +188,8 @@ const STATUS_LABEL: Record<ThreadGuestMessageStatus, string> = {
 /** Same column as the owner's timeline, so both views wrap text at the same width. */
 const LANE = "chat-content-lane px-4";
 
+const renderNothing = () => null;
+
 type GuestAccess = "checking" | "session" | "name" | "none";
 
 export function GuestPage() {
@@ -442,6 +444,8 @@ function GuestThread({
           onImageExpand={openExpandedImage}
           onFileOpen={openFile}
           renderHtmlRender={renderHtmlRender}
+          // MCP Apps run against the host environment, which guests cannot reach.
+          renderMcpApp={renderNothing}
           renderFooter={(items) => {
             const unplaced = unplacedGuestMessages(messages, items, awaitingRowIds);
             return unplaced.length === 0 ? null : (

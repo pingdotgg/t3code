@@ -383,6 +383,9 @@ export function McpAppTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
   const ctx = use(TimelineRowCtx);
   const { awaitingUser } = use(TimelineRowActivityCtx);
 
+  if (ctx.renderMcpApp) {
+    return <div className="min-w-0 px-1">{ctx.renderMcpApp(row)}</div>;
+  }
   return (
     <div className="min-w-0 px-1">
       <McpAppFrame

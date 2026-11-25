@@ -225,6 +225,7 @@ export function LinkedThread(props: {
           onImageExpand={ignore}
           onFileOpen={ignore}
           renderHtmlRender={renderHtmlRender}
+          renderMcpApp={renderHtmlRender}
         >
           {() => (
             <>
