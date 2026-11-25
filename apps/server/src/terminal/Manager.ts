@@ -7,6 +7,8 @@ import {
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   retainTerminalSnapshotHistory,
   TERMINAL_SEQUENCE_GROUND,
+  TERMINAL_BRACKETED_PASTE_END,
+  TERMINAL_BRACKETED_PASTE_START,
   terminalSequenceEnd,
   terminalSequenceStateAfter,
   TerminalCwdError,
@@ -49,6 +51,7 @@ import { SpawnExecutableResolution, mergePathEntries } from "@t3tools/shared/she
 
 import { acpRegistryManagedBinaryDirectories } from "@t3tools/provider-acp-registry/server";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Context from "effect/Context";
@@ -2030,6 +2033,28 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const workerScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(workerScope, Exit.void));
 
+  const clock = yield* Clock.Clock;
+  const pasteIdleMillis = 15_000;
+  const pasteEndOverlap = TERMINAL_BRACKETED_PASTE_END.length - 1;
+  const activePastes = new WeakMap<
+    PtyAdapter.PtyProcess,
+    {
+      readonly owner: string;
+      readonly finished: Deferred.Deferred<void>;
+      lastWrite: number;
+      readonly bracketed: boolean;
+      trailingData: string;
+    }
+  >();
+
+  const releasePaste = (process: PtyAdapter.PtyProcess | null) => {
+    if (process === null) return;
+    const paste = activePastes.get(process);
+    if (!paste) return;
+    activePastes.delete(process);
+    Deferred.doneUnsafe(paste.finished, Effect.void);
+  };
+
   const publishEvent =
     /* Provider events include streaming deltas; avoid a span for each update. */
     Effect.fnUntraced(function* (event: TerminalEvent) {
@@ -2716,6 +2741,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const process = session.process;
         cleanupProcessHandles(session);
         session.process = null;
+        releasePaste(process);
         session.pid = null;
         session.hasRunningSubprocess = false;
         session.childCommandLabel = null;
@@ -2788,6 +2814,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* modifyManagerState((state) => {
       cleanupProcessHandles(session);
       session.process = null;
+      releasePaste(process);
       session.pid = null;
       session.hasRunningSubprocess = false;
       session.childCommandLabel = null;
@@ -3880,6 +3907,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const write: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(
     function* (input, viewerId) {
       const terminalId = input.terminalId;
+      const phase = input.bracketedPaste ?? input.plainWrite;
+      const bracketed = input.bracketedPaste !== undefined;
       const found = yield* getSession(input.threadId, terminalId);
       if (Option.isNone(found)) {
         if (input.expectedPid !== undefined) return yield* new TerminalProcessChangedError();
@@ -3903,17 +3932,104 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       if (input.reply && !acceptsQueryReply(toSessionKey(input.threadId, terminalId), viewerId)) {
         return;
       }
-      session.inputCount += 1;
-      yield* Effect.try({
-        try: () => process.write(PtyAdapter.ptyInput(input.data, input.binary)),
-        catch: (cause) =>
-          new TerminalWriteError({
-            threadId: input.threadId,
-            terminalId,
-            terminalPid: process.pid,
-            cause,
-          }),
-      });
+      const writeError = (cause: unknown) =>
+        new TerminalWriteError({
+          threadId: input.threadId,
+          terminalId,
+          terminalPid: process.pid,
+          cause,
+        });
+      const writeData = (data: string, binary?: boolean) =>
+        Effect.try({
+          try: () => {
+            session.inputCount += 1;
+            process.write(PtyAdapter.ptyInput(data, binary));
+          },
+          catch: writeError,
+        });
+      if (
+        phase &&
+        (viewerId === undefined || input.binary || input.reply || (bracketed && input.plainWrite))
+      ) {
+        return yield* writeError("Invalid split terminal write");
+      }
+      if (phase === "continue" || phase === "end" || phase === "abort") {
+        const paste = activePastes.get(process);
+        if (!paste || paste.owner !== viewerId || paste.bracketed !== bracketed) {
+          if (phase === "abort") return;
+          return yield* writeError("Split terminal write is no longer active");
+        }
+        if (
+          bracketed &&
+          phase === "end" &&
+          !(paste.trailingData + input.data).endsWith(TERMINAL_BRACKETED_PASTE_END)
+        ) {
+          return yield* writeError("Missing end of bracketed paste");
+        }
+        paste.lastWrite = clock.currentTimeMillisUnsafe();
+        if (phase === "continue") {
+          yield* writeData(input.data);
+          paste.trailingData = (paste.trailingData + input.data).slice(-pasteEndOverlap);
+          return;
+        }
+        if (phase !== "abort" || bracketed) {
+          yield* writeData(phase === "abort" ? TERMINAL_BRACKETED_PASTE_END : input.data);
+        }
+        return releasePaste(process);
+      }
+
+      // A write that waits for a paste belongs to the same PTY even if its session restarts.
+      let active = activePastes.get(process);
+      while (active) {
+        if (phase === "start" && active.owner === viewerId) {
+          return yield* writeError("Split terminal write already active");
+        }
+        yield* Deferred.await(active.finished);
+        if (session.process !== process || session.status !== "running") {
+          return yield* new TerminalNotRunningError({ threadId: input.threadId, terminalId });
+        }
+        active = activePastes.get(process);
+      }
+      if (phase !== "start" || viewerId === undefined) {
+        return yield* writeData(input.data, input.binary);
+      }
+      if (bracketed && !input.data.startsWith(TERMINAL_BRACKETED_PASTE_START)) {
+        return yield* writeError("Missing start of bracketed paste");
+      }
+
+      const paste = {
+        owner: viewerId,
+        bracketed,
+        finished: Deferred.makeUnsafe<void>(),
+        lastWrite: clock.currentTimeMillisUnsafe(),
+        trailingData: input.data.slice(-pasteEndOverlap),
+      };
+      // A disconnected sender cannot close its bracket. Close it on the original PTY
+      // before releasing queued input, even when the rest of the paste never arrives.
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          yield* writeData(input.data);
+          activePastes.set(process, paste);
+          yield* Effect.gen(function* () {
+            while (activePastes.get(process) === paste && session.process === process) {
+              const remaining = paste.lastWrite + pasteIdleMillis - clock.currentTimeMillisUnsafe();
+              if (remaining <= 0) {
+                if (bracketed) {
+                  yield* writeData(TERMINAL_BRACKETED_PASTE_END).pipe(
+                    Effect.ignoreCause({ log: true }),
+                  );
+                }
+                break;
+              }
+              const finished = yield* Deferred.await(paste.finished).pipe(
+                Effect.timeoutOption(Duration.millis(remaining)),
+              );
+              if (Option.isSome(finished)) return;
+            }
+            if (activePastes.get(process) === paste) releasePaste(process);
+          }).pipe(Effect.interruptible, Effect.forkIn(workerScope));
+        }),
+      );
     },
   );
 

@@ -165,6 +165,19 @@ function xml(source: string, extension: string): XmlNode {
     if (extension === ".epub" && node.name === "ruby" && stack[1]?.name === "html")
       separateRubyReadings(node);
     if (node.name === "Fallback" && !retainCompatibilityFallback(parent, node)) return;
+    const alt = tag.attributes.alt;
+    if (
+      extension === ".epub" &&
+      node.name === "img" &&
+      stack[1]?.name === "html" &&
+      alt?.trim() &&
+      !/(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse))\s*(?:!important\s*)?(?:;|$)/i.test(
+        String(tag.attributes.style ?? ""),
+      )
+    ) {
+      node.children.push(alt);
+      node.hasText = true;
+    }
     if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
     parent.hasText = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
@@ -342,8 +355,14 @@ function hasCellText(cell: XmlNode): boolean {
   );
 }
 function* table(node: XmlNode): Generator<TextPart, void> {
+  for (const caption of children(node)) {
+    if (caption.name !== "caption") continue;
+    yield LINE_START;
+    yield* paragraphs(caption);
+    yield LINE_START;
+  }
   let rowCount = 0;
-  for (const row of all(node, ["tr", "table-row"])) {
+  for (const row of all(node, ["tr", "table-row"], ["caption"])) {
     // Word nests a cell inside w:sdt when a content control wraps the whole cell.
     const cells = [...all(row, ["tc", "table-cell", "covered-table-cell", "td", "th"])];
     // ODS writers pad sheets with repeated empty rows and trailing cells.
@@ -353,11 +372,18 @@ function* table(node: XmlNode): Generator<TextPart, void> {
     for (let index = 0; index < repeat; index++) {
       if (++rowCount > 10_000) throw new Truncation("Row limit");
       let column = 0;
+      let gap = 0;
       for (const cell of cells) {
         const count = repeatCount(cell.attrs["number-columns-repeated"]);
+        // Word emits no cell for columns covered by w:gridSpan; pad before the next cell.
+        const tcPr = cell.name === "tc" ? children(cell).find((c) => c.name === "tcPr") : undefined;
+        const val = tcPr && children(tcPr).find((c) => c.name === "gridSpan")?.attrs.val;
+        const span = val ? Math.max(1, Number.parseInt(val, 10) || 1) : 1;
         for (let i = 0; i < count; i++) {
-          if (column >= 512) throw new Truncation("Column limit");
-          if (column++) yield "\t";
+          column += span;
+          if (column > 512) throw new Truncation("Column limit");
+          if (gap) yield "\t".repeat(gap);
+          gap = span;
           // LibreOffice hides the contents a merge covers; the cell still holds its column.
           if (covered(cell)) continue;
           yield CELL_START;
