@@ -1982,6 +1982,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
   // Keep close markers in memory so unknown IDs recover after a server restart.
   const closedSessionKeys = new Set<string>();
+  const openingSessionKeys = new Set<string>();
   const threadLocks = yield* KeyedLock.make<string>();
   const terminalEventListeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const workerScope = yield* Scope.make("sequential");
@@ -2608,10 +2609,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const sessions = new Map(state.sessions);
 
         const toEvict = inactiveSessions.length - maxRetainedInactiveSessions;
-        for (const session of inactiveSessions.slice(0, toEvict)) {
-          // Startup counts toward the retention threshold, but a pending shell must stay attachable.
-          if (session.status === "starting") continue;
-          const key = toSessionKey(session.threadId, session.terminalId);
+        const candidates = inactiveSessions
+          .map((session) => toSessionKey(session.threadId, session.terminalId))
+          .filter((key) => !openingSessionKeys.has(key));
+        for (const key of candidates.slice(0, toEvict)) {
           sessions.delete(key);
           closedSessionKeys.add(key);
         }
@@ -2985,11 +2986,22 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               terminalId: session.terminalId,
               sequence: eventStamp.sequence,
               snapshot: snapshot(session),
-            });
-            // Publish startup before draining any events replayed during subscription.
-            eventsActivated = true;
-            if (session.processEventDrainRunning) runFork(drainProcessEvents(session, processPid));
+            }).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  // Publish startup before draining any events replayed during subscription.
+                  eventsActivated = true;
+                  if (session.processEventDrainRunning)
+                    runFork(drainProcessEvents(session, processPid));
+                }),
+              ),
+            );
           }),
+        ),
+        Effect.onInterrupt(() =>
+          ptyProcess && session.process !== ptyProcess
+            ? startKillEscalation(ptyProcess, session.threadId, session.terminalId)
+            : Effect.void,
         ),
       ),
     );
@@ -3400,7 +3412,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.worktreePath !== nextWorktreePath;
 
     if (launchContextChanged) {
-      yield* stopProcess(liveSession);
+      yield* Effect.uninterruptible(stopProcess(liveSession));
       liveSession.cwd = input.cwd;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.runtimeEnv = nextRuntimeEnv;
@@ -3445,7 +3457,29 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const openLocked = (input: TerminalOpenInput) =>
     withWorkspaceLease(
       path.resolve(input.worktreePath ?? input.cwd),
-      openWithWorkspaceLease(input),
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const key = toSessionKey(input.threadId, input.terminalId);
+          openingSessionKeys.add(key);
+          return key;
+        }),
+        () => openWithWorkspaceLease(input),
+        (key) =>
+          Effect.gen(function* () {
+            const needsEviction = yield* modifyManagerState((state) => {
+              openingSessionKeys.delete(key);
+              const session = state.sessions.get(key);
+              if (session?.status === "starting") {
+                // A canceled spawn leaves no close marker, so a resumed attach can retry.
+                const sessions = new Map(state.sessions);
+                sessions.delete(key);
+                return [false, { ...state, sessions }] as const;
+              }
+              return [session?.status === "exited" || session?.status === "error", state] as const;
+            });
+            if (needsEviction) yield* evictInactiveSessionsIfNeeded();
+          }),
+      ),
     );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
