@@ -686,6 +686,7 @@
   "56b4ff3993c93eca": "{host} sent an incompatible server configuration.",
   "368c4d4f99c66bfb": "Update the client and server to compatible versions.",
   "e5fd422e445391fc": "Upload failed. Tap to retry.",
+  "13b14784f8707ddd": "0 bytes",
   "b2bc6bd92ea24e5c": "{size} MB",
   "88f84178edbb7f57": "{size} KB",
   "5a78fd0a1d8e9945": "{count} MB",

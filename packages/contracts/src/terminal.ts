@@ -390,6 +390,7 @@ const TerminalErrorEvent = Schema.Struct({
 const TerminalClearedEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("cleared"),
+  pendingControlSequence: Schema.optionalKey(Schema.String),
 });
 
 const TerminalRestartedEvent = Schema.Struct({
