@@ -1,11 +1,14 @@
-import { HStack, Image, Spacer, Text, VStack } from "@expo/ui/swift-ui";
+import { HStack, Image, Link, Spacer, Text, VStack } from "@expo/ui/swift-ui";
 import {
+  background,
+  clipShape,
   containerBackground,
   font,
   foregroundStyle,
   frame,
   layoutPriority,
   lineLimit,
+  padding,
   resizable,
   widgetURL,
 } from "@expo/ui/swift-ui/modifiers";
@@ -37,6 +40,7 @@ export function AgentActivityWidget(
     environment.widgetRenderingMode === "vibrant" ||
     environment.isLuminanceReduced === true;
   const isLightScheme = environment.colorScheme === "light";
+  const newThreadLabel = text?.newThread ?? "New thread";
 
   type Foreground = Parameters<typeof foregroundStyle>[0];
   const primaryForeground = { type: "hierarchical", style: "primary" } as const;
@@ -105,9 +109,9 @@ export function AgentActivityWidget(
       ? `t3code://${linkRow.deepLink.slice(1)}`
       : null;
 
-  const background = accessory ? "clear" : isLightScheme ? "#ffffff" : "#1c1c1e";
+  const widgetBackground = accessory ? "clear" : isLightScheme ? "#ffffff" : "#1c1c1e";
   const rootModifiers = [
-    containerBackground(background, "widget"),
+    containerBackground(widgetBackground, "widget"),
     ...(deepLink ? [widgetURL(deepLink)] : []),
   ];
 
@@ -170,6 +174,33 @@ export function AgentActivityWidget(
       </HStack>
     );
 
+  const newThreadButton = (
+    <HStack
+      spacing={4}
+      alignment="center"
+      modifiers={[
+        padding({ horizontal: 9, vertical: 4 }),
+        background({ type: "hierarchical", style: "quaternary" }),
+        clipShape("capsule"),
+      ]}
+    >
+      <Image
+        systemName="square.and.pencil"
+        size={11}
+        modifiers={[foregroundStyle(primaryForeground)]}
+      />
+      <Text
+        modifiers={[
+          font({ weight: "semibold", size: 11 }),
+          foregroundStyle(primaryForeground),
+          lineLimit(1),
+        ]}
+      >
+        {newThreadLabel}
+      </Text>
+    </HStack>
+  );
+
   return (
     <VStack alignment="leading" spacing={accessory ? 2 : 8} modifiers={rootModifiers}>
       <HStack spacing={6} alignment="center">
@@ -184,6 +215,8 @@ export function AgentActivityWidget(
           {summary || (accessory ? "T3 Code" : "")}
         </Text>
         <Spacer minLength={0} />
+        {/* Small and Lock Screen widgets have a single tap target. */}
+        {accessory || small ? null : <Link destination="t3code://new">{newThreadButton}</Link>}
       </HStack>
       {shown.length > 0 ? (
         <VStack alignment="leading" spacing={accessory ? 1 : small ? 6 : 5}>

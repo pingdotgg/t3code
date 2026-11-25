@@ -36,6 +36,7 @@ export function agentActivityText(
     approval: resolve(msg("Approval", { $context: "agent waits for an approval" })),
     input: resolve(msg("Input", { $context: "agent waits for user input" })),
     noActiveAgents: resolve(msg("No active agents")),
+    newThread: resolve(msg("New thread")),
     activeAgents: countTable(maxCount, (count) =>
       resolve(
         msg("{count, plural, one {{count} active agent} other {{count} active agents}}", {
