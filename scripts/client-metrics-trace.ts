@@ -229,15 +229,18 @@ const add = (totals: Map<string, number>, key: string, ms: number) =>
   totals.set(key, (totals.get(key) ?? 0) + ms);
 
 /**
- * Each marked step's input task, forced style/layout, CPU by source and later long tasks, grouped
- * by label, plus the top forced call sites over all steps. A style or layout event with a JS stack
- * was forced by a script reading layout mid-task; one without ran in the frame's rendering step.
- * Undefined when the trace has no renderer main thread.
+ * Each marked step's input task, forced style/layout, CPU by source and later long tasks, plus the
+ * top forced call sites. Style or layout with a JS stack was forced mid-task. `skipCases` windows
+ * (label before the colon) still bound their neighbours but count nowhere.
  */
 export function analyzeTrace(
   events: ReadonlyArray<TraceEvent>,
   mapper: SourceMapper,
-  options: { readonly topSites?: number; readonly topEntries?: number } = {},
+  options: {
+    readonly topSites?: number;
+    readonly topEntries?: number;
+    readonly skipCases?: ReadonlySet<string>;
+  } = {},
 ) {
   const thread = mainThread(events);
   if (thread === undefined) return undefined;
@@ -293,7 +296,9 @@ export function analyzeTrace(
     });
   }
   const ordered = [...marks.values()].toSorted((a, b) => a.ts - b.ts);
-  const starts = ordered.filter((mark) => mark.label !== END_LABEL);
+  const starts = ordered.filter(
+    (mark) => mark.label !== END_LABEL && !options.skipCases?.has(mark.label.split(":")[0]!),
+  );
   const tasks = onMain.filter((event) => event.name === "RunTask" && event.ph === "X");
   const taskAt = (at: number) =>
     tasks.find((task) => task.ts! <= at && task.ts! + (task.dur ?? 0) >= at);

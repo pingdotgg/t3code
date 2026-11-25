@@ -1064,63 +1064,67 @@ const panelThreads = (cases: ReadonlyArray<Case>) => [
 ];
 
 /**
- * Opens each needed panel through the right panel launcher, as a person would, and counts the
- * open surface's DOM. The surfaces thread gets a Diff surface beside its pull request.
+ * Opens a thread's panel through the right panel launcher, as a person would. The surfaces thread
+ * gets a Diff surface beside its pull request.
  */
-const openPanels = Effect.fn("clientMetrics.openPanels")(function* (
+const openPanel = Effect.fn("clientMetrics.openPanel")(function* (
   h: Harness,
-  threads: ReadonlyArray<ThreadName>,
+  name: ThreadName,
+  artifacts: string | undefined,
+) {
+  const path = yield* Path.Path;
+  const { page, seeded } = h;
+  const label = PANEL_LAUNCHERS[name]!;
+  yield* browserPromise(`open the ${name} panel`, async () => {
+    await page.goto(`${seeded.origin}/${seeded.environmentId}/${seeded.threads[name]}`);
+    await page.waitForSelector("[data-timeline-row-id]", { timeout: 60_000 });
+    await page
+      .getByRole("button", { name: /^Toggle right panel/ })
+      .first()
+      .click();
+    const launcher = page.locator('[aria-label="Open a surface"] button', {
+      hasText: new RegExp(`^${label}`),
+    });
+    await launcher.first().click({ timeout: 30_000 });
+    if (name === "browser") {
+      const address = page.getByRole("textbox", { name: "Search or enter URL" });
+      // Disabled until the server's headless shell is installed; the first run downloads it.
+      await address.fill(seeded.fixtureUrl, { timeout: 300_000 });
+      await address.press("Enter");
+      await page.getByText("Bench fixture").first().waitFor({ timeout: 240_000 });
+    }
+    if (name === "surfaces") {
+      await page.waitForTimeout(1_000);
+      await page.getByRole("button", { name: "Add panel surface" }).click();
+      await page.getByRole("menuitem", { name: /^Diff/ }).first().click({ timeout: 10_000 });
+    }
+    await page.waitForTimeout(3_000);
+    if (artifacts !== undefined) {
+      await page.screenshot({ path: path.join(artifacts, `${name}.png`) });
+    }
+  });
+});
+
+/** Counts the open surface's DOM. */
+const panelCensus = Effect.fn("clientMetrics.panelCensus")(function* (
+  h: Harness,
+  name: ThreadName,
   artifacts: string | undefined,
 ) {
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
-  const { page, seeded } = h;
-  const panels: Panel[] = [];
-  for (const name of threads) {
-    const label = PANEL_LAUNCHERS[name]!;
-    yield* browserPromise(`open the ${name} panel`, async () => {
-      await page.goto(`${seeded.origin}/${seeded.environmentId}/${seeded.threads[name]}`);
-      await page.waitForSelector("[data-timeline-row-id]", { timeout: 60_000 });
-      await page
-        .getByRole("button", { name: /^Toggle right panel/ })
-        .first()
-        .click();
-      const launcher = page.locator('[aria-label="Open a surface"] button', {
-        hasText: new RegExp(`^${label}`),
-      });
-      await launcher.first().click({ timeout: 30_000 });
-      if (name === "browser") {
-        const address = page.getByRole("textbox", { name: "Search or enter URL" });
-        // Disabled until the server's headless shell is installed; the first run downloads it.
-        await address.fill(seeded.fixtureUrl, { timeout: 300_000 });
-        await address.press("Enter");
-        await page.getByText("Bench fixture").first().waitFor({ timeout: 240_000 });
-      }
-      if (name === "surfaces") {
-        await page.waitForTimeout(1_000);
-        await page.getByRole("button", { name: "Add panel surface" }).click();
-        await page.getByRole("menuitem", { name: /^Diff/ }).first().click({ timeout: 10_000 });
-      }
-      await page.waitForTimeout(3_000);
-      if (artifacts !== undefined) {
-        await page.screenshot({ path: path.join(artifacts, `${name}.png`) });
-      }
-    });
-    if (name === "surfaces") continue;
-    const census = yield* evaluate(page, DOM_CENSUS, Census);
-    panels.push({
-      case: name,
-      panelNodes: census.panelNodes,
-      documentNodes: census.documentNodes,
-    });
-    if (artifacts !== undefined) {
-      yield* fs.writeFileString(
-        path.join(artifacts, `${name}.census.json`),
-        `${encodeJson(census)}\n`,
-      );
-    }
+  const census = yield* evaluate(h.page, DOM_CENSUS, Census);
+  if (artifacts !== undefined) {
+    yield* fs.writeFileString(
+      path.join(artifacts, `${name}.census.json`),
+      `${encodeJson(census)}\n`,
+    );
   }
-  return panels;
+  return {
+    case: name,
+    panelNodes: census.panelNodes,
+    documentNodes: census.documentNodes,
+  } satisfies Panel;
 });
 
 const TRACE_CATEGORIES = [
@@ -1289,7 +1293,8 @@ const measurePass = Effect.fn("clientMetrics.measurePass")(function* (options: M
   // A panel this checkout cannot open skips only the cases that need it.
   const panels: Panel[] = [];
   for (const thread of panelThreads(cases)) {
-    const opened = yield* openPanels(h, [thread], options.artifacts).pipe(
+    const opened = yield* openPanel(h, thread, options.artifacts).pipe(
+      Effect.as(true),
       Effect.catch((error) =>
         Effect.as(
           Effect.forEach(
@@ -1297,11 +1302,13 @@ const measurePass = Effect.fn("clientMetrics.measurePass")(function* (options: M
             (name) =>
               skip(name, `its ${thread} panel did not open: ${error.message.split("\n")[0]!}`),
           ),
-          [],
+          false,
         ),
       ),
     );
-    panels.push(...opened);
+    // Outside the catch: a census that cannot be read or saved fails the run.
+    if (opened && thread !== "surfaces")
+      panels.push(yield* panelCensus(h, thread, options.artifacts));
   }
 
   // A fresh document, so round 0 visits every thread for the first time in this page.
@@ -1438,12 +1445,12 @@ const measurePass = Effect.fn("clientMetrics.measurePass")(function* (options: M
       path.join(options.checkout, "apps/web/dist/assets"),
       urls,
     );
-    const analyzed = analyzeTrace(events, mapper);
+    const analyzed = analyzeTrace(events, mapper, { skipCases: failedInTrace });
     if (analyzed === undefined) {
       yield* Console.error("the trace has no renderer main thread; no CPU breakdown");
     } else {
       if (!analyzed.profiled) yield* Console.error("the trace has no CPU profile samples");
-      trace = analyzed.steps.filter((step) => !failedInTrace.has(step.label.split(":")[0]!));
+      trace = analyzed.steps;
       callSites = analyzed.callSites;
     }
   }

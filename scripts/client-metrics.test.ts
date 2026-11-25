@@ -593,6 +593,12 @@ describe("analyzeTrace", () => {
     expect(result.steps[0]!.sampledMs).toBe(0);
   });
 
+  it("leaves a failed case's windows out of the steps and the call sites", () => {
+    const result = analyzeTrace(events, mapper, { skipCases: new Set(["switch"]) })!;
+    expect(result.callSites).toEqual([]);
+    expect(result.steps.some((entry) => entry.label.startsWith("switch:"))).toBe(false);
+  });
+
   it("needs a renderer main thread", () => {
     expect(analyzeTrace(events.slice(1), mapper)).toBeUndefined();
   });
