@@ -1585,7 +1585,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     renamingOriginalTitleRef.current = title;
   });
   const cancelThreadRename = () => setRenamingThreadRef(null);
-  const commitThreadRename = (threadRef: ScopedThreadRef, title: string) => {
+  const commitThreadRename = useStableCallback((threadRef: ScopedThreadRef, title: string) => {
     const originalTitle = renamingOriginalTitleRef.current;
     void (async () => {
       if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
@@ -1611,7 +1611,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
       }
     })();
-  };
+  });
 
   const readOpensPullRequestsInRightPanel = useStableCallback(() => routeThreadRef !== null);
   // A closure over the route key would hand every row a new click handler on each thread switch.
@@ -1663,47 +1663,46 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         : () => void router.navigate({ to: "/" });
   };
 
-  const attemptSettle = (
-    threadRef: ScopedThreadRef,
-    opts: { coSettlingKeys?: ReadonlySet<string> } = {},
-  ) => {
-    void (async () => {
-      const threadKey = scopedThreadKey(threadRef);
-      if (settlingThreadKeysRef.current.has(threadKey)) return;
-      settlingThreadKeysRef.current.add(threadKey);
-      const navigateAfterSettle = planForwardNavigation(threadKey, opts.coSettlingKeys);
-      if (navigateAfterSettle) departRouteThread(threadKey);
-      const result = await settleThread(threadRef);
-      settlingThreadKeysRef.current.delete(threadKey);
-      if (result._tag === "Failure") {
-        stayOnRouteThread(threadKey);
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: gt("Failed to settle thread"),
-              description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
-            }),
-          );
+  const attemptSettle = useStableCallback(
+    (threadRef: ScopedThreadRef, opts: { coSettlingKeys?: ReadonlySet<string> } = {}) => {
+      void (async () => {
+        const threadKey = scopedThreadKey(threadRef);
+        if (settlingThreadKeysRef.current.has(threadKey)) return;
+        settlingThreadKeysRef.current.add(threadKey);
+        const navigateAfterSettle = planForwardNavigation(threadKey, opts.coSettlingKeys);
+        if (navigateAfterSettle) departRouteThread(threadKey);
+        const result = await settleThread(threadRef);
+        settlingThreadKeysRef.current.delete(threadKey);
+        if (result._tag === "Failure") {
+          stayOnRouteThread(threadKey);
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: gt("Failed to settle thread"),
+                description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
+              }),
+            );
+          }
+          return;
         }
-        return;
-      }
-      if (
-        shouldNavigateAfterThreadPark({
-          threadKey,
-          currentThreadKey: readRouteThreadKey(router),
-          action: "settle",
-          now: new Date().toISOString(),
-          thread: readThreadShell(threadRef),
-        })
-      ) {
-        navigateAfterSettle?.();
-      } else {
-        stayOnRouteThread(threadKey);
-      }
-    })();
-  };
+        if (
+          shouldNavigateAfterThreadPark({
+            threadKey,
+            currentThreadKey: readRouteThreadKey(router),
+            action: "settle",
+            now: new Date().toISOString(),
+            thread: readThreadShell(threadRef),
+          })
+        ) {
+          navigateAfterSettle?.();
+        } else {
+          stayOnRouteThread(threadKey);
+        }
+      })();
+    },
+  );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this sidebar's settle handler in the module-level settleAndAdvance registry
   useEffect(() => registerSettleAndAdvance(attemptSettle), [attemptSettle]);
   const settleThreads = (threadKeys: readonly string[]) => {
@@ -1714,7 +1713,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       attemptSettle(scopeThreadRef(thread.environmentId, thread.id), { coSettlingKeys });
     }
   };
-  const attemptUnsettle = (threadRef: ScopedThreadRef) => {
+  const attemptUnsettle = useStableCallback((threadRef: ScopedThreadRef) => {
     void (async () => {
       const result = await unsettleThread(threadRef);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -1728,8 +1727,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
       }
     })();
-  };
-  const attemptUnsnooze = (threadRef: ScopedThreadRef) => {
+  });
+  const attemptUnsnooze = useStableCallback((threadRef: ScopedThreadRef) => {
     void (async () => {
       const result = await unsnoozeThread(threadRef);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -1743,7 +1742,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
       }
     })();
-  };
+  });
   const restrictBelowPins: Modifier = (args) =>
     restrictBelowSidebarLabel(args, dragLabelOffsetRef.current);
   const dndModifiers = [
@@ -1947,7 +1946,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
     })();
   };
-  const attemptUnpin = (threadRef: ScopedThreadRef) => {
+  const attemptUnpin = useStableCallback((threadRef: ScopedThreadRef) => {
     void (async () => {
       const result = await confirmAndUnpinThread(threadRef);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -1961,7 +1960,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
       }
     })();
-  };
+  });
 
   const handleThreadDragStart = (event: DragStartEvent) => {
     const activeKey = String(event.active.id);

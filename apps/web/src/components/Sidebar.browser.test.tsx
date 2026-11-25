@@ -13,6 +13,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
+import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -334,6 +335,70 @@ describe("sidebar render isolation", () => {
     await userEvent.keyboard(`{/${modifier}}`);
     expect(rowRenders()).toBeGreaterThan(beforeRelease);
     expect(jumpLabelsSince(beforeRelease)).toEqual([]);
+  });
+
+  it("switching threads changes props only on the rows being left and opened", async () => {
+    const activeProject = project("active");
+    const threads = Array.from({ length: 5 }, (_, index) => threadShell(activeProject.id, index));
+    const routeTo = (index: number) => {
+      const threadRef = {
+        environmentId: activeProject.environmentId,
+        threadId: threads[index]!.id,
+      };
+      vi.mocked(useHandleNewThread).mockReturnValue({
+        activeDraftThread: null,
+        activeThread: null,
+        defaultProjectRef: {
+          environmentId: activeProject.environmentId,
+          projectId: activeProject.id,
+        },
+        defaultProjectFallbackReady: true,
+        handleNewThread: vi.fn().mockResolvedValue(null),
+        routeDraftId: null,
+        routeThreadRef: threadRef,
+      });
+      return { kind: "server" as const, threadRef };
+    };
+    let routeTarget = routeTo(0);
+    const routeListeners = new Set<() => void>();
+    vi.mocked(useThreadRouteTarget).mockImplementation(() =>
+      useSyncExternalStore(
+        (listener) => {
+          routeListeners.add(listener);
+          return () => routeListeners.delete(listener);
+        },
+        () => routeTarget,
+      ),
+    );
+    vi.mocked(useNowMinute).mockReturnValue("2026-01-01T00:00");
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    await expect.element(screen.getByText("Thread 4").first()).toBeInTheDocument();
+    const rowProps = () =>
+      vi.mocked(SortableThreadRow).mock.calls.map(([props]) => props as Record<string, unknown>);
+    const before = new Map(rowProps().map((props) => [props.sortableId, props]));
+    const start = rowProps().length;
+
+    await act(() => {
+      routeTarget = routeTo(1);
+      for (const listener of routeListeners) listener();
+    });
+
+    const changedRows = new Set(
+      rowProps()
+        .slice(start)
+        .filter((props) => {
+          const previous = before.get(props.sortableId)!;
+          return Object.keys(props).some((key) => !Object.is(props[key], previous[key]));
+        })
+        .map((props) => props.sortableId),
+    );
+    expect([...changedRows].toSorted()).toEqual(["local:thread-0", "local:thread-1"]);
   });
 });
 
