@@ -4034,6 +4034,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const pendingControlSequence = unfinishedSequenceReplay(
           session.pendingHistoryControlSequence,
         );
+        // A drain waits for the key to go idle, which never happens while the shell keeps
+        // printing; every reader of the file flushes it first.
+        yield* persistWorker.enqueue(toSessionKey(input.threadId, terminalId), {
+          history: session.history,
+          immediate: true,
+        });
         const event: TerminalEvent = {
           type: "cleared",
           threadId: input.threadId,
@@ -4044,12 +4050,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         if (pendingControlSequence) {
           pendingSequenceStarts.set(event, session.pendingHistorySequenceStart);
         }
-        // A drain waits for the key to go idle, which never happens while the shell keeps
-        // printing; every reader of the file flushes it first.
-        yield* persistWorker.enqueue(toSessionKey(input.threadId, terminalId), {
-          history: session.history,
-          immediate: true,
-        });
         yield* publishEvent(event);
       }),
     );
