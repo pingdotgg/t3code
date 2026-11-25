@@ -4340,6 +4340,21 @@
     },
     " lämnade sin sida och stoppades"
   ],
+  "796b81c4875c4feb": [
+    "Appen ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " behöver en nyare ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "-server i den här miljön. Uppdatera servern för att använda den."
+  ],
   "5ef18e4d39b398bf": [
     "Det gick inte att läsa in appen ",
     {

@@ -145,6 +145,65 @@ it.each([
   expect(received).toEqual(launcher);
 });
 
+function UnavailableTerminalCommand({
+  command,
+  owner,
+}: {
+  command: KeybindingCommand;
+  owner: "drawer" | "right-panel" | null;
+}) {
+  useChatShortcuts({
+    enabled: true,
+    keybindings: compileResolvedKeybindingsConfig([
+      { key: command === "terminal.previous" ? "cmd+shift+[" : "cmd+shift+]", command },
+    ]),
+    scriptKeybindings: [],
+    getShortcutContext: () => ({ ...shortcutContext, terminalFocus: owner !== null }),
+    threadFindActive: false,
+    composerRef: { current: null },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: { [command]: () => false },
+    fallback: () => undefined,
+  });
+  return (
+    <div data-terminal-owner={owner ?? undefined}>
+      <input ref={focusOnMount} />
+    </div>
+  );
+}
+
+it.each([
+  ["terminal.previous", "drawer", true],
+  ["terminal.next", "drawer", true],
+  ["terminal.new", "drawer", false],
+  ["terminal.previous", "right-panel", true],
+  ["terminal.next", "right-panel", true],
+  ["terminal.previous", null, false],
+  ["terminal.next", null, false],
+] as const)("handles unavailable %s with focus owner %s", async (command, owner, prevented) => {
+  await using screen = await render(
+    <UnavailableTerminalCommand command={command} owner={owner} />,
+    options,
+  );
+  const input = screen.container.querySelector("input")!;
+  const received: string[] = [];
+  input.addEventListener("keydown", (event) => received.push(event.key));
+  const previous = command === "terminal.previous";
+  const key = previous ? "{" : "}";
+  const event = new KeyboardEvent("keydown", {
+    key,
+    code: previous ? "BracketLeft" : "BracketRight",
+    shiftKey: true,
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(prevented);
+  expect(received).toEqual(prevented ? [] : [key]);
+});
+
 const sideChatKeybindings: ResolvedKeybindingsConfig = [
   ctrl("m", "modelPicker.toggle", true),
   ctrl("x", "thread.stop", true),
