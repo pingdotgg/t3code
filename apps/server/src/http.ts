@@ -17,7 +17,11 @@ import {
   DESKTOP_READINESS_PROOF_PATH,
   desktopReadinessProof,
 } from "@t3tools/shared/desktopReadinessProof";
-import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
+import {
+  decodeOtlpTraceRecords,
+  redactEndpointUrl,
+  withManualRedirects,
+} from "@t3tools/shared/observability";
 import * as ByteSize from "effect/ByteSize";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -468,7 +472,7 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
       return HttpServerResponse.empty({ status: 204 });
     }
 
-    return yield* httpClient
+    return yield* withManualRedirects(httpClient)
       .post(otlpTracesUrl, {
         body: serialization.traces(bodyJson),
         headers: otlpHeaders,
@@ -476,10 +480,13 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
       .pipe(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
         Effect.as(HttpServerResponse.empty({ status: 204 })),
-        Effect.tapError((cause) =>
+        Effect.tapError((error) =>
           Effect.logWarning("Failed to export browser OTLP traces", {
-            cause,
-            otlpTracesUrl,
+            reason: error.reason._tag,
+            ...(error.reason._tag === "StatusCodeError"
+              ? { status: error.reason.response.status }
+              : {}),
+            otlpTracesUrl: redactEndpointUrl(otlpTracesUrl),
           }),
         ),
         Effect.orElseSucceed(() =>

@@ -5,6 +5,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type * as Exit from "effect/Exit";
 import * as ExitRuntime from "effect/Exit";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
@@ -13,9 +14,33 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Tracer from "effect/Tracer";
+import { FetchHttpClient, HttpClient } from "effect/http";
 import { OtlpResource, OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import { makeAsyncRotatingFileSink } from "./logging.ts";
+
+const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
+
+export const withManualRedirects = <E, R>(
+  client: HttpClient.HttpClient.With<E, R>,
+): HttpClient.HttpClient.With<E, R> =>
+  HttpClient.transform(client, (response) =>
+    Effect.provideService(response, FetchHttpClient.RequestInit, MANUAL_REDIRECT),
+  );
+
+export const layerManualRedirects = Layer.effect(
+  HttpClient.HttpClient,
+  Effect.map(HttpClient.HttpClient, withManualRedirects),
+);
+
+export function redactEndpointUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return "<invalid-url>";
+  }
+}
 
 export const OtlpProtocol = Schema.Literals(["http/json", "http/protobuf"]);
 export type OtlpProtocol = typeof OtlpProtocol.Type;

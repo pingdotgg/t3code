@@ -640,6 +640,7 @@ const layerTelemetry = Layer.unwrap(
       { mergeWithExisting: false },
     ).pipe(
       Layer.provide(OtlpExporter.layerFlusher),
+      Layer.provide(SharedObservability.layerManualRedirects),
       Layer.provide(
         SharedObservability.layerOtlpSerialization(
           endpoints.logs?.export.protocol ?? environment.otlpProtocol,
@@ -668,7 +669,10 @@ const layerTelemetry = Layer.unwrap(
                 resource,
               }).pipe(
                 Effect.provide(
-                  SharedObservability.layerOtlpSerialization(endpoints.traces.export.protocol),
+                  Layer.merge(
+                    SharedObservability.layerManualRedirects,
+                    SharedObservability.layerOtlpSerialization(endpoints.traces.export.protocol),
+                  ),
                 ),
               );
         const tracer = yield* makeLocalFileTracer({
