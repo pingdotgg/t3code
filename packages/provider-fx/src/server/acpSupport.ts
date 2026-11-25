@@ -35,16 +35,16 @@ const FX_DEFAULT_EFFORT = "medium";
 
 export const FX_DEFAULT_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 
-const FX_EFFORT_LABELS: Readonly<Record<string, string>> = {
-  auto: "Auto",
-  none: "None",
-  minimal: "Minimal",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Extra High",
-  max: "Max",
-};
+const FX_EFFORT_LABELS = new Map<string, string>([
+  ["auto", "Auto"],
+  ["none", "None"],
+  ["minimal", "Minimal"],
+  ["low", "Low"],
+  ["medium", "Medium"],
+  ["high", "High"],
+  ["xhigh", "Extra High"],
+  ["max", "Max"],
+]);
 
 /**
  * Builds the Effort select descriptor for an fx model from the levels
@@ -63,7 +63,7 @@ export function fxEffortOptionDescriptor(
     type: "select",
     options: ["auto", ...levels].map((id) => ({
       id,
-      label: FX_EFFORT_LABELS[id] ?? id,
+      label: FX_EFFORT_LABELS.get(id) ?? id,
       ...(id === defaultEffort ? { isDefault: true } : {}),
     })),
   };
