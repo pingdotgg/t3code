@@ -1114,6 +1114,16 @@ export type Wire104 = {
   readonly reason?: Wire37;
   readonly fullAccessOverride?: "ask_rule" | "provider_check" | undefined;
   readonly appName?: Wire37;
+  readonly pushHooks?:
+    | {
+        readonly branch: string;
+        readonly files: globalThis.ReadonlyArray<string>;
+        readonly commands: globalThis.ReadonlyArray<{
+          readonly name: string;
+          readonly command: string;
+        }>;
+      }
+    | undefined;
   readonly options?:
     | globalThis.ReadonlyArray<{
         readonly decision: Wire64;

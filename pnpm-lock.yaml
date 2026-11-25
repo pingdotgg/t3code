@@ -877,9 +877,6 @@ importers:
       '@muse-code/sdk':
         specifier: 1.4.6
         version: 1.4.6(patch_hash=7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101)(@types/node@24.12.4)
-      '@napi-rs/keyring':
-        specifier: ^1.3.0
-        version: 1.3.0
       '@t3tools/issue-tracker-linear':
         specifier: workspace:*
         version: link:../../packages/issue-tracker-linear

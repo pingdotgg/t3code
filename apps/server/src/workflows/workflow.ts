@@ -31,7 +31,13 @@ import {
   type WebhookTrigger,
 } from "./triggers.ts";
 import type { WorkflowAgents } from "./WorkflowAgents.ts";
-import { unavailable, WorkflowForge } from "./WorkflowForge.ts";
+import {
+  type SubjectInput,
+  subjectReference,
+  unavailable,
+  WorkflowForge,
+} from "./WorkflowForge.ts";
+import { subjectSet } from "./runReferences.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 /** A step that could not be completed. Its run is paused until someone resumes it. */
@@ -812,6 +818,30 @@ export const tags = (
     const name = `tags/${n}`;
     return Effect.flatMap(claim(name), (run) =>
       Activity.make({ name, execute: run.store.runTags(run.runId, kept) }),
+    );
+  }).pipe(Effect.orDie);
+};
+
+/**
+ * Say what the run is about: an issue or pull request a trigger or listing gave, `{ threadId }`,
+ * or a web address. Lists show it and link to it, and `runs({ subject })` and
+ * `t3 workflow list --subject` find the run by it. Calling it again replaces the subject.
+ */
+export const subject = (
+  value: SubjectInput,
+  ...rest: ReadonlyArray<never>
+): Effect.Effect<void, never, InRun> => {
+  if (rest.length > 0) {
+    throw new Error("subject takes only what the run is about, and no step name.");
+  }
+  const reference = subjectReference("subject", value);
+  return Effect.flatMap(RunContext, (current) => {
+    // Numbered by how many came before in the body, which a replay walks the same way.
+    let n = 0;
+    while (current.names.has(`subject/${n}`)) n++;
+    const name = `subject/${n}`;
+    return Effect.flatMap(claim(name), (run) =>
+      Activity.make({ name, execute: subjectSet(run.store, run.runId, reference) }),
     );
   }).pipe(Effect.orDie);
 };

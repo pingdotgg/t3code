@@ -614,6 +614,7 @@ export const CreatePullRequestResult = Schema.Struct({
   created: Schema.Boolean.annotate({
     description: "False when the branch already had an open PR.",
   }),
+  note: Schema.optional(Schema.String),
   next: Schema.optional(Schema.String),
 });
 export type CreatePullRequestResult = typeof CreatePullRequestResult.Type;

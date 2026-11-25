@@ -10,6 +10,7 @@ import {
   type WorkflowRun,
   type WorkflowRunReference,
   type WorkflowRunsSnapshot,
+  type WorkflowRunSubject,
   type WorkflowStep,
   type WorkflowSummary,
 } from "@t3tools/contracts";
@@ -898,31 +899,39 @@ const decodeIssueAddress = Schema.decodeUnknownOption(WorkflowIssueAddress);
 const decodePullRequestAddress = Schema.decodeUnknownOption(WorkflowPullRequestAddress);
 
 /** A reference's issue, when it is one and its address reads as one. */
-export function workflowReferenceIssue(reference: WorkflowRunReference): IssueRef | null {
+export function workflowReferenceIssue(reference: WorkflowRunSubject): IssueRef | null {
   return reference.kind === WorkflowReferenceKind.issue
     ? Option.getOrNull(decodeIssueAddress(reference.address))
     : null;
 }
 
 /** A reference's pull request, when it is one and its address reads as one. */
-export function workflowReferencePullRequest(
-  reference: WorkflowRunReference,
-): PullRequestRef | null {
+export function workflowReferencePullRequest(reference: WorkflowRunSubject): PullRequestRef | null {
   return reference.kind === WorkflowReferenceKind.pullRequest
     ? Option.getOrNull(decodePullRequestAddress(reference.address))
     : null;
 }
 
+/** A reference's thread, when it is one, in the run's own environment. */
+export function workflowReferenceThreadId(reference: WorkflowRunSubject): string | null {
+  const threadId = field(reference.address, "threadId");
+  return reference.kind === WorkflowReferenceKind.thread && typeof threadId === "string"
+    ? threadId
+    : null;
+}
+
 /**
  * What a reference is called in a chip: `#412` for an issue or pull request on a git host, a
- * tracker's own key such as `ENG-12`, and the title for a kind this client does not know.
+ * tracker's own key such as `ENG-12`, and otherwise the title, or the host of its web address.
  */
-export function workflowReferenceLabel(reference: WorkflowRunReference): string {
+export function workflowReferenceLabel(reference: WorkflowRunSubject): string {
   const pullRequest = workflowReferencePullRequest(reference);
   if (pullRequest !== null) return `#${pullRequest.number}`;
   const issue = workflowReferenceIssue(reference);
   if (issue !== null) return /^\d+$/.test(issue.key) ? `#${issue.key}` : issue.key;
-  return reference.title === "" ? reference.kind : reference.title;
+  if (reference.title !== "") return reference.title;
+  if (reference.url !== null && URL.canParse(reference.url)) return new URL(reference.url).host;
+  return reference.kind;
 }
 
 /** The references a step touched, in the order the run first touched them. */
