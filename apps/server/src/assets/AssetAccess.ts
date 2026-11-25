@@ -521,12 +521,17 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     const path = yield* Path.Path;
     const fileSystem = yield* FileSystem.FileSystem;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
-    // A root registered through a symlink spells a file differently from the real path an agent
-    // writes, so both are compared resolved; an unresolvable path is compared as written.
+    // A root registered through a symlink spells a directory differently from the real path an
+    // agent writes, so both are compared resolved; an unresolvable path is compared as written.
+    // Only the directory is resolved: the file's own name is kept as written, so a page that is a
+    // link still names itself for the entry check that decides whether it may leave its folder.
     const relativePath = path.isAbsolute(input.requestedPath)
-      ? path.relative(
-          yield* resolveRealPathOrSelf(input.workspaceRoot),
-          yield* resolveRealPathOrSelf(input.requestedPath),
+      ? path.join(
+          path.relative(
+            yield* resolveRealPathOrSelf(input.workspaceRoot),
+            yield* resolveRealPathOrSelf(path.dirname(input.requestedPath)),
+          ),
+          path.basename(input.requestedPath),
         )
       : input.requestedPath;
     const resolved = yield* workspacePaths
