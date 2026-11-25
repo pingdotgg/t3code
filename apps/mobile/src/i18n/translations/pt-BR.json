@@ -5700,5 +5700,10 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Execuções de workflow"
+  "46d614fa7b4bf1e5": "Execuções de workflow",
+  "6381c4a2297e37e6": "Excluir {model}?",
+  "00b5905cc4800231": "{environment} vai excluir {size} de arquivos de modelo. Você pode baixá-lo novamente mais tarde.",
+  "c73437a48071f19d": "Excluir",
+  "51fd61b9c85dec5d": "Não foi possível excluir o modelo",
+  "88fa0730d8c7eab4": "Excluir {model}"
 }

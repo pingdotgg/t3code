@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Platform, View } from "react-native";
+import { Platform, View, type PressableProps } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
 import { cn } from "../../lib/cn";
@@ -17,6 +17,8 @@ export function ListChoiceRow(props: {
   readonly separated?: boolean;
   readonly disabled?: boolean;
   readonly onPress: () => void;
+  /** Lets a wrapping long-press Menu observe the touch. */
+  readonly onTouchStart?: PressableProps["onTouchStart"];
 }) {
   const rippleStyle = useResolveClassNames("bg-subtle-strong");
   return (
@@ -27,6 +29,7 @@ export function ListChoiceRow(props: {
       accessibilityState={{ checked: props.selected, disabled: Boolean(props.disabled) }}
       disabled={props.disabled}
       onPress={props.onPress}
+      onTouchStart={props.onTouchStart}
       android_ripple={{ color: rippleStyle.backgroundColor }}
       unstable_pressDelay={Platform.OS === "android" ? 50 : undefined}
       // Like UIKit and Material lists, only the checkmark or radio marks the selected row.

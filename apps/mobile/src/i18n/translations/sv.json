@@ -5706,5 +5706,10 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "201490988858b511": "återkallad av {by}",
-  "46d614fa7b4bf1e5": "Arbetsflödeskörningar"
+  "46d614fa7b4bf1e5": "Arbetsflödeskörningar",
+  "6381c4a2297e37e6": "Ta bort {model}?",
+  "00b5905cc4800231": "{environment} tar bort {size} modellfiler. Du kan ladda ned den igen senare.",
+  "c73437a48071f19d": "Ta bort",
+  "51fd61b9c85dec5d": "Kunde inte ta bort modellen",
+  "88fa0730d8c7eab4": "Ta bort {model}"
 }

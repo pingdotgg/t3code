@@ -5,6 +5,7 @@ import { useNavigation } from "@react-navigation/native";
 import {
   cancelEnvironmentSpeechModelDownload,
   installEnvironmentSpeechModel,
+  removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
 } from "@t3tools/client-runtime/voice-input";
 import {
@@ -15,17 +16,19 @@ import {
 import { speechModelDownloadPercent } from "@t3tools/shared/speech";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactNode, useEffect, useState } from "react";
-import { Platform, Text as NativeText, View } from "react-native";
+import { Platform, Pressable, Text as NativeText, View } from "react-native";
 import { m } from "../../i18n/messages";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
+import { Menu } from "../../components/ui/Menu";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ListRow } from "../../components/ui/ListRow";
 import { Progress } from "../../components/ui/Progress";
 import { formatBytes } from "../../lib/formatBytes";
+import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { useEnvironmentScope } from "../../state/session";
 import {
   runSpeech,
@@ -109,6 +112,25 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
       void run(gt("Could not select the model"), () =>
         runSpeech(selectEnvironmentSpeechModel(connection, model.id)),
       );
+    },
+    remove: (model: EnvironmentSpeechModel) => {
+      if (!ready) return;
+      Dialog.confirm({
+        title: gt("Delete {model}?", { model: model.name }),
+        message: gt(
+          "{environment} will delete {size} of model files. You can download it again later.",
+          {
+            environment: label,
+            size: formatBytes(model.size),
+          },
+        ),
+        confirmText: gt("Delete", { $context: "verb" }),
+        destructive: true,
+        onConfirm: () =>
+          void run(gt("Could not delete the model"), () =>
+            runSpeech(removeEnvironmentSpeechModel(connection, model.id)),
+          ),
+      });
     },
     cancel: (model: EnvironmentSpeechModel) => {
       if (!ready) return;
@@ -203,9 +225,16 @@ function ModelStats(props: { readonly model: EnvironmentSpeechModel; readonly la
   );
 }
 
-function DownloadedGlyph() {
+function DownloadedGlyph(props: { readonly label: string; readonly onPress?: () => void }) {
   return (
-    <View className="size-6">
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={props.label}
+      disabled={!props.onPress}
+      hitSlop={12}
+      onPress={props.onPress}
+      className="size-6"
+    >
       <SymbolView
         name="tray.and.arrow.down"
         size={Platform.OS === "android" ? 24 : 22}
@@ -222,7 +251,7 @@ function DownloadedGlyph() {
           weight="bold"
         />
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -236,10 +265,17 @@ export function VoiceModelRow(props: {
   const gt = useGT();
   const { model, voice, separated } = props;
   const meta = <ModelStats model={model} language={props.language} />;
-  if (model.state === "installed")
-    return (
+  if (model.state === "installed") {
+    const removable = voice.canManage && !voice.busy && !voice.downloading;
+    const remove = () => voice.remove(model);
+    const choice = (
       <ListChoiceRow
-        leading={<DownloadedGlyph />}
+        leading={
+          <DownloadedGlyph
+            label={gt("Delete {model}", { model: model.name })}
+            onPress={removable ? remove : undefined}
+          />
+        }
         label={model.name}
         description={model.description}
         meta={meta}
@@ -249,6 +285,45 @@ export function VoiceModelRow(props: {
         onPress={() => voice.select(model)}
       />
     );
+    if (!removable) return choice;
+    const row = (
+      <Menu
+        actions={[
+          {
+            id: "delete",
+            title: gt("Delete", { $context: "verb" }),
+            image: "trash",
+            attributes: { destructive: true },
+          },
+        ]}
+        onPressAction={({ nativeEvent }) => {
+          if (nativeEvent.event === "delete") remove();
+        }}
+        shouldOpenOnLongPress
+      >
+        {choice}
+      </Menu>
+    );
+    return (
+      <ThreadSwipeable
+        backgroundColor="transparent"
+        fullSwipeAction="primary"
+        onDelete={remove}
+        primaryAction={{
+          accessibilityLabel: gt("Delete {model}", { model: model.name }),
+          destructive: true,
+          icon: "trash",
+          label: gt("Delete", { $context: "verb" }),
+          onPress: remove,
+        }}
+        secondaryAction={null}
+        threadKey={`speech-model:${model.id}`}
+        threadTitle={model.name}
+      >
+        {() => row}
+      </ThreadSwipeable>
+    );
+  }
   const percent =
     model.downloaded === undefined
       ? undefined

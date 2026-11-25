@@ -239,7 +239,8 @@ interface ThreadSwipeableProps {
   readonly enableTrackpadSwipe?: boolean;
   /** Omitted uses Delete only with the built-in Delete secondary action; otherwise it uses primary. */
   readonly fullSwipeAction?: "delete" | "primary";
-  readonly fullSwipeWidth: number;
+  /** Initial full-swipe width used until the row's own layout is measured. */
+  readonly fullSwipeWidth?: number;
   /** The list animates item layout; collapse in one step so its transition moves siblings once. */
   readonly listAnimatesLayout?: boolean;
   readonly onDelete: () => void;
@@ -262,7 +263,9 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const hasSecondaryAction = props.secondaryAction !== null;
   const actionsWidth = swipeActionsWidth(hasSecondaryAction);
-  const fullSwipeThreshold = Math.max(actionsWidth + 44, props.fullSwipeWidth * 0.58);
+  const [measuredRowWidth, setMeasuredRowWidth] = useState(0);
+  const swipeWidth = measuredRowWidth > 0 ? measuredRowWidth : (props.fullSwipeWidth ?? 0);
+  const fullSwipeThreshold = Math.max(actionsWidth + 44, swipeWidth * 0.58);
   const fullSwipeAction =
     props.fullSwipeAction ?? (props.secondaryAction === undefined ? "delete" : "primary");
   const close = useCallback(() => swipeableRef.current?.close(), []);
@@ -281,7 +284,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const [collapsedInList, setCollapsedInList] = useState(false);
   const dismissing = useSharedValue(false);
   const rowHeight = useSharedValue(0);
-  const rowWidth = useSharedValue(props.fullSwipeWidth);
+  const rowWidth = useSharedValue(props.fullSwipeWidth ?? 0);
   const collapse = useSharedValue(0);
   const fallbackTranslation = useSharedValue(0);
   const actionOpacity = useSharedValue(1);
@@ -544,6 +547,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
           onLayout={({ nativeEvent: { layout } }) => {
             rowHeight.set(layout.height);
             setMeasuredRowHeight(layout.height);
+            setMeasuredRowWidth(layout.width);
             rowWidth.set(layout.width);
           }}
         >
