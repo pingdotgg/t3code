@@ -32,7 +32,7 @@ threads. The board turns that into one view you can scan.
 3. **Triage without leaving the board.** The usual actions (approve, answer a question,
    send a follow-up, open the PR) work from the board itself.
 4. **Reuse what exists.** Read thread state through `packages/client-runtime`. Add server
-   work only where the board truly needs it (for example, generating summaries).
+   work only where the board truly needs data the client can't get today.
 5. **Performance is a feature.** Many live cards must not mean heavy websocket traffic or
    lots of re-rendering. Follow upstream AGENTS.md and
    `docs/internals/16_performance-regressions.md`.
@@ -48,13 +48,14 @@ filter; lanes set automatically; cards with a short status; a peek panel for tri
 navigation into the full thread.
 
 **Out (for now):** workflow engines or lanes that drive agents (that was #3135's scope);
-creating tasks from the board; manual lane overrides; mobile. Mobile is an open question,
-not a rejection.
+creating tasks from the board; manual lane overrides; LLM-generated summaries; moving into
+upstream's pane system; mobile (ignored for now).
 
 ## UX draft (to iterate on)
 
 The clickable prototype lives at [prototype/index.html](prototype/index.html) (open it in a
-browser; fake data, no build). Its "Prototype" panel toggles the variants that are still open.
+browser; fake data, no build). It is the reference for phase 3; its "Prototype" panel only
+drives the fake live simulation and the theme.
 
 - **Entry point:** a board icon in the sidebar footer, with a Needs-you count.
 - **Board layout:** **full screen**; the sidebar hides while the board is open. Top left, where
@@ -92,10 +93,17 @@ browser; fake data, no build). Its "Prototype" panel toggles the variants that a
 
 ## Open questions
 
-1. Is a state-built grey line enough, or will finished threads need an LLM summary later?
-2. Later, the board could move into upstream's pane system (#28839–#28845, #28845 "tabs in
-   split panes") once that lands.
-3. Mobile: later, or never?
+None right now. Phase 2 will raise data questions; add them here.
+
+## Phases
+
+| # | Phase | Output | Status |
+|---|-------|--------|--------|
+| 0 | Vision and setup | This doc, the fork, the T3 project | done |
+| 1 | UX prototype | Clickable mock with fake threads: lanes, card anatomy, click and Ctrl-click flow | done |
+| 2 | Data spike | Map lanes, cards and the peek to real thread state in client-runtime | next |
+| 3 | Build | Board behind a Labs toggle, in small steps (shell → lanes → cards → peek → live polish) | - |
+| 4 | Upstream (optional) | Ideas discussion upstream with a demo | - |
 
 ## Data the board needs (learned from the prototype, feeds phase 2)
 
@@ -133,7 +141,7 @@ Add new entries at the bottom: date, decision, reason.
   proposing with a demo has the best odds.
 - **2026-11-24** Build on upstream `main`, not on the redesign stack (#28839–#28845).
   Reason: that stack is unmerged, marked DO NOT MERGE, and changes daily. Keep the board
-  self-contained so it can move into the pane system later.
+  self-contained.
 - **2026-11-24** Keep project context in this file plus a pointer at the top of
   `AGENTS.md`, under the fork-only `fork/` folder.
 - **2026-11-24** Prototype the UX with fake data before changing app code.
@@ -160,6 +168,10 @@ Add new entries at the bottom: date, decision, reason.
 - **2026-11-25** Swimlanes with Needs-you cards move to the top; the rest keep sidebar order.
 - **2026-11-25** Snoozed threads leave the board until they wake, then return with "Woke".
   Reason: snooze means "not now", same as upstream's sidebar shelf.
+- **2026-11-25** No LLM summaries; thread state is enough.
+- **2026-11-25** The board will not move into upstream's pane system.
+- **2026-11-25** Mobile is out of scope for now.
+- **2026-11-25** Phase 1 is done; the prototype is the reference for the build.
 
 ## Prior art (upstream, all closed)
 
