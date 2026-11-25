@@ -1924,6 +1924,29 @@ it.layer(
     }),
   );
 
+  it.effect("replays the color and carriage return of an unfinished CSI on attach", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const input = openInput();
+      const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
+      yield* live;
+      const process = ptyAdapter.processes[0]!;
+      process.emitData(`prompt\u001b[31${"\u0000".repeat(4_096)}\r`);
+      yield* live;
+
+      const joining = yield* Stream.toPull(manager.attachOutputStream(input, "joining"));
+      const [event] = yield* joining;
+      if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+      process.emitData("mX");
+      const [output] = yield* joining;
+      if (output?.type !== "output") throw new Error("Expected live terminal output");
+
+      expect((event.snapshot.history + output.data).replaceAll("\u0000", "")).toBe(
+        "prompt\u001b[31\rmX",
+      );
+    }),
+  );
+
   it.effect("preserves large chunked OSC 52 and DCS strings across reopen", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, logsDir } = yield* createManager();
