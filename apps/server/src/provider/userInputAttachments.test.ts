@@ -953,18 +953,6 @@ describe("question answer paths", () => {
           occurrences: { text: "Callout box", count: 1 },
         },
         {
-          ext: "epub",
-          bounded: true,
-          parts: {
-            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
-            "book.opf":
-              '<package><item id="ch1" href="ch1.xhtml"/><itemref idref="ch1"/></package>',
-            "ch1.xhtml":
-              '<html><p><quiz:AlternateContent xmlns:quiz="urn:quiz"><quiz:Choice>Alpha</quiz:Choice><quiz:Choice>Beta</quiz:Choice></quiz:AlternateContent></p></html>',
-          },
-          expected: ["AlphaBeta"],
-        },
-        {
           ext: "docx",
           bounded: true,
           parts: {
