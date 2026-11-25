@@ -31,11 +31,21 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))))(
         queued: "progress\u0007",
         afterClear: "ready\r\n",
       },
+      {
+        part: "exit",
+        publishing: "old output\r\n\u001b]0;Build ",
+        queued: "progress\u0007",
+        afterClear: "ready\r\n",
+        exit: { exitCode: 42, signal: null },
+      },
     ])("keeps visible history correct when the title $part is queued", (row) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const logsDir = yield* fs.makeTempDirectoryScoped();
         const onData = vi.fn<(callback: (data: string) => void) => () => void>(() => () => {});
+        const onExit = vi.fn<
+          (callback: (event: { exitCode: number; signal: number | null }) => void) => () => void
+        >(() => () => {});
         const manager = yield* makeWithOptions({
           logsDir,
           ptyAdapter: {
@@ -46,7 +56,7 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))))(
                 resize: () => {},
                 kill: () => {},
                 onData,
-                onExit: () => () => {},
+                onExit,
               }),
           },
           foregroundProcessGroup: (pid) => Effect.succeed(pid),
@@ -72,13 +82,28 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))))(
           (unsubscribe) =>
             Deferred.succeed(resume, undefined).pipe(Effect.andThen(Effect.sync(unsubscribe))),
         );
+        const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
+        yield* live;
 
         const emitData = onData.mock.calls[0]![0];
         emitData(row.publishing);
         yield* Deferred.await(publishing);
         emitData(row.queued);
+        if (row.exit) onExit.mock.calls[0]![0](row.exit);
         yield* manager.clear(input);
+        const [cleared] = yield* live;
+        expect(cleared?.type).toBe("cleared");
         yield* Deferred.succeed(resume, undefined);
+
+        if (row.exit) {
+          emitData(row.afterClear);
+          const [exited] = yield* live;
+          expect(exited).toMatchObject({ type: "exited", exitCode: row.exit.exitCode });
+          return;
+        }
+        if (row.part === "opener") {
+          expect(cleared).toMatchObject({ pendingControlSequence: row.queued });
+        }
         emitData(row.afterClear);
         yield* Deferred.await(printed);
 

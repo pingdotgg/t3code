@@ -488,6 +488,26 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect(core.snapshot()).toEqual(reference.snapshot());
   });
 
+  it("resumes a split title update after clearing an attached terminal", async () => {
+    const [core, reference] = await Promise.all([createCore(), createCore()]);
+    let state = createSession("old output\r\n");
+    const initial = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    writeTerminalOutputUpdate(core, initial);
+
+    const cleared = {
+      type: "cleared",
+      threadId: "terminal-stream-test",
+      terminalId: "term-1",
+      pendingControlSequence: "\u001b]0;Build ",
+    } as const;
+    state = applyTerminalAttachStreamEvent(state, cleared);
+    state = append(state, "progress\u0007ready\r\n");
+    writeTerminalOutputUpdate(core, readTerminalOutputUpdate(state.output, initial.cursor));
+
+    reference.write("ready\r\n");
+    expect(core.snapshot()).toEqual(reference.snapshot());
+  });
+
   it("drops stale text in real Ghostty for a repeated snapshot, clear, restart, and a fresh attach", async () => {
     const [core, reference] = await Promise.all([createCore(), createCore()]);
     let state = createSession("hello");
