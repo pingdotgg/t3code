@@ -21,9 +21,10 @@ function mount(
   view: ReturnType<typeof viewer>,
   settled = true,
   loadMore: (() => void) | null = null,
+  loaded = 0,
 ) {
   const restore = createCodeViewScrollRestore();
-  restore.update(scopeKey, settled, loadMore);
+  restore.update(scopeKey, settled, loadMore, loaded);
   restore.attach(view);
   return restore;
 }
@@ -65,7 +66,26 @@ describe("createCodeViewScrollRestore", () => {
     expect(shrunk.scrolls).toEqual([]);
     settling.update("thread-c", true, null);
     settling.flush();
-    expect(shrunk.scrolls).toEqual([{ type: "position", position: 1500 }]);
+    // Past the end, Pierre clamps the target to the bottom without subtracting the header.
+    expect(shrunk.scrolls).toEqual([{ type: "position", position: 1532 }]);
+  });
+
+  it("waits for as many batches as were shown when the position was saved", () => {
+    const first = viewer(10_000);
+    mount("pull-request-a", first, true, null, 2).onScroll(300, first.instance);
+
+    // The first batch alone is tall enough, but the second sorts files above it.
+    const again = viewer(10_000);
+    let batches = 0;
+    const loadMore = () => {
+      batches += 1;
+    };
+    const restore = mount("pull-request-a", again, false, loadMore, 1);
+    expect(again.scrolls).toEqual([]);
+    expect(batches).toBe(1);
+    restore.update("pull-request-a", false, loadMore, 2);
+    restore.flush();
+    expect(again.scrolls).toEqual([{ type: "position", position: 332 }]);
   });
 
   it("lets a reader who scrolls while more files load keep their own position", () => {

@@ -1057,6 +1057,8 @@ function PullRequestCodeTab({
     `pull-request:${scopeKey}`,
     loadedSlices.length > 0 && nextCursor === null,
     canLoadNextSlice ? loadNextSlice : null,
+    // Review order moves files as pages arrive, so the offset waits for the pages it was saved on.
+    loadedSlices.length,
   );
   // The viewer moves scrollTop itself while it measures restored rows; saving those moves would
   // drift the offset further on every remount, so only a reader's own scroll is saved.
@@ -1131,6 +1133,7 @@ function PullRequestCodeTab({
   };
 
   const toggleAllFiles = () => {
+    codeViewScroll.cancel();
     const shownTestKeys = annotatedFiles.flatMap((file) =>
       isTestChangedFile(file.path) ? [file.foldKey] : [],
     );

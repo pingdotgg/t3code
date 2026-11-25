@@ -354,7 +354,7 @@ function linkedTab(anchor: PullRequestAnchor | null): PullRequestDetailTab | nul
 // The Summary restores its scroll on remount; a header left expanded would condense over the
 // restored position and its scroll compensation would move the view.
 const summaryCondensedByScopeKey = new Map<string, boolean>();
-// The Code tab restores its scroll on remount too.
+// The Code tab restores its scroll on remount too, per commit.
 const codeCondensedByScopeKey = new Map<string, boolean>();
 
 export function PullRequestDetailPanel({
@@ -558,12 +558,13 @@ export function PullRequestDetailPanel({
       ? pullRequestEnvironment.diff({ environmentId, input: { ...reference } })
       : null,
   );
+  const codeScopeKey = `${tabScopeKey}:${selectedCodeCommitOid ?? ""}`;
   // Each tab restores the condensed state its own scrolling left behind.
   const [condensedByTab, setCondensedByTab] = useState<
     Partial<Record<PullRequestDetailTab, boolean>>
   >(() => ({
     summary: summaryCondensedByScopeKey.get(tabScopeKey) ?? false,
-    code: codeCondensedByScopeKey.get(tabScopeKey) ?? false,
+    code: codeCondensedByScopeKey.get(codeScopeKey) ?? false,
   }));
   const condensed = condensedByTab[tab] ?? false;
   const scrollerByTab = useRef<Partial<Record<PullRequestDetailTab, HTMLElement | null>>>({});
@@ -2149,9 +2150,10 @@ export function PullRequestDetailPanel({
               compensationRef.current = { tab, scroller, target: top - chromeDelta };
               next = true;
             }
+            // Saved on every scroll: picking a commit changes the scope under an unchanged header.
+            if (tab === "code") codeCondensedByScopeKey.set(codeScopeKey, next);
             if (next === previous) return;
             if (tab === "summary") summaryCondensedByScopeKey.set(tabScopeKey, next);
-            if (tab === "code") codeCondensedByScopeKey.set(tabScopeKey, next);
             setCondensedByTab({ ...condensedByTab, [tab]: next });
           }}
         >
