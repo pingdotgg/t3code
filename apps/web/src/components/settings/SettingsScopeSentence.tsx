@@ -1,4 +1,3 @@
-import { useRenderedSettingsPathname } from "./useRenderedSettingsPathname";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { fileDisplayName } from "@t3tools/shared/path";
 import { CheckIcon, ChevronDownIcon, FolderIcon, LayersIcon } from "lucide-react";
@@ -47,6 +46,7 @@ import {
   settingsScopeEnvironmentLabels,
   settingsScopeProjectMachines,
 } from "./settingsScopeAxis";
+import { useRenderedSettingsPathname } from "./useRenderedSettingsPathname";
 
 export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/general",
