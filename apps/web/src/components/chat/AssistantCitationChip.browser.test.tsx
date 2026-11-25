@@ -116,12 +116,28 @@ describe("citation comment source disappearance", () => {
     expect(textarea()).toBeNull();
   });
 
+  it("keeps a draft open and unsaved when the cited row unmounts mid-typing", async () => {
+    using source = setup();
+    const onSave = vi.fn(() => true);
+    await using _screen = await mount(source.sourceAnchor, onSave);
+    await typeComment("if it's a good bug rep");
+    await removeSource();
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(textarea()?.value).toBe("if it's a good bug rep");
+
+    await typeComment("if it's a good bug report");
+    await clickButton("Save");
+    expect(onSave).toHaveBeenCalledExactlyOnceWith("if it's a good bug report");
+  });
+
   it("preserves a rejected save and allows a later retry", async () => {
     using source = setup();
     const onSave = vi.fn(() => false);
     await using _screen = await mount(source.sourceAnchor, onSave);
     await typeComment("keep this draft");
     await removeSource();
+    await clickButton("Save");
 
     expect(onSave).toHaveBeenCalledWith("keep this draft");
     expect(textarea()?.value).toBe("keep this draft");

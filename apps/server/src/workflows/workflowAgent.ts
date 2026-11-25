@@ -506,38 +506,158 @@ export const agent = Object.assign(orPause, {
   ): Effect.Effect<Attempt<A>, never, InRun> => Effect.orDie(attempt(name, options, "return")),
 });
 
+/** A choice that says what picking it does, or that takes an answer only with a reason. */
+// Types, not interfaces, so a question's request and its answer are still JSON.
+export type AskChoice<Value extends string = string> = {
+  readonly value: Value;
+  readonly description?: string;
+  readonly requireReason?: boolean;
+};
+
+/** Something to look at before answering, shown on the question. */
+export type AskLink = {
+  readonly label: string;
+  readonly url: string;
+};
+
+type ChoiceValue<C> = C extends string ? C : C extends AskChoice<infer Value> ? Value : never;
+
+/** What a person answered, and who and when as the server saw it. */
+export type AskAnswer<Choice extends string> = {
+  readonly choice: Choice;
+  readonly reason?: string;
+  /** The name of the client, tool or agent thread that sent the answer. */
+  readonly answeredBy?: string;
+  /** The client session that sent it, for an answer given in the app. */
+  readonly answeredBySession?: string;
+  readonly answeredAt?: string;
+};
+
+const ASK_OPTIONS = ["title", "choices", "kind", "data", "links", "timeout"];
+const ASK_CHOICE_OPTIONS = ["value", "description", "requireReason"];
+const ASK_LINK_OPTIONS = ["label", "url"];
+
+const answeredFields = {
+  answeredBy: Schema.optional(Schema.String),
+  answeredBySession: Schema.optional(Schema.String),
+  answeredAt: Schema.optional(Schema.String),
+};
+const givenReason = Schema.String.check(Schema.isPattern(/\S/));
+
+const readChoice = (name: string, choice: unknown): AskChoice => {
+  if (typeof choice === "string") return { value: choice };
+  if (typeof choice !== "object" || choice === null) {
+    throw new Error(
+      `ask("${name}")'s choices are text or \`{ value, description?, requireReason? }\`.`,
+    );
+  }
+  checkOptions(`ask("${name}")'s choice`, choice, ASK_CHOICE_OPTIONS);
+  const { value, description, requireReason } = choice as Record<string, unknown>;
+  if (
+    typeof value !== "string" ||
+    (description !== undefined && typeof description !== "string") ||
+    (requireReason !== undefined && typeof requireReason !== "boolean")
+  ) {
+    throw new Error(
+      `ask("${name}")'s choice takes \`value\` and \`description\` as text and \`requireReason\` as true or false.`,
+    );
+  }
+  return {
+    value,
+    ...(description === undefined || description.trim() === "" ? {} : { description }),
+    ...(requireReason === true ? { requireReason } : {}),
+  };
+};
+
+const readLink = (name: string, link: unknown): AskLink => {
+  if (typeof link === "object" && link !== null) {
+    checkOptions(`ask("${name}")'s link`, link, ASK_LINK_OPTIONS);
+    const { label, url } = link as Record<string, unknown>;
+    if (typeof label === "string" && label.trim() !== "" && typeof url === "string") {
+      const protocol = URL.parse(url)?.protocol;
+      if (protocol === "https:" || protocol === "http:") return { label, url };
+    }
+  }
+  throw new Error(`ask("${name}")'s links are \`{ label, url }\`, each with an http or https url.`);
+};
+
 /**
- * A question a person answers with one of `choices`; `None` when the timeout passes first. The run
- * holds nothing while it waits. `data` is the same facts as the title, for whatever lays the
- * question out.
+ * A question a person answers with one of `choices`; `None` when the timeout passes first. `data`
+ * is the same facts as the title, for whatever lays the question out. `kind` is one of the
+ * workflow's `asks`, which lists filter by; any other kind is asked the same and listed as Other.
  */
-export const ask = <const Choices extends ReadonlyArray<string>>(
+export const ask = <const Choices extends ReadonlyArray<string | AskChoice>>(
   name: string,
   options: {
     readonly title: string;
     readonly choices: Choices;
+    readonly kind?: string;
     readonly data?: Schema.Json;
+    readonly links?: ReadonlyArray<AskLink>;
     readonly timeout?: Parameters<typeof waitAs>[2]["timeout"];
   },
-): Effect.Effect<
-  Option.Option<{ readonly choice: Choices[number]; readonly reason?: string | undefined }>,
-  never,
-  InRun
-> =>
+): Effect.Effect<Option.Option<AskAnswer<ChoiceValue<Choices[number]>>>, never, InRun> =>
   Effect.suspend(() => {
-    checkOptions(`ask("${name}")`, options, ["title", "choices", "data", "timeout"]);
+    checkOptions(`ask("${name}")`, options, ASK_OPTIONS);
+    const kind = options.kind;
+    if (kind !== undefined && typeof kind !== "string") {
+      throw new Error(
+        `ask("${name}")'s kind is the name of one of the workflow's \`asks\`, as text.`,
+      );
+    }
+    if (options.links !== undefined && !Array.isArray(options.links)) {
+      throw new Error(`ask("${name}")'s links are a list of \`{ label, url }\`.`);
+    }
+    const choices = options.choices.map((choice) => readChoice(name, choice));
+    const links = (options.links ?? []).map((link) => readLink(name, link));
+    const values = choices.map((choice) => choice.value);
+    const needReason = choices.filter((choice) => choice.requireReason).map((c) => c.value);
+    const free = values.filter((value) => !needReason.includes(value));
+    const answer = (picks: ReadonlyArray<string>, reason: Schema.Top) =>
+      Schema.Struct({ choice: Schema.Literals(picks), reason, ...answeredFields });
+    const optionalReason = answer(free, Schema.optional(Schema.String));
+    const requiredReason = answer(needReason, givenReason);
+    const returns =
+      needReason.length === 0
+        ? optionalReason
+        : free.length === 0
+          ? requiredReason
+          : Schema.Union([optionalReason, requiredReason]);
+    const described = choices.filter(
+      (choice) => choice.description !== undefined || choice.requireReason,
+    );
     return Effect.orDie(
       waitAs("ask", name, {
-        returns: Schema.Struct({
-          choice: Schema.Literals(options.choices),
-          reason: Schema.optional(Schema.String),
-        }),
+        returns: returns as unknown as Schema.Codec<AskAnswer<ChoiceValue<Choices[number]>>>,
         timeout: options.timeout,
         request: {
           title: options.title,
-          choices: [...options.choices],
+          // Plain values, so a client that knows no `choiceDetails` still offers every choice.
+          choices: values,
+          ...(described.length === 0 ? {} : { choiceDetails: described }),
+          ...(links.length === 0 ? {} : { links }),
+          ...(kind === undefined ? {} : { kind }),
           ...(options.data === undefined ? {} : { data: options.data }),
         },
       }),
     );
   });
+
+/**
+ * Why `value` does not answer a question asked with `request`, in words that name the choice, or
+ * undefined when nothing in it is missing. The wait's schema refuses it as well, in less plain words.
+ */
+export const answerProblem = (request: unknown, value: unknown): string | undefined => {
+  const field = (from: unknown, key: string): unknown =>
+    typeof from === "object" && from !== null ? (from as Record<string, unknown>)[key] : undefined;
+  const choice = field(value, "choice");
+  const reason = field(value, "reason");
+  const details = field(request, "choiceDetails");
+  if (typeof choice !== "string" || !Array.isArray(details)) return undefined;
+  const needed = details.some(
+    (detail) => field(detail, "value") === choice && field(detail, "requireReason") === true,
+  );
+  return needed && (typeof reason !== "string" || reason.trim() === "")
+    ? `"${choice}" needs a reason. Send one with the answer.`
+    : undefined;
+};

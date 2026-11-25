@@ -20,6 +20,7 @@ vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: null, error: null }),
 }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { workflowsLive } }));
+vi.mock("../../state/session", () => ({ useEnvironmentSessionId: () => null }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: vi.fn() }));
 vi.mock("./WorkflowStepCard", () => ({}));
 vi.mock("./WorkflowsScreen", () => ({}));
