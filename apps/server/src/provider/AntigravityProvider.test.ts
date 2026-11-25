@@ -4,6 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   AntigravitySettings,
+  isProviderWorkspaceSnapshotPending,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
@@ -955,6 +956,24 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           (entry) => entry.cwd === "/workspace",
         )?.skills,
       ).toEqual(rescanned);
+    }),
+  );
+
+  it.effect("a session in an unscanned folder does not publish its skills as scanned", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.initialize;
+      const unscanned = () =>
+        Effect.map(harness.provider.snapshot.getSnapshot, (snapshot) => {
+          const entry = snapshot.workspaceSnapshots?.find((item) => item.cwd === "/workspace");
+          // ProviderRegistry skips the skill scan for a current entry that is not pending.
+          return entry === undefined || isProviderWorkspaceSnapshotPending(entry);
+        });
+
+      yield* harness.provider.onSessionStarted(started, "/workspace");
+      expect(yield* unscanned()).toBe(true);
+      yield* harness.provider.onAvailableCommands(commands, "/workspace");
+      expect(yield* unscanned()).toBe(true);
     }),
   );
 
