@@ -4634,6 +4634,104 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    { checkpoint: "strong", handoff: "command", returnedPrompt: false, discarded: true },
+    { checkpoint: "strong", handoff: "prompt", returnedPrompt: true, discarded: true },
+    { checkpoint: "command", handoff: "prompt", returnedPrompt: false, discarded: false },
+    { checkpoint: "weak", handoff: "prompt", returnedPrompt: false, discarded: false },
+  ] as const)("restores the Pi checkpoint after a session round trip %j", (scenario) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const ref = (nativeId: string, strength: "strong" | "weak" = "strong") => ({
+        driver: PI_PROVIDER,
+        nativeId,
+        strength,
+      });
+      const sessionFile = providerThread.nativeThreadRef!.nativeId!;
+      const forkFile = "/fake/rewound.jsonl";
+      const turn = (
+        ordinal: number,
+        nativeTurnRef: OrchestrationV2ProviderTurn["nativeTurnRef"],
+        file = sessionFile,
+      ): OrchestrationV2ProviderTurn => ({
+        id: ProviderTurnId.make(`turn-${ordinal}`),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make(`node-${ordinal}`),
+        runAttemptId: null,
+        nativeTurnRef,
+        nativeThreadRef: ref(file),
+        ordinal,
+        status: "completed",
+        startedAt: at(ordinal * 50 - 50),
+        completedAt: at(ordinal * 50),
+      });
+      const previous = turn(1, ref("u1"));
+      const target = turn(
+        2,
+        scenario.checkpoint === "strong"
+          ? ref("u2")
+          : scenario.checkpoint === "weak"
+            ? ref("uncaptured", "weak")
+            : null,
+      );
+      const retained =
+        scenario.checkpoint === "command"
+          ? TURN_ONE_ENTRIES
+          : [
+              ...TURN_ONE_ENTRIES,
+              sessionMessage("u2", "a1b", "user", 60),
+              sessionMessage("a2", "u2", "assistant", 80),
+            ];
+      const retainedHead = retained.at(-1)!.id;
+      const entries = [
+        ...retained,
+        ...(scenario.discarded
+          ? [
+              sessionMessage("discarded", retainedHead, "user", 110),
+              sessionMessage("discarded-answer", "discarded", "assistant", 120),
+            ]
+          : []),
+        ...(scenario.returnedPrompt ? [sessionMessage("u5", "discarded-answer", "user", 210)] : []),
+      ];
+      fake.queueEntries({ entries, leafId: entries.at(-1)!.id });
+      fake.queueEntries({ entries: retained, leafId: retainedHead });
+      if (scenario.discarded) fake.queueState({ sessionFile: forkFile });
+      const restored = yield* runtime.rollbackThread({
+        providerThread,
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("checkpoint-1"),
+          appRunOrdinal: target.ordinal,
+          providerTurn: target,
+        },
+        providerThreadTurns: [
+          previous,
+          target,
+          turn(3, scenario.handoff === "prompt" ? ref("u3") : null, "/fake/other.jsonl"),
+          turn(4, null),
+          ...(scenario.returnedPrompt ? [turn(5, ref("u5"))] : []),
+        ],
+      });
+      const requests = fake.allRequests();
+      assert.isFalse(requests.some((request) => request.type === "switch_session"));
+      assert.deepEqual(
+        requests.filter((request) => request.type === "fork").map((request) => request.entryId),
+        scenario.discarded ? ["discarded"] : [],
+      );
+      assert.equal(
+        restored.providerThread.nativeThreadRef?.nativeId,
+        scenario.discarded ? forkFile : sessionFile,
+      );
+      assert.equal(restored.providerThread.nativeConversationHeadRef?.nativeId, retainedHead);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("rolls back a persisted thread on a fresh runtime after its session was released", () =>
     Effect.gen(function* () {
       const previousFake = yield* makeFakePi;
