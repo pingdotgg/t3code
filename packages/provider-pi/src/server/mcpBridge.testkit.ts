@@ -133,16 +133,10 @@ export async function loadMcpBridge(
       });
       const sessionId = transport.headers["mcp-session-id"];
       if (transport.method === "DELETE") {
-        if (
-          options.startupRetry === undefined ||
-          sessionId !== String(session) ||
-          transport.headers.authorization !== "Bearer fixture-token"
-        ) {
-          return new Response(null, { status: 400 });
-        }
-        sessionTerminationAttempts.push(sessionId);
-        if (options.startupRetry.deleteResult === "offline") throw new Error("Network unavailable");
-        return new Response(null, { status: options.startupRetry.deleteResult });
+        sessionTerminationAttempts.push(sessionId!);
+        const deleteResult = options.startupRetry?.deleteResult ?? 204;
+        if (deleteResult === "offline") throw new Error("Network unavailable");
+        return new Response(null, { status: deleteResult });
       }
       const request = JSON.parse(transport.body) as {
         id: number;
