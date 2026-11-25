@@ -30,6 +30,7 @@ import {
   deriveResumableRunId,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
+  isProviderInstanceWarm,
   deriveThreadRuntime,
   formatModelSelectionEffort,
   formatSubagentEffort,
@@ -516,13 +517,43 @@ describe("thread execution presentation", () => {
       lastError: null,
     };
 
-    expect(
-      deriveThreadActivityRun({
-        ...v2Projection,
-        runs: [secondRun],
-        providerSessions: [liveSession],
-      })?.providerStartingLabel,
-    ).toBeUndefined();
+    const providerThreadId = ProviderThreadId.make("provider-thread-live");
+    const firstTurn = {
+      id: ProviderTurnId.make("provider-turn-first"),
+      providerThreadId,
+      nodeId: NodeId.make("node-first"),
+      runAttemptId: RunAttemptId.make("attempt-first-send"),
+      nativeTurnRef: null,
+      ordinal: 1,
+      status: "completed" as const,
+      startedAt: now,
+      completedAt: now,
+    };
+    const firstSendDone = {
+      ...v2Projection,
+      runs: [{ ...run("run-first-send", 1, "completed"), completedAt: now }],
+      providerThreads: [{ id: providerThreadId, providerSessionId: liveSession.id } as never],
+      providerTurns: [firstTurn],
+      providerSessions: [liveSession],
+    };
+    const secondSend = { ...firstSendDone, runs: [...firstSendDone.runs, secondRun] };
+
+    expect(deriveThreadActivityRun(secondSend)?.providerStartingLabel).toBeUndefined();
+    // Before the server has the second run, the send reads the same session.
+    expect(isProviderInstanceWarm(firstSendDone, secondRun.providerInstanceId)).toBe(true);
+
+    // A ready session that has not run this thread's turns yet is still launching its process.
+    const firstSend = { ...v2Projection, runs: [secondRun], providerSessions: [liveSession] };
+    expect(deriveThreadActivityRun(firstSend)?.providerStartingLabel).toBe("Starting Claude");
+    expect(isProviderInstanceWarm(v2Projection, secondRun.providerInstanceId)).toBe(false);
+
+    // An adapter relaunching its exited process in the same session reports the launch.
+    const relaunching = {
+      ...secondSend,
+      providerSessions: [{ ...liveSession, startupPhase: "launch" }],
+    };
+    expect(deriveThreadActivityRun(relaunching)?.providerStartingLabel).toBe("Starting Claude");
+    expect(isProviderInstanceWarm(relaunching, secondRun.providerInstanceId)).toBe(false);
   });
 
   it("presents a held queue as the stopped run instead of queued work", () => {

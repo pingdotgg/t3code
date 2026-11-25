@@ -5978,14 +5978,15 @@ describe("AcpAdapterV2", () => {
       );
       assert.equal(runtimeOrdinalSeen, 2);
       assert.lengthOf(runtimeInputs, 2);
-      // Loading the thread into the replacement agent is reported, and cleared before the turn runs.
+      // Launching the replacement agent and loading the thread into it are reported, and cleared
+      // before the turn runs.
       assert.deepEqual(
         Array.from(startup, (event) =>
           event.type === "provider_session.updated"
             ? (event.providerSession.startupPhase ?? null)
             : "turn running",
-        ).slice(0, 3),
-        ["resume", null, "turn running"],
+        ).slice(0, 4),
+        ["launch", "resume", null, "turn running"],
       );
     }).pipe(Effect.provide(layerTest)),
   );

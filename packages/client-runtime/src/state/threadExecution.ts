@@ -173,6 +173,35 @@ function startupPhaseFor(
     : undefined;
 }
 
+// A live session that already ran this thread's turns keeps its process up between sends; an
+// adapter that has to launch one again reports a startup phase while it does.
+function providerSessionIsWarm(
+  projection: ThreadStructure,
+  session: OrchestrationV2ProviderSession | undefined,
+) {
+  return (
+    session !== undefined &&
+    LIVE_PROVIDER_SESSION_STATUSES.has(session.status) &&
+    startupPhaseFor(projection, session) === undefined &&
+    projection.providerTurns.some((turn) =>
+      projection.providerThreads.some(
+        (thread) => thread.id === turn.providerThreadId && thread.providerSessionId === session.id,
+      ),
+    )
+  );
+}
+
+/** Whether a send to this provider instance reaches a process that is already running. */
+export function isProviderInstanceWarm(
+  projection: ThreadStructure,
+  instanceId: ProviderInstanceId,
+) {
+  return providerSessionIsWarm(
+    projection,
+    projection.providerSessions.findLast((session) => session.providerInstanceId === instanceId),
+  );
+}
+
 function providerStarting(
   run: OrchestrationV2ThreadProjection["runs"][number],
   session: OrchestrationV2ProviderSession | undefined,
@@ -218,13 +247,11 @@ function summarizeThreadRun(
         (message) => message.runId === run.id && message.role === "assistant",
       )?.id ?? null,
     // A run counts as running before its provider opens; until a turn appears, a provider
-    // without a live session can still be launching for minutes. Some providers keep
+    // that is not already warm can still be launching for minutes. Some providers keep
     // preparing after their turn opens and report that step until the first output.
     ...(turnStatus === undefined
       ? PROVIDER_STARTING_RUN_STATUSES.has(run.status) &&
-        (phase !== undefined ||
-          session === undefined ||
-          !LIVE_PROVIDER_SESSION_STATUSES.has(session.status))
+        !providerSessionIsWarm(projection, session)
         ? providerStarting(run, session, phase, providers)
         : {}
       : turnStatus === "pending" || turnStatus === "running"

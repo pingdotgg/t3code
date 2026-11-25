@@ -98,6 +98,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveLatestThreadRun,
+  isProviderInstanceWarm,
   presentProviderStarting,
   deriveThreadStructureRuntime,
   limitRecoveryOwnsSnooze,
@@ -1601,13 +1602,15 @@ export default function ChatView(props: ChatViewProps) {
   const activeWorkStartedAt =
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
-  // Until the server has the run, a send shows the provider it is starting, not the thinking brain.
+  // Until the server has the run, a send to a provider that is not warm shows it starting, not the thinking brain.
   const providerStartingRun =
     activeActivityRun?.providerStartingLabelMsg !== undefined
       ? activeActivityRun
       : isSendBusy &&
           selectedProviderEntry !== undefined &&
-          (activeActivityRun === null || !ACTIVE_RUN_STATUSES.has(activeActivityRun.status))
+          (activeActivityRun === null || !ACTIVE_RUN_STATUSES.has(activeActivityRun.status)) &&
+          (serverProjection === null ||
+            !isProviderInstanceWarm(serverProjection, selectedProviderEntry.instanceId))
         ? presentProviderStarting({
             instanceId: selectedProviderEntry.instanceId,
             driver: selectedProviderEntry.driverKind,

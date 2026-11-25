@@ -1856,13 +1856,13 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
       );
 
       assert.deepStrictEqual(log, [`enter ${instanceId}`, "open query", "exit"]);
-      // The step reported while the process opens is cleared before the turn runs.
+      // The steps reported while the process opens are cleared before the turn runs.
       const startup = yield* runtime.events.pipe(
         Stream.filter(
           (event) =>
             event.type === "provider_session.updated" || event.type === "provider_turn.updated",
         ),
-        Stream.take(3),
+        Stream.take(4),
         Stream.runCollect,
       );
       assert.deepStrictEqual(
@@ -1873,7 +1873,7 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
               ? event.providerTurn.status
               : null,
         ),
-        ["mcp", null, "running"],
+        ["launch", "mcp", null, "running"],
       );
     }).pipe(
       Effect.provide(
@@ -4612,7 +4612,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.offerAndWait(status("00000000-0000-4000-8000-000000000903"));
       yield* harness.offerAndWait(turnOneResult);
       yield* Queue.take(harness.terminalReceipts);
-      assert.deepEqual(phases(), ["connecting", null]);
+      assert.deepEqual(phases(), ["launch", null, "connecting", null]);
       // The next turn reuses the running process, so its request is not startup either.
       yield* harness.runtime.startTurn(turn(2));
       yield* harness.offerAndWait(status("00000000-0000-4000-8000-000000000904"));
@@ -4621,7 +4621,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       yield* Queue.take(harness.terminalReceipts);
       assert.equal(harness.processQueues.length, 1);
-      assert.deepEqual(phases(), ["connecting", null]);
+      assert.deepEqual(phases(), ["launch", null, "connecting", null]);
       yield* harness.runtime.interruptTurn({
         providerThread: latest(),
         providerTurnId: lastProviderTurn(harness.events).id,
@@ -4643,7 +4643,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000908", result: "Three." }),
       );
       yield* Queue.take(harness.terminalReceipts);
-      assert.deepEqual(phases(), ["connecting", null, "connecting", null]);
+      assert.deepEqual(phases(), [
+        "launch",
+        null,
+        "connecting",
+        null,
+        "launch",
+        null,
+        "connecting",
+        null,
+      ]);
     }).pipe(
       Effect.scoped,
       Effect.provide(

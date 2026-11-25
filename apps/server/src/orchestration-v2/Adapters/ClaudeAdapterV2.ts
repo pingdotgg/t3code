@@ -13751,8 +13751,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
             .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd));
-          // Read right before opening so an update during startup counts too.
-          const openQueryRuntime = readProgram.pipe(
+          // Read right before opening so an update during startup counts too. The session stays
+          // ready while no CLI runs, so the launch phase is what tells clients one is booting.
+          const openQueryRuntime = reportStartupPhase("launch").pipe(
+            Effect.andThen(readProgram),
             Effect.flatMap((program) =>
               queryRunner
                 .open({
@@ -13760,13 +13762,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   providerSessionId: input.providerSessionId,
                   options: queryOptions,
                   ...(turnInput.resume ? { resume: true } : {}),
-                  onStartupPhase: reportStartupPhase,
+                  onStartupPhase: (phase) => reportStartupPhase(phase ?? "launch"),
                 })
-                .pipe(
-                  Effect.map((querySession) => ({ program, querySession })),
-                  Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
-                ),
+                .pipe(Effect.map((querySession) => ({ program, querySession }))),
             ),
+            Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
           );
           // The SDK spawns the CLI when a query opens, so only the open waits for a provider update.
           const { program, querySession } = yield* (
