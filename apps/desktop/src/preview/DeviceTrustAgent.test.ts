@@ -44,6 +44,8 @@ it("consumes only a bridge URL issued for the exact authentication origin and me
       headers: new Headers({ Origin: auth, "Content-Type": "text/plain;charset=UTF-8" }),
     }),
   );
+  const forwarded = fetchHelper.mock.calls[0]?.[1];
+  expect(await new Response(forwarded?.body).text()).toBe("fixture");
 });
 
 describe("only recognizes the agent's own requests from the authentication page", () => {
