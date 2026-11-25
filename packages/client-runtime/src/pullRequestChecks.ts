@@ -15,7 +15,7 @@ export function resolvePullRequestDetailChecks(
   const workflowApprovalsRequired =
     checks.workflowApprovalsRequired ??
     (detail.workflowApprovalsRequired !== undefined &&
-    !checks.checks.some((check) => check.status === "action-required" && !check.placeholder)
+    !checks.checks.some((check) => check.status === "action-required")
       ? 0
       : detail.workflowApprovalsRequired);
   return {

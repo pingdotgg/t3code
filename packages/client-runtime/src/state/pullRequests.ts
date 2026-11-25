@@ -1398,11 +1398,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             Option.getOrUndefined(loadedValue<PullRequestChecks | null>(registry, query)) === null
           )
             return;
-          const pending = actionReplyPatches
-            .get(pullRequestHostAnswer(query))
-            ?.pendingRead(registry);
-          if (pending !== undefined && readsBeforeSend?.has(pending)) registry.refresh(query);
-          // Keep the approval pending until the checks reader can replace the old button.
+          // A pending read may have started before GitHub applied the approval.
+          if (registry.get(query).waiting) registry.refresh(query);
           yield* awaitAtomResult(registry, query, { refresh: true }).pipe(Effect.ignore);
         }),
         scheduler: commandScheduler,

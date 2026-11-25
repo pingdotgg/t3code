@@ -1190,13 +1190,16 @@ it.effect("waits for a fresh check status before clearing a workflow approval", 
     const afterApproval = yield* Deferred.make<void>();
     const checksStarted = yield* Deferred.make<void>();
     const staleReadStarted = yield* Deferred.make<void>();
+    const approvalStarted = yield* Deferred.make<void>();
+    const commitApproval = yield* Deferred.make<void>();
     let reads = 0;
     let approved = false;
     const client = actionReplyClient({
       [WS_METHODS.pullRequestsRunAction]: () =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
+          yield* Deferred.succeed(approvalStarted, undefined);
+          yield* Deferred.await(commitApproval);
           approved = true;
-          return undefined;
         }),
       [WS_METHODS.pullRequestsChecks]: () =>
         Effect.gen(function* () {
@@ -1215,12 +1218,13 @@ it.effect("waits for a fresh check status before clearing a workflow approval", 
     const checks = atoms.checks(target);
     yield* AtomRegistry.mount(registry, checks);
     yield* AtomRegistry.getResult(registry, checks);
-    registry.refresh(checks);
-    yield* Deferred.await(staleReadStarted);
-
     const action = yield* atoms.runAction
       .run(registry, { ...target, input: { ...actionReference, action: "approve-workflows" } })
       .pipe(Effect.forkChild);
+    yield* Deferred.await(approvalStarted);
+    registry.refresh(checks);
+    yield* Deferred.await(staleReadStarted);
+    yield* Deferred.succeed(commitApproval, undefined);
     yield* Effect.raceFirst(
       Deferred.await(checksStarted),
       Fiber.join(action).pipe(

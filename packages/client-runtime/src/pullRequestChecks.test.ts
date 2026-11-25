@@ -54,6 +54,16 @@ describe("resolvePullRequestDetailChecks", () => {
       resolvePullRequestDetailChecks(cached, { state: checks.state, checks: checks.checks }, true)
         ?.workflowApprovalsRequired,
     ).toBe(0);
+    expect(
+      resolvePullRequestDetailChecks(
+        cached,
+        {
+          state: checks.state,
+          checks: [{ ...pending, status: "action-required", placeholder: true }],
+        },
+        true,
+      )?.workflowApprovalsRequired,
+    ).toBe(1);
     const refreshed = detail({ observedAt: 3_000, checks: [pending] });
     expect(resolvePullRequestDetailChecks(refreshed, checks, true)).toBe(refreshed);
   });
