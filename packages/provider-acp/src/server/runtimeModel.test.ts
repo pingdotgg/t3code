@@ -545,6 +545,66 @@ describe("AcpRuntimeModel", () => {
     });
   });
 
+  it("names the file an edit permission request asks to change", () => {
+    const request = parsePermissionRequest({
+      sessionId: "session-1",
+      options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Edit file",
+        kind: "edit",
+        status: "pending",
+        locations: [{ path: "/workspace/src/notes.md" }],
+      },
+    });
+
+    expect(request.detail).toContain("notes.md");
+  });
+
+  it("names the file a Kiro write permission request asks to change from its tracked call", () => {
+    const request = withTrackedPermissionToolCall(
+      {
+        sessionId: "session-1",
+        options: [{ optionId: "allow-once", name: "Allow", kind: "allow_once" }],
+        toolCall: { toolCallId: "tool-1", status: "pending", title: "Write File" },
+      },
+      {
+        toolCallId: "tool-1",
+        kind: "edit",
+        data: {
+          toolCallId: "tool-1",
+          title: "Write File",
+          kind: "edit",
+          locations: [{ path: "/workspace/kiro-permission-probe.txt" }],
+        },
+      },
+    );
+
+    expect(parsePermissionRequest(request)).toMatchObject({
+      kind: "edit",
+      detail: expect.stringContaining("kiro-permission-probe.txt"),
+    });
+  });
+
+  it("names the command an execute permission request asks to run", () => {
+    expect(
+      parsePermissionRequest({
+        sessionId: "session-1",
+        options: [],
+        toolCall: { toolCallId: "tool-1", title: "npm test", kind: "execute", status: "pending" },
+      }).detail,
+    ).toBe("npm test");
+    expect(
+      parsePermissionRequest({
+        sessionId: "session-1",
+        title: "Run tests",
+        subject: { type: "command", command: "npm test", cwd: "/workspace" },
+        options: [],
+        toolCall: { toolCallId: "tool-1", title: "Run tests", kind: "execute" },
+      }).detail,
+    ).toBe("npm test");
+  });
+
   it("keeps an explicit permission request kind over the tracked tool call's kind", () => {
     const request = withTrackedPermissionToolCall(
       {

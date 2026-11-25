@@ -4,6 +4,8 @@ import type { KiroSettings } from "../settings.ts";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpErrors from "effect-acp/errors";
@@ -123,6 +125,33 @@ export function kiroPermissionDisposition(
     (option) => option.kind === "allow_once" && option.optionId.trim().length > 0,
   );
   return disposition === "allow" && !offersOnce ? "ask" : disposition;
+}
+
+const decodeKiroReviewFiles = Schema.decodeUnknownOption(
+  Schema.Struct({
+    kiro: Schema.Struct({ files: Schema.Array(Schema.Struct({ path: Schema.String })) }),
+  }),
+);
+
+/**
+ * Kiro's end-of-turn "Review changes" request names its files only in
+ * `_meta.kiro.files`; they become the request's ACP `locations`, and the
+ * request, which accepts those edits, takes the `edit` kind.
+ */
+export function kiroNormalizePermissionRequest(
+  request: EffectAcpSchema.RequestPermissionRequest,
+): EffectAcpSchema.RequestPermissionRequest {
+  if (request.toolCall.locations != null) return request;
+  const files = Option.getOrUndefined(decodeKiroReviewFiles(request._meta))?.kiro.files;
+  if (files === undefined || files.length === 0) return request;
+  return {
+    ...request,
+    toolCall: {
+      ...request.toolCall,
+      kind: request.toolCall.kind ?? "edit",
+      locations: files.map(({ path }) => ({ path })),
+    },
+  };
 }
 
 export interface KiroAcpRuntimeInput extends Omit<
