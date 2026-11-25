@@ -119,22 +119,13 @@ const noSpawn = ChildProcessSpawner.make(() =>
 );
 
 function stdoutSpawner(
-  onSpawn: (
-    command: string,
-    args: ReadonlyArray<string>,
-    options: { readonly env: Record<string, unknown> },
-  ) => string,
+  onSpawn: (command: string, args: ReadonlyArray<string>) => string,
   exitCodeOf: (args: ReadonlyArray<string>) => number = () => 0,
 ) {
   return ChildProcessSpawner.make((command) => {
-    const {
-      command: executable,
-      args,
-      options: spawnOptions,
-    } = command as unknown as {
+    const { command: executable, args } = command as unknown as {
       readonly command: string;
       readonly args: ReadonlyArray<string>;
-      readonly options: { readonly env: Record<string, unknown> };
     };
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
@@ -144,7 +135,7 @@ function stdoutSpawner(
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
         stdin: Sink.drain,
-        stdout: Stream.encodeText(Stream.make(onSpawn(executable, args, spawnOptions))),
+        stdout: Stream.encodeText(Stream.make(onSpawn(executable, args))),
         stderr: Stream.empty,
         all: Stream.empty,
         getInputFd: () => Sink.drain,
@@ -591,7 +582,7 @@ it.layer(
   );
 
   it.effect.skipIf(windowsHost)(
-    "keeps a killed npm view's partial packument out of the user's npm cache",
+    "removes the partial packument an interrupted npm view leaves in the npm cache",
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-npm-view-cache");
@@ -602,48 +593,52 @@ it.layer(
         writeExecutable(NodePath.join(npmBinDir, "npm"));
         const binaryPath = NodePath.join(tempDir, ".local/bin/native-package-tool");
         writeExecutable(binaryPath);
-        const cacheDirs: string[] = [];
+        const cacheTmpDir = NodePath.join(tempDir, "npm-cache", "_cacache", "tmp");
+        NodeFS.mkdirSync(cacheTmpDir, { recursive: true });
+        const otherRunEntry = NodePath.join(cacheTmpDir, "other-npm-run");
+        NodeFS.writeFileSync(otherRunEntry, "");
+        NodeFS.utimesSync(otherRunEntry, new Date(0), new Date(0));
+        const partialPackument = NodePath.join(cacheTmpDir, "partial-packument");
+        const viewStarted = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make((command) => {
+          const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+          const isView = args[0] === "view";
+          if (isView) {
+            NodeFS.writeFileSync(partialPackument, '{"name":"@example/native-package-tool"');
+          }
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: isView ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              isRunning: Effect.succeed(isView),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: isView
+                ? Stream.fromEffect(Deferred.succeed(viewStarted, undefined)).pipe(
+                    Stream.flatMap(() => Stream.never),
+                  )
+                : Stream.encodeText(Stream.make(`${NodePath.join(tempDir, "npm-cache")}\n`)),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
+        });
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           nativePackageToolUpdate,
           { binaryPath, env: { PATH: "" } },
         ).pipe(
           Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
-          Effect.provideService(
-            ChildProcessSpawner.ChildProcessSpawner,
-            // The partial packument a killed `npm view` leaves behind in its cache.
-            stdoutSpawner((_command, _args, options) => {
-              const cacheDir = options.env?.npm_config_cache;
-              if (typeof cacheDir !== "string") return '"1.2.0"';
-              cacheDirs.push(cacheDir);
-              NodeFS.mkdirSync(NodePath.join(cacheDir, "_cacache", "tmp"), { recursive: true });
-              NodeFS.writeFileSync(
-                NodePath.join(cacheDir, "_cacache", "tmp", "partial-packument"),
-                '{"name":"@example/native-package-tool"',
-              );
-              return '"1.2.0"';
-            }),
-          ),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
-        expect(capabilities.lookupLatestVersion).toBeDefined();
-        const work = Effect.gen(function* () {
-          expect(yield* resolveLatestProviderVersion(capabilities)).toBe("1.2.0");
-        });
-        yield* work.pipe(
-          Effect.provideServiceEffect(
-            ProviderLatestVersions.ProviderLatestVersions,
-            ProviderLatestVersions.make([]),
-          ),
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make(() =>
-              Effect.die("the npm view answer must not fall back to the registry"),
-            ),
-          ),
-        );
-        expect(cacheDirs).toHaveLength(1);
-        expect(NodeFS.existsSync(cacheDirs[0]!)).toBe(false);
+        const fiber = yield* Effect.forkChild(capabilities.lookupLatestVersion!);
+        yield* Deferred.await(viewStarted);
+        yield* Fiber.interrupt(fiber);
+        expect(NodeFS.existsSync(partialPackument)).toBe(false);
+        expect(NodeFS.existsSync(otherRunEntry)).toBe(true);
       }),
-    { skip: !symlinksSupported },
   );
 
   it.effect.skipIf(!symlinksSupported || windowsHost)(

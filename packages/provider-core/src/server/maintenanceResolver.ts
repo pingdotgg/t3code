@@ -1310,6 +1310,29 @@ function environmentCacheKey(env: NodeJS.ProcessEnv): string {
     .digest("hex");
 }
 
+// `npm view` downloads the whole packument into the cache's tmp directory before answering; a
+// killed npm leaves it there. Entries older than the probe belong to other npm runs and stay.
+const NPM_CACHE_TMP_MTIME_SLACK_MS = 2_000;
+const removeNpmCacheTmpSince = Effect.fn("removeNpmCacheTmpSince")(function* (
+  npmPath: string,
+  env: NodeJS.ProcessEnv,
+  startedAt: number,
+) {
+  const cacheDir = (yield* runProbe(npmPath, ["config", "get", "cache"], env))?.trim();
+  if (!cacheDir) return;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tmpDir = path.join(cacheDir, "_cacache", "tmp");
+  for (const entry of yield* fileSystem.readDirectory(tmpDir)) {
+    const entryPath = path.join(tmpDir, entry);
+    const info = yield* fileSystem.stat(entryPath);
+    const modifiedAt = Option.getOrUndefined(info.mtime)?.getTime() ?? 0;
+    if (modifiedAt >= startedAt - NPM_CACHE_TMP_MTIME_SLACK_MS) {
+      yield* fileSystem.remove(entryPath, { recursive: true, force: true });
+    }
+  }
+}, Effect.ignore);
+
 const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup")(function* (
   capabilities: ProviderMaintenanceCapabilities,
 ) {
@@ -1321,26 +1344,16 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
   const npmPath = yield* resolveCommandPath("npm", { env });
   if (!npmPath) return capabilities;
   const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
-  const lookup = Effect.gen(function* () {
-    // A killed `npm view` leaves its partial packument in the cache's tmp directory, so the probe
-    // gets a throwaway cache, removed after `runProbe` has killed the child.
-    const fileSystem = yield* FileSystem.FileSystem;
-    const cacheDir = yield* Effect.acquireRelease(
-      fileSystem.makeTempDirectory({ prefix: "t3-npm-view-" }),
-      (directory) => Effect.ignore(fileSystem.remove(directory, { recursive: true, force: true })),
-    ).pipe(Effect.option);
-    return yield* runProbe(
+  const lookup = Effect.suspend(() => {
+    const startedAt = Date.now();
+    return runProbe(
       npmPath,
       ["view", "--global", "--json", `${packageName}@latest`, "version"],
-      Option.match(cacheDir, {
-        onNone: () => env,
-        onSome: (npm_config_cache) => ({ ...env, npm_config_cache }),
-      }),
+      env,
       [0],
       NPM_REGISTRY_PROBE_TIMEOUT,
-    );
+    ).pipe(Effect.onInterrupt(() => removeNpmCacheTmpSince(npmPath, env, startedAt)));
   }).pipe(
-    Effect.scoped,
     Effect.map((stdout) => {
       const value = stdout ? Option.getOrNull(decodeNpmViewVersion(stdout.trim())) : null;
       return nonEmptyString(typeof value === "string" ? value : value?.[0]);
