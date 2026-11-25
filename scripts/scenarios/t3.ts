@@ -188,10 +188,13 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
       "user.email=scenario@example.invalid",
       "-c",
       "commit.gpgsign=false",
+      // A path with no hooks in it: `--no-verify` still runs prepare-commit-msg.
+      "-c",
+      "core.hooksPath=/dev/null",
     ];
     yield* git(["init", "--quiet", "--initial-branch=main"]);
     yield* git(["add", "--all"]);
-    yield* git([...author, "commit", "--quiet", "--no-verify", "--message", "Initial commit"]);
+    yield* git([...author, "commit", "--quiet", "--message", "Initial commit"]);
     const created = yield* mutate({
       type: "project.create",
       commandId: CommandId.make(yield* uuid),

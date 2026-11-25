@@ -34,12 +34,18 @@ test("A sent message keeps its leading spaces", WEB, async ({ t3, app, screen })
   const project = await t3.project("demo");
   const thread = await t3.thread({ project, title: "Outline", messages: ["Start"] });
   await t3.open(thread);
-  await expect(screen.getByRole("textbox")).toBeVisible();
+  await screen.getByRole("textbox").waitFor();
 });
 ```
 
-End the seed with an `expect` on something the loaded screen shows, so the next
-step starts after the app has rendered.
+End the seed with a `waitFor()` on something the loaded screen shows, so the
+next step starts after the app has rendered. Keep `expect` for the behavior the
+bug breaks.
+
+An iOS scenario imports `IOS` and `test` from `t3-mobile.ts` and runs on
+`ios` wherever the steps below say `web`. That target leases a Simlock
+simulator, so it needs `SIMLOCK_AGENT_DEVICE_URL` and
+`AGENT_DEVICE_DAEMON_AUTH_TOKEN`. Without them, say the device proof is missing.
 
 ## 2. Walk the flow
 
@@ -75,14 +81,16 @@ Commit the fix first: `scenarios:prove` runs commits, not your working tree.
 The scenario file itself is read from this checkout, committed or not.
 
 ```sh
-vp run scenarios:prove scripts/scenarios/<name>.e2e.ts --base origin/main
+vp run scenarios:prove scripts/scenarios/<name>.e2e.ts --base origin/main --upload-command "ghdrop upload"
 ```
 
 - Exit `0` is a proof. `1` did not prove, `2` the app did not start, `3` the
   scenario stopped before its assertion.
 - Look at both captures in `scripts/.e2e/prove/` before you claim anything.
+- `--upload-command` takes any command that prints one URL per capture path.
+  Without one, the images in `proof.md` are local paths that do not load on
+  GitHub: upload them to the PR by hand, or say the captures are not attached.
 - Paste `scripts/.e2e/prove/proof.md` into the PR's Verification section as it
-  is. Its images are local paths unless you pass `--upload-command`, which
-  takes any command that prints one URL per capture path.
+  is, once its images are URLs.
 - When it cannot run, say which exit code and why. Do not describe a proof you
   did not get.
