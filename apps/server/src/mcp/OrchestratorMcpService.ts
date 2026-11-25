@@ -1761,26 +1761,33 @@ const make = Effect.gen(function* () {
         `No provider instance is mapped for ${vendor}.`,
       );
     }
+    const usesProfileInstance = input.profile.providerInstanceId !== undefined;
+    const instanceFailureCode = usesProfileInstance ? "invalid_request" : "provider_unavailable";
     const resolve = Effect.fnUntraced(function* (providers: ReadonlyArray<ServerProvider>) {
       const provider = providers.find((candidate) => candidate.instanceId === instanceId);
       if (provider === undefined) {
         return yield* failure(
-          "provider_unavailable",
+          instanceFailureCode,
           `Provider instance ${instanceId} is not registered.`,
         );
       }
       if (provider.driver !== driver) {
         return yield* failure(
-          "provider_unavailable",
-          `The ${vendor} route maps to provider ${instanceId} with driver ${provider.driver}; it requires ${driver}.`,
+          instanceFailureCode,
+          usesProfileInstance
+            ? `The delegation profile selects provider ${instanceId} with driver ${provider.driver}; the ${vendor} model requires ${driver}.`
+            : `The ${vendor} route maps to provider ${instanceId} with driver ${provider.driver}; it requires ${driver}.`,
         );
+      }
+      if (usesProfileInstance && !provider.enabled && isProviderAvailable(provider)) {
+        return yield* failure("invalid_request", `Provider instance ${instanceId} is disabled.`);
       }
       if (
         input.projectId !== undefined &&
         !resolveProjectProviderInstanceEnabled(input.settings, input.projectId, instanceId)
       ) {
         return yield* failure(
-          "provider_unavailable",
+          instanceFailureCode,
           `Provider instance ${instanceId} is disabled for this project.`,
         );
       }
@@ -3169,6 +3176,7 @@ const make = Effect.gen(function* () {
                   const route = yield* resolveDelegationRoute(
                     settings.delegation.providerByVendor,
                     profile.model,
+                    profile.providerInstanceId,
                   );
                   const constraint = yield* preflightProfile({
                     route,
@@ -3422,6 +3430,7 @@ const make = Effect.gen(function* () {
             route: yield* resolveDelegationRoute(
               profiled.settings.delegation.providerByVendor,
               input.target?.model ?? profiled.profile.model,
+              profiled.profile.providerInstanceId,
             ),
             profile: profiled.profile,
             providers,

@@ -3,6 +3,7 @@ import {
   type DelegationSettings,
   type ModelSelection,
   OrchestratorMcpFailure,
+  type ProviderInstanceId,
   type SelectProviderOptionDescriptor,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -44,6 +45,7 @@ export function antigravitySuffixedModel(provider: ServerProvider, model: string
 export function resolveDelegationRoute(
   providerByVendor: DelegationSettings["providerByVendor"],
   model: string,
+  providerInstanceId?: ProviderInstanceId,
 ) {
   const reference = parseModelReference(model);
   if (reference._tag === "None") {
@@ -59,7 +61,7 @@ export function resolveDelegationRoute(
     vendor,
     model: nativeModel,
     driver: driverByVendor[vendor],
-    instanceId: providerByVendor[vendor] ?? null,
+    instanceId: providerInstanceId ?? providerByVendor[vendor] ?? null,
   });
 }
 

@@ -212,27 +212,27 @@ const layerUnusedScheduledTaskStub = Layer.succeed(
 );
 
 describe("orchestrator MCP toolkit", () => {
-  it.effect("delegates a local Google profile and replays its receipt after removal", () =>
+  it.effect("delegates to the profile's Pi instance and replays its receipt after removal", () =>
     Effect.gen(function* () {
       const cwd = "/repo/attached-caller-worktree";
-      const agy = ProviderInstanceId.make("agy-profile-test");
-      const model = "gemini-test";
+      const pi = ProviderInstanceId.make("pi");
+      const reviewer = ProviderInstanceId.make("pi-reviewer");
+      const piDriver = ProviderDriverKind.make("pi");
+      const model = "amazon-bedrock/openai-review-model";
       const providers = [
         makeProviderSnapshot({
           instanceId: codexInstanceId,
           driver: ProviderDriverKind.make("codex"),
           model: codexModel,
         }),
-        makeProviderSnapshot({
-          instanceId: agy,
-          driver: ProviderDriverKind.make("antigravity"),
-          model,
-        }),
+        makeProviderSnapshot({ instanceId: pi, driver: piDriver, model }),
+        makeProviderSnapshot({ instanceId: reviewer, driver: piDriver, model }),
       ];
       const registry = ProviderAdapterRegistry.layerFromAdapters(
         providers.map(({ instanceId, driver }) => ({
           instanceId,
           driver,
+          supportsSkillDenyList: driver === piDriver,
           getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
           planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
           openSession: () =>
@@ -246,12 +246,16 @@ describe("orchestrator MCP toolkit", () => {
         { databaseLayer: database, runEffectWorker: false },
       );
       const settingsLayer = ServerSettings.layerTest({
-        providerInstances: { [agy]: { driver: "antigravity", enabled: true } },
+        providerInstances: {
+          [pi]: { driver: "pi", enabled: true },
+          [reviewer]: { driver: "pi", enabled: true },
+        },
         delegation: {
-          providerByVendor: { google: agy },
+          providerByVendor: { openai: pi },
           profiles: {
             reviewer: {
-              model: `google:${model}`,
+              model: `openai:${model}`,
+              providerInstanceId: reviewer,
               checkout: "shared",
               deniedSkills: ["private:skill"],
             },
@@ -335,13 +339,13 @@ describe("orchestrator MCP toolkit", () => {
         expect(capabilities.profiles).toEqual([
           {
             name: "reviewer",
-            model: `google:${model}`,
-            providerInstanceId: agy,
+            model: `openai:${model}`,
+            providerInstanceId: reviewer,
             checkout: "shared",
             options: {},
             deniedSkillCount: 1,
             canRunChildTask: true,
-            constraints: ["skill limits not applied on Antigravity"],
+            constraints: [],
           },
         ]);
         const linkedCall = yield* invoke(
@@ -361,7 +365,9 @@ describe("orchestrator MCP toolkit", () => {
         const linked = yield* decodeCapabilitiesResult(linkedCall.structuredContent);
         expect(linked.profiles).toBeUndefined();
         expect(linked.providerByVendor).toBeUndefined();
-        expect(linked.providers.map(({ providerInstanceId }) => providerInstanceId)).toContain(agy);
+        expect(linked.providers.map(({ providerInstanceId }) => providerInstanceId)).toContain(
+          reviewer,
+        );
 
         const contradictory = yield* invoke("delegate_task", {
           task: delegatedPrompt,
@@ -382,16 +388,17 @@ describe("orchestrator MCP toolkit", () => {
         const start = yield* invoke("delegate_task", request);
         const started = yield* decodeDelegateTaskResult(start.structuredContent);
         expect(started).toMatchObject({
-          providerInstanceId: agy,
+          providerInstanceId: reviewer,
           model,
-          notice: "skill limits not applied on Antigravity",
         });
         const child = yield* orchestrator.getThreadProjection(localChild(started.childThreadId));
         expect(child.thread).toMatchObject({
+          modelSelection: { instanceId: reviewer, model },
           worktreePath: cwd,
           branch: "attached-review",
           runtimeMode: "approval-required",
         });
+        expect(child.runs[0]?.providerInstanceId).toBe(reviewer);
         expect(child.runs[0]?.workspacePreparation).toBeUndefined();
 
         yield* settings.updateSettings({

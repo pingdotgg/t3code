@@ -1443,6 +1443,7 @@ export const SkillName = Schema.String.check(
 const DelegationProfile = rejectUnknownProfileFields(
   Schema.Struct({
     model: Schema.toEncoded(DelegationModelReferenceParts),
+    providerInstanceId: Schema.optionalKey(ProviderInstanceId),
     options: Schema.optionalKey(DelegationProfileOptions),
     deniedSkills: Schema.Array(SkillName).check(Schema.isMaxLength(256), Schema.isUnique()),
     checkout: Schema.Literals(["shared", "worktree"]),
