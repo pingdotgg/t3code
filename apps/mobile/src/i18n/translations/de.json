@@ -66,7 +66,7 @@
   "2f6e4f7cd364da73": "Erwartet",
   "9d11c93d4035de3e": "Tatsächlich passiert",
   "c87d0595693704f9": "Stattdessen getan",
-  "d7a4ea6ce5af44e0": "{speaker} · {count} Zeichen",
+  "ed5c85bb4aecb472": "{count, plural, one {{speaker} · {count} Zeichen} other {{speaker} · {count} Zeichen}}",
   "f5114fb9c40fd929": "Du",
   "cd03eb1b84271c02": "Agent",
   "bfe1a60f3f9c60fb": "Runde {turn} · {what}",
