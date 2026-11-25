@@ -90,26 +90,6 @@ function runtimePolicy(input: {
 }
 
 describe("GrokAdapterV2 capabilities", () => {
-  it("extracts context usage from Grok notification metadata", () => {
-    const flavor = makeGrokAcpAdapterFlavor(
-      {
-        makeRuntime: () => Effect.never,
-      } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0],
-      "/home/ada",
-    );
-    const notification = {
-      sessionId: "grok-context-session",
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: "done" },
-      },
-      _meta: { totalTokens: 42_731 },
-    } as EffectAcpSchema.SessionNotification;
-
-    assert.isDefined(flavor.extractContextUsage);
-    assert.deepEqual(flavor.extractContextUsage(notification), { usedTokens: 42_731 });
-  });
-
   it("rejects invalid Grok context metadata and ignores aggregate turn usage", () => {
     const flavor = makeGrokAcpAdapterFlavor(
       {

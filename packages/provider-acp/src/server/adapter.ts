@@ -2850,6 +2850,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           sessionId: string,
           usage: ThreadTokenUsageSnapshot,
         ) {
+          if (usage.maxTokens !== undefined) return usage;
           if (sessionId !== (yield* Ref.get(activeSessionId))) return usage;
           const selection = yield* Ref.get(activeSelection);
           const setup = yield* Ref.get(activeSessionSetup);
@@ -2857,14 +2858,50 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const maxTokens = flavor.getModelContextWindow?.(selection, setup);
           return maxTokens === undefined ? usage : { ...usage, maxTokens };
         });
+        const publishProviderThreadState = Effect.fnUntraced(function* (
+          sessionId: string,
+          context: ActiveAcpTurn | null,
+        ) {
+          const knownProviderThread = (yield* Ref.get(providerThreadByNativeSessionId)).get(
+            sessionId,
+          );
+          if (knownProviderThread === undefined) return;
+          const now = yield* DateTime.now;
+          const providerThread: OrchestrationV2ProviderThread = {
+            ...knownProviderThread,
+            // The settled turn's snapshot is still cached as active; no turn runs now.
+            ...(context === null && knownProviderThread.status === "active"
+              ? { status: "idle" as const }
+              : {}),
+            contextUsage:
+              (yield* Ref.get(contextUsageBySessionId)).get(sessionId) ??
+              knownProviderThread.contextUsage ??
+              null,
+            nativeMetadata:
+              (yield* Ref.get(nativeMetadataBySessionId)).get(sessionId) ??
+              knownProviderThread.nativeMetadata ??
+              null,
+            updatedAt: now,
+          };
+          yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+            new Map(current).set(sessionId, providerThread),
+          );
+          yield* emitProviderEvent({
+            type: "provider_thread.updated",
+            driver,
+            providerThread,
+            // Agents like Kimi report usage after the prompt settles, when no run receives it.
+            ...(context === null ? { sessionScoped: true } : {}),
+          });
+        });
+        // Replayed history only records the snapshot; `ensureThread` publishes it.
         const projectExtractedContextUsage = Effect.fnUntraced(function* (
           notification: EffectAcpSchema.SessionNotification,
-          emit: boolean,
+          live: boolean,
         ) {
+          if (notification.update.sessionUpdate === "usage_update") return;
           const reportedUsage = flavor.extractContextUsage?.(notification);
-          if (reportedUsage === undefined || notification.update.sessionUpdate === "usage_update") {
-            return;
-          }
+          if (reportedUsage === undefined) return;
           const previous = (yield* Ref.get(contextUsageBySessionId)).get(notification.sessionId);
           const usage = yield* withModelContextWindow(notification.sessionId, {
             ...previous,
@@ -2876,29 +2913,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
           const context = yield* Ref.get(activeTurn);
           if (context?.nativeThreadId === notification.sessionId) context.contextUsage = usage;
-          if (!emit) return;
-          const knownProviderThread = (yield* Ref.get(providerThreadByNativeSessionId)).get(
-            notification.sessionId,
-          );
-          if (knownProviderThread === undefined) return;
-          const now = yield* DateTime.now;
-          const providerThread: OrchestrationV2ProviderThread = {
-            ...knownProviderThread,
-            ...(context === null && knownProviderThread.status === "active"
-              ? { status: "idle" as const }
-              : {}),
-            contextUsage: usage,
-            updatedAt: now,
-          };
-          yield* Ref.update(providerThreadByNativeSessionId, (current) =>
-            new Map(current).set(notification.sessionId, providerThread),
-          );
-          yield* emitProviderEvent({
-            type: "provider_thread.updated",
-            driver,
-            providerThread,
-            ...(context === null ? { sessionScoped: true } : {}),
-          });
+          if (live) yield* publishProviderThreadState(notification.sessionId, context);
         });
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
           Effect.void;
@@ -6098,38 +6113,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 context.nativeMetadata = metadata;
               }
             }
-            const knownProviderThread = (yield* Ref.get(providerThreadByNativeSessionId)).get(
-              notification.sessionId,
-            );
-            if (knownProviderThread !== undefined) {
-              const now = yield* DateTime.now;
-              const providerThread: OrchestrationV2ProviderThread = {
-                ...knownProviderThread,
-                // The settled turn's snapshot is still cached as active; no turn runs now.
-                ...(context === null && knownProviderThread.status === "active"
-                  ? { status: "idle" as const }
-                  : {}),
-                contextUsage:
-                  (yield* Ref.get(contextUsageBySessionId)).get(notification.sessionId) ??
-                  knownProviderThread.contextUsage ??
-                  null,
-                nativeMetadata:
-                  (yield* Ref.get(nativeMetadataBySessionId)).get(notification.sessionId) ??
-                  knownProviderThread.nativeMetadata ??
-                  null,
-                updatedAt: now,
-              };
-              yield* Ref.update(providerThreadByNativeSessionId, (current) =>
-                new Map(current).set(notification.sessionId, providerThread),
-              );
-              yield* emitProviderEvent({
-                type: "provider_thread.updated",
-                driver,
-                providerThread,
-                // Agents like Kimi report usage after the prompt settles, when no run receives it.
-                ...(context === null ? { sessionScoped: true } : {}),
-              });
-            }
+            yield* publishProviderThreadState(notification.sessionId, context);
             return;
           }
           if (yield* followNativeChild(notification, context)) return;
