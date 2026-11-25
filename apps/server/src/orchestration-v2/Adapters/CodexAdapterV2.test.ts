@@ -5053,6 +5053,75 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  // regression: #42825 a cold resume restores the thread's saved full access before turn/start
+  it.effect("selects the restricted runtime mode's permissions at thread/resume", () =>
+    Effect.gen(function* () {
+      const scenario = "codex-resume-restricted";
+      const nativeThreadId = `native-${scenario}-thread`;
+      const preamble = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "unused-turn",
+        prompt: "unused-prompt",
+      }).slice(0, 5);
+      const transcript = makeCodexReplayTranscript({
+        scenario,
+        entries: [
+          ...preamble,
+          {
+            type: "expect_outbound",
+            label: "thread/resume",
+            frame: {
+              id: 3,
+              method: "thread/resume",
+              params: {
+                threadId: nativeThreadId,
+                excludeTurns: true,
+                config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "thread/resume",
+            frame: { id: 3, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+          },
+        ],
+      });
+      const resumeParams: Array<unknown> = [];
+      const harness = yield* makeCodexReplayHarness(transcript, undefined, (method, params) =>
+        Effect.sync(() => {
+          if (method === "thread/resume") resumeParams.push(params);
+        }),
+      );
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: "auto-accept-edits" },
+      });
+
+      assert.equal(resumeParams.length, 1);
+      const params = resumeParams[0];
+      const selectsPermissions =
+        (Predicate.hasProperty(params, "sandbox") && params.sandbox != null) ||
+        (Predicate.hasProperty(params, "permissions") && params.permissions != null) ||
+        (Predicate.hasProperty(params, "config") &&
+          Predicate.hasProperty(params.config, "default_permissions"));
+      assert.ok(
+        selectsPermissions,
+        "thread/resume must select the restricted policy, or Codex prepares the saved full-access sandbox",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #15389 archived native Codex sessions resume via thread/unarchive
   it.effect.each(
     (
