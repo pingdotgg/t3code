@@ -361,6 +361,7 @@ interface ClaudeFields {
   readonly title: string | undefined;
   readonly customTitle: string | null;
   readonly model: string | undefined;
+  readonly shellCommandTitle: string | undefined;
 }
 
 const emptyClaudeFields: ClaudeFields = {
@@ -368,6 +369,7 @@ const emptyClaudeFields: ClaudeFields = {
   title: undefined,
   customTitle: null,
   model: undefined,
+  shellCommandTitle: undefined,
 };
 
 // Claude Code's model name for its own local errors, such as "Invalid API key".
@@ -376,6 +378,10 @@ const CLAUDE_SYNTHETIC_MODEL = "<synthetic>";
 function foldClaudeFields(fields: ClaudeFields, record: DecodedTranscriptRecord): ClaudeFields {
   if (isHiddenClaudeRecord(record)) return fields;
   const model = record.message?.model?.trim();
+  const shellInput =
+    fields.shellCommandTitle === undefined && record.type === "user"
+      ? claudeShellInput(extractText(record.message?.content))
+      : undefined;
   return {
     sessionId: record.sessionId?.trim() || fields.sessionId,
     title: claudeTitle(record.aiTitle) ?? fields.title,
@@ -386,6 +392,9 @@ function foldClaudeFields(fields: ClaudeFields, record: DecodedTranscriptRecord)
         : (claudeTitle(record.customTitle) ?? null),
     // Not a model ID that can be selected when the imported session resumes.
     model: model && model !== CLAUDE_SYNTHETIC_MODEL ? model : fields.model,
+    shellCommandTitle: shellInput?.trim()
+      ? deriveTitle("claudeAgent", `!${shellInput}`)
+      : fields.shellCommandTitle,
   };
 }
 
@@ -438,14 +447,15 @@ function claudeCommand(text: string): { readonly text: string; readonly titleTex
   return { text: args.length === 0 ? name : `${name} ${args}`, titleText: args };
 }
 
+function claudeShellInput(text: string): string | undefined {
+  return /^<bash-input>([\s\S]*)<\/bash-input>$/.exec(text)?.[1];
+}
+
 /** What a Claude user turn shows the user typed, and the part of it that may name the thread. */
 function claudeUserText(text: string): { readonly text: string; readonly titleText: string } {
   if (CLAUDE_UI_OUTPUT.test(text)) return { text: "", titleText: "" };
-  const shellInput = /^<bash-input>([\s\S]*)<\/bash-input>$/.exec(text)?.[1];
-  if (shellInput !== undefined) {
-    const command = `!${shellInput}`;
-    return { text: command, titleText: shellInput.trim().length > 0 ? command : "" };
-  }
+  const shellInput = claudeShellInput(text);
+  if (shellInput !== undefined) return { text: `!${shellInput}`, titleText: "" };
   return claudeCommand(text) ?? { text, titleText: text };
 }
 
@@ -745,7 +755,10 @@ function parseAgentSessionRecords(
     providerSessionId.trim().length === 0 ||
     firstUserMessage === undefined ||
     // A Claude session of bare commands such as `/clear` that no reply followed did nothing.
-    (input.source === "claudeAgent" && derivedTitle === undefined && !hasAssistantMessage) ||
+    (input.source === "claudeAgent" &&
+      derivedTitle === undefined &&
+      claudeFields.shellCommandTitle === undefined &&
+      !hasAssistantMessage) ||
     // Nor did one whose only replies are Claude Code's own errors.
     (input.source === "claudeAgent" &&
       droppedMessageCount === 0 &&
@@ -765,7 +778,12 @@ function parseAgentSessionRecords(
     providerInstanceId: input.providerInstanceId,
     providerSessionId,
     title:
-      claudeFields.customTitle ?? title ?? derivedTitle ?? bareCommandTitle ?? "Imported thread",
+      claudeFields.customTitle ??
+      title ??
+      derivedTitle ??
+      claudeFields.shellCommandTitle ??
+      bareCommandTitle ??
+      "Imported thread",
     model,
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
