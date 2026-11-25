@@ -5622,5 +5622,8 @@
   "eb287395a09cd288": "Envoyer les traces de connexion",
   "6787f93bbf6ce0b6": "Aide l’équipe T3 Code à résoudre les problèmes de connexion. Les traces contiennent des durées, des types d’erreur, un identifiant de cette session de l’app et la version de l’app, jamais vos fils, prompts ni votre code. Modifiable dans Réglages > À propos de T3 Code > Diagnostic.",
   "0b1e4aecbd38e0cf": "Quand l’app se connecte à un ordinateur via {product}, elle envoie à l’équipe T3 Code la durée de chaque étape, le type d’erreur, un identifiant de cette session de l’app et la version de l’app. Les traces n’incluent jamais vos fils, prompts ni votre code.",
-  "e0856d6a402ad821": "La politique de {organization} n’autorise pas les commandes de disposition des worktrees des projets."
+  "e0856d6a402ad821": "La politique de {organization} n’autorise pas les commandes de disposition des worktrees des projets.",
+  "99451a5d2d40440f": "Retirée par {by}.",
+  "3ee30a50b70fffab": "Retirée par {by} : {reason}",
+  "201490988858b511": "retirée par {by}"
 }

@@ -12877,5 +12877,9 @@
   "f6a91589456cca50": "Godkänt",
   "c92657bb7f2293ff": "Behöver godkännande",
   "f1e5c1be1ac92361": "Godkänn",
-  "fcb5f3c4d4753326": "Den här anslutningen kan inte godkänna kommandon. Använd en klient som får använda terminalen."
+  "fcb5f3c4d4753326": "Den här anslutningen kan inte godkänna kommandon. Använd en klient som får använda terminalen.",
+  "201490988858b511": "återkallad av {by}",
+  "99451a5d2d40440f": "Återkallad av {by}.",
+  "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
+  "92e129bf413a1220": "återkallad"
 }

@@ -63,6 +63,7 @@ import {
   workflowResultLines,
   workflowRunNow,
   workflowRunState,
+  workflowWithdrawal,
   workflowSaidStart,
   workflowStepReferences,
   workflowStepTime,
@@ -1274,9 +1275,11 @@ function WorkflowBeatRow({
       case "agent":
         return said === null ? null : workflowOneLine(said);
       case "ask":
-        return answer === null
+        if (answer !== null) return gt("You said {choice}", { choice: answer.choice });
+        const withdrawal = workflowWithdrawal(beat.result);
+        return withdrawal === null
           ? gt("nobody answered")
-          : gt("You said {choice}", { choice: answer.choice });
+          : gt("withdrawn by {by}", { by: withdrawal.by });
       case "sleep":
       case "wait":
         return null;
@@ -1503,6 +1506,23 @@ function WorkflowBeatCard({
       );
     case "ask": {
       const answer = workflowAnswer(beat.result);
+      const withdrawal = answer === null ? workflowWithdrawal(beat.result) : null;
+      if (withdrawal !== null)
+        return (
+          <Note
+            label={beat.name}
+            detail={
+              <p className="mt-3 text-sm">
+                {withdrawal.reason === null
+                  ? gt("Withdrawn by {by}.", { by: withdrawal.by })
+                  : gt("Withdrawn by {by}: {reason}", {
+                      by: withdrawal.by,
+                      reason: withdrawal.reason,
+                    })}
+              </p>
+            }
+          >{`${gt("withdrawn")} · ${length}`}</Note>
+        );
       if (answer === null)
         return <Note label={beat.name}>{`${gt("nobody answered")} · ${length}`}</Note>;
       return (

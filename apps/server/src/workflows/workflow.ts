@@ -564,6 +564,10 @@ const waitClaimed = Effect.fnUntraced(function* <A, I>(
         yield* run.store.waitClosed(run.runId, name);
         yield* run.store.stepEnded(run.runId, name, "completed", closedDetail(woke));
         if (!woke.expired) yield* run.store.stepResult(run.runId, name, woke.value);
+        // Kept as data, so the history can say who withdrew the question and why.
+        else if (woke.withdrawn !== undefined) {
+          yield* run.store.stepResult(run.runId, name, { withdrawn: woke.withdrawn });
+        }
         yield* run.store.runResumed(run.runId);
       }),
     });

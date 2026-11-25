@@ -3,6 +3,7 @@ import {
   buildWorkflowTimeline,
   workflowAgentSummary,
   workflowAnswer,
+  workflowWithdrawal,
   type WorkflowBeat,
   type WorkflowRunNode,
 } from "@t3tools/client-runtime/workflows";
@@ -118,6 +119,7 @@ export function BeatCard(props: {
   const child = beat.childRun;
   const summary = workflowAgentSummary(beat);
   const answer = beat.kind === "ask" ? workflowAnswer(beat.result) : null;
+  const withdrawal = beat.kind === "ask" ? workflowWithdrawal(beat.result) : null;
   const running = beat.status === "running";
   const gt = useGT();
   return (
@@ -143,6 +145,13 @@ export function BeatCard(props: {
           {answer.reason === null
             ? gt("Answered {choice}", { choice: answer.choice })
             : gt("Answered {choice}: {reason}", { choice: answer.choice, reason: answer.reason })}
+        </Text>
+      )}
+      {withdrawal === null ? null : (
+        <Text className="text-sm text-foreground">
+          {withdrawal.reason === null
+            ? gt("Withdrawn by {by}.", { by: withdrawal.by })
+            : gt("Withdrawn by {by}: {reason}", { by: withdrawal.by, reason: withdrawal.reason })}
         </Text>
       )}
       {child === null ? null : (

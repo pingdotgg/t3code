@@ -1,6 +1,7 @@
 import {
   workflowAgentSummary,
   workflowAnswer,
+  workflowWithdrawal,
   workflowOneLine,
   workflowResultLines,
   workflowRunNow,
@@ -343,9 +344,11 @@ export function WorkflowTimeline(props: {
       }
       case "ask": {
         const answer = workflowAnswer(beat.result);
-        return answer === null
+        if (answer !== null) return gt("Answered {choice}", { choice: answer.choice });
+        const withdrawal = workflowWithdrawal(beat.result);
+        return withdrawal === null
           ? gt("nobody answered")
-          : gt("Answered {choice}", { choice: answer.choice });
+          : gt("withdrawn by {by}", { by: withdrawal.by });
       }
       case "run": {
         const child = node.children.find(

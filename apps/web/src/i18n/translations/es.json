@@ -12865,5 +12865,9 @@
   "f6a91589456cca50": "Aprobado",
   "c92657bb7f2293ff": "Necesita aprobación",
   "f1e5c1be1ac92361": "Aprobar",
-  "fcb5f3c4d4753326": "Esta conexión no puede aprobar comandos. Usa un cliente que pueda usar el terminal."
+  "fcb5f3c4d4753326": "Esta conexión no puede aprobar comandos. Usa un cliente que pueda usar el terminal.",
+  "201490988858b511": "retirada por {by}",
+  "99451a5d2d40440f": "Retirada por {by}.",
+  "3ee30a50b70fffab": "Retirada por {by}: {reason}",
+  "92e129bf413a1220": "retirada"
 }

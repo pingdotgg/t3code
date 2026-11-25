@@ -2295,26 +2295,35 @@ it.effect("a withdrawn question ends unanswered, and its run goes on and can ask
             { run: runId, name },
             { idempotencyKey: key },
           );
-          return (yield* workflows.waitFor(run.runId, status("completed"))).result;
+          const ended = yield* workflows.waitFor(run.runId, status("completed"));
+          return [ended.result, run.runId] as const;
         });
         // A run withdraws it from a step; the step that asked records who and why.
-        assert.equal(yield* withdrawer("x1", "wanted"), "withdrawn");
+        const [withdrawn, by] = yield* withdrawer("x1", "wanted");
+        assert.equal(withdrawn, "withdrawn");
         yield* workflows.waitFor(runId, (run) => run.detail === "again");
         assert.deepStrictEqual(
           (yield* workflows.questions).map((question) => question.name),
           ["again"],
         );
         const asked = (yield* workflows.get(runId)).steps.find((step) => step.name === "wanted");
-        assert.deepStrictEqual([asked?.status, asked?.result], ["completed", null]);
-        assert.match(asked?.detail ?? "", /^withdrawn by run .+: settled elsewhere$/);
+        assert.deepStrictEqual(
+          [asked?.status, asked?.detail, asked?.result],
+          [
+            "completed",
+            `withdrawn by run ${by}: settled elsewhere`,
+            { withdrawn: { by: `run ${by}`, reason: "settled elsewhere" } },
+          ],
+        );
         // Already gone, so nothing to withdraw; a question that is still open is withdrawn once.
-        assert.equal(yield* withdrawer("x2", "wanted"), "not_open");
+        assert.equal((yield* withdrawer("x2", "wanted"))[0], "not_open");
         assert.equal(yield* workflows.withdraw(runId, "again", { by: "t3 CLI" }), "withdrawn");
         assert.equal(yield* workflows.withdraw(runId, "again", { by: "t3 CLI" }), "not_open");
         const done = yield* workflows.waitFor(runId, status("completed"));
         assert.equal(done.result, "never");
         const again = (yield* workflows.get(runId)).steps.find((step) => step.name === "again");
         assert.equal(again?.detail, "withdrawn by t3 CLI");
+        assert.deepStrictEqual(again?.result, { withdrawn: { by: "t3 CLI", reason: null } });
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

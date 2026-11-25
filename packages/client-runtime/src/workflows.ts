@@ -626,6 +626,18 @@ export function workflowAnswer(
     : null;
 }
 
+/** Who withdrew a question unanswered, and why, when a step's result says so. */
+export function workflowWithdrawal(
+  result: WorkflowStep["result"],
+): { readonly by: string; readonly reason: string | null } | null {
+  const withdrawn = field(result, "withdrawn");
+  const by = field(withdrawn, "by");
+  const reason = field(withdrawn, "reason");
+  return typeof by === "string"
+    ? { by, reason: typeof reason === "string" && reason.trim() !== "" ? reason : null }
+    : null;
+}
+
 /** Steps that were under way at the same time, shown side by side. */
 export interface WorkflowTogether {
   readonly kind: "together";
