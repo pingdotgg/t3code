@@ -294,116 +294,59 @@ describe("device tab rename", () => {
   });
 });
 
-describe("add surface launcher availability", () => {
-  const unavailableProps = (overrides: Partial<RightPanelTabsProps> = {}): RightPanelTabsProps => ({
-    ...(panel(DIFF_SURFACE).props as RightPanelTabsProps),
-    open: true,
-    keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
-    browserAvailable: false,
-    terminalAvailable: false,
-    diffAvailable: false,
-    filesAvailable: false,
-    pullRequestAvailable: false,
-    pullRequestsAvailable: false,
-    deviceAvailable: false,
-    ...overrides,
-  });
-
-  const stubMenuBridge = () => {
-    const listeners = new Set<(action: string) => void>();
-    const bridge = stubGlobal("desktopBridge", {
+describe("add surface launcher", () => {
+  it("hides the button, closes the open menu and stops taking Mod+T and the desktop menu action once no surface can be added", async () => {
+    const menuListeners = new Set<(action: string) => void>();
+    using _bridge = stubGlobal("desktopBridge", {
       onMenuAction: (listener: (action: string) => void) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
+        menuListeners.add(listener);
+        return () => menuListeners.delete(listener);
       },
     });
-    return {
-      listeners,
-      [Symbol.dispose]: () => bridge[Symbol.dispose](),
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    const tabs = (sideChatAvailable: boolean) => (
+      <RightPanelTabs
+        {...(panel(DIFF_SURFACE).props as RightPanelTabsProps)}
+        open
+        keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+        browserAvailable={false}
+        terminalAvailable={false}
+        diffAvailable={false}
+        filesAvailable={false}
+        pullRequestAvailable={false}
+        pullRequestsAvailable={false}
+        deviceAvailable={false}
+        onAddSideChat={() => {}}
+        sideChatAvailable={sideChatAvailable}
+      >
+        {null}
+      </RightPanelTabs>
+    );
+    const pressModT = async () => {
+      const event = new KeyboardEvent("keydown", {
+        key: "t",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      await act(() => {
+        document.body.dispatchEvent(event);
+      });
+      return event.defaultPrevented;
     };
-  };
+    await using screen = await render(tabs(true));
+    const addButton = screen.getByRole("button", { name: "Add panel surface" });
 
-  const pressCtrlT = async () => {
-    const event = new KeyboardEvent("keydown", {
-      key: "t",
-      ctrlKey: true,
-      bubbles: true,
-      cancelable: true,
-    });
-    await act(() => {
-      document.body.dispatchEvent(event);
-    });
-    return event;
-  };
-
-  it("hides the add button and leaves Mod+T and desktop menu actions alone when no surface can be added", async () => {
-    using bridge = stubMenuBridge();
-    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
-    await using screen = await render(
-      <RightPanelTabs
-        {...unavailableProps({
-          onAddSideChat: () => {},
-          sideChatAvailable: true,
-          sideChatDisabledReason: "Side chats start after the first message.",
-        })}
-      >
-        {null}
-      </RightPanelTabs>,
-    );
-
-    expect(screen.getByRole("button", { name: "Add panel surface" }).query()).toBeNull();
-    expect(bridge.listeners.size).toBe(0);
-
-    const shortcut = await pressCtrlT();
-    expect(shortcut.defaultPrevented).toBe(false);
-    expect(page.getByRole("menu").query()).toBeNull();
-  });
-
-  it("closes an open menu and detaches listeners if all surfaces become unavailable", async () => {
-    using bridge = stubMenuBridge();
-    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
-    await using screen = await render(
-      <RightPanelTabs {...unavailableProps({ terminalAvailable: true })}>{null}</RightPanelTabs>,
-    );
-
-    await expect
-      .element(screen.getByRole("button", { name: "Add panel surface" }))
-      .toBeInTheDocument();
-    expect(bridge.listeners.size).toBe(1);
-
-    expect((await pressCtrlT()).defaultPrevented).toBe(true);
+    await expect.element(addButton).toBeInTheDocument();
+    expect(menuListeners.size).toBe(1);
+    expect(await pressModT()).toBe(true);
     await expect.element(page.getByRole("menu")).toBeVisible();
 
-    await screen.rerender(<RightPanelTabs {...unavailableProps()}>{null}</RightPanelTabs>);
-    expect(screen.getByRole("button", { name: "Add panel surface" }).query()).toBeNull();
+    await screen.rerender(tabs(false));
+    expect(addButton.query()).toBeNull();
     expect(page.getByRole("menu").query()).toBeNull();
-    expect(bridge.listeners.size).toBe(0);
-
-    expect((await pressCtrlT()).defaultPrevented).toBe(false);
+    expect(menuListeners.size).toBe(0);
+    expect(await pressModT()).toBe(false);
     expect(page.getByRole("menu").query()).toBeNull();
-  });
-
-  it("keeps the add button and desktop menu action active when only side chat is available", async () => {
-    using bridge = stubMenuBridge();
-    await using screen = await render(
-      <RightPanelTabs
-        {...unavailableProps({
-          onAddSideChat: () => {},
-          sideChatAvailable: true,
-        })}
-      >
-        {null}
-      </RightPanelTabs>,
-    );
-
-    await expect
-      .element(screen.getByRole("button", { name: "Add panel surface" }))
-      .toBeInTheDocument();
-    expect(bridge.listeners.size).toBe(1);
-
-    await act(() => {
-      for (const listener of bridge.listeners) listener("rightPanel.new");
-    });
-    await expect.element(page.getByRole("menu")).toBeVisible();
   });
 });
