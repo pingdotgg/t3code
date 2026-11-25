@@ -4844,6 +4844,7 @@
   "2d1278a2e1e1bc29": "Umlenken",
   "e80496a6921896bb": "Neu starten",
   "d5aaded9f81a6501": "Nachricht in der Warteschlange aktualisieren",
+  "5e3c9bba8874ee07": "Öffnet die Subagenten dieser Runde",
   "9073907c0a93baa1": "Zum Ende scrollen",
   "dc16ff92956147aa": "Warte auf Gerätegenehmigung",
   "aabd9632196ee7e5": "Verbinde neu…",
@@ -5635,7 +5636,5 @@
   "d199175ce57e9403": "Nachricht {number} aus der Warteschlange entfernen",
   "ee670b86eca5cc09": "Nachricht {number} in der Warteschlange bearbeiten",
   "06fbf63249050b37": "Agenten, {agents}",
-  "022029b98e856844": "Zeigt den Status und die Agenten des Threads",
-  "beacf88cf56e5878": "Status schließen",
   "f014d40bc62a5c9e": "Öffnen"
 }

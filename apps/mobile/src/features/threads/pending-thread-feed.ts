@@ -65,19 +65,8 @@ export interface PendingFoldFeedEntry {
   readonly messageId: string;
 }
 
-/** The thread's queued messages, after everything else in the feed, as on web. */
-export interface QueuedRunsFeedEntry {
-  readonly type: "queued-runs";
-  readonly id: "queued-runs";
-  readonly createdAt: string;
-}
-
 /** A row of the thread feed's list. */
-export type ThreadFeedRow =
-  | PendingThreadFeedEntry
-  | GuestPendingFeedEntry
-  | PendingFoldFeedEntry
-  | QueuedRunsFeedEntry;
+export type ThreadFeedRow = PendingThreadFeedEntry | GuestPendingFeedEntry | PendingFoldFeedEntry;
 
 export type GroupedThreadFeedRow = ThreadFeedRow & {
   readonly userMessageGrouping: ReturnType<typeof resolveUserMessageGrouping>;
@@ -121,20 +110,6 @@ export function createThreadFeedGrouping() {
       return row;
     });
   };
-}
-
-// One shared object, so the WeakMap-cached grouping keeps the row's identity across renders.
-const QUEUED_RUNS_ROW: QueuedRunsFeedEntry = {
-  type: "queued-runs",
-  id: "queued-runs",
-  createdAt: new Date(0).toISOString(),
-};
-
-export function appendQueuedRuns(
-  feed: ReadonlyArray<ThreadFeedRow>,
-  queuedCount: number,
-): ReadonlyArray<ThreadFeedRow> {
-  return queuedCount === 0 ? feed : [...feed, QUEUED_RUNS_ROW];
 }
 
 /** Waiting guest messages go after the transcript, oldest first. */

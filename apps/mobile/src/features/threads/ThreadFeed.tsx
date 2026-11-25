@@ -267,7 +267,6 @@ import {
 } from "./thread-work-log";
 import {
   appendGuestPendingMessages,
-  appendQueuedRuns,
   appendPendingThreadMessages,
   createPendingTurnAppender,
   createThreadFeedGrouping,
@@ -2023,15 +2022,6 @@ function renderFeedEntry(
 ) {
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor, m } = props;
-
-  if (entry.type === "queued-runs") {
-    return (
-      <ThreadQueuedRuns
-        target={{ environmentId: props.environmentId, threadId: props.threadId }}
-        bubbleMaxWidth={props.duoColumns ? "85%" : props.userBubbleMaxWidth}
-      />
-    );
-  }
 
   if (entry.type === "guest-pending") {
     return (
@@ -3837,17 +3827,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   }
   const [appendPendingTurn] = useState(createPendingTurnAppender);
   const queuedRunCount = useThreadQueuedCount(props.detailRef);
-  const presentedFeed = appendQueuedRuns(
-    appendGuestPendingMessages(
-      appendPendingTurn(
-        useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups, revealedMessageId),
-        { zen: props.toolCallVisibility === "zen" },
-        m,
-      ),
-      guestShare,
+  const presentedFeed = appendGuestPendingMessages(
+    appendPendingTurn(
+      useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups, revealedMessageId),
+      { zen: props.toolCallVisibility === "zen" },
       m,
     ),
-    queuedRunCount,
+    guestShare,
+    m,
   );
   const pendingFoldMessageId =
     presentedFeed.findLast((entry) => entry.type === "pending-fold")?.messageId ?? null;
@@ -4131,7 +4118,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // estimatedItemSize tall, and scrolling up through unmeasured content
   // corrects each row's height as it mounts — the feed visibly jumps.
   const getFixedItemSize = (entry: ThreadFeedRow) => {
-    if (entry.type === "guest-pending" || entry.type === "queued-runs") return undefined;
+    if (entry.type === "guest-pending") return undefined;
     if (entry.type === "pending-fold") {
       return workRowSizing.fixedRowHeight === undefined
         ? undefined
@@ -4399,7 +4386,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               </>
             }
             ListFooterComponent={
-              props.pendingHandoff || props.statusLines?.length ? (
+              props.pendingHandoff || props.statusLines?.length || queuedRunCount > 0 ? (
                 <>
                   {props.pendingHandoff ? (
                     <ThreadHandoffDivider
@@ -4413,6 +4400,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                   {props.statusLines?.map((line) => (
                     <ThreadStatusLine key={line.key} line={line} iconColor={iconSubtleColor} />
                   ))}
+                  {/* As on web, the queue closes the feed after the thread's current state. */}
+                  {queuedRunCount > 0 && props.detailRef ? (
+                    <ThreadQueuedRuns
+                      target={props.detailRef}
+                      bubbleMaxWidth={duoColumns ? "85%" : userBubbleMaxWidth}
+                    />
+                  ) : null}
                 </>
               ) : null
             }

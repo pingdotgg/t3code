@@ -3,41 +3,6 @@ import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
 
-export interface FloatingStatusAction {
-  readonly label: string;
-  readonly accessibilityLabel: string;
-  readonly disabled: boolean;
-  readonly onPress: () => void;
-}
-
-export type FloatingWorkingStatus =
-  | {
-      readonly kind: "child-input";
-      readonly label: string;
-      readonly accessibilityLabel: string;
-      readonly onPress: () => void;
-    }
-  | {
-      readonly kind: "stop";
-      readonly label: string;
-      readonly unresponsive: boolean;
-      readonly action: FloatingStatusAction | null;
-    }
-  | {
-      readonly kind: "goal";
-      readonly label: string;
-      readonly detail: string;
-      readonly accessibilityLabel: string;
-      readonly actions: ReadonlyArray<FloatingStatusAction>;
-    }
-  | { readonly kind: "extension"; readonly label: string; readonly detail: string }
-  | { readonly kind: "preparing"; readonly label: string }
-  | {
-      readonly kind: "connection";
-      readonly label: string;
-      readonly onPress: () => void;
-    };
-
 /** A connection still retrying on its own; short enough for the thread header subtitle. */
 export function connectionRetryLabel(
   input: {
@@ -58,40 +23,32 @@ export function connectionRetryLabel(
     : resolve(msg("Retrying connection…"));
 }
 
-export function connectionFloatingStatus(
+/** Why the thread's environment is unreachable, once it stops retrying on its own. */
+export function connectionNoticeLabel(
   input: {
     readonly connectionError: string | null;
     readonly connectionState: EnvironmentConnectionPhase;
     readonly environmentLabel: string | null;
-    readonly onReconnect: () => void;
   },
   resolve: MessageResolver = m,
-): FloatingWorkingStatus | null {
+): string | null {
   const environmentLabel = input.environmentLabel ?? resolve(msg("Environment"));
-  const unavailable = (label: string): FloatingWorkingStatus => ({
-    kind: "connection",
-    label,
-    onPress: input.onReconnect,
-  });
-
   switch (input.connectionState) {
     case "offline":
-      return unavailable(resolve(msg("You are offline")));
+      return resolve(msg("You are offline"));
     case "unsupported":
-      return unavailable(resolve(msg("Client not supported")));
+      return resolve(msg("Client not supported"));
     case "error":
-      return unavailable(
-        input.connectionError
-          ? resolve(
-              msg("Failed to connect to {environmentLabel}: {connectionError}", {
-                environmentLabel,
-                connectionError: input.connectionError,
-              }),
-            )
-          : resolve(msg("Failed to connect to {environmentLabel}", { environmentLabel })),
-      );
+      return input.connectionError
+        ? resolve(
+            msg("Failed to connect to {environmentLabel}: {connectionError}", {
+              environmentLabel,
+              connectionError: input.connectionError,
+            }),
+          )
+        : resolve(msg("Failed to connect to {environmentLabel}", { environmentLabel }));
     case "available":
-      return unavailable(resolve(msg("{environmentLabel} is not connected", { environmentLabel })));
+      return resolve(msg("{environmentLabel} is not connected", { environmentLabel }));
     case "connecting":
     case "reconnecting":
     case "connected":

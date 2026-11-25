@@ -4844,6 +4844,7 @@
   "2d1278a2e1e1bc29": "Styr om",
   "e80496a6921896bb": "Starta om",
   "d5aaded9f81a6501": "Uppdatera köat meddelande",
+  "5e3c9bba8874ee07": "Öppnar omgångens subagenter",
   "9073907c0a93baa1": "Rulla till slutet",
   "dc16ff92956147aa": "Väntar på godkännande av enheten",
   "aabd9632196ee7e5": "Återansluter…",
@@ -5635,7 +5636,5 @@
   "d199175ce57e9403": "Ta bort meddelande {number} i kön",
   "ee670b86eca5cc09": "Redigera meddelande {number} i kön",
   "06fbf63249050b37": "Agenter, {agents}",
-  "022029b98e856844": "Visar trådens status och agenter",
-  "beacf88cf56e5878": "Stäng status",
   "f014d40bc62a5c9e": "Öppna"
 }

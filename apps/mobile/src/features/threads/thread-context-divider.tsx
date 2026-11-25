@@ -57,21 +57,22 @@ export interface ThreadStatusLineModel {
   readonly accessibilityLabel?: string;
   /** Tapping the label opens the state's detail. */
   readonly onOpen?: () => void;
-  readonly action: {
-    readonly label: string;
-    readonly accessibilityLabel: string;
-    readonly disabled: boolean;
-    readonly onPress: () => void;
-  };
+  readonly actions: ReadonlyArray<ThreadStatusLineAction>;
 }
 
-/** A thread state that closes the feed with its one action, left-aligned as on web. */
+export interface ThreadStatusLineAction {
+  readonly label: string;
+  readonly accessibilityLabel: string;
+  readonly disabled: boolean;
+  readonly onPress: () => void;
+}
+
+/** A thread state that closes the feed with its actions, left-aligned as on web. */
 export function ThreadStatusLine(props: {
   readonly line: ThreadStatusLineModel;
   readonly iconColor: ColorValue;
 }) {
   const { line } = props;
-  const { action } = line;
   const body = (
     <>
       <SymbolView name={line.icon} size={13} tintColor={props.iconColor} type="monochrome" />
@@ -101,18 +102,22 @@ export function ThreadStatusLine(props: {
           {body}
         </View>
       )}
-      <Text className="text-xs text-foreground-muted">·</Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={action.accessibilityLabel}
-        accessibilityState={{ disabled: action.disabled }}
-        disabled={action.disabled}
-        onPress={action.onPress}
-        hitSlop={8}
-        className={`active:opacity-70 ${action.disabled ? "opacity-50" : ""}`}
-      >
-        <Text className="font-t3-medium text-xs text-foreground">{action.label}</Text>
-      </Pressable>
+      {line.actions.map((action) => (
+        <View key={action.label} className="flex-row items-center gap-1.5">
+          <Text className="text-xs text-foreground-muted">·</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={action.accessibilityLabel}
+            accessibilityState={{ disabled: action.disabled }}
+            disabled={action.disabled}
+            onPress={action.onPress}
+            hitSlop={8}
+            className={`active:opacity-70 ${action.disabled ? "opacity-50" : ""}`}
+          >
+            <Text className="font-t3-medium text-xs text-foreground">{action.label}</Text>
+          </Pressable>
+        </View>
+      ))}
     </View>
   );
 }

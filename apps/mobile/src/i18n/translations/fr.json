@@ -4838,6 +4838,7 @@
   "2d1278a2e1e1bc29": "Réorienter",
   "e80496a6921896bb": "Redémarrer",
   "d5aaded9f81a6501": "Mettre à jour le message en file d’attente",
+  "5e3c9bba8874ee07": "Ouvre les sous-agents de ce tour",
   "9073907c0a93baa1": "Faire défiler jusqu’à la fin",
   "dc16ff92956147aa": "En attente d’approbation de l’appareil",
   "aabd9632196ee7e5": "Reconnexion…",
@@ -5629,7 +5630,5 @@
   "d199175ce57e9403": "Retirer le message en file d’attente {number}",
   "ee670b86eca5cc09": "Modifier le message en file d’attente {number}",
   "06fbf63249050b37": "Agents, {agents}",
-  "022029b98e856844": "Affiche l’état et les agents du fil",
-  "beacf88cf56e5878": "Fermer l’état",
   "f014d40bc62a5c9e": "Ouvrir"
 }

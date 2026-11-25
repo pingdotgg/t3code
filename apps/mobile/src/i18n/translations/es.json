@@ -4837,6 +4837,7 @@
   "2d1278a2e1e1bc29": "Redirigir",
   "e80496a6921896bb": "Reiniciar",
   "d5aaded9f81a6501": "Actualizar mensaje en cola",
+  "5e3c9bba8874ee07": "Abre los subagentes de este turno",
   "9073907c0a93baa1": "Desplazarse al final",
   "dc16ff92956147aa": "Esperando la aprobación del dispositivo",
   "aabd9632196ee7e5": "Reconectando…",
@@ -5629,7 +5630,5 @@
   "d199175ce57e9403": "Quitar el mensaje en cola {number}",
   "ee670b86eca5cc09": "Editar el mensaje en cola {number}",
   "06fbf63249050b37": "Agentes, {agents}",
-  "022029b98e856844": "Muestra el estado y los agentes del hilo",
-  "beacf88cf56e5878": "Cerrar estado",
   "f014d40bc62a5c9e": "Abrir"
 }

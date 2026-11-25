@@ -16,16 +16,12 @@ import Animated, {
 } from "react-native-reanimated";
 import { withUniwind } from "uniwind";
 
-import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { Button } from "../../components/ui/Button";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { BrowserPreviewButton } from "../browser/browser-preview-button";
 import { DevicePreviewButton } from "../devices/device-preview-button";
-import type { FloatingWorkingStatus } from "./floating-working-status";
-import { ShimmeringWorkContent } from "./thread-work-log";
 
 const CONTROL_HEIGHT = 38.5;
 const CONTROL_GAP = 8;
@@ -70,9 +66,6 @@ export interface ThreadStatusPillProps {
   /** Room the composer and keyboard take at the bottom; the open card stays above it. */
   readonly bottomInset: number;
   readonly maxWidth: number | undefined;
-  readonly status: FloatingWorkingStatus | null;
-  /** Pi's status beside a goal, shown in full once the card opens. */
-  readonly extensionStatus: { readonly label: string; readonly detail: string } | null;
   readonly devicePreview: { readonly count: number; readonly onPress: () => void } | null;
   readonly browserPreview: { readonly count: number; readonly onPress: () => void } | null;
   readonly agents: SubagentPillSegment | null;
@@ -81,19 +74,14 @@ export interface ThreadStatusPillProps {
 }
 
 export function hasThreadStatusPill(
-  props: Pick<ThreadStatusPillProps, "status" | "agents" | "devicePreview" | "browserPreview">,
+  props: Pick<ThreadStatusPillProps, "agents" | "devicePreview" | "browserPreview">,
 ) {
-  return (
-    props.status !== null ||
-    props.agents !== null ||
-    props.devicePreview !== null ||
-    props.browserPreview !== null
-  );
+  return props.agents !== null || props.devicePreview !== null || props.browserPreview !== null;
 }
 
 /**
- * The thread's live status under the header. Tapping it opens a glass card in place with the
- * status in full, its actions, and this turn's agents.
+ * This turn's agents and the thread's previews, under the header. Tapping the agents opens them
+ * in a glass card in place. Other thread states sit at the end of the feed, as on web.
  */
 export function ThreadStatusPill(props: ThreadStatusPillProps) {
   const gt = useGT();
@@ -101,10 +89,8 @@ export function ThreadStatusPill(props: ThreadStatusPillProps) {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [expanded, setExpanded] = useState(false);
   const visible = hasThreadStatusPill(props);
-  const { status, agents, extensionStatus } = props;
-  const expandable =
-    agents !== null || extensionStatus !== null || (status !== null && status.kind !== "preparing");
-  if (expanded && (!visible || !expandable)) setExpanded(false);
+  const { agents } = props;
+  if (expanded && agents === null) setExpanded(false);
   if (!visible) return null;
 
   const close = () => setExpanded(false);
@@ -124,41 +110,34 @@ export function ThreadStatusPill(props: ThreadStatusPillProps) {
       exiting={reducedMotion ? undefined : CONTENT_EXITING}
       className="h-11 flex-row items-center"
     >
-      {status !== null || agents !== null ? (
+      {agents !== null ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={pillAccessibilityLabel(status, agents, gt)}
-          accessibilityHint={expandable ? gt("Shows the thread's status and agents") : undefined}
-          accessibilityState={expandable ? { expanded: false } : undefined}
-          disabled={!expandable}
+          accessibilityLabel={gt("Agents, {agents}", { agents: agents.accessibilityLabel })}
+          accessibilityHint={gt("Opens this turn's subagents")}
+          accessibilityState={{ expanded: false }}
           onPress={toggle}
-          className="h-11 min-w-0 shrink flex-row items-center active:opacity-70"
+          className="h-11 flex-row items-center gap-1.5 px-3.5 active:opacity-70"
         >
-          {status !== null ? <StatusLabel status={status} /> : null}
-          {agents !== null ? (
-            <View className="h-11 flex-row items-center gap-1.5 px-3.5">
-              {status !== null ? <View className="absolute left-0 h-4 w-px bg-border" /> : null}
-              <SymbolView name="person.2" size={13} tintColorClassName="accent-foreground" />
-              <Text className="font-t3-medium text-xs tabular-nums" numberOfLines={1}>
-                {agents.label}
-              </Text>
-            </View>
-          ) : null}
+          <SymbolView name="person.2" size={13} tintColorClassName="accent-foreground" />
+          <Text className="font-t3-medium text-xs tabular-nums" numberOfLines={1}>
+            {agents.label}
+          </Text>
         </Pressable>
       ) : null}
       {hasPreview ? (
         <View className="h-11 flex-row items-center">
-          {status !== null || agents !== null ? <View className="h-4 w-px bg-border" /> : null}
+          {agents !== null ? <View className="h-4 w-px bg-border" /> : null}
           {props.devicePreview !== null ? (
             <DevicePreviewButton
               {...props.devicePreview}
-              compact={status !== null || agents !== null || props.browserPreview !== null}
+              compact={agents !== null || props.browserPreview !== null}
             />
           ) : null}
           {props.browserPreview !== null ? (
             <BrowserPreviewButton
               {...props.browserPreview}
-              compact={status !== null || agents !== null || props.devicePreview !== null}
+              compact={agents !== null || props.devicePreview !== null}
             />
           ) : null}
         </View>
@@ -183,38 +162,11 @@ export function ThreadStatusPill(props: ThreadStatusPillProps) {
             ),
           ),
         }}
-        contentContainerClassName={status !== null ? "gap-2 px-4 pb-1 pt-3.5" : "px-4 py-1"}
+        contentContainerClassName="px-4 py-1"
         nestedScrollEnabled
         showsVerticalScrollIndicator={false}
       >
-        {/* The status heads the card; with only agents the list starts at the top. */}
-        {status !== null ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ expanded: true }}
-            accessibilityHint={gt("Close status")}
-            onPress={toggle}
-            className="active:opacity-70"
-          >
-            <StatusDetail status={status} />
-          </Pressable>
-        ) : null}
-        <StatusActions status={status} onAct={close} />
-        {extensionStatus !== null ? (
-          <View className="gap-1">
-            <Text className="font-t3-medium text-2xs uppercase tracking-wide text-foreground-muted">
-              Pi
-            </Text>
-            <Text selectable className="text-sm text-foreground">
-              {extensionStatus.detail}
-            </Text>
-          </View>
-        ) : null}
-        {agents !== null ? (
-          <View className={status !== null ? "border-t border-border" : undefined}>
-            {props.renderAgents(close)}
-          </View>
-        ) : null}
+        {props.renderAgents(close)}
       </ScrollView>
     </Animated.View>
   );
@@ -228,7 +180,7 @@ export function ThreadStatusPill(props: ThreadStatusPillProps) {
     // Open, it sits above the browser float that shares its corner.
     <View pointerEvents="box-none" className={`absolute inset-0 ${expanded ? "z-40" : "z-20"}`}>
       {expanded ? (
-        // The card's own header closes it for assistive tech; this only catches taps outside.
+        // VoiceOver closes the card with its escape gesture; this only catches taps outside.
         <Pressable
           accessible={false}
           importantForAccessibility="no"
@@ -247,7 +199,7 @@ export function ThreadStatusPill(props: ThreadStatusPillProps) {
           <AnimatedGlassView
             colorScheme={props.colorScheme}
             glassEffectStyle="regular"
-            isInteractive
+            // Interactive glass plays UIKit's own touch bounce, which fights the morph.
             tintColorClassName="accent-glass-tint"
             layout={layout}
             accessibilityViewIsModal={expanded}
@@ -268,170 +220,6 @@ export function ThreadStatusPill(props: ThreadStatusPillProps) {
           </Animated.View>
         )}
       </Animated.View>
-    </View>
-  );
-}
-
-function pillAccessibilityLabel(
-  status: FloatingWorkingStatus | null,
-  agents: SubagentPillSegment | null,
-  gt: ReturnType<typeof useGT>,
-) {
-  const statusLabel =
-    status === null
-      ? null
-      : status.kind === "goal" || status.kind === "child-input"
-        ? status.accessibilityLabel
-        : status.label;
-  const agentsLabel =
-    agents === null ? null : gt("Agents, {agents}", { agents: agents.accessibilityLabel });
-  return [statusLabel, agentsLabel].filter((label) => label !== null).join(", ");
-}
-
-function StatusIcon(props: { readonly status: FloatingWorkingStatus }) {
-  const { status } = props;
-  switch (status.kind) {
-    case "connection":
-      return <View className="h-2 w-2 rounded-full bg-red-500" />;
-    case "child-input":
-      return <SymbolView name="text.bubble" size={13} tintColorClassName="accent-foreground" />;
-    case "goal":
-      return (
-        <SymbolView
-          name="target"
-          size={13}
-          tintColorClassName="accent-foreground"
-          type="monochrome"
-        />
-      );
-    case "stop":
-      return status.unresponsive ? (
-        <SymbolView
-          name="exclamationmark.triangle"
-          size={13}
-          tintColorClassName="accent-warning-foreground"
-          type="monochrome"
-        />
-      ) : (
-        <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
-      );
-    case "extension":
-      return (
-        <SymbolView
-          name="info.circle"
-          size={13}
-          tintColorClassName="accent-foreground"
-          type="monochrome"
-        />
-      );
-    case "preparing":
-      return (
-        <SymbolView
-          name="arrow.triangle.branch"
-          size={13}
-          tintColorClassName="accent-foreground"
-          type="monochrome"
-        />
-      );
-  }
-}
-
-/** The status as the collapsed pill shows it: one line, truncated. */
-function StatusLabel(props: { readonly status: FloatingWorkingStatus }) {
-  const { status } = props;
-  return (
-    <View className="h-11 min-w-0 shrink flex-row items-center gap-2 px-4">
-      <StatusIcon status={status} />
-      {status.kind === "preparing" ? (
-        <ShimmeringWorkContent
-          className="flex-none"
-          textClassName="font-t3-medium"
-          compact
-          icon="arrow.triangle.branch"
-          iconSubtleColor="transparent"
-          label={status.label}
-          showIcon={false}
-        />
-      ) : (
-        <Text
-          className="max-w-[240px] shrink font-t3-medium text-xs text-foreground"
-          numberOfLines={1}
-        >
-          {status.label}
-        </Text>
-      )}
-    </View>
-  );
-}
-
-/** The status as the open card shows it: its full text. */
-function StatusDetail(props: { readonly status: FloatingWorkingStatus }) {
-  const { status } = props;
-  const detail = status.kind === "goal" || status.kind === "extension" ? status.detail : null;
-  return (
-    <View className="gap-1">
-      <View className="flex-row items-center gap-2">
-        <StatusIcon status={status} />
-        <Text className="min-w-0 flex-1 font-t3-semibold text-base text-foreground">
-          {status.label}
-        </Text>
-      </View>
-      {detail ? (
-        <Text selectable className="text-sm text-foreground-muted">
-          {detail}
-        </Text>
-      ) : null}
-    </View>
-  );
-}
-
-function StatusActions(props: {
-  readonly status: FloatingWorkingStatus | null;
-  readonly onAct: () => void;
-}) {
-  const gt = useGT();
-  const { status } = props;
-  if (status === null) return null;
-  const buttons =
-    status.kind === "goal"
-      ? status.actions
-      : status.kind === "stop" && status.action !== null
-        ? [status.action]
-        : status.kind === "connection"
-          ? [
-              {
-                label: gt("Reconnect"),
-                accessibilityLabel: gt("Reconnect"),
-                disabled: false,
-                onPress: status.onPress,
-              },
-            ]
-          : status.kind === "child-input"
-            ? [
-                {
-                  label: gt("Open", { $context: "verb, button that opens a thread" }),
-                  accessibilityLabel: status.accessibilityLabel,
-                  disabled: false,
-                  onPress: () => {
-                    props.onAct();
-                    status.onPress();
-                  },
-                },
-              ]
-            : [];
-  if (buttons.length === 0) return null;
-  return (
-    <View className="flex-row flex-wrap gap-2">
-      {buttons.map((button) => (
-        <Button
-          key={button.label}
-          label={button.label}
-          accessibilityLabel={button.accessibilityLabel}
-          size="compact"
-          disabled={button.disabled}
-          onPress={button.onPress}
-        />
-      ))}
     </View>
   );
 }

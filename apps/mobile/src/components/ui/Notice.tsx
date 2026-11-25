@@ -15,6 +15,7 @@ export function Notice(props: {
   readonly floating?: boolean;
   readonly onDismiss?: () => void;
   readonly dismissLabel?: string;
+  readonly action?: { readonly label: string; readonly onPress: () => void };
 }) {
   const gt = useGT();
   const danger = props.tone === "danger";
@@ -51,6 +52,24 @@ export function Notice(props: {
       >
         {props.message}
       </AppText>
+      {props.action ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={props.action.onPress}
+          hitSlop={10}
+          className="min-h-6 justify-center active:opacity-60"
+        >
+          <AppText
+            textRole="footnote"
+            className={cn(
+              "font-t3-semibold",
+              danger ? "text-danger-foreground" : "text-foreground",
+            )}
+          >
+            {props.action.label}
+          </AppText>
+        </Pressable>
+      ) : null}
       {props.onDismiss ? (
         <Pressable
           accessibilityRole="button"

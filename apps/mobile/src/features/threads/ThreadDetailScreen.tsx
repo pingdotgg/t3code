@@ -183,6 +183,7 @@ import type {
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
+import { Notice } from "../../components/ui/Notice";
 import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
 import { FreshSessionNotice } from "./FreshSessionNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
@@ -198,11 +199,7 @@ import {
   ThreadStatusPill,
   hasThreadStatusPill,
 } from "./floating-working-control";
-import {
-  connectionFloatingStatus,
-  type FloatingStatusAction,
-  type FloatingWorkingStatus,
-} from "./floating-working-status";
+import { connectionNoticeLabel } from "./floating-working-status";
 import type { ThreadStatusLineModel } from "./thread-context-divider";
 import {
   derivePendingUserInputMaxHeight,
@@ -750,11 +747,8 @@ function ThreadDetailBody(
     props.selectedThread.pendingBackgroundTasks,
     messages,
   );
-  const extensionStatus = props.extensionStatuses?.length
-    ? {
-        label: `Pi · ${props.extensionStatuses.map((status) => status.text).join(" · ")}`,
-        detail: props.extensionStatuses.map((status) => status.text).join("\n\n"),
-      }
+  const extensionStatusLabel = props.extensionStatuses?.length
+    ? `Pi · ${props.extensionStatuses.map((status) => status.text).join(" · ")}`
     : null;
   const backgroundLine = ((): ThreadStatusLineModel | null => {
     if (pendingBackgroundWork === null || contentPresentationKind !== "ready") return null;
@@ -772,12 +766,14 @@ function ThreadDetailBody(
           threadId: props.selectedThread.id,
         });
       },
-      action: {
-        label: statusPending ? gt("Stopping...") : gt("Stop", { $context: "verb, button" }),
-        accessibilityLabel: gt("Stop background work"),
-        disabled: !props.canOperateThread || statusPending,
-        onPress: () => void runStatusAction("stop"),
-      },
+      actions: [
+        {
+          label: statusPending ? gt("Stopping...") : gt("Stop", { $context: "verb, button" }),
+          accessibilityLabel: gt("Stop background work"),
+          disabled: !props.canOperateThread || statusPending,
+          onPress: () => void runStatusAction("stop"),
+        },
+      ],
     };
   })();
   const lifecycleLine = ((): ThreadStatusLineModel | null => {
@@ -803,47 +799,46 @@ function ThreadDetailBody(
         : settled
           ? gt("Settled", { $context: "thread state" })
           : gt("Woke from snooze"),
-      action: {
-        label: statusPending
-          ? lifecycleSnoozed
-            ? gt("Waking...")
-            : settled
-              ? gt("Un-settling...")
-              : gt("Dismissing...")
-          : actionLabel,
-        accessibilityLabel: actionLabel,
-        disabled:
-          !(lifecycleSnoozed || settled ? canTriageThread : props.canOperateThread) ||
-          statusPending,
-        onPress: () =>
-          void runStatusAction(lifecycleSnoozed ? "wake" : settled ? "unsettle" : "dismiss"),
-      },
+      actions: [
+        {
+          label: statusPending
+            ? lifecycleSnoozed
+              ? gt("Waking...")
+              : settled
+                ? gt("Un-settling...")
+                : gt("Dismissing...")
+            : actionLabel,
+          accessibilityLabel: actionLabel,
+          disabled:
+            !(lifecycleSnoozed || settled ? canTriageThread : props.canOperateThread) ||
+            statusPending,
+          onPress: () =>
+            void runStatusAction(lifecycleSnoozed ? "wake" : settled ? "unsettle" : "dismiss"),
+        },
+      ],
     };
   })();
-  const statusLines = [backgroundLine, lifecycleLine].filter((line) => line !== null);
-  const floatingStatus = ((): FloatingWorkingStatus | null => {
-    const connectionStatus = connectionFloatingStatus(
-      {
-        connectionError: props.connectionError,
-        connectionState: props.connectionStateLabel,
-        environmentLabel: props.environmentLabel,
-        onReconnect: props.onReconnectEnvironment,
-      },
-      messages,
-    );
-    if (connectionStatus !== null && !props.draftMode) {
-      return connectionStatus;
-    }
-    // Before the request check: an agent stuck on an approval may also ignore Stop.
-    if (runStop !== null && contentPresentationKind === "ready") {
-      const unresponsive = runStop.state === "unresponsive";
-      return {
-        kind: "stop",
-        unresponsive,
-        label: unresponsive ? gt("Not responding to Stop") : gt("Stopping…"),
-        action:
-          unresponsive && canForceStop
-            ? {
+  const connectionNotice = props.draftMode
+    ? null
+    : connectionNoticeLabel(
+        {
+          connectionError: props.connectionError,
+          connectionState: props.connectionStateLabel,
+          environmentLabel: props.environmentLabel,
+        },
+        messages,
+      );
+  const stopLine = ((): ThreadStatusLineModel | null => {
+    if (runStop === null || contentPresentationKind !== "ready") return null;
+    const unresponsive = runStop.state === "unresponsive";
+    return {
+      key: "run-stop",
+      icon: unresponsive ? "exclamationmark.triangle" : "stop.fill",
+      label: unresponsive ? gt("Not responding to Stop") : gt("Stopping…"),
+      actions:
+        unresponsive && canForceStop
+          ? [
+              {
                 label:
                   forceStoppingKey === selectedThreadKey
                     ? gt("Force stopping...")
@@ -860,53 +855,63 @@ function ThreadDetailBody(
                     destructive: true,
                     onConfirm: () => void forceStop(runStop.runId),
                   }),
-              }
-            : null,
-      };
-    }
-    if (props.activePendingApproval !== null || props.activePendingUserInput !== null) {
-      return null;
-    }
-    if (props.creationState?.kind === "preparing") {
-      // The feed shows worktree setup in place, so only a plain start needs the pill.
-      if (props.worktreeSetup || props.creationState.preparingWorktree) return null;
-      return { kind: "preparing", label: gt("Starting…") };
-    }
-    if (props.creationState?.kind === "failed") {
-      return null;
-    }
+              },
+            ]
+          : [],
+    };
+  })();
+  const childInputLine = ((): ThreadStatusLineModel | null => {
     const childInput = childThreadInputs[0];
-    if (childInput && contentPresentationKind === "ready") {
-      return {
-        kind: "child-input",
-        label: childThreadInputsTitle(childThreadInputs, messages),
-        accessibilityLabel: childInput.hasPendingApprovals
-          ? gt("Open approval from {title}", { title: childInput.title })
-          : gt("Open question from {title}", { title: childInput.title }),
-        onPress: () => {
-          Keyboard.dismiss();
-          openLinkedThread({ environmentId: childInput.environmentId, threadId: childInput.id });
+    // While this thread waits on the user itself, its own request comes first.
+    if (
+      childInput === undefined ||
+      contentPresentationKind !== "ready" ||
+      props.activePendingApproval !== null ||
+      props.activePendingUserInput !== null
+    )
+      return null;
+    const open = () => {
+      Keyboard.dismiss();
+      openLinkedThread({ environmentId: childInput.environmentId, threadId: childInput.id });
+    };
+    const accessibilityLabel = childInput.hasPendingApprovals
+      ? gt("Open approval from {title}", { title: childInput.title })
+      : gt("Open question from {title}", { title: childInput.title });
+    return {
+      key: "child-input",
+      icon: "text.bubble",
+      label: childThreadInputsTitle(childThreadInputs, messages),
+      onOpen: open,
+      actions: [
+        {
+          label: gt("Open", { $context: "verb, button that opens a thread" }),
+          accessibilityLabel,
+          disabled: false,
+          onPress: open,
         },
-      };
-    }
-    if (props.selectedThread.goal !== null && contentPresentationKind === "ready") {
-      const goal = presentProviderGoal(props.selectedThread.goal, false, messages);
-      const goalDriver = props.serverConfig?.providers.find(
-        (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
-      )?.driver;
-      const goalAction = (
-        label: string,
-        accessibilityLabel: string,
-        command: string,
-      ): FloatingStatusAction => ({
-        label,
-        accessibilityLabel,
-        disabled: !props.canOperateThread || goalCommandPending,
-        onPress: () => void runGoalCommand(command),
-      });
+      ],
+    };
+  })();
+  const goalLine = ((): ThreadStatusLineModel | null => {
+    if (props.selectedThread.goal === null || contentPresentationKind !== "ready") return null;
+    const goal = presentProviderGoal(props.selectedThread.goal, false, messages);
+    const goalDriver = props.serverConfig?.providers.find(
+      (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
+    )?.driver;
+    const goalAction = (label: string, accessibilityLabel: string, command: string) => ({
+      label,
+      accessibilityLabel,
+      disabled: !props.canOperateThread || goalCommandPending,
+      onPress: () => void runGoalCommand(command),
+    });
+    return {
+      key: "goal",
+      icon: "target",
+      label: goal.title,
+      accessibilityLabel: `${goal.title}: ${goal.objective}`,
       // The server rejects Antigravity goal controls and Claude resume. Resume would stop
       // unrelated work, so it waits for the thread to go idle.
-      const goalActions =
+      actions:
         goalDriver === "antigravity"
           ? []
           : [
@@ -914,20 +919,16 @@ function ThreadDetailBody(
                 ? [goalAction(gt("Resume"), gt("Resume goal"), "/goal resume")]
                 : []),
               goalAction(gt("Clear"), gt("Clear goal"), "/goal clear"),
-            ];
-      return {
-        kind: "goal",
-        label: goal.title,
-        detail: goal.objective,
-        accessibilityLabel: `${goal.title}: ${goal.objective}`,
-        actions: goalActions,
-      };
-    }
-    if (extensionStatus !== null && contentPresentationKind === "ready") {
-      return { kind: "extension", ...extensionStatus };
-    }
-    return null;
+            ],
+    };
   })();
+  // Web's order: what needs you, what is running, the goal, then the thread's lifecycle.
+  const statusLines = [
+    runStop?.state === "unresponsive" ? stopLine : childInputLine,
+    runStop?.state === "stopping" ? stopLine : backgroundLine,
+    goalLine,
+    lifecycleLine,
+  ].filter((line) => line !== null);
   const devicePreview =
     devicePreviews.length > 0 ? { count: devicePreviews.length, onPress: openDevicePreview } : null;
   const browserPreview =
@@ -935,7 +936,6 @@ function ThreadDetailBody(
       ? { count: browserTabs.tabs.length, onPress: () => openBrowserPreview() }
       : null;
   const showStatusPill = hasThreadStatusPill({
-    status: floatingStatus,
     agents: agentsSegment,
     devicePreview,
     browserPreview,
@@ -1511,8 +1511,6 @@ function ThreadDetailBody(
           top={navigationHeaderHeight + 8}
           bottomInset={liveKeyboardHeight + estimatedOverlayHeight}
           maxWidth={contentMaxWidth}
-          status={floatingStatus}
-          extensionStatus={floatingStatus?.kind === "goal" ? extensionStatus : null}
           devicePreview={devicePreview}
           browserPreview={browserPreview}
           agents={agentsSegment}
@@ -1745,6 +1743,25 @@ function ThreadDetailBody(
                         onDismiss={() => props.onDismissFeedback(submission.id)}
                       />
                     ))}
+                    {connectionNotice !== null ? (
+                      <View className="px-4 pb-3">
+                        <Notice
+                          message={connectionNotice}
+                          icon="wifi.slash"
+                          iconTone="danger"
+                          floating
+                          action={{
+                            label: gt("Reconnect"),
+                            onPress: props.onReconnectEnvironment,
+                          }}
+                        />
+                      </View>
+                    ) : null}
+                    {extensionStatusLabel !== null ? (
+                      <View className="px-4 pb-3">
+                        <Notice message={extensionStatusLabel} floating />
+                      </View>
+                    ) : null}
                     {freshSessionAvailable ? (
                       <FreshSessionNotice threadKey={selectedThreadKey} />
                     ) : null}

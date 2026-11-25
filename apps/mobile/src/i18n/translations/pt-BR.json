@@ -4838,6 +4838,7 @@
   "2d1278a2e1e1bc29": "Direcionar",
   "e80496a6921896bb": "Reiniciar",
   "d5aaded9f81a6501": "Atualizar mensagem na fila",
+  "5e3c9bba8874ee07": "Abre os subagentes deste turno",
   "9073907c0a93baa1": "Rolar até o fim",
   "dc16ff92956147aa": "Aguardando aprovação do dispositivo",
   "aabd9632196ee7e5": "Reconectando…",
@@ -5629,7 +5630,5 @@
   "d199175ce57e9403": "Remover a mensagem na fila {number}",
   "ee670b86eca5cc09": "Editar a mensagem na fila {number}",
   "06fbf63249050b37": "Agentes, {agents}",
-  "022029b98e856844": "Mostra o status e os agentes da conversa",
-  "beacf88cf56e5878": "Fechar status",
   "f014d40bc62a5c9e": "Abrir"
 }

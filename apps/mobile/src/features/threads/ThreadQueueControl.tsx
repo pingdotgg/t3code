@@ -18,7 +18,6 @@ import { msg, useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 
-import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -227,15 +226,21 @@ export function ThreadQueuedRuns(props: {
   };
 
   return (
-    <View className="gap-4 pb-5">
+    <View className="gap-4 pb-4">
       {workflow?.isHeld ? (
-        <View className="flex-row items-center justify-end gap-3">
-          <Text className="text-sm text-foreground-muted">
+        <View className="flex-row items-center justify-end gap-1 pl-2">
+          <SymbolView
+            name="tray.and.arrow.up"
+            size={11}
+            tintColorClassName="accent-foreground-muted"
+            type="monochrome"
+          />
+          <Text className="mr-1 text-2xs text-foreground-muted">
             {gt("Queue paused", { $context: "status of the thread's queued messages" })}
           </Text>
-          <Button
+          <QueueAction
             label={gt("Resume queue")}
-            size="compact"
+            accessibilityLabel={gt("Resume queue")}
             disabled={resuming || busyRunId !== null}
             onPress={() => void resumeQueue()}
           />

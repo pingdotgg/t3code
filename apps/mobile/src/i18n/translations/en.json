@@ -4846,6 +4846,7 @@
   "2d1278a2e1e1bc29": "Steer",
   "e80496a6921896bb": "Restart",
   "d5aaded9f81a6501": "Update queued message",
+  "5e3c9bba8874ee07": "Opens this turn's subagents",
   "9073907c0a93baa1": "Scroll to end",
   "dc16ff92956147aa": "Awaiting device approval",
   "aabd9632196ee7e5": "Reconnecting…",
@@ -5637,7 +5638,5 @@
   "d199175ce57e9403": "Remove queued message {number}",
   "ee670b86eca5cc09": "Edit queued message {number}",
   "06fbf63249050b37": "Agents, {agents}",
-  "022029b98e856844": "Shows the thread's status and agents",
-  "beacf88cf56e5878": "Close status",
   "f014d40bc62a5c9e": "Open"
 }
