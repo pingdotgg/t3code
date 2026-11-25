@@ -11646,6 +11646,7 @@
   "2b3e8ee4f31d1433": "Automatiskt använder din Macs språk. Ett språk hämtas första gången det används.",
   "71184e5a54a69f1d": "Leverantören identifierar ditt språk automatiskt.",
   "ffb2653eb2d9fc1a": "{model} identifierar språket automatiskt.",
+  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…",
   "773cbfca7c466cc4": "{model} använder ett fast språk.",
   "18aa8cceba8c50c6": "Den här modellen använder ett fast språk.",
   "d4b59565bd8b6d07": "Översätt till engelska",

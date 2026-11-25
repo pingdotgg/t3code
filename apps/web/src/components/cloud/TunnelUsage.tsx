@@ -8,6 +8,7 @@ import { m, type MessageResolver } from "../../i18n/messages";
 import { cn } from "../../lib/utils";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
+import { Skeleton } from "../ui/skeleton";
 
 // Above this, one slot per tunnel is too thin to read, so the bar fills instead.
 const MAX_SEGMENTS = 10;
@@ -41,6 +42,18 @@ export function tunnelUpgradeCopy(
 }
 
 /** "2 of 3 tunnels in use" with one bar slot per tunnel. */
+/** Holds the meter's height while usage loads, so the rows below it stay put. */
+export function TunnelUsageMeterSkeleton() {
+  return (
+    <div aria-hidden className="flex max-w-sm flex-col gap-1.5">
+      <div className="flex h-4 items-center">
+        <Skeleton shape="pill" className="h-3 w-32" />
+      </div>
+      <Skeleton shape="pill" className="h-1.5 w-full" />
+    </div>
+  );
+}
+
 export function TunnelUsageMeter({
   used,
   limit,
