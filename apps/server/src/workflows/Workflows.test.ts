@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { ProjectId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -21,7 +22,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 import { issues, pullRequests } from "./forgeApi.ts";
-import { cancel, runs, signalAll, start } from "./stepServices.ts";
+import { cancel, runs, signalAll, start, withdraw } from "./stepServices.ts";
 import {
   type InRun,
   invoke,
@@ -40,6 +41,7 @@ import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
+import WorkflowMailSenderMigration from "../persistence/Migrations/117_WorkflowMailSender.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import {
   Issue,
@@ -170,6 +172,29 @@ const definitions = (
           { concurrency: 2 },
         ),
         ([bad, sib]) => `${bad} ${Option.getOrElse(sib, () => "none")}`,
+      ),
+    ),
+    /** Fails `bad` beside an open question, as long as `failures` says. */
+    workflow("doubting", { version: 1, payload: Schema.Struct({}), returns: Schema.String }, () =>
+      Effect.map(
+        Effect.all(
+          [
+            step(
+              "bad",
+              { returns: Schema.Number, ...once },
+              Effect.andThen(
+                Deferred.await(latch.bad),
+                Effect.flatMap(
+                  Ref.getAndUpdate(failures, (left) => Math.max(0, left - 1)),
+                  (left) => (left > 0 ? Effect.fail("the dependency is down") : Effect.succeed(1)),
+                ),
+              ),
+            ),
+            ask("sure", { title: "Sure?", choices: ["Yes", "No"] }),
+          ],
+          { concurrency: 2 },
+        ),
+        ([bad, sure]) => `${bad} ${Option.isSome(sure) ? sure.value.choice : "none"}`,
       ),
     ),
     workflow(
@@ -606,6 +631,23 @@ const sorted = [
       );
     }),
   ),
+  /** Asks with choices that say what they do, one of them only with a reason, and a link. */
+  workflow(
+    "described",
+    { version: 1, payload: Schema.Struct({}), returns: Schema.Json },
+    Effect.fn(function* () {
+      const answer = yield* ask("wanted", {
+        title: "Build this?",
+        links: [{ label: "The request", url: "https://example.com/issues/1" }],
+        choices: [
+          "Later",
+          { value: "Yes", description: "Work starts on it" },
+          { value: "No", requireReason: true },
+        ],
+      });
+      return Option.getOrNull(answer);
+    }),
+  ),
   /** Finds runs by their tag, or by the kind of question they have open. */
   workflow(
     "finder",
@@ -629,6 +671,32 @@ const sorted = [
           }),
           (found) => found.map((run) => `${run.key} ${run.tags.join("+")}`).toSorted(),
         ),
+      ),
+  ),
+  /** Asks, and when the question is withdrawn asks again. */
+  workflow(
+    "wanting",
+    { version: 1, payload: Schema.Struct({}), returns: Schema.String },
+    Effect.fn(function* () {
+      const wanted = yield* ask("wanted", { title: "Wanted?", choices: ["Yes", "No"] });
+      if (Option.isSome(wanted)) return wanted.value.choice;
+      const again = yield* ask("again", { title: "Still wanted?", choices: ["Yes", "No"] });
+      return Option.match(again, { onNone: () => "never", onSome: (it) => `then ${it.choice}` });
+    }),
+  ),
+  /** Withdraws another run's question from a step. */
+  workflow(
+    "withdrawer",
+    {
+      version: 1,
+      payload: Schema.Struct({ run: Schema.String, name: Schema.String }),
+      returns: Schema.String,
+    },
+    (payload) =>
+      step(
+        "withdraw",
+        { returns: Schema.String, ...once },
+        withdraw({ run: payload.run, name: payload.name, reason: "settled elsewhere" }),
       ),
   ),
 ];
@@ -749,6 +817,12 @@ const fakeForge = () => {
   };
 };
 
+/** Whether an answer's stamp is an instant between two the test saw, the ends included. */
+const stampedBetween = (stamp: string, from: DateTime.Utc, to: DateTime.Utc) => {
+  const at = Date.parse(stamp);
+  return DateTime.toEpochMillis(from) <= at && at <= DateTime.toEpochMillis(to);
+};
+
 const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -757,6 +831,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
   yield* Effect.provide(
     Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration).pipe(
       Effect.andThen(WorkflowRunTagsMigration),
+      Effect.andThen(WorkflowMailSenderMigration),
     ),
     database,
   );
@@ -1299,13 +1374,16 @@ it.effect(
             .pipe(Effect.flip);
           assert.include(refused.message, "merge waits for");
           // Clicked twice: one answer, and nothing kept to answer it again.
+          const before = yield* DateTime.now;
+          const laptop = { label: "Laptop", sessionId: "session-laptop" };
           yield* Effect.all(
             [
-              workflows.answer(runId, "merge", { choice: "Merge" }),
-              workflows.answer(runId, "merge", { choice: "Merge" }),
+              workflows.answer(runId, "merge", { choice: "Merge" }, laptop),
+              workflows.answer(runId, "merge", { choice: "Merge" }, laptop),
             ],
             { concurrency: "unbounded" },
           );
+          const after = yield* DateTime.now;
           yield* workflows.answer(runId, "merge", { choice: "Leave" });
           assert.isUndefined(yield* kept!.mailNext([{ runId, wait: "merge" }]));
 
@@ -1318,11 +1396,22 @@ it.effect(
           assert.deepStrictEqual(yield* workflows.questions, []);
           // Each step keeps what it produced, for a person reading the run afterwards.
           const { steps } = yield* workflows.get(runId);
+          const { answeredAt, ...answer } = mergeAnswer(steps);
+          // The clock runs beside the test, so the stamp is some instant of the answer's call.
+          assert.isTrue(stampedBetween(answeredAt, before, after), answeredAt);
           assert.deepStrictEqual(
-            steps.map((step) => [step.name, step.result]),
+            steps.map((step) => [step.name, step.name === "merge" ? answer : step.result]),
             [
               ["write", { branch: "fix/1" }],
-              ["merge", { choice: "Merge" }],
+              [
+                "merge",
+                {
+                  choice: "Merge",
+                  answeredBy: "Laptop",
+                  // Another Laptop is told from this one by its session, not its name.
+                  answeredBySession: "session-laptop",
+                },
+              ],
               ["land", "merged as abc123"],
             ],
           );
@@ -1876,7 +1965,9 @@ it.effect("a watcher is sent the runs again when one changes", () =>
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
-        const first = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        const first = Option.getOrThrow(
+          yield* Stream.runHead(Workflows.wholeLists(workflows.watch)),
+        );
         assert.deepStrictEqual([first.runs, first.questions], [[], []]);
         // What exists is listed before anything has run, with what starts it.
         assert.deepInclude(first.workflows, {
@@ -1889,7 +1980,7 @@ it.effect("a watcher is sent the runs again when one changes", () =>
           { change: "c9", timeout: "1 hour" },
           { idempotencyKey: "c9" },
         );
-        const seen = yield* workflows.watch.pipe(
+        const seen = yield* Workflows.wholeLists(workflows.watch).pipe(
           Stream.filter((snapshot) => snapshot.runs.some((run) => run.status === "waiting")),
           Stream.runHead,
         );
@@ -2079,6 +2170,11 @@ it("hooks of different workflows never share an id", () => {
   assert.equal(Workflows.hookId("inbound", "push"), "wf-inbound.push");
 });
 
+it("every accepts bigint nanoseconds and names short ones in its error", () => {
+  assert.deepStrictEqual(every(60_000_000_000n), every("1 minute"));
+  assert.throws(() => every(1_000n), /^every\(1000n\) is shorter than the shortest, one minute\.$/);
+});
+
 it.effect("the sweep deletes skipped runs past the number the settings keep", () =>
   Effect.gen(function* () {
     const exposed = exposedStore();
@@ -2255,6 +2351,86 @@ it.effect("a step finds runs by their key, wakes everyone at a key, and cancels 
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("a withdrawn question ends unanswered, and its run goes on and can ask again", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const { runId } = yield* workflows.start("wanting", {}, { idempotencyKey: "w1" });
+        yield* workflows.waitFor(runId, (run) => run.detail === "wanted");
+        const withdrawer = Effect.fn(function* (key: string, name: string) {
+          const run = yield* workflows.start(
+            "withdrawer",
+            { run: runId, name },
+            { idempotencyKey: key },
+          );
+          const ended = yield* workflows.waitFor(run.runId, status("completed"));
+          return [ended.result, run.runId] as const;
+        });
+        // A run withdraws it from a step; the step that asked records who and why.
+        const [withdrawn, by] = yield* withdrawer("x1", "wanted");
+        assert.equal(withdrawn, "withdrawn");
+        yield* workflows.waitFor(runId, (run) => run.detail === "again");
+        assert.deepStrictEqual(
+          (yield* workflows.questions).map((question) => question.name),
+          ["again"],
+        );
+        const asked = (yield* workflows.get(runId)).steps.find((step) => step.name === "wanted");
+        assert.deepStrictEqual(
+          [asked?.status, asked?.detail, asked?.result],
+          [
+            "completed",
+            `withdrawn by run ${by}: settled elsewhere`,
+            { withdrawn: { by: `run ${by}`, reason: "settled elsewhere" } },
+          ],
+        );
+        // Already gone, so nothing to withdraw; a question that is still open is withdrawn once.
+        assert.equal((yield* withdrawer("x2", "wanted"))[0], "not_open");
+        assert.equal(yield* workflows.withdraw(runId, "again", { by: "t3 CLI" }), "withdrawn");
+        assert.equal(yield* workflows.withdraw(runId, "again", { by: "t3 CLI" }), "not_open");
+        const done = yield* workflows.waitFor(runId, status("completed"));
+        assert.equal(done.result, "never");
+        const again = (yield* workflows.get(runId)).steps.find((step) => step.name === "again");
+        assert.equal(again?.detail, "withdrawn by t3 CLI");
+        assert.deepStrictEqual(again?.result, { withdrawn: { by: "t3 CLI", reason: null } });
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a watcher sees a question leave when it is withdrawn while its run is paused", () =>
+  Effect.gen(function* () {
+    const { failures, latch, boot } = yield* harness();
+    yield* Ref.set(failures, 1);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const { runId } = yield* workflows.start("doubting", {}, { idempotencyKey: "d1" });
+        yield* workflows.waitFor(runId, (run) => run.status === "waiting" && run.detail === "sure");
+        yield* Deferred.succeed(latch.bad, undefined);
+        yield* workflows.waitFor(runId, status("paused"));
+        // Subscribed once the run is paused: nothing else about it changes from here on.
+        const listed = yield* Deferred.make<ReadonlyArray<string>>();
+        const left = yield* Workflows.wholeLists(workflows.watch).pipe(
+          Stream.map((list) => list.questions.map((question) => question.name)),
+          Stream.tap((names) => Deferred.succeed(listed, names)),
+          Stream.drop(1),
+          Stream.filter((names) => names.length === 0),
+          Stream.runHead,
+          Effect.timeoutOption("30 seconds"),
+          Effect.forkScoped,
+        );
+        assert.deepStrictEqual(yield* Deferred.await(listed), ["sure"]);
+        assert.equal(yield* workflows.withdraw(runId, "sure", { by: "t3 CLI" }), "withdrawn");
+        // The paused run is not woken, so the claim itself has to be what tells the watcher.
+        assert.deepStrictEqual(Option.flatten(yield* Fiber.join(left)), Option.some([]));
+        assert.equal((yield* workflows.get(runId)).run.status, "paused");
+      }).pipe(Effect.scoped),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it("tags refuses a list with a gap in it", () => {
   // The same list `tags([, "pr"])` makes: a first entry that was never set.
   const gapped = new Array<string>(2);
@@ -2282,7 +2458,9 @@ it.effect("questions carry their kind and runs their tags, and both can be filte
         for (const run of [feature, intended, plain]) {
           yield* workflows.waitFor(run.runId, status("waiting"));
         }
-        const snapshot = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        const snapshot = Option.getOrThrow(
+          yield* Stream.runHead(Workflows.wholeLists(workflows.watch)),
+        );
         // The page reads the labels and their order from what the workflow declares.
         assert.deepStrictEqual(
           snapshot.workflows.find((workflow) => workflow.name === "sorter")?.asks,
@@ -2330,7 +2508,9 @@ it.effect("questions carry their kind and runs their tags, and both can be filte
         // A kind the workflow does not declare is asked all the same, and kept as it was written.
         const typo = yield* sort("d", [], "feture");
         yield* workflows.waitFor(typo.runId, status("waiting"));
-        const after = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        const after = Option.getOrThrow(
+          yield* Stream.runHead(Workflows.wholeLists(workflows.watch)),
+        );
         assert.equal(
           after.questions.find((question) => question.runId === typo.runId)?.kind,
           "feture",
@@ -2344,6 +2524,274 @@ it.effect("questions carry their kind and runs their tags, and both can be filte
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "a question shows what its choices do and its links, wants a reason where asked, and keeps who answered",
+  () =>
+    Effect.gen(function* () {
+      const { boot } = yield* harness();
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const { runId } = yield* workflows.start("described", {}, { idempotencyKey: "d" });
+          yield* workflows.waitFor(runId, status("waiting"));
+          const [question] = yield* workflows.questions;
+          assert.deepStrictEqual(question?.request, {
+            title: "Build this?",
+            choices: ["Later", "Yes", "No"],
+            choiceDetails: [
+              { value: "Yes", description: "Work starts on it" },
+              { value: "No", requireReason: true },
+            ],
+            links: [{ label: "The request", url: "https://example.com/issues/1" }],
+          });
+          for (const reason of [undefined, "  "]) {
+            const refused = yield* workflows
+              .answer(runId, "wanted", {
+                choice: "No",
+                ...(reason === undefined ? {} : { reason }),
+              })
+              .pipe(Effect.flip);
+            assert.include(refused.message, '"No" needs a reason');
+          }
+          // Who answered is the server's to say, not the sender's.
+          const before = yield* DateTime.now;
+          yield* workflows.signal(
+            { runId, wait: "wanted" },
+            {
+              choice: "No",
+              reason: "Out of scope",
+              answeredBy: "someone else",
+              answeredBySession: "someone-elses-session",
+              answeredAt: "never",
+            },
+            { id: "d0", answeredBy: "t3 workflow signal" },
+          );
+          // Sampled before the wait for the run: the clock runs on while that waits.
+          const after = yield* DateTime.now;
+          const done = yield* workflows.waitFor(runId, status("completed"));
+          const { answeredAt, ...answer } = done.result as { readonly answeredAt: string };
+          assert.deepStrictEqual(answer, {
+            choice: "No",
+            reason: "Out of scope",
+            answeredBy: "t3 workflow signal",
+          });
+          // The clock runs beside the test, so the stamp is some instant of the signal's call.
+          assert.isTrue(stampedBetween(answeredAt, before, after), answeredAt);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+/** What the run's `merge` question was answered with. */
+const mergeAnswer = (steps: ReadonlyArray<{ readonly name: string; readonly result: unknown }>) =>
+  steps.find((step) => step.name === "merge")!.result as { readonly answeredAt: string };
+
+/** What a sender has no say in, each claimed as another client's. */
+const claimed = {
+  answeredBy: "Laptop",
+  answeredBySession: "session-laptop",
+  answeredAt: "2020-01-01T00:00:00.000Z",
+};
+
+it.effect(
+  "a signal kept for a question that has not opened answers as its sender when received, not as the session it claims",
+  () =>
+    Effect.gen(function* () {
+      const { boot, agents } = yield* harness();
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const start = { project: "p1" };
+          const named = yield* workflows.start("fix", start, { idempotencyKey: "named" });
+          const nameless = yield* workflows.start("fix", start, { idempotencyKey: "nameless" });
+          yield* agents.started(named.runId, "write/0");
+          yield* agents.started(nameless.runId, "write/0");
+          const before = yield* DateTime.now;
+          assert.deepStrictEqual(
+            [
+              yield* workflows.signal(
+                { runId: named.runId, wait: "merge" },
+                { choice: "Merge", ...claimed },
+                { id: "early-named", answeredBy: "t3 workflow signal" },
+              ),
+              // A sender the server has no name for stays nameless, whatever it calls itself.
+              yield* workflows.signal(
+                { runId: nameless.runId, wait: "merge" },
+                { choice: "Merge", ...claimed },
+                { id: "early-nameless" },
+              ),
+            ],
+            ["buffered", "buffered"],
+          );
+          const after = yield* DateTime.now;
+          // The questions open a good while after their answers were received.
+          yield* TestClock.adjust("1 hour");
+          const answers: Array<Record<string, unknown>> = [];
+          for (const { runId } of [named, nameless]) {
+            yield* agents.end(runId, "write/0", { output: { branch: "fix/1" } });
+            yield* agents.started(runId, "land/0");
+            const { steps } = yield* workflows.get(runId);
+            const { answeredAt, ...answer } = mergeAnswer(steps);
+            assert.isTrue(stampedBetween(answeredAt, before, after), answeredAt);
+            answers.push(answer);
+          }
+          assert.deepStrictEqual(answers, [
+            { choice: "Merge", answeredBy: "t3 workflow signal" },
+            { choice: "Merge" },
+          ]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "a signal kept as its question opens answers as its sender, not as the session it claims",
+  () =>
+    Effect.gen(function* () {
+      const looked = yield* Deferred.make<void>();
+      const opened = yield* Deferred.make<void>();
+      const checked = yield* Deferred.make<void>();
+      // Holds the signal between finding no question and keeping it, while the question opens.
+      const store = Layer.effect(
+        WorkflowStore.WorkflowStore,
+        Effect.gen(function* () {
+          const real = yield* WorkflowStore.make;
+          let first = true;
+          return WorkflowStore.WorkflowStore.of({
+            ...real,
+            waitAt: (address) =>
+              Effect.tap(real.waitAt(address), () => {
+                if (!("wait" in address) || address.wait !== "merge" || !first) return Effect.void;
+                first = false;
+                return Effect.andThen(Deferred.succeed(looked, undefined), Deferred.await(opened));
+              }),
+            mailNext: (addresses, passed) =>
+              Effect.tap(real.mailNext(addresses, passed), (mail) =>
+                mail === undefined && !first ? Deferred.succeed(checked, undefined) : Effect.void,
+              ),
+          });
+        }),
+      );
+      const { boot, agents } = yield* harness(store);
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const { runId } = yield* workflows.start(
+            "fix",
+            { project: "p1" },
+            { idempotencyKey: "raced" },
+          );
+          yield* agents.started(runId, "write/0");
+          const sent = yield* Effect.forkChild(
+            workflows.signal(
+              { runId, wait: "merge" },
+              { choice: "Merge", ...claimed },
+              { id: "raced", answeredBy: "t3 workflow signal" },
+            ),
+          );
+          yield* Deferred.await(looked);
+          yield* agents.end(runId, "write/0", { output: { branch: "fix/1" } });
+          // Released once the open question has looked for mail and found none.
+          yield* Deferred.await(checked);
+          yield* Deferred.succeed(opened, undefined);
+          assert.equal(yield* Fiber.join(sent), "delivered");
+          yield* agents.started(runId, "land/0");
+          const { steps } = yield* workflows.get(runId);
+          const { answeredAt, ...answer } = mergeAnswer(steps);
+          assert.deepStrictEqual(answer, { choice: "Merge", answeredBy: "t3 workflow signal" });
+          assert.notEqual(answeredAt, claimed.answeredAt);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+// A retry meets its kept copy while the question is opening: before it looks for the question,
+// when it finds it open, or after, when it finds it only once it has kept itself again.
+it.effect.each(["finds the question open", "finds it after keeping itself"] as const)(
+  "a kept signal's retry that %s answers as the first arrival, when that was received",
+  (window) =>
+    Effect.gen(function* () {
+      const looked = yield* Deferred.make<void>();
+      const opening = yield* Deferred.make<void>();
+      const retried = yield* Deferred.make<void>();
+      const store = Layer.effect(
+        WorkflowStore.WorkflowStore,
+        Effect.gen(function* () {
+          const real = yield* WorkflowStore.make;
+          let looks = 0;
+          return WorkflowStore.WorkflowStore.of({
+            ...real,
+            // The retry's first look, the first arrival's two being done, waits for the question.
+            waitAt: (address) =>
+              Effect.tap(real.waitAt(address), () =>
+                "wait" in address &&
+                address.wait === "merge" &&
+                ++looks === 3 &&
+                window === "finds it after keeping itself"
+                  ? Effect.andThen(Deferred.succeed(looked, undefined), Deferred.await(opening))
+                  : Effect.void,
+              ),
+            // The open question does not take its mail until the retry is through.
+            mailNext: (addresses, passed) =>
+              addresses.some((address) => "wait" in address && address.wait === "merge")
+                ? Effect.andThen(
+                    Effect.andThen(Deferred.succeed(opening, undefined), Deferred.await(retried)),
+                    real.mailNext(addresses, passed),
+                  )
+                : real.mailNext(addresses, passed),
+          });
+        }),
+      );
+      const { boot, agents } = yield* harness(store);
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const { runId } = yield* workflows.start(
+            "fix",
+            { project: "p1" },
+            { idempotencyKey: window },
+          );
+          yield* agents.started(runId, "write/0");
+          const merge = { runId, wait: "merge" };
+          const before = yield* DateTime.now;
+          assert.equal(
+            yield* workflows.signal(
+              merge,
+              { choice: "Merge" },
+              { id: "again", answeredBy: "Phone", answeredBySession: "session-phone" },
+            ),
+            "buffered",
+          );
+          const after = yield* DateTime.now;
+          yield* TestClock.adjust("1 hour");
+          const retry = workflows.signal(
+            merge,
+            { choice: "Merge" },
+            { id: "again", answeredBy: "Laptop", answeredBySession: "session-laptop" },
+          );
+          const sent = yield* Effect.forkChild(
+            window === "finds the question open"
+              ? Effect.andThen(Deferred.await(opening), retry)
+              : retry,
+          );
+          if (window === "finds it after keeping itself") yield* Deferred.await(looked);
+          yield* agents.end(runId, "write/0", { output: { branch: "fix/1" } });
+          assert.equal(yield* Fiber.join(sent), "delivered");
+          yield* Deferred.succeed(retried, undefined);
+          yield* agents.started(runId, "land/0");
+          const { steps } = yield* workflows.get(runId);
+          const { answeredAt, ...answer } = mergeAnswer(steps);
+          assert.deepStrictEqual(answer, {
+            choice: "Merge",
+            answeredBy: "Phone",
+            answeredBySession: "session-phone",
+          });
+          assert.isTrue(stampedBetween(answeredAt, before, after), answeredAt);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect("a workflow can take an agent's failure as an answer and go on", () =>
@@ -2502,3 +2950,63 @@ it("error text cuts at 2,000 units without leaving half an emoji", () => {
     `outer: ${"a".repeat(1_992)}`,
   );
 });
+
+it.effect("one run moving sends a watcher an update about that run, not the whole list", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        // Half the other runs wait at a gate, half wait on a question to a person.
+        const park = (from: number, to: number) =>
+          Effect.forEach(
+            Array.from({ length: to - from }, (_, i) => from + i),
+            (i) =>
+              i % 2 === 0
+                ? workflows.start("gate", { gate: "south" }, { idempotencyKey: `visit/${i}` })
+                : workflows.start("sorter", { tags: [] }, { idempotencyKey: `asked/${i}` }),
+            { discard: true },
+          );
+        // The size of the first update a watcher gets after `mover` ends, let through a gate or
+        // by its question being answered.
+        const updateWhen = Effect.fnUntraced(function* (mover: string, by: "signal" | "answer") {
+          const { runId } =
+            by === "signal"
+              ? yield* workflows.start("gate", { gate: mover }, { idempotencyKey: mover })
+              : yield* workflows.start("sorter", { tags: [] }, { idempotencyKey: mover });
+          yield* workflows.waitFor(runId, status("waiting"));
+          const subscribed = yield* Deferred.make<void>();
+          const update = yield* workflows.watch.pipe(
+            Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+            Stream.drop(1),
+            Stream.map((sent) => JSON.stringify(sent)),
+            Stream.filter((text) => text.includes(runId) && text.includes('"completed"')),
+            Stream.map((text) => text.length),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          yield* Deferred.await(subscribed);
+          yield* by === "signal"
+            ? workflows.signal({ runId, wait: "through" }, "go on", { id: mover })
+            : Effect.asVoid(workflows.answer(runId, "sort", { choice: "No" }));
+          return Option.getOrThrow(yield* Fiber.join(update));
+        });
+
+        yield* park(0, 10);
+        const fewOthers = [
+          yield* updateWhen("north-1", "signal"),
+          yield* updateWhen("asked-1", "answer"),
+        ];
+        yield* park(10, 300);
+        const manyOthers = [
+          yield* updateWhen("north-2", "signal"),
+          yield* updateWhen("asked-2", "answer"),
+        ];
+        for (const [index, few] of fewOthers.entries()) {
+          const many = manyOthers[index] ?? 0;
+          assert.isBelow(many, few * 2, `${few} bytes beside 10 runs, ${many} beside 300`);
+        }
+      }).pipe(Effect.scoped),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);

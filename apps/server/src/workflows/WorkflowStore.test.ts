@@ -16,8 +16,11 @@ import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
 import WorkflowRunIndexesMigration from "../persistence/Migrations/114_WorkflowRunIndexes.ts";
 import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
+import WorkflowMailSenderMigration from "../persistence/Migrations/117_WorkflowMailSender.ts";
 import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
+
+const sender = { answeredBy: "t3 CLI", answeredAt: "2026-01-01T00:00:00.000Z" };
 
 const withStore = <A, E>(
   use: Effect.Effect<
@@ -35,6 +38,7 @@ const withStore = <A, E>(
       Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration).pipe(
         Effect.andThen(WorkflowRunIndexesMigration),
         Effect.andThen(WorkflowRunTagsMigration),
+        Effect.andThen(WorkflowMailSenderMigration),
       ),
     );
     return yield* Effect.provide(
@@ -378,6 +382,7 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
         address: { workflow: "gate:ready", channel: "x" },
         valueJson: "1",
         expiresAt: "2999-01-01T00:00:00.000Z",
+        sender,
       });
       assert.isUndefined(yield* store.mailNext([{ workflow: "gate", channel: "ready:x" }]));
 
@@ -386,7 +391,13 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
         address: { workflow: "gate", channel: "ready" },
         valueJson: '"yes"',
         expiresAt: "2999-01-01T00:00:00.000Z",
+        sender,
       });
+      // Who sent it is kept beside the value, as the server said it on receiving it.
+      assert.deepStrictEqual(
+        (yield* store.mailNext([{ workflow: "gate", channel: "ready" }]))?.sender,
+        sender,
+      );
       const woke = { expired: false, value: "yes" };
       assert.equal(yield* store.mailDeliver("s1", "r1", "go", woke), "delivered");
       // The second wait finds the signal gone and stays open for the next one.
@@ -403,6 +414,7 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
         address: { workflow: "gate", channel: "ready" },
         valueJson: '"yes"',
         expiresAt: "2999-01-01T00:00:00.000Z",
+        sender,
       });
       assert.equal(yield* store.mailDeliver("s1", "r2", "go", woke), "gone");
       assert.isDefined(yield* store.waitAt({ runId: "r2", wait: "go" }));
@@ -428,6 +440,7 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
         address: { runId: "r3", wait: "go" },
         valueJson: '"yes"',
         expiresAt: "1970-01-31T00:00:00.000Z",
+        sender,
       });
       assert.equal(yield* store.mailDeliver("long", "r3", "go", woke), "delivered");
       yield* TestClock.adjust("10 days");
@@ -769,6 +782,51 @@ it.effect("reads that run on every change or sweep do not read every run", () =>
         ),
         ["r1", "r0"],
       );
+    }),
+  ),
+);
+
+it.effect("a run waiting on you is listed however many runs started after it", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const start = (runId: string) =>
+        store.runStarted({
+          runId,
+          workflow: "ask",
+          version: 1,
+          engineTag: "ask@1",
+          idempotencyKey: runId,
+          input: {},
+        });
+      yield* start("old");
+      yield* store.runStatus("old", "waiting", "waiting on you");
+      yield* store.waitOpened({
+        runId: "old",
+        name: "approve",
+        workflow: "ask",
+        key: undefined,
+        token: "t",
+        schemaJson: "{}",
+        requestJson: '{"title":"Ship it?"}',
+        watchJson: null,
+        deadline: null,
+      });
+      yield* start("paused");
+      yield* store.runPaused("paused", "gave up", true);
+      for (let index = 0; index < 500; index++) {
+        yield* TestClock.adjust("1 second");
+        yield* start(`new-${index}`);
+        yield* store.runEnded(`new-${index}`, "completed", null, null);
+      }
+      assert.deepStrictEqual(
+        (yield* store.requests).map((wait) => wait.run_id),
+        ["old"],
+      );
+      // Needs you lists the paused runs and open questions it is sent; one it is not sent is lost.
+      const listed = new Set((yield* store.runs(undefined)).map((run) => run.run_id));
+      assert.isTrue(listed.has("old"));
+      assert.isTrue(listed.has("paused"));
     }),
   ),
 );
