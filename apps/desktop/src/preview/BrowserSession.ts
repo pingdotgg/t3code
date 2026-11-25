@@ -803,7 +803,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                             message: mediaBlockedMessage(blocked),
                             detail: m(
                               msg(
-                                "Allow T3 Code in System Settings › Privacy & Security, then restart T3 Code.",
+                                "Allow HYR Code in System Settings › Privacy & Security, then restart HYR Code.",
                               ),
                             ),
                           },
