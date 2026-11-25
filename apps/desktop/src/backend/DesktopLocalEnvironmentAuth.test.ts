@@ -74,7 +74,6 @@ describe("DesktopLocalEnvironmentAuth", () => {
             id: PRIMARY_LOCAL_ENVIRONMENT_ID,
             label: Effect.succeed("Windows"),
             currentConfig: Effect.succeedSome(config),
-            databaseMigrationProgress: Effect.succeed(null),
             waitForReady: (timeout: Duration.Duration) =>
               Deferred.succeed(waiting, undefined).pipe(
                 Effect.andThen(Deferred.await(ready)),
@@ -139,7 +138,6 @@ describe("DesktopLocalEnvironmentAuth", () => {
             {
               id: PRIMARY_LOCAL_ENVIRONMENT_ID,
               label: Effect.succeed("Windows"),
-              databaseMigrationProgress: Effect.succeed(null),
               waitForReady: () => Effect.succeed(true),
               currentConfig: Effect.succeedSome({
                 ...config,
@@ -191,7 +189,6 @@ describe("DesktopLocalEnvironmentAuth", () => {
         id: PRIMARY_LOCAL_ENVIRONMENT_ID,
         label: Effect.succeed("Windows"),
         currentConfig: Effect.succeedSome(config),
-        databaseMigrationProgress: Effect.succeed(null),
         waitForReady: () => Effect.succeed(true),
       },
     ]),

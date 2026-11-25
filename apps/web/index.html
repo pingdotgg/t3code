@@ -445,40 +445,30 @@
         object-fit: contain;
       }
 
-      #boot-upgrade {
+      #boot-shell-progress {
         position: absolute;
-        top: calc(50% + 64px);
-        left: 50%;
-        z-index: 1;
-        width: min(360px, calc(100% - 48px));
-        transform: translateX(-50%);
+        top: 100%;
+        width: min(360px, 80vw);
         text-align: center;
-        font-size: 13px;
-        line-height: 20px;
+        font: 13px system-ui;
+        opacity: 0.7;
       }
 
-      #boot-upgrade-title {
-        font-weight: 500;
-      }
-
-      #boot-upgrade-bar {
+      #boot-shell-progress-bar {
         height: 4px;
-        margin: 10px 0;
+        margin: 10px 0 6px;
         overflow: hidden;
         border-radius: 2px;
         background: color-mix(in srgb, currentColor 15%, transparent);
       }
 
-      #boot-upgrade-fill {
+      #boot-shell-progress-fill {
         height: 100%;
         background: currentColor;
       }
 
-      #boot-upgrade-note {
-        margin-top: 4px;
+      #boot-shell-progress-note {
         font-size: 12px;
-        line-height: 18px;
-        opacity: 0.7;
       }
 
       /* App CSS locks body and #root scrolling once main loads, so the error screen scrolls itself. */
@@ -724,9 +714,45 @@
       <div id="boot-shell">
         <div id="boot-shell-card" aria-label="T3 Code splash screen">
           <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
+          <div id="boot-shell-progress" hidden>
+            <p id="boot-shell-progress-label" role="status" aria-live="polite"></p>
+            <div id="boot-shell-progress-bar">
+              <div id="boot-shell-progress-fill"></div>
+            </div>
+            <p id="boot-shell-progress-note">
+              This can take a few minutes after an update. Keep T3 Code open.
+            </p>
+          </div>
         </div>
       </div>
     </div>
+    <script>
+      const migrationPanel = document.getElementById("boot-shell-progress");
+      const migrationLabel = document.getElementById("boot-shell-progress-label");
+      const migrationFill = document.getElementById("boot-shell-progress-fill");
+      const readMigrationProgress = window.desktopBridge?.getDatabaseMigrationProgress;
+      if (readMigrationProgress && migrationPanel && migrationLabel && migrationFill) {
+        const showMigrationProgress = (progress) => {
+          migrationPanel.hidden = !progress;
+          migrationLabel.textContent = progress
+            ? `Upgrading database (${progress.current} of ${progress.total})`
+            : "";
+          // The server reports the migration it is starting, so the ones before it are done.
+          if (progress)
+            migrationFill.style.width = `${((progress.current - 1) / progress.total) * 100}%`;
+        };
+        const updateMigrationProgress = async () => {
+          if (!migrationLabel.isConnected) return;
+          try {
+            showMigrationProgress(await readMigrationProgress());
+          } catch {
+            showMigrationProgress(null);
+          }
+          if (migrationLabel.isConnected) setTimeout(updateMigrationProgress, 1000);
+        };
+        void updateMigrationProgress();
+      }
+    </script>
     <script type="module" src="/src/bootstrap.ts"></script>
   </body>
 </html>

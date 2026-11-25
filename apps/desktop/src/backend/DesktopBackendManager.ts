@@ -25,11 +25,11 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   DesktopTelemetryControlMessage,
   type DesktopTelemetryControlMessage as DesktopTelemetryControlMessageValue,
+  type DatabaseMigrationProgress,
 } from "@t3tools/contracts";
 import {
-  type DatabaseMigrationProgress,
+  databaseMigrationProgress,
   isRunningDatabaseMigrations,
-  readDatabaseMigrationProgress,
 } from "@t3tools/shared/databaseMigrationLog";
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 
@@ -263,8 +263,6 @@ export interface DesktopBackendInstance {
   readonly currentConfig: Effect.Effect<Option.Option<DesktopBackendStartConfig>>;
   readonly snapshot: Effect.Effect<DesktopBackendSnapshot>;
   readonly waitForReady: (timeout: Duration.Duration) => Effect.Effect<boolean>;
-  /** The database upgrade the starting server reports; null once ready or when none runs. */
-  readonly databaseMigrationProgress: Effect.Effect<DatabaseMigrationProgress | null>;
 }
 
 export interface BackendInstanceSpec {
@@ -279,6 +277,9 @@ export interface BackendInstanceSpec {
   readonly onStateDirOwned?: () => Effect.Effect<void>;
   /** Fires on each repeated crash or readiness timeout until the backend becomes ready. */
   readonly onStartupFailure?: (failure: BackendStartupFailure) => Effect.Effect<void>;
+  readonly onMigrationProgress?: (
+    progress: DatabaseMigrationProgress | null,
+  ) => Effect.Effect<void>;
 }
 
 interface ActiveBackendRun {
@@ -743,6 +744,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const state = yield* SubscriptionRef.make(initialState);
   const mutex = yield* Semaphore.make(1);
   const outputTail = yield* Ref.make("");
+  const migrationProgress = yield* Ref.make<DatabaseMigrationProgress | null>(null);
   // One streaming decoder per stream keeps UTF-8 characters split across chunks intact.
   const makeOutputDecoders = () => ({ stdout: new TextDecoder(), stderr: new TextDecoder() });
   let outputDecoders = makeOutputDecoders();
@@ -769,10 +771,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     })),
   );
   const currentConfig = SubscriptionRef.get(state).pipe(Effect.map((current) => current.config));
-  const databaseMigrationProgress = Effect.gen(function* () {
-    if ((yield* SubscriptionRef.get(state)).ready) return null;
-    return readDatabaseMigrationProgress(yield* Ref.get(outputTail));
-  });
 
   const cancelRestart = Effect.gen(function* () {
     const restartFiber = yield* SubscriptionRef.modify(state, (current) => [
@@ -973,6 +971,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 );
 
               if (isCurrentRun) {
+                yield* Ref.set(migrationProgress, null);
+                yield* spec.onMigrationProgress?.(null) ?? Effect.void;
                 yield* desktopTelemetryPublisher.removeControlSource(spec.id);
                 if (Option.isSome(pid)) {
                   if (exitObserved && !stopRequested) {
@@ -1017,6 +1017,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               pid: Option.some(pid),
             }));
             yield* Ref.set(outputTail, "");
+            yield* Ref.set(migrationProgress, null);
+            yield* spec.onMigrationProgress?.(null) ?? Effect.void;
             outputDecoders = makeOutputDecoders();
             yield* backendOutputLog.beginSession({
               details: `pid=${pid} port=${config.value.bootstrap.port} cwd=${config.value.cwd}`,
@@ -1047,6 +1049,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               return;
             }
 
+            yield* Ref.set(migrationProgress, null);
+            yield* spec.onMigrationProgress?.(null) ?? Effect.void;
             yield* spec.onReady?.(config.value.httpBaseUrl, pid) ?? Effect.void;
             if (
               config.value.runningDistro !== undefined &&
@@ -1061,7 +1065,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           }),
           onReadinessFailure: Effect.fn("desktop.backendInstance.onReadinessFailure")(
             function* (error) {
-              if (isRunningDatabaseMigrations(yield* Ref.get(outputTail))) {
+              if (
+                (yield* Ref.get(migrationProgress)) !== null ||
+                isRunningDatabaseMigrations(yield* Ref.get(outputTail))
+              ) {
                 yield* logInstanceWarning("backend is still migrating its database; waiting", {
                   error: error.message,
                 });
@@ -1077,12 +1084,31 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             },
           ),
           onOutput: (streamName, chunk) =>
-            Ref.update(outputTail, (tail) =>
-              // A cut through a surrogate pair would make encodeURIComponent throw when rendering.
-              (tail + outputDecoders[streamName].decode(chunk, { stream: true }))
-                .slice(-STARTUP_FAILURE_OUTPUT_CHARS)
-                .toWellFormed(),
-            ).pipe(Effect.andThen(backendOutputLog.writeOutputChunk(streamName, chunk))),
+            Ref.modify(outputTail, (tail) => {
+              const output = tail + outputDecoders[streamName].decode(chunk, { stream: true });
+              return [
+                output,
+                // A cut through a surrogate pair would make encodeURIComponent throw when rendering.
+                output.slice(-STARTUP_FAILURE_OUTPUT_CHARS).toWellFormed(),
+              ];
+            }).pipe(
+              Effect.flatMap((output) =>
+                Effect.gen(function* () {
+                  const latest = yield* SubscriptionRef.get(state);
+                  if (
+                    !latest.ready &&
+                    Option.isSome(latest.active) &&
+                    latest.active.value.id === runId
+                  ) {
+                    const progress = yield* Ref.updateAndGet(migrationProgress, (previous) =>
+                      databaseMigrationProgress(output, previous),
+                    );
+                    yield* spec.onMigrationProgress?.(progress) ?? Effect.void;
+                  }
+                }),
+              ),
+              Effect.andThen(backendOutputLog.writeOutputChunk(streamName, chunk)),
+            ),
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -1281,6 +1307,5 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     currentConfig,
     snapshot,
     waitForReady,
-    databaseMigrationProgress,
   } satisfies DesktopBackendInstance;
 });

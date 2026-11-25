@@ -4,6 +4,16 @@ Use a new thread for a separate task. Choose **New worktree** when its code chan
 need a separate branch and working directory. Threads in the same checkout share its
 branch, so T3 Code refuses a branch switch there while one of them is working.
 
+## Resize or hide the sidebar
+
+On web and desktop, drag the sidebar's right edge to resize it. Continue left past its minimum
+width to preview hiding it, then release to keep it hidden. Dragging back right before releasing
+shows it again and continues resizing.
+
+Move the mouse to the middle of the left window edge to find a handle. Drag it right or click
+it to show the sidebar again. Dragging back to the edge before releasing hides the preview
+and leaves it hidden. The sidebar toggle and shortcut still keep it open.
+
 ## Start a thread
 
 On web and desktop, **New thread** opens the project picker when you have more than one

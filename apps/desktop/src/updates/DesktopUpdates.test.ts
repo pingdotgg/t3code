@@ -959,7 +959,6 @@ describe("DesktopUpdates", () => {
           restartAttempt: 0,
           restartScheduled: false,
         })),
-        databaseMigrationProgress: Effect.succeed(null),
         waitForReady: () => Effect.succeed(true),
       } satisfies DesktopBackendPool.DesktopBackendInstance;
     };

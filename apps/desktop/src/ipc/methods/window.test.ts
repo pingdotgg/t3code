@@ -82,7 +82,6 @@ const defaultWslInstance: DesktopBackendManager.DesktopBackendInstance = {
     restartAttempt: 0,
     restartScheduled: false,
   }),
-  databaseMigrationProgress: Effect.succeed(null),
   waitForReady: () => Effect.succeed(true),
 };
 

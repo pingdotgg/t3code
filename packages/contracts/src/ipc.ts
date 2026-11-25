@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import type { DatabaseMigrationProgress } from "./server.ts";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
@@ -322,14 +323,6 @@ export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
   stats: Schema.optionalKey(Schema.String),
   footer: Schema.optionalKey(Schema.String),
 });
-
-/** The database upgrade a starting local server reports, shown while the app waits for it. */
-export const DesktopDatabaseUpgradeProgressSchema = Schema.Struct({
-  /** The migration now running, from 1. Null when the server has not reported a count. */
-  step: Schema.NullOr(Schema.Number),
-  total: Schema.NullOr(Schema.Number),
-});
-export type DesktopDatabaseUpgradeProgress = typeof DesktopDatabaseUpgradeProgressSchema.Type;
 
 export const DesktopUpdateStateSchema = Schema.Struct({
   enabled: Schema.Boolean,
@@ -1118,6 +1111,7 @@ export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
+  getDatabaseMigrationProgress?: () => Promise<DatabaseMigrationProgress | null>;
   /** `null` until the desktop host has read the login shell's environment; ask again later. */
   getRelayTelemetryEnabled: () => boolean | null;
   getPathForFile: (file: File) => string;
@@ -1149,8 +1143,6 @@ export interface DesktopBridge {
   /** The environment ID recorded in this app's T3 home, such as its own machine's background service. */
   getHostEnvironmentId?: () => Promise<string | null>;
   getLocalEnvironmentBearerToken: () => Promise<string>;
-  /** Null unless the local server is still upgrading its database before it can accept connections. */
-  getDatabaseUpgradeProgress?: () => Promise<DesktopDatabaseUpgradeProgress | null>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
   getConnectionCatalog: () => Promise<string | null>;
