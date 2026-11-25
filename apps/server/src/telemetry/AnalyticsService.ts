@@ -1,4 +1,4 @@
-// T3 ingest retains events and forwards to PostHog; UUIDs deduplicate retries there.
+// T3 ingest retains events and deduplicates retries by UUID.
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isCiEnvironment, isDoNotTrackSet } from "@t3tools/shared/otelEnvironment";
 import type { ClientOs } from "@t3tools/contracts";
