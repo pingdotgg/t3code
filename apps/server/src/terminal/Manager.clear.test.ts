@@ -137,7 +137,7 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))), {
         yield* Deferred.await(publishing);
         yield* live;
       }
-      if (row.queued) emitData(row.queued);
+      emitData(row.queued);
       if (row.exit) onExit.mock.calls[0]![0](row.exit);
       yield* manager.clear(input);
       const [cleared] = yield* live;
