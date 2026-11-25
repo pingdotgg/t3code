@@ -1,4 +1,4 @@
-import { TerminalWriteInput } from "@t3tools/contracts";
+import { TERMINAL_WRITE_MAX_LENGTH, TerminalWriteInput } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -134,6 +134,26 @@ describe("createTerminalInputWriter", () => {
     await write(large, send);
     await write("after", send);
     expect(sent).toEqual([large.slice(0, 65_536), "\x1b[201~", "after"]);
+  });
+
+  it("finishes a split closing marker when the remaining chunk is canceled before dispatch", async () => {
+    const open = "\x1b[200~";
+    const close = "\x1b[201~";
+    const payload = "p".repeat(TERMINAL_WRITE_MAX_LENGTH - open.length - 1);
+    const received: string[] = [];
+    const write = createTerminalInputWriter();
+    let canceled = false;
+
+    await write(open + payload + close, async (chunk) => {
+      if (received.length > 0 && !canceled) {
+        canceled = true;
+        return "not-dispatched";
+      }
+      received.push(chunk);
+      return true;
+    });
+
+    expect(received.join("").slice(open.length + payload.length)).toBe(close);
   });
 
   it("reports each input blocked by failed framing recovery without retrying payload", async () => {
