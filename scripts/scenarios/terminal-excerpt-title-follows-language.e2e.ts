@@ -26,6 +26,8 @@ test(
     const excerpt = browser.locator('[data-testid="composer-editor"]').getByText(/行目/);
     await excerpt.waitFor();
     const expectedTitle = (await excerpt.textContent())!.trim();
+    await app.screenshot("terminal-excerpt-draft-row");
+    await expect(browser.locator('[data-testid="sidebar-draft-row"]')).toContainText(expectedTitle);
     await toggle.tap();
     await screen.getByRole("button", "メッセージを送信", { exact: true }).tap();
     await browser.locator("[data-thread-title-chevron]").waitFor({ state: "attached" });

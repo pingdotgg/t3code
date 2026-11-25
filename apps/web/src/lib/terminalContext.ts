@@ -84,6 +84,18 @@ export function terminalContextDisplayLabel(
       );
 }
 
+export function terminalContextDisplayLabels(
+  contexts: ReadonlyArray<TerminalContextReferenceSource>,
+  resolve: MessageResolver,
+): ReadonlyMap<string, string> {
+  return new Map(
+    contexts.map((context) => [
+      toKindScopedComposerContextId("terminal", context.id),
+      terminalContextDisplayLabel(context, resolve),
+    ]),
+  );
+}
+
 export function migrateLegacyTerminalContextPlaceholders(
   prompt: string,
   contexts: ReadonlyArray<TerminalContextReferenceSource>,

@@ -83,7 +83,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 import {
   filterTerminalContextsWithText,
-  terminalContextDisplayLabel,
+  terminalContextDisplayLabels,
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import {
@@ -1558,12 +1558,7 @@ export function deriveComposerSendTitle(
   snapshot: ComposerSendSnapshot,
   resolve: MessageResolver = m,
 ) {
-  const terminalLabels = new Map(
-    snapshot.terminalContexts.map((context) => [
-      terminalContextReference(context).contextId,
-      terminalContextDisplayLabel(context, resolve),
-    ]),
-  );
+  const terminalLabels = terminalContextDisplayLabels(snapshot.terminalContexts, resolve);
   const text = replaceComposerContextReferences(snapshot.messageText, (reference) => {
     const label = terminalLabels.get(reference.contextId);
     return reference.kind === "terminal" && label !== undefined
