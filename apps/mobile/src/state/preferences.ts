@@ -26,9 +26,10 @@ export function createMobilePreferencesState(
     .atom(
       MobilePreferences.MobilePreferencesStore.pipe(
         Effect.flatMap((store) => store.load),
+        Effect.map((preferences) => ({ preferences, loadFailed: false })),
         Effect.catch((error) =>
           Effect.logWarning("Could not load mobile preferences.", error).pipe(
-            Effect.as<MobilePreferences.Preferences>({}),
+            Effect.as({ preferences: {} as MobilePreferences.Preferences, loadFailed: true }),
           ),
         ),
       ),
@@ -49,12 +50,18 @@ export function createMobilePreferencesState(
     const stored = get(storedPreferencesAtom);
     const confirmed = get(confirmedPreferencesAtom);
     const optimistic = get(optimisticPatchAtom);
-    return AsyncResult.map(stored, (preferences) => ({
+    return AsyncResult.map(stored, ({ preferences }) => ({
       ...preferences,
       ...confirmed,
       ...optimistic.values,
     }));
   }).pipe(Atom.keepAlive, Atom.withLabel("mobile:preferences"));
+
+  /** True when stored preferences could not be read and the defaults stand in for them. */
+  const loadFailedAtom = Atom.make((get) => {
+    const stored = get(storedPreferencesAtom);
+    return AsyncResult.isSuccess(stored) && stored.value.loadFailed;
+  }).pipe(Atom.keepAlive, Atom.withLabel("mobile:preferences:load-failed"));
 
   const settlePatch = (
     registry: AtomRegistry.AtomRegistry,
@@ -115,11 +122,12 @@ export function createMobilePreferencesState(
     execute: save,
   });
 
-  return { preferencesAtom, save, savePreferences } as const;
+  return { preferencesAtom, loadFailedAtom, save, savePreferences } as const;
 }
 
 const mobilePreferencesRuntime = Atom.runtime(Runtime.layer);
 const mobilePreferencesState = createMobilePreferencesState(mobilePreferencesRuntime);
 
 export const mobilePreferencesAtom = mobilePreferencesState.preferencesAtom;
+export const mobilePreferencesLoadFailedAtom = mobilePreferencesState.loadFailedAtom;
 export const saveMobilePreferences = mobilePreferencesState.savePreferences;

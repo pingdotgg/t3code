@@ -4,7 +4,14 @@ import { AppState, Keyboard } from "react-native";
 
 import { appLockExpired, DEFAULT_APP_LOCK_GRACE_PERIOD_MS } from "../../lib/appLock";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { mobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, mobilePreferencesLoadFailedAtom } from "../../state/preferences";
+
+/** Unreadable preferences count as locked: an unknown setting must not open the app. */
+export const appLockEnabledAtom = Atom.make((get) => {
+  if (get(mobilePreferencesLoadFailedAtom)) return true;
+  const preferences = get(mobilePreferencesAtom);
+  return AsyncResult.isSuccess(preferences) && preferences.value.appLockEnabled === true;
+}).pipe(Atom.keepAlive, Atom.withLabel("mobile:app-lock:enabled"));
 
 interface AppLockSession {
   /** Every launch starts locked; only a successful unlock in this process sets it. */
@@ -58,13 +65,14 @@ export async function unlockApp(promptMessage: string): Promise<void> {
 }
 
 function lockExpiredSince(awaySince: number): boolean {
+  if (!appAtomRegistry.get(appLockEnabledAtom)) return false;
   const preferences = appAtomRegistry.get(mobilePreferencesAtom);
-  if (!AsyncResult.isSuccess(preferences) || preferences.value.appLockEnabled !== true)
-    return false;
   return appLockExpired({
     awaySince,
     now: Date.now(),
-    gracePeriodMs: preferences.value.appLockGracePeriodMs ?? DEFAULT_APP_LOCK_GRACE_PERIOD_MS,
+    gracePeriodMs:
+      (AsyncResult.isSuccess(preferences) ? preferences.value.appLockGracePeriodMs : undefined) ??
+      DEFAULT_APP_LOCK_GRACE_PERIOD_MS,
   });
 }
 
