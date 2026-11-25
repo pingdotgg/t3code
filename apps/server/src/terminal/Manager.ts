@@ -410,7 +410,10 @@ function terminalWireLabel(session: TerminalSessionState): string {
   return truncateTerminalWireLabel(getTerminalLabel(session.terminalId));
 }
 
-function snapshot(session: TerminalSessionState, legacyReplay = false): TerminalSessionSnapshot {
+function snapshot(
+  session: TerminalSessionState,
+  supportsSnapshotSequenceState = false,
+): TerminalSessionSnapshot {
   return {
     threadId: session.threadId,
     terminalId: session.terminalId,
@@ -418,7 +421,7 @@ function snapshot(session: TerminalSessionState, legacyReplay = false): Terminal
     worktreePath: session.worktreePath,
     status: session.status,
     pid: session.pid,
-    ...snapshotHistory(session, legacyReplay),
+    ...snapshotHistory(session, supportsSnapshotSequenceState),
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     label: terminalWireLabel(session),
@@ -1416,15 +1419,15 @@ const STRING_TERMINATOR = "\u001b\\";
 // Long prefixes stay out of snapshots so they cannot crowd out scrollback on every resync.
 const MAX_SNAPSHOT_SEQUENCE_LENGTH = 4_096;
 
-function snapshotHistory(session: TerminalSessionState, legacyReplay: boolean) {
+function snapshotHistory(session: TerminalSessionState, supportsSnapshotSequenceState: boolean) {
   const history = session.history.value();
   const held = session.pendingHistoryControlSequence;
   const oversized = held.startsWith(OVERSIZED_SEQUENCE);
   if (!oversized && held.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH) {
     return { history: history + held };
   }
-  // The standalone open RPC retains its historical replay format.
-  if (legacyReplay) {
+  // Viewers that cannot skip omitted prefixes still need the legacy replay.
+  if (!supportsSnapshotSequenceState) {
     const replay = oversized
       ? held.slice(1)
       : held.slice(0, 2) + (/[\u001b\ud800-\udbff]$/.exec(held)?.[0] ?? "");
@@ -3455,18 +3458,18 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return liveSession;
   });
 
-  const openLocked = (input: TerminalOpenInput, legacyReplay = false) =>
+  const openLocked = (input: TerminalOpenInput, supportsSnapshotSequenceState?: boolean) =>
     withWorkspaceLease(
       path.resolve(input.worktreePath ?? input.cwd),
-      openWithWorkspaceLease(input).pipe(Effect.map((session) => snapshot(session, legacyReplay))),
+      openWithWorkspaceLease(input).pipe(
+        Effect.map((session) => snapshot(session, supportsSnapshotSequenceState)),
+      ),
     );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
     withThreadLock(
       input.threadId,
-      resolveLaunchInputEnvironment(input).pipe(
-        Effect.flatMap((resolved) => openLocked(resolved, true)),
-      ),
+      resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
     );
 
   const getShell = Effect.fn("terminal.getShell")(function* (input: TerminalObserveInput) {
@@ -3498,7 +3501,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         terminalId,
         cwd: input.cwd,
       });
-      return yield* Effect.uninterruptible(openLocked(resolvedInput));
+      return yield* Effect.uninterruptible(
+        openLocked(resolvedInput, input.supportsSnapshotSequenceState),
+      );
     }
 
     const session = existing.value;
@@ -3511,7 +3516,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         terminalId,
         cwd: input.cwd,
       });
-      return yield* Effect.uninterruptible(openLocked(resolvedInput));
+      return yield* Effect.uninterruptible(
+        openLocked(resolvedInput, input.supportsSnapshotSequenceState),
+      );
     }
 
     if (
@@ -3522,7 +3529,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* resizeSession(session, session.process, targetCols, targetRows);
     }
 
-    return snapshot(session);
+    return snapshot(session, input.supportsSnapshotSequenceState);
   });
 
   const readAllTerminalMetadata = () =>
@@ -3702,7 +3709,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   ) =>
     streamSession(
       input,
-      requireSession(input.threadId, input.terminalId).pipe(Effect.map(snapshot)),
+      requireSession(input.threadId, input.terminalId).pipe(
+        Effect.map((session) => snapshot(session, input.supportsSnapshotSequenceState)),
+      ),
       listener,
       registerCleanup,
     );
@@ -3715,7 +3724,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     streamSession(
       input,
       getSession(input.threadId, input.terminalId).pipe(
-        Effect.map((session) => (Option.isSome(session) ? snapshot(session.value) : null)),
+        Effect.map((session) =>
+          Option.isSome(session)
+            ? snapshot(session.value, input.supportsSnapshotSequenceState)
+            : null,
+        ),
       ),
       listener,
       registerCleanup,
@@ -3725,22 +3738,21 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     input,
     viewerId,
   ) => {
-    const { maxHistoryBytes } = input;
+    const { maxHistoryBytes, supportsSnapshotSequenceState } = input;
     const retained = (listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>) =>
       maxHistoryBytes === undefined
         ? listener
-        : (event: TerminalAttachStreamEvent) =>
-            listener(
-              "snapshot" in event
-                ? {
-                    ...event,
-                    snapshot: {
-                      ...event.snapshot,
-                      ...retainTerminalSnapshotHistory(event.snapshot.history, maxHistoryBytes),
-                    },
-                  }
-                : event,
-            );
+        : (event: TerminalAttachStreamEvent) => {
+            if (!("snapshot" in event)) return listener(event);
+            const retained = retainTerminalSnapshotHistory(event.snapshot.history, maxHistoryBytes);
+            return listener({
+              ...event,
+              snapshot: {
+                ...event.snapshot,
+                ...(supportsSnapshotSequenceState ? retained : { history: retained.history }),
+              },
+            });
+          };
     return Stream.unwrap(
       Effect.acquireRelease(
         Effect.sync(() => retainViewerOnce(input, viewerId, null)),

@@ -97,6 +97,31 @@ export function terminalSequenceEnd(state: number, text: string): number {
   return index;
 }
 
+/** Skip the continuation of an omitted snapshot prefix, retaining any new escape sequence. */
+export function skipTerminalSnapshotContinuation(state: number, data: string) {
+  if (data.length === 0) return { state, data };
+  if (state === SEQUENCE_ESCAPE) {
+    return {
+      state: TERMINAL_SEQUENCE_GROUND,
+      data: data[0] === "\\" ? data.slice(1) : "\u001b" + data,
+    };
+  }
+
+  const escape = data.indexOf("\u001b");
+  const prefix = escape < 0 ? data : data.slice(0, escape);
+  const end = terminalSequenceEnd(state, prefix);
+  const next = terminalSequenceStateAfter(state, prefix, 0, end);
+  if (next === TERMINAL_SEQUENCE_GROUND || escape < 0) {
+    return { state: next, data: data.slice(end) };
+  }
+  // Hold a final ESC until we know whether it starts a new sequence or completes ST.
+  if (escape + 1 === data.length) return { state: SEQUENCE_ESCAPE, data: "" };
+  return {
+    state: TERMINAL_SEQUENCE_GROUND,
+    data: data.slice(data[escape + 1] === "\\" ? escape + 2 : escape),
+  };
+}
+
 /**
  * The final `maxBytes` of UTF-8 a client retains, starting at a code point boundary and
  * outside any control sequence the cut went through.
@@ -186,8 +211,15 @@ export const TerminalOpenInput = Schema.Struct({
 });
 export type TerminalOpenInput = typeof TerminalOpenInput.Type;
 
-export const TerminalAttachInput = Schema.Struct({
+export const TerminalObserveInput = Schema.Struct({
   ...TerminalSessionInput.fields,
+  // The viewer can skip a discarded prefix using the snapshot's parser state.
+  supportsSnapshotSequenceState: Schema.optional(Schema.Boolean),
+});
+export type TerminalObserveInput = Schema.Codec.Encoded<typeof TerminalObserveInput>;
+
+export const TerminalAttachInput = Schema.Struct({
+  ...TerminalObserveInput.fields,
   cwd: Schema.optional(TrimmedNonEmptyStringSchema),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   cols: Schema.optional(TerminalColsSchema),
@@ -202,9 +234,6 @@ export const TerminalAttachInput = Schema.Struct({
   maxHistoryBytes: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type TerminalAttachInput = typeof TerminalAttachInput.Type;
-
-export const TerminalObserveInput = TerminalSessionInput;
-export type TerminalObserveInput = Schema.Codec.Encoded<typeof TerminalObserveInput>;
 
 /** Longest `data` one `terminal.write` carries, in UTF-16 code units. */
 export const TERMINAL_WRITE_MAX_LENGTH = 65_536;

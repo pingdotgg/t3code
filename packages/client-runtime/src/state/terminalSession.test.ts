@@ -78,9 +78,26 @@ describe("terminal session reducers", () => {
       attach: false,
       historySequenceState: terminalSequenceStateAfter(0, "\u001b[20"),
     },
+    {
+      title: "SGR replacing an omitted OSC",
+      history: "before\n",
+      budget: 8_192,
+      chunks: ["progress", "\u001b[31m"],
+      attach: false,
+      historySequenceState: terminalSequenceStateAfter(0, "\u001b]0;title"),
+      escapeReplay: "\u001b[31m",
+    },
+    {
+      title: "split string terminator after an omitted OSC",
+      history: "before\n",
+      budget: 8_192,
+      chunks: ["progress", "\u001b", "\\"],
+      attach: false,
+      historySequenceState: terminalSequenceStateAfter(0, "\u001b]0;title"),
+    },
   ])(
     "skips a continuation after $title",
-    ({ history, budget, chunks, attach, historySequenceState }) => {
+    ({ history, budget, chunks, attach, historySequenceState, escapeReplay }) => {
       const snapshot = {
         ...BASE_SNAPSHOT,
         ...(attach
@@ -104,10 +121,12 @@ describe("terminal session reducers", () => {
           clientBudget,
         );
         const update = readTerminalOutputUpdate(state.output, cursor);
-        expect("data" in update ? update.data : "").toBe(data === "ok" ? data : "");
+        expect("data" in update ? update.data : "").toBe(
+          data === "ok" || data === escapeReplay ? data : "",
+        );
         cursor = update.cursor;
       }
-      expect(terminalOutputText(state.output)).toBe(replayed + "ok");
+      expect(terminalOutputText(state.output)).toBe(replayed + (escapeReplay ?? "") + "ok");
     },
   );
 

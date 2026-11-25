@@ -1,5 +1,6 @@
 import {
   retainTerminalSnapshotHistory,
+  skipTerminalSnapshotContinuation,
   TERMINAL_SEQUENCE_GROUND,
   type TerminalSessionSnapshot,
   terminalSequenceEnd,
@@ -189,14 +190,14 @@ function appendOutput(
   if (pending === undefined || data.length === 0) {
     return appendRetainedOutput(current, data, maxBufferBytes);
   }
-  const end = terminalSequenceEnd(pending, data);
-  const state = terminalSequenceStateAfter(pending, data, 0, end);
+  const continuation = skipTerminalSnapshotContinuation(pending, data);
   return appendRetainedOutput(
     {
       ...current,
-      pendingSnapshotSequenceState: state === TERMINAL_SEQUENCE_GROUND ? undefined : state,
+      pendingSnapshotSequenceState:
+        continuation.state === TERMINAL_SEQUENCE_GROUND ? undefined : continuation.state,
     },
-    data.slice(end),
+    continuation.data,
     maxBufferBytes,
   );
 }
