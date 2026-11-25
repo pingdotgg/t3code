@@ -3,6 +3,8 @@ import {
   fullAccessOverrideExplanation,
   PUSH_HOOKS_APPROVAL_LABEL,
   PUSH_HOOKS_APPROVAL_QUESTION,
+  TOOL_ACTION_APPROVAL_LABEL,
+  toolActionApprovalQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { msg, T, useMessages } from "gt-react";
 import { ShieldIcon } from "lucide-react";
@@ -12,6 +14,7 @@ import { InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { PushHooksApprovalDetails } from "./PushHooksApprovalDetails";
+import { ToolActionApprovalDetails } from "./ToolActionApprovalDetails";
 import { ToolActivityIconView, type WorkEntryIconName } from "./TimelineToolActivityIcon";
 import { TimelineRowCtx } from "./timelineRowContext";
 import { WorkLogRow } from "./WorkLog";
@@ -52,8 +55,18 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
   const m = useMessages();
   const presentation = APPROVAL_PRESENTATION[approval.requestKind];
   // T3 Code's own question reads as the app asking: a plain sentence, then what it names.
-  const { pushHooks } = approval;
-  const label = pushHooks ? PUSH_HOOKS_APPROVAL_LABEL : presentation.label;
+  // One request may name both: a push, and the hooks it runs.
+  const { pushHooks, toolAction } = approval;
+  const label = toolAction
+    ? TOOL_ACTION_APPROVAL_LABEL
+    : pushHooks
+      ? PUSH_HOOKS_APPROVAL_LABEL
+      : presentation.label;
+  const question = toolAction
+    ? toolActionApprovalQuestion(toolAction)
+    : pushHooks
+      ? m(PUSH_HOOKS_APPROVAL_QUESTION)
+      : undefined;
   const canRespond = approval.responseCapability === "live";
   return (
     <WorkLogRow
@@ -64,15 +77,15 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
       icon={
         <ToolActivityIconView
           icon={undefined}
-          fallbackName={pushHooks ? "terminal" : presentation.icon}
+          fallbackName={toolAction ? "globe" : pushHooks ? "terminal" : presentation.icon}
           className="block size-4 shrink-0 stroke-2 text-icon-muted"
           muted
         />
       }
       label={
-        pushHooks ? (
+        question !== undefined ? (
           <span className="block min-w-0 text-foreground select-text! wrap-anywhere">
-            {m(PUSH_HOOKS_APPROVAL_QUESTION)}
+            {question}
           </span>
         ) : (
           <code
@@ -87,6 +100,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
       }
     >
       <div className="ms-7.5 flex min-w-0 flex-col gap-1 pb-1 text-xs">
+        {toolAction ? <ToolActionApprovalDetails toolAction={toolAction} /> : null}
         {pushHooks ? <PushHooksApprovalDetails pushHooks={pushHooks} /> : null}
         {approval.appName ? (
           <span className="text-muted-foreground wrap-anywhere">{approval.appName}</span>

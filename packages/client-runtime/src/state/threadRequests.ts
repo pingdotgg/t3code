@@ -8,6 +8,7 @@ import type {
   ProviderApprovalFullAccessOverride,
   ProviderApprovalOption,
   ProviderApprovalPushHooks,
+  ProviderApprovalToolAction,
   ProviderApprovalDecision,
   ProviderRequestKind,
   RuntimeRequestId,
@@ -62,6 +63,11 @@ export interface ThreadPendingApproval {
   readonly appName?: string;
   /** Set when T3 Code itself asks to run a repository's push hooks; `detail` is the same in one sentence. */
   readonly pushHooks?: ProviderApprovalPushHooks;
+  /**
+   * Set when one of T3 Code's own tools asks to act outside the thread. With `pushHooks` too,
+   * the one request covers both.
+   */
+  readonly toolAction?: ProviderApprovalToolAction;
   readonly options?: ReadonlyArray<ProviderApprovalOption>;
   readonly responseCapability: "live" | "not_resumable";
   readonly supportsFeedback?: boolean;
@@ -91,6 +97,37 @@ export function pushHooksApprovalRows(
       name,
       code: command,
     })),
+  ];
+}
+
+export const TOOL_ACTION_APPROVAL_LABEL = msg("Approval to act outside this thread");
+export const TOOL_ACTION_OTHER_REPOSITORY = msg(
+  "This is not the repository of this thread's project.",
+);
+
+/** What a tool asks to do, in the server's own words, which stay as it wrote them. */
+export const toolActionApprovalQuestion = (toolAction: ProviderApprovalToolAction): string =>
+  `${toolAction.action} ${toolAction.target}?`;
+
+/** What a tool action approval names: where it acts, then the tool that asks. */
+export function toolActionApprovalRows(
+  toolAction: ProviderApprovalToolAction,
+  resolve: MFunctionType = mFallback,
+): ReadonlyArray<ApprovalDetailRow> {
+  const { repository, host, origin, tool } = toolAction;
+  return [
+    ...(repository === undefined
+      ? []
+      : [
+          {
+            label: resolve(msg("Location", { $context: "field label, where an action happens" })),
+            code: host === undefined ? repository : `${host}/${repository}`,
+          },
+        ]),
+    ...(origin === undefined
+      ? []
+      : [{ label: resolve(msg("Page", { $context: "field label, a web page" })), code: origin }]),
+    { label: resolve(msg("Tool", { $context: "field label, an agent's tool" })), code: tool },
   ];
 }
 
@@ -320,6 +357,9 @@ export function derivePendingThreadRequests(
         : {}),
       ...(item?.type === "approval_request" && item.appName ? { appName: item.appName } : {}),
       ...(item?.type === "approval_request" && item.pushHooks ? { pushHooks: item.pushHooks } : {}),
+      ...(item?.type === "approval_request" && item.toolAction
+        ? { toolAction: item.toolAction }
+        : {}),
       ...(item?.type === "approval_request" && item.options !== undefined
         ? { options: item.options }
         : {}),

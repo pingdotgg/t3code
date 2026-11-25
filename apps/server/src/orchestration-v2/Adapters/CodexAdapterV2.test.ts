@@ -1897,6 +1897,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const nativeTurnId = "own-approval-turn";
         const prompt = "Open a pull request.";
         const message = "Push tools and run this repository's hook file .husky/pre-push?";
+        const toolAction = {
+          tool: "pull_request_create",
+          action: "Push tools and open",
+          target: "a pull request",
+          repository: "t3tools/t3code",
+        };
         const pushHooks = { branch: "tools", files: [".husky/pre-push"], commands: [] };
         const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
         const harness = yield* makeCodexReplayHarness(
@@ -1950,7 +1956,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         const sessions = yield* McpProviderSessions.McpProviderSessions;
         const ownAsked = asked
-          ? yield* sessions.recordApprovalRequest(harness.threadId, { message, pushHooks })
+          ? yield* sessions.recordApprovalRequest(harness.threadId, {
+              message,
+              pushHooks,
+              toolAction,
+            })
           : undefined;
         const turnInput = makeCodexTestTurnInput({
           threadId: harness.threadId,
@@ -1971,11 +1981,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const item = card?.type === "turn_item.updated" ? card.turnItem : undefined;
         assert.deepInclude(item, { prompt: message });
         if (expected.own) {
-          assert.deepInclude(item, { pushHooks });
+          assert.deepInclude(item, { pushHooks, toolAction });
           assert.notProperty(item, "appName");
         } else {
           assert.deepInclude(item, { appName: serverName });
           assert.notProperty(item, "pushHooks");
+          assert.notProperty(item, "toolAction");
         }
         if (ownAsked !== undefined) {
           assert.notProperty(

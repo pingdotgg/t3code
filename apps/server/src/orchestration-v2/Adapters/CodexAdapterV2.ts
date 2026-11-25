@@ -82,6 +82,7 @@ import type {
   ProviderApprovalDecision,
   ProviderApprovalOption,
   ProviderApprovalPushHooks,
+  ProviderApprovalToolAction,
   ProviderRequestKind,
   ProviderThreadId,
   ProviderTurnId,
@@ -5054,6 +5055,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly reason?: string | null | undefined;
           readonly appName?: string;
           readonly pushHooks?: ProviderApprovalPushHooks | undefined;
+          readonly toolAction?: ProviderApprovalToolAction | undefined;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
         }) {
           const createdAt = yield* DateTime.now;
@@ -5140,6 +5142,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ...(reason === undefined ? {} : { reason }),
             ...(input.appName === undefined ? {} : { appName: input.appName }),
             ...(input.pushHooks === undefined ? {} : { pushHooks: input.pushHooks }),
+            ...(input.toolAction === undefined ? {} : { toolAction: input.toolAction }),
             ...(input.options === undefined ? {} : { options: input.options }),
           };
           return { node, request, turnItem };
@@ -6583,7 +6586,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               // T3 Code asking is the app itself, so there is no other app to name.
               ...(ownRequest === undefined
                 ? { appName: described.appName }
-                : { pushHooks: ownRequest.pushHooks }),
+                : { pushHooks: ownRequest.pushHooks, toolAction: ownRequest.toolAction }),
               options: described.options,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();

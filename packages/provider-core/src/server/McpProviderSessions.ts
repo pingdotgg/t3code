@@ -1,6 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Pure synchronous hashing keeps page matching bounded without a runtime dependency.
 import * as NodeCrypto from "node:crypto";
-import type { ProviderApprovalPushHooks, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type {
+  ProviderApprovalPushHooks,
+  ProviderApprovalToolAction,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
@@ -45,6 +50,7 @@ export interface T3ApprovalRequest {
   /** The whole question, as the provider's client hands it on. */
   readonly message: string;
   readonly pushHooks?: ProviderApprovalPushHooks | undefined;
+  readonly toolAction?: ProviderApprovalToolAction | undefined;
   /** What an answer is given for; an answer to another state does not count for this request. */
   readonly state?: string | undefined;
 }

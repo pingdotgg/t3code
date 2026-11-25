@@ -1,8 +1,11 @@
 import {
   type EnvironmentId,
+  isRuntimeModeAbove,
   type OrchestrationV2LinkOrigin,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
+  type ProviderApprovalPushHooks,
+  type ProviderApprovalToolAction,
   type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
@@ -22,6 +25,8 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import { hashToolInput } from "@t3tools/provider-core/server/McpProviderSessions";
+
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import {
   assertFullAccessNamingLink,
@@ -29,6 +34,7 @@ import {
   assertSameLink,
   callerLinkOrigin,
 } from "./linkOrigin.ts";
+import * as McpClientInput from "./McpClientInput.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import {
@@ -64,6 +70,7 @@ let declare: <P, A, E, R>(
  */
 type RemoteCheck<P> = (
   params: P,
+  environmentId: EnvironmentId,
 ) => Effect.Effect<unknown, OrchestratorMcpFailure, Effect.Services<typeof writingCaller>>;
 let remoteCheckOf: <Handler>(declaration: Declaration<Handler>) => RemoteCheck<never> | undefined;
 
@@ -214,10 +221,148 @@ export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.E
   declare(
     (params: P) =>
       writingCaller.pipe(
-        Effect.tap((caller) => assertNotLinked(caller, "start work here that is not its link's")),
+        Effect.tap((caller) => assertNotLinked(caller, startsOutsideWork)),
         Effect.flatMap(() => handle(params)),
       ),
     () => writingCaller,
+  );
+
+/**
+ * What a tool is about to do outside its thread: a write to a forge with the user's login, or a
+ * file of theirs sent to a page. The person asked to approve it reads these words, so a handler
+ * resolves each from the call's checked arguments and never copies text the agent wrote.
+ */
+export interface OutsideAction extends Omit<ProviderApprovalToolAction, "tool"> {
+  /** What else the approval covers, ending the question: the hooks a push would run. */
+  readonly also?: string | undefined;
+  readonly pushHooks?: ProviderApprovalPushHooks | undefined;
+}
+
+const OUTSIDE_ACTION_KEY = "outside-action";
+
+const outsideActionSentence = (asks: OutsideAction) =>
+  `${asks.action} ${asks.target}${
+    asks.repository !== undefined
+      ? ` in ${asks.repository}`
+      : asks.origin !== undefined
+        ? ` to ${asks.origin}`
+        : ""
+  }${asks.also ?? ""}`;
+
+const outsideActionRefused = (message: string) =>
+  new OrchestratorMcpFailure({ code: "capability_denied", message });
+
+/**
+ * Full access as the rest of the server reads it: the mode itself, outside plan mode, and not
+ * above an administrator's limit, under which a thread recorded in Full access does not run in it.
+ */
+const hasFullAccess = ({ limits, scope }: Caller) =>
+  limits.runtimeMode === "full-access" &&
+  limits.interactionMode === "default" &&
+  !isRuntimeModeAbove(limits.runtimeMode, scope.runtimeModeCeiling);
+
+const personApproved: unique symbol = Symbol("t3/mcp/McpToolAccess/personApproved");
+
+/**
+ * Below Full access, ends unless the person approved exactly this: the tool, its arguments and
+ * what they resolved to. The approval is read from the server's own record of the person's
+ * answer, so only a thread whose adapter keeps that record can be asked. Anything that differs
+ * on the call that brings the answer is another request, and asks again.
+ */
+const personApproves = Effect.fnUntraced(function* (
+  caller: Caller,
+  tool: string,
+  params: unknown,
+  asks: OutsideAction,
+) {
+  if (hasFullAccess(caller)) return undefined;
+  const sentence = outsideActionSentence(asks);
+  if (caller.caller === undefined) {
+    return yield* outsideActionRefused(
+      `Not done: "${sentence}" needs full access for this MCP client, which has no thread where a person could approve it.`,
+    );
+  }
+  const cannotAsk = outsideActionRefused(
+    `Not done: "${sentence}" needs the user's approval below Full access, and this agent's client cannot ask for it. Tell the user; they can do it themselves or switch this thread to Full access.`,
+  );
+  if (!(yield* McpClientInput.asksThePerson)) return yield* cannotAsk;
+  const { also: _also, pushHooks, ...named } = asks;
+  const request = hashToolInput({ tool, params, asks });
+  const answer = yield* McpClientInput.askApproval({
+    key: OUTSIDE_ACTION_KEY,
+    state: `${tool} ${request}`,
+    // The start of the request's own name ends the question, so two requests never read alike
+    // and an answer in the app is recorded for the one it was given to.
+    message: `${sentence}? (request ${request.slice(0, 8)})`,
+    toolAction: { tool, ...named },
+    pushHooks,
+  });
+  switch (answer) {
+    case "accepted":
+      return personApproved;
+    case "declined":
+      return yield* outsideActionRefused(`Not done: the user declined "${sentence}".`);
+    case "unconfirmed":
+      return yield* outsideActionRefused(
+        `Not done: T3 Code has no approval from the user for "${sentence}". Call again to ask.`,
+      );
+    case "unavailable":
+      return yield* cannotAsk;
+    case "asked":
+      // Never read: the question is this call's answer.
+      return yield* outsideActionRefused("Waiting for the user's approval.");
+  }
+});
+
+const startsOutsideWork = "start work here that is not its link's";
+
+/**
+ * Acts outside the thread with the user's own access, as a forge write does. Below Full access
+ * the person approves `run` first; `plan` only checks the arguments and resolves what they name.
+ * A call bound for a linked environment is asked about here from `named`, the arguments alone.
+ */
+export const actsOutsideThread = <P, A, E, R, E2, R2>(
+  tool: string,
+  plan: (
+    params: P,
+    /** `asked`: the person is asked before `run`, so what a full-access call skips is read. */
+    caller: { readonly asked: boolean },
+  ) => Effect.Effect<
+    {
+      readonly asks: OutsideAction;
+      readonly run: Effect.Effect<A, E, R>;
+    },
+    E2,
+    R2
+  >,
+  named?: (params: P) => OutsideAction,
+) =>
+  declare(
+    (params: P) =>
+      Effect.gen(function* () {
+        const caller = yield* writingCaller;
+        yield* assertNotLinked(caller, startsOutsideWork);
+        const planned = yield* plan(params, { asked: !hasFullAccess(caller) });
+        yield* personApproves(caller, tool, params, planned.asks);
+        return yield* planned.run;
+      }),
+    (params: P, environmentId) =>
+      Effect.gen(function* () {
+        const caller = yield* writingCaller;
+        if (named === undefined) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "This action is done from this environment. Omit environmentId.",
+          });
+        }
+        const asks = named(params);
+        return yield* personApproves(
+          caller,
+          tool,
+          { params, environmentId },
+          { ...asks, target: `${asks.target} (linked environment ${environmentId})` },
+        );
+      }),
   );
 
 export const writesThreads = <P, A, E, R>(
@@ -317,8 +462,8 @@ export const either = <P, A, E, R, A2, E2, R2>(
   return declare(
     (params: P): Effect.Effect<A | A2, E | E2, R | R2> =>
       useFirst(params) ? checkedHandler(first)(params) : checkedHandler(second)(params),
-    (params) =>
-      remotes[useFirst(params) ? 0 : 1]?.(params) ??
+    (params, environmentId) =>
+      remotes[useFirst(params) ? 0 : 1]?.(params, environmentId) ??
       Effect.fail(
         new OrchestratorMcpFailure({
           code: "invalid_request",
@@ -480,12 +625,16 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
         const target = PeerForwarding.remoteTarget(scope, environmentId);
         if (target === undefined) return yield* here(params);
         if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
-        yield* (remote as RemoteCheck<typeof params>)(params);
+        const checked = yield* (remote as RemoteCheck<typeof params>)(params, target);
         if (Option.isNone(forwarding)) return yield* linksUnavailable;
-        const result = yield* forwarding.value.call(scope, tool, target, {
-          ...params,
-          environmentId,
-        });
+        const result = yield* forwarding.value.call(
+          scope,
+          tool,
+          target,
+          { ...params, environmentId },
+          // The person here said yes to this call, and the other environment has no one to ask.
+          checked === personApproved ? { personApproved: true } : undefined,
+        );
         return forwarded === undefined ? result : yield* forwarded(params, target, result);
       });
   }

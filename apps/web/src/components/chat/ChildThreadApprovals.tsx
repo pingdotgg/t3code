@@ -4,6 +4,7 @@ import type { ChildThreadApproval } from "@t3tools/client-runtime/state/thread-r
 import {
   fullAccessOverrideExplanation,
   PUSH_HOOKS_APPROVAL_QUESTION,
+  toolActionApprovalQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
 import {
   isAtomCommandInterrupted,
@@ -16,6 +17,7 @@ import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { PushHooksApprovalDetails } from "./PushHooksApprovalDetails";
+import { ToolActionApprovalDetails } from "./ToolActionApprovalDetails";
 
 function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
   const canRespond = useEnvironmentScope(entry.thread.environmentId, AuthOrchestrationOperateScope);
@@ -35,11 +37,18 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           Approval needed from <Var>{entry.title}</Var>
         </T>
       </p>
-      {approval.pushHooks ? (
-        <>
-          <p className="mb-1">{messages(PUSH_HOOKS_APPROVAL_QUESTION)}</p>
-          <PushHooksApprovalDetails pushHooks={approval.pushHooks} />
-        </>
+      {approval.toolAction || approval.pushHooks ? (
+        <div className="flex flex-col gap-1">
+          <p>
+            {approval.toolAction
+              ? toolActionApprovalQuestion(approval.toolAction)
+              : messages(PUSH_HOOKS_APPROVAL_QUESTION)}
+          </p>
+          {approval.toolAction ? (
+            <ToolActionApprovalDetails toolAction={approval.toolAction} />
+          ) : null}
+          {approval.pushHooks ? <PushHooksApprovalDetails pushHooks={approval.pushHooks} /> : null}
+        </div>
       ) : (
         <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">
           {approval.detail || approval.requestKind}

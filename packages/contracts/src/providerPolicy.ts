@@ -89,6 +89,28 @@ export const ProviderApprovalPushHooks = Schema.Struct({
 });
 export type ProviderApprovalPushHooks = typeof ProviderApprovalPushHooks.Type;
 
+/**
+ * What one of T3 Code's own tools asks to do outside the thread, such as a write to a forge.
+ * The server resolves every field from the call's checked arguments. Clients show it as the
+ * request's details; the item's `prompt` stays the whole question in one sentence.
+ */
+export const ProviderApprovalToolAction = Schema.Struct({
+  /** The tool that asks, such as `pull_request_merge`. */
+  tool: Schema.String,
+  /** What it does, such as "Merge". */
+  action: Schema.String,
+  /** What it does that to, such as "pull request #5". */
+  target: Schema.String,
+  /** The repository it is in, as its host names it. */
+  repository: Schema.optional(Schema.String),
+  host: Schema.optional(Schema.String),
+  /** The page a file goes to. */
+  origin: Schema.optional(Schema.String),
+  /** True when the repository is not the one the thread's project is a checkout of. */
+  otherRepository: Schema.optional(Schema.Boolean),
+});
+export type ProviderApprovalToolAction = typeof ProviderApprovalToolAction.Type;
+
 export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unknown);
 export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 

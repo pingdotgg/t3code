@@ -238,6 +238,18 @@ export class GitManager extends Context.Service<
       GitCreatePullRequestResult,
       GitManagerServiceError | GitPushHooksUnapprovedError
     >;
+    /**
+     * What opening a pull request from `cwd` would push, for a caller that asks a person first:
+     * the branch, whether it has commits its remote lacks, and the hooks a push would run.
+     */
+    readonly pullRequestPush: (cwd: string) => Effect.Effect<
+      {
+        readonly branch: string | null;
+        readonly needsPush: boolean;
+        readonly hooks: GitVcsDriver.PushHooks | null;
+      },
+      GitManagerServiceError
+    >;
     readonly subscribePullRequestStateChanges: Effect.Effect<
       Stream.Stream<ThreadPullRequestKey>,
       never,
@@ -3195,6 +3207,25 @@ export const make = Effect.gen(function* () {
     return result;
   });
 
+  const pullRequestPush: GitManager["Service"]["pullRequestPush"] = Effect.fn(
+    "GitManager.pullRequestPush",
+  )(function* (cwd) {
+    const status = yield* gitCore.statusDetails(cwd);
+    const needsPush = yield* createPrNeedsPush(cwd, status);
+    const hooks = yield* gitCore.pushHooks(cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitManagerError({
+            operation: "createPullRequest",
+            cwd,
+            detail: "Could not read the repository's push hooks. Nothing was pushed.",
+            cause,
+          }),
+      ),
+    );
+    return { branch: status.branch, needsPush, hooks };
+  });
+
   const createPullRequest: GitManager["Service"]["createPullRequest"] = Effect.fn(
     "GitManager.createPullRequest",
   )(function* (input) {
@@ -4414,6 +4445,7 @@ export const make = Effect.gen(function* () {
     preparePullRequestThread,
     runStackedAction,
     createPullRequest,
+    pullRequestPush,
     subscribePullRequestStateChanges: PubSub.subscribe(pullRequestStateChanges).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),
     ),

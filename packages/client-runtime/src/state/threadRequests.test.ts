@@ -25,6 +25,8 @@ import {
   declinePendingApprovals,
   sendApprovalFeedback,
   pushHooksApprovalRows,
+  toolActionApprovalQuestion,
+  toolActionApprovalRows,
   makeThreadRequestsResolvedAnnouncer,
   onThreadRequestsResolved,
   pruneResolvedUserInputDrafts,
@@ -186,6 +188,72 @@ describe("a push hooks approval", () => {
       { label: "Branch", code: "feature/greeting" },
       { label: "Hook file", code: ".husky/pre-push" },
       { label: "Configured hook", name: "checks", code: "pnpm run checks" },
+    ]);
+  });
+});
+
+describe("an approval to act outside the thread", () => {
+  const toolAction = {
+    tool: "pull_request_merge",
+    action: "Merge",
+    target: "pull request #5",
+    repository: "org/repo",
+    host: "github.com",
+  };
+  const prompt = "Merge pull request #5 in org/repo? (request 1a2b3c4d)";
+  const pending = (item: object) =>
+    derivePendingThreadRequests({
+      runtimeRequests: [{ ...projection.runtimeRequests[0]!, kind: "mcp-elicitation" }],
+      turnItems: [
+        {
+          id: TurnItemId.make("tool-action-approval-item"),
+          threadId: v2Projection.thread.id,
+          runId: null,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          status: "waiting",
+          title: null,
+          startedAt: v2Now,
+          completedAt: null,
+          updatedAt: v2Now,
+          type: "approval_request",
+          requestId,
+          requestKind: "mcp-elicitation",
+          prompt,
+          ...item,
+        },
+      ],
+    }).approvals[0]!;
+
+  it("carries what the tool names, beside the hooks a push would run", () => {
+    const pushHooks = { branch: "tools", files: [".husky/pre-push"], commands: [] };
+    const own = pending({ toolAction, pushHooks });
+    expect(own.toolAction).toEqual(toolAction);
+    expect(own.pushHooks).toEqual(pushHooks);
+    expect(own.detail).toBe(prompt);
+    expect(pending({ appName: "deploys" })).not.toHaveProperty("toolAction");
+  });
+
+  it("asks in the server's words and lists where it acts, then the tool", () => {
+    expect(toolActionApprovalQuestion(toolAction)).toBe("Merge pull request #5?");
+    expect(toolActionApprovalRows(toolAction)).toEqual([
+      { label: "Location", code: "github.com/org/repo" },
+      { label: "Tool", code: "pull_request_merge" },
+    ]);
+    expect(
+      toolActionApprovalRows({
+        tool: "preview_act",
+        action: "Upload",
+        target: "/home/me/notes.txt",
+        origin: "https://example.com",
+      }),
+    ).toEqual([
+      { label: "Page", code: "https://example.com" },
+      { label: "Tool", code: "preview_act" },
     ]);
   });
 });

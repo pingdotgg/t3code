@@ -1,4 +1,4 @@
-import type { ProviderApprovalPushHooks } from "@t3tools/contracts";
+import type { ProviderApprovalPushHooks, ProviderApprovalToolAction } from "@t3tools/contracts";
 import type * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -73,22 +73,16 @@ const accepted = Effect.fnUntraced(function* (id: string | undefined, state?: st
 });
 
 /**
- * The reply this call brings to `key`, with the `state` of the request it answers: what a
- * sessionless client sends when it calls again. A handler reads it before it does anything a
- * decline rules out, and it is read once: the request it answers is no longer waiting, so the
- * thread's session forgets it.
+ * Whether an approval asked of this call's client is the person's own: the call comes from a
+ * thread whose adapter shows T3 Code's requests in the app and passes on what the person
+ * answered there. Any other client's reply is that client's word alone.
  */
-export const answered = Effect.fn("McpClientInput.answered")(function* (key: string) {
-  const context = Option.getOrUndefined(yield* Effect.serviceOption(McpSchema.McpRequestContext));
-  const answer = context?.inputResponses?.[key];
-  if (answer === undefined || context?.requestState === undefined) return undefined;
-  const { state, id } = sentState(context.requestState);
-  if (answer.action === "accept") return { state, answer: yield* accepted(id, state) };
+export const asksThePerson = Effect.gen(function* () {
   const requests = yield* threadRequests;
-  if (requests !== undefined && id !== undefined) {
-    yield* requests.sessions.forgetApprovalRequest(requests.thread.threadId, id);
-  }
-  return { state, answer: "declined" as const };
+  return (
+    requests !== undefined &&
+    (yield* requests.sessions.areApprovalRequestsShown(requests.thread.providerInstanceId))
+  );
 });
 
 /**
@@ -100,7 +94,8 @@ export const askApproval = Effect.fn("McpClientInput.askApproval")(function* (in
   readonly key: string;
   readonly state: string;
   readonly message: string;
-  readonly pushHooks?: ProviderApprovalPushHooks;
+  readonly pushHooks?: ProviderApprovalPushHooks | undefined;
+  readonly toolAction?: ProviderApprovalToolAction | undefined;
 }): Effect.fn.Return<Approval> {
   const context = Option.getOrUndefined(yield* Effect.serviceOption(McpSchema.McpRequestContext));
   const elicitation = context?.clientCapabilities.elicitation;
@@ -124,6 +119,7 @@ export const askApproval = Effect.fn("McpClientInput.askApproval")(function* (in
       : requests.sessions.recordApprovalRequest(requests.thread.threadId, {
           message: input.message,
           pushHooks: input.pushHooks,
+          toolAction: input.toolAction,
           state: input.state,
         });
 

@@ -129,6 +129,7 @@ import {
   ProviderMcpSignInError,
   type ProviderApprovalOption,
   type ProviderApprovalPushHooks,
+  type ProviderApprovalToolAction,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderRequestKind,
@@ -9598,6 +9599,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly prompt?: string;
           readonly appName?: string;
           readonly pushHooks?: ProviderApprovalPushHooks | undefined;
+          readonly toolAction?: ProviderApprovalToolAction | undefined;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
           readonly presentation?: ReturnType<typeof claudeApprovalPresentation>;
 
@@ -9692,6 +9694,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
                   ...(input.appName === undefined ? {} : { appName: input.appName }),
                   ...(input.pushHooks === undefined ? {} : { pushHooks: input.pushHooks }),
+                  ...(input.toolAction === undefined ? {} : { toolAction: input.toolAction }),
                   ...(input.options === undefined ? {} : { options: input.options }),
                   ...input.presentation,
                 }
@@ -13433,7 +13436,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // T3 Code asking is the app itself, so there is no other app to name.
             ...(ownRequest === undefined
               ? { appName: request.displayName ?? request.title ?? request.serverName }
-              : { pushHooks: ownRequest.pushHooks }),
+              : { pushHooks: ownRequest.pushHooks, toolAction: ownRequest.toolAction }),
             options:
               ownRequest === undefined
                 ? CLAUDE_MCP_ELICITATION_OPTIONS

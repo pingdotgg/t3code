@@ -12,14 +12,17 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as McpClientInput from "./McpClientInput.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
@@ -533,4 +536,190 @@ it.effect("refuses to build a thread-bound tool that outside clients would be of
       "reads_as_caller acts as its calling thread",
     );
   }),
+);
+
+/** A tool that acts outside its thread: what ran, and what went to a linked environment. */
+const outsideProbe = Effect.fn("outsideProbe")(function* (named = true) {
+  const ran: Array<string> = [];
+  const forwarded: Array<PeerForwarding.ForwardOptions | undefined> = [];
+  const OutsideToolkit = Toolkit.make(Tool.make("acts_outside", linkedProbe));
+  const toolkit = yield* OutsideToolkit.pipe(
+    Effect.provide(
+      McpToolAccess.HandlersLayer.layer(
+        McpToolAccess.toLayer(OutsideToolkit, {
+          acts_outside: McpToolAccess.actsOutsideThread(
+            "acts_outside",
+            () =>
+              Effect.succeed({
+                asks: { action: "Merge", target: "pull request #5", repository: "org/repo" },
+                run: Effect.sync(() => {
+                  ran.push("here");
+                  return { ran: "here" };
+                }),
+              }),
+            named ? () => ({ action: "Merge", target: "pull request #5" }) : undefined,
+          ),
+        }),
+      ).pipe(
+        Layer.provide(
+          Layer.mock(PeerForwarding.PeerForwarding)({
+            call: (_scope, tool, environmentId, _params, options) =>
+              Effect.sync(() => {
+                forwarded.push(options);
+                return { ran: `${tool.name} in ${environmentId}` } as never;
+              }),
+          }),
+        ),
+      ),
+    ),
+  );
+  const call = (
+    scope: McpInvocationContext.McpInvocationScope,
+    args: { readonly environmentId?: EnvironmentId } = {},
+    reply?: { readonly action: string; readonly state: string },
+  ) =>
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const request = Ref.makeUnsafe<McpSchema.InputRequired | undefined>(undefined);
+      const { result } = yield* toolkit.handle("acts_outside", args).pipe(
+        Stream.unwrap,
+        Stream.run(Sink.last()),
+        Effect.flatMap(Effect.fromOption),
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpClientInput.McpClientInput, { request, sessions }),
+        Effect.provideService(
+          McpSchema.McpRequestContext,
+          McpSchema.McpRequestContext.of({
+            clientId: 1,
+            protocolVersion: "2026-07-28",
+            clientCapabilities: new McpSchema.ClientCapabilities({ elicitation: {} }),
+            ...(reply === undefined
+              ? {}
+              : {
+                  inputResponses: { "outside-action": { action: reply.action } },
+                  requestState: reply.state,
+                }),
+          }),
+        ),
+        Effect.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
+          }),
+        ),
+      );
+      const asked = Ref.getUnsafe(request);
+      return {
+        result: result as {
+          readonly ran?: string;
+          readonly code?: string;
+          readonly message?: string;
+        },
+        state: asked?.requestState,
+        question: (
+          asked?.inputRequests?.["outside-action"] as
+            | { readonly params: { readonly message: string } }
+            | undefined
+        )?.params.message,
+      };
+    });
+  return { ran, forwarded, call };
+});
+
+const personAnswers = Effect.gen(function* () {
+  const sessions = yield* McpProviderSessions.McpProviderSessions;
+  yield* sessions.showsApprovalRequests(ProviderInstanceId.make("codex"));
+  return (threadId: ThreadId, question: string, approved: boolean) =>
+    sessions.answerApprovalRequests(threadId, question, approved);
+});
+
+it.effect("a call bound for a linked environment is asked about here before it goes", () =>
+  Effect.gen(function* () {
+    const answer = yield* personAnswers;
+    const probed = yield* outsideProbe();
+    const asked = yield* probed.call(supervised, { environmentId: box });
+    expect(asked.question).toMatch(
+      /^Merge pull request #5 \(linked environment environment-box\)\? \(request [0-9a-f]{8}\)$/,
+    );
+    expect(probed.forwarded).toEqual([]);
+
+    // The client's own "accept" sends nothing.
+    const unconfirmed = yield* probed.call(
+      supervised,
+      { environmentId: box },
+      { action: "accept", state: asked.state! },
+    );
+    expect(unconfirmed.result).toMatchObject({ code: "capability_denied" });
+    expect(probed.forwarded).toEqual([]);
+
+    const again = yield* probed.call(supervised, { environmentId: box });
+    yield* answer(supervisedThreadId, again.question!, true);
+    const sent = yield* probed.call(
+      supervised,
+      { environmentId: box },
+      { action: "accept", state: again.state! },
+    );
+    expect(sent.result).toEqual({ ran: "acts_outside in environment-box" });
+    // It goes as the person's own call: the other environment has no one to ask.
+    expect(probed.forwarded).toEqual([{ personApproved: true }]);
+    expect(probed.ran).toEqual([]);
+
+    // An approval for the call there is not one for the same call here.
+    const here = yield* probed.call(supervised, {}, { action: "accept", state: again.state! });
+    expect(here.state).not.toBe(again.state);
+    expect(probed.ran).toEqual([]);
+  }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect("a Full access thread's call goes to a linked environment unasked, as its own", () =>
+  Effect.gen(function* () {
+    yield* personAnswers;
+    const probed = yield* outsideProbe();
+    const sent = yield* probed.call(fullAccess, { environmentId: box });
+    expect(sent.result).toEqual({ ran: "acts_outside in environment-box" });
+    expect(sent.question).toBeUndefined();
+    expect(probed.forwarded).toEqual([undefined]);
+  }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect("a tool that cannot name its action from its arguments never leaves", () =>
+  Effect.gen(function* () {
+    yield* personAnswers;
+    const probed = yield* outsideProbe(false);
+    const refused = yield* probed.call(fullAccess, { environmentId: box });
+    expect(refused.result).toMatchObject({ code: "invalid_request" });
+    expect(probed.forwarded).toEqual([]);
+  }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+// A narrowed full-access link is a linked environment passing on its agent's modes: the person
+// was asked there, and a call they approved comes with their access.
+const narrowedLinkedClient: McpInvocationContext.McpInvocationScope = {
+  ...fullAccessLinkedClient,
+  client: {
+    ...fullAccessLinkedClient.client!,
+    narrowedTo: { runtimeMode: "approval-required", interactionMode: "default" },
+  },
+};
+
+it.effect.each([
+  ["a full-access client", fullAccessClient, "here"],
+  ["a full-access link", fullAccessLinkedClient, "here"],
+  ["a client approved below full access", supervisedClient, "capability_denied"],
+  ["a client held to an administrator's limit", atCeilingClient, "capability_denied"],
+  ["a link passing on modes below full access", narrowedLinkedClient, "capability_denied"],
+  ["a read-only client", readOnlyClient, "capability_denied"],
+] as const)("%s has no thread to be asked in: %o", ([, scope, expected]) =>
+  Effect.gen(function* () {
+    yield* personAnswers;
+    const probed = yield* outsideProbe();
+    const { result, question } = yield* probed.call(scope);
+    expect(result.code ?? result.ran).toBe(expected);
+    expect(question).toBeUndefined();
+    expect(probed.ran).toEqual(expected === "here" ? ["here"] : []);
+    if (expected !== "here" && scope !== readOnlyClient) {
+      expect(result.message).toBe(
+        'Not done: "Merge pull request #5 in org/repo" needs full access for this MCP client, which has no thread where a person could approve it.',
+      );
+    }
+  }).pipe(Effect.provide(McpProviderSessions.layer)),
 );

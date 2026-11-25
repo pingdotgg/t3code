@@ -8260,7 +8260,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const sessions = yield* McpProviderSessions.McpProviderSessions;
         const message = "Push tools and run this repository's hook file .husky/pre-push?";
         const pushHooks = { branch: "tools", files: [".husky/pre-push"], commands: [] };
-        yield* sessions.recordApprovalRequest(harness.threadId, { message, pushHooks });
+        const toolAction = {
+          tool: "pull_request_create",
+          action: "Push tools and open",
+          target: "a pull request",
+          repository: "t3tools/t3code",
+        };
+        yield* sessions.recordApprovalRequest(harness.threadId, {
+          message,
+          pushHooks,
+          toolAction,
+        });
         const cards = () =>
           harness.events.flatMap((event) =>
             event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
@@ -8276,7 +8286,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         yield* elicit(own);
         yield* awaitCard(1);
-        assert.deepInclude(cards().at(-1), { prompt: message, pushHooks });
+        assert.deepInclude(cards().at(-1), { prompt: message, pushHooks, toolAction });
         assert.notProperty(cards().at(-1), "appName");
 
         // Asked by a server T3 Code did not register: its name is shown, as for any server.
@@ -8284,12 +8294,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* awaitCard(2);
         assert.deepInclude(cards().at(-1), { prompt: message, appName: "T3 Code" });
         assert.notProperty(cards().at(-1), "pushHooks");
+        assert.notProperty(cards().at(-1), "toolAction");
 
         // Under T3 Code's name, but nothing T3 Code asked this thread.
         yield* elicit({ ...own, message: "Push tools?" });
         yield* awaitCard(3);
         assert.deepInclude(cards().at(-1), { prompt: "Push tools?", appName: "t3-code" });
         assert.notProperty(cards().at(-1), "pushHooks");
+        assert.notProperty(cards().at(-1), "toolAction");
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 

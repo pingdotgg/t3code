@@ -55,6 +55,12 @@ function listThreadIssues(
   };
 }
 
+/** An issue as its tracker writes it: `#12` on a forge, `ENG-12` where keys carry a prefix. */
+const issueNamed = (key: string) => `issue ${/^\d+$/.test(key) ? "#" : ""}${key}`;
+
+// The state is quoted whole on one line, so it cannot read as part of the question.
+const setStateAction = (state: string) => `Set state ${JSON.stringify(state)} on`;
+
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const issues = yield* IssueService.IssueService;
@@ -148,6 +154,22 @@ const make = Effect.gen(function* () {
   const readIssue = (target: ResolvedTarget) =>
     target.issue === undefined ? issues.detail(refOf(target)) : Effect.succeed(target.issue);
 
+  /** What a write to an issue asks a person: the tracker's own names, and whose project it is. */
+  const asksOf = Effect.fnUntraced(function* (
+    action: string,
+    target: string,
+    where: { readonly projectId: ProjectId; readonly host: string; readonly scope: string },
+  ) {
+    const own = (yield* callerThread())?.projectId;
+    return {
+      action,
+      target,
+      repository: where.scope,
+      host: where.host,
+      ...(own === where.projectId ? {} : { otherRepository: true }),
+    } satisfies McpToolAccess.OutsideAction;
+  });
+
   /** A link needs the issue's URL, which a key-only reference does not carry; one read fills it. */
   const linkFailure = <E>(cause: Cause.Cause<E>) =>
     Cause.hasInterruptsOnly(cause)
@@ -231,39 +253,47 @@ const make = Effect.gen(function* () {
         };
       }),
     ),
-    create_issue: McpToolAccess.writesWithCapability((input) =>
+    create_issue: McpToolAccess.actsOutsideThread("create_issue", (input) =>
       Effect.gen(function* () {
         const scope = yield* requireProjectScope(input.projectId, { scope: input.scope });
-        const created = yield* issues.create({
-          ...scope,
-          title: input.title,
-          body: input.body ?? "",
-          labels: input.labels ?? [],
-          assignees: input.assignees ?? [],
-        });
+        const run = issues
+          .create({
+            ...scope,
+            title: input.title,
+            body: input.body ?? "",
+            labels: input.labels ?? [],
+            assignees: input.assignees ?? [],
+          })
+          .pipe(
+            Effect.map((created) => ({
+              ...scope,
+              key: created.key,
+              url: created.url,
+              displayKey: created.displayKey,
+            })),
+          );
+        return { asks: yield* asksOf("Create", "an issue", scope), run };
+      }),
+    ),
+    comment_on_issue: McpToolAccess.actsOutsideThread("comment_on_issue", (input) =>
+      Effect.gen(function* () {
+        const target = yield* resolveTarget(input);
+        const run = issues
+          .comment({ ...refOf(target), body: input.body })
+          .pipe(Effect.as(identityOf(target)));
+        return { asks: yield* asksOf("Comment on", issueNamed(target.key), target), run };
+      }),
+    ),
+    set_issue_state: McpToolAccess.actsOutsideThread("set_issue_state", (input) =>
+      Effect.gen(function* () {
+        const target = yield* resolveTarget(input);
+        const run = issues
+          .setState({ ...refOf(target), state: input.state })
+          .pipe(Effect.as(identityOf(target)));
         return {
-          ...scope,
-          key: created.key,
-          url: created.url,
-          displayKey: created.displayKey,
+          asks: yield* asksOf(setStateAction(input.state), issueNamed(target.key), target),
+          run,
         };
-      }),
-    ),
-    comment_on_issue: McpToolAccess.writesWithCapability((input) =>
-      Effect.gen(function* () {
-        const target = yield* resolveTarget(input);
-        yield* issues.comment({ ...refOf(target), body: input.body });
-        return identityOf(target);
-      }),
-    ),
-    set_issue_state: McpToolAccess.writesWithCapability((input) =>
-      Effect.gen(function* () {
-        const target = yield* resolveTarget(input);
-        yield* issues.setState({
-          ...refOf(target),
-          state: input.state,
-        });
-        return identityOf(target);
       }),
     ),
     link_issue: writesThread((input) =>

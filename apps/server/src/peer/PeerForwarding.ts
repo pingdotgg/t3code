@@ -35,6 +35,16 @@ const MAX_WAIT_TIMEOUT_MS = 45_000;
 
 type Scope = McpInvocationContext.McpInvocationScope;
 
+export interface ForwardOptions {
+  /**
+   * The person here approved this one call, so it goes with their access, not the agent's modes:
+   * the linked environment has no one to ask, and holds a call below full access back.
+   */
+  readonly personApproved?: boolean;
+}
+
+const PERSON_LIMITS = { runtimeMode: "full-access", interactionMode: "default" } as const;
+
 /**
  * Runs T3 MCP tools in a linked environment for an agent here. The tool's own
  * declaration checks the agent here first; the linked environment then holds
@@ -53,6 +63,7 @@ export class PeerForwarding extends Context.Service<
       tool: T,
       environmentId: EnvironmentId,
       params: Tool.Parameters<T>,
+      options?: ForwardOptions,
     ) => Effect.Effect<Tool.Success<T>, OrchestratorMcpFailure>;
     /** `t3_thread_read` there. */
     readonly readThread: (
@@ -172,6 +183,7 @@ const make = Effect.gen(function* () {
     success: Schema.Top,
     environmentId: EnvironmentId,
     params: unknown,
+    options?: ForwardOptions,
   ) {
     const { caller, limits } = yield* forwardingCaller(scope);
     const encoded = (yield* Schema.encodeUnknownEffect(parameters as Schema.Encoder<unknown>)(
@@ -202,7 +214,7 @@ const make = Effect.gen(function* () {
       environmentId,
       tool: toolName,
       arguments: args,
-      limits,
+      limits: options?.personApproved === true ? PERSON_LIMITS : limits,
       ...(sender === undefined ? {} : { sender }),
       success: success as Schema.Decoder<A>,
     });
@@ -263,11 +275,19 @@ const make = Effect.gen(function* () {
       : undefined;
   };
 
-  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) => {
+  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params, options) => {
     const forwardTool = (
       args: unknown,
     ): Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure> =>
-      forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, args);
+      forward(
+        scope,
+        tool.name,
+        tool.parametersSchema,
+        tool.successSchema,
+        environmentId,
+        args,
+        options,
+      );
     const newest = newestPage(tool.name, params);
     const forwarded: Effect.Effect<
       Tool.Success<typeof tool>,
