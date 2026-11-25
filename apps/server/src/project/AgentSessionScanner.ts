@@ -378,14 +378,18 @@ const CLAUDE_SYNTHETIC_MODEL = "<synthetic>";
 function foldClaudeFields(fields: ClaudeFields, record: DecodedTranscriptRecord): ClaudeFields {
   if (isHiddenClaudeRecord(record)) return fields;
   const model = record.message?.model?.trim();
+  const requestTitle =
+    fields.firstRequestTitle === undefined && record.type === "user"
+      ? deriveTitle("claudeAgent", claudeVisibleText(record).titleText)
+      : undefined;
   return {
     sessionId: record.sessionId?.trim() || fields.sessionId,
     title: claudeTitle(record.aiTitle) ?? fields.title,
+    // Copy the title so a slice cannot keep an evicted prompt's backing string alive.
     firstRequestTitle:
-      fields.firstRequestTitle ??
-      (record.type === "user"
-        ? deriveTitle("claudeAgent", claudeVisibleText(record).titleText)
-        : undefined),
+      requestTitle === undefined
+        ? fields.firstRequestTitle
+        : Buffer.from(requestTitle, "utf16le").toString("utf16le"),
     // Claude flushes the AI title after the user's rename; an empty rename clears it.
     customTitle:
       record.customTitle === undefined
