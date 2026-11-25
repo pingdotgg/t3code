@@ -91,6 +91,7 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
 function keepLastGoodReadings(
   previous: ReadonlyArray<UsageLimitSourceSnapshot>,
   next: ReadonlyArray<UsageLimitSourceSnapshot>,
+  redeemedAccountId?: string,
 ): ReadonlyArray<UsageLimitSourceSnapshot> {
   return next.map((source) => {
     // Auth file names can be reused, so only the same hub and login may lend a reading.
@@ -102,6 +103,8 @@ function keepLastGoodReadings(
       ...source,
       accounts: source.accounts.map((account) => {
         if (account.usageLimits.unavailable?.reason !== "probeFailed") return account;
+        // A redemption changes the reading, so a refused re-read must not bring back the one before it.
+        if (account.id === redeemedAccountId) return account;
         // Without a listed login, a reused auth file name cannot be told apart from the old one.
         if (account.email === undefined && account.workspaceId === undefined) return account;
         const last = before.accounts.find(
@@ -253,10 +256,16 @@ export const make = Effect.gen(function* () {
       input.accountId,
       input.creditId,
     );
-    // A redemption changes the reading, so a refused re-read must not bring back the one before it.
     const snapshot = yield* readSource(input.sourceId, config);
     const previous = yield* Ref.get(stateRef);
-    yield* publish(previous.map((source) => (source.id === input.sourceId ? snapshot : source)));
+    // The source's other accounts keep their readings: one a provider told to wait is not re-read.
+    yield* publish(
+      keepLastGoodReadings(
+        previous,
+        previous.map((source) => (source.id === input.sourceId ? snapshot : source)),
+        input.accountId,
+      ),
+    );
     return result;
   }, refreshLock.withPermits(1));
 

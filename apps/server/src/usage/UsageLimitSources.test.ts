@@ -268,6 +268,8 @@ it.effect("keeps an account's last good reading when the hub's next read of it i
     // Nothing to keep yet: the account stays listed as unreadable.
     expect(yield* read).toMatchObject({ windows: [], unavailable: { reason: "probeFailed" } });
     refused = false;
+    // A 429 that names no wait is not asked again for a minute.
+    yield* TestClock.adjust("1 minute");
     const good = yield* read;
     expect(good?.windows.map((window) => window.usedPercent)).toEqual([78]);
     expect(good?.unavailable).toBeUndefined();
@@ -343,6 +345,109 @@ it.effect("keeps an account's last good reading when the hub's next read of it i
                   ? { status_code: 429, body: "{}" }
                   : { status_code: 200, body: JSON.stringify(usage) },
               ),
+            );
+          }),
+        ),
+      ),
+      NodeCrypto.layer,
+    ]),
+  );
+});
+
+it.effect("redeeming a credit keeps the reading of an account its provider told to wait", () => {
+  let claudeUsed = 41;
+  let claudeRefused = false;
+  let codexRefused = false;
+  const answer = (status_code: number, body: unknown, header?: Record<string, string[]>) =>
+    Response.json({ status_code, body: JSON.stringify(body), ...(header ? { header } : {}) });
+  return Effect.gen(function* () {
+    const sources = yield* UsageLimitSources.make;
+    const claude = Effect.map(sources.current, ([source]) => source?.accounts[0]?.usageLimits);
+    yield* sources.refresh;
+    const good = yield* claude;
+    expect(good?.windows.map((window) => window.usedPercent)).toEqual([41]);
+    claudeRefused = true;
+    yield* sources.refresh;
+    expect(yield* claude).toEqual(good);
+    claudeRefused = false;
+    claudeUsed = 99;
+    codexRefused = true;
+    yield* sources.consumeResetCredit({
+      sourceId: UsageLimitSourceId.make("hub"),
+      accountId: "codex.json",
+      creditId: "credit",
+    });
+    // The waiting account is not read and keeps its bars; the redeemed one loses its earlier ones.
+    const [source] = yield* sources.current;
+    expect(source?.accounts.map((account) => account.usageLimits.unavailable?.reason)).toEqual([
+      undefined,
+      "probeFailed",
+    ]);
+    expect(source?.accounts[0]?.usageLimits).toEqual(good);
+  }).pipe(
+    Effect.provide([
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("hub")]: {
+            kind: "cliproxy",
+            url: "http://hub.test:8317",
+            managementKey: "management-secret",
+            enabled: true,
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
+      }),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            const path = new URL(request.url).pathname;
+            const upstream =
+              request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
+            const respond = (response: Response) => HttpClientResponse.fromWeb(request, response);
+            if (path.endsWith("/auth-files")) {
+              return respond(
+                Response.json({
+                  files: [
+                    {
+                      id: "claude.json",
+                      auth_index: "a",
+                      provider: "claude",
+                      email: "a@example.com",
+                    },
+                    {
+                      id: "codex.json",
+                      auth_index: "b",
+                      provider: "codex",
+                      email: "b@example.com",
+                    },
+                  ],
+                }),
+              );
+            }
+            if (!path.endsWith("/api-call")) return respond(Response.json({}));
+            if (upstream.includes("/api/oauth/usage")) {
+              return respond(
+                claudeRefused
+                  ? answer(429, {}, { "Retry-After": ["600"] })
+                  : answer(200, { five_hour: { utilization: claudeUsed, resets_at: null } }),
+              );
+            }
+            if (upstream.includes("/consume")) return respond(answer(200, { code: "reset" }));
+            if (upstream.includes("/rate-limit-reset-credits")) {
+              return respond(answer(200, { credits: [] }));
+            }
+            return respond(
+              codexRefused
+                ? answer(401, {})
+                : answer(200, { rate_limit: { primary_window: { used_percent: 12 } } }),
             );
           }),
         ),
