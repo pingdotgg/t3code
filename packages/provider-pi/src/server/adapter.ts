@@ -1490,9 +1490,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }
         }
         const output = piToolOutput(resultRecord, toolName);
+        // Pi strips @ only at the start of the raw argument, before preview trimming.
         const readPath =
           toolName === "read"
-            ? (recordString(args, "path") ?? recordString(args, "file_path"))?.trim()
+            ? (recordString(args, "path") ?? recordString(args, "file_path"))
+                ?.replace(/^@/, "")
+                .trim()
             : undefined;
         const viewedImagePath =
           readPath &&
