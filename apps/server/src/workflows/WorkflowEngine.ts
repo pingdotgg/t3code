@@ -624,12 +624,16 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   // Typed, as it and the resume it starts refer to each other.
   const placesTaken: (given: ReadonlyArray<WorkflowStore.PlaceRow>) => Effect.Effect<void> =
     Effect.fnUntraced(function* (given) {
+      // Several of one run's places can come back at once; the run is resumed once.
+      const resumed = new Set<string>();
       for (const place of given) {
         if (place.state === "queued") {
           yield* placeWake(place.run_id, place.name);
           continue;
         }
+        if (resumed.has(place.run_id)) continue;
         if (yield* store.placesReturning(place.run_id)) continue;
+        resumed.add(place.run_id);
         yield* store.runResumed(place.run_id);
         yield* Effect.forkIn(Effect.ignore(resumeRun(place.run_id)), scope);
       }
