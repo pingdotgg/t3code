@@ -61,6 +61,13 @@ export interface StoredTeamInviteRecord extends TeamInvite {
   readonly tokenHash: string;
 }
 
+export interface TeamRelayRecipientBinding {
+  readonly teamId: TeamId;
+  readonly memberId: TeamMemberId;
+  readonly cloudUserId: string | null;
+  readonly boundAt: string;
+}
+
 interface WorkspaceRow {
   readonly id: string;
   readonly name: string;
@@ -268,7 +275,7 @@ export class TeamRepository extends Context.Service<
       readonly threadId: ThreadId;
       readonly authorMemberId: TeamMemberId;
       readonly createdAt: string;
-    }) => Effect.Effect<void, TeamRepositoryError>;
+    }) => Effect.Effect<boolean, TeamRepositoryError>;
     readonly listTurnAttributionsForThread: (
       threadId: ThreadId,
     ) => Effect.Effect<ReadonlyArray<TeamTurnAttribution>, TeamRepositoryError>;
@@ -281,6 +288,12 @@ export class TeamRepository extends Context.Service<
     readonly threadExistsInProjection: (
       threadId: ThreadId,
     ) => Effect.Effect<boolean, TeamRepositoryError>;
+    readonly isThreadDeletedInProjection: (
+      threadId: ThreadId,
+    ) => Effect.Effect<boolean, TeamRepositoryError>;
+    readonly getThreadCreatedAtInProjection: (
+      threadId: ThreadId,
+    ) => Effect.Effect<Option.Option<string>, TeamRepositoryError>;
     readonly followThread: (input: {
       readonly threadId: ThreadId;
       readonly memberId: TeamMemberId;
@@ -300,6 +313,14 @@ export class TeamRepository extends Context.Service<
     readonly listFollowersForThread: (
       threadId: ThreadId,
     ) => Effect.Effect<ReadonlyArray<TeamMemberId>, TeamRepositoryError>;
+    readonly setRelayRecipientBinding: (
+      input: TeamRelayRecipientBinding,
+    ) => Effect.Effect<void, TeamRepositoryError>;
+    readonly getRelayRecipientBinding: () => Effect.Effect<
+      Option.Option<TeamRelayRecipientBinding>,
+      TeamRepositoryError
+    >;
+    readonly clearRelayRecipientBinding: () => Effect.Effect<void, TeamRepositoryError>;
   }
 >()("t3/team/TeamRepository") {}
 
@@ -677,13 +698,15 @@ const make = Effect.gen(function* () {
     }),
 
     recordTurnAttribution: Effect.fn("TeamRepository.recordTurnAttribution")(function* (input) {
-      yield* runSql(
+      const rows = yield* runSql(
         "recordTurnAttribution",
-        sql`
+        sql<{ readonly turn_id: string }>`
           INSERT OR IGNORE INTO team_turn_meta (turn_id, thread_id, author_member_id, created_at)
           VALUES (${input.turnId}, ${input.threadId}, ${input.authorMemberId}, ${input.createdAt})
+          RETURNING turn_id
         `,
       );
+      return rows.length > 0;
     }),
 
     listTurnAttributionsForThread: Effect.fn("TeamRepository.listTurnAttributionsForThread")(
@@ -718,21 +741,26 @@ const make = Effect.gen(function* () {
 
     listLatestTurnAttributions: Effect.fn("TeamRepository.listLatestTurnAttributions")(
       function* (teamId) {
+        // Keep the most recent non-steering runs per thread so queued runs never evict an active run's author.
         const rows = yield* runSql(
           "listLatestTurnAttributions",
           sql<TurnMetaRow>`
-          SELECT t.turn_id, t.thread_id, t.author_member_id, m.pseudo AS author_pseudo, t.created_at
-          FROM team_turn_meta t
-          INNER JOIN team_thread_meta tm ON tm.thread_id = t.thread_id
-          INNER JOIN team_members m ON m.id = t.author_member_id
-          WHERE tm.team_id = ${teamId}
-            AND t.turn_id NOT LIKE 'msg:%'
-            AND t.rowid = (
-              SELECT MAX(t2.rowid)
-              FROM team_turn_meta t2
-              WHERE t2.thread_id = t.thread_id
-                AND t2.turn_id NOT LIKE 'msg:%'
-            )
+          SELECT turn_id, thread_id, author_member_id, author_pseudo, created_at
+          FROM (
+            SELECT
+              t.turn_id,
+              t.thread_id,
+              t.author_member_id,
+              m.pseudo AS author_pseudo,
+              t.created_at,
+              ROW_NUMBER() OVER (PARTITION BY t.thread_id ORDER BY t.rowid DESC) AS rn
+            FROM team_turn_meta t
+            INNER JOIN team_thread_meta tm ON tm.thread_id = t.thread_id
+            INNER JOIN team_members m ON m.id = t.author_member_id
+            WHERE tm.team_id = ${teamId}
+              AND t.turn_id NOT LIKE 'msg:%'
+          )
+          WHERE rn <= 5
         `,
         );
         return rows.map(mapTurnMetaRow);
@@ -752,6 +780,38 @@ const make = Effect.gen(function* () {
         `,
         );
         return rows.length > 0;
+      },
+    ),
+
+    isThreadDeletedInProjection: Effect.fn("TeamRepository.isThreadDeletedInProjection")(
+      function* (threadId) {
+        const rows = yield* runSql(
+          "isThreadDeletedInProjection",
+          sql<{ readonly thread_id: string }>`
+          SELECT thread_id
+          FROM orchestration_v2_projection_threads
+          WHERE thread_id = ${threadId}
+            AND deleted_at IS NOT NULL
+          LIMIT 1
+        `,
+        );
+        return rows.length > 0;
+      },
+    ),
+
+    getThreadCreatedAtInProjection: Effect.fn("TeamRepository.getThreadCreatedAtInProjection")(
+      function* (threadId) {
+        const rows = yield* runSql(
+          "getThreadCreatedAtInProjection",
+          sql<{ readonly created_at: string }>`
+          SELECT created_at
+          FROM orchestration_v2_projection_threads
+          WHERE thread_id = ${threadId}
+          LIMIT 1
+        `,
+        );
+        const createdAt = rows[0]?.created_at;
+        return createdAt !== undefined ? Option.some(createdAt) : Option.none();
       },
     ),
 
@@ -796,10 +856,15 @@ const make = Effect.gen(function* () {
       const rows = yield* runSql(
         "listFollowedThreadIds",
         sql<{ readonly thread_id: string }>`
-          SELECT thread_id
-          FROM team_thread_follows
-          WHERE member_id = ${memberId}
-          ORDER BY created_at DESC
+          SELECT f.thread_id
+          FROM team_thread_follows f
+          WHERE f.member_id = ${memberId}
+            AND NOT EXISTS (
+              SELECT 1
+              FROM orchestration_v2_projection_threads p
+              WHERE p.thread_id = f.thread_id AND p.deleted_at IS NOT NULL
+            )
+          ORDER BY f.created_at DESC
         `,
       );
       return rows.map((row) => ThreadId.make(row.thread_id));
@@ -816,6 +881,55 @@ const make = Effect.gen(function* () {
         `,
         );
         return rows.map((row) => TeamMemberId.make(row.member_id));
+      },
+    ),
+
+    setRelayRecipientBinding: Effect.fn("TeamRepository.setRelayRecipientBinding")(
+      function* (input) {
+        yield* runSql(
+          "setRelayRecipientBinding",
+          sql`
+          INSERT INTO team_relay_binding (singleton, team_id, member_id, cloud_user_id, bound_at)
+          VALUES (1, ${input.teamId}, ${input.memberId}, ${input.cloudUserId}, ${input.boundAt})
+          ON CONFLICT(singleton) DO UPDATE SET
+            team_id = excluded.team_id,
+            member_id = excluded.member_id,
+            cloud_user_id = excluded.cloud_user_id,
+            bound_at = excluded.bound_at
+        `,
+        );
+      },
+    ),
+
+    getRelayRecipientBinding: Effect.fn("TeamRepository.getRelayRecipientBinding")(function* () {
+      const rows = yield* runSql(
+        "getRelayRecipientBinding",
+        sql<{
+          readonly team_id: string;
+          readonly member_id: string;
+          readonly cloud_user_id: string | null;
+          readonly bound_at: string;
+        }>`
+          SELECT team_id, member_id, cloud_user_id, bound_at
+          FROM team_relay_binding
+          WHERE singleton = 1
+          LIMIT 1
+        `,
+      );
+      const row = rows[0];
+      return row
+        ? Option.some({
+            teamId: TeamId.make(row.team_id),
+            memberId: TeamMemberId.make(row.member_id),
+            cloudUserId: row.cloud_user_id,
+            boundAt: row.bound_at,
+          })
+        : Option.none();
+    }),
+
+    clearRelayRecipientBinding: Effect.fn("TeamRepository.clearRelayRecipientBinding")(
+      function* () {
+        yield* runSql("clearRelayRecipientBinding", sql`DELETE FROM team_relay_binding`);
       },
     ),
   });

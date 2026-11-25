@@ -164,6 +164,7 @@ describe("team notification gating helpers", () => {
       threadAttributions: [attribution],
       followedThreadIds: new Set(),
       latestTurnByThreadId: new Map(),
+      turnAuthorByTurnId: new Map(),
       memberById: new Map([
         [aliceId, alice],
         [bobId, bob],
@@ -174,9 +175,19 @@ describe("team notification gating helpers", () => {
   };
 
   it("leaves personal mode untouched and gates team threads by creator, follow, or completing turn author", async () => {
-    const { formatTeamNotificationThreadTitle, shouldNotifyForTeamEnvironmentThread } =
-      await import("./threadNotifications");
+    const {
+      formatTeamNotificationThreadTitle,
+      resolveTeamEnvironmentThreadNotificationDecision,
+      shouldNotifyForTeamEnvironmentThread,
+    } = await import("./threadNotifications");
 
+    expect(
+      resolveTeamEnvironmentThreadNotificationDecision({
+        teamState: null,
+        threadId: aliceThreadId,
+        latestRunId: "run-1",
+      }),
+    ).toBe("defer");
     expect(
       shouldNotifyForTeamEnvironmentThread({
         teamState: EMPTY_TEAM_ENVIRONMENT_STATE,
@@ -192,7 +203,31 @@ describe("team notification gating helpers", () => {
       }),
     ).toBe("Personal task");
 
-    const silenced = makeTeamState();
+    const aliceTurn = {
+      turnId: "run-alice-1",
+      threadId: aliceThreadId,
+      authorMemberId: aliceId,
+      authorPseudo: "alice" as TeamPseudo,
+      createdAt: "2026-01-01T00:00:01.000Z",
+    };
+    const silenced = makeTeamState({
+      latestTurnByThreadId: new Map([[aliceThreadId, aliceTurn]]),
+      turnAuthorByTurnId: new Map([[aliceTurn.turnId, aliceTurn]]),
+    });
+    expect(
+      resolveTeamEnvironmentThreadNotificationDecision({
+        teamState: silenced,
+        threadId: aliceThreadId,
+        latestRunId: "run-alice-1",
+      }),
+    ).toBe("suppress");
+    expect(
+      resolveTeamEnvironmentThreadNotificationDecision({
+        teamState: silenced,
+        threadId: aliceThreadId,
+        latestRunId: "run-in-flight",
+      }),
+    ).toBe("defer");
     expect(
       shouldNotifyForTeamEnvironmentThread({
         teamState: silenced,
@@ -217,19 +252,16 @@ describe("team notification gating helpers", () => {
       }),
     ).toBe(true);
 
+    const bobTurn = {
+      turnId: "run-bob-2",
+      threadId: aliceThreadId,
+      authorMemberId: bobId,
+      authorPseudo: "bob" as TeamPseudo,
+      createdAt: "2026-01-01T00:00:02.000Z",
+    };
     const ownTurn = makeTeamState({
-      latestTurnByThreadId: new Map([
-        [
-          aliceThreadId,
-          {
-            turnId: "run-bob-2",
-            threadId: aliceThreadId,
-            authorMemberId: bobId,
-            authorPseudo: "bob" as TeamPseudo,
-            createdAt: "2026-01-01T00:00:02.000Z",
-          },
-        ],
-      ]),
+      latestTurnByThreadId: new Map([[aliceThreadId, bobTurn]]),
+      turnAuthorByTurnId: new Map([[bobTurn.turnId, bobTurn]]),
     });
     expect(
       shouldNotifyForTeamEnvironmentThread({

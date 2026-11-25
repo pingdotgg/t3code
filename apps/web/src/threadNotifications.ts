@@ -1,7 +1,9 @@
 import {
   formatTeamThreadTitle,
+  resolveTeamThreadNotificationDecision,
   shouldNotifyForTeamThread,
   type TeamEnvironmentState,
+  type TeamThreadNotificationDecision,
 } from "@t3tools/client-runtime/team";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
@@ -26,10 +28,20 @@ export function hasDesktopNotifications(mode: NotificationMode) {
   return mode === "notifications" || mode === "notifications-and-sound";
 }
 
+export function resolveTeamEnvironmentThreadNotificationDecision(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+  readonly latestRunId?: string | null;
+  readonly threadCreatedAt?: string | null;
+}): TeamThreadNotificationDecision {
+  return resolveTeamThreadNotificationDecision(input);
+}
+
 export function shouldNotifyForTeamEnvironmentThread(input: {
   readonly teamState: TeamEnvironmentState | null | undefined;
   readonly threadId: ThreadId;
   readonly latestRunId?: string | null;
+  readonly threadCreatedAt?: string | null;
 }): boolean {
   return shouldNotifyForTeamThread(input);
 }

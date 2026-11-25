@@ -42,6 +42,7 @@ import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
+  CLOUD_LINKED_USER_ID,
   isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -452,13 +453,14 @@ export const make = Effect.gen(function* () {
       );
 
   const readRelayConfig = Effect.gen(function* () {
-    const [url, issuer, environmentCredential] = yield* Effect.all([
+    const [url, issuer, environmentCredential, cloudUserId] = yield* Effect.all([
       readSecretString(RELAY_URL_SECRET),
       readSecretString(RELAY_ISSUER_SECRET),
       readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+      readSecretString(CLOUD_LINKED_USER_ID),
     ]);
     return url && environmentCredential
-      ? { url, issuer: issuer ?? url, environmentCredential }
+      ? { url, issuer: issuer ?? url, environmentCredential, cloudUserId }
       : null;
   });
 
@@ -606,15 +608,23 @@ export const make = Effect.gen(function* () {
       pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
     });
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
-    const relayNotificationAllowed =
-      rawSnapshot.state === null || Option.isNone(teamService) || Option.isNone(thread)
-        ? true
-        : yield* teamService.value.shouldPublishRelayNotificationForThread({
-            threadId,
-            ...(thread.value.latestRunId !== null ? { turnId: thread.value.latestRunId } : {}),
-          });
-    if (!relayNotificationAllowed && !hasLivePublishedState(publishedStateByThread, threadId)) {
-      return;
+    const shouldCheckTeamRelayGate =
+      Option.isSome(teamService) &&
+      Option.isSome(thread) &&
+      (rawSnapshot.state !== null || heldCompletions.has(threadId));
+    const relayNotificationAllowed = shouldCheckTeamRelayGate
+      ? yield* teamService.value.shouldPublishRelayNotificationForThread({
+          threadId,
+          ...(thread.value.latestRunId !== null ? { turnId: thread.value.latestRunId } : {}),
+          cloudUserId: relayConfig.cloudUserId,
+        })
+      : true;
+    if (!relayNotificationAllowed) {
+      heldCompletions.delete(threadId);
+      if (!hasLivePublishedState(publishedStateByThread, threadId)) {
+        publishConfirmDeadlines.delete(threadId);
+        return;
+      }
     }
     const snapshot = relayNotificationAllowed
       ? rawSnapshot
@@ -675,6 +685,7 @@ export const make = Effect.gen(function* () {
       // Settled during the hold, not resumed: alert the current completion, then clear the card
       // on a new window. Only settlement may hide it; queued or silent runs also project to null.
       const unsettled =
+        relayNotificationAllowed &&
         snapshot.state === null &&
         heldCompletions.has(threadId) &&
         Option.isSome(thread) &&
@@ -1006,6 +1017,18 @@ export const make = Effect.gen(function* () {
           }).pipe(Effect.andThen(enqueueThreadPublish(threadId)));
         }),
       );
+      if (Option.isSome(teamService)) {
+        const teamNotificationStream = teamService.value.subscribeNotificationEvents?.();
+        if (teamNotificationStream !== undefined) {
+          yield* forkParked(
+            Stream.runForEach(teamNotificationStream, (trigger) =>
+              trigger.type === "thread"
+                ? enqueueThreadPublish(trigger.threadId)
+                : Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid),
+            ),
+          );
+        }
+      }
     },
   );
 

@@ -16,6 +16,8 @@ export {
   isFollowingTeamThread,
   isTeamColleagueThread,
   resolveTeamThreadCreatorPseudo,
+  resolveTeamThreadNotificationDecision,
   shouldNotifyForTeamThread,
   shouldShowThreadInTeamFilter,
+  type TeamThreadNotificationDecision,
 } from "./presentation.ts";

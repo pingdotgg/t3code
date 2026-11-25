@@ -18,6 +18,7 @@ import {
   isFollowingTeamThread,
   isTeamColleagueThread,
   resolveTeamThreadCreatorPseudo,
+  resolveTeamThreadNotificationDecision,
   shouldNotifyForTeamThread,
   shouldShowThreadInTeamFilter,
 } from "./index.ts";
@@ -317,7 +318,14 @@ describe("team client-runtime state and presentation", () => {
         latestRunId: "run-bob-2",
       }),
     ).toBe(true);
-    // A different later run ID not authored by Bob does not falsely inherit Bob's earlier turn.
+    // A different later run ID not yet attributed defers (and does not notify).
+    expect(
+      resolveTeamThreadNotificationDecision({
+        teamState: state,
+        threadId: aliceThreadId,
+        latestRunId: "run-alice-3",
+      }),
+    ).toBe("defer");
     expect(
       shouldNotifyForTeamThread({
         teamState: state,
@@ -325,5 +333,67 @@ describe("team client-runtime state and presentation", () => {
         latestRunId: "run-alice-3",
       }),
     ).toBe(false);
+
+    // A queued follow-up turn by Alice must NOT evict Bob's active run attribution!
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "turnAttributed",
+      payload: {
+        turnId: "run-alice-3",
+        threadId: aliceThreadId,
+        authorMemberId: aliceId,
+        authorPseudo: alice.pseudo,
+        createdAt: "2026-01-01T00:00:06.000Z",
+      },
+    });
+    expect(
+      resolveTeamThreadNotificationDecision({
+        teamState: state,
+        threadId: aliceThreadId,
+        latestRunId: "run-bob-2",
+      }),
+    ).toBe("allow");
+    expect(
+      resolveTeamThreadNotificationDecision({
+        teamState: state,
+        threadId: aliceThreadId,
+        latestRunId: "run-alice-3",
+      }),
+    ).toBe("suppress");
+
+    // Unresolved team state and post-team unattributed threads defer; pre-team legacy threads allow.
+    expect(
+      resolveTeamThreadNotificationDecision({
+        teamState: null,
+        threadId: aliceThreadId,
+        latestRunId: "run-alice-1",
+      }),
+    ).toBe("defer");
+    expect(
+      resolveTeamThreadNotificationDecision({
+        teamState: state,
+        threadId: ThreadId.make("thread-brand-new"),
+        threadCreatedAt: "2026-01-01T00:01:00.000Z",
+      }),
+    ).toBe("defer");
+    expect(
+      resolveTeamThreadNotificationDecision({
+        teamState: state,
+        threadId: ThreadId.make("thread-pre-team"),
+        threadCreatedAt: "2025-12-31T23:59:00.000Z",
+      }),
+    ).toBe("allow");
+
+    // countFollowedTeamThreads ignores non-colleague (own) threads even if present in followedThreadIds.
+    const pollutedFollowed = new Map([
+      [
+        envId,
+        {
+          ...state,
+          followedThreadIds: new Set([aliceThreadId, bobThreadId]),
+        },
+      ],
+    ]);
+    expect(countFollowedTeamThreads(pollutedFollowed)).toBe(1);
   });
 });

@@ -106,6 +106,10 @@ const stripInviteHash = (invite: TeamRepository.StoredTeamInviteRecord): TeamInv
   createdAt: invite.createdAt,
 });
 
+export type TeamNotificationTriggerEvent =
+  | { readonly type: "thread"; readonly threadId: ThreadId }
+  | { readonly type: "relayBinding" };
+
 export class TeamService extends Context.Service<
   TeamService,
   {
@@ -170,7 +174,15 @@ export class TeamService extends Context.Service<
     readonly shouldPublishRelayNotificationForThread: (input: {
       readonly threadId: ThreadId;
       readonly turnId?: string;
+      readonly threadCreatedAt?: string;
+      readonly cloudUserId?: string | null;
     }) => Effect.Effect<boolean>;
+    readonly bindRelayRecipientForSession: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly cloudUserId?: string | null;
+    }) => Effect.Effect<void>;
+    readonly clearRelayRecipientBinding: () => Effect.Effect<void>;
+    readonly subscribeNotificationEvents?: () => Stream.Stream<TeamNotificationTriggerEvent>;
     readonly recordThreadCreated: (input: {
       readonly sessionId: AuthSessionId;
       readonly threadId: ThreadId;
@@ -193,9 +205,22 @@ const make = Effect.gen(function* () {
   const sessionStore = yield* SessionStore.SessionStore;
   const random = yield* SecureRandom.SecureRandom;
   const eventsPubSub = yield* PubSub.unbounded<TeamStateStreamEvent>();
+  const notificationTriggersPubSub = yield* PubSub.unbounded<TeamNotificationTriggerEvent>();
 
   const publish = (event: TeamStateStreamEvent) =>
-    PubSub.publish(eventsPubSub, event).pipe(Effect.asVoid);
+    PubSub.publish(eventsPubSub, event).pipe(
+      Effect.andThen(
+        event.type === "threadFollowChanged" ||
+          event.type === "threadAttributed" ||
+          event.type === "turnAttributed"
+          ? PubSub.publish(notificationTriggersPubSub, {
+              type: "thread" as const,
+              threadId: event.payload.threadId,
+            })
+          : Effect.void,
+      ),
+      Effect.asVoid,
+    );
 
   const validatePseudo = Effect.fn("TeamService.validatePseudo")(function* (raw: string) {
     const normalized = normalizeTeamPseudo(raw);
@@ -769,6 +794,21 @@ const make = Effect.gen(function* () {
           message: "You cannot follow a thread belonging to another team.",
         });
       }
+      if (attribution.value.creatorMemberId === actor.id) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "You already receive notifications for threads you created.",
+        });
+      }
+      const deleted = yield* repository
+        .isThreadDeletedInProjection(input.payload.threadId)
+        .pipe(Effect.mapError(toInternalError));
+      if (deleted) {
+        return yield* new TeamOperationError({
+          code: "not_found",
+          message: "Thread not found.",
+        });
+      }
     } else {
       const exists = yield* repository
         .threadExistsInProjection(input.payload.threadId)
@@ -1002,9 +1042,75 @@ const make = Effect.gen(function* () {
     return { isTeamThread: true, recipientMemberIds };
   });
 
+  const bindRelayRecipientForSession = Effect.fn("TeamService.bindRelayRecipientForSession")(
+    function* (input: { readonly sessionId: AuthSessionId; readonly cloudUserId?: string | null }) {
+      const workspaceOption = yield* repository.getWorkspace().pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.bindRelayRecipientForSession workspace lookup failed", {
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamWorkspace>()),
+      );
+      if (Option.isNone(workspaceOption)) return;
+      const memberOption = yield* repository.getMemberForSession(input.sessionId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.bindRelayRecipientForSession member lookup failed", {
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamMember>()),
+      );
+      if (
+        Option.isNone(memberOption) ||
+        memberOption.value.status !== "active" ||
+        memberOption.value.teamId !== workspaceOption.value.id
+      ) {
+        yield* clearRelayRecipientBinding();
+        return;
+      }
+      const boundAt = DateTime.formatIso(yield* DateTime.now);
+      yield* repository
+        .setRelayRecipientBinding({
+          teamId: workspaceOption.value.id,
+          memberId: memberOption.value.id,
+          cloudUserId: input.cloudUserId ?? null,
+          boundAt,
+        })
+        .pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("TeamService.bindRelayRecipientForSession write failed", { cause }),
+          ),
+          Effect.ignore,
+        );
+      yield* PubSub.publish(notificationTriggersPubSub, { type: "relayBinding" as const }).pipe(
+        Effect.asVoid,
+      );
+    },
+  );
+
+  const clearRelayRecipientBinding = Effect.fn("TeamService.clearRelayRecipientBinding")(
+    function* () {
+      yield* repository.clearRelayRecipientBinding().pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.clearRelayRecipientBinding failed", { cause }),
+        ),
+        Effect.ignore,
+      );
+      yield* PubSub.publish(notificationTriggersPubSub, { type: "relayBinding" as const }).pipe(
+        Effect.asVoid,
+      );
+    },
+  );
+
   const shouldPublishRelayNotificationForThread = Effect.fn(
     "TeamService.shouldPublishRelayNotificationForThread",
-  )(function* (input: { readonly threadId: ThreadId; readonly turnId?: string }) {
+  )(function* (input: {
+    readonly threadId: ThreadId;
+    readonly turnId?: string;
+    readonly threadCreatedAt?: string;
+    readonly cloudUserId?: string | null;
+  }) {
     const workspaceOption = yield* repository.getWorkspace().pipe(
       Effect.tapError((cause) =>
         Effect.logWarning(
@@ -1016,20 +1122,110 @@ const make = Effect.gen(function* () {
     );
     if (Option.isNone(workspaceOption)) return true;
 
-    const recipients = yield* listNotificationRecipientsForThread(input);
-    if (!recipients.isTeamThread || recipients.recipientMemberIds === null) {
+    const [attributionOption, relayBindingOption] = yield* Effect.all([
+      repository.getThreadAttribution(input.threadId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning(
+            "TeamService.shouldPublishRelayNotificationForThread attribution lookup failed",
+            { threadId: input.threadId, cause },
+          ),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()),
+      ),
+      repository.getRelayRecipientBinding().pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning(
+            "TeamService.shouldPublishRelayNotificationForThread relay binding lookup failed",
+            { cause },
+          ),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamRepository.TeamRelayRecipientBinding>()),
+      ),
+    ]);
+
+    if (Option.isNone(attributionOption)) {
+      // Do not fail open for post-team threads whose attribution write may still be in flight.
+      const resolvedCreatedAt =
+        input.threadCreatedAt !== undefined
+          ? Option.some(input.threadCreatedAt)
+          : yield* repository
+              .getThreadCreatedAtInProjection(input.threadId)
+              .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+      if (Option.isSome(resolvedCreatedAt)) {
+        const threadCreatedMs = Date.parse(resolvedCreatedAt.value);
+        const teamCreatedMs = Date.parse(workspaceOption.value.createdAt);
+        if (
+          Number.isFinite(threadCreatedMs) &&
+          Number.isFinite(teamCreatedMs) &&
+          threadCreatedMs >= teamCreatedMs
+        ) {
+          return false;
+        }
+      }
       return true;
     }
-    const members = yield* repository
-      .listMembers(workspaceOption.value.id)
-      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamMember>));
-    // T3 Connect relay delivers push notifications to the host server's linked owner account.
-    const hostOwner = members.find(
-      (member) => member.status === "active" && member.role === "owner",
-    );
-    if (!hostOwner) return false;
-    return recipients.recipientMemberIds.includes(hostOwner.id);
+    if (attributionOption.value.teamId !== workspaceOption.value.id) {
+      return false;
+    }
+
+    // Require an explicit relay-to-member binding matching the linked cloud user ID rather than guessing an owner.
+    if (
+      Option.isNone(relayBindingOption) ||
+      relayBindingOption.value.teamId !== workspaceOption.value.id
+    ) {
+      return false;
+    }
+    if (
+      input.cloudUserId !== undefined &&
+      input.cloudUserId !== null &&
+      relayBindingOption.value.cloudUserId !== null &&
+      relayBindingOption.value.cloudUserId !== input.cloudUserId
+    ) {
+      return false;
+    }
+
+    const recipientMemberId = relayBindingOption.value.memberId;
+    const [memberOption, isFollowing, turnAttribution] = yield* Effect.all([
+      repository
+        .getMemberById(recipientMemberId)
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>())),
+      repository
+        .isFollowingThread({ threadId: input.threadId, memberId: recipientMemberId })
+        .pipe(Effect.orElseSucceed(() => false)),
+      input.turnId !== undefined
+        ? repository
+            .getTurnAttribution(input.turnId)
+            .pipe(Effect.orElseSucceed(() => Option.none<TeamTurnAttribution>()))
+        : Effect.succeed(Option.none<TeamTurnAttribution>()),
+    ]);
+    if (
+      Option.isNone(memberOption) ||
+      memberOption.value.status !== "active" ||
+      memberOption.value.teamId !== workspaceOption.value.id
+    ) {
+      return false;
+    }
+
+    const activeTurnAuthorMemberId =
+      Option.isSome(turnAttribution) && turnAttribution.value.threadId === input.threadId
+        ? turnAttribution.value.authorMemberId
+        : null;
+
+    return shouldNotifyTeamMemberForThread({
+      hasTeam: true,
+      memberId: memberOption.value.id,
+      creatorMemberId: attributionOption.value.creatorMemberId,
+      isFollowing,
+      activeTurnAuthorMemberId,
+    });
   });
+
+  const subscribeNotificationEvents = () =>
+    Stream.unwrap(
+      PubSub.subscribe(notificationTriggersPubSub).pipe(
+        Effect.map((subscription) => Stream.fromSubscription(subscription)),
+      ),
+    );
 
   const recordThreadCreated = Effect.fn("TeamService.recordThreadCreated")(function* (input: {
     readonly sessionId: AuthSessionId;
@@ -1096,7 +1292,7 @@ const make = Effect.gen(function* () {
     );
     if (Option.isNone(memberOption)) return;
     const nowIso = DateTime.formatIso(yield* DateTime.now);
-    const written = yield* repository
+    const inserted = yield* repository
       .recordTurnAttribution({
         turnId: input.turnId,
         threadId: input.threadId,
@@ -1104,7 +1300,6 @@ const make = Effect.gen(function* () {
         createdAt: nowIso,
       })
       .pipe(
-        Effect.as(true),
         Effect.tapError((cause) =>
           Effect.logWarning("TeamService.recordTurnAuthored attribution write failed", {
             threadId: input.threadId,
@@ -1114,7 +1309,7 @@ const make = Effect.gen(function* () {
         ),
         Effect.orElseSucceed(() => false),
       );
-    if (written && !input.turnId.startsWith("msg:")) {
+    if (inserted && !input.turnId.startsWith("msg:")) {
       yield* publish({
         version: 1,
         type: "turnAttributed",
@@ -1180,7 +1375,7 @@ const make = Effect.gen(function* () {
         });
       }
       if (input.turnId) {
-        const written = yield* repository
+        const inserted = yield* repository
           .recordTurnAttribution({
             turnId: input.turnId,
             threadId: input.threadId,
@@ -1188,7 +1383,6 @@ const make = Effect.gen(function* () {
             createdAt: nowIso,
           })
           .pipe(
-            Effect.as(true),
             Effect.tapError((cause) =>
               Effect.logWarning("TeamService.recordThreadInheritedFromParent turn write failed", {
                 threadId: input.threadId,
@@ -1198,7 +1392,7 @@ const make = Effect.gen(function* () {
             ),
             Effect.orElseSucceed(() => false),
           );
-        if (written && !input.turnId.startsWith("msg:")) {
+        if (inserted && !input.turnId.startsWith("msg:")) {
           yield* publish({
             version: 1,
             type: "turnAttributed",
@@ -1231,6 +1425,9 @@ const make = Effect.gen(function* () {
     shouldNotifyMemberForThread,
     listNotificationRecipientsForThread,
     shouldPublishRelayNotificationForThread,
+    bindRelayRecipientForSession,
+    clearRelayRecipientBinding,
+    subscribeNotificationEvents,
     recordThreadCreated,
     recordTurnAuthored,
     recordThreadInheritedFromParent,

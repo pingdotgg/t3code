@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { hasActiveTeamEnvironment } from "@t3tools/client-runtime/team";
+import { countFollowedTeamThreads, hasActiveTeamEnvironment } from "@t3tools/client-runtime/team";
 import { useGT } from "gt-react";
 import { BellIcon, UsersIcon } from "lucide-react";
 
@@ -10,7 +10,6 @@ import {
   toggleShowFollowedThreadsOnly,
   useShowColleaguesThreads,
   useShowFollowedThreadsOnly,
-  useTeamFollowedThreadCount,
   useTeamStatesByEnvironment,
 } from "~/state/team";
 import { SidebarHeaderIconButton } from "../sidebar/SidebarThreadHeader";
@@ -20,7 +19,7 @@ export function TeamColleaguesToggle() {
   const teamStates = useTeamStatesByEnvironment();
   const showColleagues = useShowColleaguesThreads();
   const showFollowedOnly = useShowFollowedThreadsOnly();
-  const followedCount = useTeamFollowedThreadCount();
+  const followedCount = countFollowedTeamThreads(teamStates);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
 
   if (!hasActiveTeamEnvironment(teamStates)) return null;

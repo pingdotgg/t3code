@@ -25,7 +25,9 @@ export function TeamThreadFollowButton({
     teamEnvironment.unfollowThread.permissionAtom(environmentId),
   );
   const { setFollowing } = useTeamThreadFollowToggle();
-  const [pending, setPending] = useState(false);
+  const [pendingThreadKey, setPendingThreadKey] = useState<string | null>(null);
+  const currentThreadKey = `${environmentId}:${threadId}`;
+  const isPending = pendingThreadKey === currentThreadKey;
 
   if (!canFollow) return null;
 
@@ -38,14 +40,14 @@ export function TeamThreadFollowButton({
     : gt("Follow thread notifications");
 
   const handleClick = async () => {
-    if (pending || !canToggle) return;
-    setPending(true);
+    if (isPending || !canToggle) return;
+    setPendingThreadKey(currentThreadKey);
     await setFollowing({
       environmentId,
       threadId,
       follow: !isFollowing,
     }).catch(() => false);
-    setPending(false);
+    setPendingThreadKey((active) => (active === currentThreadKey ? null : active));
   };
 
   return (
@@ -59,7 +61,7 @@ export function TeamThreadFollowButton({
             data-testid="team-thread-follow-button"
             aria-pressed={isFollowing}
             aria-label={ariaLabel}
-            disabled={pending || !canToggle}
+            disabled={isPending || !canToggle}
             onClick={() => void handleClick()}
             className="shrink-0"
           />

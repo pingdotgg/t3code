@@ -647,6 +647,19 @@ describe("TeamService", () => {
           turnId: "run-bob-1",
         });
 
+        // Reject following own thread (prevents one-way UI dead end and count inflation).
+        const ownThreadExit = yield* Effect.exit(
+          team.followThread({
+            sessionId: bobSession1.sessionId,
+            payload: { threadId: bobThreadId },
+          }),
+        );
+        expect(ownThreadExit._tag).toBe("Failure");
+        if (ownThreadExit._tag === "Failure") {
+          const failure = Cause.squash(ownThreadExit.cause) as { readonly code?: string };
+          expect(failure.code).toBe("forbidden");
+        }
+
         // Reject following a non-existent thread.
         const missingExit = yield* Effect.exit(
           team.followThread({
@@ -713,19 +726,59 @@ describe("TeamService", () => {
             threadId: personalLegacyThreadId,
           }),
         ).toBe(true);
-        // Relay push for host owner (Alice): allowed on Alice's thread, silenced on Bob's unfollowed thread.
+        // Without an explicit relay-to-member binding, team relay push fails closed (never guesses owner).
         expect(
           yield* team.shouldPublishRelayNotificationForThread({
             threadId: aliceThreadId,
             turnId: "run-alice-1",
+            cloudUserId: "cloud-alice",
+          }),
+        ).toBe(false);
+
+        // Bind T3 Connect relay explicitly to Alice's session + cloud user ID.
+        yield* team.bindRelayRecipientForSession({
+          sessionId: ownerSession.sessionId,
+          cloudUserId: "cloud-alice",
+        });
+
+        // Relay push for bound recipient (Alice): allowed on Alice's thread, silenced on Bob's unfollowed thread.
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+            cloudUserId: "cloud-alice",
           }),
         ).toBe(true);
         expect(
           yield* team.shouldPublishRelayNotificationForThread({
             threadId: bobThreadId,
             turnId: "run-bob-1",
+            cloudUserId: "cloud-alice",
           }),
         ).toBe(false);
+        // Mismatched cloud user ID (e.g., relinked to another cloud account) fails closed.
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+            cloudUserId: "cloud-someone-else",
+          }),
+        ).toBe(false);
+        // Post-team unattributed threads fail closed; pre-team legacy threads stay allowed.
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: ThreadId.make("thread-post-team-unattributed"),
+            threadCreatedAt: "2099-01-01T00:00:00.000Z",
+            cloudUserId: "cloud-alice",
+          }),
+        ).toBe(false);
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: personalLegacyThreadId,
+            threadCreatedAt: "1969-12-31T23:59:59.000Z",
+            cloudUserId: "cloud-alice",
+          }),
+        ).toBe(true);
 
         // Subscribe Bob's second session and Alice's session to verify follow events stay member-scoped.
         const bobSession2Fiber = yield* team
@@ -817,7 +870,7 @@ describe("TeamService", () => {
           }),
         ).toBe(true);
 
-        // When host owner (Alice) follows Bob's thread, relay push notification unlocks for Bob's thread.
+        // When bound relay recipient (Alice) follows Bob's thread, relay push notification unlocks for Bob's thread.
         yield* team.followThread({
           sessionId: ownerSession.sessionId,
           payload: { threadId: bobThreadId },
@@ -826,8 +879,97 @@ describe("TeamService", () => {
           yield* team.shouldPublishRelayNotificationForThread({
             threadId: bobThreadId,
             turnId: "run-bob-1",
+            cloudUserId: "cloud-alice",
           }),
         ).toBe(true);
+
+        // Multi-owner & relink: add second owner Dana and bind relay to Dana.
+        const danaInvite = yield* team.createInvite({
+          sessionId: ownerSession.sessionId,
+          payload: { role: "owner", prefilledPseudo: "dana" },
+        });
+        const danaRedeemed = yield* team.redeemInvite({
+          token: danaInvite.token,
+          pseudo: "dana",
+          client: testClient,
+        });
+        const danaSession = yield* sessions.verify(danaRedeemed.accessToken);
+        const danaThreadId = ThreadId.make("thread-dana-owner");
+        yield* team.recordThreadCreated({
+          sessionId: danaSession.sessionId,
+          threadId: danaThreadId,
+        });
+        yield* team.bindRelayRecipientForSession({
+          sessionId: danaSession.sessionId,
+          cloudUserId: "cloud-dana",
+        });
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+            cloudUserId: "cloud-dana",
+          }),
+        ).toBe(false);
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: danaThreadId,
+            cloudUserId: "cloud-dana",
+          }),
+        ).toBe(true);
+        yield* team.clearRelayRecipientBinding();
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: danaThreadId,
+            cloudUserId: "cloud-dana",
+          }),
+        ).toBe(false);
+
+        // Soft-deleted attributed thread cannot be followed and is excluded from listFollowedThreads.
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_threads (
+            thread_id, project_id, title, default_provider, runtime_mode,
+            interaction_mode, active_provider_thread_id, created_at, updated_at,
+            archived_at, deleted_at, payload_json
+          ) VALUES (
+            ${bobThreadId}, 'proj-1', 'Deleted Bob thread', 'codex', 'full-access',
+            'default', NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
+            NULL, '2026-01-02T00:00:00.000Z', '{}'
+          )
+        `;
+        expect(yield* team.listFollowedThreads(ownerSession.sessionId)).not.toContain(bobThreadId);
+        const deletedFollowExit = yield* Effect.exit(
+          team.followThread({
+            sessionId: danaSession.sessionId,
+            payload: { threadId: bobThreadId },
+          }),
+        );
+        expect(deletedFollowExit._tag).toBe("Failure");
+        if (deletedFollowExit._tag === "Failure") {
+          const failure = Cause.squash(deletedFollowExit.cause) as { readonly code?: string };
+          expect(failure.code).toBe("not_found");
+        }
+
+        // Duplicate recordTurnAuthored for an existing turnId does NOT re-broadcast turnAttributed.
+        const dupTurnFiber = yield* team
+          .streamState(ownerSession.sessionId)
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* team.recordTurnAuthored({
+          sessionId: bobSession1.sessionId,
+          threadId: aliceThreadId,
+          turnId: "run-bob-in-alice-thread",
+        });
+        yield* team.recordTurnAuthored({
+          sessionId: bobSession1.sessionId,
+          threadId: aliceThreadId,
+          turnId: "run-bob-fresh-2",
+        });
+        const dupTurnEvents = yield* Fiber.join(dupTurnFiber);
+        expect(dupTurnEvents.map((event) => event.type)).toEqual(["snapshot", "turnAttributed"]);
+        const turnEvent = dupTurnEvents[1];
+        if (turnEvent?.type === "turnAttributed") {
+          expect(turnEvent.payload.turnId).toBe("run-bob-fresh-2");
+        }
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });

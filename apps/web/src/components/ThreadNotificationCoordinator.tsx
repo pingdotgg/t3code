@@ -31,8 +31,8 @@ import {
   hasDesktopNotifications,
   hasNotificationSound,
   playNotificationSound,
+  resolveTeamEnvironmentThreadNotificationDecision,
   setNotificationBadge,
-  shouldNotifyForTeamEnvironmentThread,
   threadNotificationTag,
   unlockNotificationAudio,
 } from "../threadNotifications";
@@ -55,9 +55,19 @@ interface NotificationState extends ThreadNotificationObservation {
 
 type ToastId = ReturnType<typeof toastManager.add>;
 
+type DeferredNotificationReason = "team_loading" | "thread_attribution" | "turn_attribution";
+
 interface WatchedEnvironment {
   unsubscribe: () => void;
   previous: Map<ThreadId, NotificationState>;
+  deferred: Map<
+    ThreadId,
+    {
+      readonly state: NotificationState;
+      readonly kind: ThreadNotificationKind;
+      reason: DeferredNotificationReason;
+    }
+  >;
   reconnecting: boolean;
   readonly gate: ReturnType<typeof createThreadNotificationGate<ThreadId>>;
 }
@@ -139,21 +149,34 @@ export function startThreadNotifications(
     kind: ThreadNotificationKind,
   ) => {
     const { thread, status } = state;
+    const watchedEntry = watched.get(environmentId);
     if (
       registry
         .get(environmentThreadShells.hiddenThreadKeysAtom)
         .has(threadKey({ environmentId, threadId: thread.id }))
-    )
+    ) {
+      watchedEntry?.deferred.delete(thread.id);
       return;
+    }
     const teamState = readTeamEnvironmentStateFromRegistry(registry, environmentId);
-    if (
-      !shouldNotifyForTeamEnvironmentThread({
-        teamState,
-        threadId: thread.id,
-        latestRunId: thread.latestRun?.runId ?? null,
-      })
-    )
+    const decision = resolveTeamEnvironmentThreadNotificationDecision({
+      teamState,
+      threadId: thread.id,
+      latestRunId: thread.latestRun?.runId ?? null,
+      threadCreatedAt: thread.createdAt,
+    });
+    if (decision === "defer") {
+      const reason: DeferredNotificationReason =
+        teamState === null
+          ? "team_loading"
+          : !teamState.attributionByThreadId.has(thread.id)
+            ? "thread_attribution"
+            : "turn_attribution";
+      watchedEntry?.deferred.set(thread.id, { state, kind, reason });
       return;
+    }
+    watchedEntry?.deferred.delete(thread.id);
+    if (decision === "suppress") return;
     const notificationThreadTitle = formatTeamNotificationThreadTitle({
       title: thread.title,
       teamState,
@@ -319,6 +342,16 @@ export function startThreadNotifications(
     }
     entry.reconnecting = false;
     entry.previous = next;
+    for (const [threadId, pendingDeferred] of entry.deferred) {
+      const current = next.get(threadId);
+      if (
+        current === undefined ||
+        current.thread.archivedAt !== null ||
+        current.thread.latestRun?.runId !== pendingDeferred.state.thread.latestRun?.runId
+      ) {
+        entry.deferred.delete(threadId);
+      }
+    }
     entry.gate.retain(new Set(next.keys()));
     const now = Date.now();
     for (const [prior, state] of changed) {
@@ -333,6 +366,7 @@ export function startThreadNotifications(
   const watchEnvironment = (environmentId: EnvironmentId): WatchedEnvironment => {
     const entry: WatchedEnvironment = {
       previous: new Map(),
+      deferred: new Map(),
       reconnecting: false,
       unsubscribe: () => {},
       gate: createThreadNotificationGate<ThreadId>((threadId, kind) => {
@@ -370,12 +404,52 @@ export function startThreadNotifications(
     );
     const unsubscribeTeam = registry.subscribe(teamEnvironment.state(environmentId), () => {
       const teamState = readTeamEnvironmentStateFromRegistry(registry, environmentId);
-      const isSilenced = (threadId: ThreadId) =>
-        !shouldNotifyForTeamEnvironmentThread({
+      if (teamState === null) return;
+      for (const [threadId, deferred] of entry.deferred) {
+        const latestRunId = deferred.state.thread.latestRun?.runId ?? null;
+        if (deferred.reason === "turn_attribution") {
+          const matchedTurn =
+            latestRunId !== null
+              ? (teamState.turnAuthorByTurnId.get(latestRunId) ??
+                (teamState.latestTurnByThreadId.get(threadId)?.turnId === latestRunId
+                  ? teamState.latestTurnByThreadId.get(threadId)
+                  : undefined))
+              : undefined;
+          if (matchedTurn === undefined) {
+            if (teamState.followedThreadIds.has(threadId)) {
+              entry.deferred.delete(threadId);
+            }
+            continue;
+          }
+        }
+        const decision = resolveTeamEnvironmentThreadNotificationDecision({
           teamState,
           threadId,
-          latestRunId: entry.previous.get(threadId)?.thread.latestRun?.runId ?? null,
+          latestRunId,
+          threadCreatedAt: deferred.state.thread.createdAt,
         });
+        if (decision === "allow") {
+          entry.deferred.delete(threadId);
+          present(environmentId, deferred.state, deferred.kind);
+        } else if (decision === "suppress") {
+          entry.deferred.delete(threadId);
+        } else {
+          deferred.reason = !teamState.attributionByThreadId.has(threadId)
+            ? "thread_attribution"
+            : "turn_attribution";
+        }
+      }
+      const isSilenced = (threadId: ThreadId) => {
+        const previousState = entry.previous.get(threadId);
+        return (
+          resolveTeamEnvironmentThreadNotificationDecision({
+            teamState,
+            threadId,
+            latestRunId: previousState?.thread.latestRun?.runId ?? null,
+            threadCreatedAt: previousState?.thread.createdAt ?? null,
+          }) !== "allow"
+        );
+      };
       closeToasts((key) => {
         const parsed = parseThreadKey(key);
         return parsed.environmentId === environmentId && isSilenced(parsed.threadId);
@@ -394,6 +468,7 @@ export function startThreadNotifications(
       unsubscribeRequests();
       unsubscribeDelegated();
       unsubscribeTeam();
+      entry.deferred.clear();
       entry.gate.clear();
     };
     return entry;

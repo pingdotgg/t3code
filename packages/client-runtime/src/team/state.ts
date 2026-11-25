@@ -48,6 +48,7 @@ export interface TeamEnvironmentState {
   readonly threadAttributions: ReadonlyArray<TeamThreadAttribution>;
   readonly followedThreadIds: ReadonlySet<ThreadId>;
   readonly latestTurnByThreadId: ReadonlyMap<ThreadId, TeamTurnAttribution>;
+  readonly turnAuthorByTurnId: ReadonlyMap<string, TeamTurnAttribution>;
   readonly memberById: ReadonlyMap<TeamMemberId, TeamMember>;
   readonly attributionByThreadId: ReadonlyMap<ThreadId, TeamThreadAttribution>;
 }
@@ -60,6 +61,7 @@ export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
   threadAttributions: [],
   followedThreadIds: new Set(),
   latestTurnByThreadId: new Map(),
+  turnAuthorByTurnId: new Map(),
   memberById: new Map(),
   attributionByThreadId: new Map(),
 };
@@ -72,9 +74,14 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
     snapshot.threadAttributions.map((attribution) => [attribution.threadId, attribution] as const),
   );
   const followedThreadIds = new Set<ThreadId>(snapshot.followedThreadIds);
-  const latestTurnByThreadId = new Map<ThreadId, TeamTurnAttribution>(
-    snapshot.latestTurnAttributions.map((turn) => [turn.threadId, turn] as const),
-  );
+  const latestTurnByThreadId = new Map<ThreadId, TeamTurnAttribution>();
+  const turnAuthorByTurnId = new Map<string, TeamTurnAttribution>();
+  for (const turn of snapshot.latestTurnAttributions) {
+    turnAuthorByTurnId.set(turn.turnId, turn);
+    if (!latestTurnByThreadId.has(turn.threadId)) {
+      latestTurnByThreadId.set(turn.threadId, turn);
+    }
+  }
   return {
     team: snapshot.team,
     currentMember: snapshot.currentMember,
@@ -83,6 +90,7 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
     threadAttributions: snapshot.threadAttributions,
     followedThreadIds,
     latestTurnByThreadId,
+    turnAuthorByTurnId,
     memberById,
     attributionByThreadId,
   };
@@ -119,10 +127,17 @@ export function applyTeamStreamEvent(
         }
       }
       const latestTurnByThreadId = new Map(current.latestTurnByThreadId);
+      const turnAuthorByTurnId = new Map(current.turnAuthorByTurnId);
       let turnsChanged = false;
       for (const [threadId, turn] of latestTurnByThreadId) {
         if (turn.authorMemberId === member.id && turn.authorPseudo !== member.pseudo) {
           latestTurnByThreadId.set(threadId, { ...turn, authorPseudo: member.pseudo });
+          turnsChanged = true;
+        }
+      }
+      for (const [turnId, turn] of turnAuthorByTurnId) {
+        if (turn.authorMemberId === member.id && turn.authorPseudo !== member.pseudo) {
+          turnAuthorByTurnId.set(turnId, { ...turn, authorPseudo: member.pseudo });
           turnsChanged = true;
         }
       }
@@ -137,7 +152,7 @@ export function applyTeamStreamEvent(
               attributionByThreadId,
             }
           : {}),
-        ...(turnsChanged ? { latestTurnByThreadId } : {}),
+        ...(turnsChanged ? { latestTurnByThreadId, turnAuthorByTurnId } : {}),
       };
     }
 
@@ -166,9 +181,12 @@ export function applyTeamStreamEvent(
       const turn = event.payload;
       const latestTurnByThreadId = new Map(current.latestTurnByThreadId);
       latestTurnByThreadId.set(turn.threadId, turn);
+      const turnAuthorByTurnId = new Map(current.turnAuthorByTurnId);
+      turnAuthorByTurnId.set(turn.turnId, turn);
       return {
         ...current,
         latestTurnByThreadId,
+        turnAuthorByTurnId,
       };
     }
 

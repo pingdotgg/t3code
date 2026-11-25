@@ -58,11 +58,16 @@ test("team notifications stay silent for unfollowed colleague threads, fire whil
   await notificationSelect.click();
   await bob.page.getByRole("option", { name: "Notifications only" }).click();
 
-  // Navigate Bob back to the main workspace so live subscriptions are active, and simulate unfocused window.
+  // Navigate Bob back to the main workspace, enable colleagues view BEFORE Turn 1 so his sidebar
+  // reflects Alice's thread live, then simulate an unfocused window.
   await bob.open("/");
   await bob.page
     .getByTestId("team-colleagues-toggle")
     .waitFor({ state: "visible", timeout: 15_000 });
+  await bob.page.getByTestId("team-colleagues-toggle").click();
+  expect(await bob.page.getByTestId("team-colleagues-toggle").getAttribute("aria-pressed")).toBe(
+    "true",
+  );
   await bob.clearNotifications();
   await bob.setWindowFocused(false);
 
@@ -108,26 +113,29 @@ test("team notifications stay silent for unfollowed colleague threads, fire whil
   // Confirm Alice's own thread does NOT show a Follow button in her header.
   expect(await alice.page.getByTestId("team-thread-follow-button").count()).toBe(0);
 
-  // Bob reveals colleagues' threads to prove his live shell snapshot received Alice's completed turn,
-  // and verifies he received 0 notifications for Alice's unfollowed turn.
-  await bob.setWindowFocused(true);
-  await bob.page.getByTestId("team-colleagues-toggle").click();
-  await expect
-    .poll(
-      async () =>
-        (await bob.page.locator("aside, [data-sidebar='sidebar']").first().textContent()) ?? "",
-      { timeout: 20_000 },
-    )
-    .toContain("alice: Release checklist");
-  expect(await bob.notifications()).toEqual([]);
-
-  // 4. Bob opens Alice's thread and clicks Follow in the thread header.
-  await bob.page
+  // While Bob's window is STILL unfocused, confirm his live shell + team stream received Alice's
+  // completed thread AND he recorded 0 notifications for Alice's unfollowed Turn 1.
+  const bobThreadRow = bob.page
     .locator("aside, [data-sidebar='sidebar']")
     .first()
-    .getByText("Release checklist")
-    .first()
-    .click();
+    .locator("[data-sidebar-row]", { hasText: "Release checklist" })
+    .first();
+  await expect
+    .poll(async () => (await bobThreadRow.textContent().catch(() => "")) ?? "", {
+      timeout: 20_000,
+    })
+    .toContain("alice: Release checklist");
+  await expect
+    .poll(async () => (await bobThreadRow.textContent().catch(() => "")) ?? "", {
+      timeout: 15_000,
+    })
+    .not.toContain("Working");
+  expect(await bob.notifications()).toEqual([]);
+
+  // 4. Bob refocuses, opens Alice's thread via the sidebar row, and clicks Follow in the thread header.
+  await bob.setWindowFocused(true);
+  await bobThreadRow.focus();
+  await bobThreadRow.press("Enter");
 
   const followButton = bob.page.getByTestId("team-thread-follow-button");
   await followButton.waitFor({ state: "visible", timeout: 15_000 });
@@ -137,7 +145,7 @@ test("team notifications stay silent for unfollowed colleague threads, fire whil
     .poll(async () => await followButton.getAttribute("aria-pressed"), { timeout: 15_000 })
     .toBe("true");
 
-  // Verify the sidebar shows the followed badge and the Followed filter shows Alice's thread.
+  // Verify the sidebar shows the followed badge, Followed filter turns on, and Colleagues toggle turns off (mutually exclusive).
   await bob.page
     .getByTestId("team-thread-followed-badge")
     .first()
@@ -146,6 +154,9 @@ test("team notifications stay silent for unfollowed colleague threads, fire whil
   expect(
     await bob.page.getByTestId("team-followed-filter-toggle").getAttribute("aria-pressed"),
   ).toBe("true");
+  expect(await bob.page.getByTestId("team-colleagues-toggle").getAttribute("aria-pressed")).toBe(
+    "false",
+  );
   expect(
     (await bob.page.locator("aside, [data-sidebar='sidebar']").first().textContent()) ?? "",
   ).toContain("alice: Release checklist");

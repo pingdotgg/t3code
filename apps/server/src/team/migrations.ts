@@ -117,6 +117,15 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
           CREATE INDEX IF NOT EXISTS idx_team_thread_follows_member_id
             ON team_thread_follows (member_id)
         `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_relay_binding (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            member_id TEXT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+            cloud_user_id TEXT,
+            bound_at TEXT NOT NULL
+          )
+        `;
     }),
   },
 ];

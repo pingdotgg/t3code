@@ -471,6 +471,9 @@ export async function startTeamTopology(input: {
           });
         },
         setWindowFocused: async (focused: boolean) => {
+          if (focused) {
+            await page.bringToFront();
+          }
           await page.evaluate((nextFocused) => {
             (
               globalThis as unknown as { __t3WindowFocusedOverride: boolean | null }
