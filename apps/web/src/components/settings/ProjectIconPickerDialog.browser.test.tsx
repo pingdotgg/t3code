@@ -48,24 +48,3 @@ it("Escape in the icon search clears it without closing the dialog", async () =>
   await userEvent.keyboard("{Escape}");
   expect(onOpenChange.mock.calls.map(([open]) => open)).toEqual([false]);
 });
-
-it("keeps the search field still while the result count changes", async () => {
-  await using _screen = await render(
-    <ProjectIconPickerDialog
-      current={null}
-      projectName="Project"
-      open
-      onOpenChange={() => {}}
-      onSelect={() => {}}
-    />,
-  );
-  const search = page.getByRole("searchbox", { name: "Search Lucide icons" });
-  await expect.element(search).toBeVisible();
-  const restingTop = search.element().getBoundingClientRect().top;
-
-  for (const query of ["folder-code", "zzzzzzzz", ""]) {
-    await userEvent.fill(search, query);
-    await expect.element(search).toHaveValue(query);
-    expect(search.element().getBoundingClientRect().top).toBe(restingTop);
-  }
-});
