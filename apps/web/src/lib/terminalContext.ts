@@ -1,8 +1,10 @@
 import type { ThreadId } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import {
   formatComposerContextReference,
   toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
+import type { MessageResolver } from "~/i18n/messages";
 
 export interface TerminalContextSelection {
   terminalId: string;
@@ -65,6 +67,21 @@ export function formatTerminalContextLabel(selection: {
   lineEnd: number;
 }): string {
   return `${selection.terminalLabel} ${formatTerminalContextRange(selection)}`;
+}
+
+export function terminalContextDisplayLabel(
+  {
+    terminalLabel,
+    lineStart,
+    lineEnd,
+  }: Pick<TerminalContextSelection, "terminalLabel" | "lineStart" | "lineEnd">,
+  resolve: MessageResolver,
+): string {
+  return lineStart === lineEnd
+    ? resolve(msg("{terminalLabel} line {lineStart}", { terminalLabel, lineStart }))
+    : resolve(
+        msg("{terminalLabel} lines {lineStart}-{lineEnd}", { terminalLabel, lineStart, lineEnd }),
+      );
 }
 
 export function migrateLegacyTerminalContextPlaceholders(
