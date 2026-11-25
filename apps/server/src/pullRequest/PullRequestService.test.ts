@@ -2277,6 +2277,8 @@ it.effect("rejects a different Forgejo HTTP port for an HTTP checkout", () =>
         }),
       ],
       providers: [fakePullRequestProvider(SourceControlProviderKind.make("forgejo"))],
+      resolveHandle: ({ context }) =>
+        Effect.succeed({ context: context ?? null, provider: undefined as never }),
     });
     const failure = yield* service
       .summary(
