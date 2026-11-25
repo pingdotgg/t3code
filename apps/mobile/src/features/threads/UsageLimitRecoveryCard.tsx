@@ -2,7 +2,10 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { limitRecoveryOwnsSnooze } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  limitRecoveryOwnsSnooze,
+  usageLimitNoticeAppliesToPick,
+} from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   CHATGPT_USAGE_LIMIT_CODE,
@@ -62,7 +65,16 @@ export function UsageLimitRecoveryCard({
     thread.runtime?.status !== "failed" ||
     // Older servers report ChatGPT sharing limits as provider errors.
     (thread.runtime.lastErrorClass !== "usage_limit" && !chatGptLimit) ||
-    !runId
+    !runId ||
+    // ThreadRouteScreen hands this card the thread with the composer's pick as its model.
+    !usageLimitNoticeAppliesToPick({
+      threadInstanceId: thread.providerInstanceId,
+      pickInstanceId: thread.modelSelection.instanceId,
+      runId,
+      resetAt,
+      recovery,
+      snoozedUntil: thread.snoozedUntil,
+    })
   )
     return null;
   const resumes = canSchedule && scheduled;
