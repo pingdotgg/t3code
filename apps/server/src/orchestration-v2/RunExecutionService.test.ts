@@ -3050,7 +3050,7 @@ it.effect("settles native subagents when a workspace handoff completes the root 
     assert.deepEqual(statusOf("turn-item.updated", runningTurnItem.id), ["interrupted"]);
     assert.deepEqual(statusOf("node.updated", runningNode.id), ["interrupted"]);
     assert.deepEqual(statusOf("node.updated", runningChildNode.id), ["interrupted"]);
-    assert.deepEqual(statusOf("run.updated", ids.runId), ["waiting"]);
+    assert.deepEqual(statusOf("run.updated", ids.runId), ["completed"]);
     assert.deepEqual(statusOf("run-attempt.updated", ids.attemptId), ["completed"]);
     assert.isFalse(
       events.some(
@@ -3596,6 +3596,48 @@ it.effect("ends a running root command when the provider stream fails mid-turn",
   }),
 );
 
+it.effect("fails the run when a released session's interrupt exits interrupted", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const key = "released-session-interrupted-interrupt";
+    const { observed, finalEvents } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.make({
+          type: "provider_turn.updated" as const,
+          driver,
+          providerTurn: {
+            id: ids.rootProviderTurnId,
+            providerThreadId: ids.providerThreadId,
+            nodeId: ids.rootNodeId,
+            runAttemptId: ids.attemptId,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "running" as const,
+            startedAt: now,
+            completedAt: null,
+          },
+        }).pipe(
+          Stream.concat(
+            Stream.fail(
+              new ProviderAdapter.ProviderAdapterEventStreamError({
+                driver,
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                raisedByT3: true,
+                cause: "Provider sign-in changed.",
+              }),
+            ),
+          ),
+        ),
+      // An ACP session whose scope is already closing interrupts the join.
+      interruptTurn: () => Effect.interrupt,
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.isTrue(finalEvents.some((event) => event.type === "run.updated"));
+  }),
+);
+
 it.effect("keeps a running root command open when a write fails under a live provider", () =>
   Effect.gen(function* () {
     const key = "write-error-running-command";
@@ -3697,8 +3739,8 @@ it.effect.each([
             : [],
         ),
         ended
-          ? ["run.updated:waiting", "subagent.updated:failed", "turn-item.updated:failed"]
-          : ["run.updated:waiting"],
+          ? ["run.updated:completed", "subagent.updated:failed", "turn-item.updated:failed"]
+          : ["run.updated:completed"],
       );
     }),
 );
@@ -3971,7 +4013,7 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
       events: (ids) => Stream.make(rootTerminalEvent(ids, "completed")),
       refreshAfterTurn: Effect.die("refresh failed"),
     });
-    assert.deepEqual(observed, ["run:waiting", "pull-requests-refreshed"]);
+    assert.deepEqual(observed, ["run:completed", "pull-requests-refreshed"]);
   }),
 );
 

@@ -86,6 +86,7 @@ import { useAndroidWorkspaceBack } from "../layout/workspace/useAndroidWorkspace
 import { EmptyState } from "../../components/ui/EmptyState";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { PullRequestGlyph } from "./pullRequestGlyphs";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { RelativeTime } from "../../components/RelativeTime";
 import { usePullRequestConnected } from "./usePullRequestConnected";
@@ -115,6 +116,7 @@ import {
   usePullRequestVerticalControls,
 } from "./PullRequestControls";
 import {
+  pullRequestParams,
   pullRequestTarget as requestTarget,
   usePullRequestDiff,
   usePullRequestDiffEntry,
@@ -228,6 +230,16 @@ function PullRequestIdentity(props: {
             <Text className={`text-xs font-t3-medium ${status.text}`}>{status.label}</Text>
           </View>
         )}
+        {"visibility" in pr && pr.visibility === "private" ? (
+          <View className="flex-row items-center gap-1">
+            <SymbolView
+              name={PullRequestGlyph.private}
+              size={12}
+              tintColorClassName="accent-icon-muted"
+            />
+            <Text className="text-xs font-t3-medium text-foreground-muted">{gt("Private")}</Text>
+          </View>
+        ) : null}
         <PullRequestDiffStats additions={pr.additions ?? 0} deletions={pr.deletions ?? 0} compact />
         {"changedFiles" in pr && pr.changedFiles !== undefined ? (
           <Text className="text-2xs text-foreground-muted">
@@ -397,7 +409,8 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const contentTopInset = useContentTopInset();
   // Only iOS lists run under the bottom safe area; Android's floating toolbar pads its own.
   const contentBottomInset = Platform.OS === "ios" ? insets.bottom : 0;
-  const params = route.params;
+  // A link's query lands on this route; only the pull request's own fields go further.
+  const params = useMemo(() => pullRequestParams(route.params), [route.params]);
   usePullRequestEnvironmentFallback(params);
   const connected = usePullRequestConnected(params.environmentId);
   const [chosenSection, setSection] = useState<"overview" | "activity" | "guide">(() => {
@@ -615,7 +628,11 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
               title: gt("Submit review"),
               icon: "text.bubble",
               onPress: () =>
-                navigation.navigate("PullRequestReview", { ...params, mode: "review" }),
+                navigation.navigate("PullRequestReview", {
+                  ...params,
+                  mode: "review",
+                  reviewedHeadSha: pr?.headSha,
+                }),
             },
           ]
         : []),
@@ -1260,6 +1277,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
                 navigation.navigate("PullRequestReview", {
                   ...route.params,
                   mode: "review",
+                  reviewedHeadSha: diffHead.sha ?? undefined,
                 }),
             },
           ]
@@ -1492,6 +1510,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       <PullRequestActionToolbar
         pr={detail.data}
         params={route.params}
+        reviewedHeadSha={diffHead.sha ?? undefined}
         filePath={visibleFile?.path}
         menu={diffMenu}
         onOpenFiles={() => navigation.navigate("PullRequestFiles", route.params)}

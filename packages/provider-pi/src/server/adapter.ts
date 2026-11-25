@@ -359,6 +359,11 @@ function compactionTitle(status: PiCompactionStatus): string {
   }
 }
 
+type PiMessageTokenUsage = Pick<
+  OrchestrationV2ProviderTurnTokenUsage,
+  "inputTokens" | "cachedInputTokens" | "outputTokens"
+>;
+
 interface ActivePiTurn {
   readonly turnInput: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurn: OrchestrationV2ProviderTurn;
@@ -377,6 +382,7 @@ interface ActivePiTurn {
   promptMayBeCommandOnly: boolean;
   latestCompactionAfterTokens: number | null;
   lastLiveUsedTokens: number | null;
+  lastMessageUsage: PiMessageTokenUsage | undefined;
   settleProbeGeneration: number;
   /** An extension may start compaction immediately after Pi emits agent_settled. */
   settleWhenIdle: boolean;
@@ -775,6 +781,28 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           });
         });
 
+      const reportStartupPhase = Effect.fn("PiAdapterV2.reportStartupPhase")(function* (
+        phase: string | undefined,
+      ) {
+        if (sessionEntity.startupPhase === phase) return;
+        const { startupPhase: _reported, ...current } = sessionEntity;
+        sessionEntity = {
+          ...current,
+          ...(phase === undefined ? {} : { startupPhase: phase }),
+          updatedAt: yield* DateTime.now,
+        };
+        yield* emit({
+          type: "provider_session.updated",
+          driver: PI_PROVIDER,
+          providerSession: sessionEntity,
+        });
+      });
+      const reportingResume = <A, E, R>(resume: Effect.Effect<A, E, R>) =>
+        reportStartupPhase("resume").pipe(
+          Effect.andThen(resume),
+          Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
+        );
+
       // Frequent notifications share the event pump's tracing boundary and outlive individual turns.
       const updateExtensionStatus = Effect.fnUntraced(function* (event: PiRpcRecord) {
         if (
@@ -904,6 +932,25 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return value === undefined ? undefined : Math.max(0, Math.trunc(value));
       };
 
+      // Pi counts uncached input, cache reads and cache writes separately; input includes all three.
+      const piMessageTokenUsage = (usage: unknown): PiMessageTokenUsage => {
+        const uncachedInputTokens = nonNegativeInteger(usage, "input");
+        const cachedInputTokens = nonNegativeInteger(usage, "cacheRead");
+        const outputTokens = nonNegativeInteger(usage, "output");
+        return {
+          ...(uncachedInputTokens === undefined
+            ? {}
+            : {
+                inputTokens:
+                  uncachedInputTokens +
+                  (cachedInputTokens ?? 0) +
+                  (nonNegativeInteger(usage, "cacheWrite") ?? 0),
+              }),
+          ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+          ...(outputTokens === undefined ? {} : { outputTokens }),
+        };
+      };
+
       const rememberModelContextWindow = (model: unknown): number | null => {
         const provider = recordString(model, "provider");
         const id = recordString(model, "id");
@@ -994,6 +1041,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const tokenUsageFromStats = (
         stats: unknown,
         fallbackUsedTokens: number | null,
+        messageUsage: PiMessageTokenUsage | undefined,
         updatedAt: DateTime.Utc,
       ): OrchestrationV2ProviderTurnTokenUsage | undefined => {
         const contextUsage = recordField(stats, "contextUsage");
@@ -1002,24 +1050,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           nonNegativeInteger(contextUsage, "tokens") ?? fallbackUsedTokens ?? undefined;
         if (usedTokens === undefined || maxTokens === undefined || maxTokens === 0)
           return undefined;
-
-        const totals = recordField(stats, "tokens");
-        const inputTokens = nonNegativeInteger(totals, "input");
-        const cachedInputTokens = nonNegativeInteger(totals, "cacheRead");
-        const outputTokens = nonNegativeInteger(totals, "output");
-        return {
-          usedTokens,
-          maxTokens,
-          ...(inputTokens === undefined ? {} : { inputTokens }),
-          ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
-          ...(outputTokens === undefined ? {} : { outputTokens }),
-          updatedAt: DateTime.formatIso(updatedAt),
-        };
+        // Stats `tokens` are whole-session totals; the breakdown comes from the turn's last message.
+        return { usedTokens, maxTokens, ...messageUsage, updatedAt: DateTime.formatIso(updatedAt) };
       };
 
-      const readTokenUsage = (fallbackUsedTokens: number | null, updatedAt: DateTime.Utc) =>
+      const readTokenUsage = (turn: ActivePiTurn, updatedAt: DateTime.Utc) =>
         request({ type: "get_session_stats" }, 2_000).pipe(
-          Effect.map((stats) => tokenUsageFromStats(stats, fallbackUsedTokens, updatedAt)),
+          Effect.map((stats) =>
+            tokenUsageFromStats(
+              stats,
+              turn.latestCompactionAfterTokens,
+              turn.lastMessageUsage,
+              updatedAt,
+            ),
+          ),
           Effect.orElseSucceed(() => undefined),
         );
 
@@ -1030,6 +1074,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         /* Provider events include streaming deltas; avoid a span for each update. */
         Effect.fnUntraced(function* (turn: ActivePiTurn, usage: unknown) {
           const usedTokens = nonNegativeInteger(usage, "totalTokens");
+          if (usedTokens !== undefined && usedTokens > 0) {
+            turn.lastMessageUsage = piMessageTokenUsage(usage);
+          }
           if (
             usedTokens === undefined ||
             usedTokens === 0 ||
@@ -1040,9 +1087,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             return;
           }
           turn.lastLiveUsedTokens = usedTokens;
-          const inputTokens = nonNegativeInteger(usage, "input");
-          const cachedInputTokens = nonNegativeInteger(usage, "cacheRead");
-          const outputTokens = nonNegativeInteger(usage, "output");
           const updatedAt = yield* DateTime.now;
           yield* emit({
             type: "provider_turn.updated",
@@ -1053,9 +1097,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               tokenUsage: {
                 usedTokens,
                 maxTokens: contextWindow,
-                ...(inputTokens === undefined ? {} : { inputTokens }),
-                ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
-                ...(outputTokens === undefined ? {} : { outputTokens }),
+                ...turn.lastMessageUsage,
                 updatedAt: DateTime.formatIso(updatedAt),
               },
             },
@@ -2075,9 +2117,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
         const treeRefs =
           turn.stopTreeRefs !== undefined ? turn.stopTreeRefs : yield* captureTurnTreeRefs();
-        const tokenUsage = readUsage
-          ? yield* readTokenUsage(turn.latestCompactionAfterTokens, completedAt)
-          : undefined;
+        const tokenUsage = readUsage ? yield* readTokenUsage(turn, completedAt) : undefined;
         const failure = interrupted ? null : (turn.rejectedPromptFailure ?? turn.failure);
         yield* emit({
           type: "provider_turn.updated",
@@ -2146,6 +2186,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             failureItemOrdinal: itemOrdinal(turn, failureItemId),
             status: "failed",
             failure,
+            ...(!closed && [...piAsyncRuns.values()].some((run) => run.turn === turn)
+              ? { childTurnsContinue: true }
+              : {}),
             ...(turn.activeProviderRetry === null
               ? {}
               : {
@@ -2843,6 +2886,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             Effect.gen(function* () {
               runtimeRetired = true;
               const state = threadState;
+              // Pi ending while nothing is in flight is an idle exit, not a failure.
+              const idle =
+                state !== null &&
+                state.activeTurn === null &&
+                pendingWake === null &&
+                piAsyncRuns.size === 0 &&
+                pendingPrompts.size === 0 &&
+                !nativeCompacting &&
+                !registrationInProgress &&
+                rollbackBarrier === null &&
+                extensionStatusReset === null &&
+                pendingPromptResponsesDrained === null;
               closed = true;
               if (pendingPromptResponsesDrained !== null)
                 yield* Deferred.fail(
@@ -2876,7 +2931,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               if (unsolicitedActivityDetected) {
                 yield* updateProviderSession("error", PI_UNSOLICITED_ACTIVITY_ERROR);
                 yield* Queue.end(events);
-              } else if (stopRequested) {
+              } else if (stopRequested || idle) {
                 yield* updateProviderSession("stopped", null);
                 yield* Queue.end(events);
               } else {
@@ -2966,6 +3021,27 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
       });
 
+      const readSessionFile = Effect.fnUntraced(function* (file: string) {
+        const entries = new Map<string, PiSessionEntry>();
+        let leafId: string | null = null;
+        const readable = yield* fileSystem.stream(file).pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runForEach((line) =>
+            Effect.sync(() => {
+              const entry = readPiSessionEntry(Option.getOrUndefined(decodeSessionLine(line)));
+              if (entry === null) return;
+              const [id, value] = entry;
+              entries.set(id, value);
+              leafId = id;
+            }),
+          ),
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+        return readable ? { entries, leafId } : null;
+      });
+
       // Old records hold entry IDs without a session file. Recover only when both
       // timestamped user entries are on the same branch in a sibling session.
       const findHistoricalForkSession = Effect.fnUntraced(function* (
@@ -2998,29 +3074,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           .reverse();
         for (const file of files) {
           if (file === currentFile) continue;
-          const entries = new Map<string, PiSessionEntry>();
-          let leafId: string | null = null;
-          const readable = yield* fileSystem.stream(file).pipe(
-            Stream.decodeText(),
-            Stream.splitLines,
-            Stream.runForEach((line) =>
-              Effect.sync(() => {
-                const entry = readPiSessionEntry(Option.getOrUndefined(decodeSessionLine(line)));
-                if (entry === null) return;
-                const [id, value] = entry;
-                entries.set(id, value);
-                leafId = id;
-              }),
-            ),
-            Effect.as(true),
-            Effect.orElseSucceed(() => false),
-          );
+          const listing = yield* readSessionFile(file);
           if (
-            readable &&
-            piUserEntryInWindow(entries.get(targetId), from, between) &&
-            piUserEntryInWindow(entries.get(boundary.entryId), between, to) &&
-            walkPiBranch(entries, leafId, boundary.entryId)?.reachedStop === true &&
-            walkPiBranch(entries, boundary.entryId, targetId)?.reachedStop === true
+            listing !== null &&
+            piUserEntryInWindow(listing.entries.get(targetId), from, between) &&
+            piUserEntryInWindow(listing.entries.get(boundary.entryId), between, to) &&
+            walkPiBranch(listing.entries, listing.leafId, boundary.entryId)?.reachedStop === true &&
+            walkPiBranch(listing.entries, boundary.entryId, targetId)?.reachedStop === true
           ) {
             return file;
           }
@@ -3092,14 +3152,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             baselineModel = null;
             baselineThinking = null;
             contextWindow = null;
-            const result = yield* lifecycleRequest(
+            const result =
               resumeId != null && existing !== undefined
-                ? {
-                    type: "switch_session",
-                    sessionPath: yield* sessionFileInCwd(resumeId, existing.createdAt),
-                  }
-                : { type: "new_session" },
-            );
+                ? yield* reportingResume(
+                    lifecycleRequest({
+                      type: "switch_session",
+                      sessionPath: yield* sessionFileInCwd(resumeId, existing.createdAt),
+                    }),
+                  )
+                : yield* lifecycleRequest({ type: "new_session" });
             if (recordField(result, "cancelled") === true) {
               return yield* protocolError("A Pi extension cancelled the session switch");
             }
@@ -3336,10 +3397,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         },
         events: Stream.fromQueue(events),
         backgroundTasksEndWithProcess: true,
-        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null),
-        hasPendingBackgroundWorkForThread: (providerThread) =>
+        // An async pi-subagents run dies with the Pi process, so the session stays loaded for it.
+        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null || piAsyncRuns.size > 0),
+        hasPendingBackgroundWorkForThread: (providerThread, probe) =>
           Effect.sync(
-            () => pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id,
+            () =>
+              (pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id) ||
+              (probe?.includeSubagents === true &&
+                [...piAsyncRuns.values()].some(
+                  (run) => run.turn.turnInput.providerThread.id === providerThread.id,
+                )),
           ),
         getModelContextWindow: (selection) => {
           if (selection.instanceId !== options.instanceId) return undefined;
@@ -3474,6 +3541,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 compactCommand !== null || (payload?.message.trimStart().startsWith("/") ?? false),
               latestCompactionAfterTokens: null,
               lastLiveUsedTokens: null,
+              lastMessageUsage: undefined,
               settleProbeGeneration: 0,
               settleWhenIdle: false,
               compactionCancelled: false,
@@ -3839,7 +3907,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             );
             return {
               providerThread: state.providerThread,
-              providerTurns: [],
               messages,
               runtimeRequests: [],
             };
@@ -3891,15 +3958,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (pendingWake !== null) {
               return yield* protocolError("Cannot roll back while native Pi work awaits a turn");
             }
-            const boundary = piForkBoundary(rollbackInput);
-            if (boundary.type === "nothing") {
-              return piThreadSnapshot(state.providerThread);
-            }
-            const forkEntryId = yield* piForkEntry(
-              boundary,
-              rollbackInput.providerThread.createdAt,
-              request({ type: "get_entries" }),
-            );
+            const target =
+              rollbackInput.target.type === "provider_turn"
+                ? rollbackInput.target.providerTurn
+                : null;
+            const targetFile = target?.nativeThreadRef?.nativeId ?? undefined;
+            const firstBoundary = piForkBoundary(rollbackInput);
             return yield* Effect.acquireUseRelease(
               sessionEventPermit.withPermits(1)(
                 Effect.gen(function* () {
@@ -3923,11 +3987,137 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   return barrier;
                 }),
               ),
-              (barrier) =>
-                Effect.gen(function* () {
-                  const forkData = yield* lifecycleRequest({ type: "fork", entryId: forkEntryId });
-                  if (recordField(forkData, "cancelled") === true)
-                    return yield* protocolError("A Pi extension cancelled the session fork");
+              (barrier) => {
+                let switchedSession = false;
+                return Effect.gen(function* () {
+                  const currentFile = state.providerThread.nativeThreadRef?.nativeId;
+                  const isCurrentFile = (file: string) =>
+                    currentFile != null &&
+                    path.resolve(cwd, file) === path.resolve(cwd, currentFile);
+                  const boundaryFile =
+                    firstBoundary.type === "nothing"
+                      ? undefined
+                      : firstBoundary.turn.nativeThreadRef?.nativeId;
+                  let boundary = firstBoundary;
+                  let sourceFile = targetFile ?? boundaryFile;
+                  const targetId = piTurnEntryId(target);
+                  if (
+                    targetFile !== undefined &&
+                    boundaryFile != null &&
+                    path.resolve(cwd, boundaryFile) !== path.resolve(cwd, targetFile)
+                  ) {
+                    // A previous fork can carry the checkpoint into the session with the discard boundary.
+                    const listing =
+                      targetId === undefined
+                        ? null
+                        : isCurrentFile(boundaryFile)
+                          ? piSessionListing(yield* request({ type: "get_entries" }))
+                          : yield* readSessionFile(path.resolve(cwd, boundaryFile));
+                    const boundaryId =
+                      firstBoundary.type === "entry" ? firstBoundary.entryId : null;
+                    if (
+                      targetId !== undefined &&
+                      listing !== null &&
+                      listing.entries.has(targetId) &&
+                      (boundaryId === null ||
+                        (listing.entries.has(boundaryId) &&
+                          walkPiBranch(listing.entries, listing.leafId, boundaryId)?.reachedStop ===
+                            true)) &&
+                      walkPiBranch(listing.entries, boundaryId ?? listing.leafId, targetId)
+                        ?.reachedStop === true
+                    ) {
+                      sourceFile = boundaryFile;
+                    } else {
+                      boundary = piForkBoundary({ ...rollbackInput, sessionFile: targetFile });
+                    }
+                  }
+                  if (
+                    sourceFile == null &&
+                    currentFile != null &&
+                    boundary.type === "entry" &&
+                    piTurnEntryId(boundary.target) !== undefined &&
+                    boundary.target?.startedAt != null &&
+                    boundary.target.completedAt !== null &&
+                    boundary.turn.completedAt !== null
+                  ) {
+                    // The persisted file avoids sending the whole tree over RPC before forking.
+                    const live = yield* readSessionFile(path.resolve(cwd, currentFile));
+                    if (live !== null && !live.entries.has(boundary.entryId)) {
+                      sourceFile = yield* findHistoricalForkSession(currentFile, boundary);
+                      if (sourceFile === undefined)
+                        return yield* protocolError("Pi rollback entry was not found in a session");
+                    }
+                  }
+                  let switchedTo: string | undefined;
+                  if (sourceFile != null && !isCurrentFile(sourceFile)) {
+                    switchedTo = yield* sessionFileInCwd(
+                      sourceFile,
+                      rollbackInput.providerThread.createdAt,
+                    );
+                    // Pi can change files before its switch response arrives.
+                    switchedSession = true;
+                    const switched = yield* lifecycleRequest({
+                      type: "switch_session",
+                      sessionPath: switchedTo,
+                    });
+                    if (recordField(switched, "cancelled") === true) {
+                      switchedSession = false;
+                      return yield* protocolError("A Pi extension cancelled the session switch");
+                    }
+                    const attached = recordString(
+                      yield* request({ type: "get_state" }),
+                      "sessionFile",
+                    );
+                    if (
+                      attached === undefined ||
+                      path.resolve(cwd, attached) !== path.resolve(cwd, switchedTo)
+                    ) {
+                      return yield* protocolError(
+                        "Pi rollback did not attach the source session file",
+                      );
+                    }
+                  }
+                  let forkEntryId: string | undefined;
+                  if (boundary.type !== "nothing") {
+                    forkEntryId = yield* piForkEntry(
+                      boundary,
+                      rollbackInput.providerThread.createdAt,
+                      request({ type: "get_entries" }),
+                    );
+                  } else if (switchedTo === undefined) {
+                    return piThreadSnapshot(state.providerThread);
+                  } else {
+                    const listing = piSessionListing(yield* request({ type: "get_entries" }));
+                    const walk =
+                      listing !== null && targetId !== undefined && listing.entries.has(targetId)
+                        ? walkPiBranch(listing.entries, listing.leafId, targetId)
+                        : null;
+                    if (listing === null || walk?.reachedStop !== true)
+                      return yield* protocolError(
+                        "Pi rollback could not verify the retained session head",
+                      );
+                    // A move can leave prompts behind in the source file, even when no later
+                    // app turn points at that file. Keep steers sent during the retained turn.
+                    for (const id of [...walk.userEntryIds].reverse()) {
+                      const timestamp = listing.entries.get(id)?.timestamp;
+                      if (timestamp == null || target?.completedAt == null)
+                        return yield* protocolError(
+                          "Pi rollback could not verify the retained session head",
+                        );
+                      if (timestamp >= DateTime.toEpochMillis(target.completedAt)) {
+                        forkEntryId = id;
+                        break;
+                      }
+                    }
+                  }
+                  if (forkEntryId !== undefined) {
+                    const forkData = yield* lifecycleRequest({
+                      type: "fork",
+                      entryId: forkEntryId,
+                    });
+                    if (recordField(forkData, "cancelled") === true)
+                      return yield* protocolError("A Pi extension cancelled the session fork");
+                  }
                   const forkState = yield* request({ type: "get_state" }).pipe(
                     Effect.onError(() =>
                       Effect.sync(() => {
@@ -3982,7 +4172,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       return piThreadSnapshot(state.providerThread);
                     }),
                   );
-                }).pipe(Effect.onInterrupt(() => connection.terminate)),
+                }).pipe(
+                  Effect.onError(() => (switchedSession ? connection.terminate : Effect.void)),
+                  Effect.onInterrupt(() => connection.terminate),
+                );
+              },
               (barrier) =>
                 Effect.sync(() => {
                   if (rollbackBarrier === barrier) rollbackBarrier = null;
@@ -4351,7 +4545,7 @@ function piExtensionDisplayName(extensionPath: string | undefined): string {
 function piThreadSnapshot(
   providerThread: OrchestrationV2ProviderThread,
 ): ProviderAdapter.ProviderAdapterV2ThreadSnapshot {
-  return { providerThread, providerTurns: [], messages: [], runtimeRequests: [] };
+  return { providerThread, messages: [], runtimeRequests: [] };
 }
 
 function piQuestion(

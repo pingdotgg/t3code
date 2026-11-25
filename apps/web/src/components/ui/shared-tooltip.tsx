@@ -11,6 +11,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { Tooltip, TooltipPopup, TooltipTrigger, useTooltipScrollTracker } from "./tooltip";
 
@@ -39,6 +40,8 @@ interface SharedTooltipApi {
   hide(anchor: HTMLElement): void;
   /** A press closes it at once, as Base UI's closeOnClick does. */
   dismiss(anchor: HTMLElement): void;
+  /** An unmounting trigger drops its own pending open and closes the popup only if it is its. */
+  release(anchor: HTMLElement): void;
   holdOpen(): void;
 }
 
@@ -79,6 +82,8 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
   const [api] = useState<SharedTooltipApi>(() => ({
     show(anchor, content, immediate) {
       clearTimer();
+      // A Root that mounts open skips Base UI's mount transition, so the popup would slide in from (0,0).
+      if (!current.current) flushSync(() => commit({ ...content, anchor, open: false }));
       const open = current.current?.open === true;
       const reopen = performance.now() - lastClosedAt.current < REOPEN_WINDOW_MS;
       if (immediate || open || reopen) {
@@ -123,6 +128,12 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
       if (current.current?.anchor !== anchor) return;
       if (current.current.open) lastClosedAt.current = 0;
       commit({ ...current.current, open: false });
+    },
+    release(anchor) {
+      if (pending.current?.anchor === anchor) clearTimer();
+      if (current.current?.anchor === anchor && current.current.open) {
+        commit({ ...current.current, open: false });
+      }
     },
     holdOpen() {
       clearTimer();
@@ -181,6 +192,13 @@ export function useSharedTooltip(content: SharedTooltipContent): SharedTooltipTr
   useEffect(() => {
     if (api && anchorRef.current) api.refresh(anchorRef.current, content);
   }, [api, content]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a removed trigger fires no pointerleave, so it must close the popup anchored to it
+  useEffect(
+    () => () => {
+      if (api && anchorRef.current) api.release(anchorRef.current);
+    },
+    [api],
+  );
   if (!api) return null;
   return {
     // Touch never opens it, as Base UI's mouseOnly trigger; taps also send compatibility mouse events.

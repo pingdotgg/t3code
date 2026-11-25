@@ -67,7 +67,7 @@ import { recordPromptSent } from "../GitHubStarPrompt";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { newMessageId, newThreadId } from "~/lib/utils";
-import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { readPendingWorkspaceDefault, useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   beginBackgroundDraftSubmissionByRef,
@@ -77,6 +77,7 @@ import {
   restoreFailedDraftThread,
   checkoutPullRequestUrlToLink,
   composerDraftHasUserContent,
+  composerTargetKey,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -119,9 +120,11 @@ import {
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { countPreparingComposerImages, holdComposerSend } from "./preparingComposerImages";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
+import { ensureWorktreeLayoutApproved } from "../../worktreeLayoutApproval";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -428,12 +431,13 @@ export function useComposerSend(input: ComposerSendInput) {
     e?.preventDefault();
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
-    const promptAtSend = detachedOverride ? detachedOverride.prompt : promptRef.current;
+    let promptAtSend = detachedOverride ? detachedOverride.prompt : promptRef.current;
     if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&
       !directAnnotation &&
       !draftHasNonPromptContent(composerDraftTarget) &&
+      countPreparingComposerImages(composerTargetKey(composerDraftTarget)) === 0 &&
       isUsageLimitsCommand(promptAtSend)
     ) {
       if (openUsageLimits()) {
@@ -446,9 +450,11 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
 
-    const sendCtx = detachedOverride
+    // Read before any wait; the composer on screen may belong to another thread after it.
+    let sendCtx = detachedOverride
       ? detachedOverride.sendContext
       : composerRef.current?.getSendContext();
+    const isCurrentRouteThread = () => currentRouteThreadKeyRef.current === routeThreadKey;
     // `/side` beats an open question and a plan follow-up, which would send the text to main.
     const sideChatCommand =
       sendCtx && !directAnnotation && !queuedRunEdit.isEditing
@@ -543,6 +549,27 @@ export function useComposerSend(input: ComposerSendInput) {
         }),
       );
       return;
+    }
+    const heldForImages = directAnnotation ? null : holdComposerSend(composerDraftTarget);
+    if (heldForImages) {
+      if ((await heldForImages).status === "cancelled") return;
+      const draftAfterHold = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (!draftAfterHold) return;
+      // A dictation sent after leaving the thread carries its transcript outside the draft.
+      promptAtSend = detachedOverride ? detachedOverride.prompt : draftAfterHold.prompt;
+      if (sendCtx) {
+        sendCtx = {
+          ...sendCtx,
+          prompt: promptAtSend,
+          images: draftAfterHold.images,
+          files: draftAfterHold.files,
+          terminalContexts: draftAfterHold.terminalContexts,
+          previewAnnotations: draftAfterHold.previewAnnotations,
+          reviewComments: draftAfterHold.reviewComments,
+          threadContexts: draftAfterHold.threadContexts,
+          environmentContexts: draftAfterHold.environmentContexts,
+        };
+      }
     }
     const startDraftAttachmentUploads = (
       attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
@@ -819,6 +846,7 @@ export function useComposerSend(input: ComposerSendInput) {
       // in place instead of dispatching a new turn.
       await queuedRunEdit.saveEdit(
         {
+          modelSelection: ctxSelectedModelSelection,
           prompt: promptForSend,
           images: composerImages,
           files: composerFiles,
@@ -1010,6 +1038,39 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       return;
     }
+    // A project may set its worktrees up with its own commands, which run only once a person
+    // has approved their text. Asking takes as long as the user does, so the draft is compared
+    // across it like any other wait before a send.
+    if (baseBranchForWorktree || multipleModelSelections !== null) {
+      const draftBeforeApproval = useComposerDraftStore
+        .getState()
+        .getComposerDraft(composerDraftTarget);
+      sendInFlightRef.current = true;
+      const layoutApproval = await ensureWorktreeLayoutApproved({
+        environmentId,
+        projectId: activeProject.id,
+        projectTitle: activeProject.title,
+      }).finally(() => {
+        sendInFlightRef.current = false;
+      });
+      if (layoutApproval.status === "cancelled") return;
+      if (layoutApproval.status === "blocked") {
+        setThreadError(threadIdForSend, layoutApproval.message);
+        return;
+      }
+      if (
+        composerDraftContentChanged(
+          draftBeforeApproval,
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+        )
+      ) {
+        setThreadError(
+          threadIdForSend,
+          m(msg("Draft changed while preparing this message. Review it and send again.")),
+        );
+        return;
+      }
+    }
     // Records bind attachments by the id each side knows: the local id for the optimistic
     // row, the upload id (or local id on the data-URL path) on the wire; the server
     // rebinds them to the persisted id.
@@ -1038,7 +1099,6 @@ export function useComposerSend(input: ComposerSendInput) {
       effort: ctxSelectedPromptEffort,
       text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
     });
-    const isCurrentRouteThread = () => currentRouteThreadKeyRef.current === routeThreadKey;
     if (
       isCurrentRouteThread() &&
       composerRef.current?.validateProviderInput(outgoingMessageText) === false
@@ -1092,6 +1152,7 @@ export function useComposerSend(input: ComposerSendInput) {
     if (turnUsesAttachmentUploads) startDraftAttachmentUploads(composerAttachmentsSnapshot);
 
     if (
+      isCurrentRouteThread() &&
       multipleModelSelections === null &&
       shouldDockDraftHeroForSubmission({ isDraftHeroState, activeThreadKey, submissionIntent }) &&
       activeThreadKey
@@ -1307,7 +1368,7 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     if (sendQueuesBehindSetup) {
       setSetupQueueSendThreadKey(activeThreadKey);
-    } else {
+    } else if (isCurrentRouteThread()) {
       beginLocalDispatch({
         preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
         submissionIntent:
@@ -1723,13 +1784,12 @@ export function useComposerSend(input: ComposerSendInput) {
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
-      if (!sendQueuesBehindSetup) resetLocalDispatch();
+      if (!sendQueuesBehindSetup && isCurrentRouteThread()) resetLocalDispatch();
     }
   };
 
   const onSendLatest = useStableCallback(onSend);
-  const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
-    args[0]?.preventDefault();
+  const sendWithEnvironmentRefresh = async (...args: Parameters<typeof onSend>) => {
     const refresh =
       args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
         ? null
@@ -1740,6 +1800,18 @@ export function useComposerSend(input: ComposerSendInput) {
       sendInFlightRef.current = false;
     });
     if (ready) return onSendLatest(...args);
+  };
+  const sendWithEnvironmentRefreshLatest = useStableCallback(sendWithEnvironmentRefresh);
+  const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
+    args[0]?.preventDefault();
+    const workspaceDefault =
+      draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
+    if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
+    sendInFlightRef.current = true;
+    await workspaceDefault.finally(() => {
+      sendInFlightRef.current = false;
+    });
+    return sendWithEnvironmentRefreshLatest(...args);
   };
   // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
   // only time a detached send runs, so the draft keeps the environment it was dictated for.
