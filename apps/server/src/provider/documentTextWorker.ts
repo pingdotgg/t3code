@@ -953,13 +953,19 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
   }
 }
 
+// A nested list starts its own line unless its parent item's text already ended one.
+function endsMidLine(text: string) {
+  let index = text.length - 1;
+  while (text[index] === " " || text[index] === "\t") index--;
+  return index >= 0 && text[index] !== "\n";
+}
+
 export async function extractDocumentText(path: string, extension: string): Promise<string> {
   let result = "";
   let remaining = MAX_OUTPUT;
   let cellDepth = 0;
   let started = false;
   let space = false;
-  let lineHasText = false;
   let truncated = false;
   try {
     // Charge raw text before normalization so repeated whitespace also exhausts the budget.
@@ -977,7 +983,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
         continue;
       }
       if (part === LINE_START) {
-        if (extension !== ".epub" || (!cellDepth && !lineHasText)) continue;
+        if (!endsMidLine(result)) continue;
         part = "\n";
       }
       if (typeof part !== "string" && started) continue;
@@ -990,17 +996,9 @@ export async function extractDocumentText(path: string, extension: string): Prom
         if (trimmed) {
           result += (started && (space || value.startsWith(" ")) ? " " : "") + trimmed;
           started = true;
-          lineHasText = true;
         }
         space = value.endsWith(" ") || (!value && space);
-      } else {
-        result += value;
-        if (extension === ".epub") {
-          const lastNewline = value.lastIndexOf("\n");
-          lineHasText =
-            (lastNewline < 0 && lineHasText) || value.trimEnd().length > lastNewline + 1;
-        }
-      }
+      } else result += value;
       if (remaining === 0) throw new Truncation("Output budget");
     }
   } catch (error) {
