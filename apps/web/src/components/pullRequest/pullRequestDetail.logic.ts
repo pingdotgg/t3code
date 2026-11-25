@@ -1626,7 +1626,7 @@ const ACTION_NEEDS_HOST_REFRESH: Record<PullRequestAction, boolean> = {
   "disable-auto-merge": false,
   revert: false,
   "delete-branch": false,
-  "approve-workflows": true,
+  "approve-workflows": false,
 };
 
 export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): boolean {

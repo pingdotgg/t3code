@@ -880,11 +880,11 @@ const make = Effect.gen(function* () {
       }
       return yield* (
         failure ??
-          new IssueOperationError({
-            operation: "resolveUrl",
-            reason: "not-found",
-            detail: "This issue URL does not belong to the connected workspace.",
-          })
+        new IssueOperationError({
+          operation: "resolveUrl",
+          reason: "not-found",
+          detail: "This issue URL does not belong to the connected workspace.",
+        })
       );
     },
   );
