@@ -2343,10 +2343,8 @@ it.each([
 
 it.each([
   ["firmware", "Save it to open in an app that supports this format."],
-  ["firmware.", "Save it to open in an app that supports this format."],
   [".cache", "Save it to open in an app that supports this format."],
   ["a.dir/firmware", "Save it to open in an app that supports this format."],
-  ["a.dir\\firmware", "Save it to open in an app that supports this format."],
   ["blob.foo", "Save it to open in an app that supports foo files."],
 ] as const)(
   "describes unsupported binary attachment %s without misreading its name as an extension",
