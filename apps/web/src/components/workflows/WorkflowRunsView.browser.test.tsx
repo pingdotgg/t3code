@@ -434,7 +434,10 @@ describe("WorkflowRunsView", () => {
 
   it("says who withdrew a question that ended unanswered, and why", async () => {
     setup(
-      { runs: [run({ runId: "ship", status: "completed", endedAt: at(2) })], questions: [] },
+      {
+        runs: [run({ runId: "ship", title: "Ship", status: "completed", endedAt: at(2) })],
+        questions: [],
+      },
       {
         ship: [
           step({
