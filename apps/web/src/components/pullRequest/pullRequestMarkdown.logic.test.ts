@@ -7,11 +7,14 @@ import {
   pullRequestMarkdownExtensions,
 } from "./pullRequestMarkdown.logic";
 
-function links(markdown: string) {
-  const extensions = pullRequestMarkdownExtensions({
+function links(
+  markdown: string,
+  subject: { readonly provider: string; readonly url: string } = {
     provider: "github",
     url: "https://github.com/team/repo/pull/8",
-  });
+  },
+) {
+  const extensions = pullRequestMarkdownExtensions(subject);
   const tree = wordsHast(markdown, {
     math: false,
     breaks: false,
@@ -45,6 +48,31 @@ describe("pullRequestMarkdownExtensions", () => {
       ["abcdef1", "https://github.com/team/repo/commit/abcdef1", "commit"],
       ["#13", "https://example.com", undefined],
     ]);
+  });
+  it("links GitHub and GitLab references in issue descriptions and ignores Linear", () => {
+    expect(
+      links("Fix opened in #38661 (`#99`).", {
+        provider: "github",
+        url: "https://github.com/team/repo/issues/42686",
+      }),
+    ).toEqual([["#38661", "https://github.com/team/repo/issues/38661", "reference"]]);
+
+    expect(
+      links("See !15 and #12", {
+        provider: "gitlab",
+        url: "https://gitlab.example/group/sub/repo/-/issues/7",
+      }),
+    ).toEqual([
+      ["!15", "https://gitlab.example/group/sub/repo/-/merge_requests/15", "reference"],
+      ["#12", "https://gitlab.example/group/sub/repo/-/issues/12", "reference"],
+    ]);
+
+    expect(
+      links("See #12", {
+        provider: "linear",
+        url: "https://linear.app/acme/issue/ENG-1",
+      }),
+    ).toEqual([]);
   });
   it("renders GitHub emoji shortcodes in prose and leaves code literal", () => {
     const extensions = pullRequestMarkdownExtensions({
