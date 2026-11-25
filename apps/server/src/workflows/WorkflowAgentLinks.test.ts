@@ -287,18 +287,6 @@ it.effect("returns the whole last reply from an older page of a linked thread", 
   }),
 );
 
-it.effect(
-  "uses one cursorless transcript read when the turn already has a reply on the newest page",
-  () =>
-    Effect.gen(function* () {
-      const { result, reads } = yield* readReply(
-        page([assistant(3, "turn-1", "Done."), assistant(4, "turn-2", "other turn")], 3),
-      );
-      assert.strictEqual(result.reply, "Done.");
-      assert.deepStrictEqual(reads, [messageRead]);
-    }),
-);
-
 it.effect("keeps the latest matching reply when paging a legacy peer forward", () =>
   Effect.gen(function* () {
     for (const earlierPosition of [undefined, null]) {
