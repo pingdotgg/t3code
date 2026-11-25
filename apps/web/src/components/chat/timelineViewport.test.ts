@@ -50,10 +50,20 @@ describe("transitionTimelineFollow", () => {
   });
 
   it("re-arms only after the released view leaves the end and comes back", () => {
-    expect(transitionTimelineFollow(releasedAtEnd, { type: "reachedEnd" })).toBe(releasedAtEnd);
+    expect(
+      transitionTimelineFollow(releasedAtEnd, { type: "reachedEnd", scrolledDown: true }),
+    ).toBe(releasedAtEnd);
     const away = transitionTimelineFollow(releasedAtEnd, { type: "leftEnd" });
     expect(away).toEqual(releasedAway);
-    expect(transitionTimelineFollow(away, { type: "reachedEnd" })).toBe(FOLLOWING);
+    expect(transitionTimelineFollow(away, { type: "reachedEnd", scrolledDown: true })).toBe(
+      FOLLOWING,
+    );
+  });
+
+  it("stays released when the end band is reached without scrolling down", () => {
+    expect(
+      transitionTimelineFollow(releasedAway, { type: "reachedEnd", scrolledDown: false }),
+    ).toBe(releasedAway);
   });
 
   it("follows the end on request from any state", () => {

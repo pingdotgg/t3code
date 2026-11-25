@@ -1020,6 +1020,50 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  // regression: #42590 work after a steer folds under its own key
+  it("keeps the post-steer note a released reader is reading when the run ends", () => {
+    const steer = {
+      ...userMessage("2026-06-20T00:00:04.000Z"),
+      id: TurnItemId.make("item-steer"),
+      messageId: MessageId.make("message-steer"),
+      inputIntent: "steer" as const,
+    };
+    const progress = {
+      ...assistantMessage("2026-06-20T00:00:07.000Z"),
+      id: TurnItemId.make("item-progress"),
+      messageId: MessageId.make("message-progress"),
+    };
+    const feed = buildThreadFeed(
+      [
+        userMessage(),
+        command(),
+        steer,
+        { ...command("2026-06-20T00:00:06.000Z"), id: TurnItemId.make("item-after") },
+        progress,
+        assistantMessage("2026-06-20T00:00:09.000Z"),
+      ].map((item, position) => projected(item, position)),
+    );
+    const running = {
+      runId,
+      status: "running" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: null,
+    };
+    const completed = {
+      ...running,
+      status: "completed" as const,
+      completedAt: "2026-06-20T00:00:09.000Z",
+    };
+    const foldKeys = () =>
+      deriveThreadFeedPresentation(feed, completed, new Set()).flatMap((entry) =>
+        entry.type === "run-fold" ? [entry.runId] : [],
+      );
+    const expanded = nextExpandedRuns(new Set<RunId>(), running, completed, runId, foldKeys);
+    expect(
+      deriveThreadFeedPresentation(feed, completed, expanded).map((entry) => entry.id),
+    ).toContain("message-progress");
+  });
+
   it("splits a settled turn's work fold at a steer", () => {
     const steer = {
       ...userMessage("2026-06-20T00:00:04.000Z"),

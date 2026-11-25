@@ -3935,17 +3935,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     setPreviousLatestRun(props.latestRun);
     const latest = props.latestRun ?? null;
     const previous = previousLatestRun ?? null;
-    if (nextExpandedRuns(expandedTurnIds, previous, latest, readerSeenRunId) !== expandedTurnIds) {
-      setInteractionState((current) => ({
-        ...current,
-        expandedTurnIds: nextExpandedRuns(
-          current.expandedTurnIds,
-          previous,
-          latest,
-          readerSeenRunId,
-        ),
-      }));
-    }
+    const foldKeys = () =>
+      presentedFeed.flatMap((entry) => (entry.type === "run-fold" ? [entry.runId] : []));
+    setInteractionState((current) => {
+      const expanded = nextExpandedRuns(
+        current.expandedTurnIds,
+        previous,
+        latest,
+        readerSeenRunId,
+        foldKeys,
+      );
+      return expanded === current.expandedTurnIds
+        ? current
+        : { ...current, expandedTurnIds: expanded };
+    });
   }
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears copy feedback and disclosure animation timers and frames on unmount

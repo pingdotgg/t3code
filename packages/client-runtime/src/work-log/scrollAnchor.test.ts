@@ -53,6 +53,22 @@ describe("runs a released reader is reading", () => {
     expect(nextExpandedRuns(none, running, completed, null)).toBe(none);
   });
 
+  it("opens the reader's run's steer segments with it", () => {
+    const folds = () => ["b", "b:steer:s1", "a:steer:s0"];
+    expect(nextExpandedRuns(new Set<string>(), running, completed, "b", folds)).toEqual(
+      new Set(["b", "b:steer:s1"]),
+    );
+    expect(
+      nextExpandedRuns(
+        new Set<string>(),
+        running,
+        { runId: "b", status: "interrupted" },
+        null,
+        folds,
+      ),
+    ).toEqual(new Set(["b"]));
+  });
+
   it("opens an interrupted run wherever the reader is", () => {
     expect(
       nextExpandedRuns(new Set<string>(), running, { runId: "b", status: "interrupted" }, null),

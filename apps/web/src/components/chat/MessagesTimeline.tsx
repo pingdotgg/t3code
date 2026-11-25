@@ -627,31 +627,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   // The latest run whose rows a released reader can see: folding it would pull them away.
   const [readerSeenRunId, setReaderSeenRunId] = useState<RunId | null>(null);
-  const [observedLatestRun, setObservedLatestRun] = useState({
-    identity: listIdentityKey,
-    runId: latestRun?.runId,
-    status: latestRun?.status,
-  });
-  if (
-    observedLatestRun.identity !== listIdentityKey ||
-    observedLatestRun.runId !== latestRun?.runId ||
-    observedLatestRun.status !== latestRun?.status
-  ) {
-    setObservedLatestRun({
-      identity: listIdentityKey,
-      runId: latestRun?.runId,
-      status: latestRun?.status,
-    });
-    const previousRunId = observedLatestRun.runId;
-    if (observedLatestRun.identity === listIdentityKey && previousRunId !== undefined) {
-      const previous = { runId: previousRunId, status: observedLatestRun.status };
-      const readerRunId = liveFollowEnabled ? null : readerSeenRunId;
-      setExpandedRunIds((existing) =>
-        nextExpandedRuns(existing, previous, latestRun ?? null, readerRunId),
-      );
-    }
-  }
-
   const preferredToolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
   const screenReaderAnnouncements = useClientSettings(
     (settings) => settings.screenReaderAnnouncements,
@@ -776,6 +751,33 @@ const ConversationTimeline = memo(function ConversationTimeline({
     revealedMessageId,
   });
   const rows = useStableRows(rawRows, listIdentityKey);
+  const [observedLatestRun, setObservedLatestRun] = useState({
+    identity: listIdentityKey,
+    runId: latestRun?.runId,
+    status: latestRun?.status,
+  });
+  if (
+    observedLatestRun.identity !== listIdentityKey ||
+    observedLatestRun.runId !== latestRun?.runId ||
+    observedLatestRun.status !== latestRun?.status
+  ) {
+    setObservedLatestRun({
+      identity: listIdentityKey,
+      runId: latestRun?.runId,
+      status: latestRun?.status,
+    });
+    const previousRunId = observedLatestRun.runId;
+    if (observedLatestRun.identity === listIdentityKey && previousRunId !== undefined) {
+      const previous = { runId: previousRunId, status: observedLatestRun.status };
+      const readerRunId = liveFollowEnabled ? null : readerSeenRunId;
+      setExpandedRunIds((existing) =>
+        nextExpandedRuns(existing, previous, latestRun ?? null, readerRunId, () =>
+          rows.flatMap((row) => (row.kind === "turn-fold" ? [row.runId] : [])),
+        ),
+      );
+    }
+  }
+
   const matchedApprovalRequestIds = new Set<string>();
   for (const row of pendingApprovalRequestIds.size > 0 ? rows : []) {
     const entries =

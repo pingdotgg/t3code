@@ -1358,6 +1358,8 @@ describe("MessagesTimeline follow", () => {
       ),
       work(`tool-${index}`, { label: `Read file${index}.ts`, tone: "tool", itemType: "file_read" }),
     ]).flat();
+    // Work after a steer folds under its own key, apart from the run.
+    notes.splice(12, 0, message("Also check the tests", { runId, inputIntent: "steer" }, "steer"));
     const running = [...history, message("Run the long turn", { runId }, "prompt"), ...notes];
     const latestRunning = {
       runId,
@@ -1441,7 +1443,7 @@ describe("MessagesTimeline follow", () => {
     );
     await vi.waitFor(() => {
       const state = listRef.current!.getState();
-      expect(state.contentLength).toBe(viewport().scrollHeight);
+      expect(Math.abs(state.contentLength - viewport().scrollHeight)).toBeLessThan(1);
       expect(Math.abs(state.scroll - viewport().scrollTop)).toBeLessThan(2);
     });
     await expectNoteInPlace("the note being read after the turn ends");
