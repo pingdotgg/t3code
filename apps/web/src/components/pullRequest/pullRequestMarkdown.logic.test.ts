@@ -7,8 +7,8 @@ import {
   pullRequestMarkdownExtensions,
 } from "./pullRequestMarkdown.logic";
 
-function links(markdown: string, url = "https://github.com/team/repo/pull/8") {
-  const extensions = pullRequestMarkdownExtensions({ provider: "github", url });
+function links(markdown: string, url = "https://github.com/team/repo/pull/8", provider = "github") {
+  const extensions = pullRequestMarkdownExtensions({ provider, url });
   const tree = wordsHast(markdown, {
     math: false,
     breaks: false,
@@ -46,6 +46,14 @@ describe("pullRequestMarkdownExtensions", () => {
   it("links references in an issue's markdown against the issue's repository", () => {
     expect(links("Fix opened in #38661.", "https://github.com/team/repo/issues/42686")).toEqual([
       ["#38661", "https://github.com/team/repo/issues/38661", "reference"],
+    ]);
+  });
+  it("links references in a GitLab issue's markdown against its project", () => {
+    expect(
+      links("See !15 and #7.", "https://gitlab.com/group/sub/proj/-/issues/3", "gitlab"),
+    ).toEqual([
+      ["!15", "https://gitlab.com/group/sub/proj/-/merge_requests/15", "reference"],
+      ["#7", "https://gitlab.com/group/sub/proj/-/issues/7", "reference"],
     ]);
   });
   it("renders GitHub emoji shortcodes in prose and leaves code literal", () => {
