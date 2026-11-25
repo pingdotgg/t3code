@@ -78,6 +78,7 @@ import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./Dif
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
 import { DiffFileTree } from "./diffs/DiffFileTree";
+import { HiddenTestFilesEmptyState } from "./diffs/HiddenTestFilesEmptyState";
 import { FileExplorerPane } from "./files/FileExplorerPane";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { getDiffHeaderClickAction } from "./diffs/diffHeaderClick";
@@ -1676,6 +1677,11 @@ export default function DiffPanel({
                   </p>
                 </div>
               )
+            ) : hideTestFiles && testFileCount > 0 && shownFileEntries.length === 0 ? (
+              <HiddenTestFilesEmptyState
+                count={testFileCount}
+                onShow={() => setHideTestFiles(false)}
+              />
             ) : lazySource || renderablePatch?.kind === "files" ? (
               <div className="flex min-h-0 flex-1 overflow-hidden">
                 <div
