@@ -43,11 +43,11 @@ describe("SimlockDeviceHostEditor", () => {
 
     const input = page.getByLabelText("Devices at once");
     await userEvent.clear(input);
-    expect(input.element()).toHaveDisplayValue("");
+    await expect.element(input).toHaveDisplayValue("");
     await expect.element(saveButton).toBeDisabled();
 
     await userEvent.type(input, "5");
-    expect(input.element()).toHaveDisplayValue("5");
+    await expect.element(input).toHaveDisplayValue("5");
     await expect.element(saveButton).not.toBeDisabled();
   });
 });
