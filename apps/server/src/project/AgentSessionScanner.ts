@@ -776,6 +776,10 @@ function extractDecodedCwd(record: DecodedTranscriptRecord): string | null {
   return cwd && cwd.length > 0 ? cwd : null;
 }
 
+function extractPiSessionCwd(type: unknown, cwd: unknown): string | null {
+  return type === "session" && typeof cwd === "string" ? cwd.trim() || null : null;
+}
+
 function shouldRetainDecodedRecord(
   source: AgentSessionSource,
   record: DecodedTranscriptRecord,
@@ -847,6 +851,7 @@ function extractCwd(parsed: unknown, source: AgentSessionSource): string | null 
   if (typeof parsed !== "object" || parsed === null) return null;
 
   const record = parsed as Record<string, unknown>;
+  if (source === "pi") return extractPiSessionCwd(record.type, record.cwd);
   if (typeof record.cwd === "string" && record.cwd.trim().length > 0) {
     return record.cwd;
   }
@@ -1391,7 +1396,13 @@ export const make = Effect.gen(function* () {
                 // Pi accepts messages this schema rejects, such as null content; keep their tree links.
                 records.push(...Option.toArray(decodePiEntryLinks(value)));
               } else if (Option.isSome(decoded)) {
-                if (Option.isNone(cwd)) cwd = Option.fromNullOr(extractDecodedCwd(decoded.value));
+                if (Option.isNone(cwd)) {
+                  cwd = Option.fromNullOr(
+                    source === "pi"
+                      ? extractPiSessionCwd(decoded.value.type, decoded.value.cwd)
+                      : extractDecodedCwd(decoded.value),
+                  );
+                }
                 if (source === "claudeAgent") {
                   claudeFields = foldClaudeFields(claudeFields, decoded.value);
                 }
