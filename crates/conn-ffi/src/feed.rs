@@ -186,12 +186,16 @@ pub fn highlight_code(source: String, language: String, theme: String) -> Vec<Ve
 
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct FfiPatchLine {
+    pub old_line: Option<u32>,
+    pub new_line: Option<u32>,
     pub number: Option<u32>,
     pub marker: String,
     pub text: String,
 }
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct FfiFilePatch {
+    pub new_path: Option<String>,
+    pub old_path: Option<String>,
     pub path: String,
     pub lines: Vec<FfiPatchLine>,
     pub binary: bool,
@@ -210,12 +214,16 @@ pub(crate) fn file_patches(diff: &str) -> Vec<FfiFilePatch> {
             let mut lines = Vec::new();
             for hunk in file.hunks {
                 lines.push(FfiPatchLine {
+                    old_line: None,
+                    new_line: None,
                     number: None,
                     marker: "@@".into(),
                     text: hunk.header,
                 });
                 lines.extend(hunk.lines.into_iter().map(|line| {
                     FfiPatchLine {
+                        old_line: line.old_line,
+                        new_line: line.new_line,
                         number: line.new_line.or(line.old_line),
                         marker: match line.kind {
                             DiffLineKind::Added => "+",
@@ -228,6 +236,8 @@ pub(crate) fn file_patches(diff: &str) -> Vec<FfiFilePatch> {
                 }));
             }
             FfiFilePatch {
+                new_path: file.new_path,
+                old_path: file.old_path,
                 path: file.display_path,
                 binary: file.is_binary,
                 lines,

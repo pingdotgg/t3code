@@ -123,7 +123,7 @@ struct WorkspaceRootView: View {
                             store: owner,
                             threadId: threadId,
                             initialTitle: summary?.title ?? "Thread",
-                            initialProjectTitle: projectTitle,
+                            initialProjectTitle: summary?.orbitProjectSlug ?? projectTitle,
                             initialBranch: summary?.branch,
                             initialSettled: summary?.settled ?? false,
                             onOpenThread: { childId, environment in

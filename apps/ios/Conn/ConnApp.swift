@@ -36,6 +36,11 @@ struct ConnApp: App {
                 }
             }
             .kitAppearance()
+            #if DEBUG && targetEnvironment(simulator)
+            .preferredColorScheme(ProcessInfo.processInfo.environment["CONN_TEST_APPEARANCE"].flatMap {
+                switch $0 { case "dark": .dark; case "light": .light; default: nil }
+            })
+            #endif
             .onChange(of: scenePhase) { _, newPhase in
                 store.handleScenePhase(newPhase)
             }

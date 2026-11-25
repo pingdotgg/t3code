@@ -1,17 +1,14 @@
 import SwiftUI
 import UIKit
 
-/// The model list of Conn mobile's thread settings sheet (`ThreadSettingsSheet.tsx`
-/// `ThreadSettingsModelsScreen`, `ThreadSettingsRows`): "Thread settings", a close button, Done
-/// or Save, the "Find a model" search, and provider sections of grouped rows. A tap picks a row;
-/// Save applies it. `model_picker` in conn-ffi builds the sections.
 struct ModelPickerSheet: View {
     @Bindable var store: CoreStore
     let threadId: String
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.connTheme) private var theme
-    @State private var query = ""
+    private enum Page: Hashable { case providers, models(String) }
+    @State private var pages: [Page] = []
     @State private var toggled: [String] = []
     @State private var pending: (instanceId: String, model: String)?
     @State private var picker: FfiModelPicker?
@@ -23,56 +20,78 @@ struct ModelPickerSheet: View {
     private var reloadKey: String {
         let pick = pending.map { "\($0.instanceId):\($0.model)" } ?? ""
         let model = store.openThread?.modelLabel ?? ""
-        return "\(store.providersRevision)|\(query)|\(toggled.joined(separator: ","))|\(pick)|\(model)"
+        return "\(store.providersRevision)|\(toggled.joined(separator: ","))|\(pick)|\(model)"
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    Picker("Follow-up messages", selection: $steer) {
-                        Text("Steer").tag(true)
-                        Text("Queue").tag(false)
-                    }.padding(.horizontal)
-                    if let picker {
-                        if !picker.loaded {
-                            notice("Loading models…")
-                        } else if picker.sections.isEmpty {
-                            notice(query.isEmpty ? "No models available." : "No models match your search.")
-                        }
-                        ForEach(picker.sections, id: \.instanceId) { section in
-                            header(section)
-                            ForEach(Array(section.models.enumerated()), id: \.element.model) { index, row in
-                                modelRow(row, isFirst: index == 0, isLast: index == section.models.count - 1)
-                                if row.selected {
-                                    ForEach(row.controls, id: \.id) { control in
-                                        Picker(control.label, selection: Binding(
-                                            get: { optionChanges[control.id] ?? control.current },
-                                            set: { value in
-                                                pending = (row.instanceId, row.model)
-                                                optionChanges[control.id] = value == control.current ? nil : value
-                                            }
-                                        )) {
-                                            ForEach(Array(zip(control.values, control.labels)), id: \.0) { value, label in
-                                                Text(label).tag(value)
-                                            }
-                                        }.padding(.horizontal, 24)
+        NavigationStack(path: $pages) {
+            List {
+                if let picker, picker.loaded {
+                    let section = picker.sections.first { $0.models.contains(where: \.selected) }
+                    let row = section?.models.first(where: \.selected)
+                    if picker.sections.isEmpty {
+                        Text("No models available.").foregroundStyle(.secondary)
+                    } else {
+                        Section {
+                            NavigationLink(value: Page.providers) {
+                                LabeledContent("Provider", value: section?.label ?? "Select")
+                            }
+                            if let section {
+                                Button { browse(section) } label: {
+                                    LabeledContent("Model", value: row?.label ?? "Select")
+                                }
+                            }
+                            if let row {
+                                ForEach(row.controls, id: \.id) { control in
+                                    Picker(control.toggle || control.id == "serviceTier" ? "Speed" : "Effort", selection: Binding(
+                                        get: { optionChanges[control.id] ?? control.current },
+                                        set: { value in
+                                            pending = (row.instanceId, row.model)
+                                            optionChanges[control.id] = value == control.current ? nil : value
+                                        }
+                                    )) {
+                                        ForEach(Array(zip(control.values, control.labels)), id: \.0) { value, label in
+                                            Text(label).tag(value)
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                } else { ProgressView("Loading models…") }
+                Section {
+                    Picker("Follow-up messages", selection: $steer) {
+                        Text("Steer").tag(true)
+                        Text("Queue").tag(false)
+                    }
                 }
-                .padding(.bottom, 16)
             }
-            .background(theme.background.ignoresSafeArea())
+            .navigationDestination(for: Page.self) { page in
+                switch page {
+                case .providers:
+                    List(picker?.sections ?? [], id: \.instanceId) { section in
+                        Button { browse(section) } label: {
+                            Label { Text(section.label) } icon: { ProviderIcon(driver: section.driver, size: 18) }
+                        }.accessibilityIdentifier("modelPicker.provider." + section.instanceId)
+                    }.navigationTitle("Provider")
+                case .models(let instance):
+                    List(picker?.sections.first { $0.instanceId == instance }?.models ?? [], id: \.model) { row in
+                        Button {
+                            if !row.selected { optionChanges = [:] }
+                            pending = (row.instanceId, row.model)
+                            pages = []
+                        } label: {
+                            HStack {
+                                Text(row.label)
+                                Spacer()
+                                if row.selected { Image(systemName: "checkmark") }
+                            }
+                        }.accessibilityIdentifier("modelPicker.model." + row.model)
+                    }.navigationTitle("Model")
+                }
+            }
             .navigationTitle("Thread settings")
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(
-                text: $query,
-                placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Find a model"
-            )
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { dismiss() } label: { Image(systemName: "xmark") }
@@ -102,12 +121,13 @@ struct ModelPickerSheet: View {
             }
         }
         .task(id: reloadKey) {
-            picker = await store.modelPicker(
+            let result = await store.modelPicker(
                 threadId: threadId,
-                query: query,
+                query: "",
                 toggled: toggled,
                 pending: pending
             )
+            if !Task.isCancelled { picker = result }
         }
     }
 
@@ -138,120 +158,11 @@ struct ModelPickerSheet: View {
         }
     }
 
-    private func notice(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 14))
-            .foregroundStyle(theme.mutedForeground)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 32)
-    }
-
-    /// `ProviderHeader`: the icon at 15 and the label (14 medium, muted); a collapsible one adds the
-    /// folded count and a 12pt chevron.
-    private func header(_ section: FfiModelPickerSection) -> some View {
-        let content = HStack(spacing: 7) {
-            ProviderIcon(driver: section.driver, size: 15)
-            Text(section.label)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(theme.mutedForeground)
-            if section.collapsible {
-                Spacer(minLength: 0)
-                if section.collapsed {
-                    Text("\(section.modelCount)")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(theme.mutedForeground)
-                }
-                ConnIcon(section.collapsed ? "chevron.down" : "chevron.up")
-                    .font(.system(size: 12))
-                    .foregroundStyle(theme.mutedForeground)
-            }
+    private func browse(_ section: FfiModelPickerSection) {
+        if section.collapsed {
+            if toggled.contains(section.instanceId) { toggled.removeAll { $0 == section.instanceId } }
+            else { toggled.append(section.instanceId) }
         }
-        .padding(.horizontal, 3.5)
-        .padding(.top, 7)
-        .frame(minHeight: 44, alignment: .bottom)
-        .padding(.horizontal, 14)
-        .padding(.top, 3.5)
-
-        return Group {
-            if section.collapsible {
-                Button {
-                    if let index = toggled.firstIndex(of: section.instanceId) {
-                        toggled.remove(at: index)
-                    } else {
-                        toggled.append(section.instanceId)
-                    }
-                } label: {
-                    content.contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(section.label), \(section.modelCount) models")
-            } else {
-                content.accessibilityAddTraits(.isHeader)
-            }
-        }
-    }
-
-    /// `ModelRowContent` with the iOS trailing checkmark: 44 tall, 14 at the sides inside a 14pt
-    /// inset card, label 16 medium, badges 11 bold, sub-provider 13 muted.
-    private func modelRow(_ row: FfiModelPickerRow, isFirst: Bool, isLast: Bool) -> some View {
-        let shape = UnevenRoundedRectangle(
-            topLeadingRadius: isFirst ? 14 : 0,
-            bottomLeadingRadius: isLast ? 14 : 0,
-            bottomTrailingRadius: isLast ? 14 : 0,
-            topTrailingRadius: isFirst ? 14 : 0,
-            style: .continuous
-        )
-        return Button {
-            UISelectionFeedbackGenerator().selectionChanged()
-            if !row.selected { optionChanges = [:] }
-            pending = (row.instanceId, row.model)
-        } label: {
-            HStack(spacing: 7) {
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 7) {
-                        Text(row.label)
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(theme.foreground)
-                            .lineLimit(1)
-                        if row.isDefault { badge("Default", strong: true) }
-                        if row.isLegacy { badge("Legacy", strong: false) }
-                    }
-                    if !row.subtitle.isEmpty {
-                        Text(row.subtitle)
-                            .font(.system(size: 13))
-                            .foregroundStyle(theme.mutedForeground)
-                            .lineLimit(1)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if row.selected {
-                    ConnIcon("checkmark")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(theme.foreground)
-                }
-            }
-            .padding(.horizontal, 14)
-            .frame(minHeight: 44)
-            .background(theme.card, in: shape)
-            .overlay(alignment: .bottom) {
-                if !isLast {
-                    Rectangle().fill(theme.border.opacity(0.6)).frame(height: 0.5)
-                }
-            }
-            .contentShape(shape)
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 14)
-        .accessibilityLabel([row.label, row.subtitle].filter { !$0.isEmpty }.joined(separator: ", "))
-        .accessibilityAddTraits(row.selected ? [.isSelected] : [])
-    }
-
-    private func badge(_ text: String, strong: Bool) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .bold))
-            .foregroundStyle(theme.mutedForeground)
-            .padding(.horizontal, 5.25)
-            .padding(.vertical, 1.75)
-            .background(theme.foreground.opacity(strong ? 0.12 : 0.06), in: RoundedRectangle(cornerRadius: 6))
+        pages.append(.models(section.instanceId))
     }
 }

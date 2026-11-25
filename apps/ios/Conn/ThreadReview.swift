@@ -154,6 +154,8 @@ private struct CheckpointReview: View {
 
 struct PatchBody: View {
     let patch: FfiFilePatch
+    var comments: [String: [String]] = [:]
+    var comment: ((FfiPatchLine) -> Void)? = nil
     @Environment(\.connTheme) private var theme
     @State private var colors: [AttributedString] = []
 
@@ -167,7 +169,13 @@ struct PatchBody: View {
                         let line = patch.lines[index]
                         let tint = line.marker == "+" ? theme.diffAdded : line.marker == "-" ? theme.diffRemoved : theme.mutedForeground
                         HStack(alignment: .firstTextBaseline, spacing: 5) {
-                            Text(line.number.map(String.init) ?? "").frame(width: 36, alignment: .trailing)
+                            if let comment, line.number != nil {
+                                Button { comment(line) } label: {
+                                    Image(systemName: "text.bubble").frame(minWidth: 30, minHeight: 28)
+                                }.accessibilityLabel("Comment on line " + String(line.number ?? 0))
+                            }
+                            Text(line.oldLine.map(String.init) ?? "").frame(width: 32, alignment: .trailing)
+                            Text(line.newLine.map(String.init) ?? "").frame(width: 32, alignment: .trailing)
                             Text(line.marker == "@@" ? "" : line.marker)
                             if line.number != nil && colors.indices.contains(index) {
                                 Text(colors[index])
@@ -180,6 +188,12 @@ struct PatchBody: View {
                         .font(.system(size: 12, design: .monospaced)).foregroundStyle(tint)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(tint.opacity(line.marker == " " ? 0 : 0.12))
+                        let notes = (line.oldLine.flatMap { comments["left" + String($0)] } ?? [])
+                            + (line.newLine.flatMap { comments["right" + String($0)] } ?? [])
+                        ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
+                            Label(note, systemImage: "text.bubble").font(.callout)
+                                .frame(maxWidth: 300, alignment: .leading).padding(.leading, 12)
+                        }
                     }
                 }
                 .padding(.vertical, 8).textSelection(.enabled)

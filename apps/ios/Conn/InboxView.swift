@@ -52,6 +52,14 @@ struct InboxView: View {
     @ViewBuilder
     private func inboxList(shell: FfiShellSnapshot) -> some View {
         let projectsById = Dictionary(uniqueKeysWithValues: shell.projects.map { ($0.id, $0) })
+        let catalogs = ([("", shell)] + store.linked.compactMap { key, owner in owner.shell.map { (key, $0) } })
+            .filter { environmentFilter == nil || $0.0 == environmentFilter }
+        let projectChoices = catalogs.reduce(into: [String: String]()) { choices, entry in
+            for project in entry.1.projects { choices[project.id] = project.title }
+            for thread in entry.1.threads {
+                if let slug = thread.orbitProjectSlug { choices[thread.sidebarProjectKey] = slug }
+            }
+        }
         let filtered = environmentFilter == nil || environmentFilter == "" ? filteredThreads(in: shell, projectsById: projectsById) : []
         let active = filtered
             .filter { !$0.settled }
@@ -81,12 +89,14 @@ struct InboxView: View {
                             Text(store.linked[scope]?.serverURL.flatMap { URL(string: $0)?.host } ?? scope).tag(Optional(scope))
                         }
                     }
+                    .pickerStyle(.inline)
                     Picker("Project", selection: $selectedProjectFilter) {
                         Text("All projects").tag(nil as String?)
-                        ForEach(shell.projects, id: \.id) { project in
-                            Text(project.title).tag(Optional(project.id))
+                        ForEach(projectChoices.keys.sorted { (projectChoices[$0] ?? $0, $0) < (projectChoices[$1] ?? $1, $1) }, id: \.self) { key in
+                            Text(projectChoices[key] ?? key).tag(Optional(key))
                         }
                     }
+                    .pickerStyle(.inline)
                 } label: {
                     Image(systemName: "line.3.horizontal.decrease").frame(width: 44, height: 44)
                 }.accessibilityLabel("Filter threads")
@@ -161,6 +171,9 @@ struct InboxView: View {
                 }
             }
         }
+        .onChange(of: environmentFilter) { _, _ in
+            if let key = selectedProjectFilter, projectChoices[key] == nil { selectedProjectFilter = nil }
+        }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(theme.background)
@@ -175,7 +188,7 @@ struct InboxView: View {
         } label: {
             ThreadListV2RowView(
                 thread: thread,
-                projectTitle: project?.title,
+                projectTitle: thread.orbitProjectSlug ?? project?.title,
                 settled: settled
             )
         }
@@ -305,14 +318,14 @@ struct InboxView: View {
     ) -> [FfiThreadSummary] {
         var result = shell.threads
         if let projectFilter = selectedProjectFilter {
-            result = result.filter { $0.projectId == projectFilter }
+            result = result.filter { $0.sidebarProjectKey == projectFilter }
         }
         let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return result.filter { !$0.isSubagent } }
         return result.filter { thread in
             if thread.title.lowercased().contains(q) { return true }
             if let branch = thread.branch?.lowercased(), branch.contains(q) { return true }
-            if let proj = projectsById[thread.projectId]?.title.lowercased(), proj.contains(q) { return true }
+            if let proj = (thread.orbitProjectSlug ?? projectsById[thread.projectId]?.title)?.lowercased(), proj.contains(q) { return true }
             return false
         }
     }

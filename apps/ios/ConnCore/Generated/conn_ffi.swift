@@ -5215,13 +5215,17 @@ public func FfiConverterTypeFfiDeliverable_lower(_ value: FfiDeliverable) -> Rus
 
 
 public struct FfiFilePatch: Equatable, Hashable {
+    public var newPath: String?
+    public var oldPath: String?
     public var path: String
     public var lines: [FfiPatchLine]
     public var binary: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(path: String, lines: [FfiPatchLine], binary: Bool) {
+    public init(newPath: String?, oldPath: String?, path: String, lines: [FfiPatchLine], binary: Bool) {
+        self.newPath = newPath
+        self.oldPath = oldPath
         self.path = path
         self.lines = lines
         self.binary = binary
@@ -5243,6 +5247,8 @@ public struct FfiConverterTypeFfiFilePatch: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiFilePatch {
         return
             try FfiFilePatch(
+                newPath: FfiConverterOptionString.read(from: &buf), 
+                oldPath: FfiConverterOptionString.read(from: &buf), 
                 path: FfiConverterString.read(from: &buf), 
                 lines: FfiConverterSequenceTypeFfiPatchLine.read(from: &buf), 
                 binary: FfiConverterBool.read(from: &buf)
@@ -5250,6 +5256,8 @@ public struct FfiConverterTypeFfiFilePatch: FfiConverterRustBuffer {
     }
 
     public static func write(_ value: FfiFilePatch, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.newPath, into: &buf)
+        FfiConverterOptionString.write(value.oldPath, into: &buf)
         FfiConverterString.write(value.path, into: &buf)
         FfiConverterSequenceTypeFfiPatchLine.write(value.lines, into: &buf)
         FfiConverterBool.write(value.binary, into: &buf)
@@ -7114,13 +7122,17 @@ public func FfiConverterTypeFfiOrbitWorkspace_lower(_ value: FfiOrbitWorkspace) 
 
 
 public struct FfiPatchLine: Equatable, Hashable {
+    public var oldLine: UInt32?
+    public var newLine: UInt32?
     public var number: UInt32?
     public var marker: String
     public var text: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(number: UInt32?, marker: String, text: String) {
+    public init(oldLine: UInt32?, newLine: UInt32?, number: UInt32?, marker: String, text: String) {
+        self.oldLine = oldLine
+        self.newLine = newLine
         self.number = number
         self.marker = marker
         self.text = text
@@ -7142,6 +7154,8 @@ public struct FfiConverterTypeFfiPatchLine: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPatchLine {
         return
             try FfiPatchLine(
+                oldLine: FfiConverterOptionUInt32.read(from: &buf), 
+                newLine: FfiConverterOptionUInt32.read(from: &buf), 
                 number: FfiConverterOptionUInt32.read(from: &buf), 
                 marker: FfiConverterString.read(from: &buf), 
                 text: FfiConverterString.read(from: &buf)
@@ -7149,6 +7163,8 @@ public struct FfiConverterTypeFfiPatchLine: FfiConverterRustBuffer {
     }
 
     public static func write(_ value: FfiPatchLine, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt32.write(value.oldLine, into: &buf)
+        FfiConverterOptionUInt32.write(value.newLine, into: &buf)
         FfiConverterOptionUInt32.write(value.number, into: &buf)
         FfiConverterString.write(value.marker, into: &buf)
         FfiConverterString.write(value.text, into: &buf)
@@ -10457,6 +10473,8 @@ public func FfiConverterTypeFfiThreadSnapshot_lower(_ value: FfiThreadSnapshot) 
  * Summary row for one thread in [`FfiShellSnapshot`].
  */
 public struct FfiThreadSummary: Equatable, Hashable {
+    public var sidebarProjectKey: String
+    public var orbitProjectSlug: String?
     public var id: String
     public var projectId: String
     public var title: String
@@ -10480,7 +10498,7 @@ public struct FfiThreadSummary: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, projectId: String, title: String, branch: String?, activity: FfiThreadActivity, updatedAt: String?, settled: Bool, isSubagent: Bool, pinned: Bool, unread: Bool, 
+    public init(sidebarProjectKey: String, orbitProjectSlug: String?, id: String, projectId: String, title: String, branch: String?, activity: FfiThreadActivity, updatedAt: String?, settled: Bool, isSubagent: Bool, pinned: Bool, unread: Bool, 
         /**
          * The provider's error (`lastError`) while the thread has failed; `None` otherwise.
          * Conn mobile shows it as a third row line (`ThreadListV2Row`).
@@ -10489,6 +10507,8 @@ public struct FfiThreadSummary: Equatable, Hashable {
          * The failure is a usage limit (`lastErrorClass: usage_limit`), which mobile shows as a
          * warning ("limited") instead of an error.
          */usageLimited: Bool) {
+        self.sidebarProjectKey = sidebarProjectKey
+        self.orbitProjectSlug = orbitProjectSlug
         self.id = id
         self.projectId = projectId
         self.title = title
@@ -10519,6 +10539,8 @@ public struct FfiConverterTypeFfiThreadSummary: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiThreadSummary {
         return
             try FfiThreadSummary(
+                sidebarProjectKey: FfiConverterString.read(from: &buf), 
+                orbitProjectSlug: FfiConverterOptionString.read(from: &buf), 
                 id: FfiConverterString.read(from: &buf), 
                 projectId: FfiConverterString.read(from: &buf), 
                 title: FfiConverterString.read(from: &buf), 
@@ -10535,6 +10557,8 @@ public struct FfiConverterTypeFfiThreadSummary: FfiConverterRustBuffer {
     }
 
     public static func write(_ value: FfiThreadSummary, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sidebarProjectKey, into: &buf)
+        FfiConverterOptionString.write(value.orbitProjectSlug, into: &buf)
         FfiConverterString.write(value.id, into: &buf)
         FfiConverterString.write(value.projectId, into: &buf)
         FfiConverterString.write(value.title, into: &buf)

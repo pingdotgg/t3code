@@ -154,6 +154,8 @@ pub struct FfiProject {
 /// Summary row for one thread in [`FfiShellSnapshot`].
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct FfiThreadSummary {
+    pub sidebar_project_key: String,
+    pub orbit_project_slug: Option<String>,
     pub id: String,
     pub project_id: String,
     pub title: String,
@@ -733,6 +735,12 @@ fn map_thread_summary(shell: &ShellState, thread: &ThreadShell, settled: bool) -
     };
 
     FfiThreadSummary {
+        sidebar_project_key: conn_state::sidebar_project_key(thread).into_owned(),
+        orbit_project_slug: thread
+            .orbit_project
+            .as_ref()
+            .and_then(Option::as_ref)
+            .map(|p| p.slug.clone()),
         id: thread.id.clone(),
         project_id: thread.project_id.clone(),
         title: thread.title.clone(),
@@ -2034,7 +2042,7 @@ mod tests {
 
     #[test]
     fn builds_shell_snapshot_with_newest_first_ordering_settled_pinned_and_unread_flags() {
-        let snapshot_json = json!({
+        let mut snapshot_json = json!({
             "kind": "snapshot",
             "snapshot": {
                 "schemaVersion": 1,
@@ -2140,6 +2148,7 @@ mod tests {
             }
         });
 
+        snapshot_json["snapshot"]["threads"][1]["orbitProject"] = json!({"id":85,"slug":"mini"});
         let item: OrchestrationV2ShellStreamItem =
             serde_json::from_value(snapshot_json).expect("shell snapshot json must decode");
         let sync_item: OrchestrationV2ShellStreamItem =
@@ -2159,6 +2168,10 @@ mod tests {
         assert_eq!(snap.projects.len(), 1, "archived projects must be filtered");
         assert_eq!(snap.projects[0].id, "p-active");
 
+        let filed = snap.threads.iter().find(|t| t.id == "t-new").unwrap();
+        assert_eq!(filed.project_id, "p-active");
+        assert_eq!(filed.sidebar_project_key, "orbit-project:85");
+        assert_eq!(filed.orbit_project_slug.as_deref(), Some("mini"));
         let ids: Vec<&str> = snap.threads.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(
             ids,

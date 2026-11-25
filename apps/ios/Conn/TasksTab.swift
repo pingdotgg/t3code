@@ -474,7 +474,7 @@ struct TaskRecordView: View {
                                 if let usage = step.usageText { Text(usage).foregroundStyle(.secondary) }
                             } label: {
                                 LabeledContent(step.title, value: step.statusText)
-                            }
+                            }.accessibilityIdentifier("task.step." + String(step.id))
                         }
                     case .agents:
                         Text("\(detail.agents.count) assigned").font(.subheadline).foregroundStyle(.secondary)

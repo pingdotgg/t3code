@@ -62,13 +62,16 @@ struct PullRequestsTabView: View {
                 ZStack(alignment: .trailing) {
                     VStack(spacing: 0) {
                         Text("Pull Requests").font(.system(size: 18, weight: .medium))
-                        Text("\(selected.count) open · \(selected.filter { $0.checksState == "pending" }.count) in progress")
+                        Text("\(selected.count) open · \(selected.filter { $0.status == "Checks running" }.count) in progress")
                             .font(.caption).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity)
                     Menu {
-                        ForEach(["All", "Checks running", "Checks passed", "Checks failed", "Draft"], id: \.self) { option in
-                            Button("\(option) (\(candidates.filter { option == "All" || $0.status == option }.count))") { filter = option }
-                        }
+                        Picker("Status", selection: $filter) {
+                            ForEach(["All", "Checks running", "Checks passed", "Checks failed", "Draft"], id: \.self) { option in
+                                let label = option == "Checks running" ? "In progress" : option
+                                Text("\(label) (\(candidates.filter { option == "All" || $0.status == option }.count))").tag(option)
+                            }
+                        }.pickerStyle(.inline)
                     } label: { Image(systemName: "line.3.horizontal.decrease").frame(width: 44, height: 44) }
                     .accessibilityLabel("Filter pull requests")
                 }.frame(height: 56)
@@ -162,7 +165,7 @@ struct PullRequestRecord: View {
             let description: String?
             let placeholder: Bool?
         }
-        struct Permissions: Decodable { let verdicts: [String] }
+        struct Permissions: Decodable { let verdicts: [String]; let comment: Bool?; let inlineComment: Bool? }
         struct Capabilities: Decodable { let review: Permissions; let diff: Bool }
         let title, body: String
         let additions, deletions, changedFiles: Int
@@ -173,7 +176,12 @@ struct PullRequestRecord: View {
     struct Activity: Decodable {
         struct Comment: Decodable { let id, body, createdAt: String }
         struct Commit: Decodable { let oid, messageHeadline, committedDate: String }
-        struct Thread: Decodable { let comments: [Comment] }
+        struct Thread: Decodable {
+            let path, side: String?
+            let line: UInt32?
+            let isOutdated: Bool
+            let comments: [Comment]
+        }
         let comments: [Comment]
         let reviewThreads: [Thread]
         let overviewThreads: [Thread]?
@@ -215,6 +223,13 @@ struct PullRequestRecord: View {
     @State private var canReadOmitted = false
     @State private var truncated = false
     @State private var submitting = false
+
+    private var canCommentOnFile: Bool {
+        detail?.capabilities.review.inlineComment == true &&
+        detail?.viewerPermissions.comment == true &&
+        detail?.capabilities.review.verdicts.contains("comment") == true &&
+        detail?.viewerPermissions.verdicts.contains("comment") == true
+    }
 
     var body: some View {
         ScrollView {
@@ -260,7 +275,7 @@ struct PullRequestRecord: View {
                             }
                             ForEach(omitted, id: \.self) { path in
                                 if canReadOmitted {
-                                    NavigationLink(path) { OmittedPatch(store: store, row: row, path: path) }
+                                    NavigationLink(path) { OmittedPatch(store: store, row: row, path: path, canComment: canCommentOnFile) }
                                 } else { LabeledContent(path, value: "Diff unavailable") }
                             }
                             if truncated { Text("Some changes were omitted by the host.").foregroundStyle(.secondary) }
@@ -310,17 +325,9 @@ struct PullRequestRecord: View {
                 }
             }
         }
-        .sheet(item: $selectedFile) { file in
-            NavigationStack {
-                ScrollView { PatchBody(patch: file.patch) }
-                    .navigationTitle((file.patch.path as NSString).lastPathComponent)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button { selectedFile = nil } label: { Image(systemName: "chevron.left") }
-                                .accessibilityLabel("Back to changed files")
-                        }
-                    }
+        .navigationDestination(isPresented: Binding(get: { selectedFile != nil }, set: { if !$0 { selectedFile = nil } })) {
+            if let file = selectedFile {
+                ReviewFileView(store: store, row: row, file: file, canComment: canCommentOnFile)
             }
         }
         .alert("Submit review", isPresented: Binding(get: { review != nil }, set: { if !$0 { review = nil } })) {
@@ -378,16 +385,113 @@ struct PullRequestRecord: View {
     }
 }
 
-private struct OmittedPatch: View {
+private struct ReviewFileView: View {
     let store: CoreStore
     let row: PullRequestRow
-    let path: String
-    @State private var patch: FfiFilePatch?
+    let file: PullRequestRecord.FileChange
+    let canComment: Bool
+    @State private var line: FfiPatchLine?
+    @State private var draft = ""
+    @State private var sending = false
+    @State private var comments: [String: [String]] = [:]
+    @State private var revision = 0
     @State private var error: String?
 
     var body: some View {
         ScrollView {
-            if let patch { PatchBody(patch: patch) }
+            VStack(alignment: .leading) {
+                if let error, line == nil { Text(error).foregroundStyle(.secondary) }
+                PatchBody(patch: file.patch, comments: comments, comment: canComment && store.status == .connected ? { line = $0 } : nil)
+            }
+        }
+        .task(id: revision) {
+            do {
+                let activity = try await store.pullRequest(.activity, input: row.ref, as: PullRequestRecord.Activity.self)
+                var anchored: [String: [String]] = [:]
+                for thread in activity.reviewThreads where !thread.isOutdated {
+                    guard let line = thread.line, let side = thread.side,
+                          thread.path == (file.patch.newPath ?? file.patch.oldPath) || (side == "left" && thread.path == file.patch.oldPath) else { continue }
+                    anchored[side + String(line), default: []] += thread.comments.map(\.body)
+                }
+                comments = anchored
+            } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        }
+        .navigationTitle((file.patch.path as NSString).lastPathComponent)
+        .toolbar(.hidden, for: .bottomBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 0) {
+                    Text((file.patch.path as NSString).lastPathComponent).font(.headline).lineLimit(1)
+                    HStack(spacing: 5) {
+                        if file.additions > 0 { Text("+\(file.additions)").foregroundStyle(.green) }
+                        if file.deletions > 0 { Text("−\(file.deletions)").foregroundStyle(.red) }
+                    }.font(.caption.monospacedDigit())
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if store.status != .connected { OfflinePill().padding(.bottom, 8) }
+        }
+        .sheet(isPresented: Binding(get: { line != nil }, set: { if !$0 { line = nil } })) {
+            NavigationStack {
+                Form {
+                    TextField("Comment", text: $draft, axis: .vertical)
+                    if let error { Text(error).foregroundStyle(.red) }
+                }
+                .navigationTitle("Comment on line " + String(line?.number ?? 0))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { line = nil; draft = ""; error = nil }.disabled(sending)
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Submit") { Task { await submit() } }
+                            .disabled(sending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }.interactiveDismissDisabled(!draft.isEmpty || sending)
+        }
+    }
+
+    private func submit() async {
+        guard !sending, let line else { return }
+        let position: [String: Any]
+        switch (line.oldLine, line.newLine) {
+        case let (old?, new?): position = ["kind": "context", "oldLine": old, "newLine": new, "side": "right"]
+        case let (nil, new?): position = ["kind": "added", "newLine": new]
+        case let (old?, nil): position = ["kind": "deleted", "oldLine": old]
+        case (nil, nil): return
+        }
+        guard let path = file.patch.newPath ?? file.patch.oldPath else { return }
+        var comment: [String: Any] = ["path": path, "position": position, "body": draft]
+        if let old = file.patch.oldPath, old != path { comment["oldPath"] = old }
+        var input = row.ref
+        input["verdict"] = "comment"
+        input["body"] = ""
+        input["comments"] = [comment]
+        sending = true
+        defer { sending = false }
+        do {
+            _ = try await store.pullRequest(.submitReview, input: input, as: Bool?.self)
+            revision += 1
+            self.line = nil
+            draft = ""
+            error = nil
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+private struct OmittedPatch: View {
+    let store: CoreStore
+    let row: PullRequestRow
+    let path: String
+    let canComment: Bool
+    @State private var change: PullRequestRecord.FileChange?
+    @State private var error: String?
+
+    var body: some View {
+        Group {
+            if let change { ReviewFileView(store: store, row: row, file: change, canComment: canComment) }
             else if let error { Text(error) }
             else { ProgressView() }
         }
@@ -398,8 +502,8 @@ private struct OmittedPatch: View {
                 var input = row.ref
                 input["path"] = path
                 let page = try await store.pullRequest(.diff, input: input, as: PullRequestRecord.DiffPage.self)
-                patch = await Task.detached { parseFilePatches(patch: page.patch).first }.value
-                if patch == nil { error = "No diff available" }
+                change = await Task.detached { parseFilePatches(patch: page.patch).first.map(PullRequestRecord.FileChange.init) }.value
+                if change == nil { error = "No diff available" }
             } catch { self.error = error.localizedDescription }
         }
     }
