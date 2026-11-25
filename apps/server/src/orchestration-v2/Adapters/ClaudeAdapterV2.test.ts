@@ -14063,17 +14063,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("holds a backgrounded MCP call as a background task, not a subagent", () =>
+  it.effect("publishes a backgrounded MCP call as detached work, not a subagent", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
       const taskId = "k2bw174rj";
       const toolUseId = "toolu_codemode";
       const expected = {
         taskId,
-        kind: "background_task" as const,
+        kind: "background_task",
+        detached: true,
         description: "exec/codemode",
         nativeItemId: toolUseId,
-      };
+      } satisfies OrchestrationV2PendingBackgroundTask;
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
           threadId: harness.threadId,

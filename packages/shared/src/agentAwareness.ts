@@ -109,7 +109,10 @@ export function projectThreadAwarenessV2(
   const { environmentId, project, thread } = input;
   if (!isListedThreadLineage(thread.lineage)) return null;
   const subagentRequest = input.pendingSubagentRequest ?? null;
-  const phase = resolveThreadAwarenessPhaseV2(thread, subagentRequest);
+  const backgroundHoldsCompletion = backgroundWorkHoldsCompletion(
+    thread.pendingBackgroundTasks?.filter((task) => task.detached !== true || task.awaited) ?? [],
+  );
+  const phase = resolveThreadAwarenessPhaseV2(thread, subagentRequest, backgroundHoldsCompletion);
   if (phase === null) {
     return null;
   }
@@ -121,7 +124,7 @@ export function projectThreadAwarenessV2(
     (phase === "completed" ||
       phase === "failed" ||
       (phase === "running" && runStatus === "completed")) &&
-    !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+    !backgroundHoldsCompletion
   ) {
     return null;
   }
@@ -154,6 +157,7 @@ export function projectThreadAwarenessV2(
 function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
   subagentRequest: SubagentRequestAwareness | null,
+  backgroundHoldsCompletion: boolean,
 ): AgentAwarenessPhase | null {
   if (thread.pendingRuntimeRequest?.kind === "user_input") return "waiting_for_input";
   if (
@@ -175,8 +179,7 @@ function resolveThreadAwarenessPhaseV2(
     case "waiting":
       return "running";
     case "completed":
-      return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) ||
-        monitorHoldsWakeCompletion(thread)
+      return backgroundHoldsCompletion || monitorHoldsWakeCompletion(thread)
         ? "running"
         : "completed";
     case "failed":

@@ -209,6 +209,16 @@ describe("projectThreadAwarenessV2", () => {
     ["only a dev server", "completed", [{ taskId: "dev", kind: "command" }]],
     ["a dev server's watchdog monitor", "completed", [{ taskId: "watch", kind: "monitor" }]],
     [
+      "a detached MCP call",
+      "completed",
+      [{ taskId: "codemode", kind: "background_task", detached: true }],
+    ],
+    [
+      "a detached MCP call the agent waits on",
+      "running",
+      [{ taskId: "codemode", kind: "background_task", detached: true, awaited: true }],
+    ],
+    [
       "a command the agent waits on",
       "running",
       [{ taskId: "tests", kind: "command", awaited: true }],

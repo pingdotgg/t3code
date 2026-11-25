@@ -4109,6 +4109,7 @@ function claudePendingBackgroundTask(input: {
       : ((input.taskType === null
           ? undefined
           : CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS.get(input.taskType)) ?? "background_task"),
+    ...(input.taskType === "mcp_task" ? { detached: true } : {}),
     ...(input.description !== undefined && input.description.trim().length > 0
       ? { description: input.description }
       : {}),

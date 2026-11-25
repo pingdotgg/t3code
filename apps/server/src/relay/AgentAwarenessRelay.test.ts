@@ -9,6 +9,7 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   RuntimeRequestId,
@@ -169,7 +170,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly respond?: (attempt: number) => Response;
     readonly failSecretRead?: (name: string) => boolean;
     readonly linked?: boolean;
-    readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
+    readonly readShell?: (
+      threadId: ThreadId,
+    ) => Effect.Effect<ProjectionStore.AgentAwarenessThread | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
     readonly catchUpThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
   } = {},
@@ -337,6 +340,87 @@ const makeTestRelay = Effect.fnUntraced(function* (
     Effect.provide(NodeCrypto.layer),
   );
   return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp };
+});
+
+const makeProjectedRelay = Effect.fnUntraced(function* (providerInstanceId: ProviderInstanceId) {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+  const pulls = yield* Queue.unbounded<void>();
+  const test = yield* makeTestRelay({
+    readShell: (threadId) =>
+      store.getAgentAwarenessSnapshot(threadId).pipe(
+        Effect.orDie,
+        Effect.map((snapshot) => snapshot.threads[0] ?? null),
+      ),
+    domainEvents: Stream.fromEffectRepeat(
+      Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+    ),
+  });
+  yield* test.relay.start();
+  yield* Queue.take(pulls);
+  const deliver = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
+    yield* store.apply(event);
+    yield* Queue.offer(events, event);
+    yield* Queue.take(pulls);
+    yield* test.relay.drain;
+  });
+  const now = yield* DateTime.now;
+  const modelSelection = { instanceId: providerInstanceId, model: "test-model" };
+  const run = {
+    id: RunId.make("run:first"),
+    threadId: THREAD_ID,
+    ordinal: 1,
+    providerInstanceId,
+    modelSelection,
+    providerThreadId: null,
+    userMessageId: MessageId.make("message:first"),
+    rootNodeId: null,
+    activeAttemptId: null,
+    status: "running" as const,
+    requestedAt: now,
+    startedAt: now,
+    completedAt: null,
+    checkpointId: null,
+    contextHandoffId: null,
+  };
+  yield* deliver({
+    id: EventId.make("event:thread"),
+    type: "thread.created",
+    threadId: THREAD_ID,
+    occurredAt: now,
+    payload: {
+      createdBy: "user",
+      creationSource: "web",
+      id: THREAD_ID,
+      projectId: PROJECT_ID,
+      title: "Thread",
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { rootThreadId: THREAD_ID, parentThreadId: null, relationshipToParent: null },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  });
+  yield* deliver({
+    id: EventId.make("event:first-run"),
+    type: "run.created",
+    threadId: THREAD_ID,
+    runId: run.id,
+    occurredAt: now,
+    payload: run,
+  });
+  return { ...test, deliver, now, run };
 });
 
 describe("AgentAwarenessRelay", () => {
@@ -1040,43 +1124,10 @@ describe("AgentAwarenessRelay", () => {
   );
   it.effect("publishes a held completion when its background item ends, not on tool output", () =>
     Effect.gen(function* () {
-      const store = yield* ProjectionStore.ProjectionStoreV2;
-      const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
-      const pulls = yield* Queue.unbounded<void>();
-      const { relay, shellReads, publications } = yield* makeTestRelay({
-        readShell: (threadId) => store.getThreadShell(threadId).pipe(Effect.orDie),
-        domainEvents: Stream.fromEffectRepeat(
-          Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
-        ),
-      });
-      yield* relay.start();
-      yield* Queue.take(pulls);
-      const deliver = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
-        yield* store.apply(event);
-        yield* Queue.offer(events, event);
-        yield* Queue.take(pulls);
-        yield* relay.drain;
-      });
-
-      const now = yield* DateTime.now;
-      const runId = RunId.make("run:held-item");
-      const run = {
-        id: runId,
-        threadId: THREAD_ID,
-        ordinal: 1,
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
-        providerThreadId: null,
-        userMessageId: MessageId.make("message:held-item"),
-        rootNodeId: null,
-        activeAttemptId: null,
-        status: "running" as const,
-        requestedAt: now,
-        startedAt: now,
-        completedAt: null,
-        checkpointId: null,
-        contextHandoffId: null,
-      };
+      const { deliver, now, publications, relay, run, shellReads } = yield* makeProjectedRelay(
+        ProviderInstanceId.make("codex"),
+      );
+      const runId = run.id;
       const item = (
         id: string,
         fields: Pick<OrchestrationV2TurnItem, "status"> &
@@ -1116,43 +1167,6 @@ describe("AgentAwarenessRelay", () => {
         }) satisfies OrchestrationV2DomainEvent;
       const background = { type: "dynamic_tool" as const, toolName: "watch", input: {} };
 
-      yield* deliver({
-        id: EventId.make("event:held-item:thread"),
-        type: "thread.created",
-        threadId: THREAD_ID,
-        occurredAt: now,
-        payload: {
-          createdBy: "user",
-          creationSource: "web",
-          id: THREAD_ID,
-          projectId: PROJECT_ID,
-          title: "Thread",
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          activeProviderThreadId: null,
-          lineage: { rootThreadId: THREAD_ID, parentThreadId: null, relationshipToParent: null },
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
-        },
-      });
-      yield* deliver({
-        id: EventId.make("event:held-item:run"),
-        type: "run.created",
-        threadId: THREAD_ID,
-        runId,
-        occurredAt: now,
-        payload: run,
-      });
       yield* deliver(
         itemEvent("event:held-item:tool", item("item:tool", { ...background, status: "running" })),
       );
@@ -1195,6 +1209,117 @@ describe("AgentAwarenessRelay", () => {
       assert.deepEqual(
         publications.map((publication) => publication.state?.phase),
         ["running", "completed"],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    ),
+  );
+
+  it.effect("confirms an idle Claude turn even while its delegated child is running", () =>
+    Effect.gen(function* () {
+      const { deliver, now, publications, relay, run } = yield* makeProjectedRelay(
+        ProviderInstanceId.make("claudeAgent"),
+      );
+      const nodeId = NodeId.make("node:delegated-task");
+      yield* deliver({
+        id: EventId.make("event:delegate:running"),
+        type: "turn-item.updated",
+        threadId: THREAD_ID,
+        runId: run.id,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("item:delegated-task"),
+          threadId: THREAD_ID,
+          runId: run.id,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "running",
+          title: "Check the build",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "subagent",
+          subagentId: nodeId,
+          origin: "app_owned",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          childThreadId: CHILD_THREAD_ID,
+          prompt: "Check the build.",
+          result: null,
+        },
+      });
+      yield* deliver({
+        id: EventId.make("event:delegate:run-completed"),
+        type: "run.updated",
+        threadId: THREAD_ID,
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...run, status: "completed", completedAt: now },
+      });
+      yield* TestClock.adjust("4 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map(({ state }) => state?.phase),
+        ["running"],
+      );
+
+      const continuationAt = yield* DateTime.now;
+      const continuation = {
+        ...run,
+        id: RunId.make("run:background-notification"),
+        ordinal: run.ordinal + 1,
+        userMessageId: MessageId.make("message:background-notification"),
+        requestedAt: continuationAt,
+        startedAt: null,
+      };
+      yield* deliver({
+        id: EventId.make("event:continuation:queued"),
+        type: "run.created",
+        threadId: THREAD_ID,
+        runId: continuation.id,
+        occurredAt: continuationAt,
+        payload: { ...continuation, status: "queued", queuePosition: 1 },
+      });
+      yield* deliver({
+        id: EventId.make("event:continuation:starting"),
+        type: "run.updated",
+        threadId: THREAD_ID,
+        runId: continuation.id,
+        occurredAt: continuationAt,
+        payload: { ...continuation, status: "starting", startedAt: continuationAt },
+      });
+      yield* TestClock.adjust("1 second");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map(({ state }) => state?.phase),
+        ["running", "starting"],
+      );
+
+      const completedAt = yield* DateTime.now;
+      yield* deliver({
+        id: EventId.make("event:continuation:completed"),
+        type: "run.updated",
+        threadId: THREAD_ID,
+        runId: continuation.id,
+        occurredAt: completedAt,
+        payload: { ...continuation, status: "completed", startedAt: continuationAt, completedAt },
+      });
+      yield* TestClock.adjust("4 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map(({ state }) => state?.phase),
+        ["running", "starting"],
+      );
+      yield* TestClock.adjust("1 second");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map(({ state }) => state?.phase),
+        ["running", "starting", "completed"],
       );
     }).pipe(
       Effect.scoped,
