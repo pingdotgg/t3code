@@ -12854,5 +12854,8 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "4a18481bea4b4ad5": "Ny enhet inloggad på {environmentLabel}",
+  "4144ab6aa487528a": "{device} anslöt via {product}. Inte du? Granska den.",
+  "a10cfdb27152c757": "{count, plural, one {{count} enhet} other {{count} enheter}} anslöt via {product}. Inte du? Granska dem."
 }

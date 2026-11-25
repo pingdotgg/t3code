@@ -12847,5 +12847,8 @@
   "27d76249d09eb69f": "Guide de revue prêt",
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
-  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue"
+  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
+  "4a18481bea4b4ad5": "Nouvel appareil connecté à {environmentLabel}",
+  "4144ab6aa487528a": "{device} s’est connecté via {product}. Ce n’était pas vous ? Vérifiez-le.",
+  "a10cfdb27152c757": "{count, plural, one {{count} appareil s’est connecté} other {{count} appareils se sont connectés}} via {product}. Ce n’était pas vous ? Vérifiez-les."
 }

@@ -5624,5 +5624,8 @@
   "ad208e3e32c85029": "Alle ausblenden",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool-Aufrufe im Chat",
-  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt."
+  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
+  "89bf40eb2503b6c5": "Neues Gerät bei {environment} angemeldet",
+  "c94b5fe9ef372bc0": "{device} hat sich über {product} verbunden. Warst du das nicht, entferne es in T3 Code auf diesem Computer unter Einstellungen → Zugriff.",
+  "bec67d0ed485f885": "{count, plural, one {{count} Gerät hat} other {{count} Geräte haben}} sich über {product} verbunden. Warst du das nicht, entferne sie in T3 Code auf diesem Computer unter Einstellungen → Zugriff."
 }

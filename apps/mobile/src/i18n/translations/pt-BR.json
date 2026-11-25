@@ -5618,5 +5618,8 @@
   "ad208e3e32c85029": "Ocultar todas",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
-  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem."
+  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
+  "89bf40eb2503b6c5": "Novo dispositivo conectado a {environment}",
+  "c94b5fe9ef372bc0": "{device} se conectou pelo {product}. Se não foi você, remova-o em Configurações → Acesso no T3 Code desse computador.",
+  "bec67d0ed485f885": "{count, plural, one {{count} dispositivo se conectou} other {{count} dispositivos se conectaram}} pelo {product}. Se não foi você, remova-os em Configurações → Acesso no T3 Code desse computador."
 }

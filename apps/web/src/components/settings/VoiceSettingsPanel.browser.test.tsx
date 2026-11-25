@@ -364,8 +364,9 @@ it("tests the selected model after download and preserves its transcript across 
           await expect.element(screen.getByText("No models match.")).toBeVisible();
           await userEvent.clear(search);
           const languages = screen.getByRole("button", { name: /^Filter by language/ });
+          const languageSearch = screen.getByRole("textbox", { name: "Search languages" });
           await userEvent.click(languages);
-          await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
+          await userEvent.fill(languageSearch, "fr");
           const french = screen.getByRole("menuitemcheckbox", { name: "French", exact: true });
           await userEvent.click(french);
           await userEvent.keyboard("{Escape}");
@@ -373,7 +374,11 @@ it("tests the selected model after download and preserves its transcript across 
           await expect.element(screen.getByText("B+", { exact: true })).toBeVisible();
           expect(screen.container.querySelector("#transcription-test")).toHaveAttribute("hidden");
           await userEvent.click(languages);
-          await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
+          await expect.element(languageSearch).toHaveValue("");
+          await expect
+            .element(screen.getByRole("menuitemcheckbox", { name: "All languages", exact: true }))
+            .toBeVisible();
+          await userEvent.fill(languageSearch, "fr");
           await userEvent.click(french);
           await userEvent.keyboard("{Escape}");
           await expect.element(result).toBeVisible();

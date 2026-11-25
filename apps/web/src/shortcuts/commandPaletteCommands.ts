@@ -56,6 +56,7 @@ export function installCommandPaletteCommands(
         const { open, mode } = useCommandPaletteStore.getState();
         if (!open || mode === "command") return false;
         consume(event);
+        if (event.repeat) return;
         dispatchCommandPalette({ _tag: "BackToCommand" });
       },
     },
