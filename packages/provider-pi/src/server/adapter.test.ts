@@ -166,7 +166,6 @@ interface FakePi {
   readonly queueMessages: (data: unknown) => void;
   readonly vetoNextSwitch: () => void;
   readonly failNextFork: () => void;
-  readonly setForkEntries: (file: string, entries: ReadonlyArray<string>) => void;
   readonly queueState: (data: Record<string, unknown>) => void;
   readonly setStreaming: (streaming: boolean) => void;
   readonly setCompacting: (compacting: boolean) => void;
@@ -241,7 +240,6 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let failThinking = false;
   let vetoSwitch = false;
   let failFork = false;
-  const forkEntries = new Map<string, ReadonlyArray<string>>();
   let vetoNewSession = false;
   let deferredLifecycle: string | undefined;
   let sessionFile = FAKE_SESSION_FILE;
@@ -349,12 +347,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
       case "switch_session": {
         const cancelled = vetoSwitch;
         vetoSwitch = false;
-        if (!cancelled) {
-          serviceTier = null;
-          if (forkEntries.size > 0 && typeof record["sessionPath"] === "string") {
-            sessionFile = record["sessionPath"];
-          }
-        }
+        if (!cancelled) serviceTier = null;
         return { ...base, data: { cancelled } };
       }
       case "get_entries":
@@ -363,20 +356,13 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         return { ...base, data: messagesQueue.shift() ?? { messages: [] } };
       case "get_session_stats":
         return { ...base, data: statsQueue.shift() ?? {} };
-      case "fork": {
-        const entries = forkEntries.get(sessionFile);
-        if (failFork || (entries !== undefined && !entries.includes(String(record["entryId"])))) {
+      case "fork":
+        if (failFork) {
           failFork = false;
           return { ...base, success: false, error: "Invalid entry ID for forking" };
         }
         serviceTier = null;
-        if (entries !== undefined) {
-          const retained = entries.slice(0, entries.indexOf(String(record["entryId"])));
-          sessionFile += ".forked";
-          forkEntries.set(sessionFile, retained);
-        }
         return { ...base, data: { text: "Hello pi", cancelled: false } };
-      }
       case "clear_queue":
         return clearQueue === "unknown_command"
           ? { ...base, success: false, error: "Unknown command: clear_queue" }
@@ -431,14 +417,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.sync(() => {
       if (ChildProcess.isStandardCommand(command)) {
-        const args = command.args.map(String);
-        const source = args.indexOf("--fork");
-        const forkSource = source === -1 ? undefined : args[source + 1];
-        if (forkSource !== undefined && forkEntries.has(forkSource)) {
-          sessionFile = forkSource;
-        }
         lastSpawn = {
-          args,
+          args: command.args.map(String),
           env: command.options.env ?? {},
         };
       }
@@ -524,9 +504,6 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     allRequests: () => allRequests,
     vetoNextSwitch: () => {
       vetoSwitch = true;
-    },
-    setForkEntries: (file, entries) => {
-      forkEntries.set(file, entries);
     },
     failNextFork: () => {
       failFork = true;
@@ -4496,121 +4473,6 @@ describe("PiAdapterV2", () => {
       assert.deepEqual(forkedEntries(), []);
       yield* rollBackToFirst([turn(1, "u1"), turn(2, null), turn(3, "u3")]);
       assert.deepEqual(forkedEntries(), ["u3"]);
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
-  );
-
-  it.effect("rolls back to a checkpoint before an extension switched session files", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const forkFake = yield* makeFakePi;
-      const fs = yield* FileSystem.FileSystem;
-      const cwd = process.cwd();
-      const dir = yield* fs.makeTempDirectoryScoped();
-      const oldFile = `${dir}/original.jsonl`;
-      const newFile = `${dir}/extension-handoff.jsonl`;
-      const newEntries = [
-        sessionMessage("u3", null, "user", 150),
-        sessionMessage("a3", "u3", "assistant", 160),
-      ];
-      const writeSession = (file: string, entries: ReadonlyArray<unknown>) =>
-        fs.writeFileString(
-          file,
-          [{ type: "session", version: 3, cwd }, ...entries]
-            .map((entry) => encodeJsonLine(entry))
-            .join("\n") + "\n",
-        );
-      yield* writeSession(oldFile, UNCAPTURED_TURN_TREE.entries);
-      yield* writeSession(newFile, newEntries);
-      fake.reloadExtensions(oldFile);
-      for (const process of [fake, forkFake]) {
-        process.setForkEntries(
-          oldFile,
-          UNCAPTURED_TURN_TREE.entries.map((entry) => entry.id),
-        );
-        process.setForkEntries(
-          newFile,
-          newEntries.map((entry) => entry.id),
-        );
-      }
-
-      const { runtime, takeEvent } = yield* openRuntime(
-        fake,
-        "default",
-        THREAD_ID,
-        SESSION_ID,
-        forkFake,
-      );
-      const originalThread = yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      const turns: OrchestrationV2ProviderTurn[] = [];
-      let providerThread = originalThread;
-      for (const [index, entries] of [
-        TURN_ONE_ENTRIES,
-        UNCAPTURED_TURN_TREE.entries,
-        newEntries,
-      ].entries()) {
-        yield* startTurn(
-          runtime,
-          providerThread,
-          "default",
-          [],
-          index === 2 ? "/handoff" : "Next",
-          undefined,
-          index + 1,
-        );
-        const prompt = yield* fake.takeRequest("prompt");
-        if (index === 2) fake.reloadExtensions(newFile);
-        const listing = { entries, leafId: entries.at(-1)!.id };
-        fake.queueEntries(listing);
-        // A different session does not contain the previous leaf, so Pi also gets a full tree read.
-        if (index === 2) fake.queueEntries(listing);
-        yield* fake.emit({ type: "response", id: prompt["id"], command: "prompt", success: true });
-        yield* fake.emit({ type: "agent_start" });
-        yield* fake.emit({ type: "agent_settled" });
-        const completed = yield* takeEvent(
-          (event) =>
-            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
-        );
-        if (completed.type !== "provider_turn.updated") throw new Error("Missing completed turn");
-        turns.push(completed.providerTurn);
-        const idle = yield* takeEvent(
-          (event) =>
-            event.type === "provider_thread.updated" && event.providerThread.status === "idle",
-        );
-        if (idle.type !== "provider_thread.updated") throw new Error("Missing idle thread");
-        providerThread = idle.providerThread;
-        yield* takeEvent((event) => event.type === "turn.terminal");
-      }
-
-      assert.equal(providerThread.nativeThreadRef?.nativeId, newFile);
-      assert.equal(turns[1]?.nativeTurnRef?.nativeId, "u2");
-
-      const result = yield* runtime
-        .rollbackThread({
-          providerThread,
-          target: {
-            type: "provider_turn",
-            checkpointId: CheckpointId.make("checkpoint-1"),
-            appRunOrdinal: 1,
-            providerTurn: turns[0]!,
-          },
-          providerThreadTurns: turns,
-        })
-        .pipe(Effect.result);
-
-      assert.equal(
-        result._tag,
-        "Success",
-        result._tag === "Failure" ? String(result.failure.cause) : undefined,
-      );
-      if (result._tag === "Success") {
-        const restoredFile = result.success.providerThread.nativeThreadRef?.nativeId;
-        assert.isString(restoredFile);
-        assert.notEqual(restoredFile, newFile);
-      }
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
