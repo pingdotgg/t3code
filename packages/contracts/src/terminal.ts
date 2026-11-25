@@ -19,7 +19,11 @@ const SEQUENCE_SOS_PM_APC = 5;
 const SEQUENCE_OSC = 6;
 
 // Bits above the low three hold a high surrogate until its other half arrives.
-function nextTerminalSequenceState(state: number, unit: number): number {
+function nextTerminalSequenceState(
+  state: number,
+  unit: number,
+  onC1ReturnToGround?: (byte: number, remainingBytes: number) => void,
+): number {
   if (unit === 0x1b) return SEQUENCE_ESCAPE;
   if (state === TERMINAL_SEQUENCE_GROUND || unit === 0x18 || unit === 0x1a) {
     return TERMINAL_SEQUENCE_GROUND;
@@ -62,7 +66,10 @@ function nextTerminalSequenceState(state: number, unit: number): number {
     if (byte === 0x90) mode = SEQUENCE_DCS;
     else if (byte === 0x9b) mode = SEQUENCE_CSI;
     else if (byte === 0x98 || byte >= 0x9e) mode = SEQUENCE_SOS_PM_APC;
-    else return TERMINAL_SEQUENCE_GROUND;
+    else {
+      onC1ReturnToGround?.(byte, shift / 6);
+      return TERMINAL_SEQUENCE_GROUND;
+    }
   }
   return mode;
 }
@@ -97,6 +104,25 @@ export function terminalSequenceEnd(state: number, text: string): number {
   return index;
 }
 
+function scanSnapshotContinuation(state: number, data: string, limit = data.length) {
+  let control = "";
+  let replacementCount = 0;
+  const replayC1 = (byte: number, remainingBytes: number) => {
+    // Replay IND, NEL, HTS and RI from ground. Any bytes parsed after the control
+    // are now stray UTF-8 continuation bytes.
+    if (byte === 0x84 || byte === 0x85 || byte === 0x88 || byte === 0x8d) {
+      control = "\u001b" + String.fromCharCode(byte - 0x40);
+    }
+    replacementCount = remainingBytes;
+  };
+  let end = 0;
+  while (state !== TERMINAL_SEQUENCE_GROUND && end < limit) {
+    state = nextTerminalSequenceState(state, data.charCodeAt(end), replayC1);
+    end += 1;
+  }
+  return { state, end, control, replacementCount };
+}
+
 /** Skip the continuation of an omitted snapshot prefix, retaining any new escape sequence. */
 export function skipTerminalSnapshotContinuation(state: number, data: string) {
   if (data.length === 0) return { state, data };
@@ -108,17 +134,20 @@ export function skipTerminalSnapshotContinuation(state: number, data: string) {
   }
 
   const escape = data.indexOf("\u001b");
-  const prefix = escape < 0 ? data : data.slice(0, escape);
-  const end = terminalSequenceEnd(state, prefix);
-  const next = terminalSequenceStateAfter(state, prefix, 0, end);
-  if (next === TERMINAL_SEQUENCE_GROUND || escape < 0) {
-    return { state: next, data: data.slice(end) };
+  const {
+    state: next,
+    end,
+    control,
+    replacementCount,
+  } = scanSnapshotContinuation(state, data, escape < 0 ? data.length : escape);
+  if (next === TERMINAL_SEQUENCE_GROUND || end === data.length) {
+    return { state: next, data: control + "\ufffd".repeat(replacementCount) + data.slice(end) };
   }
   // Hold a final ESC until we know whether it starts a new sequence or completes ST.
-  if (escape + 1 === data.length) return { state: SEQUENCE_ESCAPE, data: "" };
+  if (end + 1 === data.length) return { state: SEQUENCE_ESCAPE, data: "" };
   return {
     state: TERMINAL_SEQUENCE_GROUND,
-    data: data.slice(data[escape + 1] === "\\" ? escape + 2 : escape),
+    data: data.slice(data[end + 1] === "\\" ? end + 2 : end),
   };
 }
 
@@ -152,7 +181,13 @@ export function retainedTerminalHistory(history: string, maxBytes: number): stri
     0,
     history.length - retained.length,
   );
-  return retained.slice(terminalSequenceEnd(state, retained));
+  const { end, control, replacementCount } = scanSnapshotContinuation(state, retained);
+  const tail = retained.slice(end);
+  if (replacementCount === 0) return control + tail;
+  // The two-byte ESC form fits where the consumed code point did. Each replacement
+  // glyph takes three bytes, so keep only as many as fit alongside the control and tail.
+  const available = maxBytes - historyEncoder.encode(tail).byteLength - control.length;
+  return control + "\ufffd".repeat(Math.min(replacementCount, Math.floor(available / 3))) + tail;
 }
 
 /** Keep a whole unfinished prefix when possible, or skip its continuation during replay. */
