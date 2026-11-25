@@ -45,6 +45,7 @@ import {
 } from "../../../sourceControl/threadPullRequests.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as TeamMcpAccess from "../../../team/mcpAccess.ts";
 import { threadNotFound } from "../../threadAccess.ts";
 import {
   type ListThreadPullRequestsResult,
@@ -413,7 +414,19 @@ const make = Effect.gen(function* () {
 
   const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
     handle: (params: P) => Effect.Effect<A, E, R>,
-  ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
+  ) =>
+    McpToolAccess.writesThreads(
+      (params: P) => [params.threadId],
+      (params) =>
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const targetThreadId = params.threadId ?? scope.thread?.threadId;
+          if (targetThreadId !== undefined) {
+            yield* TeamMcpAccess.assertCanPostInThread(targetThreadId);
+          }
+          return yield* handle(params);
+        }),
+    );
 
   const forgeFailure = (error: { readonly message: string }) =>
     new PullRequestForgeError({ detail: error.message, cause: error });

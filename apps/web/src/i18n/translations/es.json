@@ -5391,6 +5391,7 @@
   "6a483f4461919209": "Cada uno obtiene su propio worktree en la rama del hilo",
   "6a48fd0a37e725a1": "Legal",
   "6a55769df7c4e349": "Publicando...",
+  "6a69a6ebe8fd5756": "Interrumpir el turno activo de este miembro",
   "6a6b1c244a1a0476": "apilado dividido en paralelo unificado en línea vista",
   "6a717189b43e9f0e": "Abierta",
   "6a7ff74c32313d11": "Tarifa de entrada",
@@ -9317,6 +9318,7 @@
     "para tener más túneles"
   ],
   "b5188f172f59ca79": "Esta conexión no puede leer archivos del host.",
+  "b51b087a1080356f": "Interrumpir turno activo",
   "b51d5be25d79b06c": "{count, plural, one {{formatted} archivo} other {{formatted} archivos}}",
   "b527ed8da5bc9ef9": "Build",
   "b52f5d6d4df79baf": "El plan Free permite un conector personalizado.",

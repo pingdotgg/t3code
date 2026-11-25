@@ -117,6 +117,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import { placeholderThreadTitle } from "../orchestration-v2/placeholderThreadTitle.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as TeamService from "../team/TeamService.ts";
+import * as TeamMcpAccess from "../team/mcpAccess.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
@@ -1488,6 +1489,7 @@ const make = Effect.gen(function* () {
     scope: McpInvocationScope,
     threadId: ThreadId,
   ) {
+    yield* TeamMcpAccess.assertCanReadThread(threadId);
     const shell = yield* threadManagement
       .getThreadShell(threadId)
       .pipe(Effect.mapError(threadManagementFailure));
@@ -1589,6 +1591,7 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     runLimit: number,
   ) {
+    yield* TeamMcpAccess.assertCanReadThread(threadId);
     const { parent } = yield* loadCaller(scope, []);
     const shell = yield* threadManagement
       .getThreadShell(threadId)
@@ -2445,6 +2448,7 @@ const make = Effect.gen(function* () {
 
   return OrchestratorMcpService.of({
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
+      yield* TeamMcpAccess.assertCanUseScheduledTasks();
       const { parent, limits } = yield* loadCaller(scope, ["runs"]);
       const projectId = yield* resolveProjectTarget(parent, input.projectId);
       yield* assertLiveCallerForOtherProject(scope, parent, projectId);
@@ -2522,6 +2526,7 @@ const make = Effect.gen(function* () {
     }),
     listScheduledTasks: Effect.fn("OrchestratorMcpService.listScheduledTasks")(
       function* (scope, input) {
+        yield* TeamMcpAccess.assertCanUseScheduledTasks();
         const { parent } = yield* loadCaller(scope, []);
         const projectId = input.projectId ?? parent?.thread.projectId;
         const { tasks } = yield* scheduledTasks
@@ -2544,6 +2549,7 @@ const make = Effect.gen(function* () {
     ),
     updateScheduledTask: Effect.fn("OrchestratorMcpService.updateScheduledTask")(
       function* (scope, input) {
+        yield* TeamMcpAccess.assertCanUseScheduledTasks();
         const { parent, limits } = yield* loadCaller(scope, ["runs"]);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
@@ -2621,6 +2627,7 @@ const make = Effect.gen(function* () {
     ),
     deleteScheduledTask: Effect.fn("OrchestratorMcpService.deleteScheduledTask")(
       function* (scope, input) {
+        yield* TeamMcpAccess.assertCanUseScheduledTasks();
         const { parent, limits } = yield* loadCaller(scope, ["runs"]);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
@@ -3037,12 +3044,18 @@ const make = Effect.gen(function* () {
           // type's own enablement check, using the same command id and its
           // receipt-replay exemption, so no separate assert runs here.
           const derivedChildThreadId = deriveOrchestrationId.delegatedTaskThread({ commandId });
+          const teamChildAuth = yield* TeamMcpAccess.authorizeChildThreadCreation({
+            sourceThreadId: scope.thread.threadId,
+          });
           const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
           const preparedAttribution = Option.isSome(maybeTeam)
             ? yield* maybeTeam.value
                 .prepareThreadInheritedFromParent({
                   parentThreadId: scope.thread.threadId,
                   threadId: derivedChildThreadId,
+                  ...(Option.isSome(teamChildAuth)
+                    ? { creatorMemberId: teamChildAuth.value.memberId }
+                    : {}),
                 })
                 .pipe(
                   Effect.mapError((error) =>
@@ -3109,6 +3122,9 @@ const make = Effect.gen(function* () {
             yield* maybeTeam.value.recordThreadInheritedFromParent({
               parentThreadId: scope.thread.threadId,
               threadId: childThreadId,
+              ...(Option.isSome(teamChildAuth)
+                ? { creatorMemberId: teamChildAuth.value.memberId }
+                : {}),
               ...(childRunEvent?.event.type === "run.created"
                 ? { turnId: childRunEvent.event.payload.id }
                 : {}),
@@ -3161,6 +3177,7 @@ const make = Effect.gen(function* () {
       const assertStoppable = Effect.fn("OrchestratorMcpService.assertStoppable")(function* (
         threadId: ThreadId,
       ): Effect.fn.Return<void, OrchestratorMcpFailure> {
+        yield* TeamMcpAccess.assertCanInterruptThread(threadId);
         const shell = yield* threadManagement
           .getThreadShell(threadId)
           .pipe(Effect.mapError(threadManagementFailure));
@@ -3429,12 +3446,18 @@ const make = Effect.gen(function* () {
                       text: request.prompt,
                       attachments: [],
                     };
+              const teamChildAuth = yield* TeamMcpAccess.authorizeChildThreadCreation({
+                sourceThreadId: scope.thread.threadId,
+              });
               const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
               const preparedAttribution = Option.isSome(maybeTeam)
                 ? yield* maybeTeam.value
                     .prepareThreadInheritedFromParent({
                       parentThreadId: scope.thread.threadId,
                       threadId,
+                      ...(Option.isSome(teamChildAuth)
+                        ? { creatorMemberId: teamChildAuth.value.memberId }
+                        : {}),
                     })
                     .pipe(
                       Effect.mapError((error) =>
@@ -3445,6 +3468,13 @@ const make = Effect.gen(function* () {
                       ),
                     )
                 : false;
+              if (initialMessage !== undefined && Option.isSome(teamChildAuth)) {
+                yield* teamChildAuth.value.teamService.recordTurnAuthoredByMember({
+                  memberId: teamChildAuth.value.memberId,
+                  threadId,
+                  turnId: `msg:${initialMessage.messageId}`,
+                });
+              }
               const created = yield* threadManagement
                 .dispatch({
                   type: "thread.create",
@@ -3479,12 +3509,21 @@ const make = Effect.gen(function* () {
                   ),
                 );
               if (Option.isSome(maybeTeam)) {
+                const createdRunEvent = created.storedEvents.find(
+                  (stored) =>
+                    stored.event.type === "run.created" && stored.event.threadId === threadId,
+                );
                 yield* maybeTeam.value.recordThreadInheritedFromParent({
                   parentThreadId: scope.thread.threadId,
                   threadId,
-                  ...(initialMessage !== undefined
-                    ? { turnId: `msg:${initialMessage.messageId}` }
+                  ...(Option.isSome(teamChildAuth)
+                    ? { creatorMemberId: teamChildAuth.value.memberId }
                     : {}),
+                  ...(createdRunEvent?.event.type === "run.created"
+                    ? { turnId: createdRunEvent.event.payload.id }
+                    : initialMessage !== undefined
+                      ? { turnId: `msg:${initialMessage.messageId}` }
+                      : {}),
                 });
               }
               // A receipt can appear after target resolution; use the committed thread's selection.
@@ -3603,12 +3642,16 @@ const make = Effect.gen(function* () {
       }
       const listFailure = (error: unknown) =>
         failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`);
-      const projectThreads = yield* threadManagement
+      const rawProjectThreads = yield* threadManagement
         .listProjectThreads({
           projectId: projectId ?? undefined,
           includeSubagents: input.includeSubagents !== false,
         })
         .pipe(Effect.mapError(listFailure));
+      const readableThreadIds = yield* TeamMcpAccess.filterReadableThreadIds(
+        rawProjectThreads.map((thread) => thread.id),
+      );
+      const projectThreads = rawProjectThreads.filter((thread) => readableThreadIds.has(thread.id));
       const nowMs = yield* Clock.currentTimeMillis;
       // An empty list is no filter: clients that fill every optional field send `[]`.
       const statuses =
@@ -3812,13 +3855,32 @@ const make = Effect.gen(function* () {
       const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId, ["runs"]);
       yield* assertLiveCallerForOtherThread(scope, parent, target);
       yield* assertTargetWithinLimits(limits, target.thread);
+      yield* TeamMcpAccess.assertCanPostInThread(input.threadId);
 
-      const mode = input.mode ?? "auto";
+      const requestedMode = input.mode ?? "auto";
+      let mode = requestedMode;
+      if (requestedMode === "steer" || requestedMode === "restart") {
+        yield* TeamMcpAccess.assertCanSteerActiveTurn(input.threadId);
+      } else if (requestedMode === "auto") {
+        const canSteer = yield* TeamMcpAccess.canSteerActiveTurn(input.threadId);
+        if (!canSteer) {
+          const targetShell = yield* threadManagement
+            .getThreadShell(input.threadId)
+            .pipe(Effect.orElseSucceed(() => null));
+          if (targetShell?.activeRunId != null) {
+            mode = "queue";
+          }
+        }
+      }
       const key = yield* requestKey(input.clientRequestId);
       const messageId = stableOperationMessageId({
         scope,
         requestKey: key,
         operation: "thread-send",
+      });
+      yield* TeamMcpAccess.recordTurnAuthoredByCaller({
+        threadId: input.threadId,
+        turnId: `msg:${messageId}`,
       });
       const result = yield* threadManagement
         .sendToThread({
@@ -3853,6 +3915,10 @@ const make = Effect.gen(function* () {
                 ),
           ),
         );
+      yield* TeamMcpAccess.recordTurnAuthoredByCaller({
+        threadId: input.threadId,
+        turnId: result.run.id,
+      });
       return {
         threadId: input.threadId,
         link: threadLinkFor(scope, input.threadId, target.thread.title),
@@ -3927,6 +3993,7 @@ const make = Effect.gen(function* () {
       const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId, ["runs"]);
       yield* assertLiveCallerForOtherThread(scope, parent, target);
       yield* assertTargetWithinLimits(limits, target.thread);
+      yield* TeamMcpAccess.assertCanInterruptThread(input.threadId, input.runId);
       const key = yield* requestKey(input.clientRequestId);
       // A peer from before `stop` drops it when decoding, so it interrupts
       // the run instead, as this call did then.
@@ -3968,6 +4035,13 @@ const make = Effect.gen(function* () {
               event.payload.type === "run_interrupt_request" &&
               event.payload.providerTurnId !== null),
         )?.event.runId;
+        if (interrupted !== undefined) {
+          yield* TeamMcpAccess.notifyTurnInterruptedByCaller({
+            threadId: input.threadId,
+            runId: interrupted,
+            reason: "mcp_interrupt",
+          });
+        }
         return {
           threadId: input.threadId,
           runId: interrupted ?? null,
@@ -4003,6 +4077,11 @@ const make = Effect.gen(function* () {
           status: "no_active_run",
         } satisfies OrchestratorMcpThreadInterruptResult;
       }
+      yield* TeamMcpAccess.notifyTurnInterruptedByCaller({
+        threadId: input.threadId,
+        runId: result.run.id,
+        reason: "mcp_interrupt",
+      });
       return {
         threadId: input.threadId,
         runId: result.run.id,

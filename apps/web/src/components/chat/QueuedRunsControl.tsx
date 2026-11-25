@@ -20,6 +20,11 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import {
+  canCurrentMemberManageQueuedRun,
+  canCurrentMemberPromoteQueuedRun,
+  resolveTeamQueuedRunAuthorPseudo,
+} from "@t3tools/client-runtime/team";
 import { Link } from "@tanstack/react-router";
 import {
   ArrowUpIcon,
@@ -37,6 +42,7 @@ import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref 
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
+import { useTeamEnvironmentState } from "../../state/team";
 import { useQuietThreadProjection, useQuietThreadShell } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -106,6 +112,11 @@ export function QueuedRunsControl({
   const projection = useQuietThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
   )?.projection;
+  const teamState = useTeamEnvironmentState(props.environmentId);
+  const canPromoteQueuedRun = canCurrentMemberPromoteQueuedRun({
+    teamState,
+    threadId: props.threadId,
+  });
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
@@ -124,10 +135,12 @@ export function QueuedRunsControl({
   const queued = workflow?.queuedRuns ?? [];
   const activeRun = workflow?.activeRun ?? null;
   // A fresh message starts its own turn: it may skip compaction, but not steer into a turn.
+  // In team mode, `Send now` (promoting a queued run) is strictly restricted to the thread creator.
   const canSendRun = (freshContext: boolean) =>
-    workflow?.canSendNow === true ||
-    (workflow?.canPromoteToSteer === true &&
-      (!freshContext || workflow.promoteSkipsCompaction === true));
+    canPromoteQueuedRun &&
+    (workflow?.canSendNow === true ||
+      (workflow?.canPromoteToSteer === true &&
+        (!freshContext || workflow.promoteSkipsCompaction === true)));
   const queuedImageUrlById = new Map(
     queuedImageAttachmentUrls.flatMap((url, index) => {
       const resource = queuedImageAttachmentResources[index];
@@ -146,6 +159,18 @@ export function QueuedRunsControl({
       freshContext: run.freshContext === true,
       serverIndex,
       text,
+      authorPseudo: resolveTeamQueuedRunAuthorPseudo({
+        teamState,
+        threadId: props.threadId,
+        runId: run.id,
+        userMessageId: run.userMessageId,
+      }),
+      canManage: canCurrentMemberManageQueuedRun({
+        teamState,
+        threadId: props.threadId,
+        runId: run.id,
+        userMessageId: run.userMessageId,
+      }),
       // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
       editable: context?.guest === undefined,
       attachments,
@@ -167,6 +192,11 @@ export function QueuedRunsControl({
       freshContext: false,
       serverIndex: null,
       text: message.text,
+      authorPseudo:
+        teamState !== null && teamState.team !== null
+          ? (teamState.currentMember?.pseudo ?? null)
+          : null,
+      canManage: true,
       editable: true,
       attachments: [] as ReadonlyArray<ContractChatAttachment>,
       thumbnails: (message.attachments ?? []).filter(isImageAttachment),
@@ -220,6 +250,12 @@ export function QueuedRunsControl({
       if (
         !latest ||
         latest.context?.guest !== undefined ||
+        !canCurrentMemberManageQueuedRun({
+          teamState,
+          threadId: props.threadId,
+          runId: latest.run.id,
+          userMessageId: latest.run.userMessageId,
+        }) ||
         props.editingRunId !== null ||
         props.editBlockedReason !== null ||
         busyRunId !== null
@@ -296,6 +332,7 @@ export function QueuedRunsControl({
               <QueuedMessage
                 environmentId={props.environmentId}
                 message={item.message}
+                authorPseudo={item.authorPseudo}
                 previewText={previewText}
                 thumbnails={item.thumbnails}
                 isEditing={isEditing}
@@ -310,6 +347,7 @@ export function QueuedRunsControl({
                         <Button
                           size="xs"
                           variant="ghost-muted"
+                          data-testid="queued-send-now-button"
                           disabled={item.runId === null || busyRunId !== null}
                           onClick={() => {
                             if (item.runId !== null) {
@@ -369,7 +407,7 @@ export function QueuedRunsControl({
                       <T>Cancel</T>
                     </Button>
                   </>
-                ) : (
+                ) : item.canManage ? (
                   <>
                     <Tooltip>
                       {/* The span keeps the tooltip, and its reason, on a disabled button. */}
@@ -428,7 +466,7 @@ export function QueuedRunsControl({
                       </TooltipPopup>
                     </Tooltip>
                   </>
-                )}
+                ) : null}
               </QueuedMessage>
             </li>
           );
@@ -470,6 +508,7 @@ type QueuedRunMessage = NonNullable<ThreadQueueProjection["messages"][number]>;
 function QueuedMessage(props: {
   readonly environmentId: EnvironmentId;
   readonly message: QueuedRunMessage | undefined;
+  readonly authorPseudo?: string | null;
   readonly previewText: string;
   readonly thumbnails: ReadonlyArray<ChatImageAttachment>;
   readonly isEditing: boolean;
@@ -524,6 +563,14 @@ function QueuedMessage(props: {
       {presentation?.guestName === undefined ? null : (
         <GuestMessageName name={presentation.guestName} />
       )}
+      {presentation?.guestName === undefined && props.authorPseudo ? (
+        <span
+          data-testid="team-queued-author"
+          className="me-1 text-2xs font-medium text-muted-foreground/80"
+        >
+          {props.authorPseudo}
+        </span>
+      ) : null}
       {/* Dashed and unfilled: a turn that has not been sent yet. */}
       <div
         className={cn(

@@ -15,6 +15,7 @@ import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as TeamMcpAccess from "../../../team/mcpAccess.ts";
 import {
   IssueLinkFailedError,
   IssueProjectNotFoundError,
@@ -157,7 +158,19 @@ const make = Effect.gen(function* () {
   /** A tool that changes `threadId`, or the caller's own thread when it is omitted. */
   const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
     handle: (params: P) => Effect.Effect<A, E, R>,
-  ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
+  ) =>
+    McpToolAccess.writesThreads(
+      (params: P) => [params.threadId],
+      (params) =>
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const targetThreadId = params.threadId ?? scope.thread?.threadId;
+          if (targetThreadId !== undefined) {
+            yield* TeamMcpAccess.assertCanPostInThread(targetThreadId);
+          }
+          return yield* handle(params);
+        }),
+    );
 
   return {
     list_issues: McpToolAccess.reads((input) =>

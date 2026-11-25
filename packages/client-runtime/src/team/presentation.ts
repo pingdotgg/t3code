@@ -1,11 +1,17 @@
 import {
   canChangeThreadTeamView,
   canMemberCreateThreadInTeamView,
+  canMemberInterruptTeamTurn,
+  canMemberManageTeamQueuedRun,
+  canMemberPromoteTeamQueuedRun,
   canMemberReadTeamView,
+  canMemberSteerActiveTeamTurn,
   canToggleTeamThreadLock,
+  isTeamAdminRole,
   resolveTeamThreadPostBlockReason,
   shouldNotifyTeamMemberForThread,
   type EnvironmentId,
+  type TeamMemberId,
   type TeamThreadPostBlockReason,
   type TeamView,
   type ThreadId,
@@ -311,4 +317,192 @@ export function canCurrentMemberToggleThreadLock(
     teamState.currentMember.status === "active" &&
     canToggleTeamThreadLock(teamState.currentMember.role)
   );
+}
+
+function resolveTurnAttribution(input: {
+  readonly teamState: TeamEnvironmentState;
+  readonly threadId: ThreadId;
+  readonly runId?: string | null | undefined;
+  readonly userMessageId?: string | null | undefined;
+}) {
+  const { teamState, threadId, runId, userMessageId } = input;
+  if (runId !== undefined && runId !== null) {
+    const byRun = teamState.turnAuthorByTurnId.get(runId);
+    if (byRun && byRun.threadId === threadId) return byRun;
+  }
+  if (userMessageId !== undefined && userMessageId !== null) {
+    const byMessage = teamState.turnAuthorByTurnId.get(`msg:${userMessageId}`);
+    if (byMessage && byMessage.threadId === threadId) return byMessage;
+  }
+  // Never fall back to latestTurnByThreadId when no runId/userMessageId is provided:
+  // a colleague's newly queued run updates latestTurnByThreadId and must not impersonate the active turn's author.
+  if (
+    (runId === undefined || runId === null) &&
+    (userMessageId === undefined || userMessageId === null)
+  ) {
+    return undefined;
+  }
+  const latest = teamState.latestTurnByThreadId.get(threadId);
+  if (
+    latest &&
+    ((runId !== undefined && runId !== null && latest.turnId === runId) ||
+      (userMessageId !== undefined &&
+        userMessageId !== null &&
+        latest.turnId === `msg:${userMessageId}`))
+  ) {
+    return latest;
+  }
+  return undefined;
+}
+
+export function resolveTeamQueuedRunAuthorPseudo(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+  readonly runId: string;
+  readonly userMessageId?: string | null | undefined;
+}): string | null {
+  const { teamState, threadId, runId, userMessageId } = input;
+  if (!teamState || teamState.team === null) return null;
+  const turn = resolveTurnAttribution({ teamState, threadId, runId, userMessageId });
+  if (!turn) return null;
+  return teamState.memberById.get(turn.authorMemberId)?.pseudo ?? turn.authorPseudo;
+}
+
+export function canCurrentMemberSteerActiveTurn(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+}): boolean {
+  const { teamState, threadId } = input;
+  if (!teamState || teamState.team === null) return true;
+  const attribution = teamState.attributionByThreadId.get(threadId) ?? null;
+  if (attribution === null) return true;
+  const view = resolveTeamThreadView({ teamState, threadId });
+  return canMemberSteerActiveTeamTurn({
+    member: teamState.currentMember,
+    attribution,
+    view,
+  });
+}
+
+export function canCurrentMemberPromoteQueuedRun(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+}): boolean {
+  const { teamState, threadId } = input;
+  if (!teamState || teamState.team === null) return true;
+  const attribution = teamState.attributionByThreadId.get(threadId) ?? null;
+  if (attribution === null) return true;
+  const view = resolveTeamThreadView({ teamState, threadId });
+  return canMemberPromoteTeamQueuedRun({
+    member: teamState.currentMember,
+    attribution,
+    view,
+  });
+}
+
+export interface TeamThreadInterruptPermission {
+  readonly canInterrupt: boolean;
+  readonly isExplicitAdminInterrupt: boolean;
+}
+
+export function canCurrentMemberInterruptThread(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+  readonly activeRunId?: string | null | undefined;
+  readonly activeUserMessageId?: string | null | undefined;
+}): TeamThreadInterruptPermission {
+  const { teamState, threadId, activeRunId, activeUserMessageId } = input;
+  if (!teamState || teamState.team === null) {
+    return { canInterrupt: true, isExplicitAdminInterrupt: false };
+  }
+  const member = teamState.currentMember;
+  if (member === null || member.status !== "active") {
+    return { canInterrupt: false, isExplicitAdminInterrupt: false };
+  }
+  const attribution = teamState.attributionByThreadId.get(threadId) ?? null;
+  if (attribution === null) {
+    return { canInterrupt: true, isExplicitAdminInterrupt: false };
+  }
+  const view = resolveTeamThreadView({ teamState, threadId });
+  const activeTurn = resolveTurnAttribution({
+    teamState,
+    threadId,
+    runId: activeRunId,
+    userMessageId: activeUserMessageId,
+  });
+  const activeTurnAuthorMemberId: TeamMemberId | null =
+    activeTurn?.authorMemberId ?? attribution.creatorMemberId;
+  const canInterrupt = canMemberInterruptTeamTurn({
+    member,
+    attribution,
+    view,
+    activeTurnAuthorMemberId,
+  });
+  const isExplicitAdminInterrupt =
+    canInterrupt &&
+    isTeamAdminRole(member.role) &&
+    attribution.creatorMemberId !== member.id &&
+    activeTurnAuthorMemberId !== member.id;
+  return { canInterrupt, isExplicitAdminInterrupt };
+}
+
+export function canCurrentMemberManageQueuedRun(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+  readonly runId: string;
+  readonly userMessageId?: string | null | undefined;
+}): boolean {
+  const { teamState, threadId, runId, userMessageId } = input;
+  if (!teamState || teamState.team === null) return true;
+  const attribution = teamState.attributionByThreadId.get(threadId) ?? null;
+  if (attribution === null) return true;
+  const view = resolveTeamThreadView({ teamState, threadId });
+  const queuedTurn = resolveTurnAttribution({ teamState, threadId, runId, userMessageId });
+  return canMemberManageTeamQueuedRun({
+    member: teamState.currentMember,
+    attribution,
+    view,
+    queuedRunAuthorMemberId: queuedTurn?.authorMemberId ?? null,
+  });
+}
+
+export interface TeamThreadTurnControls {
+  readonly isTeamThread: boolean;
+  readonly canSteerActiveTurn: boolean;
+  readonly canPromoteQueuedRun: boolean;
+  readonly canInterrupt: boolean;
+  readonly isExplicitAdminInterrupt: boolean;
+}
+
+export const TEAM_THREAD_TURN_CONTROLS_DEFAULT: TeamThreadTurnControls = {
+  isTeamThread: false,
+  canSteerActiveTurn: true,
+  canPromoteQueuedRun: true,
+  canInterrupt: true,
+  isExplicitAdminInterrupt: false,
+};
+
+export function resolveTeamThreadTurnControls(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+  readonly activeRunId?: string | null | undefined;
+  readonly activeUserMessageId?: string | null | undefined;
+}): TeamThreadTurnControls {
+  const { teamState, threadId, activeRunId, activeUserMessageId } = input;
+  if (!teamState || teamState.team === null) {
+    return TEAM_THREAD_TURN_CONTROLS_DEFAULT;
+  }
+  const interrupt = canCurrentMemberInterruptThread({
+    teamState,
+    threadId,
+    activeRunId,
+    activeUserMessageId,
+  });
+  return {
+    isTeamThread: true,
+    canSteerActiveTurn: canCurrentMemberSteerActiveTurn({ teamState, threadId }),
+    canPromoteQueuedRun: canCurrentMemberPromoteQueuedRun({ teamState, threadId }),
+    canInterrupt: interrupt.canInterrupt,
+    isExplicitAdminInterrupt: interrupt.isExplicitAdminInterrupt,
+  };
 }

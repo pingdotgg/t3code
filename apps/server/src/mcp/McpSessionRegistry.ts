@@ -1,4 +1,4 @@
-import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { ProviderInstanceId, type TeamMemberId, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -20,6 +20,8 @@ export interface McpCredentialRequest {
   readonly browserToolsAvailable?: boolean;
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
   readonly subagent?: boolean;
+  /** Team member whose permissions bound this turn-scoped MCP token. */
+  readonly actingMemberId?: TeamMemberId;
 }
 
 export interface McpIssuedCredential {
@@ -133,6 +135,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerSessionId,
           providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
           subagent: request.subagent === true,
+          ...(request.actingMemberId !== undefined
+            ? { actingMemberId: request.actingMemberId }
+            : {}),
         },
         client: undefined,
         capabilities: new Set<McpInvocationContext.McpCapability>([

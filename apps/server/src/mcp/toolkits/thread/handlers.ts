@@ -26,6 +26,7 @@ import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageInt
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as TeamService from "../../../team/TeamService.ts";
+import * as TeamMcpAccess from "../../../team/mcpAccess.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
 
@@ -112,6 +113,7 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
+      yield* TeamMcpAccess.assertCanUseScheduledTasks();
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
       const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
       if (!tasks.some((task) => task.id === input.taskId))
@@ -148,9 +150,13 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const { caller } = yield* readCaller();
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
-      const { matches } = yield* threadSearch
+      const { matches: rawMatches } = yield* threadSearch
         .searchThreads({ ...input, projectId: input.projectId ?? caller?.projectId })
         .pipe(Effect.mapError(unavailable));
+      const readableThreadIds = yield* TeamMcpAccess.filterReadableThreadIds(
+        rawMatches.map((match) => match.threadId),
+      );
+      const matches = rawMatches.filter((match) => readableThreadIds.has(match.threadId));
       return {
         currentThreadId: scope.thread?.threadId ?? null,
         matches: matches.map((match) => ({
@@ -187,6 +193,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           if (input.action === "merge_back") {
             const targetThreadId = yield* required(input.targetThreadId, "targetThreadId");
             yield* readThread(targetThreadId);
+            yield* TeamMcpAccess.assertCanPostInThread(targetThreadId);
             const result = yield* threads
               .dispatch({
                 type: "thread.merge_back",
@@ -201,12 +208,18 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             return { sequence: result.sequence, targetThreadId };
           }
           const targetThreadId = ThreadId.make(`${commandId}:fork`);
+          const teamChildAuth = yield* TeamMcpAccess.authorizeChildThreadCreation({
+            sourceThreadId: projection.thread.id,
+          });
           const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
           const preparedAttribution = Option.isSome(maybeTeam)
             ? yield* maybeTeam.value
                 .prepareThreadInheritedFromParent({
                   parentThreadId: projection.thread.id,
                   threadId: targetThreadId,
+                  ...(Option.isSome(teamChildAuth)
+                    ? { creatorMemberId: teamChildAuth.value.memberId }
+                    : {}),
                 })
                 .pipe(
                   Effect.mapError(
@@ -241,6 +254,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             yield* maybeTeam.value.recordThreadInheritedFromParent({
               parentThreadId: projection.thread.id,
               threadId: targetThreadId,
+              ...(Option.isSome(teamChildAuth)
+                ? { creatorMemberId: teamChildAuth.value.memberId }
+                : {}),
             });
           }
           return { sequence: result.sequence, targetThreadId };
@@ -269,6 +285,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           threads,
           projection: { thread },
         } = yield* readThread(input.threadId);
+        yield* TeamMcpAccess.assertCanPostInThread(thread.id);
         const type = modelSelectionCommandType(thread.providerInstanceId, modelSelection);
         const result = yield* threads
           .dispatch({ type, threadId: thread.id, commandId: yield* newCommandId(), modelSelection })
@@ -302,6 +319,8 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           threadId: input.threadId,
           requestId,
         });
+        yield* TeamMcpAccess.assertCanPostInThread(projection.thread.id);
+        yield* TeamMcpAccess.assertCanInterruptThread(projection.thread.id);
         const result = yield* threads
           .dispatch({
             type: "runtime-request.respond",
@@ -384,6 +403,8 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           case "edit": {
             const text = yield* required(input.text, "text");
             const { threads, projection } = yield* readThread(input.threadId);
+            yield* TeamMcpAccess.assertCanPostInThread(projection.thread.id);
+            yield* TeamMcpAccess.assertCanManageQueuedRun(projection.thread.id, runId);
             // An agent must not turn a person's queued message into a provider sign-out.
             const command = yield* ThreadMessageIntake.withQueuedAttachmentsOnSignOutText({
               type: "queued-run.edit",
@@ -406,7 +427,10 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           }
           case "reorder": {
             const beforeRunId = yield* required(input.beforeRunId, "beforeRunId");
-            return yield* dispatch(input.threadId, (common) => ({
+            const { projection } = yield* readThread(input.threadId);
+            yield* TeamMcpAccess.assertCanPostInThread(projection.thread.id);
+            yield* TeamMcpAccess.assertCanManageQueuedRun(projection.thread.id, runId);
+            return yield* dispatch(projection.thread.id, (common) => ({
               ...common,
               type: "queued-run.reorder",
               runId,
@@ -415,19 +439,31 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           }
           case "promote_to_steer": {
             const targetRunId = yield* required(input.targetRunId, "targetRunId");
-            return yield* dispatch(input.threadId, (common) => ({
+            const { projection } = yield* readThread(input.threadId);
+            yield* TeamMcpAccess.assertCanPromoteQueuedRun(projection.thread.id);
+            const dispatched = yield* dispatch(projection.thread.id, (common) => ({
               ...common,
               type: "queued-message.promote-to-steer",
               queuedRunId: runId,
               targetRunId,
             }));
+            yield* TeamMcpAccess.notifyTurnInterruptedByCaller({
+              threadId: projection.thread.id,
+              runId: targetRunId,
+              reason: "promote_to_steer",
+            });
+            return dispatched;
           }
-          default:
-            return yield* dispatch(input.threadId, (common) => ({
+          default: {
+            const { projection } = yield* readThread(input.threadId);
+            yield* TeamMcpAccess.assertCanPostInThread(projection.thread.id);
+            yield* TeamMcpAccess.assertCanManageQueuedRun(projection.thread.id, runId);
+            return yield* dispatch(projection.thread.id, (common) => ({
               ...common,
               type: "queued-run.cancel",
               runId,
             }));
+          }
         }
       }),
     ),
@@ -435,6 +471,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
       const { threads, projection, caller } = yield* readThread(input.threadId);
+      if (input.action !== "mark_unread") {
+        yield* TeamMcpAccess.assertCanPostInThread(projection.thread.id);
+      }
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
       if (input.action === "settle") {
         return yield* threads

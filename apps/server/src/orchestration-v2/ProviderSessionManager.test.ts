@@ -21,6 +21,7 @@ import {
   ProviderInstanceId,
   type ProviderSessionId,
   RunId,
+  TeamMemberId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -40,6 +41,7 @@ import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
@@ -689,6 +691,7 @@ function layerTest(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
+  readonly serverConfigLayer?: Layer.Layer<ServerConfig.ServerConfig>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -788,6 +791,7 @@ function layerTest(input: {
           input.installationGateLayer ?? ProviderInstallationGate.layer,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.serverConfigLayer === undefined ? [] : [input.serverConfigLayer]),
         ),
       ),
     ),
@@ -6140,4 +6144,131 @@ it.effect("ProviderSessionManagerV2 gives a delegated child its project's device
     });
     assert.isTrue(child?.capabilities?.has("device"));
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 recycles warm sessions and rotates MCP tokens when actingMemberId changes between turns",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const aliceId = TeamMemberId.make("member-alice");
+      const bobId = TeamMemberId.make("member-bob");
+      const threadId = ThreadId.make("thread-author-switch");
+
+      yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const mcpRegistry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+
+        // Turn 1: Alice opens the session -> spawns process 1 with MCP token bound to Alice.
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: aliceId,
+        });
+        const afterAlice1 = yield* Ref.get(state);
+        assert.strictEqual(afterAlice1.openCount, 1);
+        assert.strictEqual(afterAlice1.closeCount, 0);
+        const configs1 = yield* Ref.get(mcpConfigs);
+        const aliceToken = configs1[0]?.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.isDefined(aliceToken);
+        const aliceResolved = yield* mcpRegistry.resolve(aliceToken!);
+        assert.strictEqual(aliceResolved?.thread.actingMemberId, aliceId);
+
+        // Turn 2: Alice again -> reuses warm session and keeps the same token.
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: aliceId,
+        });
+        const afterAlice2 = yield* Ref.get(state);
+        assert.strictEqual(afterAlice2.openCount, 1);
+        assert.strictEqual(afterAlice2.closeCount, 0);
+
+        // Turn 3: Bob takes a turn on the same thread -> recycles warm session, revokes Alice's token,
+        // and injects a fresh MCP token bound to Bob.
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: bobId,
+        });
+        const afterBob = yield* Ref.get(state);
+        assert.strictEqual(afterBob.closeCount, 1);
+        assert.strictEqual(afterBob.openCount, 2);
+        const configs2 = yield* Ref.get(mcpConfigs);
+        const bobToken = configs2[1]?.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.isDefined(bobToken);
+        assert.notStrictEqual(bobToken, aliceToken);
+        // Alice's previous token must be revoked; Bob's new token resolves to Bob.
+        assert.isUndefined(yield* mcpRegistry.resolve(aliceToken!));
+        const bobResolved = yield* mcpRegistry.resolve(bobToken!);
+        assert.strictEqual(bobResolved?.thread.actingMemberId, bobId);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            mcpConfigs,
+            capabilities: ExclusiveCapabilities,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 refuses opening local agent sessions in --team-hub-only mode",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const hubConfigLayer = Layer.effect(
+        ServerConfig.ServerConfig,
+        Effect.gen(function* () {
+          const cfg = yield* ServerConfig.ServerConfig;
+          return { ...cfg, teamHubOnly: true };
+        }),
+      ).pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-psm-hub-only-" })),
+        Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        Layer.orDie,
+      );
+
+      const exit = yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threadId = ThreadId.make("thread-hub-refused");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        return yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+      }).pipe(Effect.provide(layerTest({ state, serverConfigLayer: hubConfigLayer })), Effect.exit);
+
+      assert.isTrue(Exit.isFailure(exit));
+      assert.strictEqual((yield* Ref.get(state)).openCount, 0);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.squash(exit.cause) as { readonly cause?: unknown };
+        assert.include(String(error.cause ?? error), "--team-hub-only");
+      }
+    }),
 );

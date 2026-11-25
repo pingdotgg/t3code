@@ -23,6 +23,7 @@ import {
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as TeamMcpAccess from "../team/mcpAccess.ts";
 import {
   assertFullAccessNamingLink,
   assertNotLinked,
@@ -134,11 +135,13 @@ const refuseReadOnlyClient = McpInvocationContext.McpInvocationContext.pipe(
 );
 
 const writingCaller = refuseReadOnlyClient.pipe(
+  Effect.andThen(TeamMcpAccess.assertActiveMemberIfTeamConfigured),
   Effect.andThen(loadCaller()),
   Effect.tap(assertLiveCaller),
 );
 
 const orchestratingCaller = refuseReadOnlyClient.pipe(
+  Effect.andThen(TeamMcpAccess.assertActiveMemberIfTeamConfigured),
   Effect.andThen(readCaller()),
   Effect.tap(assertLiveCaller),
 );
@@ -150,17 +153,25 @@ const requireThreadCaller = McpInvocationContext.McpInvocationContext.pipe(
 export const reads = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
   declare(
     (params: P) => handle(params),
-    () => Effect.void,
+    () => TeamMcpAccess.assertActiveMemberIfTeamConfigured,
   );
 
 export const readsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
-  declare((params: P) => requireThreadCaller.pipe(Effect.flatMap(() => handle(params))), undefined);
+  declare(
+    (params: P) =>
+      requireThreadCaller.pipe(
+        Effect.andThen(TeamMcpAccess.assertCanAccessCallerThread("read")),
+        Effect.flatMap(() => handle(params)),
+      ),
+    undefined,
+  );
 
 export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
   declare(
     (params: P) =>
       requireThreadCaller.pipe(
         Effect.andThen(writingCaller),
+        Effect.andThen(TeamMcpAccess.assertCanAccessCallerThread("write")),
         Effect.flatMap(() => handle(params)),
       ),
     undefined,
@@ -230,6 +241,7 @@ export const writesThreads = <P, A, E, R>(
         const caller = yield* writingCaller;
         for (const threadId of threads(params)) {
           if (threadId === undefined || threadId === caller.scope.thread?.threadId) continue;
+          yield* TeamMcpAccess.assertCanReadThread(threadId);
           const target = yield* caller.threads
             .getThreadShell(threadId)
             .pipe(Effect.mapError(unavailable));
@@ -361,6 +373,12 @@ export const writesEnvironment = <P, A, E, R>(
   },
 ) => {
   const check = orchestratingCaller.pipe(
+    Effect.tap(() =>
+      TeamMcpAccess.assertIsAdmin(
+        "Only owner and admin members can change team projects or environment settings.",
+        "team:environment:write",
+      ),
+    ),
     Effect.tap((caller) =>
       options?.linkedCallers === "allowed"
         ? Effect.void
@@ -463,7 +481,14 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
       return yield* Effect.die(
         `${name} acts as its calling thread, so outside clients must not be offered it.`,
       );
-    if (!takesLinkedEnvironment(tool)) continue;
+    if (!takesLinkedEnvironment(tool)) {
+      const here = handlers[name] as (
+        params: object,
+      ) => Effect.Effect<unknown, Tool.Failure<Tools[keyof Tools]>>;
+      handlers[name] = (params: object) =>
+        TeamMcpAccess.assertActiveMemberIfTeamConfigured.pipe(Effect.andThen(here(params)));
+      continue;
+    }
     const forwarded = forwardedOf(declaration) as
       | Forwarded<object, unknown, Tool.Failure<Tools[keyof Tools]>, never>
       | undefined;
@@ -476,6 +501,7 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
     ) => Effect.Effect<unknown, Tool.Failure<Tools[keyof Tools]>>;
     handlers[name] = ({ environmentId, ...params }: { readonly environmentId?: EnvironmentId }) =>
       Effect.gen(function* () {
+        yield* TeamMcpAccess.assertActiveMemberIfTeamConfigured;
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const target = PeerForwarding.remoteTarget(scope, environmentId);
         if (target === undefined) return yield* here(params);

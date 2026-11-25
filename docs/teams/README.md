@@ -34,4 +34,5 @@ The goal of this fork is to turn T3 Code into a **first-class multi-user ADE for
 - **[architecture.md](./architecture.md)** — Full functional requirements, data model, authorization rules, provider routing, per-turn GitHub credential brokering, UI/UX design, and upstream merge strategy.
 - **[roadmap.md](./roadmap.md)** — Phased implementation plan from core team identity through RBAC/views, UI/notifications, and per-turn GitHub forwarding.
 - **[testing-e2e.md](./testing-e2e.md)** — Multi-member E2E testing architecture (1 Team Server + ≥2 isolated local apps, fake LLM proxy, fake Git/GitHub server).
+- **[hub-runner-deployment.md](./hub-runner-deployment.md)** — Single-host `t3hub` (`--team-hub-only`) and unprivileged loopback `t3runner` OS-user isolation runbook.
 - **[ci-and-releases.md](./ci-and-releases.md)** — Fork GitHub Actions CI & release pipeline (`teams-ci.yml`, `teams-release.yml`), signing secrets reference, and upstream tag hygiene.

@@ -16,8 +16,12 @@ import {
   canManageTeamMembers,
   canManageTeamViews,
   canMemberCreateThreadInTeamView,
+  canMemberInterruptTeamTurn,
+  canMemberManageTeamQueuedRun,
+  canMemberPromoteTeamQueuedRun,
   canMemberReadTeamThread,
   canMemberReadTeamView,
+  canMemberSteerActiveTeamTurn,
   canModifyTeamMember,
   canToggleTeamThreadLock,
   EnvironmentAuthorizationError,
@@ -145,6 +149,20 @@ export type TeamAccessChangeEvent =
   | { readonly type: "view"; readonly viewId: TeamViewId }
   | { readonly type: "member"; readonly memberId: TeamMemberId }
   | { readonly type: "threadView"; readonly threadId: ThreadId };
+
+export type TeamActor =
+  | { readonly kind: "session"; readonly sessionId: AuthSessionId }
+  | { readonly kind: "member"; readonly memberId: TeamMemberId | null };
+
+export interface TeamTurnInterruptEvent {
+  readonly threadId: ThreadId;
+  readonly runId: string | null;
+  readonly actorMemberId: TeamMemberId;
+  readonly activeTurnAuthorMemberId: TeamMemberId | null;
+  readonly reason: "interrupt" | "stop" | "force_stop" | "mcp_interrupt" | "promote_to_steer";
+}
+
+export type TeamTurnInterruptHook = (event: TeamTurnInterruptEvent) => Effect.Effect<void>;
 
 const normalizeAccessRule = (rule: TeamAccessRule): TeamAccessRule => ({
   roles: [...new Set(rule.roles)],
@@ -305,6 +323,19 @@ export class TeamService extends Context.Service<
       sessionId: AuthSessionId,
       command: OrchestrationV2Command,
     ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertAndNormalizeDispatchCommand: (
+      sessionId: AuthSessionId,
+      command: OrchestrationV2Command,
+    ) => Effect.Effect<OrchestrationV2Command, EnvironmentAuthorizationError>;
+    readonly assertCanInterruptThread: (
+      sessionId: AuthSessionId,
+      threadId: ThreadId,
+      runId?: string | null,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertCanPromoteQueuedRun: (
+      sessionId: AuthSessionId,
+      threadId: ThreadId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
     readonly assertCanCreateGuestShare: (
       sessionId: AuthSessionId,
       threadId: ThreadId,
@@ -366,6 +397,7 @@ export class TeamService extends Context.Service<
       readonly parentThreadId: ThreadId;
       readonly threadId: ThreadId;
       readonly creatorSessionId?: AuthSessionId;
+      readonly creatorMemberId?: TeamMemberId;
     }) => Effect.Effect<boolean, EnvironmentAuthorizationError>;
     readonly rollbackPreparedThreadAttribution: (threadId: ThreadId) => Effect.Effect<void>;
     readonly recordTurnAuthored: (input: {
@@ -373,10 +405,105 @@ export class TeamService extends Context.Service<
       readonly threadId: ThreadId;
       readonly turnId: string;
     }) => Effect.Effect<void>;
+    readonly recordTurnAuthoredByMember: (input: {
+      readonly memberId: TeamMemberId;
+      readonly threadId: ThreadId;
+      readonly turnId: string;
+    }) => Effect.Effect<void>;
+    readonly prepareTurnAttributionForCommand: (
+      sessionId: AuthSessionId,
+      command: OrchestrationV2Command,
+    ) => Effect.Effect<void>;
+    readonly prepareThreadAttributionForMember: (input: {
+      readonly memberId: TeamMemberId;
+      readonly threadId: ThreadId;
+      readonly viewId?: TeamViewId;
+      readonly locked?: boolean;
+    }) => Effect.Effect<boolean, EnvironmentAuthorizationError>;
+    readonly recordThreadCreatedByMember: (input: {
+      readonly memberId: TeamMemberId;
+      readonly threadId: ThreadId;
+      readonly viewId?: TeamViewId;
+      readonly locked?: boolean;
+    }) => Effect.Effect<void>;
     readonly recordThreadInheritedFromParent: (input: {
       readonly parentThreadId: ThreadId;
       readonly threadId: ThreadId;
       readonly turnId?: string;
+      readonly creatorMemberId?: TeamMemberId;
+    }) => Effect.Effect<void>;
+    readonly getThreadAttribution: (
+      threadId: ThreadId,
+    ) => Effect.Effect<Option.Option<TeamThreadAttribution>>;
+    readonly resolveMemberIdForSession: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<Option.Option<TeamMemberId>>;
+    readonly resolveTurnAuthorMemberId: (input: {
+      readonly threadId: ThreadId;
+      readonly runId?: string | null;
+      readonly userMessageId?: string | null;
+    }) => Effect.Effect<Option.Option<TeamMemberId>>;
+    readonly assertActorIsActiveMember: (
+      actor: TeamActor,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly canActorReadThread: (actor: TeamActor, threadId: ThreadId) => Effect.Effect<boolean>;
+    readonly assertActorCanReadThread: (
+      actor: TeamActor,
+      threadId: ThreadId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly filterReadableThreadIdsForActor: (
+      actor: TeamActor,
+      threadIds: ReadonlyArray<ThreadId>,
+    ) => Effect.Effect<ReadonlySet<ThreadId>>;
+    readonly canActorPostInThread: (actor: TeamActor, threadId: ThreadId) => Effect.Effect<boolean>;
+    readonly assertActorCanPostInThread: (
+      actor: TeamActor,
+      threadId: ThreadId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertActorCanCreateThreadInView: (input: {
+      readonly actor: TeamActor;
+      readonly viewId?: TeamViewId;
+      readonly locked?: boolean;
+    }) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly canActorSteerActiveTurn: (
+      actor: TeamActor,
+      threadId: ThreadId,
+    ) => Effect.Effect<boolean>;
+    readonly assertActorCanSteerActiveTurn: (
+      actor: TeamActor,
+      threadId: ThreadId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertActorCanPromoteQueuedRun: (
+      actor: TeamActor,
+      threadId: ThreadId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertActorCanInterruptThread: (
+      actor: TeamActor,
+      threadId: ThreadId,
+      runId?: string | null,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertActorCanManageQueuedRun: (
+      actor: TeamActor,
+      threadId: ThreadId,
+      runId: string,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertActorCanUseWorkflows: (
+      actor: TeamActor,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertActorCanUseScheduledTasks: (
+      actor: TeamActor,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertActorIsAdmin: (
+      actor: TeamActor,
+      message?: string,
+      requiredPermission?: string,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly registerTurnInterruptHook: (hook: TeamTurnInterruptHook) => Effect.Effect<() => void>;
+    readonly notifyTurnInterrupted: (input: {
+      readonly actor: TeamActor;
+      readonly threadId: ThreadId;
+      readonly runId?: string | null;
+      readonly reason: TeamTurnInterruptEvent["reason"];
     }) => Effect.Effect<void>;
   }
 >()("t3/team/TeamService") {}
@@ -388,6 +515,7 @@ const make = Effect.gen(function* () {
   const eventsPubSub = yield* PubSub.unbounded<TeamStateStreamEvent>();
   const notificationTriggersPubSub = yield* PubSub.unbounded<TeamNotificationTriggerEvent>();
   const accessChangesPubSub = yield* PubSub.unbounded<TeamAccessChangeEvent>();
+  const turnInterruptHooks = new Set<TeamTurnInterruptHook>();
 
   const publishAccessChange = (event: TeamAccessChangeEvent) =>
     PubSub.publish(accessChangesPubSub, event).pipe(Effect.asVoid);
@@ -1615,10 +1743,129 @@ const make = Effect.gen(function* () {
     } satisfies TeamRedeemInviteResponse;
   });
 
-  const resolveThreadAccessContext = Effect.fn("TeamService.resolveThreadAccessContext")(function* (
-    sessionId: AuthSessionId,
+  const resolveMemberForActor = Effect.fn("TeamService.resolveMemberForActor")(function* (
+    actor: TeamActor,
+  ) {
+    if (actor.kind === "session") {
+      return yield* repository.getMemberForSession(actor.sessionId);
+    }
+    if (actor.memberId === null) {
+      return Option.none<TeamMember>();
+    }
+    return yield* repository.getMemberById(actor.memberId);
+  });
+
+  const sessionActor = (sessionId: AuthSessionId): TeamActor => ({
+    kind: "session",
+    sessionId,
+  });
+
+  const getThreadAttribution = Effect.fn("TeamService.getThreadAttribution")(function* (
     threadId: ThreadId,
   ) {
+    return yield* repository.getThreadAttribution(threadId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.getThreadAttribution failed", { threadId, cause }),
+      ),
+      Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()),
+    );
+  });
+
+  const resolveMemberIdForSession = Effect.fn("TeamService.resolveMemberIdForSession")(function* (
+    sessionId: AuthSessionId,
+  ) {
+    const workspaceOption = yield* repository
+      .getWorkspace()
+      .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+    if (Option.isNone(workspaceOption)) return Option.none<TeamMemberId>();
+    const memberOption = yield* repository
+      .getMemberForSession(sessionId)
+      .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>()));
+    if (
+      Option.isNone(memberOption) ||
+      memberOption.value.teamId !== workspaceOption.value.id ||
+      memberOption.value.status !== "active"
+    ) {
+      return Option.none<TeamMemberId>();
+    }
+    return Option.some(memberOption.value.id);
+  });
+
+  const resolveTurnAuthorMemberId = Effect.fn("TeamService.resolveTurnAuthorMemberId")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly runId?: string | null;
+      readonly userMessageId?: string | null;
+    }) {
+      return yield* Effect.gen(function* () {
+        const workspaceOption = yield* repository.getWorkspace();
+        if (Option.isNone(workspaceOption)) return Option.none<TeamMemberId>();
+        const team = workspaceOption.value;
+        const runId = input.runId ?? null;
+        if (runId !== null) {
+          const byRun = yield* repository.getTurnAttribution(runId);
+          if (Option.isSome(byRun) && byRun.value.threadId === input.threadId) {
+            return Option.some(byRun.value.authorMemberId);
+          }
+        }
+        let userMessageId = input.userMessageId ?? null;
+        if (userMessageId === null && runId !== null) {
+          const runRecord = yield* repository
+            .getRunInProjection(input.threadId, runId)
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          if (Option.isSome(runRecord)) {
+            userMessageId = runRecord.value.userMessageId;
+          }
+        }
+        if (userMessageId !== null) {
+          const byMessage = yield* repository.getTurnAttribution(`msg:${userMessageId}`);
+          if (Option.isSome(byMessage) && byMessage.value.threadId === input.threadId) {
+            return Option.some(byMessage.value.authorMemberId);
+          }
+        }
+        if (runId === null && userMessageId === null) {
+          const activeRun = yield* repository
+            .getActiveRunInProjection(input.threadId)
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          if (Option.isSome(activeRun)) {
+            const byActiveRun = yield* repository.getTurnAttribution(activeRun.value.runId);
+            if (Option.isSome(byActiveRun) && byActiveRun.value.threadId === input.threadId) {
+              return Option.some(byActiveRun.value.authorMemberId);
+            }
+            if (activeRun.value.userMessageId !== null) {
+              const byActiveMessage = yield* repository.getTurnAttribution(
+                `msg:${activeRun.value.userMessageId}`,
+              );
+              if (
+                Option.isSome(byActiveMessage) &&
+                byActiveMessage.value.threadId === input.threadId
+              ) {
+                return Option.some(byActiveMessage.value.authorMemberId);
+              }
+            }
+          }
+        }
+        const attribution = yield* repository.getThreadAttribution(input.threadId);
+        if (Option.isSome(attribution) && attribution.value.teamId === team.id) {
+          return Option.some(attribution.value.creatorMemberId);
+        }
+        return Option.none<TeamMemberId>();
+      }).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.resolveTurnAuthorMemberId failed", {
+            threadId: input.threadId,
+            runId: input.runId,
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamMemberId>()),
+      );
+    },
+  );
+
+  const resolveThreadAccessContextForActor = Effect.fn(
+    "TeamService.resolveThreadAccessContextForActor",
+  )(function* (actor: TeamActor, threadId: ThreadId) {
     const workspaceOption = yield* repository.getWorkspace();
     if (Option.isNone(workspaceOption)) {
       return { kind: "personal" as const };
@@ -1626,7 +1873,7 @@ const make = Effect.gen(function* () {
     const team = workspaceOption.value;
     const [attributionOption, memberOption] = yield* Effect.all([
       repository.getThreadAttribution(threadId),
-      repository.getMemberForSession(sessionId),
+      resolveMemberForActor(actor),
     ]);
     const member =
       Option.isSome(memberOption) && memberOption.value.teamId === team.id
@@ -1659,11 +1906,47 @@ const make = Effect.gen(function* () {
     };
   });
 
-  const canReadThread = Effect.fn("TeamService.canReadThread")(function* (
-    sessionId: AuthSessionId,
+  const resolveThreadAccessContext = (sessionId: AuthSessionId, threadId: ThreadId) =>
+    resolveThreadAccessContextForActor(sessionActor(sessionId), threadId);
+
+  const assertActorIsActiveMember = Effect.fn("TeamService.assertActorIsActiveMember")(function* (
+    actor: TeamActor,
+  ) {
+    const workspaceOption = yield* repository.getWorkspace().pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.assertActorIsActiveMember workspace lookup failed", {
+          cause,
+        }),
+      ),
+      Effect.mapError(() =>
+        teamReadAuthError("This caller is not bound to an active team member."),
+      ),
+    );
+    if (Option.isNone(workspaceOption)) {
+      return;
+    }
+    const memberOption = yield* resolveMemberForActor(actor).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.assertActorIsActiveMember member lookup failed", { cause }),
+      ),
+      Effect.mapError(() =>
+        teamReadAuthError("This caller is not bound to an active team member."),
+      ),
+    );
+    const member =
+      Option.isSome(memberOption) && memberOption.value.teamId === workspaceOption.value.id
+        ? memberOption.value
+        : null;
+    if (!member || member.status !== "active") {
+      return yield* teamReadAuthError("This caller is not bound to an active team member.");
+    }
+  });
+
+  const canActorReadThread = Effect.fn("TeamService.canActorReadThread")(function* (
+    actor: TeamActor,
     threadId: ThreadId,
   ) {
-    return yield* resolveThreadAccessContext(sessionId, threadId).pipe(
+    return yield* resolveThreadAccessContextForActor(actor, threadId).pipe(
       Effect.map((ctx) => {
         if (ctx.kind === "personal") return true;
         if (ctx.kind === "wrong_team") return false;
@@ -1675,7 +1958,7 @@ const make = Effect.gen(function* () {
         return canMemberReadTeamThread({ member: ctx.member, view: ctx.view });
       }),
       Effect.tapError((cause) =>
-        Effect.logWarning("TeamService.canReadThread failed; denying access", {
+        Effect.logWarning("TeamService.canActorReadThread failed; denying access", {
           threadId,
           cause,
         }),
@@ -1684,15 +1967,21 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const assertCanReadThread = Effect.fn("TeamService.assertCanReadThread")(function* (
-    sessionId: AuthSessionId,
+  const canReadThread = (sessionId: AuthSessionId, threadId: ThreadId) =>
+    canActorReadThread(sessionActor(sessionId), threadId);
+
+  const assertActorCanReadThread = Effect.fn("TeamService.assertActorCanReadThread")(function* (
+    actor: TeamActor,
     threadId: ThreadId,
   ) {
-    const allowed = yield* canReadThread(sessionId, threadId);
+    const allowed = yield* canActorReadThread(actor, threadId);
     if (!allowed) {
       return yield* teamReadAuthError();
     }
   });
+
+  const assertCanReadThread = (sessionId: AuthSessionId, threadId: ThreadId) =>
+    assertActorCanReadThread(sessionActor(sessionId), threadId);
 
   const canReadAttachment = Effect.fn("TeamService.canReadAttachment")(function* (
     sessionId: AuthSessionId,
@@ -1754,72 +2043,78 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const filterReadableThreadIds = Effect.fn("TeamService.filterReadableThreadIds")(function* (
-    sessionId: AuthSessionId,
-    threadIds: ReadonlyArray<ThreadId>,
-  ) {
-    if (threadIds.length === 0) {
-      return new Set<ThreadId>() as ReadonlySet<ThreadId>;
-    }
-    return yield* Effect.gen(function* () {
-      const workspaceOption = yield* repository.getWorkspace();
-      if (Option.isNone(workspaceOption)) {
-        return new Set<ThreadId>(threadIds) as ReadonlySet<ThreadId>;
-      }
-      const team = workspaceOption.value;
-      const [memberOption, views, attributions] = yield* Effect.all([
-        repository.getMemberForSession(sessionId),
-        repository.listViews(team.id),
-        repository.listThreadAttributions(team.id),
-      ]);
-      const member =
-        Option.isSome(memberOption) && memberOption.value.teamId === team.id
-          ? memberOption.value
-          : null;
-      if (!member || member.status !== "active") {
+  const filterReadableThreadIdsForActor = Effect.fn("TeamService.filterReadableThreadIdsForActor")(
+    function* (actor: TeamActor, threadIds: ReadonlyArray<ThreadId>) {
+      if (threadIds.length === 0) {
         return new Set<ThreadId>() as ReadonlySet<ThreadId>;
       }
-      const viewById = new Map(views.map((view) => [view.id, view] as const));
-      const defaultView = viewById.get(team.defaultViewId) ?? null;
-      const attributionByThreadId = new Map(
-        attributions.map((attribution) => [attribution.threadId, attribution] as const),
-      );
-      const unattributedIds = threadIds.filter((threadId) => !attributionByThreadId.has(threadId));
-      const createdAtByThreadId =
-        unattributedIds.length > 0 && !isTeamAdminOrOwner(member)
-          ? yield* repository.listThreadCreatedAtInProjection(unattributedIds)
-          : new Map<ThreadId, string>();
-      const allowed = new Set<ThreadId>();
-      for (const threadId of threadIds) {
-        const attribution = attributionByThreadId.get(threadId);
-        if (!attribution) {
-          if (
-            isTeamAdminOrOwner(member) ||
-            isPreTeamLegacyTimestamp(team, createdAtByThreadId.get(threadId))
-          ) {
+      return yield* Effect.gen(function* () {
+        const workspaceOption = yield* repository.getWorkspace();
+        if (Option.isNone(workspaceOption)) {
+          return new Set<ThreadId>(threadIds) as ReadonlySet<ThreadId>;
+        }
+        const team = workspaceOption.value;
+        const [memberOption, views, attributions] = yield* Effect.all([
+          resolveMemberForActor(actor),
+          repository.listViews(team.id),
+          repository.listThreadAttributions(team.id),
+        ]);
+        const member =
+          Option.isSome(memberOption) && memberOption.value.teamId === team.id
+            ? memberOption.value
+            : null;
+        if (!member || member.status !== "active") {
+          return new Set<ThreadId>() as ReadonlySet<ThreadId>;
+        }
+        const viewById = new Map(views.map((view) => [view.id, view] as const));
+        const defaultView = viewById.get(team.defaultViewId) ?? null;
+        const attributionByThreadId = new Map(
+          attributions.map((attribution) => [attribution.threadId, attribution] as const),
+        );
+        const unattributedIds = threadIds.filter(
+          (threadId) => !attributionByThreadId.has(threadId),
+        );
+        const createdAtByThreadId =
+          unattributedIds.length > 0 && !isTeamAdminOrOwner(member)
+            ? yield* repository.listThreadCreatedAtInProjection(unattributedIds)
+            : new Map<ThreadId, string>();
+        const allowed = new Set<ThreadId>();
+        for (const threadId of threadIds) {
+          const attribution = attributionByThreadId.get(threadId);
+          if (!attribution) {
+            if (
+              isTeamAdminOrOwner(member) ||
+              isPreTeamLegacyTimestamp(team, createdAtByThreadId.get(threadId))
+            ) {
+              allowed.add(threadId);
+            }
+            continue;
+          }
+          const view = viewById.get(attribution.viewId) ?? defaultView;
+          if (canMemberReadTeamThread({ member, view })) {
             allowed.add(threadId);
           }
-          continue;
         }
-        const view = viewById.get(attribution.viewId) ?? defaultView;
-        if (canMemberReadTeamThread({ member, view })) {
-          allowed.add(threadId);
-        }
-      }
-      return allowed as ReadonlySet<ThreadId>;
-    }).pipe(
-      Effect.tapError((cause) =>
-        Effect.logWarning("TeamService.filterReadableThreadIds failed; failing closed", { cause }),
-      ),
-      Effect.orElseSucceed(() => new Set<ThreadId>() as ReadonlySet<ThreadId>),
-    );
-  });
+        return allowed as ReadonlySet<ThreadId>;
+      }).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.filterReadableThreadIdsForActor failed; failing closed", {
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => new Set<ThreadId>() as ReadonlySet<ThreadId>),
+      );
+    },
+  );
 
-  const canPostInThread = Effect.fn("TeamService.canPostInThread")(function* (
-    sessionId: AuthSessionId,
+  const filterReadableThreadIds = (sessionId: AuthSessionId, threadIds: ReadonlyArray<ThreadId>) =>
+    filterReadableThreadIdsForActor(sessionActor(sessionId), threadIds);
+
+  const canActorPostInThread = Effect.fn("TeamService.canActorPostInThread")(function* (
+    actor: TeamActor,
     threadId: ThreadId,
   ) {
-    return yield* resolveThreadAccessContext(sessionId, threadId).pipe(
+    return yield* resolveThreadAccessContextForActor(actor, threadId).pipe(
       Effect.map((ctx) => {
         if (ctx.kind === "personal") return true;
         if (ctx.kind === "wrong_team") return false;
@@ -1836,7 +2131,7 @@ const make = Effect.gen(function* () {
         );
       }),
       Effect.tapError((cause) =>
-        Effect.logWarning("TeamService.canPostInThread failed; denying access", {
+        Effect.logWarning("TeamService.canActorPostInThread failed; denying access", {
           threadId,
           cause,
         }),
@@ -1845,13 +2140,16 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const assertCanPostInThread = Effect.fn("TeamService.assertCanPostInThread")(function* (
-    sessionId: AuthSessionId,
+  const canPostInThread = (sessionId: AuthSessionId, threadId: ThreadId) =>
+    canActorPostInThread(sessionActor(sessionId), threadId);
+
+  const assertActorCanPostInThread = Effect.fn("TeamService.assertActorCanPostInThread")(function* (
+    actor: TeamActor,
     threadId: ThreadId,
   ) {
-    const ctx = yield* resolveThreadAccessContext(sessionId, threadId).pipe(
+    const ctx = yield* resolveThreadAccessContextForActor(actor, threadId).pipe(
       Effect.tapError((cause) =>
-        Effect.logWarning("TeamService.assertCanPostInThread failed; denying access", {
+        Effect.logWarning("TeamService.assertActorCanPostInThread failed; denying access", {
           threadId,
           cause,
         }),
@@ -1888,6 +2186,250 @@ const make = Effect.gen(function* () {
       );
     }
     return yield* teamPostAuthError();
+  });
+
+  const assertCanPostInThread = (sessionId: AuthSessionId, threadId: ThreadId) =>
+    assertActorCanPostInThread(sessionActor(sessionId), threadId);
+
+  const canActorSteerActiveTurn = Effect.fn("TeamService.canActorSteerActiveTurn")(function* (
+    actor: TeamActor,
+    threadId: ThreadId,
+  ) {
+    return yield* resolveThreadAccessContextForActor(actor, threadId).pipe(
+      Effect.map((ctx) => {
+        if (ctx.kind === "personal") return true;
+        if (ctx.kind === "wrong_team") return false;
+        if (ctx.kind === "unattributed") {
+          if (!ctx.member || ctx.member.status !== "active") return false;
+          return ctx.isLegacyPreTeam || isTeamAdminOrOwner(ctx.member);
+        }
+        return canMemberSteerActiveTeamTurn({
+          member: ctx.member,
+          attribution: ctx.attribution,
+          view: ctx.view,
+        });
+      }),
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.canActorSteerActiveTurn failed; denying steer", {
+          threadId,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+  });
+
+  const assertActorCanSteerActiveTurn = Effect.fn("TeamService.assertActorCanSteerActiveTurn")(
+    function* (actor: TeamActor, threadId: ThreadId) {
+      const allowed = yield* canActorSteerActiveTurn(actor, threadId);
+      if (!allowed) {
+        return yield* teamPostAuthError(
+          "Only the thread creator can steer an active turn. Queue your message instead.",
+        );
+      }
+    },
+  );
+
+  const assertActorCanPromoteQueuedRun = Effect.fn("TeamService.assertActorCanPromoteQueuedRun")(
+    function* (actor: TeamActor, threadId: ThreadId) {
+      const ctx = yield* resolveThreadAccessContextForActor(actor, threadId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.assertActorCanPromoteQueuedRun failed; denying", {
+            threadId,
+            cause,
+          }),
+        ),
+        Effect.mapError(() =>
+          teamPostAuthError("Only the thread creator can send a queued message now."),
+        ),
+      );
+      if (ctx.kind === "personal") return;
+      if (ctx.kind === "wrong_team") {
+        return yield* teamPostAuthError("Only the thread creator can send a queued message now.");
+      }
+      if (ctx.kind === "unattributed") {
+        if (!ctx.member || ctx.member.status !== "active") {
+          return yield* teamPostAuthError("This session is not bound to an active team member.");
+        }
+        if (!ctx.isLegacyPreTeam && !isTeamAdminOrOwner(ctx.member)) {
+          return yield* teamPostAuthError("Only the thread creator can send a queued message now.");
+        }
+        return;
+      }
+      if (
+        !canMemberPromoteTeamQueuedRun({
+          member: ctx.member,
+          attribution: ctx.attribution,
+          view: ctx.view,
+        })
+      ) {
+        return yield* teamPostAuthError(
+          ctx.attribution.locked
+            ? "This thread is locked. Only owners and admins can post, and queued messages cannot be promoted by non-creators."
+            : "Only the thread creator can send a queued message now.",
+        );
+      }
+    },
+  );
+
+  const assertCanPromoteQueuedRun = (sessionId: AuthSessionId, threadId: ThreadId) =>
+    assertActorCanPromoteQueuedRun(sessionActor(sessionId), threadId);
+
+  const assertActorCanInterruptThread = Effect.fn("TeamService.assertActorCanInterruptThread")(
+    function* (actor: TeamActor, threadId: ThreadId, runId?: string | null) {
+      const ctx = yield* resolveThreadAccessContextForActor(actor, threadId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.assertActorCanInterruptThread failed; denying", {
+            threadId,
+            runId,
+            cause,
+          }),
+        ),
+        Effect.mapError(() =>
+          teamPostAuthError(
+            "Only the thread creator, active turn author, admins, or owners can interrupt this turn.",
+          ),
+        ),
+      );
+      if (ctx.kind === "personal") return;
+      if (ctx.kind === "wrong_team") {
+        return yield* teamPostAuthError(
+          "Only the thread creator, active turn author, admins, or owners can interrupt this turn.",
+        );
+      }
+      if (ctx.kind === "unattributed") {
+        if (!ctx.member || ctx.member.status !== "active") {
+          return yield* teamPostAuthError("This session is not bound to an active team member.");
+        }
+        if (!ctx.isLegacyPreTeam && !isTeamAdminOrOwner(ctx.member)) {
+          return yield* teamPostAuthError(
+            "Only the thread creator, active turn author, admins, or owners can interrupt this turn.",
+          );
+        }
+        return;
+      }
+      const activeTurnAuthorOption = yield* resolveTurnAuthorMemberId({
+        threadId,
+        ...(runId !== undefined ? { runId } : {}),
+      });
+      if (
+        !canMemberInterruptTeamTurn({
+          member: ctx.member,
+          attribution: ctx.attribution,
+          view: ctx.view,
+          activeTurnAuthorMemberId: Option.getOrNull(activeTurnAuthorOption),
+        })
+      ) {
+        return yield* teamPostAuthError(
+          "Only the thread creator, active turn author, admins, or owners can interrupt this turn.",
+        );
+      }
+    },
+  );
+
+  const assertCanInterruptThread = (
+    sessionId: AuthSessionId,
+    threadId: ThreadId,
+    runId?: string | null,
+  ) => assertActorCanInterruptThread(sessionActor(sessionId), threadId, runId);
+
+  const assertActorCanManageQueuedRun = Effect.fn("TeamService.assertActorCanManageQueuedRun")(
+    function* (actor: TeamActor, threadId: ThreadId, runId: string) {
+      const ctx = yield* resolveThreadAccessContextForActor(actor, threadId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.assertActorCanManageQueuedRun failed; denying", {
+            threadId,
+            runId,
+            cause,
+          }),
+        ),
+        Effect.mapError(() =>
+          teamPostAuthError("You do not have permission to modify this queued message."),
+        ),
+      );
+      if (ctx.kind === "personal") return;
+      if (ctx.kind === "wrong_team") {
+        return yield* teamPostAuthError(
+          "You do not have permission to modify this queued message.",
+        );
+      }
+      if (ctx.kind === "unattributed") {
+        if (!ctx.member || ctx.member.status !== "active") {
+          return yield* teamPostAuthError("This session is not bound to an active team member.");
+        }
+        if (!ctx.isLegacyPreTeam && !isTeamAdminOrOwner(ctx.member)) {
+          return yield* teamPostAuthError(
+            "You do not have permission to modify this queued message.",
+          );
+        }
+        return;
+      }
+      const queuedRunAuthorOption = yield* resolveTurnAuthorMemberId({ threadId, runId });
+      if (
+        !canMemberManageTeamQueuedRun({
+          member: ctx.member,
+          attribution: ctx.attribution,
+          view: ctx.view,
+          queuedRunAuthorMemberId: Option.getOrNull(queuedRunAuthorOption),
+        })
+      ) {
+        return yield* teamPostAuthError(
+          "You can only edit or cancel your own queued messages unless you are the thread creator, an admin, or an owner.",
+        );
+      }
+    },
+  );
+
+  const registerTurnInterruptHook = (hook: TeamTurnInterruptHook) =>
+    Effect.sync(() => {
+      turnInterruptHooks.add(hook);
+      return () => {
+        turnInterruptHooks.delete(hook);
+      };
+    });
+
+  const notifyTurnInterrupted = Effect.fn("TeamService.notifyTurnInterrupted")(function* (input: {
+    readonly actor: TeamActor;
+    readonly threadId: ThreadId;
+    readonly runId?: string | null;
+    readonly reason: TeamTurnInterruptEvent["reason"];
+  }) {
+    if (turnInterruptHooks.size === 0) return;
+    const workspaceOption = yield* repository
+      .getWorkspace()
+      .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+    if (Option.isNone(workspaceOption)) return;
+    const actorOption = yield* resolveMemberForActor(input.actor).pipe(
+      Effect.orElseSucceed(() => Option.none<TeamMember>()),
+    );
+    if (Option.isNone(actorOption) || actorOption.value.teamId !== workspaceOption.value.id) {
+      return;
+    }
+    const activeTurnAuthorOption = yield* resolveTurnAuthorMemberId({
+      threadId: input.threadId,
+      ...(input.runId !== undefined ? { runId: input.runId } : {}),
+    });
+    const event: TeamTurnInterruptEvent = {
+      threadId: input.threadId,
+      runId: input.runId ?? null,
+      actorMemberId: actorOption.value.id,
+      activeTurnAuthorMemberId: Option.getOrNull(activeTurnAuthorOption),
+      reason: input.reason,
+    };
+    yield* Effect.forEach(
+      [...turnInterruptHooks],
+      (hook) =>
+        hook(event).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("TeamService.turnInterruptHook failed", {
+              threadId: input.threadId,
+              reason: input.reason,
+              cause,
+            }),
+          ),
+        ),
+      { discard: true },
+    );
   });
 
   const assertCanCreateGuestShare = Effect.fn("TeamService.assertCanCreateGuestShare")(function* (
@@ -1955,143 +2497,121 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const assertCanUseWorkflows = Effect.fn("TeamService.assertCanUseWorkflows")(function* (
-    sessionId: AuthSessionId,
+  const assertActorIsAdmin = Effect.fn("TeamService.assertActorIsAdmin")(function* (
+    actor: TeamActor,
+    message = "Only owner and admin members can perform this operation.",
+    requiredPermission = "team:admin",
   ) {
     const workspaceOption = yield* repository.getWorkspace().pipe(
       Effect.tapError((cause) =>
-        Effect.logWarning("TeamService.assertCanUseWorkflows workspace lookup failed", { cause }),
+        Effect.logWarning("TeamService.assertActorIsAdmin workspace lookup failed", { cause }),
       ),
-      Effect.mapError(() =>
-        teamAdminAuthError(
-          "Only owner and admin members can access team workflows.",
-          "team:workflows",
-        ),
-      ),
+      Effect.mapError(() => teamAdminAuthError(message, requiredPermission)),
     );
     if (Option.isNone(workspaceOption)) {
       return;
     }
-    const memberOption = yield* repository.getMemberForSession(sessionId).pipe(
+    const memberOption = yield* resolveMemberForActor(actor).pipe(
       Effect.tapError((cause) =>
-        Effect.logWarning("TeamService.assertCanUseWorkflows member lookup failed", { cause }),
+        Effect.logWarning("TeamService.assertActorIsAdmin member lookup failed", { cause }),
       ),
-      Effect.mapError(() =>
-        teamAdminAuthError(
-          "Only owner and admin members can access team workflows.",
-          "team:workflows",
-        ),
-      ),
+      Effect.mapError(() => teamAdminAuthError(message, requiredPermission)),
     );
     const member =
       Option.isSome(memberOption) && memberOption.value.teamId === workspaceOption.value.id
         ? memberOption.value
         : null;
     if (!isTeamAdminOrOwner(member)) {
-      return yield* teamAdminAuthError(
-        "Only owner and admin members can access team workflows.",
-        "team:workflows",
-      );
+      return yield* teamAdminAuthError(message, requiredPermission);
     }
   });
 
-  const assertCanUseScheduledTasks = Effect.fn("TeamService.assertCanUseScheduledTasks")(function* (
-    sessionId: AuthSessionId,
-  ) {
+  const assertActorCanUseWorkflows = (actor: TeamActor) =>
+    assertActorIsAdmin(
+      actor,
+      "Only owner and admin members can access team workflows.",
+      "team:workflows",
+    );
+
+  const assertCanUseWorkflows = (sessionId: AuthSessionId) =>
+    assertActorCanUseWorkflows(sessionActor(sessionId));
+
+  const assertActorCanUseScheduledTasks = (actor: TeamActor) =>
+    assertActorIsAdmin(
+      actor,
+      "Only owner and admin members can manage team scheduled tasks.",
+      "team:scheduled_tasks",
+    );
+
+  const assertCanUseScheduledTasks = (sessionId: AuthSessionId) =>
+    assertActorCanUseScheduledTasks(sessionActor(sessionId));
+
+  const assertActorCanCreateThreadInView = Effect.fn(
+    "TeamService.assertActorCanCreateThreadInView",
+  )(function* (input: {
+    readonly actor: TeamActor;
+    readonly viewId?: TeamViewId;
+    readonly locked?: boolean;
+  }) {
     const workspaceOption = yield* repository.getWorkspace().pipe(
       Effect.tapError((cause) =>
-        Effect.logWarning("TeamService.assertCanUseScheduledTasks workspace lookup failed", {
+        Effect.logWarning("TeamService.assertActorCanCreateThreadInView workspace lookup failed", {
           cause,
         }),
       ),
-      Effect.mapError(() =>
-        teamAdminAuthError(
-          "Only owner and admin members can manage team scheduled tasks.",
-          "team:scheduled_tasks",
-        ),
-      ),
+      Effect.mapError(() => teamPostAuthError()),
     );
     if (Option.isNone(workspaceOption)) {
       return;
     }
-    const memberOption = yield* repository.getMemberForSession(sessionId).pipe(
+    const team = workspaceOption.value;
+    const memberOption = yield* resolveMemberForActor(input.actor).pipe(
       Effect.tapError((cause) =>
-        Effect.logWarning("TeamService.assertCanUseScheduledTasks member lookup failed", { cause }),
+        Effect.logWarning("TeamService.assertActorCanCreateThreadInView member lookup failed", {
+          cause,
+        }),
       ),
-      Effect.mapError(() =>
-        teamAdminAuthError(
-          "Only owner and admin members can manage team scheduled tasks.",
-          "team:scheduled_tasks",
-        ),
-      ),
+      Effect.mapError(() => teamPostAuthError()),
     );
     const member =
-      Option.isSome(memberOption) && memberOption.value.teamId === workspaceOption.value.id
+      Option.isSome(memberOption) && memberOption.value.teamId === team.id
         ? memberOption.value
         : null;
-    if (!isTeamAdminOrOwner(member)) {
-      return yield* teamAdminAuthError(
-        "Only owner and admin members can manage team scheduled tasks.",
-        "team:scheduled_tasks",
+    if (!member || member.status !== "active") {
+      return yield* teamPostAuthError("This session is not bound to an active team member.");
+    }
+    if (input.locked === true && !canToggleTeamThreadLock(member.role)) {
+      return yield* teamPostAuthError("Only owner and admin members can create locked threads.");
+    }
+    const targetViewId = input.viewId ?? team.defaultViewId;
+    const viewOption = yield* repository.getViewById(targetViewId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.assertActorCanCreateThreadInView view lookup failed", {
+          targetViewId,
+          cause,
+        }),
+      ),
+      Effect.mapError(() => teamPostAuthError()),
+    );
+    const view =
+      Option.isSome(viewOption) && viewOption.value.teamId === team.id ? viewOption.value : null;
+    if (!canMemberCreateThreadInTeamView(member, view, input.locked === true)) {
+      return yield* teamPostAuthError(
+        "You do not have permission to create a thread in this view.",
       );
     }
   });
 
-  const assertCanCreateThreadInView = Effect.fn("TeamService.assertCanCreateThreadInView")(
-    function* (input: {
-      readonly sessionId: AuthSessionId;
-      readonly viewId?: TeamViewId;
-      readonly locked?: boolean;
-    }) {
-      const workspaceOption = yield* repository.getWorkspace().pipe(
-        Effect.tapError((cause) =>
-          Effect.logWarning("TeamService.assertCanCreateThreadInView workspace lookup failed", {
-            cause,
-          }),
-        ),
-        Effect.mapError(() => teamPostAuthError()),
-      );
-      if (Option.isNone(workspaceOption)) {
-        return;
-      }
-      const team = workspaceOption.value;
-      const memberOption = yield* repository.getMemberForSession(input.sessionId).pipe(
-        Effect.tapError((cause) =>
-          Effect.logWarning("TeamService.assertCanCreateThreadInView member lookup failed", {
-            cause,
-          }),
-        ),
-        Effect.mapError(() => teamPostAuthError()),
-      );
-      const member =
-        Option.isSome(memberOption) && memberOption.value.teamId === team.id
-          ? memberOption.value
-          : null;
-      if (!member || member.status !== "active") {
-        return yield* teamPostAuthError("This session is not bound to an active team member.");
-      }
-      if (input.locked === true && !canToggleTeamThreadLock(member.role)) {
-        return yield* teamPostAuthError("Only owner and admin members can create locked threads.");
-      }
-      const targetViewId = input.viewId ?? team.defaultViewId;
-      const viewOption = yield* repository.getViewById(targetViewId).pipe(
-        Effect.tapError((cause) =>
-          Effect.logWarning("TeamService.assertCanCreateThreadInView view lookup failed", {
-            targetViewId,
-            cause,
-          }),
-        ),
-        Effect.mapError(() => teamPostAuthError()),
-      );
-      const view =
-        Option.isSome(viewOption) && viewOption.value.teamId === team.id ? viewOption.value : null;
-      if (!canMemberCreateThreadInTeamView(member, view, input.locked === true)) {
-        return yield* teamPostAuthError(
-          "You do not have permission to create a thread in this view.",
-        );
-      }
-    },
-  );
+  const assertCanCreateThreadInView = (input: {
+    readonly sessionId: AuthSessionId;
+    readonly viewId?: TeamViewId;
+    readonly locked?: boolean;
+  }) =>
+    assertActorCanCreateThreadInView({
+      actor: sessionActor(input.sessionId),
+      ...(input.viewId !== undefined ? { viewId: input.viewId } : {}),
+      ...(input.locked !== undefined ? { locked: input.locked } : {}),
+    });
 
   const assertCanLaunchThread = Effect.fn("TeamService.assertCanLaunchThread")(function* (input: {
     readonly sessionId: AuthSessionId;
@@ -2111,23 +2631,26 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const assertCanDispatchCommand = Effect.fn("TeamService.assertCanDispatchCommand")(function* (
+  const assertAndNormalizeDispatchCommand = Effect.fn(
+    "TeamService.assertAndNormalizeDispatchCommand",
+  )(function* (
     sessionId: AuthSessionId,
     command: OrchestrationV2Command,
-  ) {
+  ): Effect.fn.Return<OrchestrationV2Command, EnvironmentAuthorizationError> {
     if (!(yield* isTeamConfigured())) {
-      return;
+      return command;
     }
+    const actor = sessionActor(sessionId);
     switch (command.type) {
       case "thread.create":
-        yield* assertCanCreateThreadInView({ sessionId });
-        return;
+        yield* assertActorCanCreateThreadInView({ actor });
+        return command;
       case "thread.visit":
       case "thread.mark-unread":
-        yield* assertCanReadThread(sessionId, command.threadId);
-        return;
+        yield* assertActorCanReadThread(actor, command.threadId);
+        return command;
       case "thread.delete": {
-        const ctx = yield* resolveThreadAccessContext(sessionId, command.threadId).pipe(
+        const ctx = yield* resolveThreadAccessContextForActor(actor, command.threadId).pipe(
           Effect.tapError((cause) =>
             Effect.logWarning("TeamService.assertCanDispatchCommand(thread.delete) failed", {
               threadId: command.threadId,
@@ -2138,7 +2661,7 @@ const make = Effect.gen(function* () {
             teamPostAuthError("You do not have permission to delete this thread."),
           ),
         );
-        if (ctx.kind === "personal") return;
+        if (ctx.kind === "personal") return command;
         if (ctx.kind === "wrong_team") {
           return yield* teamPostAuthError("You do not have permission to delete this thread.");
         }
@@ -2149,7 +2672,7 @@ const make = Effect.gen(function* () {
           if (!ctx.isLegacyPreTeam && !isTeamAdminOrOwner(ctx.member)) {
             return yield* teamPostAuthError("You do not have permission to delete this thread.");
           }
-          return;
+          return command;
         }
         if (!isTeamAdminOrOwner(ctx.member) && ctx.attribution.creatorMemberId !== ctx.member.id) {
           return yield* teamPostAuthError(
@@ -2161,10 +2684,13 @@ const make = Effect.gen(function* () {
             "This thread is locked. Only owners and admins can delete it.",
           );
         }
-        return;
+        return command;
       }
       case "thread.fork": {
-        const sourceCtx = yield* resolveThreadAccessContext(sessionId, command.sourceThreadId).pipe(
+        const sourceCtx = yield* resolveThreadAccessContextForActor(
+          actor,
+          command.sourceThreadId,
+        ).pipe(
           Effect.tapError((cause) =>
             Effect.logWarning("TeamService.assertCanDispatchCommand(thread.fork) failed", {
               sourceThreadId: command.sourceThreadId,
@@ -2173,32 +2699,80 @@ const make = Effect.gen(function* () {
           ),
           Effect.mapError(() => teamReadAuthError()),
         );
-        if (sourceCtx.kind === "personal") return;
-        yield* assertCanReadThread(sessionId, command.sourceThreadId);
+        if (sourceCtx.kind === "personal") return command;
+        yield* assertActorCanReadThread(actor, command.sourceThreadId);
         const inheritedViewId =
           sourceCtx.kind === "team_thread" ? sourceCtx.attribution.viewId : undefined;
-        yield* assertCanCreateThreadInView({
-          sessionId,
+        yield* assertActorCanCreateThreadInView({
+          actor,
           ...(inheritedViewId !== undefined ? { viewId: inheritedViewId } : {}),
         });
-        return;
+        return command;
       }
       case "thread.merge_back":
-        yield* assertCanReadThread(sessionId, command.sourceThreadId);
-        yield* assertCanPostInThread(sessionId, command.targetThreadId);
-        return;
+        yield* assertActorCanReadThread(actor, command.sourceThreadId);
+        yield* assertActorCanPostInThread(actor, command.targetThreadId);
+        return command;
+      case "message.dispatch": {
+        yield* assertActorCanPostInThread(actor, command.threadId);
+        if (
+          command.dispatchMode.type === "steer_active" ||
+          command.dispatchMode.type === "restart_active"
+        ) {
+          yield* assertActorCanSteerActiveTurn(actor, command.threadId);
+          return command;
+        }
+        if (command.dispatchMode.type === "start_immediately") {
+          const canSteer = yield* canActorSteerActiveTurn(actor, command.threadId);
+          if (!canSteer) {
+            const activeRun = yield* repository
+              .getActiveRunInProjection(command.threadId)
+              .pipe(Effect.orElseSucceed(() => Option.none()));
+            if (Option.isSome(activeRun)) {
+              // Non-creators never auto-steer an active turn; always queue behind it.
+              return {
+                ...command,
+                dispatchMode: { type: "queue_after_active" },
+              };
+            }
+          }
+        }
+        return command;
+      }
+      case "queued-message.promote-to-steer":
+        yield* assertActorCanPromoteQueuedRun(actor, command.threadId);
+        return command;
+      case "run.interrupt":
+        yield* assertActorCanInterruptThread(actor, command.threadId, command.runId);
+        return command;
+      case "thread.stop":
+        yield* assertActorCanInterruptThread(actor, command.threadId);
+        return command;
+      case "runtime-request.respond":
+      case "thread.user-input.dismiss":
+        yield* assertActorCanInterruptThread(actor, command.threadId);
+        return command;
+      case "queued-run.edit":
+      case "queued-run.cancel":
+      case "queued-run.reorder":
+        yield* assertActorCanPostInThread(actor, command.threadId);
+        yield* assertActorCanManageQueuedRun(actor, command.threadId, command.runId);
+        return command;
       case "delegated_task.request":
       case "delegated_task.wake-policy":
       case "delegated_task.completion-delivery.acknowledge":
       case "delegated_task.completion-delivery.dispose":
       case "thread.created.record":
-        yield* assertCanPostInThread(sessionId, command.parentThreadId);
-        return;
+        yield* assertActorCanPostInThread(actor, command.parentThreadId);
+        return command;
       default:
-        yield* assertCanPostInThread(sessionId, command.threadId);
-        return;
+        yield* assertActorCanPostInThread(actor, command.threadId);
+        return command;
     }
   });
+
+  const assertCanDispatchCommand = (sessionId: AuthSessionId, command: OrchestrationV2Command) =>
+    assertAndNormalizeDispatchCommand(sessionId, command).pipe(Effect.asVoid);
 
   const listThreadAttributions = Effect.fn("TeamService.listThreadAttributions")(function* (
     sessionId?: AuthSessionId,
@@ -2826,12 +3400,131 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const prepareThreadAttributionForMember = Effect.fn(
+    "TeamService.prepareThreadAttributionForMember",
+  )(function* (input: {
+    readonly memberId: TeamMemberId;
+    readonly threadId: ThreadId;
+    readonly viewId?: TeamViewId;
+    readonly locked?: boolean;
+  }) {
+    return yield* Effect.gen(function* () {
+      const workspaceOption = yield* repository.getWorkspace();
+      if (Option.isNone(workspaceOption)) return false;
+      const existing = yield* repository.getThreadAttribution(input.threadId);
+      if (Option.isSome(existing)) return false;
+      const memberOption = yield* repository.getMemberById(input.memberId);
+      if (
+        Option.isNone(memberOption) ||
+        memberOption.value.teamId !== workspaceOption.value.id ||
+        memberOption.value.status !== "active"
+      ) {
+        return yield* teamPostAuthError("This caller is not bound to an active team member.");
+      }
+      const locked = input.locked === true && canToggleTeamThreadLock(memberOption.value.role);
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const inserted = yield* repository.recordThreadAttribution({
+        threadId: input.threadId,
+        teamId: workspaceOption.value.id,
+        creatorMemberId: memberOption.value.id,
+        viewId: input.viewId ?? workspaceOption.value.defaultViewId,
+        locked,
+        lockedByMemberId: locked ? memberOption.value.id : null,
+        createdAt: nowIso,
+      });
+      if (Option.isNone(inserted)) {
+        return yield* teamPostAuthError("Failed to prepare team thread attribution.");
+      }
+      return true;
+    }).pipe(
+      Effect.tapError((cause) =>
+        cause._tag === "EnvironmentAuthorizationError"
+          ? Effect.void
+          : Effect.logWarning("TeamService.prepareThreadAttributionForMember failed", {
+              threadId: input.threadId,
+              memberId: input.memberId,
+              cause,
+            }),
+      ),
+      Effect.mapError((cause) =>
+        cause._tag === "EnvironmentAuthorizationError"
+          ? cause
+          : teamPostAuthError("Failed to prepare team thread attribution."),
+      ),
+    );
+  });
+
+  const recordThreadCreatedByMember = Effect.fn("TeamService.recordThreadCreatedByMember")(
+    function* (input: {
+      readonly memberId: TeamMemberId;
+      readonly threadId: ThreadId;
+      readonly viewId?: TeamViewId;
+      readonly locked?: boolean;
+    }) {
+      const workspaceOption = yield* repository.getWorkspace().pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.recordThreadCreatedByMember workspace lookup failed", {
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamWorkspace>()),
+      );
+      if (Option.isNone(workspaceOption)) return;
+      const memberOption = yield* repository.getMemberById(input.memberId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.recordThreadCreatedByMember member lookup failed", {
+            memberId: input.memberId,
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamMember>()),
+      );
+      if (
+        Option.isNone(memberOption) ||
+        memberOption.value.teamId !== workspaceOption.value.id ||
+        memberOption.value.status !== "active"
+      ) {
+        return;
+      }
+      const locked = input.locked === true && canToggleTeamThreadLock(memberOption.value.role);
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const attribution = yield* repository
+        .recordThreadAttribution({
+          threadId: input.threadId,
+          teamId: workspaceOption.value.id,
+          creatorMemberId: memberOption.value.id,
+          viewId: input.viewId ?? workspaceOption.value.defaultViewId,
+          locked,
+          lockedByMemberId: locked ? memberOption.value.id : null,
+          createdAt: nowIso,
+        })
+        .pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("TeamService.recordThreadCreatedByMember write failed", {
+              threadId: input.threadId,
+              cause,
+            }),
+          ),
+          Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()),
+        );
+      if (Option.isSome(attribution)) {
+        yield* publish({
+          version: 1,
+          type: "threadAttributed",
+          payload: attribution.value,
+        });
+        yield* publishAccessChange({ type: "threadView", threadId: input.threadId });
+      }
+    },
+  );
+
   const prepareThreadInheritedFromParent = Effect.fn(
     "TeamService.prepareThreadInheritedFromParent",
   )(function* (input: {
     readonly parentThreadId: ThreadId;
     readonly threadId: ThreadId;
     readonly creatorSessionId?: AuthSessionId;
+    readonly creatorMemberId?: TeamMemberId;
   }) {
     return yield* Effect.gen(function* () {
       const workspaceOption = yield* repository.getWorkspace();
@@ -2846,7 +3539,17 @@ const make = Effect.gen(function* () {
         creatorMemberId = parentAttribution.value.creatorMemberId;
         viewId = parentAttribution.value.viewId;
       }
-      if (input.creatorSessionId !== undefined) {
+      if (input.creatorMemberId !== undefined) {
+        const actorOption = yield* repository.getMemberById(input.creatorMemberId);
+        if (
+          Option.isNone(actorOption) ||
+          actorOption.value.teamId !== team.id ||
+          actorOption.value.status !== "active"
+        ) {
+          return yield* teamPostAuthError("This caller is not bound to an active team member.");
+        }
+        creatorMemberId = actorOption.value.id;
+      } else if (input.creatorSessionId !== undefined) {
         const actorOption = yield* repository.getMemberForSession(input.creatorSessionId);
         if (
           Option.isNone(actorOption) ||
@@ -2911,56 +3614,96 @@ const make = Effect.gen(function* () {
     yield* repository.deleteThreadAttribution(threadId).pipe(Effect.ignore);
   });
 
+  const recordTurnAuthoredByMember = Effect.fn("TeamService.recordTurnAuthoredByMember")(
+    function* (input: {
+      readonly memberId: TeamMemberId;
+      readonly threadId: ThreadId;
+      readonly turnId: string;
+    }) {
+      const workspaceOption = yield* repository.getWorkspace().pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.recordTurnAuthoredByMember workspace lookup failed", {
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamWorkspace>()),
+      );
+      if (Option.isNone(workspaceOption)) return;
+      const memberOption = yield* repository.getMemberById(input.memberId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.recordTurnAuthoredByMember member lookup failed", {
+            memberId: input.memberId,
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamMember>()),
+      );
+      if (
+        Option.isNone(memberOption) ||
+        memberOption.value.teamId !== workspaceOption.value.id ||
+        memberOption.value.status !== "active"
+      ) {
+        return;
+      }
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const inserted = yield* repository
+        .recordTurnAttribution({
+          turnId: input.turnId,
+          threadId: input.threadId,
+          authorMemberId: memberOption.value.id,
+          createdAt: nowIso,
+        })
+        .pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("TeamService.recordTurnAuthoredByMember attribution write failed", {
+              threadId: input.threadId,
+              turnId: input.turnId,
+              cause,
+            }),
+          ),
+          Effect.orElseSucceed(() => false),
+        );
+      if (inserted && !input.turnId.startsWith("msg:")) {
+        yield* publish({
+          version: 1,
+          type: "turnAttributed",
+          payload: {
+            turnId: input.turnId,
+            threadId: input.threadId,
+            authorMemberId: memberOption.value.id,
+            authorPseudo: memberOption.value.pseudo,
+            createdAt: nowIso,
+          },
+        });
+      }
+    },
+  );
+
   const recordTurnAuthored = Effect.fn("TeamService.recordTurnAuthored")(function* (input: {
     readonly sessionId: AuthSessionId;
     readonly threadId: ThreadId;
     readonly turnId: string;
   }) {
-    const workspaceOption = yield* repository.getWorkspace().pipe(
-      Effect.tapError((cause) =>
-        Effect.logWarning("TeamService.recordTurnAuthored workspace lookup failed", { cause }),
-      ),
-      Effect.orElseSucceed(() => Option.none<TeamWorkspace>()),
-    );
-    if (Option.isNone(workspaceOption)) return;
-    const memberOption = yield* repository.getMemberForSession(input.sessionId).pipe(
-      Effect.tapError((cause) =>
-        Effect.logWarning("TeamService.recordTurnAuthored member lookup failed", { cause }),
-      ),
-      Effect.orElseSucceed(() => Option.none<TeamMember>()),
-    );
-    if (Option.isNone(memberOption)) return;
-    const nowIso = DateTime.formatIso(yield* DateTime.now);
-    const inserted = yield* repository
-      .recordTurnAttribution({
-        turnId: input.turnId,
-        threadId: input.threadId,
-        authorMemberId: memberOption.value.id,
-        createdAt: nowIso,
-      })
-      .pipe(
-        Effect.tapError((cause) =>
-          Effect.logWarning("TeamService.recordTurnAuthored attribution write failed", {
-            threadId: input.threadId,
-            turnId: input.turnId,
-            cause,
-          }),
-        ),
-        Effect.orElseSucceed(() => false),
-      );
-    if (inserted && !input.turnId.startsWith("msg:")) {
-      yield* publish({
-        version: 1,
-        type: "turnAttributed",
-        payload: {
-          turnId: input.turnId,
-          threadId: input.threadId,
-          authorMemberId: memberOption.value.id,
-          authorPseudo: memberOption.value.pseudo,
-          createdAt: nowIso,
-        },
-      });
-    }
+    const memberId = yield* resolveMemberIdForSession(input.sessionId);
+    if (Option.isNone(memberId)) return;
+    yield* recordTurnAuthoredByMember({
+      memberId: memberId.value,
+      threadId: input.threadId,
+      turnId: input.turnId,
+    });
+  });
+
+  const prepareTurnAttributionForCommand = Effect.fn(
+    "TeamService.prepareTurnAttributionForCommand",
+  )(function* (sessionId: AuthSessionId, command: OrchestrationV2Command) {
+    if (command.type !== "message.dispatch") return;
+    // Record `msg:<messageId>` synchronously before enqueueCommand so EffectWorker/ProviderTurnStartService
+    // sees the exact turn author before spawning/recycling the provider session.
+    yield* recordTurnAuthored({
+      sessionId,
+      threadId: command.threadId,
+      turnId: `msg:${command.messageId}`,
+    });
   });
 
   const recordThreadInheritedFromParent = Effect.fn("TeamService.recordThreadInheritedFromParent")(
@@ -2968,6 +3711,7 @@ const make = Effect.gen(function* () {
       readonly parentThreadId: ThreadId;
       readonly threadId: ThreadId;
       readonly turnId?: string;
+      readonly creatorMemberId?: TeamMemberId;
     }) {
       const workspaceOption = yield* repository.getWorkspace().pipe(
         Effect.tapError((cause) =>
@@ -3016,6 +3760,20 @@ const make = Effect.gen(function* () {
         inheritedCreatorMemberId = activeOwner.id;
         inheritedCreatorPseudo = activeOwner.pseudo;
         inheritedViewId = workspaceOption.value.defaultViewId;
+      }
+      if (input.creatorMemberId !== undefined) {
+        const explicitMember = yield* repository
+          .getMemberById(input.creatorMemberId)
+          .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>()));
+        if (
+          Option.isNone(explicitMember) ||
+          explicitMember.value.teamId !== workspaceOption.value.id ||
+          explicitMember.value.status !== "active"
+        ) {
+          return;
+        }
+        inheritedCreatorMemberId = explicitMember.value.id;
+        inheritedCreatorPseudo = explicitMember.value.pseudo;
       }
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       const attribution = yield* repository
@@ -3107,6 +3865,9 @@ const make = Effect.gen(function* () {
     assertCanPostInThread,
     assertCanLaunchThread,
     assertCanDispatchCommand,
+    assertAndNormalizeDispatchCommand,
+    assertCanInterruptThread,
+    assertCanPromoteQueuedRun,
     assertCanCreateGuestShare,
     assertCanUseWorkflows,
     assertCanUseScheduledTasks,
@@ -3124,7 +3885,31 @@ const make = Effect.gen(function* () {
     prepareThreadInheritedFromParent,
     rollbackPreparedThreadAttribution,
     recordTurnAuthored,
+    recordTurnAuthoredByMember,
+    prepareTurnAttributionForCommand,
+    prepareThreadAttributionForMember,
+    recordThreadCreatedByMember,
     recordThreadInheritedFromParent,
+    getThreadAttribution,
+    resolveMemberIdForSession,
+    resolveTurnAuthorMemberId,
+    assertActorIsActiveMember,
+    canActorReadThread,
+    assertActorCanReadThread,
+    filterReadableThreadIdsForActor,
+    canActorPostInThread,
+    assertActorCanPostInThread,
+    assertActorCanCreateThreadInView,
+    canActorSteerActiveTurn,
+    assertActorCanSteerActiveTurn,
+    assertActorCanPromoteQueuedRun,
+    assertActorCanInterruptThread,
+    assertActorCanManageQueuedRun,
+    assertActorCanUseWorkflows,
+    assertActorCanUseScheduledTasks,
+    assertActorIsAdmin,
+    registerTurnInterruptHook,
+    notifyTurnInterrupted,
   });
 });
 

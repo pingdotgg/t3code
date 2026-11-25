@@ -128,8 +128,10 @@ import { ensureWorktreeLayoutApproved } from "../../worktreeLayoutApproval";
 import {
   clearTeamDraftAccessOptions,
   readTeamDraftAccessOptions,
+  readTeamEnvironmentStateFromRegistry,
   readTeamThreadPostPermission,
 } from "../../state/team";
+import { canCurrentMemberSteerActiveTurn } from "@t3tools/client-runtime/team";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -1013,6 +1015,16 @@ export function useComposerSend(input: ComposerSendInput) {
       environmentContexts: composerEnvironmentContextsSnapshot,
       messageText: messageTextForSend,
     } = sendSnapshot;
+    const canSteerTeamActiveTurn =
+      !isServerThread ||
+      canCurrentMemberSteerActiveTurn({
+        teamState: readTeamEnvironmentStateFromRegistry(appAtomRegistry, environmentId),
+        threadId: threadIdForSend,
+      });
+    const effectiveDispatchMode =
+      !canSteerTeamActiveTurn && (phase === "running" || phase === "connecting")
+        ? "queue"
+        : dispatchMode;
     const {
       missingWorktreeBaseBranch,
       baseBranchForWorktree,
@@ -1033,7 +1045,7 @@ export function useComposerSend(input: ComposerSendInput) {
       resumeCompactionTokens,
       keepFullHistory,
       phase,
-      dispatchMode,
+      dispatchMode: effectiveDispatchMode,
       freshContext: freshArm !== undefined,
     });
     if (missingWorktreeBaseBranch) {
@@ -1261,17 +1273,18 @@ export function useComposerSend(input: ComposerSendInput) {
         return;
       }
     }
-    // A message sent while approvals are pending redirects the agent. They are declined only
-    // here, after everything above has accepted the send, so local commands and rejected
-    // drafts leave them alone. After navigating away during an upload, the shown approvals
-    // are another thread's, so this send leaves them alone too.
+    // Decline pending approvals only after send acceptance, only while still on the same thread,
+    // and never when a team non-creator queues behind a colleague's active turn.
+    const effectiveApprovalFeedbackTarget = canSteerTeamActiveTurn
+      ? approvalFeedbackTarget
+      : undefined;
     const approvalsToDecline =
-      currentRouteThreadKeyRef.current === routeThreadKey
+      canSteerTeamActiveTurn && currentRouteThreadKeyRef.current === routeThreadKey
         ? pendingApprovalsRef.current.filter((approval) =>
             sendCtx?.shownPendingApprovalIds.includes(approval.requestId),
           )
         : [];
-    if (approvalsToDecline.length > 0 || approvalFeedbackTarget !== undefined) {
+    if (approvalsToDecline.length > 0 || effectiveApprovalFeedbackTarget !== undefined) {
       // A draft edited since send, or a paste still landing in it, is no longer the message
       // the user sent.
       const attachmentIdsAtSend = composerAttachmentsSnapshot.map((attachment) => attachment.id);
@@ -1315,7 +1328,7 @@ export function useComposerSend(input: ComposerSendInput) {
       const approvalResponding = approvalsToDecline.some((approval) =>
         respondingRequestIdsRef.current.includes(approval.requestId),
       );
-      if (approvalFeedbackTarget !== undefined) {
+      if (effectiveApprovalFeedbackTarget !== undefined) {
         if (composerAttachmentsSnapshot.length > 0 || outgoingMessageContext !== undefined) {
           setThreadError(
             threadIdForSend,
@@ -1333,7 +1346,7 @@ export function useComposerSend(input: ComposerSendInput) {
           return;
         }
         const sent = await sendApprovalFeedback(
-          approvalFeedbackTarget,
+          effectiveApprovalFeedbackTarget,
           messageTextForSend,
           onRespondToApprovalStable,
         ).catch(() => false);

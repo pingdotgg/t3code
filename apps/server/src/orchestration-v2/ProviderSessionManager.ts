@@ -17,6 +17,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   type RunId,
+  type TeamMemberId,
   ThreadId,
   type OrchestrationV2TurnItem,
   type ProviderThreadId,
@@ -57,6 +58,11 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import {
+  isTeamHubOnlyServer,
+  TEAM_HUB_ONLY_AGENT_ERROR_MESSAGE,
+  TeamHubOnlyExecutionRefusedError,
+} from "../team/hubOnly.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import {
@@ -252,6 +258,8 @@ export interface ProviderSessionManagerV2Shape {
     readonly resumeFromSession?: OrchestrationV2ProviderSession;
     readonly initialNativeThreadId?: string;
     readonly initialProviderItemIdentityVersion?: 2;
+    /** Team member whose turn is opening this session; author changes recycle warm sessions and rotate MCP tokens. */
+    readonly actingMemberId?: TeamMemberId | null;
   }) => Effect.Effect<
     ProviderAdapter.ProviderAdapterV2SessionRuntime,
     ProviderSessionManagerV2Error
@@ -332,6 +340,8 @@ interface LiveSessionEntry {
   readonly linkedEnvironmentsByThread: ReadonlyMap<ThreadId, boolean | null>;
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
+  /** Tracks which team member's MCP token is bound to each attached thread so author switches recycle warm sessions. */
+  readonly actingMemberIdByThread: ReadonlyMap<ThreadId, TeamMemberId | null>;
   readonly supportsMultipleProviderThreads: boolean;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
@@ -477,6 +487,7 @@ export const layerWithOptions = (
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+      const teamHubOnly = yield* isTeamHubOnlyServer;
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
@@ -615,6 +626,7 @@ export const layerWithOptions = (
       const prepareMcpSession = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
+        actingMemberId?: TeamMemberId | null,
       ): Effect.Effect<PreparedMcpCredential> =>
         options.configureMcp === false
           ? mcpSessions
@@ -668,7 +680,9 @@ export const layerWithOptions = (
                     (Option.isNone(backgroundWait) ||
                       resolved.capabilities.has("background-wait") === backgroundWait.value) &&
                     // A credential issued while the lineage read failed is replaced once it works.
-                    (resolved.thread.subagent === true) === subagent
+                    (resolved.thread.subagent === true) === subagent &&
+                    // Rotate MCP credentials whenever the acting team member changes between turns.
+                    (resolved.thread.actingMemberId ?? null) === (actingMemberId ?? null)
                   ) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
@@ -681,6 +695,9 @@ export const layerWithOptions = (
                   browserToolsAvailable,
                   capabilities,
                   subagent,
+                  ...(actingMemberId !== undefined && actingMemberId !== null
+                    ? { actingMemberId }
+                    : {}),
                 });
                 yield* mcpSessions.set({
                   ...credential.config,
@@ -1840,12 +1857,15 @@ export const layerWithOptions = (
           loadedProviderThreadKeyByThread.delete(input.threadId);
           const linkedEnvironmentsByThread = new Map(entry.linkedEnvironmentsByThread);
           linkedEnvironmentsByThread.delete(input.threadId);
+          const actingMemberIdByThread = new Map(entry.actingMemberIdByThread);
+          actingMemberIdByThread.delete(input.threadId);
           const updated = new Map(current);
           updated.set(key, {
             ...entry,
             attachedThreadIds,
             loadedProviderThreadKeyByThread,
             linkedEnvironmentsByThread,
+            actingMemberIdByThread,
           });
           return updated;
         });
@@ -1925,6 +1945,7 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
         readonly providerInstanceId: ProviderInstanceId;
+        readonly actingMemberId?: TeamMemberId | null;
       }) =>
         Effect.suspend(() => {
           let attachedTo: ProviderAdapter.ProviderAdapterV2SessionRuntime | undefined;
@@ -1944,7 +1965,11 @@ export const layerWithOptions = (
               Effect.uninterruptible,
             );
             if (attached !== undefined) {
-              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+              const prepared = yield* prepareMcpSession(
+                input.threadId,
+                input.providerInstanceId,
+                input.actingMemberId,
+              );
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
@@ -1954,8 +1979,25 @@ export const layerWithOptions = (
                   if (entry === undefined) return current;
                   const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
                   mcpCredentialIdByThread.set(input.threadId, mcpCredentialId);
+                  const actingMemberIdByThread = new Map(entry.actingMemberIdByThread);
+                  actingMemberIdByThread.set(input.threadId, input.actingMemberId ?? null);
                   const updated = new Map(current);
-                  updated.set(key, { ...entry, mcpCredentialIdByThread });
+                  updated.set(key, {
+                    ...entry,
+                    mcpCredentialIdByThread,
+                    actingMemberIdByThread,
+                  });
+                  return updated;
+                });
+              } else {
+                yield* Ref.update(sessions, (current) => {
+                  const key = sessionKey(input.providerSessionId);
+                  const entry = current.get(key);
+                  if (entry === undefined) return current;
+                  const actingMemberIdByThread = new Map(entry.actingMemberIdByThread);
+                  actingMemberIdByThread.set(input.threadId, input.actingMemberId ?? null);
+                  const updated = new Map(current);
+                  updated.set(key, { ...entry, actingMemberIdByThread });
                   return updated;
                 });
               }
@@ -3241,6 +3283,16 @@ export const layerWithOptions = (
           sessionOpen.withLock(
             input.providerSessionId,
             Effect.gen(function* () {
+              if (teamHubOnly) {
+                return yield* new ProviderSessionOpenError({
+                  instanceId: input.modelSelection.instanceId,
+                  providerSessionId: input.providerSessionId,
+                  cause: new TeamHubOnlyExecutionRefusedError({
+                    operation: "agent",
+                    message: TEAM_HUB_ONLY_AGENT_ERROR_MESSAGE,
+                  }),
+                });
+              }
               const cwd = input.runtimePolicy.cwd;
               if (cwd !== null) {
                 const workspaceIsDirectory = yield* fileSystem.stat(cwd).pipe(
@@ -3257,6 +3309,37 @@ export const layerWithOptions = (
               const key = sessionKey(input.providerSessionId);
               const live = (yield* Ref.get(sessions)).get(key);
               if (live !== undefined) yield* releaseForLinkedEnvironments(live);
+              // Recycle warm provider sessions whenever the acting team member changes between turns
+              // so the child process restarts with a rotated MCP token bound to the new author.
+              const liveAfterLinks = (yield* Ref.get(sessions)).get(key);
+              if (liveAfterLinks !== undefined && input.actingMemberId !== undefined) {
+                const previousAuthor = liveAfterLinks.actingMemberIdByThread.get(input.threadId);
+                const nextAuthor = input.actingMemberId ?? null;
+                if (previousAuthor !== undefined && previousAuthor !== nextAuthor) {
+                  if (
+                    !liveAfterLinks.supportsMultipleProviderThreads ||
+                    (liveAfterLinks.busyTurns.size === 0 &&
+                      liveAfterLinks.attachedThreadIds.size <= 1)
+                  ) {
+                    yield* releaseEntry({
+                      providerSessionId: input.providerSessionId,
+                      reason: "manual_shutdown",
+                      detail:
+                        "Turn author changed; recycling warm provider session with rotated MCP token.",
+                    }).pipe(logReleaseFailure(input.providerSessionId));
+                  } else {
+                    const previousCredentialId = liveAfterLinks.mcpCredentialIdByThread.get(
+                      input.threadId,
+                    );
+                    yield* removeThreadAttachment({
+                      providerSessionId: input.providerSessionId,
+                      threadId: input.threadId,
+                      runtime: liveAfterLinks.runtime,
+                    });
+                    yield* clearMcpSession(input.threadId, previousCredentialId);
+                  }
+                }
+              }
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
@@ -3272,6 +3355,9 @@ export const layerWithOptions = (
                   providerSessionId: input.providerSessionId,
                   threadId: input.threadId,
                   providerInstanceId: existing.runtime.instanceId,
+                  ...(input.actingMemberId === undefined
+                    ? {}
+                    : { actingMemberId: input.actingMemberId }),
                 });
                 yield* touchActivity(input.providerSessionId);
                 return existing.exposedRuntime;
@@ -3291,6 +3377,7 @@ export const layerWithOptions = (
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.modelSelection.instanceId,
+                input.actingMemberId,
               );
               const mcpCredentialId = prepared.mcpCredentialId;
               let reservationDropped = mcpCredentialId === undefined;
@@ -3372,6 +3459,7 @@ export const layerWithOptions = (
                   mcpCredentialId === undefined
                     ? new Map()
                     : new Map([[input.threadId, mcpCredentialId]]),
+                actingMemberIdByThread: new Map([[input.threadId, input.actingMemberId ?? null]]),
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,

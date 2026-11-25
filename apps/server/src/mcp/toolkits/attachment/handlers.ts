@@ -11,6 +11,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Upload from "../../../assets/AttachmentUpload.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
+import * as TeamMcpAccess from "../../../team/mcpAccess.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { isThreadManagementError, threadManagementFailure } from "../../OrchestratorMcpService.ts";
 import { dispatchFailure, newCommandId, readThread, unavailable } from "../../threadAccess.ts";
@@ -89,7 +90,8 @@ export const layer = McpToolAccess.toLayer(
         (input) => [input.threadId],
         (input) =>
           Effect.gen(function* () {
-            const { caller, projection } = yield* readThread(input.threadId, ["messages"]);
+            const { caller, threads, projection } = yield* readThread(input.threadId, ["messages"]);
+            yield* TeamMcpAccess.assertCanPostInThread(projection.thread.id);
             if (projection.thread.archivedAt !== null)
               return yield* new OrchestratorMcpFailure({
                 code: "invalid_request",
@@ -101,6 +103,17 @@ export const layer = McpToolAccess.toLayer(
             );
             const commandId = yield* newCommandId();
             const messageId = MessageId.make(commandId);
+            const canSteer = yield* TeamMcpAccess.canSteerActiveTurn(projection.thread.id);
+            const targetShell = canSteer
+              ? null
+              : yield* threads
+                  .getThreadShell(projection.thread.id)
+                  .pipe(Effect.orElseSucceed(() => null));
+            const mode = !canSteer && targetShell?.activeRunId != null ? "queue" : "auto";
+            yield* TeamMcpAccess.recordTurnAuthoredByCaller({
+              threadId: projection.thread.id,
+              turnId: `msg:${messageId}`,
+            });
             const result = yield* ThreadMessageIntake.sendToThread({
               projectId: projection.thread.projectId,
               threadId: projection.thread.id,
@@ -109,7 +122,7 @@ export const layer = McpToolAccess.toLayer(
               ...(caller === undefined ? {} : { senderThreadId: caller.id }),
               text: input.message ?? "",
               attachments,
-              mode: "auto",
+              mode,
               createdBy: "agent",
               creationSource: "mcp",
             }).pipe(
@@ -124,6 +137,10 @@ export const layer = McpToolAccess.toLayer(
                     : dispatchFailure(error),
               ),
             );
+            yield* TeamMcpAccess.recordTurnAuthoredByCaller({
+              threadId: projection.thread.id,
+              turnId: result.run.id,
+            });
             return {
               threadId: projection.thread.id,
               messageId,

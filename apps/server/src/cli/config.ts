@@ -93,6 +93,12 @@ const lanFlag = Flag.Boolean("lan").pipe(
   ),
   Flag.optional,
 );
+const teamHubOnlyFlag = Flag.Boolean("team-hub-only").pipe(
+  Flag.withDescription(
+    "Run strictly as the Team Control Plane without spawning local coding agents or shell terminals (equivalent to T3CODE_TEAM_HUB_ONLY).",
+  ),
+  Flag.optional,
+);
 
 export const traceFileConfig = Config.String("T3CODE_TRACE_FILE").pipe(
   Config.option,
@@ -174,6 +180,10 @@ const EnvServerConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   lan: Config.Boolean("T3CODE_LAN").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  teamHubOnly: Config.Boolean("T3CODE_TEAM_HUB_ONLY").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -210,6 +220,7 @@ export interface CliServerFlags {
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
   readonly lan: Option.Option<boolean>;
+  readonly teamHubOnly: Option.Option<boolean>;
 }
 
 export interface CliAuthLocationFlags {
@@ -245,6 +256,7 @@ export const sharedServerCommandFlags = {
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
   lan: lanFlag,
+  teamHubOnly: teamHubOnlyFlag,
 } as const;
 
 const resolveOptionPrecedence = <Value>(
@@ -294,6 +306,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
     tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
     lan: flags.lan ?? Option.none(),
+    teamHubOnly: flags.teamHubOnly ?? Option.none(),
   } satisfies CliServerFlags;
   const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
   const bootstrapEnvelope =
@@ -538,6 +551,12 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     logWebSocketEvents,
     tailscaleServeEnabled,
     tailscaleServePort,
+    ...(Option.getOrElse(
+      resolveOptionPrecedence(flags.teamHubOnly, Option.fromUndefinedOr(env.teamHubOnly)),
+      () => false,
+    )
+      ? { teamHubOnly: true }
+      : {}),
   };
 
   return config;
@@ -563,6 +582,7 @@ export const resolveCliAuthConfig = (
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
       lan: Option.none(),
+      teamHubOnly: Option.none(),
     },
     cliLogLevel,
   );

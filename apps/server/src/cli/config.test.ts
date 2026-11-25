@@ -54,6 +54,7 @@ const minimalDesktopFlags = (baseDir: string) => ({
   tailscaleServeEnabled: Option.none<boolean>(),
   tailscaleServePort: Option.none<number>(),
   lan: Option.none<boolean>(),
+  teamHubOnly: Option.none<boolean>(),
 });
 
 const encodeDesktopBootstrap = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
@@ -346,6 +347,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
         lan: Option.none<boolean>(),
+        teamHubOnly: Option.none<boolean>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({
@@ -391,6 +393,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
         lan: Option.none<boolean>(),
+        teamHubOnly: Option.none<boolean>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({ env: { T3CODE_DEV_AUTH_TOKEN: secret } }),
@@ -447,6 +450,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          teamHubOnly: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -524,6 +528,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          teamHubOnly: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -672,6 +677,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          teamHubOnly: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -721,6 +727,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          teamHubOnly: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -762,6 +769,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          teamHubOnly: Option.none(),
         },
         Option.none(),
         {
@@ -825,6 +833,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          teamHubOnly: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -865,6 +874,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     tailscaleServeEnabled: Option.none<boolean>(),
     tailscaleServePort: Option.none<number>(),
     lan: Option.none<boolean>(),
+    teamHubOnly: Option.none<boolean>(),
   });
 
   it.effect("uses the automatic port selector only when no port is configured", () =>
@@ -1084,6 +1094,38 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         host: undefined,
         privateNetworkOnly: undefined,
       });
+    }),
+  );
+
+  it.effect("resolves --team-hub-only from CLI flag and T3CODE_TEAM_HUB_ONLY env", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-team-hub-only");
+      const resolveHubOnly = (input: {
+        readonly flag: Option.Option<boolean>;
+        readonly env?: Record<string, string>;
+      }) =>
+        resolveServerConfig(
+          { ...minimalWebFlags(baseDir), teamHubOnly: input.flag },
+          Option.none(),
+        ).pipe(
+          Effect.map((config) => config.teamHubOnly),
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: input.env ?? {} })),
+              NetService.layer,
+            ),
+          ),
+        );
+
+      expect(yield* resolveHubOnly({ flag: Option.none() })).toBeUndefined();
+      expect(yield* resolveHubOnly({ flag: Option.some(true) })).toBe(true);
+      expect(
+        yield* resolveHubOnly({ flag: Option.none(), env: { T3CODE_TEAM_HUB_ONLY: "true" } }),
+      ).toBe(true);
+      expect(
+        yield* resolveHubOnly({ flag: Option.some(false), env: { T3CODE_TEAM_HUB_ONLY: "true" } }),
+      ).toBeUndefined();
     }),
   );
 });

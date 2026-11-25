@@ -3,6 +3,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
 import * as Workflows from "../../../workflows/Workflows.ts";
+import * as TeamMcpAccess from "../../../team/mcpAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { WORKFLOW_READ_ACTIONS, WorkflowToolkit } from "./tools.ts";
@@ -22,6 +23,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
     (input) => isRead(input.action),
     McpToolAccess.reads((input) =>
       Effect.gen(function* () {
+        yield* TeamMcpAccess.assertCanUseWorkflows();
         const workflows = yield* Workflows.Workflows;
         if (input.action === "questions") {
           const questions = yield* workflows.questions.pipe(Effect.mapError(refused));
@@ -53,6 +55,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
     ),
     McpToolAccess.writesOwnerWork("start or change workflow runs, or read hook paths", (input) =>
       Effect.gen(function* () {
+        yield* TeamMcpAccess.assertCanUseWorkflows();
         const workflows = yield* Workflows.Workflows;
         // A hook's path holds its secret, and posting to it starts a run.
         if (input.action === "hooks") {

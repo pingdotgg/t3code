@@ -215,7 +215,7 @@ import {
   formatTeamThreadPostBlockReason,
   teamReadOnlyComposerBannerItem,
 } from "./team/teamComposerBanner";
-import { useTeamThreadPostPermission } from "../state/team";
+import { useTeamThreadPostPermission, useTeamThreadTurnControls } from "../state/team";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -1594,11 +1594,31 @@ export default function ChatView(props: ChatViewProps) {
   const isCompacting =
     (isSendBusy || phase === "connecting" || phase === "running") &&
     (compactionRunning || compactCommandIsActive);
-  const canSteer = threadCanSteer(serverProjection, {
-    compactCommandIsActive,
-    compactionRunning,
-    activeRunId: activeRuntime?.activeRunId,
+  const activeRunningTurn =
+    (activeRuntime?.activeRunId != null
+      ? serverProjection?.runs.find((run) => run.id === activeRuntime.activeRunId)
+      : undefined) ??
+    serverProjection?.runs.findLast(
+      (run) =>
+        run.status === "preparing" ||
+        run.status === "starting" ||
+        run.status === "running" ||
+        run.status === "waiting",
+    ) ??
+    null;
+  const teamThreadTurnControls = useTeamThreadTurnControls({
+    environmentId,
+    threadId,
+    activeRunId: activeRunningTurn?.id ?? activeRuntime?.activeRunId ?? null,
+    activeUserMessageId: activeRunningTurn?.userMessageId ?? null,
   });
+  const canSteer =
+    threadCanSteer(serverProjection, {
+      compactCommandIsActive,
+      compactionRunning,
+      activeRunId: activeRuntime?.activeRunId,
+    }) &&
+    (routeKind !== "server" || teamThreadTurnControls.canSteerActiveTurn);
   const isWorking = deriveTimelineWorking({
     phase,
     isSendBusy,
@@ -1993,8 +2013,13 @@ export default function ChatView(props: ChatViewProps) {
   const { focusComposer: focusComposerStable, scheduleComposerFocus: scheduleComposerFocusStable } =
     useComposerFocus(composerRef);
   const canInterruptRunningThread =
-    effectiveCanOperateThread &&
+    canOperateThread &&
+    (routeKind !== "server" || teamThreadTurnControls.canInterrupt) &&
     deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
+  const isExplicitAdminInterrupt =
+    routeKind === "server" &&
+    canInterruptRunningThread &&
+    teamThreadTurnControls.isExplicitAdminInterrupt;
   const onInterrupt = async () => {
     if (
       !activeThread ||
@@ -3903,6 +3928,7 @@ export default function ChatView(props: ChatViewProps) {
                                 phase={phase}
                                 canSteer={canSteer}
                                 canInterrupt={canInterruptRunningThread}
+                                isExplicitAdminInterrupt={isExplicitAdminInterrupt}
                                 isSendBusy={
                                   (isSendBusy && !sendQueuesBehindSetup) ||
                                   (setupQueueSendThreadKey !== null &&

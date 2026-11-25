@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as TeamMcpAccess from "../team/mcpAccess.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { threadNotFound } from "./threadAccess.ts";
 
@@ -131,6 +132,7 @@ const make = Effect.gen(function* () {
         "Pass threadId: this MCP client is not running inside a T3 thread.",
       );
     }
+    yield* TeamMcpAccess.assertCanPostInThread(threadId);
     const shell = yield* threadManagement
       .getThreadShell(threadId)
       .pipe(

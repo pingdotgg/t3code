@@ -1,0 +1,303 @@
+import {
+  AuthSessionId,
+  OrchestratorMcpFailure,
+  type EnvironmentAuthorizationError,
+  type TeamMemberId,
+  type TeamViewId,
+  type ThreadId,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as TeamService from "./TeamService.ts";
+
+export interface ResolvedTeamMcpCaller {
+  readonly teamService: TeamService.TeamService["Service"];
+  readonly actor: TeamService.TeamActor;
+  readonly memberId: TeamMemberId;
+  readonly callerThreadId: ThreadId | undefined;
+}
+
+const toMcpForbidden = (error: EnvironmentAuthorizationError) =>
+  new OrchestratorMcpFailure({
+    code: "capability_denied",
+    message: error.message,
+  });
+
+const forbiddenFailure = (message: string) =>
+  new OrchestratorMcpFailure({
+    code: "capability_denied",
+    message,
+  });
+
+/**
+ * Resolves the team member bound to the current MCP invocation when the server has an active team.
+ * Returns `Option.none()` in personal mode (or when `TeamService` is not mounted).
+ * Fails closed with `OrchestratorMcpFailure(forbidden)` whenever a team is configured and the caller
+ * is not bound to an active team member.
+ */
+const resolveTeamMcpCaller = Effect.fn("TeamMcpAccess.resolveTeamMcpCaller")(function* () {
+  const teamOption = yield* Effect.serviceOption(TeamService.TeamService);
+  if (Option.isNone(teamOption)) {
+    return Option.none<ResolvedTeamMcpCaller>();
+  }
+  const teamService = teamOption.value;
+  if (!(yield* teamService.isTeamConfigured())) {
+    return Option.none<ResolvedTeamMcpCaller>();
+  }
+  const scopeOption = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
+  if (Option.isNone(scopeOption)) {
+    return yield* forbiddenFailure("Missing MCP invocation context for team authorization.");
+  }
+  const scope = scopeOption.value;
+  if (scope.thread !== undefined && scope.thread !== null) {
+    let memberId = scope.thread.actingMemberId;
+    if (memberId === undefined) {
+      const resolved = yield* teamService.resolveTurnAuthorMemberId({
+        threadId: scope.thread.threadId,
+      });
+      if (Option.isSome(resolved)) {
+        memberId = resolved.value;
+      }
+    }
+    if (memberId === undefined) {
+      return yield* forbiddenFailure("This agent MCP token is not bound to an active team member.");
+    }
+    const actor: TeamService.TeamActor = { kind: "member", memberId };
+    yield* teamService.assertActorIsActiveMember(actor).pipe(Effect.mapError(toMcpForbidden));
+    return Option.some<ResolvedTeamMcpCaller>({
+      teamService,
+      actor,
+      memberId,
+      callerThreadId: scope.thread.threadId,
+    });
+  }
+  if (scope.client !== undefined) {
+    const memberId = yield* teamService.resolveMemberIdForSession(
+      AuthSessionId.make(scope.client.sessionId),
+    );
+    if (Option.isNone(memberId)) {
+      return yield* forbiddenFailure(
+        "This MCP client session is not bound to an active team member.",
+      );
+    }
+    const actor: TeamService.TeamActor = { kind: "member", memberId: memberId.value };
+    yield* teamService.assertActorIsActiveMember(actor).pipe(Effect.mapError(toMcpForbidden));
+    return Option.some<ResolvedTeamMcpCaller>({
+      teamService,
+      actor,
+      memberId: memberId.value,
+      callerThreadId: undefined,
+    });
+  }
+  return yield* forbiddenFailure("This MCP caller is not bound to an active team member.");
+});
+
+export const assertActiveMemberIfTeamConfigured = resolveTeamMcpCaller().pipe(Effect.asVoid);
+
+export const assertCanAccessCallerThread = Effect.fn("TeamMcpAccess.assertCanAccessCallerThread")(
+  function* (mode: "read" | "write") {
+    const caller = yield* resolveTeamMcpCaller();
+    if (Option.isNone(caller) || caller.value.callerThreadId === undefined) return;
+    const { teamService, actor, callerThreadId } = caller.value;
+    if (mode === "read") {
+      yield* teamService
+        .assertActorCanReadThread(actor, callerThreadId)
+        .pipe(Effect.mapError(toMcpForbidden));
+    } else {
+      yield* teamService
+        .assertActorCanPostInThread(actor, callerThreadId)
+        .pipe(Effect.mapError(toMcpForbidden));
+    }
+  },
+);
+
+export const assertCanReadThread = Effect.fn("TeamMcpAccess.assertCanReadThread")(function* (
+  threadId: ThreadId,
+) {
+  const caller = yield* resolveTeamMcpCaller();
+  if (Option.isNone(caller)) return;
+  yield* caller.value.teamService
+    .assertActorCanReadThread(caller.value.actor, threadId)
+    .pipe(Effect.mapError(toMcpForbidden));
+});
+
+export const filterReadableThreadIds = Effect.fn("TeamMcpAccess.filterReadableThreadIds")(
+  function* (threadIds: ReadonlyArray<ThreadId>) {
+    const caller = yield* resolveTeamMcpCaller();
+    if (Option.isNone(caller)) {
+      return new Set<ThreadId>(threadIds) as ReadonlySet<ThreadId>;
+    }
+    return yield* caller.value.teamService.filterReadableThreadIdsForActor(
+      caller.value.actor,
+      threadIds,
+    );
+  },
+);
+
+export const assertCanPostInThread = Effect.fn("TeamMcpAccess.assertCanPostInThread")(function* (
+  threadId: ThreadId,
+) {
+  const caller = yield* resolveTeamMcpCaller();
+  if (Option.isNone(caller)) return;
+  yield* caller.value.teamService
+    .assertActorCanPostInThread(caller.value.actor, threadId)
+    .pipe(Effect.mapError(toMcpForbidden));
+});
+
+export const canSteerActiveTurn = Effect.fn("TeamMcpAccess.canSteerActiveTurn")(function* (
+  threadId: ThreadId,
+) {
+  const caller = yield* resolveTeamMcpCaller();
+  if (Option.isNone(caller)) return true;
+  return yield* caller.value.teamService.canActorSteerActiveTurn(caller.value.actor, threadId);
+});
+
+export const assertCanSteerActiveTurn = Effect.fn("TeamMcpAccess.assertCanSteerActiveTurn")(
+  function* (threadId: ThreadId) {
+    const caller = yield* resolveTeamMcpCaller();
+    if (Option.isNone(caller)) return;
+    yield* caller.value.teamService
+      .assertActorCanSteerActiveTurn(caller.value.actor, threadId)
+      .pipe(Effect.mapError(toMcpForbidden));
+  },
+);
+
+export const assertCanPromoteQueuedRun = Effect.fn("TeamMcpAccess.assertCanPromoteQueuedRun")(
+  function* (threadId: ThreadId) {
+    const caller = yield* resolveTeamMcpCaller();
+    if (Option.isNone(caller)) return;
+    yield* caller.value.teamService
+      .assertActorCanPromoteQueuedRun(caller.value.actor, threadId)
+      .pipe(Effect.mapError(toMcpForbidden));
+  },
+);
+
+export const assertCanInterruptThread = Effect.fn("TeamMcpAccess.assertCanInterruptThread")(
+  function* (threadId: ThreadId, runId?: string | null) {
+    const caller = yield* resolveTeamMcpCaller();
+    if (Option.isNone(caller)) return;
+    yield* caller.value.teamService
+      .assertActorCanInterruptThread(caller.value.actor, threadId, runId)
+      .pipe(Effect.mapError(toMcpForbidden));
+  },
+);
+
+export const assertCanManageQueuedRun = Effect.fn("TeamMcpAccess.assertCanManageQueuedRun")(
+  function* (threadId: ThreadId, runId: string) {
+    const caller = yield* resolveTeamMcpCaller();
+    if (Option.isNone(caller)) return;
+    yield* caller.value.teamService
+      .assertActorCanManageQueuedRun(caller.value.actor, threadId, runId)
+      .pipe(Effect.mapError(toMcpForbidden));
+  },
+);
+
+export const assertCanUseWorkflows = Effect.fn("TeamMcpAccess.assertCanUseWorkflows")(function* () {
+  const caller = yield* resolveTeamMcpCaller();
+  if (Option.isNone(caller)) return;
+  yield* caller.value.teamService
+    .assertActorCanUseWorkflows(caller.value.actor)
+    .pipe(Effect.mapError(toMcpForbidden));
+});
+
+export const assertCanUseScheduledTasks = Effect.fn("TeamMcpAccess.assertCanUseScheduledTasks")(
+  function* () {
+    const caller = yield* resolveTeamMcpCaller();
+    if (Option.isNone(caller)) return;
+    yield* caller.value.teamService
+      .assertActorCanUseScheduledTasks(caller.value.actor)
+      .pipe(Effect.mapError(toMcpForbidden));
+  },
+);
+
+export const assertIsAdmin = Effect.fn("TeamMcpAccess.assertIsAdmin")(function* (
+  message?: string,
+  requiredPermission?: string,
+) {
+  const caller = yield* resolveTeamMcpCaller();
+  if (Option.isNone(caller)) return;
+  yield* caller.value.teamService
+    .assertActorIsAdmin(caller.value.actor, message, requiredPermission)
+    .pipe(Effect.mapError(toMcpForbidden));
+});
+
+/**
+ * Authorizes creating a child/spawned thread via MCP and computes the narrowest View
+ * (`sourceThreadId` or calling thread's View when present; default View otherwise) so an agent
+ * can never widen visibility by spawning a thread.
+ */
+export const authorizeChildThreadCreation = Effect.fn("TeamMcpAccess.authorizeChildThreadCreation")(
+  function* (input?: {
+    readonly sourceThreadId?: ThreadId;
+    readonly viewId?: TeamViewId;
+    readonly locked?: boolean;
+  }) {
+    const caller = yield* resolveTeamMcpCaller();
+    if (Option.isNone(caller)) {
+      return Option.none<{
+        readonly teamService: TeamService.TeamService["Service"];
+        readonly memberId: TeamMemberId;
+        readonly inheritedViewId: TeamViewId | undefined;
+      }>();
+    }
+    const { teamService, actor, memberId, callerThreadId } = caller.value;
+    const parentThreadId = input?.sourceThreadId ?? callerThreadId;
+    let inheritedViewId = input?.viewId;
+    if (inheritedViewId === undefined && parentThreadId !== undefined) {
+      yield* teamService
+        .assertActorCanReadThread(actor, parentThreadId)
+        .pipe(Effect.mapError(toMcpForbidden));
+      const parentAttr = yield* teamService.getThreadAttribution(parentThreadId);
+      if (Option.isSome(parentAttr)) {
+        inheritedViewId = parentAttr.value.viewId;
+      }
+    }
+    yield* teamService
+      .assertActorCanCreateThreadInView({
+        actor,
+        ...(inheritedViewId !== undefined ? { viewId: inheritedViewId } : {}),
+        ...(input?.locked !== undefined ? { locked: input.locked } : {}),
+      })
+      .pipe(Effect.mapError(toMcpForbidden));
+    return Option.some({
+      teamService,
+      memberId,
+      inheritedViewId,
+    });
+  },
+);
+
+export const recordTurnAuthoredByCaller = Effect.fn("TeamMcpAccess.recordTurnAuthoredByCaller")(
+  function* (input: { readonly threadId: ThreadId; readonly turnId: string }) {
+    const caller = yield* resolveTeamMcpCaller().pipe(
+      Effect.orElseSucceed(() => Option.none<ResolvedTeamMcpCaller>()),
+    );
+    if (Option.isNone(caller)) return;
+    yield* caller.value.teamService.recordTurnAuthoredByMember({
+      memberId: caller.value.memberId,
+      threadId: input.threadId,
+      turnId: input.turnId,
+    });
+  },
+);
+
+export const notifyTurnInterruptedByCaller = Effect.fn(
+  "TeamMcpAccess.notifyTurnInterruptedByCaller",
+)(function* (input: {
+  readonly threadId: ThreadId;
+  readonly runId?: string | null;
+  readonly reason: TeamService.TeamTurnInterruptEvent["reason"];
+}) {
+  const caller = yield* resolveTeamMcpCaller().pipe(
+    Effect.orElseSucceed(() => Option.none<ResolvedTeamMcpCaller>()),
+  );
+  if (Option.isNone(caller)) return;
+  yield* caller.value.teamService.notifyTurnInterrupted({
+    actor: caller.value.actor,
+    threadId: input.threadId,
+    ...(input.runId !== undefined ? { runId: input.runId } : {}),
+    reason: input.reason,
+  });
+});

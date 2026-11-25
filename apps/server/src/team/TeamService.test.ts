@@ -12,6 +12,7 @@ import {
   CommandId,
   MessageId,
   RunId,
+  RuntimeRequestId,
   TeamMemberId,
   ThreadId,
   type AuthClientMetadata,
@@ -1669,6 +1670,290 @@ describe("TeamService", () => {
           sessions.verify(danaRedeemed.accessToken),
         );
         expect(danaVerifyAfterSuspend._tag).toBe("Failure");
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "enforces Milestone 4 non-creator mid-turn queueing, creator-only Send now, owner/admin Interrupt + hook, and member-attributed child inheritance",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const repo = yield* TeamRepository.TeamRepository;
+        const sessions = yield* SessionStore.SessionStore;
+        const sql = yield* SqlClient.SqlClient;
+
+        const aliceSession = yield* sessions.issue({ subject: "owner-m4" });
+        const init = yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "M4 Team", ownerPseudo: "alice" },
+        });
+        const inviteMember = (role: "admin" | "modo" | "regular", pseudo: string) =>
+          Effect.gen(function* () {
+            const invite = yield* team.createInvite({
+              sessionId: aliceSession.sessionId,
+              payload: { role, prefilledPseudo: pseudo },
+            });
+            const redeemed = yield* team.redeemInvite({
+              token: invite.token,
+              pseudo,
+              client: testClient,
+            });
+            const verified = yield* sessions.verify(redeemed.accessToken);
+            return { member: redeemed.member, sessionId: verified.sessionId };
+          });
+
+        const dana = yield* inviteMember("admin", "dana");
+        const charlie = yield* inviteMember("modo", "charlie");
+        const bob = yield* inviteMember("regular", "bob");
+
+        // Create Bob's thread with an active run authored by Bob in the projection table.
+        const bobThreadId = ThreadId.make("thread-m4-bob");
+        const bobActiveRunId = RunId.make("run-m4-bob-active");
+        const bobQueuedRunId = RunId.make("run-m4-bob-queued");
+        const charlieQueuedRunId = RunId.make("run-m4-charlie-queued");
+        yield* team.recordThreadCreated({ sessionId: bob.sessionId, threadId: bobThreadId });
+        yield* team.recordTurnAuthored({
+          sessionId: bob.sessionId,
+          threadId: bobThreadId,
+          turnId: bobActiveRunId,
+        });
+        yield* team.recordTurnAuthored({
+          sessionId: bob.sessionId,
+          threadId: bobThreadId,
+          turnId: bobQueuedRunId,
+        });
+        yield* team.recordTurnAuthored({
+          sessionId: charlie.sessionId,
+          threadId: bobThreadId,
+          turnId: charlieQueuedRunId,
+        });
+
+        const activeRunPayload = JSON.stringify({
+          id: bobActiveRunId,
+          threadId: bobThreadId,
+          status: "running",
+          userMessageId: "msg-bob-active",
+        });
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runs (
+            run_id, thread_id, ordinal, provider, provider_thread_id,
+            status, requested_at, completed_at, payload_json
+          ) VALUES (
+            ${bobActiveRunId}, ${bobThreadId}, 1, 'codex', NULL,
+            'running', '2026-01-01T00:00:01.000Z', NULL, ${activeRunPayload}
+          )
+        `;
+
+        const makeSendCmd = (
+          id: string,
+          dispatchModeType:
+            | "start_immediately"
+            | "queue_after_active"
+            | "steer_active"
+            | "restart_active",
+        ) =>
+          ({
+            type: "message.dispatch" as const,
+            commandId: CommandId.make(`cmd-${id}`),
+            threadId: bobThreadId,
+            messageId: MessageId.make(`msg-${id}`),
+            text: `hello ${id}`,
+            attachments: [],
+            modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+            runtimeMode: "full-access" as const,
+            interactionMode: "default" as const,
+            dispatchMode:
+              dispatchModeType === "steer_active" || dispatchModeType === "restart_active"
+                ? { type: dispatchModeType, targetRunId: bobActiveRunId }
+                : { type: dispatchModeType },
+          }) as unknown as Parameters<
+            TeamService.TeamService["Service"]["assertAndNormalizeDispatchCommand"]
+          >[1];
+
+        // 1. Non-creator (even owner Alice!) sending start_immediately while Bob's turn is active
+        //    is coerced to queue_after_active — NEVER auto-steers!
+        const normalizedAliceSend = yield* team.assertAndNormalizeDispatchCommand(
+          aliceSession.sessionId,
+          makeSendCmd("alice-midturn", "start_immediately"),
+        );
+        expect(normalizedAliceSend.type).toBe("message.dispatch");
+        if (normalizedAliceSend.type === "message.dispatch") {
+          expect(normalizedAliceSend.dispatchMode.type).toBe("queue_after_active");
+        }
+
+        // Bob (creator) sending start_immediately keeps start_immediately.
+        const normalizedBobSend = yield* team.assertAndNormalizeDispatchCommand(
+          bob.sessionId,
+          makeSendCmd("bob-midturn", "start_immediately"),
+        );
+        if (normalizedBobSend.type === "message.dispatch") {
+          expect(normalizedBobSend.dispatchMode.type).toBe("start_immediately");
+        }
+
+        // 2. Non-creator steer_active and restart_active are rejected even for owner/admin.
+        for (const policy of ["steer_active", "restart_active"] as const) {
+          for (const actorSession of [aliceSession.sessionId, dana.sessionId, charlie.sessionId]) {
+            const exit = yield* Effect.exit(
+              team.assertAndNormalizeDispatchCommand(
+                actorSession,
+                makeSendCmd(`steer-${policy}`, policy),
+              ),
+            );
+            expect(exit._tag).toBe("Failure");
+          }
+        }
+
+        // 3. Send now (queued-message.promote-to-steer) is STRICTLY creator-only (rejected for owner/admin/modo).
+        const promoteCmd = {
+          type: "queued-message.promote-to-steer" as const,
+          commandId: CommandId.make("cmd-promote"),
+          threadId: bobThreadId,
+          queuedRunId: charlieQueuedRunId,
+          targetRunId: bobActiveRunId,
+        };
+        for (const actorSession of [aliceSession.sessionId, dana.sessionId, charlie.sessionId]) {
+          const exit = yield* Effect.exit(
+            team.assertAndNormalizeDispatchCommand(actorSession, promoteCmd),
+          );
+          expect(exit._tag).toBe("Failure");
+        }
+        yield* team.assertAndNormalizeDispatchCommand(bob.sessionId, promoteCmd);
+
+        // 4. Interrupt matrix: Charlie (modo non-creator) rejected; Alice (owner), Dana (admin), Bob (creator) allowed.
+        const interruptCmd = {
+          type: "run.interrupt" as const,
+          commandId: CommandId.make("cmd-interrupt"),
+          threadId: bobThreadId,
+          runId: bobActiveRunId,
+        };
+        const charlieInterruptExit = yield* Effect.exit(
+          team.assertAndNormalizeDispatchCommand(charlie.sessionId, interruptCmd),
+        );
+        expect(charlieInterruptExit._tag).toBe("Failure");
+        yield* team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, interruptCmd);
+        yield* team.assertAndNormalizeDispatchCommand(dana.sessionId, interruptCmd);
+        yield* team.assertAndNormalizeDispatchCommand(bob.sessionId, interruptCmd);
+
+        // 4b. Pending tool-approval / user-input responses follow the same non-creator containment.
+        const respondCmd = {
+          type: "runtime-request.respond" as const,
+          commandId: CommandId.make("cmd-respond"),
+          threadId: bobThreadId,
+          requestId: RuntimeRequestId.make("req-approval-1"),
+          decision: "decline" as const,
+        };
+        const dismissCmd = {
+          type: "thread.user-input.dismiss" as const,
+          commandId: CommandId.make("cmd-dismiss"),
+          threadId: bobThreadId,
+          requestId: RuntimeRequestId.make("req-approval-1"),
+        };
+        expect(
+          (yield* Effect.exit(
+            team.assertAndNormalizeDispatchCommand(charlie.sessionId, respondCmd),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            team.assertAndNormalizeDispatchCommand(charlie.sessionId, dismissCmd),
+          ))._tag,
+        ).toBe("Failure");
+        yield* team.assertAndNormalizeDispatchCommand(bob.sessionId, respondCmd);
+        yield* team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, respondCmd);
+        yield* team.assertAndNormalizeDispatchCommand(bob.sessionId, dismissCmd);
+
+        // 5. Queued run management (cancel/edit): Charlie can cancel his own queued message, not Bob's; Alice can cancel any.
+        yield* team.assertAndNormalizeDispatchCommand(charlie.sessionId, {
+          type: "queued-run.cancel",
+          commandId: CommandId.make("cmd-cancel-own"),
+          threadId: bobThreadId,
+          runId: charlieQueuedRunId,
+        });
+        const charlieCancelBobExit = yield* Effect.exit(
+          team.assertAndNormalizeDispatchCommand(charlie.sessionId, {
+            type: "queued-run.cancel",
+            commandId: CommandId.make("cmd-cancel-other"),
+            threadId: bobThreadId,
+            runId: bobQueuedRunId,
+          }),
+        );
+        expect(charlieCancelBobExit._tag).toBe("Failure");
+        yield* team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, {
+          type: "queued-run.cancel",
+          commandId: CommandId.make("cmd-cancel-admin"),
+          threadId: bobThreadId,
+          runId: bobQueuedRunId,
+        });
+
+        // 6. Milestone 7 interrupt hook receives structured interrupt metadata and unsubscribes cleanly.
+        const hookEvents: Array<TeamService.TeamTurnInterruptEvent> = [];
+        const unsubscribe = yield* team.registerTurnInterruptHook((event) =>
+          Effect.sync(() => {
+            hookEvents.push(event);
+          }),
+        );
+        yield* team.notifyTurnInterrupted({
+          actor: { kind: "session", sessionId: aliceSession.sessionId },
+          threadId: bobThreadId,
+          runId: bobActiveRunId,
+          reason: "interrupt",
+        });
+        expect(hookEvents).toEqual([
+          {
+            threadId: bobThreadId,
+            runId: bobActiveRunId,
+            actorMemberId: init.owner.id,
+            activeTurnAuthorMemberId: bob.member.id,
+            reason: "interrupt",
+          },
+        ]);
+        unsubscribe();
+        yield* team.notifyTurnInterrupted({
+          actor: { kind: "session", sessionId: aliceSession.sessionId },
+          threadId: bobThreadId,
+          runId: bobActiveRunId,
+          reason: "interrupt",
+        });
+        expect(hookEvents).toHaveLength(1);
+
+        // 7. Pre-recorded message attribution resolves turn author before runId exists.
+        yield* team.prepareTurnAttributionForCommand(
+          charlie.sessionId,
+          makeSendCmd("charlie-pre", "queue_after_active"),
+        );
+        const resolvedAuthor = yield* team.resolveTurnAuthorMemberId({
+          threadId: bobThreadId,
+          userMessageId: MessageId.make("msg-charlie-pre"),
+        });
+        expect(Option.getOrThrow(resolvedAuthor)).toBe(charlie.member.id);
+
+        // 8. Child thread inheritance with explicit creatorMemberId preserves parent's restricted View
+        //    while attributing child creator & initial turn to actingMemberId (never widening).
+        const staffOnly = yield* team.createView({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            name: "Staff Only M4",
+            readRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+            postRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+          },
+        });
+        const aliceStaffThreadId = ThreadId.make("thread-m4-staff-parent");
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: aliceStaffThreadId,
+          viewId: staffOnly.id,
+        });
+        const charlieChildThreadId = ThreadId.make("thread-m4-staff-child");
+        yield* team.prepareThreadInheritedFromParent({
+          parentThreadId: aliceStaffThreadId,
+          threadId: charlieChildThreadId,
+          creatorMemberId: charlie.member.id,
+        });
+        const childAttr = Option.getOrThrow(yield* repo.getThreadAttribution(charlieChildThreadId));
+        expect(childAttr.viewId).toBe(staffOnly.id);
+        expect(childAttr.creatorMemberId).toBe(charlie.member.id);
+        expect(yield* team.canReadThread(bob.sessionId, charlieChildThreadId)).toBe(false);
+        expect(yield* team.canReadThread(charlie.sessionId, charlieChildThreadId)).toBe(true);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 

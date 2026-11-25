@@ -308,6 +308,10 @@ import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
 import * as TeamService from "./team/TeamService.ts";
 import {
+  assertLocalAgentRpcExecutionAllowed,
+  assertLocalTerminalRpcExecutionAllowed,
+} from "./team/hubOnly.ts";
+import {
   assertCanReadAssetResource,
   filterDeviceStateForSession,
   filterPreviewEventsStreamForSession,
@@ -2150,23 +2154,38 @@ export const layerWsRpc = (
               ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
               : {}),
           }).pipe(
-            Effect.andThen(teamService.assertCanDispatchCommand(currentSessionId, command)),
             Effect.andThen(
+              command.type === "message.dispatch" ||
+                command.type === "prepared-run.retry" ||
+                command.type === "queued-message.promote-to-steer"
+                ? assertLocalAgentRpcExecutionAllowed
+                : Effect.void,
+            ),
+            Effect.andThen(
+              teamService.assertAndNormalizeDispatchCommand(currentSessionId, command),
+            ),
+            Effect.flatMap((effectiveCommand) =>
               Effect.gen(function* () {
                 const preparedThreadId = yield* prepareTeamDispatchAttribution(
                   teamService,
                   currentSessionId,
-                  command,
+                  effectiveCommand,
+                );
+                yield* teamService.prepareTurnAttributionForCommand(
+                  currentSessionId,
+                  effectiveCommand,
                 );
                 return yield* startup
                   .enqueueCommand(
-                    (command.type === "prepared-run.retry"
-                      ? threadLaunch.retryPreparation(command)
+                    (effectiveCommand.type === "prepared-run.retry"
+                      ? threadLaunch.retryPreparation(effectiveCommand)
                       : ThreadMessageIntake.dispatchCommand(
-                          ThreadManagementService.withCreationProvenance(command, {
+                          ThreadManagementService.withCreationProvenance(effectiveCommand, {
                             createdBy: "user",
                             creationSource:
-                              "creationSource" in command ? command.creationSource : "web",
+                              "creationSource" in effectiveCommand
+                                ? effectiveCommand.creationSource
+                                : "web",
                           }),
                           {
                             managesProviders:
@@ -2188,7 +2207,31 @@ export const layerWsRpc = (
                             teamService,
                             currentSessionId,
                             result.storedEvents,
-                          ).pipe(Effect.andThen(recordClientCommandAnalytics(command))),
+                          ).pipe(
+                            Effect.andThen(
+                              effectiveCommand.type === "run.interrupt"
+                                ? teamService.notifyTurnInterrupted({
+                                    actor: { kind: "session", sessionId: currentSessionId },
+                                    threadId: effectiveCommand.threadId,
+                                    runId: effectiveCommand.runId,
+                                    reason: "interrupt",
+                                  })
+                                : effectiveCommand.type === "thread.stop"
+                                  ? teamService.notifyTurnInterrupted({
+                                      actor: { kind: "session", sessionId: currentSessionId },
+                                      threadId: effectiveCommand.threadId,
+                                      reason: "stop",
+                                    })
+                                  : effectiveCommand.type === "queued-message.promote-to-steer"
+                                    ? teamService.notifyTurnInterrupted({
+                                        actor: { kind: "session", sessionId: currentSessionId },
+                                        threadId: effectiveCommand.threadId,
+                                        reason: "promote_to_steer",
+                                      })
+                                    : Effect.void,
+                            ),
+                            Effect.andThen(recordClientCommandAnalytics(effectiveCommand)),
+                          ),
                     ),
                     Effect.map((result) => ({ sequence: result.sequence })),
                   );
@@ -2197,8 +2240,8 @@ export const layerWsRpc = (
                   if (cause._tag === "EnvironmentAuthorizationError") return cause;
                   const detail = userFacingDispatchErrorMessage(cause);
                   return new OrchestrationV2DispatchCommandError({
-                    commandId: command.commandId,
-                    commandType: command.type,
+                    commandId: effectiveCommand.commandId,
+                    commandType: effectiveCommand.type,
                     message: detail ?? "Failed to dispatch orchestration V2 command",
                     ...(detail === undefined ? {} : { detail }),
                     cause,
@@ -2208,13 +2251,28 @@ export const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) =>
-          teamService
-            .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(threadManagement.stopWorkflow(input))),
+          teamService.assertCanUseWorkflows(currentSessionId).pipe(
+            Effect.andThen(teamService.assertCanInterruptThread(currentSessionId, input.threadId)),
+            Effect.andThen(threadManagement.stopWorkflow(input)),
+            Effect.tap(() =>
+              teamService.notifyTurnInterrupted({
+                actor: { kind: "session", sessionId: currentSessionId },
+                threadId: input.threadId,
+                reason: "stop",
+              }),
+            ),
+          ),
         [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: (input) =>
-          teamService
-            .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(threadManagement.forceStopThread(input))),
+          teamService.assertCanInterruptThread(currentSessionId, input.threadId).pipe(
+            Effect.andThen(threadManagement.forceStopThread(input)),
+            Effect.tap(() =>
+              teamService.notifyTurnInterrupted({
+                actor: { kind: "session", sessionId: currentSessionId },
+                threadId: input.threadId,
+                reason: "force_stop",
+              }),
+            ),
+          ),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           teamService
             .assertCanUseWorkflows(currentSessionId)
@@ -2414,6 +2472,11 @@ export const layerWsRpc = (
             "orchestration_v2.command_id": input.commandId,
             "orchestration_v2.project_id": input.projectId,
           }).pipe(
+            Effect.andThen(
+              input.initialMessage !== undefined
+                ? assertLocalAgentRpcExecutionAllowed
+                : Effect.void,
+            ),
             Effect.andThen(
               teamService.assertCanLaunchThread({
                 sessionId: currentSessionId,
@@ -3821,39 +3884,44 @@ export const layerWsRpc = (
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
         [WS_METHODS.terminalOpen]: (input) =>
-          teamService
-            .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
-            .pipe(
-              Effect.andThen(
-                prepareTerminalLaunch(input).pipe(
-                  Effect.flatMap((launch) =>
-                    terminalManager
-                      .open(launch.input)
-                      .pipe(
-                        Effect.provideService(TerminalManager.TerminalCwdRecovery, launch.recover),
-                      ),
-                  ),
+          assertLocalTerminalRpcExecutionAllowed.pipe(
+            Effect.andThen(
+              teamService.assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId)),
+            ),
+            Effect.andThen(
+              prepareTerminalLaunch(input).pipe(
+                Effect.flatMap((launch) =>
+                  terminalManager
+                    .open(launch.input)
+                    .pipe(
+                      Effect.provideService(TerminalManager.TerminalCwdRecovery, launch.recover),
+                    ),
                 ),
               ),
             ),
+          ),
         [WS_METHODS.terminalAttach]: (input, metadata) =>
           guardThreadScopedStreamForSession(
             teamService,
             currentSessionId,
             ThreadId.make(input.threadId),
             Stream.unwrap(
-              teamService
-                .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
-                .pipe(
-                  Effect.andThen(prepareTerminalLaunch(input)),
-                  Effect.map((launch) =>
-                    terminalManager
-                      .attachOutputStream(launch.input, terminalViewerId(metadata))
-                      .pipe(
-                        Stream.provideService(TerminalManager.TerminalCwdRecovery, launch.recover),
-                      ),
+              assertLocalTerminalRpcExecutionAllowed.pipe(
+                Effect.andThen(
+                  teamService.assertCanPostInThread(
+                    currentSessionId,
+                    ThreadId.make(input.threadId),
                   ),
                 ),
+                Effect.andThen(prepareTerminalLaunch(input)),
+                Effect.map((launch) =>
+                  terminalManager
+                    .attachOutputStream(launch.input, terminalViewerId(metadata))
+                    .pipe(
+                      Stream.provideService(TerminalManager.TerminalCwdRecovery, launch.recover),
+                    ),
+                ),
+              ),
             ),
           ),
         [WS_METHODS.terminalWrite]: (input, metadata) =>

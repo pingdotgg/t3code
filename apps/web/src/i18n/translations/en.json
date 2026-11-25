@@ -5403,6 +5403,7 @@
   "6a483f4461919209": "Each gets its own worktree on the thread's branch",
   "6a48fd0a37e725a1": "Legal",
   "6a55769df7c4e349": "Posting...",
+  "6a69a6ebe8fd5756": "Interrupt this member's active turn",
   "6a6b1c244a1a0476": "stacked split side by side unified inline view",
   "6a717189b43e9f0e": "Open",
   "6a7ff74c32313d11": "Input rate",
@@ -9331,6 +9332,7 @@
     "for more tunnels"
   ],
   "b5188f172f59ca79": "This connection cannot read host files.",
+  "b51b087a1080356f": "Interrupt active turn",
   "b51d5be25d79b06c": "{count, plural, one {{formatted} file} other {{formatted} files}}",
   "b527ed8da5bc9ef9": "Build",
   "b52f5d6d4df79baf": "The Free plan allows one custom connector.",

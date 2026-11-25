@@ -9,8 +9,12 @@ import {
   canManageTeamInvites,
   canManageTeamViews,
   canMemberCreateThreadInTeamView,
+  canMemberInterruptTeamTurn,
+  canMemberManageTeamQueuedRun,
   canMemberPostInTeamThread,
+  canMemberPromoteTeamQueuedRun,
   canMemberReadTeamThread,
+  canMemberSteerActiveTeamTurn,
   canModifyTeamMember,
   canToggleTeamThreadLock,
   isValidTeamPseudo,
@@ -165,6 +169,151 @@ describe("team view read/post and locking rules", () => {
         view: readOnlyForRegularView,
       }),
     ).toBe("ok");
+  });
+
+  it("enforces creator-only Send now / steering, owner/admin explicit Interrupt, and queued run management", () => {
+    const defaultView = {
+      readRule: { roles: ["owner", "admin", "modo", "regular"] as const, memberIds: [] as const },
+      postRule: { roles: ["owner", "admin", "modo", "regular"] as const, memberIds: [] as const },
+    };
+    const bobAttribution = { creatorMemberId: regular.id, locked: false };
+    const bobLockedAttribution = { creatorMemberId: regular.id, locked: true };
+
+    // Send now / steer active turn is STRICTLY creator-only (even owner/admin cannot steer Bob's thread).
+    expect(
+      canMemberPromoteTeamQueuedRun({
+        member: regular,
+        attribution: bobAttribution,
+        view: defaultView,
+      }),
+    ).toBe(true);
+    expect(
+      canMemberPromoteTeamQueuedRun({
+        member: owner,
+        attribution: bobAttribution,
+        view: defaultView,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberPromoteTeamQueuedRun({
+        member: admin,
+        attribution: bobAttribution,
+        view: defaultView,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberPromoteTeamQueuedRun({
+        member: modo,
+        attribution: bobAttribution,
+        view: defaultView,
+      }),
+    ).toBe(false);
+    // Locked thread blocks even the creator from steering/promoting.
+    expect(
+      canMemberPromoteTeamQueuedRun({
+        member: regular,
+        attribution: bobLockedAttribution,
+        view: defaultView,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberSteerActiveTeamTurn({
+        member: owner,
+        attribution: bobAttribution,
+        view: defaultView,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberSteerActiveTeamTurn({
+        member: regular,
+        attribution: bobAttribution,
+        view: defaultView,
+      }),
+    ).toBe(true);
+
+    // Interrupt: owner/admin can interrupt any thread; creator or active turn author can interrupt own; regular/modo non-creators cannot.
+    expect(
+      canMemberInterruptTeamTurn({
+        member: owner,
+        attribution: bobAttribution,
+        view: defaultView,
+        activeTurnAuthorMemberId: regular.id,
+      }),
+    ).toBe(true);
+    expect(
+      canMemberInterruptTeamTurn({
+        member: admin,
+        attribution: bobAttribution,
+        view: defaultView,
+        activeTurnAuthorMemberId: regular.id,
+      }),
+    ).toBe(true);
+    expect(
+      canMemberInterruptTeamTurn({
+        member: regular,
+        attribution: bobAttribution,
+        view: defaultView,
+        activeTurnAuthorMemberId: modo.id,
+      }),
+    ).toBe(true);
+    expect(
+      canMemberInterruptTeamTurn({
+        member: modo,
+        attribution: bobAttribution,
+        view: defaultView,
+        activeTurnAuthorMemberId: modo.id,
+      }),
+    ).toBe(true);
+    expect(
+      canMemberInterruptTeamTurn({
+        member: modo,
+        attribution: bobAttribution,
+        view: defaultView,
+        activeTurnAuthorMemberId: regular.id,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberInterruptTeamTurn({
+        member: suspended,
+        attribution: bobAttribution,
+        view: defaultView,
+        activeTurnAuthorMemberId: regular.id,
+      }),
+    ).toBe(false);
+
+    // Queued run management (edit/cancel): owner/admin, thread creator (if can post), or queued run author (if can post).
+    expect(
+      canMemberManageTeamQueuedRun({
+        member: owner,
+        attribution: bobAttribution,
+        view: defaultView,
+        queuedRunAuthorMemberId: modo.id,
+      }),
+    ).toBe(true);
+    expect(
+      canMemberManageTeamQueuedRun({
+        member: modo,
+        attribution: bobAttribution,
+        view: defaultView,
+        queuedRunAuthorMemberId: modo.id,
+      }),
+    ).toBe(true);
+    expect(
+      canMemberManageTeamQueuedRun({
+        member: modo,
+        attribution: bobAttribution,
+        view: defaultView,
+        queuedRunAuthorMemberId: regular.id,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberManageTeamQueuedRun({
+        member: regular,
+        attribution: bobLockedAttribution,
+        view: defaultView,
+        queuedRunAuthorMemberId: regular.id,
+      }),
+    ).toBe(false);
   });
 });
 

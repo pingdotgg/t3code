@@ -22,6 +22,7 @@ import { outputRequestProblem } from "../../../orchestration-v2/runOutput.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as TeamService from "../../../team/TeamService.ts";
+import * as TeamMcpAccess from "../../../team/mcpAccess.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
@@ -456,13 +457,19 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             )?.supportedRuntimeModes,
           });
         }
+        const teamChildAuth = yield* TeamMcpAccess.authorizeChildThreadCreation(
+          caller === undefined ? {} : { sourceThreadId: caller.id },
+        );
         const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
-        const preparedAttribution =
-          caller !== undefined && Option.isSome(teamServiceOption)
+        const preparedAttribution = Option.isSome(teamServiceOption)
+          ? caller !== undefined
             ? yield* teamServiceOption.value
                 .prepareThreadInheritedFromParent({
                   parentThreadId: caller.id,
                   threadId,
+                  ...(Option.isSome(teamChildAuth)
+                    ? { creatorMemberId: teamChildAuth.value.memberId }
+                    : {}),
                 })
                 .pipe(
                   Effect.mapError(
@@ -473,7 +480,36 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                       }),
                   ),
                 )
-            : false;
+            : Option.isSome(teamChildAuth)
+              ? yield* teamServiceOption.value
+                  .prepareThreadAttributionForMember({
+                    memberId: teamChildAuth.value.memberId,
+                    threadId,
+                    ...(teamChildAuth.value.inheritedViewId === undefined
+                      ? {}
+                      : { viewId: teamChildAuth.value.inheritedViewId }),
+                  })
+                  .pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new OrchestratorMcpFailure({
+                          code: "orchestration_error",
+                          message: error.message,
+                        }),
+                    ),
+                  )
+              : false
+          : false;
+        if (
+          (input.message !== undefined || attachments.length > 0) &&
+          Option.isSome(teamChildAuth)
+        ) {
+          yield* teamChildAuth.value.teamService.recordTurnAuthoredByMember({
+            memberId: teamChildAuth.value.memberId,
+            threadId,
+            turnId: `msg:${messageId}`,
+          });
+        }
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -536,12 +572,32 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         );
         const thread = result.projection.thread;
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
-        if (caller !== undefined && !result.resumed && Option.isSome(teamServiceOption)) {
-          yield* teamServiceOption.value.recordThreadInheritedFromParent({
-            parentThreadId: caller.id,
-            threadId: thread.id,
-            ...(run ? { turnId: run.id } : {}),
-          });
+        if (!result.resumed && Option.isSome(teamServiceOption)) {
+          if (caller !== undefined) {
+            yield* teamServiceOption.value.recordThreadInheritedFromParent({
+              parentThreadId: caller.id,
+              threadId: thread.id,
+              ...(Option.isSome(teamChildAuth)
+                ? { creatorMemberId: teamChildAuth.value.memberId }
+                : {}),
+              ...(run ? { turnId: run.id } : {}),
+            });
+          } else if (Option.isSome(teamChildAuth)) {
+            yield* teamServiceOption.value.recordThreadCreatedByMember({
+              memberId: teamChildAuth.value.memberId,
+              threadId: thread.id,
+              ...(teamChildAuth.value.inheritedViewId === undefined
+                ? {}
+                : { viewId: teamChildAuth.value.inheritedViewId }),
+            });
+            if (run) {
+              yield* teamServiceOption.value.recordTurnAuthoredByMember({
+                memberId: teamChildAuth.value.memberId,
+                threadId: thread.id,
+                turnId: run.id,
+              });
+            }
+          }
         }
         return {
           threadId: thread.id,

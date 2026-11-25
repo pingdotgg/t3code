@@ -5394,6 +5394,7 @@
   "6a483f4461919209": "Chacun reçoit son propre worktree sur la branche du fil",
   "6a48fd0a37e725a1": "Mentions légales",
   "6a55769df7c4e349": "Publication...",
+  "6a69a6ebe8fd5756": "Interrompre le tour actif de ce membre",
   "6a6b1c244a1a0476": "empilé scindé côte à côte unifié vue en ligne",
   "6a717189b43e9f0e": "Ouvert",
   "6a7ff74c32313d11": "Tarif d’entrée",
@@ -9320,6 +9321,7 @@
     "pour plus de tunnels"
   ],
   "b5188f172f59ca79": "Cette connexion ne peut pas lire les fichiers de l’hôte.",
+  "b51b087a1080356f": "Interrompre le tour actif",
   "b51d5be25d79b06c": "{count, plural, one {{formatted} fichier} other {{formatted} fichiers}}",
   "b527ed8da5bc9ef9": "Build",
   "b52f5d6d4df79baf": "L’offre gratuite permet un seul connecteur personnalisé.",

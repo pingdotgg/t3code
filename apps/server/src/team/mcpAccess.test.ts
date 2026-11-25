@@ -1,0 +1,470 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { describe, expect, it } from "@effect/vitest";
+import {
+  AuthSessionId,
+  EnvironmentId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type AuthClientMetadata,
+} from "@t3tools/contracts";
+import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import { FetchHttpClient, HttpServer } from "effect/http";
+import * as Layer from "effect/Layer";
+import * as NetAddress from "effect/net/NetAddress";
+import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
+
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
+import * as AuthSessions from "../persistence/AuthSessions.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as TeamMcpAccess from "./mcpAccess.ts";
+import * as TeamRepository from "./TeamRepository.ts";
+import * as TeamService from "./TeamService.ts";
+
+const testClient: AuthClientMetadata = {
+  deviceType: "desktop",
+  label: "Test App",
+};
+
+const fakeHttpServer = HttpServer.HttpServer.of({
+  address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43210),
+  serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+});
+
+const makeTeamLayer = (configOverrides?: Partial<ServerConfig.ServerConfig["Service"]>) => {
+  const platform = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
+  const configLayer = Layer.effect(
+    ServerConfig.ServerConfig,
+    Effect.gen(function* () {
+      const cfg = yield* ServerConfig.ServerConfig;
+      return { ...cfg, ...configOverrides };
+    }),
+  ).pipe(
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-team-mcp-test-" })),
+    Layer.provide(platform),
+  );
+  const persistence = SqlitePersistence.layerMemory.pipe(Layer.provide(configLayer));
+  const secretStore = ServerSecretStore.layer.pipe(
+    Layer.provide(configLayer),
+    Layer.provide(platform),
+  );
+  const serverEnv = ServerEnvironment.layer.pipe(
+    Layer.provide(secretStore),
+    Layer.provide(configLayer),
+    Layer.provide(platform),
+  );
+  const authDeps = Layer.mergeAll(
+    persistence,
+    secretStore,
+    AuthSessions.layer.pipe(Layer.provide(persistence)),
+    serverEnv,
+  );
+  const sessions = SessionStore.layer.pipe(
+    Layer.provideMerge(authDeps),
+    Layer.provide(configLayer),
+    Layer.provide(platform),
+  );
+  const teamRepo = TeamRepository.layer.pipe(Layer.provide(persistence));
+  const teamService = TeamService.layer.pipe(
+    Layer.provideMerge(teamRepo),
+    Layer.provideMerge(sessions),
+    Layer.provide(configLayer),
+    Layer.provide(platform),
+  );
+  const mcpRegistry = McpSessionRegistry.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(platform, serverEnv, Layer.succeed(HttpServer.HttpServer, fakeHttpServer)),
+    ),
+  );
+  return Layer.mergeAll(
+    platform,
+    configLayer,
+    persistence,
+    secretStore,
+    serverEnv,
+    sessions,
+    teamRepo,
+    teamService,
+    mcpRegistry,
+  );
+};
+
+const withThreadCaller = <A, E, R>(
+  threadScope: McpInvocationContext.McpThreadInvocationScope,
+  effect: Effect.Effect<A, E, R>,
+) => effect.pipe(Effect.provideService(McpInvocationContext.McpInvocationContext, threadScope));
+
+const withClientCaller = <A, E, R>(sessionId: AuthSessionId, effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.provideService(McpInvocationContext.McpInvocationContext, {
+      environmentId: EnvironmentId.make("env-test"),
+      capabilities: new Set<McpInvocationContext.McpCapability>(),
+      issuedAt: 1_700_000_000_000,
+      requestNamespace: "test-client",
+      thread: undefined,
+      client: {
+        sessionId,
+        label: "Test OAuth Client",
+        access: "full-access",
+      },
+    }),
+  );
+
+describe("Team MCP containment (Plane 1) and hub-only isolation (Plane 2)", () => {
+  it.effect(
+    "binds MCP credentials to actingMemberId and enforces team RBAC, Views, Locks, creator-only Send now, Interrupt, and immutable child inheritance",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const repo = yield* TeamRepository.TeamRepository;
+        const sessions = yield* SessionStore.SessionStore;
+        const mcpRegistry = yield* McpSessionRegistry.McpSessionRegistry;
+        const sql = yield* SqlClient.SqlClient;
+
+        const aliceSession = yield* sessions.issue({ subject: "owner-mcp" });
+        const init = yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "MCP Team", ownerPseudo: "alice" },
+        });
+        const inviteAndJoin = (role: "modo" | "regular", pseudo: string) =>
+          Effect.gen(function* () {
+            const invite = yield* team.createInvite({
+              sessionId: aliceSession.sessionId,
+              payload: { role, prefilledPseudo: pseudo },
+            });
+            const redeemed = yield* team.redeemInvite({
+              token: invite.token,
+              pseudo,
+              client: testClient,
+            });
+            const verified = yield* sessions.verify(redeemed.accessToken);
+            return { member: redeemed.member, sessionId: verified.sessionId };
+          });
+
+        const charlie = yield* inviteAndJoin("modo", "charlie");
+        const bob = yield* inviteAndJoin("regular", "bob");
+
+        // Create restricted "Staff Only" and read-only "Announcements" views.
+        const staffOnly = yield* team.createView({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            name: "Staff Only",
+            readRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+            postRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+          },
+        });
+        const announcements = yield* team.createView({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            name: "Announcements",
+            readRule: { roles: ["owner", "admin", "modo", "regular"], memberIds: [] },
+            postRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+          },
+        });
+
+        const aliceDefaultThread = ThreadId.make("thread-mcp-alice-default");
+        const aliceStaffThread = ThreadId.make("thread-mcp-alice-staff");
+        const aliceAnnouncementsThread = ThreadId.make("thread-mcp-alice-announce");
+        const bobThread = ThreadId.make("thread-mcp-bob");
+        const bobActiveRunId = RunId.make("run-mcp-bob-active");
+        const aliceActiveRunId = RunId.make("run-mcp-alice-active");
+
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: aliceDefaultThread,
+        });
+        yield* team.recordTurnAuthored({
+          sessionId: aliceSession.sessionId,
+          threadId: aliceDefaultThread,
+          turnId: aliceActiveRunId,
+        });
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: aliceStaffThread,
+          viewId: staffOnly.id,
+        });
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: aliceAnnouncementsThread,
+          viewId: announcements.id,
+        });
+        yield* team.recordThreadCreated({
+          sessionId: bob.sessionId,
+          threadId: bobThread,
+        });
+        yield* team.recordTurnAuthored({
+          sessionId: bob.sessionId,
+          threadId: bobThread,
+          turnId: bobActiveRunId,
+        });
+
+        // Register active runs in projection so active-turn-author checks work accurately.
+        for (const [runId, threadId] of [
+          [aliceActiveRunId, aliceDefaultThread],
+          [bobActiveRunId, bobThread],
+        ] as const) {
+          yield* sql`
+            INSERT INTO orchestration_v2_projection_runs (
+              run_id, thread_id, ordinal, provider, provider_thread_id,
+              status, requested_at, completed_at, payload_json
+            ) VALUES (
+              ${runId}, ${threadId}, 1, 'codex', NULL,
+              'running', '2026-01-01T00:00:01.000Z', NULL,
+              ${JSON.stringify({ id: runId, threadId, status: "running" })}
+            )
+          `;
+        }
+
+        // 1. McpSessionRegistry issues member-bound credentials and preserves actingMemberId on resolve.
+        const bobCred = yield* mcpRegistry.issue({
+          threadId: aliceDefaultThread,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          actingMemberId: bob.member.id,
+        });
+        const bobCaller = yield* mcpRegistry.resolve(
+          bobCred.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+        );
+        expect(bobCaller?.thread.actingMemberId).toBe(bob.member.id);
+
+        const aliceCred = yield* mcpRegistry.issue({
+          threadId: bobThread,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          actingMemberId: init.owner.id,
+        });
+        const aliceCaller = yield* mcpRegistry.resolve(
+          aliceCred.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+        );
+        expect(aliceCaller?.thread.actingMemberId).toBe(init.owner.id);
+
+        // 2. Agent running Bob's turn on Alice's thread obeys BOB's permissions (never Alice's!).
+        const bobReadStaffExit = yield* Effect.exit(
+          withThreadCaller(bobCaller!, TeamMcpAccess.assertCanReadThread(aliceStaffThread)),
+        );
+        expect(bobReadStaffExit._tag).toBe("Failure");
+        if (bobReadStaffExit._tag === "Failure") {
+          expect(Cause.squash(bobReadStaffExit.cause)).toMatchObject({
+            _tag: "OrchestratorMcpFailure",
+            code: "capability_denied",
+          });
+        }
+
+        const bobFiltered = yield* withThreadCaller(
+          bobCaller!,
+          TeamMcpAccess.filterReadableThreadIds([
+            aliceDefaultThread,
+            aliceStaffThread,
+            aliceAnnouncementsThread,
+            bobThread,
+          ]),
+        );
+        expect(bobFiltered.has(aliceStaffThread)).toBe(false);
+        expect(bobFiltered.has(aliceDefaultThread)).toBe(true);
+        expect(bobFiltered.has(aliceAnnouncementsThread)).toBe(true);
+        expect(bobFiltered.has(bobThread)).toBe(true);
+
+        // Bob's agent cannot post in read-only Announcements thread, cannot promote/steer Alice's thread,
+        // cannot interrupt Alice's active turn, and cannot use admin/workflow/schedule tools.
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(
+              bobCaller!,
+              TeamMcpAccess.assertCanPostInThread(aliceAnnouncementsThread),
+            ),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(
+              bobCaller!,
+              TeamMcpAccess.assertCanPromoteQueuedRun(aliceDefaultThread),
+            ),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(
+              bobCaller!,
+              TeamMcpAccess.assertCanSteerActiveTurn(aliceDefaultThread),
+            ),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(
+              bobCaller!,
+              TeamMcpAccess.assertCanInterruptThread(aliceDefaultThread),
+            ),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(withThreadCaller(bobCaller!, TeamMcpAccess.assertIsAdmin())))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(withThreadCaller(bobCaller!, TeamMcpAccess.assertCanUseWorkflows())))
+            ._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(bobCaller!, TeamMcpAccess.assertCanUseScheduledTasks()),
+          ))._tag,
+        ).toBe("Failure");
+
+        // 3. Immutable actingMemberId propagation to delegated/launched child threads:
+        //    Bob's turn on Alice's thread spawns a child -> child creator is BOB (not Alice!),
+        //    and child inherits parent's View (never widens).
+        const bobChildFromAlice = ThreadId.make("thread-mcp-child-bob");
+        const childAuth = yield* withThreadCaller(
+          bobCaller!,
+          TeamMcpAccess.authorizeChildThreadCreation({
+            sourceThreadId: aliceDefaultThread,
+          }),
+        );
+        expect(Option.isSome(childAuth)).toBe(true);
+        const childAuthVal = Option.getOrThrow(childAuth);
+        expect(childAuthVal.memberId).toBe(bob.member.id);
+        expect(childAuthVal.inheritedViewId).toBe(init.team.defaultViewId);
+        yield* childAuthVal.teamService.prepareThreadInheritedFromParent({
+          parentThreadId: aliceDefaultThread,
+          threadId: bobChildFromAlice,
+          creatorMemberId: childAuthVal.memberId,
+        });
+        const childAttr = Option.getOrThrow(yield* repo.getThreadAttribution(bobChildFromAlice));
+        expect(childAttr.creatorMemberId).toBe(bob.member.id);
+        expect(childAttr.viewId).toBe(init.team.defaultViewId);
+
+        // 4. Alice (owner) acting via MCP on Bob's thread:
+        //    - CANNOT Send now / promote queued run on Bob's thread (creator-only!)
+        //    - CAN Interrupt Bob's active turn AND fires the Milestone 7 interrupt hook!
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(aliceCaller!, TeamMcpAccess.assertCanPromoteQueuedRun(bobThread)),
+          ))._tag,
+        ).toBe("Failure");
+        yield* withThreadCaller(aliceCaller!, TeamMcpAccess.assertCanInterruptThread(bobThread));
+
+        const hookEvents: Array<TeamService.TeamTurnInterruptEvent> = [];
+        yield* team.registerTurnInterruptHook((event) =>
+          Effect.sync(() => {
+            hookEvents.push(event);
+          }),
+        );
+        yield* withThreadCaller(
+          aliceCaller!,
+          TeamMcpAccess.notifyTurnInterruptedByCaller({
+            threadId: bobThread,
+            runId: bobActiveRunId,
+            reason: "interrupt",
+          }),
+        );
+        expect(hookEvents).toEqual([
+          {
+            threadId: bobThread,
+            runId: bobActiveRunId,
+            actorMemberId: init.owner.id,
+            activeTurnAuthorMemberId: bob.member.id,
+            reason: "interrupt",
+          },
+        ]);
+
+        // 5. External OAuth MCP client (session-bound) obeys identical team RBAC, and unbound fails closed.
+        const unboundSession = yield* sessions.issue({ subject: "unbound-oauth" });
+        expect(
+          (yield* Effect.exit(
+            withClientCaller(
+              unboundSession.sessionId,
+              TeamMcpAccess.assertActiveMemberIfTeamConfigured,
+            ),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            withClientCaller(charlie.sessionId, TeamMcpAccess.assertCanInterruptThread(bobThread)),
+          ))._tag,
+        ).toBe("Failure");
+        yield* withClientCaller(
+          charlie.sessionId,
+          TeamMcpAccess.assertCanReadThread(aliceStaffThread),
+        );
+
+        // 6. Suspending Bob immediately invalidates his in-flight MCP actingMemberId calls.
+        yield* team.updateMemberStatus({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: bob.member.id, status: "suspended" },
+        });
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(bobCaller!, TeamMcpAccess.assertActiveMemberIfTeamConfigured),
+          ))._tag,
+        ).toBe("Failure");
+      }).pipe(Effect.provide(makeTeamLayer())),
+  );
+
+  it.effect(
+    "enforces --team-hub-only control-plane mode: advertises capability, refuses local terminal PTY spawns, and auto-enables runner peer links",
+    () =>
+      Effect.gen(function* () {
+        const env = yield* ServerEnvironment.ServerEnvironment;
+        const descriptor = yield* env.getDescriptor;
+        expect(descriptor.capabilities.teamHubOnly).toBe(true);
+
+        // TerminalManager refuses PTY spawns in --team-hub-only mode without ever touching the PTY adapter.
+        let ptySpawnCount = 0;
+        const fakePtyAdapter = PtyAdapter.PtyAdapter.of({
+          spawn: () => {
+            ptySpawnCount += 1;
+            return Effect.die("PTY spawn must never be called in --team-hub-only mode");
+          },
+        });
+        const config = yield* ServerConfig.ServerConfig;
+        const terminalExit = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const manager = yield* TerminalManager.makeWithOptions({
+              logsDir: config.terminalLogsDir,
+              ptyAdapter: fakePtyAdapter,
+              teamHubOnly: true,
+            });
+            return yield* manager.open({
+              threadId: ThreadId.make("thread-hub-only"),
+              terminalId: "default",
+              cwd: process.cwd(),
+              cols: 80,
+              rows: 24,
+            });
+          }),
+        ).pipe(Effect.provide(ProcessRunner.layer), Effect.exit);
+        expect(terminalExit._tag).toBe("Failure");
+        expect(ptySpawnCount).toBe(0);
+        if (terminalExit._tag === "Failure") {
+          const error = Cause.squash(terminalExit.cause) as { readonly cause?: unknown };
+          expect(String(error.cause ?? error)).toContain("--team-hub-only");
+        }
+
+        // PeerLinks automatically enables peer linking when teamHubOnly is active.
+        const peerLayer = PeerLinks.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              ServerSettings.layerTest({ linkedEnvironmentsEnabled: false }),
+              FetchHttpClient.layer,
+            ),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const peerLinks = yield* PeerLinks.PeerLinks;
+          expect(yield* peerLinks.enabled).toBe(true);
+        }).pipe(Effect.provide(peerLayer));
+      }).pipe(Effect.provide(makeTeamLayer({ teamHubOnly: true }))),
+  );
+});
