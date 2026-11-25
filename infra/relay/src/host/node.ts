@@ -127,6 +127,7 @@ const inertTunnelClient: ManagedEndpointProvider.ManagedEndpointTunnelClient["Se
       }),
     ),
   delete: () => Effect.void,
+  disconnect: () => Effect.void,
 };
 
 const inertDnsClient: ManagedEndpointProvider.ManagedEndpointDnsClient["Service"] = {

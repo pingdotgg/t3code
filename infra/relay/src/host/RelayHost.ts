@@ -1,4 +1,5 @@
 import type * as Effect from "effect/Effect";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import type * as HttpClient from "effect/http/HttpClient";
 import type * as Layer from "effect/Layer";
 import type * as Redacted from "effect/Redacted";
@@ -39,7 +40,7 @@ export interface RelayHost<R = never> {
     | ManagedEndpointProvider.ManagedEndpointTunnelClient
     | ManagedEndpointProvider.ManagedEndpointDnsClient,
     never,
-    CloudflareApiPause.CloudflareApiPause | HttpClient.HttpClient
+    CloudflareApiPause.CloudflareApiPause | HttpClient.HttpClient | SecureRandom.SecureRandom
   >;
   readonly hookInbox: Layer.Layer<HookInbox.HookInbox>;
   /** Each limiter may fail; the composition decides to fail open. */

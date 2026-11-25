@@ -37,6 +37,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -63,6 +64,7 @@ import {
   OrchestratorThreadAboveModeLimitError,
 } from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ServerConfig from "../config.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -2713,6 +2715,216 @@ describe("OrchestratorMcpService provider resolution", () => {
         });
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
     }),
+  );
+
+  it.effect("gives a worktree child in a project whose folder holds several repositories", () =>
+    Effect.gen(function* () {
+      // A plain project folder: Git finds no repository at its root, only in a/ and b/.
+      const workspaceRoot = "/work/several-repos";
+      const commands: Array<unknown> = [];
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        origin: "app_owned",
+        childThreadId,
+        providerInstanceId: codexInstanceId,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+      };
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? (() => {
+                    const parent = parentProjection(commands.length > 0 ? [task] : []);
+                    return {
+                      ...parent,
+                      thread: { ...parent.thread, worktreePath: null },
+                    } as OrchestrationV2ThreadProjection;
+                  })()
+                : childProjection,
+            ),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              commands.push(command);
+              return {
+                sequence: 1,
+                storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+              } as never;
+            }),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeedSome({ id: projectId, title: "parent", workspaceRoot } as never),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const notARepository = (cwd: string) =>
+        new GitCommandError({
+          operation: "GitVcsDriver.resolveCommit",
+          command: "git rev-parse --verify HEAD^{commit}",
+          cwd,
+          detail: "fatal: not a git repository (or any of the parent directories): .git",
+        });
+      const layerService = OrchestratorMcpService.layer.pipe(
+        Layer.provide(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            isNonGitProject: () => Effect.succeed(true),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(GitVcsDriver.GitVcsDriver)({
+            resolveCommit: ({ cwd }) => Effect.fail(notARepository(cwd)),
+          }),
+        ),
+        Layer.provide(dependencies),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const result = yield* service
+          .delegateTask(scope, {
+            task: "Add a line to a/README.md.",
+            isolation: "worktree",
+            mode: "async",
+            clientRequestId: "worktree-several-repos",
+          })
+          .pipe(Effect.result);
+        assert.isTrue(
+          Result.isSuccess(result),
+          `worktree isolation was refused: ${Result.isFailure(result) ? result.failure.message : ""}`,
+        );
+        assert.equal(
+          (commands[0] as { workspaceStrategy?: { type: string } }).workspaceStrategy?.type,
+          "worktree",
+        );
+      }).pipe(Effect.provide(layerService));
+    }),
+  );
+
+  // docs/user/multi-repo-projects.md: each repository starts from the thread's base branch
+  // where it has one, so the child's launch has to carry the parent's branch, not only its commit.
+  it.live(
+    "names the parent's branch as a worktree child's base so other repositories can match it",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        const workspaceRoot = yield* fileSystem.realPath(
+          yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mcp-delegate-base-" }),
+        );
+        for (const args of [
+          ["init", "-b", "main"],
+          ["config", "user.email", "delegate@example.test"],
+          ["config", "user.name", "Delegate"],
+          ["commit", "--allow-empty", "-m", "main"],
+          ["checkout", "-b", "release"],
+          ["commit", "--allow-empty", "-m", "release"],
+        ]) {
+          yield* git.execute({ operation: "delegate-base-test", cwd: workspaceRoot, args });
+        }
+        const commands: Array<unknown> = [];
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: codexInstanceId,
+          model: "gpt-5.4",
+          status: "running",
+          result: null,
+        };
+        const dependencies = Layer.mergeAll(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? (() => {
+                      const parent = parentProjection(commands.length > 0 ? [task] : []);
+                      return {
+                        ...parent,
+                        thread: { ...parent.thread, worktreePath: null, branch: "release" },
+                      } as OrchestrationV2ThreadProjection;
+                    })()
+                  : childProjection,
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return {
+                  sequence: 1,
+                  storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                } as never;
+              }),
+          }),
+          ServerSettings.layerTest(),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+          ]),
+          adapterRegistryLayer([codexInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () =>
+              Effect.succeedSome({ id: projectId, title: "parent", workspaceRoot } as never),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            isNonGitProject: () => Effect.succeed(false),
+          }),
+          Layer.succeed(GitVcsDriver.GitVcsDriver, git),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          yield* service.delegateTask(scope, {
+            task: "Change a and b together.",
+            isolation: "worktree",
+            mode: "async",
+            clientRequestId: "worktree-parent-branch",
+          });
+          const workspaceStrategy = (commands[0] as { workspaceStrategy?: unknown })
+            .workspaceStrategy;
+          assert.include(
+            JSON.stringify(workspaceStrategy),
+            "release",
+            "the child's workspace names only the parent's commit, so other repositories fall back to their default branch",
+          );
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            GitVcsDriver.layer.pipe(
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-delegate-base-" }),
+              ),
+              Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+            ),
+          ),
+        ),
+        Effect.scoped,
+      ),
   );
 
   it.effect("rejects delegation to a provider without a registered adapter", () =>

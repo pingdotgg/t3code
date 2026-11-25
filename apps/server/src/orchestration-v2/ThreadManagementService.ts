@@ -393,7 +393,7 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
       case "failed":
         return "Failed to update the awaited background work.";
       case "unmatched":
-        return "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and delegate_task IDs don't go here.";
+        return "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and Workflow runs already keep the thread working until they finish, and delegate_task IDs don't go here either.";
     }
   }
 }
@@ -1251,6 +1251,21 @@ const make = Effect.gen(function* () {
     const requestedAt = yield* DateTime.now;
     const { run } = yield* waitForThread({ ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS });
     if (run?.status !== "completed") return;
+    // A message steered into this run and read after the request supersedes it.
+    const { turnItems } = yield* getProjectThreadRecords(input, ["turnItems"], {
+      turnItemRunIds: [run.id],
+      turnItemTypes: ["user_message"],
+    });
+    if (
+      turnItems.some(
+        (item) =>
+          item.type === "user_message" &&
+          (item.inputIntent === "steer" || item.inputIntent === "promoted_queued_to_steer") &&
+          item.completedAt !== null &&
+          !DateTime.isLessThan(DateTime.makeUnsafe(item.completedAt), requestedAt),
+      )
+    )
+      return;
     const afterSequence = yield* orchestrator.getThreadEventSequence(input.threadId);
     const trySettle = Effect.gen(function* () {
       const sequence = yield* orchestrator.getThreadEventSequence(input.threadId);

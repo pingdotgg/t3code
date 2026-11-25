@@ -11,7 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
-import type * as Path from "effect/Path";
+import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { SCAN_CACHE_FILE_NAME } from "./usage/usageScanCache.ts";
@@ -29,6 +29,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "./config.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as CheckpointCaptureIndex from "./vcs/checkpointCaptureIndex.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as TaskFolders from "./workspace/TaskFolders.ts";
 import { layerTaskFoldersWithGit } from "./workspace/TaskFolders.testkit.ts";
@@ -773,18 +774,29 @@ describe("checkpoint ref cleanup", () => {
       Effect.gen(function* () {
         const { service, repo, worktree, command, addThread, listRefs } =
           yield* checkpointCleanupFixture();
-        yield* addThread("deleted", { deleted: true });
+        const deleted = yield* addThread("deleted", { deleted: true });
         yield* addThread("imported-deleted", { deleted: true, legacyOnly: true });
+        const active = yield* addThread("active");
         const retained = [
-          ...(yield* addThread("active")),
+          ...active,
           ...(yield* addThread("archived", { archived: true })),
           legacyCheckpointRef("unknown-owner", 0),
         ];
+        const fs = yield* FileSystem.FileSystem;
+        const indexRoot = CheckpointCaptureIndex.storeRoot(yield* Path.Path, `${repo}/.git`);
+        const captureIndexOf = (ref: string) =>
+          `${indexRoot}/${CheckpointCaptureIndex.scopeDirectoryPrefix(ref.slice(0, ref.lastIndexOf("/") + 1))}cwd`;
+        for (const ref of [deleted.at(-1)!, active.at(-1)!]) {
+          yield* fs.makeDirectory(captureIndexOf(ref), { recursive: true });
+        }
         yield* command(repo, ["update-ref", retained.at(-1)!, "HEAD"]);
         yield* command(repo, ["pack-refs", "--all"]);
         yield* command(repo, ["worktree", "remove", worktree]);
         yield* service.runNow;
         expect(yield* listRefs()).toEqual(retained.sort());
+        // A deleted thread's capture index goes with its refs; a live thread keeps its own.
+        expect(yield* fs.exists(captureIndexOf(deleted.at(-1)!))).toBe(false);
+        expect(yield* fs.exists(captureIndexOf(active.at(-1)!))).toBe(true);
       }).pipe(Effect.provide(Sqlite.layerMemory)),
     ),
   );
@@ -1041,7 +1053,7 @@ it.live("removes a task folder's clean worktrees and keeps the one with uncommit
         branch: "task",
         projectStart: { refName: "main", baseRefName: "main" },
         startFromOrigin: false,
-        projectCommands: true,
+        projectCommands: "permitted",
       });
       const root = taskFolder.root;
       // A nested worktree's uncommitted work must survive its thread's cleanup.
@@ -3408,6 +3420,38 @@ describe("storage cleanup reports and local file policies", () => {
         });
         expect(report.bytesFreed).toBe(0);
         expect(yield* fs.exists(worktree)).toBe(true);
+      }),
+    ),
+  );
+  it.effect("removes an eligible worktree whose ignored files take over 30 seconds to walk", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fs = yield* FileSystem.FileSystem;
+        const walking = yield* Deferred.make<void>();
+        let slowPath: string | undefined;
+        // Stands in for a flat Bun or npm node_modules with hundreds of thousands of files.
+        const fixture = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            lstat: (target) =>
+              Effect.gen(function* () {
+                if (target === slowPath) {
+                  yield* Deferred.succeed(walking, undefined);
+                  yield* Effect.sleep("31 seconds");
+                }
+                return yield* fs.lstat(target);
+              }),
+          }),
+        );
+        yield* fs.makeDirectory(`${fixture.worktree}/node_modules/pkg`, { recursive: true });
+        yield* fs.writeFileString(`${fixture.worktree}/node_modules/pkg/index.js`, "export {};\n");
+        slowPath = `${yield* fs.realPath(fixture.worktree)}/node_modules`;
+        const run = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(walking);
+        yield* TestClock.adjust("31 seconds");
+        expect((yield* Fiber.join(run)).entries[0]).toMatchObject({ outcome: "removed" });
+        expect(yield* fs.exists(fixture.worktree)).toBe(false);
       }),
     ),
   );

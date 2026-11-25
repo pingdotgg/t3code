@@ -15,6 +15,7 @@ import * as HookForwarder from "./hooks/HookForwarder.ts";
 import * as HookInbox from "./hooks/HookInbox.ts";
 import * as HookInboxObject from "./hooks/HookInboxObject.ts";
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
+import * as ManagedTunnelBinding from "./environments/ManagedTunnelBinding.ts";
 import * as MobileTelemetry from "./mobileTelemetry/MobileTelemetry.ts";
 import { RelayObservability } from "./observability.ts";
 import {
@@ -87,7 +88,7 @@ export const layer = Api.make(
     });
     const managedEndpointBaseDomain = yield* yield* managedEndpointZone.name;
 
-    const tunnel = yield* Cloudflare.Tunnel.ReadWriteTunnel();
+    const tunnel = yield* ManagedTunnelBinding.ManagedTunnel();
     // Keep Worker custom-domain reconciliation ordered after API zone provisioning.
     yield* yield* relayApiZone.zoneId;
     const dns = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
@@ -273,7 +274,7 @@ export const layer = Api.make(
         Layer.provideMerge(Cloudflare.Workers.CronEventSourceLive),
         Layer.provideMerge(Cloudflare.Queues.WriteQueueBinding),
         Layer.provideMerge(Cloudflare.Queues.EventSourceLive),
-        Layer.provideMerge(Cloudflare.Tunnel.ReadWriteTunnelBinding),
+        Layer.provideMerge(ManagedTunnelBinding.ManagedTunnelBinding),
         Layer.provideMerge(Cloudflare.DNS.ReadWriteDnsHttp),
         Layer.provideMerge(Cloudflare.Workers.RateLimitBinding),
         Layer.provideMerge(Cloudflare.R2.ReadBucketBinding),

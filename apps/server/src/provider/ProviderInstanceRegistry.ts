@@ -82,14 +82,19 @@ const runtimeEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boo
 
 // Drivers stamp the presentation they were created with into every snapshot, so a renamed
 // instance kept live restamps what it reports.
-const withLivePresentation = (instance: ProviderInstance, created: ProviderInstanceConfig) => {
+const withLivePresentation = (
+  instance: ProviderInstance,
+  created: ProviderInstanceConfig,
+  defaultSnapshotDisplayName: string | undefined,
+) => {
   let current = created;
   const restamp = <S extends ServerProvider>(snapshot: S): S => {
     const next: { -readonly [K in keyof S]: S[K] } = { ...snapshot };
     for (const key of ["displayName", "accentColor"] as const) {
       const value = current[key];
       if (value === created[key]) continue;
-      if (value) next[key] = value;
+      const stamped = value || (key === "displayName" ? defaultSnapshotDisplayName : undefined);
+      if (stamped) next[key] = stamped;
       else delete next[key];
     }
     return next;
@@ -400,7 +405,11 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
     };
   }
 
-  const { instance, setPresentation } = withLivePresentation(createResult.success, entry);
+  const { instance, setPresentation } = withLivePresentation(
+    createResult.success,
+    entry,
+    driver.metadata.snapshotOmitsDisplayName ? undefined : driver.metadata.displayName,
+  );
   return {
     kind: "live" as const,
     live: { instance, scope: childScope, entry, secrets, setPresentation },

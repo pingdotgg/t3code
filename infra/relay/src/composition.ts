@@ -60,6 +60,7 @@ import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as T3ChatAccounts from "./t3chat/T3ChatAccounts.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
 import * as HookForwarder from "./hooks/HookForwarder.ts";
+import * as AccountDeletion from "./accounts/AccountDeletion.ts";
 import * as HeldHooks from "./hooks/HeldHooks.ts";
 import * as MobileTelemetry from "./mobileTelemetry/MobileTelemetry.ts";
 
@@ -129,6 +130,12 @@ export const composeRelay = Effect.fn("relay.composition.compose")(function* <R>
   const clerkJwtAudience = Option.getOrUndefined(
     yield* Config.option(Config.String("CLERK_JWT_AUDIENCE")),
   );
+  const clerkWebhookSigningSecret = Option.getOrUndefined(
+    Option.filter(
+      yield* Config.option(Config.Redacted("CLERK_WEBHOOK_SIGNING_SECRET")),
+      (value) => Redacted.value(value).trim().length > 0,
+    ),
+  );
   // Optional second identity provider for self-hosted relays; Clerk keeps working alongside it.
   const oidcIssuer = Option.getOrUndefined(yield* Config.option(Config.String("OIDC_ISSUER")));
   const oidcAudience = Option.getOrUndefined(yield* Config.option(Config.String("OIDC_AUDIENCE")));
@@ -176,6 +183,7 @@ export const composeRelay = Effect.fn("relay.composition.compose")(function* <R>
       ...(clerkSecretKey === undefined ? {} : { clerkSecretKey }),
       ...(clerkPublishableKey === undefined ? {} : { clerkPublishableKey }),
       ...(clerkJwtAudience === undefined ? {} : { clerkJwtAudience }),
+      ...(clerkWebhookSigningSecret ? { clerkWebhookSigningSecret } : {}),
       manualEndpoints,
       ...(oidcIssuer === undefined || oidcAudience === undefined || oidcVerify === undefined
         ? {}
@@ -206,6 +214,7 @@ export const composeRelay = Effect.fn("relay.composition.compose")(function* <R>
         EnvironmentPublishSignatures.layer,
         ManagedEndpointReaper.layer,
         HeldHooks.layer,
+        AccountDeletion.layer,
       ),
     ),
     Layer.provideMerge(
@@ -295,6 +304,7 @@ export const composeRelay = Effect.fn("relay.composition.compose")(function* <R>
       Layer.provide(layerHookRateLimiter),
     ),
     MobileTelemetry.layerApi.pipe(Layer.provide(layerMobileTelemetry)),
+    AccountDeletion.layerApi,
   ).pipe(
     Layer.provideMerge(RelayHttpApi.layerClientAuth),
     Layer.provideMerge(RelayHttpApi.layerDpopClientAuth),
@@ -366,6 +376,19 @@ export const composeRelay = Effect.fn("relay.composition.compose")(function* <R>
               : Effect.logWarning("Failed to prune expired relay state", { cause }),
           ),
         ),
+        AccountDeletion.AccountDeletion.pipe(
+          Effect.flatMap((accounts) => accounts.processPending.pipe(Effect.timeout("2 minutes"))),
+          Effect.tap((result) =>
+            result.failed > 0
+              ? Effect.logError("Account deletions failed; retrying next sweep", result)
+              : Effect.void,
+          ),
+          Effect.catchCause((cause) =>
+            Cause.hasInterrupts(cause)
+              ? Effect.interrupt
+              : Effect.logError("Failed to process account deletions", { cause }),
+          ),
+        ),
         ManagedEndpointReaper.ManagedEndpointReaper.pipe(
           Effect.flatMap((reaper) => reaper.sweep.pipe(Effect.timeout("2 minutes"))),
           Effect.tap((result) =>
@@ -388,7 +411,7 @@ export const composeRelay = Effect.fn("relay.composition.compose")(function* <R>
           ),
         ),
       ],
-      { concurrency: 3, discard: true },
+      { concurrency: 4, discard: true },
     ).pipe(
       Effect.withSpan("relay.cron.prune_expired_state"),
       Observability.withSchemaErrorSpanAttributes,
