@@ -856,16 +856,40 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
-  // regression: #16208 PR watches burned GitHub's rate limit and gave up
-  it("does not report passed again for a new passed check where none is required", () => {
+  // A check that started and finished between reads left the agent waiting on a watch that never woke.
+  it("reports passed once more for a check that shows up already passed where none is required", () => {
     const first = evaluatePullRequestWatch(
       watch(),
       detail({ checks: [check("test", "success")] }),
       noRemarks,
     );
     assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required: false }]);
-    const both = detail({ checks: [check("test", "success"), check("lint", "success")] });
-    assert.deepEqual(evaluatePullRequestWatch(first.next, both, noRemarks).changes, []);
+    const both = detail({ checks: [check("test", "success"), check("e2e", "success")] });
+    const second = evaluatePullRequestWatch(first.next, both, noRemarks);
+    assert.deepEqual(second.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    // regression: #16208 a check list that varies between reads must not wake again and again
+    const flipped = evaluatePullRequestWatch(
+      second.next,
+      detail({ checks: [check("test", "success")] }),
+      noRemarks,
+    );
+    assert.deepEqual(flipped.changes, []);
+    assert.deepEqual(evaluatePullRequestWatch(flipped.next, both, noRemarks).changes, []);
+
+    // Advisory names told earlier do not hide a check that later turns required.
+    const required = (name: string) => ({ ...check(name, "success"), required: true });
+    const promoted = evaluatePullRequestWatch(
+      second.next,
+      detail({ checks: [required("test"), check("e2e", "success")] }),
+      noRemarks,
+    );
+    assert.deepEqual(promoted.changes, []);
+    const gated = detail({
+      checks: [required("test"), required("e2e"), check("deploy", "pending")],
+    });
+    assert.deepEqual(evaluatePullRequestWatch(promoted.next, gated, noRemarks).changes, [
+      { kind: "checks-passed", count: 2, required: true },
+    ]);
   });
 
   it("does not wake a watch saved before passed checks were recorded", () => {
