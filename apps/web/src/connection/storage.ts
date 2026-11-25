@@ -559,6 +559,8 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
 
 interface CatalogStore {
   readonly read: Effect.Effect<ConnectionCatalogDocumentType, ConnectionTransientError>;
+  /** What is stored now, for a decision that another tab's latest save must already bind. */
+  readonly readStored: Effect.Effect<ConnectionCatalogDocumentType, ConnectionTransientError>;
   readonly update: (
     transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
   ) => Effect.Effect<void, ConnectionTransientError>;
@@ -598,7 +600,7 @@ const exclusiveAcrossTabs: CatalogTabs["exclusive"] = (update) =>
 /**
  * The catalog holds each environment's pinned identity key, so a tab must not save over another
  * tab's copy or keep answering from its own: an update reads what is stored and saves while no
- * other tab does, and a save in one tab drops the others' cached copy.
+ * other tab does, a save in one tab drops the others' cached copy, and only an update writes.
  */
 export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(function* (
   backend: CatalogBackend,
@@ -614,7 +616,9 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
     cached = Option.none();
   });
 
-  const loadStored = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
+  // A corrupt catalog reads as empty and stays where it is. The update that replaces it sets
+  // it aside first, under the lock, so a recovering tab cannot write over another tab's save.
+  const loadStored = Effect.fn("web.connectionStorage.loadCatalog")(function* (replacing: boolean) {
     const savesBefore = saves;
     const raw = yield* backend.read;
     let catalog = EMPTY_CONNECTION_CATALOG_DOCUMENT;
@@ -625,7 +629,7 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
             yield* Effect.logWarning("Discarding a corrupt web connection catalog.", {
               error: error.message,
             });
-            if (backend.quarantine !== undefined) {
+            if (replacing && backend.quarantine !== undefined) {
               yield* backend.quarantine(raw).pipe(
                 Effect.catch((cause) =>
                   Effect.logWarning("Could not quarantine the corrupt web connection catalog.", {
@@ -634,14 +638,6 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
                 ),
               );
             }
-            const encoded = yield* encodeCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT);
-            yield* backend.write(encoded).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Could not persist the recovered web connection catalog.", {
-                  error: cause.message,
-                }),
-              ),
-            );
             return EMPTY_CONNECTION_CATALOG_DOCUMENT;
           }),
         ),
@@ -651,15 +647,18 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
     return catalog;
   });
 
+  const readStored = lock.withPermits(1)(loadStored(false));
   const read = lock.withPermits(1)(
-    Effect.suspend(() => (Option.isSome(cached) ? Effect.succeed(cached.value) : loadStored())),
+    Effect.suspend(() =>
+      Option.isSome(cached) ? Effect.succeed(cached.value) : loadStored(false),
+    ),
   );
   const update: CatalogStore["update"] = Effect.fn("web.connectionStorage.updateCatalog")(
     function* (transform) {
       yield* lock.withPermits(1)(
         exclusive(
           Effect.gen(function* () {
-            const next = transform(yield* loadStored());
+            const next = transform(yield* loadStored(true));
             yield* backend.write(yield* encodeCatalog(next));
             cached = Option.some(next);
             // oxlint-disable-next-line unicorn/require-post-message-target-origin -- BroadcastChannel is scoped to the origin
@@ -670,7 +669,7 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
     },
   );
 
-  return { read, update } satisfies CatalogStore;
+  return { read, readStored, update } satisfies CatalogStore;
 });
 
 // The stored names predate the rename and stay, so a tab still on an older version and an
@@ -858,7 +857,9 @@ export const layer = Layer.effectContext(
       ),
       environmentKey: Effect.fn("Persistence.ConnectionRegistrationStore.environmentKey")(
         function (environmentId) {
-          return catalog.read.pipe(
+          // Not the cached copy: a key another tab just pinned must already hold for the next
+          // request here, and that tab's notice may not have arrived yet.
+          return catalog.readStored.pipe(
             Effect.map((document) => catalogEnvironmentKey(document, environmentId)),
             Effect.mapError((cause) => persistenceError("load-environment-key", cause)),
           );

@@ -33,7 +33,7 @@ afterEach(() => {
 });
 
 describe("ConnectionStorage.makeCatalogStore", () => {
-  it.effect("quarantines malformed catalogs and starts from an empty document", () =>
+  it.effect("reads a malformed catalog as empty and sets it aside when an update replaces it", () =>
     Effect.gen(function* () {
       const writes: string[] = [];
       const quarantined: string[] = [];
@@ -43,10 +43,13 @@ describe("ConnectionStorage.makeCatalogStore", () => {
         quarantine: (raw) => Effect.sync(() => quarantined.push(raw)),
       });
 
+      // A read writes nothing: only an update holds the lock the origin's tabs share.
       expect(yield* store.read).toEqual(emptyCatalog);
+      expect([quarantined, writes]).toEqual([[], []]);
+
+      yield* store.update((document) => document);
       expect(quarantined).toEqual(["{not-json"]);
-      expect(writes).toHaveLength(1);
-      expect(decodeCatalog(writes[0]!)).toEqual(emptyCatalog);
+      expect(writes.map((raw) => decodeCatalog(raw))).toEqual([emptyCatalog]);
     }),
   );
 
@@ -102,6 +105,14 @@ describe("ConnectionStorage.makeCatalogStore", () => {
 
         yield* pinning.update((document) => ({ ...document, environmentKeys }));
         expect((yield* earlier.read).environmentKeys).toEqual(environmentKeys);
+        // A tab the notice has not reached still answers a fresh read from what is stored.
+        const unnotified = yield* ConnectionStorage.makeCatalogStore(backend);
+        yield* unnotified.read;
+        yield* earlier.update((document) => ({ ...document, disabledEnvironmentIds }));
+        expect((yield* unnotified.read).disabledEnvironmentIds).toEqual([]);
+        expect((yield* unnotified.readStored).disabledEnvironmentIds).toEqual(
+          disabledEnvironmentIds,
+        );
         // A read that was under way during the save does not leave its older copy cached.
         yield* Fiber.join(reading);
         expect((yield* late.read).environmentKeys).toEqual(environmentKeys);
