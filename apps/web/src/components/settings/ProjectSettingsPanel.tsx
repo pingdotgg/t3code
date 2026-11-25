@@ -1,4 +1,3 @@
-import { useRenderedSettingsPathname } from "./useRenderedSettingsPathname";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { m as resolveMessage } from "../../i18n/messages";
@@ -15,7 +14,7 @@ import {
   useProjectGroupUpdate,
   type ProjectGroupUpdate,
 } from "../../hooks/useProjectGroupUpdate";
-import { Navigate, useNavigate } from "@tanstack/react-router";
+import { Navigate, useLocation, useNavigate } from "@tanstack/react-router";
 import { InfoIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
 import { T, useGT, useMessages } from "gt-react";
@@ -185,7 +184,7 @@ export function ProjectSettingsPanel({
 }) {
   const gt = useGT();
   const groups = useSettingsProjectGroups();
-  const pathname = useRenderedSettingsPathname();
+  const pathname = useLocation({ select: (location) => location.pathname });
 
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
   const members =

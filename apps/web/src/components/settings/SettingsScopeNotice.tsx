@@ -1,4 +1,3 @@
-import { useRenderedSettingsPathname } from "./useRenderedSettingsPathname";
 import { resolveEnvironmentMachineKind, type EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useGT } from "gt-react";
@@ -23,6 +22,7 @@ import {
   settingsScopeEnvironmentLabels,
   settingsScopeProjectMachines,
 } from "./settingsScopeAxis";
+import { useRenderedSettingsPathname } from "./useRenderedSettingsPathname";
 
 interface ScopeChoice {
   label: string;

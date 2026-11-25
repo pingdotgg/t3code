@@ -25,6 +25,7 @@
   "986b0873f913a840": "La politique de {organization} n’autorise pas les tâches webhook.",
   "eebc538e25b09fe2": "La politique de {organization} n’autorise pas l’import des cookies du navigateur.",
   "7642a133db05f164": "La stratégie de {organization} n’autorise pas l’ouverture des serveurs locaux de cette machine sur d’autres appareils.",
+  "e0856d6a402ad821": "La politique de {organization} n’autorise pas les commandes de disposition des worktrees des projets.",
   "39f6771b49f9b3b6": "Utiliser la valeur par défaut",
   "45bb0e90e1c42046": "À votre retour",
   "d8fa0a55446bbb0d": "Avant l’expiration du cache (bêta)",
@@ -71,6 +72,7 @@
   "cd03eb1b84271c02": "Agent",
   "bfe1a60f3f9c60fb": "Tour {turn} · {what}",
   "dfdaa6255a416140": "Résumé de {turns, plural, one {{turns} tour récent} other {{turns} tours récents}}, {textTurns, plural, =0 {sans texte des messages} one {avec le texte des messages du dernier tour} other {avec le texte des messages des {textTurns} derniers tours}}{truncated, select, yes {, raccourci pour tenir dans la limite} other {}}",
+  "260c6b45f52d2f27": "Ajoute le texte de vos messages et des réponses de l'agent dans {textTurns, plural, one {le dernier tour} other {les {textTurns} derniers tours}}.",
   "afac52a5cc2dc801": "Impossible d'envoyer votre réponse. Réessayez.",
   "79d776428f4d0650": "Le fichier n’a pas pu être chargé. Reconnectez-vous et réessayez.",
   "3ea34cbb1ca5ba9b": "Aperçu annulé.",
@@ -1342,9 +1344,9 @@
   "a9b663922945a4fa": "Cette connexion ne peut pas ouvrir d’éditeur sur cet environnement.",
   "868596d482a1a2bd": "Ouvrir",
   "f58caaa68c09fbeb": "Ouvrir avec",
+  "75b6d7c3bc9c72da": "Impossible d’ouvrir dans {editor}",
   "415d9fed5542d278": "Impossible d’ouvrir le fichier",
   "1d1bbe5b700afe63": "Impossible d’afficher le fichier",
-  "75b6d7c3bc9c72da": "Impossible d’ouvrir dans {editor}",
   "31dc19d033af2774": "Impossible d’ouvrir le lien.",
   "029d8d0201aed231": "Impossible d’ouvrir les Réglages Système.",
   "9af3083226778d3c": "Open VSX a renvoyé des détails de thème mal formés.",
@@ -1524,6 +1526,8 @@
   "4eb599c7f36c99ba": "Ce fichier de thème n’est pas un JSON valide.",
   "29a5ff50ce55c4f9": "Thème VS Code",
   "10348092dfed8b11": "Ce thème VS Code n’a pas de couleur « editor.background » ; impossible d’en dériver une palette.",
+  "206811f6f441bfc7": "Ce projet prépare ses worktrees avec sa propre commande, que personne n’a approuvée telle qu’elle est écrite actuellement. Cette connexion ne peut pas l’approuver : approuvez-la depuis un client qui peut utiliser le terminal.",
+  "b8087c9a70c26da9": "Impossible d’approuver la commande de disposition des worktrees.",
   "6dff8d487001c6cf": "Adaptatif",
   "f5f61c338cc5aeb5": "Barre d’outils des appareils du navigateur",
   "3b4eb5b5ec5e60cb": "Préréglage d’appareil du navigateur",
@@ -1552,6 +1556,7 @@
   "6848f5bbb2bd9eec": "Document PDF",
   "7873a79df0cf6d0e": "Page du navigateur",
   "0b55696e27387e4e": "Appuyez sur Shift+Escape pour quitter la page du navigateur.",
+  "90dfebe26eb86b2d": "Options de sélection de la page",
   "737d3c6bec93f9e6": "Choisir des fichiers pour la page",
   "e6a3fa7cfc14f86a": "Boîte de dialogue du navigateur",
   "61a552a67e9e3eac": "Réponse à la boîte de dialogue",
@@ -1977,13 +1982,16 @@
   "7af7f00b85cc2930": "Confirmer l’action",
   "8b418a02b73f49b8": "Cette action nécessite votre confirmation.",
   "e74139c17fab1fa1": "Confirmer",
+  "4a18481bea4b4ad5": "Nouvel appareil connecté à {environmentLabel}",
+  "4144ab6aa487528a": "{device} s’est connecté via {product}. Ce n’était pas vous ? Vérifiez-le.",
+  "a10cfdb27152c757": "{count, plural, one {{count} appareil s’est connecté} other {{count} appareils se sont connectés}} via {product}. Ce n’était pas vous ? Vérifiez-les.",
+  "4672f332c89dbcd9": "Examiner",
   "775a3e99e2638341": "Un appareil veut se connecter à {environmentLabel}",
   "a8befcb9f1c61f60": "{device}. N’approuvez que s’il affiche le code {code}.",
   "ac48cc297029db41": "Approuver",
   "c12ca3fea745def0": "Impossible d’approuver l’appareil",
   "af63f05ed2f5eeb3": "Refuser",
   "b735bab216b27041": "Impossible de refuser l’appareil",
-  "4672f332c89dbcd9": "Examiner",
   "913fc23f62321556": "Choisissez une date et une heure valides dans le futur.",
   "9485a52216cfc0d5": "Saisissez une durée positive.",
   "9bc551235d78e133": "Type de planification",
@@ -2697,6 +2705,24 @@
   "a707abf0a4a73ffa": "Fermer le terminal ({shortcut})",
   "9206ecf328948f90": "Fermer le terminal",
   "9b1326a11cfe3308": "Pas encore de session de terminal pour ce fil.",
+  "49eda70cfd56e621": "S’exécute au démarrage d’un fil dans un worktree et à la restauration de son dossier",
+  "188ccaa1199f5611": "S’exécute à la suppression du worktree d’un fil",
+  "7e8476e7306acabe": "Autoriser ce projet à exécuter ses commandes de worktree ?",
+  "8e11914556fd8b13": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " prépare les fils en worktree avec ses propres commandes issues de ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "t3.json"
+    },
+    ". Elles s’exécutent sur la machine de cet environnement avec vos autorisations, hors de tout bac à sable d’agent. La question vous sera reposée chaque fois que leur texte changera."
+  ],
+  "46807acd02a4ff72": "Approuver et continuer",
   "2ac142f34e5dabc2": "Dépôts dans le nouveau worktree : {selection}",
   "c514773a8031f00b": "Filtrer les dépôts",
   "e32b730f6d27753f": "Choisissez les dépôts sur lesquels ce fil travaille",
@@ -2736,9 +2762,9 @@
   "db7b3a938c45e56c": "Mise à jour {version} prête à être téléchargée",
   "9a951140b69ba740": "Téléchargement de la mise à jour ({percent} %)",
   "7fdece033260e9fb": "Téléchargement de la mise à jour",
+  "52e1d4a487c0cf4b": "Échec de l’installation de {version}. Cliquez pour réessayer.",
   "09ef51903e99e876": "Mise à jour téléchargée. Cliquez pour redémarrer et l’installer.",
   "d62631cab06d2b80": "Mise à jour {version} téléchargée. Cliquez pour redémarrer et l’installer.",
-  "52e1d4a487c0cf4b": "Échec de l’installation de {version}. Cliquez pour réessayer.",
   "78a04e0e625c0990": "Échec de la mise à jour",
   "c24de5eb69373a55": "Cette version {build} ignore les versions {track}. Vérifiez le canal de mise à jour dans les Réglages pour terminer le changement.",
   "b02ae45a6109c93b": "À jour",
@@ -3325,9 +3351,6 @@
   "b90e87f4b7125237": "Détails",
   "16dc67f5429d8bae": "Travail en arrière-plan",
   "2188eee8f81b0f51": "Ouvrir le sous-agent",
-  "ec9e0be8ec693302": "Réduire tous les dossiers",
-  "b791dd86f7991cc0": "Développer tous les dossiers",
-  "55b936e3014e16c8": "Ouvrir le diff",
   "28bb7ce40dfd349a": "La sortie du terminal ne peut pas être ajoutée à la réponse à une question.",
   "801cb8edea94b8f6": "Répondez à la question ou ignorez-la d’abord, puis ajoutez-la à la discussion.",
   "aa5507f20d94d5a9": "Mettez à jour ce serveur pour envoyer des fichiers avec les réponses aux questions",
@@ -3641,10 +3664,10 @@
   "4e0710d19dfc2e7e": "Envoyer ce rapport à l'équipe T3 ?",
   "87d0ae0723ba75d1": "Voici tout ce qui quitte votre machine. Rien n'est envoyé tant que vous ne cliquez pas sur Envoyer.",
   "bf19826f81484328": "Inclure la conversation",
-  "260c6b45f52d2f27": "Ajoute le texte de vos messages et des réponses de l'agent dans {textTurns, plural, one {le dernier tour} other {les {textTurns} derniers tours}}.",
   "ddb7e6f8ce99e657": "Seule une personne autorisée à exécuter des agents sur cette machine peut l'envoyer ou le refuser.",
   "03c1eb603c112f47": "Ne pas envoyer",
   "653405e4ed498d9f": "Envoyer",
+  "76cf478e5674fd12": "{count, plural, one {{count} correspondance} other {{count} correspondances}}",
   "262955d6eb632f9b": "L’API Presse-papiers n’est pas disponible pour copier le lien invité.",
   "f1a4f2b04cdbb4ef": "Impossible de copier le lien invité dans le presse-papiers.",
   "cf3490a604e44d31": "Impossible de créer un lien invité.",
@@ -3793,15 +3816,6 @@
     " a été fermée"
   ],
   "dff97202cbdaec5b": "Afficher l’app",
-  "705cf2b2ee4e0e42": [
-    "L’app ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " a quitté sa page et a été arrêtée"
-  ],
   "796b81c4875c4feb": [
     "L’app ",
     {
@@ -3816,6 +3830,15 @@
       "v": "v"
     },
     " plus récent sur cet environnement. Mettez à jour le serveur pour l’utiliser."
+  ],
+  "705cf2b2ee4e0e42": [
+    "L’app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " a quitté sa page et a été arrêtée"
   ],
   "5ef18e4d39b398bf": [
     "Impossible de charger l’app ",
@@ -4641,7 +4664,6 @@
   "7f0f9b1ee42892db": "La sortie n’est plus disponible.",
   "e470bb79fa74a6ae": "Image de sortie de l’outil",
   "e8c80b6d40c0944c": "Résultat de recherche",
-  "76cf478e5674fd12": "{count, plural, one {{count} correspondance} other {{count} correspondances}}",
   "8d1906900b5c95c7": [
     "code de sortie ",
     {
@@ -4650,6 +4672,7 @@
       "v": "v"
     }
   ],
+  "55b936e3014e16c8": "Ouvrir le diff",
   "83c29850641c8935": "En file d’attente",
   "8402f099f88fd0e0": "En cours",
   "c5f5b73e92221a6a": "En attente",
@@ -5531,6 +5554,8 @@
   "1601d7e39a52c48f": "Réessayer de charger le diff",
   "b7b137472adb6989": "Aperçu partiel du diff",
   "f0d79aa56f06663f": "Ce fichier est trop volumineux pour être affiché en entier. Les totaux incluent toutes les modifications.",
+  "ec9e0be8ec693302": "Réduire tous les dossiers",
+  "b791dd86f7991cc0": "Développer tous les dossiers",
   "7fdde2b893ba1b9d": "Supprimé",
   "e58ce271d835b447": "Ajouté",
   "07b9970b662ab70d": "Afficher la source Mermaid",
@@ -6652,8 +6677,6 @@
   "1b381201aba745c2": "Aucun check signalé",
   "a6d75a4380173c60": "Ouvrir les checks : {summary}",
   "be3d1766bad18693": "Checks : {summary}",
-  "425e4a3d6c5c2867": "{count, plural, one {{count} en échec} other {{count} en échec}}",
-  "fd63b391898889f9": "{count, plural, one {{count} en attente d’action} other {{count} en attente d’action}}",
   "cb116c139cdace98": "Aucun check signalé",
   "60b56e201607c7ec": "Les détails des checks ne sont plus à jour. Actualisez la pull request pour les mettre à jour.",
   "e74cd4e960cbb5e5": "Les lignes inchangées ne sont pas disponibles dans un fichier aux lignes tronquées.",
@@ -7035,19 +7058,27 @@
     }
   ],
   "ce703d4ba40dc9b4": "Fusion de la pile...",
+  "8a883c4fbc127b68": "Activation de la fusion automatique de la pile...",
   "ac7feb9c583b02a0": "Rebase de la pile...",
   "cb0f63bbb0b68d94": "Impossible de fusionner la pile",
+  "5fb2a26ae31e8983": "Impossible d’activer la fusion automatique de la pile",
   "c8a943fa15a56b2b": "Impossible de faire le rebase de la pile",
   "ec22caeb8b949ed1": "L’hôte a refusé le rebase. Un rebase s’arrête au premier commit qui ne s’applique pas proprement.",
   "ead3e2bac1a8d231": "Demande de fusion de la pile terminée",
+  "986d0dcbf4dd0098": "Fusion automatique de la pile activée",
   "d7079b5ac269c65e": "Rebase de la pile effectué",
   "5631b32be0ce48d3": "{host} a fusionné la pile ou l’a ajoutée à sa file de fusion.",
+  "f3ed1f63c8a3eef2": "{host} fusionnera la pile jusqu’à #{number} dès que ses conditions seront remplies.",
+  "bd536a0a1754f6cb": "Impossible d’annuler la fusion automatique de la pile",
+  "bb90ac3b2f3a72d5": "L’hôte a refusé d’annuler la fusion automatique. Actualisez et réessayez.",
   "2d3b55018a54287e": "Vérification de la pile auprès de l’hôte…",
   "eea55205e46d2e3d": "Pile {number}, couche {position} sur {size}",
   "b6f729119107a145": "{count, plural, one {Fusionner la pile jusqu’à '#'{number} dans {base} ({count} {term, select, mr {merge request} cr {demande de modification} other {pull request}})} other {Fusionner la pile jusqu’à '#'{number} dans {base} ({count} {term, select, mr {merge requests} cr {demandes de modification} other {pull requests}})}}",
   "d4bfcdc6bb7676a3": "{count, plural, one {Fusionner {count} {term, select, mr {merge request} cr {demande de modification} other {pull request}} ?} other {Fusionner {count} {term, select, mr {merge requests} cr {demandes de modification} other {pull requests}} ?}}",
+  "9c28753c777c37b7": "{count, plural, one {Fusionner automatiquement {count} {term, select, mr {merge request} cr {demande de modification} other {pull request}} ?} other {Fusionner automatiquement {count} {term, select, mr {merge requests} cr {demandes de modification} other {pull requests}} ?}}",
   "b9f2a24a3757f6c9": "{count, plural, one {Faire le rebase de {count} {term, select, mr {merge request} cr {demande de modification} other {pull request}} ?} other {Faire le rebase de {count} {term, select, mr {merge requests} cr {demandes de modification} other {pull requests}} ?}}",
   "d1bcf19eb2753fff": "Fusionner #{number} et ses couches non fusionnées inférieures dans {base} avec {method}. {host} vérifie leurs règles avant de les fusionner ou de les mettre en file d’attente, puis fait le rebase du reste de la pile après la fusion.",
+  "a86b49982e18784d": "Fusionner #{number} et ses couches non fusionnées inférieures dans {base} avec {method} dès que chacune remplit les conditions de {host}. Cela peut se produire immédiatement.",
   "31d2f22f5a282719": "Faire le rebase des branches distantes de bas en haut sur {base}. Cela réécrit l’historique des branches et peut relancer les checks. Si une couche échoue, les mises à jour précédentes restent en place.",
   "a0adf78733c368ae": "Fusionner la pile",
   "140dc384c58b74f3": "Rebase de la pile",
@@ -7082,8 +7113,19 @@
     },
     ")"
   ],
+  "b1afda5c964deee4": [
+    "Fusion automatique de la pile (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ")"
+  ],
+  "33d18dda74f6d7b3": "Annuler la fusion automatique de la pile",
   "30440f98e929440a": "Rebase de la pile",
   "13718a03e3144142": "Chaque couche fusionnée doit être ouverte et prête pour la revue.",
+  "012c67c7f1a99e33": "Fusion automatique de la pile",
   "4aafe1baf113088a": "Fusionner la pile",
   "0292da19054f2a04": "Chargement de la pile…",
   "583869e6df57abeb": "Cette pull request ne fait plus partie d’une pile.",
@@ -7311,6 +7353,9 @@
   "9b0647af63a7d8c1": "Approbation de modifications antérieures",
   "abe99679224fea5e": "Modifications demandées sur des changements antérieurs",
   "6b31ad910278ff72": "Revue rejetée sur des changements antérieurs",
+  "425e4a3d6c5c2867": "{count, plural, one {{count} en échec} other {{count} en échec}}",
+  "fd63b391898889f9": "{count, plural, one {{count} en attente d’action} other {{count} en attente d’action}}",
+  "948185631ef288e6": "{count, plural, one {{count} en cours} other {{count} en cours}}",
   "aaf22207b2f18c45": "{workflows, plural, one {{workflows} workflow} other {{workflows} workflows}} et {checks, plural, one {{checks} check} other {{checks} checks}} en attente d’action",
   "c51411813ebafcc1": "{count, plural, one {{count} workflow en attente d’approbation} other {{count} workflows en attente d’approbation}}",
   "4946778c8e18a1db": "{count, plural, one {{count} check en attente d’action} other {{count} checks en attente d’action}}",
@@ -7548,6 +7593,7 @@
   "e4e5b75bba51396c": "Jeton Bearer (facultatif)",
   "e62cedcbcdbafc75": "Clé de gestion",
   "f1b3d0634ec035cb": "Libellé (facultatif)",
+  "b35256ca61016104": "Ajouter une source",
   "52814dd6f7d0a15c": "Ajouter le hub",
   "27b770d3402abfa2": "Avancé",
   "584595dfcadab699": "Illustration",
@@ -7557,6 +7603,7 @@
   "d5dc7576fd468be7": "Confortable",
   "3141408bf3874e64": "Large",
   "831badd18b64547e": "Pleine largeur",
+  "6287212fed0deec6": "Comme la discussion",
   "a96255594ebf2ce3": "Mot",
   "1ee44eb65708a8aa": "Barres",
   "7670f789e0d8672a": "Seuls les thèmes intégrés affichent une illustration ; ce thème affiche donc la pastille de version.",
@@ -7574,12 +7621,11 @@
   "03338c6aec8edacd": "Définissez la largeur maximale des messages et de la zone de saisie sur les grands écrans.",
   "92785adb251da88c": "Réinitialiser la largeur de la discussion à la valeur par défaut",
   "4d457bcce0c0e272": "Largeur de la discussion",
-  "7d7f65967cc821e3": "Largeur des aperçus HTML",
+  "81f3a196537bbee0": "Confortable (par défaut)",
   "70ce0af7f78d5957": "Permet aux aperçus HTML d’une discussion d’être plus larges que ses messages, qui restent centrés.",
   "f2b119bf02ae2558": "Réinitialiser la largeur des aperçus HTML à la valeur par défaut",
-  "6287212fed0deec6": "Comme la discussion",
+  "7d7f65967cc821e3": "Largeur des aperçus HTML",
   "dc8e85ea0364649c": "Comme la discussion (par défaut)",
-  "81f3a196537bbee0": "Confortable (par défaut)",
   "e79e5388f669495f": "Afficher l’effort de raisonnement dans la zone de saisie par son nom, comme Élevé, ou sous forme de barres.",
   "7f0365c7e4e8bcbf": "Réinitialiser l’affichage de l’effort à la valeur par défaut",
   "14bf40f765172a50": "Affichage de l’effort",
@@ -8379,7 +8425,6 @@
   "e6886a7f77b73a8e": "{platform} non disponible",
   "b0b7610d9860d18d": "Non configuré sur cette machine.",
   "f5b66c481aa3e4df": "Modifier",
-  "b35256ca61016104": "Ajouter une source",
   "3b20ef0670ae4b0b": "Machine via SSH",
   "121ccffacb6b8c6d": "Expo Simulators",
   "130b55a1410a8030": "Pool Simlock (alpha)",
@@ -8773,9 +8818,13 @@
   "ed83b25c71c98a20": "Choisissez un ou plusieurs {scope}s {tracker} pour chaque projet. Leurs tickets s'affichent à côté de ceux du dépôt, et les agents créent les nouveaux tickets dans le premier, sauf si vous leur indiquez une autre destination.",
   "19c2d5e81ff8f89a": "{scope} {tracker} pour {project}",
   "68e061510b765772": "Non lié",
+  "99d51127f573296b": "Autre compte",
+  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
+  "99963c0142e17f00": "Pour le nouveau compte {tracker}.",
   "a2d95d39d3398bda": "Identifiant refusé",
   "9eae463720500113": "Stocké sur le serveur.",
   "b6e27ab2537ef874": "En créer un",
+  "6d8e4ebc889bace9": "Ajouter un compte",
   "13ef526271b0f5d4": "Effacer toutes les conditions",
   "d1938a629f039515": "Supprimer la condition",
   "84a605b241ce65b7": "Supprimer le groupe et ses conditions",
@@ -8813,7 +8862,7 @@
   "a9cdd8c7073be920": "Palette de commandes : afficher/masquer",
   "4e0943e8c7a465d1": "Sélecteur de fichiers : afficher/masquer",
   "df5fdcdf26a6b52a": "Recherche dans le projet : afficher/masquer",
-  "a8ff6d33b060736f": "Utilisation : ouvrir",
+  "0ca6fd2b8fcab2c3": "Utilisation : Afficher ou masquer",
   "a513d51b71b95674": "Thème : sélectionner",
   "1ffd8427452372e1": "Apparence : alterner",
   "3a3bb4a7551a87cc": "Éditeur de thème : afficher/masquer",
@@ -8921,6 +8970,10 @@
   "f0e853acd2006d53": "Environnements associés",
   "ef10c2dff987f3ea": "Exécutez des workflows en plusieurs étapes à partir des fichiers du dossier workflows du répertoire T3 de ce serveur. Ouvrez-les depuis la palette de commandes. Tant que c'est désactivé, rien dans ce dossier ne s'exécute ; les exécutions attendent sa réactivation.",
   "2dadb2359422121c": "Workflows",
+  "933dabf0700708af": "Nombre d’exécutions ignorées que chaque workflow conserve dans son historique. Les exécutions ignorées plus anciennes sont supprimées ; celles qui ont fait quelque chose sont toujours conservées.",
+  "f172d7e5deb24f75": "Rétablir la valeur par défaut des exécutions ignorées conservées",
+  "ba94015389f327bc": "Exécutions ignorées conservées",
+  "d52b3d6bf9f2a013": "Mixte",
   "13e86eb5d8287a71": "Affiche un prochain message suggéré dans la zone de saisie vide après un tour Claude ou Codex. Tab l’utilise. Chaque suggestion est une requête en cache supplémentaire sur votre forfait. Nécessite Codex 0.165+. Les fils Claude se mettent à jour au redémarrage.",
   "d4b2a2ec812aafb0": "Suggérer le prochain prompt",
   "298c7150a7621c80": "Hôtes d’appareils Simlock",
@@ -8928,7 +8981,6 @@
   "f9904f78d3003f58": "Checkout rapide des worktrees",
   "9c2f647882522302": "Les machines sélectionnées utilisent des modes de retour des agents différents.",
   "31bbf7bf8c0a5279": "Retours des agents",
-  "d52b3d6bf9f2a013": "Mixte",
   "ec7623deed751c05": [
     "Partagez un fil avec un invité qui le suit en direct dans un navigateur et envoie des messages que vous approuvez. Nécessite T3 Connect : connectez-vous et associez cette machine dans",
     " ",
@@ -9266,6 +9318,28 @@
   "d2ad2df4c015f417": "La règle de regroupement décide comment chaque checkout rejoint les groupes de projets de la barre latérale. La modifier peut déplacer un checkout vers un autre projet.",
   "0bdf6ae2117b6c23": "Vous ne trouvez pas un paramètre ? Gardez ce projet sélectionné ci-dessus et passez à n’importe quelle autre page de paramètres.",
   "3310e10f1efdc9bd": "Choisir une icône",
+  "a9cb97fca6a6576b": "Commande de création",
+  "90f45a354884ccdd": "Commande de suppression",
+  "0cdc8cdbed3e5eae": "Disposition des worktrees",
+  "c17b25519e2b194e": "Impossible de charger les commandes de disposition des worktrees",
+  "78e308ada516928b": "Impossible d’approuver la commande",
+  "a0c772d32a233da6": "Impossible de révoquer l’approbation",
+  "5ccd5614c65f8d1f": "Révoquer l’approbation de la commande {kind}",
+  "80c3794a5fa12f3a": "Approuver la commande {kind}",
+  "f206891e124c77b0": [
+    "Le ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "t3.json"
+    },
+    " de ce projet prépare les fils en worktree avec ses propres commandes. Elles s’exécutent sur la machine de cet environnement avec vos autorisations, et uniquement telles qu’approuvées ici : une commande dont le texte change doit être approuvée de nouveau."
+  ],
+  "8e73b883d41d4102": "Désactivé",
+  "f6a91589456cca50": "Approuvée",
+  "c92657bb7f2293ff": "Approbation requise",
+  "f1e5c1be1ac92361": "Approuver",
+  "fcb5f3c4d4753326": "Cette connexion ne peut pas approuver de commandes. Utilisez un client qui peut utiliser le terminal.",
   "65ccf4f8e049003e": "Choisissez un projet pour gérer son nom, son icône, ses checkouts et ses actions.",
   "067beea7d8f6e2c9": "Afficher tous les environnements",
   "1bf6da50131340d4": "Teinte de la couleur d’accent",
@@ -11139,7 +11213,6 @@
   "b0d0aebadc521ed1": "Supprime les captures du navigateur enregistrées après ce nombre de jours. Les liens vers les anciennes captures ne s’ouvriront plus.",
   "fe4208562792c313": "Supprimer les anciens journaux archivés",
   "8debac9c8e9cff47": "Supprime les fichiers journaux archivés inactifs après ce nombre de jours. Les journaux actuels sont conservés.",
-  "8e73b883d41d4102": "Désactivé",
   "80d58a3fd4e4212a": "Projet",
   "de770505be25f1ff": "Dossier",
   "ada7b9a4d96959d2": "Fil",
@@ -11635,10 +11708,10 @@
   "817dbf1c068b62e7": "Où votre parole est convertie en texte.",
   "710d3e4f0243014c": "Environnement choisi (indisponible)",
   "61088464d1b7174d": "environnement indisponible",
+  "800966eb58181745": "Vérification des langues prises en charge par le modèle…",
   "2b3e8ee4f31d1433": "Automatique utilise la langue de votre Mac. Une langue est téléchargée à sa première utilisation.",
   "71184e5a54a69f1d": "Le fournisseur détecte automatiquement votre langue.",
   "ffb2653eb2d9fc1a": "{model} détecte automatiquement la langue.",
-  "800966eb58181745": "Vérification des langues prises en charge par le modèle…",
   "773cbfca7c466cc4": "{model} utilise une seule langue fixe.",
   "18aa8cceba8c50c6": "Ce modèle utilise une seule langue fixe.",
   "d4b59565bd8b6d07": "Traduire en anglais",
@@ -11871,9 +11944,6 @@
   "6826fa9579c22035": "bêta partager invité invitation lien coéquipier regarder t3 connect tunnel",
   "f10c06cba0cdf7fe": "bêta associer une autre machine vps pair agents y travaillent déléguer",
   "bc0b409d89ce086e": "bêta workflow exécutions durables automatisation étapes planification webhook dossier",
-  "933dabf0700708af": "Nombre d’exécutions ignorées que chaque workflow conserve dans son historique. Les exécutions ignorées plus anciennes sont supprimées ; celles qui ont fait quelque chose sont toujours conservées.",
-  "f172d7e5deb24f75": "Rétablir la valeur par défaut des exécutions ignorées conservées",
-  "ba94015389f327bc": "Exécutions ignorées conservées",
   "4b2669dcdb7d3776": "workflow historique rétention supprimer anciennes exécutions ignorées webhook history retention skipped runs",
   "4a21cf825a2045b0": "bêta tab autocomplétion prédire prochain message claude codex texte fantôme",
   "fea2dc36585c4a20": "Hôtes d’appareils Simlock (alpha)",
@@ -12164,14 +12234,12 @@
   "c1a9fe8e24876f1d": "{count, plural, one {{count} fil en cours sera interrompu.} other {{count} fils en cours seront interrompus.}}",
   "ecdf5f108ecc71d0": "{count, plural, one {{count} peut reprendre après le redémarrage.} other {{count} peuvent reprendre après le redémarrage.}}",
   "0576c87870fb6389": "Mettre à jour",
-  "948185631ef288e6": "{count, plural, one {{count} en cours} other {{count} en cours}}",
   "3d9a2f6b9c114039": "Fournisseurs",
   "f4baf8deafbb227d": "Ignorés",
   "f938bb483eb3d189": "redémarre en dernier",
+  "f13e08bd3614112e": "mettez à jour T3 Code sur cette machine",
   "9bca02be2b4d612a": "non connecté",
   "2dcc418b6a13b83c": "nécessite une mise à jour manuelle",
-  "f13e08bd3614112e": "mettez à jour T3 Code sur cette machine",
-  "3c3348c36a2695af": "changez le canal de mise à jour sur cette machine",
   "fa8faa732a2688ef": "sur le canal {channel}",
   "e65649675cb4cbaa": "désactivé",
   "a1e7c08d9ef315c7": "chargement en cours",
@@ -12188,6 +12256,7 @@
   "3ac986d604a2ad62": "Cette app ne peut pas basculer : son serveur n’est pas connecté, sa base de données ne peut donc pas être vérifiée.",
   "3bbb6e9ade0cf7e1": "lancez `{command}` sur cette machine",
   "e7194946af611278": "exécute un build preview",
+  "3c3348c36a2695af": "changez le canal de mise à jour sur cette machine",
   "f5eac23351c99297": "changez l’app Mac sur ce Mac",
   "d7444fbde9a80f04": "<1 min",
   "09c1af20e9323765": "Redémarrage dans {seconds} s",
@@ -12230,6 +12299,7 @@
   "9c015d3d034316cb": "Utilisez les flèches pour ajuster la valeur active. Maintenez Shift pour des pas plus grands. Utilisez Home et End pour le minimum et le maximum. Appuyez sur Tab pour passer de la saturation à la luminosité.",
   "8639d5532561f87f": "Fermer",
   "e1186ad82ee08b33": "Fermer",
+  "a4579e548b768663": "Afficher la barre latérale",
   "a1b11a1cf39c9dc9": "Redimensionner la barre latérale",
   "c557090df5722838": "Afficher ou masquer la barre latérale",
   "bbde430e56272901": "Faites glisser pour redimensionner la barre latérale",
@@ -12280,10 +12350,26 @@
   "a16b48709357a5a7": "Gérer l’utilisation",
   "a00e74aaa421c524": "restant",
   "0e34c3076c08feb2": [
-    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    {
+      "t": "span",
+      "i": 1,
+      "c": [
+        "↻ +",
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        "%"
+      ]
+    },
     " ",
     "dans ",
-    { "i": 3, "k": "_gt_value_3", "v": "v" }
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    }
   ],
   "8bd6f07136317c8f": "Aucun fournisseur des environnements sélectionnés ne signale de limites d’abonnement.",
   "87f5d0c61b335f38": "Consultez l’utilisation dans ChatGPT avec votre compte connecté.",
@@ -12637,13 +12723,23 @@
   "b6409289e0c9a4dd": "Workflow",
   "035cb02ca1ae4952": "Les {count} workflows",
   "8eeb9cb07d7c59e1": "Type de question",
-  "e4d1316c85ed7066": "Aucune question de ce type ne vous attend.",
   "e2131cbec8accfe3": "Tous les types",
   "46d614fa7b4bf1e5": "Exécutions de workflow",
   "1c635faa2fb45b8b": "Pas encore exécuté.",
+  "e4d1316c85ed7066": "Aucune question de ce type ne vous attend.",
   "156ff7b625287a1e": "Masquer les éléments ignorés",
   "69b985b97ab45e6b": "Afficher {count} ignorés",
   "2400254d362de84d": "Chargement des exécutions de workflow…",
+  "cae5c3205c01d062": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": "Un fichier de workflow présente un problème."
+    },
+    " ",
+    "La dernière version valide continue de s’exécuter."
+  ],
+  "ed8ce6ebc73dc12d": "Ouvrir le fichier",
   "145e1f7503ba3b2c": [
     "Cet environnement n’a aucune exécution avec ce lien.",
     " ",
@@ -12669,16 +12765,6 @@
       "c": "Lire le guide"
     }
   ],
-  "cae5c3205c01d062": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": "Un fichier de workflow présente un problème."
-    },
-    " ",
-    "La dernière version valide continue de s’exécuter."
-  ],
-  "ed8ce6ebc73dc12d": "Ouvrir le fichier",
   "5d8d278ff828102d": "Tous les workflows",
   "3b0f1659172107e4": "Tous les types",
   "39459da07479f482": "Agent",
@@ -12892,5 +12978,66 @@
   "f6a91589456cca50": "Approuvée",
   "c92657bb7f2293ff": "Approbation requise",
   "f1e5c1be1ac92361": "Approuver",
-  "fcb5f3c4d4753326": "Cette connexion ne peut pas approuver de commandes. Utilisez un client qui peut utiliser le terminal."
+  "fcb5f3c4d4753326": "Cette connexion ne peut pas approuver de commandes. Utilisez un client qui peut utiliser le terminal.",
+  "4e96712d839ccbff": "{who} a répondu {choice}",
+  "19097cfb8f5a79cf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " a répondu",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    "."
+  ],
+  "e7bbf693910057bf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " a répondu",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    ": ",
+    {
+      "i": 4,
+      "k": "_gt_value_4",
+      "v": "v"
+    }
+  ],
+  "3759768c5d342c22": [
+    "répondue",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " nécessite une raison."
+  ]
 }
