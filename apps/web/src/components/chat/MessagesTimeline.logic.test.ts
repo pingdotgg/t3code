@@ -1658,6 +1658,59 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("keeps the answer that ended the segment before a steer visible when the run continues", () => {
+    const runId = RunId.make("answer-then-steer-run");
+    const time = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+    const message = (
+      id: string,
+      second: number,
+      role: "user" | "assistant",
+      inputIntent?: "turn_start" | "steer",
+    ): TimelineEntry => ({
+      kind: "message",
+      id,
+      createdAt: time(second),
+      message: {
+        id: MessageId.make(id),
+        role,
+        text: id,
+        runId,
+        ...(inputIntent ? { inputIntent } : {}),
+        createdAt: time(second),
+        updatedAt: time(second),
+        streaming: false,
+      },
+    });
+    const work = (id: string, second: number): TimelineEntry => ({
+      kind: "work",
+      id,
+      createdAt: time(second),
+      entry: { id, createdAt: time(second), runId, label: "Ran command", tone: "tool" },
+    });
+    const rows = deriveMessagesTimelineRows({
+      // Claude read the steer from a tool result after it had written its answer.
+      timelineEntries: [
+        message("prompt", 0, "user", "turn_start"),
+        work("read-files", 4),
+        message("answer", 20, "assistant"),
+        work("tool-after-answer", 25),
+        message("steer", 30, "user", "steer"),
+        message("steer-reply", 40, "assistant"),
+      ],
+      latestRun: { runId, status: "completed", startedAt: time(0), completedAt: time(41) },
+      isWorking: false,
+      expandedRunIds: new Set(),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    const ids = rows.map((row) => row.id);
+    expect(ids).toContain("answer");
+    expect(ids.indexOf("answer")).toBeLessThan(ids.indexOf("steer"));
+    expect(ids).not.toContain("read-files");
+    expect(ids).not.toContain("tool-after-answer");
+  });
+
   it("stacks back-to-back steers as one burst with a single steer label", () => {
     const runId = RunId.make("double-steer-run");
     const time = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
