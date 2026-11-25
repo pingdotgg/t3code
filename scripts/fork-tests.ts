@@ -21,7 +21,7 @@ const targetedIdleLimitMs = 30_000;
 const fullSuiteIdleLimitMs = 150_000;
 const nodeTestFiles = ".github/scripts/*.test.cjs";
 const vitePlus = NodePath.join(root, "node_modules/.bin/vp");
-const vitestRunArgs = ["test", "run", "--reporter=verbose", "--testTimeout=30000"];
+const vitestRunArgs = ["test", "run", "--reporter=verbose"];
 const serverProject = "t3";
 const defaultServerShards = 4;
 
