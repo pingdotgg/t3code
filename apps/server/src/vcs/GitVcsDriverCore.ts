@@ -37,6 +37,7 @@ import {
   trimAsciiWhitespace,
   type VcsRef,
 } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
@@ -104,6 +105,13 @@ const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const GIT_IDENT_KEYWORD = /\$Id:[^$\n]*\$/g;
 const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
+const truncateReviewSubject = (subject: string) =>
+  subject.slice(
+    0,
+    splitsSurrogatePair(subject, REVIEW_BRANCH_SUBJECT_LIMIT)
+      ? REVIEW_BRANCH_SUBJECT_LIMIT - 1
+      : REVIEW_BRANCH_SUBJECT_LIMIT,
+  );
 const REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES = 128 * 1024;
 // Client patch parsers require a/ and b/ prefixes; override user diff prefix settings.
 export const PATCH_RENDER_PREFIX_ARGS = ["--src-prefix=a/", "--dst-prefix=b/"] as const;
@@ -121,6 +129,7 @@ const REVIEW_DIFF_ARGS = [
 ];
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
+const PUSH_HOOKS_START_TIMEOUT = Duration.seconds(10);
 const STATUS_UPSTREAM_FETCH_TIMEOUT = Duration.minutes(5);
 
 const STATUS_UPSTREAM_REFRESH_FAILURE_BASE_COOLDOWN = Duration.seconds(30);
@@ -230,6 +239,7 @@ interface ExecuteGitOptions {
   keepLineCallbacksAfterTruncation?: boolean | undefined;
   progress?: GitVcsDriver.ExecuteGitProgress | undefined;
   writesSharedConfig?: boolean | undefined;
+  pushes?: boolean | undefined;
 }
 
 function parseBranchAb(value: string): { ahead: number; behind: number } {
@@ -932,6 +942,51 @@ export function parseGitCheckoutProgressLine(
 
 const OUTPUT_LINE_SEPARATOR = /\r\n|\r|\n/;
 
+const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const lenientUtf8Decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+const gb18030Decoder = new TextDecoder("gb18030", { ignoreBOM: true });
+
+// A byte cap can cut the last UTF-8 character; that tail is not evidence of another encoding.
+const decodeStrictUtf8 = (bytes: Uint8Array, truncated: boolean): string => {
+  if (!truncated) return strictUtf8Decoder.decode(bytes);
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const text = decoder.decode(bytes, { stream: true });
+  try {
+    return text + decoder.decode();
+  } catch {
+    return `${text}\uFFFD`;
+  }
+};
+
+const decodeUtf8OrGb18030 = (bytes: Uint8Array, truncated: boolean): string => {
+  try {
+    return decodeStrictUtf8(bytes, truncated);
+  } catch {
+    const fallback = gb18030Decoder.decode(bytes);
+    return fallback.includes("\uFFFD") ? lenientUtf8Decoder.decode(bytes) : fallback;
+  }
+};
+
+// Git emits file bytes as stored; without a working-tree-encoding attribute, GBK/GB18030
+// sources are not UTF-8. Decode per LF line or NUL record (`-z` output) so one such file or
+// path does not garble UTF-8 neighbours.
+const decodeGitText = (bytes: Uint8Array, truncated = false): string => {
+  try {
+    return decodeStrictUtf8(bytes, truncated);
+  } catch {
+    let text = "";
+    let start = 0;
+    while (start < bytes.length) {
+      let end = start;
+      while (end < bytes.length && bytes[end] !== 0x0a && bytes[end] !== 0x00) end += 1;
+      end = Math.min(end + 1, bytes.length);
+      text += decodeUtf8OrGb18030(bytes.subarray(start, end), truncated && end === bytes.length);
+      start = end;
+    }
+    return text;
+  }
+};
+
 const collectOutput = Effect.fnUntraced(function* (
   input: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args">,
   stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
@@ -940,10 +995,10 @@ const collectOutput = Effect.fnUntraced(function* (
   onLine: ((line: string) => Effect.Effect<void, never>) | undefined,
   keepLineCallbacksAfterTruncation = false,
 ): Effect.fn.Return<{ readonly text: string; readonly truncated: boolean }, GitCommandError> {
-  const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
   const lineDecoder = keepLineCallbacksAfterTruncation && onLine ? new TextDecoder() : null;
+  const lineStreamDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+  const chunks: Array<Uint8Array> = [];
   let bytes = 0;
-  let text = "";
   let lineBuffer = "";
   let truncated = false;
   // Bound newline-free output; oversized lines are not useful to callbacks.
@@ -995,10 +1050,11 @@ const collectOutput = Effect.fnUntraced(function* (
     bytes += chunkToDecode.byteLength;
     truncated = appendTruncationMarker && nextBytes > maxOutputBytes;
 
-    const decoded = decoder.decode(chunkToDecode, { stream: !truncated });
-    text += decoded;
+    chunks.push(chunkToDecode);
     if (onLine) {
-      lineBuffer += lineDecoder ? lineDecoder.decode(chunk, { stream: true }) : decoded;
+      lineBuffer += lineDecoder
+        ? lineDecoder.decode(chunk, { stream: true })
+        : lineStreamDecoder.decode(chunkToDecode, { stream: !truncated });
       yield* emitCompleteLines(false);
     }
   });
@@ -1014,15 +1070,13 @@ const collectOutput = Effect.fnUntraced(function* (
     }),
   );
 
-  const remainder = truncated ? "" : decoder.decode();
-  text += remainder;
   if (onLine) {
-    lineBuffer += remainder;
+    if (!truncated && !lineDecoder) lineBuffer += lineStreamDecoder.decode();
     if (lineDecoder) lineBuffer += lineDecoder.decode();
     yield* emitCompleteLines(true);
   }
   return {
-    text,
+    text: decodeGitText(Buffer.concat(chunks), truncated),
     truncated,
   };
 });
@@ -1038,7 +1092,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const { worktreesDir, worktreeCheckoutCacheDir } = yield* ServerConfig.ServerConfig;
+  const { stateDir, worktreesDir, worktreeCheckoutCacheDir } = yield* ServerConfig.ServerConfig;
   const isServerInternalPath = yield* makeIsServerInternalPath;
   const digest = yield* Digest.Digest;
   const random = yield* SecureRandom.SecureRandom;
@@ -1058,6 +1112,279 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
   >();
   const statusFetchProcesses = yield* Semaphore.make(4);
+
+  // Git runs these around a push: `pre-push`, and `reference-transaction` as it records the
+  // pushed ref. Server-side hooks run in the remote, and automatic maintenance is off here.
+  const PUSH_HOOK_NAMES = ["pre-push", "reference-transaction"] as const;
+
+  // What husky 9 and Vite+ install as every hook: it sources `h` beside it, and that runner
+  // starts the script of the hook's name one directory up.
+  const SHIM_FOR_SCRIPT_ABOVE = '#!/usr/bin/env sh\n. "$(dirname "$0")/h"';
+
+  /** A `hook.<name>` section of Git's configuration: Git 2.54 and later run these beside the hook files. */
+  interface ConfiguredHook {
+    readonly name: string;
+    readonly command: string;
+    /** The points of a push that start it, read so that a doubt counts as one: empty for none. */
+    readonly pushEvents: ReadonlyArray<string>;
+  }
+
+  /**
+   * Every hook Git's configuration defines, from all of its files and whatever they include.
+   * Asked with hooks on and not through `execute`, as the hooks directory is below.
+   */
+  const readConfiguredHooks = Effect.fnUntraced(function* (cwd: string) {
+    const args = ["config", "--null", "--get-regexp", "^hook\\..+\\.(command|event|enabled)$"];
+    // `git config` alone reads only the file `GIT_CONFIG` names, and a push reads all of them.
+    const env = { GIT_CONFIG: undefined };
+    const command = { operation: "GitVcsDriver.configuredHooks", cwd, args, env };
+    const listed = yield* executeRaw({ ...command, allowNonZeroExit: true }).pipe(
+      Effect.provideService(GitVcsDriver.RepositoryHooks, { _tag: "all" }),
+    );
+    // Git exits 1 when no key matches.
+    if (listed.exitCode === 1 && listed.stdout === "") return [];
+    const unreadable = new GitCommandError({
+      ...gitCommandContext(command),
+      detail: "Could not read the hooks in Git's configuration.",
+      exitCode: listed.exitCode,
+    });
+    if (listed.exitCode !== 0 || listed.stdoutTruncated) return yield* unreadable;
+    const sections = new Map<string, { command: string; events: Array<string>; off: boolean }>();
+    // One `key\nvalue` per record, or the key alone for a valueless one. A key holds no newline.
+    for (const record of listed.stdout.split("\0")) {
+      if (record === "") continue;
+      const end = record.indexOf("\n");
+      const key = /^hook\.(.+)\.(command|event|enabled)$/.exec(
+        end === -1 ? record : record.slice(0, end),
+      );
+      if (key === null) return yield* unreadable;
+      const value = end === -1 ? undefined : record.slice(end + 1);
+      const section = sections.get(key[1]!) ?? { command: "", events: [], off: false };
+      sections.set(key[1]!, section);
+      if (key[2] === "command") section.command = value ?? "";
+      // Only the values Git surely reads as false turn a hook off here.
+      else if (key[2] === "enabled") section.off = /^(false|no|off|0|)$/i.test(value ?? "true");
+      // An empty value clears the events before it; one without a value is taken as any event.
+      else if (value === "") section.events = [];
+      else section.events.push(value ?? PUSH_HOOK_NAMES[0]);
+    }
+    const hooks: Array<ConfiguredHook> = [];
+    for (const [name, section] of sections) {
+      // `hook.<event>.enabled` alone is Git 2.55's switch for an event, not a hook.
+      if (section.command === "" && section.events.length === 0) continue;
+      const pushEvents = section.off
+        ? []
+        : PUSH_HOOK_NAMES.filter((event) => section.events.includes(event));
+      hooks.push({ name, command: section.command, pushEvents });
+    }
+    return hooks;
+  });
+
+  /**
+   * `run` is what a push from `cwd` would run, null for nothing: `hooks` the files Git starts,
+   * `commands` the configured hooks, `files` all the digest covers (for the shim above also the
+   * runner and script it names, and nothing those go on to run). A file or setting that cannot
+   * be read fails this rather than counting as no hook.
+   */
+  const readPushHooks = Effect.fn("readPushHooks")(function* (cwd: string) {
+    // Without --path-format, which Git before 2.31 echoes: the path is absolute or from `cwd`.
+    const args = ["rev-parse", "--git-path", "hooks"];
+    const command = { operation: "GitVcsDriver.pushHooks", cwd, args };
+    const context = gitCommandContext(command);
+    const located = yield* executeRaw(command).pipe(
+      Effect.provideService(GitVcsDriver.RepositoryHooks, { _tag: "all" }),
+    );
+    const answer = located.stdout.replace(/\r?\n$/, "");
+    if (answer === "" || located.stdoutTruncated) {
+      return yield* new GitCommandError({
+        ...context,
+        detail: "Could not find the repository's hooks directory.",
+      });
+    }
+    const hooksDir = path.resolve(cwd, answer);
+    const unreadable = (file: string) => (cause: PlatformError.PlatformError) =>
+      new GitCommandError({ ...context, detail: `Could not read the hook ${file}.`, cause });
+    /** The file's contents; null when there is no such file, or `runnable` and Git would skip it. */
+    const read = Effect.fnUntraced(function* (file: string, runnable: boolean) {
+      const info = yield* fileSystem.stat(file).pipe(
+        // Absent: no such file, or a hooks path that is not a directory, such as /dev/null.
+        Effect.catchIf(
+          ({ reason }) =>
+            reason._tag === "NotFound" ||
+            (reason._tag === "BadResource" &&
+              typeof reason.cause === "object" &&
+              reason.cause !== null &&
+              "code" in reason.cause &&
+              reason.cause.code === "ENOTDIR"),
+          () => Effect.succeed(null),
+        ),
+        Effect.mapError(unreadable(file)),
+      );
+      // Git skips a hook it may not execute; Windows has no such bit, so any file counts.
+      if (
+        info === null ||
+        info.type !== "File" ||
+        (runnable && hostPlatform !== "win32" && (info.mode & 0o111) === 0)
+      ) {
+        return null;
+      }
+      return yield* fileSystem.readFile(file).pipe(Effect.mapError(unreadable(file)));
+    });
+    const hooks: Array<{ readonly name: string; readonly file: string }> = [];
+    const covered = new Map<string, Uint8Array>();
+    for (const name of PUSH_HOOK_NAMES) {
+      const file = path.join(hooksDir, name);
+      const contents = yield* read(file, true);
+      if (contents === null) continue;
+      hooks.push({ name, file });
+      covered.set(file, contents);
+      const text = new TextDecoder().decode(contents).replaceAll("\r\n", "\n").trim();
+      if (text !== SHIM_FOR_SCRIPT_ABOVE) continue;
+      for (const named of [path.join(hooksDir, "h"), path.join(path.dirname(hooksDir), name)]) {
+        const more = yield* read(named, false);
+        if (more !== null) covered.set(named, more);
+      }
+    }
+    const configured = yield* readConfiguredHooks(cwd);
+    const onPush = configured.filter((hook) => hook.pushEvents.length > 0);
+    const commands = onPush.map(({ name, command }) => ({ name, command }));
+    if (hooks.length === 0 && commands.length === 0) return { configured, run: null };
+    const parts = yield* Effect.forEach([...covered], ([file, contents]) =>
+      Effect.map(digest.digest(Digest.sha256, contents), (hash) => `${file}\0${Hex.encode(hash)}`),
+    );
+    // With the points of the push that start it: the same command moved to another is a change.
+    for (const { name, command, pushEvents } of onPush) {
+      parts.push(`hook\0${name}\0${command}\0${pushEvents.join(",")}`);
+    }
+    return {
+      configured,
+      run: {
+        hooks,
+        files: [...covered.keys()],
+        commands,
+        digest: yield* sha256Hex(parts.join("\n")),
+      },
+    };
+  });
+
+  const pushHooks: GitVcsDriver.GitVcsDriver["Service"]["pushHooks"] = (cwd) =>
+    Effect.map(readPushHooks(cwd), ({ run }) =>
+      run === null ? null : { files: run.files, commands: run.commands, digest: run.digest },
+    );
+
+  /**
+   * The approved push's hooks directory: one launcher per approved hook, each starting the hook
+   * by its own path as husky's `$0` lookups need, in the server's state directory. Git skips a
+   * hook it may not execute, so this fails unless a script written here the same way ran.
+   */
+  const approvedHooksDirectory = Effect.fnUntraced(function* (
+    input: GitVcsDriver.ExecuteGitInput,
+    hooks: ReadonlyArray<{ readonly name: string; readonly file: string }>,
+  ) {
+    const writeScript = Effect.fnUntraced(function* (file: string, script: string) {
+      yield* fileSystem.writeFileString(file, script);
+      yield* fileSystem.chmod(file, 0o755);
+    });
+    const write = Effect.gen(function* () {
+      const parent = path.join(stateDir, "push-hooks");
+      yield* fileSystem.makeDirectory(parent, { recursive: true });
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        directory: parent,
+        prefix: "push-",
+      });
+      for (const { name, file } of hooks) {
+        // Git for Windows starts hooks with its own sh, which reads forward slashes.
+        const target = hostPlatform === "win32" ? file.replaceAll("\\", "/") : file;
+        yield* writeScript(
+          path.join(directory, name),
+          `#!/bin/sh\nexec '${target.replaceAll("'", "'\\''")}' "$@"\n`,
+        );
+      }
+      return directory;
+    });
+    const directory = yield* write.pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitCommandError({
+            ...gitCommandContext(input),
+            detail: "Could not prepare the approved push hooks. Nothing was pushed.",
+            cause,
+          }),
+      ),
+    );
+    // Windows has no such permission: Git's sh starts any file there.
+    if (hostPlatform === "win32") return directory;
+    // Not a hook's name, so Git would not start it, and gone again before the push.
+    const probe = path.join(directory, "started");
+    const cannotStart = (cause?: unknown) =>
+      new GitCommandError({
+        ...gitCommandContext(input),
+        detail:
+          "Could not start the repository's push hooks from the server's state directory. Nothing was pushed.",
+        ...(cause === undefined ? {} : { cause }),
+      });
+    const started = Effect.gen(function* () {
+      yield* writeScript(probe, "#!/bin/sh\nexit 0\n");
+      const child = yield* commandSpawner.spawn(
+        ChildProcess.make(probe, [], {
+          cwd: directory,
+          env: {},
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+        }),
+      );
+      const exitCode = yield* child.exitCode;
+      yield* fileSystem.remove(probe);
+      return exitCode;
+    }).pipe(
+      Effect.scoped,
+      Effect.timeoutOption(PUSH_HOOKS_START_TIMEOUT),
+      Effect.mapError(cannotStart),
+      // Synchronous spawn throws arrive as defects.
+      Effect.catchDefect((cause) => Effect.fail(cannotStart(cause))),
+    );
+    const exitCode = yield* started;
+    // Anything but a clean run, a timeout included, counts as hooks that would not start.
+    if (Option.isNone(exitCode) || exitCode.value !== 0) return yield* cannotStart();
+    return directory;
+  });
+
+  /**
+   * How this command's hooks are limited; undefined leaves the repository's. `hooksPath` replaces
+   * its hooks directory and `off` names the configured hooks it may not start. For an approved
+   * push this is the last step before Git is started: the hooks are read again, and anything but
+   * the approved ones fails the command instead of running.
+   */
+  const hookLimits = Effect.fnUntraced(function* (input: GitVcsDriver.ExecuteGitInput) {
+    const policy = yield* GitVcsDriver.RepositoryHooks;
+    if (policy._tag === "all") return undefined;
+    const none = (configured: ReadonlyArray<ConfiguredHook>) => ({
+      hooksPath: "/dev/null",
+      off: configured.map((hook) => hook.name),
+    });
+    if (policy._tag === "none" || input.pushes !== true) {
+      return none(yield* readConfiguredHooks(input.cwd));
+    }
+    const { configured, run } = yield* readPushHooks(input.cwd);
+    if (run === null) return none(configured);
+    if (run.digest === policy.digest) {
+      const approved = new Set(run.commands.map((hook) => hook.name));
+      return {
+        hooksPath: yield* approvedHooksDirectory(input, run.hooks),
+        off: configured.flatMap((hook) => (approved.has(hook.name) ? [] : [hook.name])),
+      };
+    }
+    return yield* new GitCommandError({
+      ...gitCommandContext(input),
+      detail: "The repository's push hooks changed before the push started. Nothing was pushed.",
+      cause: new GitVcsDriver.PushHooksUnapprovedError({
+        files: run.files,
+        commands: run.commands,
+        digest: run.digest,
+      }),
+    });
+  });
 
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
     function* (input) {
@@ -1091,7 +1418,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ...input.env,
           ...trace2Monitor.env,
         };
-        const env = { ...baseEnv, ...serverGitConfigEnv(baseEnv, hostPlatform) };
+        const serverEnv = { ...baseEnv, ...serverGitConfigEnv(baseEnv, hostPlatform) };
+        const limits = yield* hookLimits(input);
+        // Git reads these from the environment since 2.31, well before it had configured hooks.
+        const env = { ...serverEnv };
+        for (const name of limits?.off ?? []) {
+          Object.assign(env, gitConfigEnv(env, `hook.${name}.enabled`, "false", hostPlatform));
+        }
+        // On the command line, which every Git reads and which wins over all other configuration.
+        const spawnArgs =
+          limits === undefined
+            ? commandInput.args
+            : ["-c", `core.hooksPath=${limits.hooksPath}`, ...commandInput.args];
         const spawnEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
         const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
         const spawnError = (cause: unknown) =>
@@ -1104,7 +1442,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const executable = resolved.shell ? "git" : resolved.command;
         const child = yield* commandSpawner
           .spawn(
-            ChildProcess.make(executable, commandInput.args, {
+            ChildProcess.make(executable, spawnArgs, {
               cwd: commandInput.cwd,
               env: spawnEnv,
               // SIGTERM first lets git remove its lock files; SIGKILL ends one that ignores it.
@@ -1281,6 +1619,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : {}),
       ...(options.progress ? { progress: options.progress } : {}),
       ...(options.writesSharedConfig ? { writesSharedConfig: true } : {}),
+      ...(options.pushes ? { pushes: true } : {}),
     }).pipe(
       Effect.flatMap((result) => {
         if (options.allowNonZeroExit || result.exitCode === 0) {
@@ -3810,7 +4149,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
         cwd,
         ["push", "--", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
-        { timeoutMs: null },
+        { timeoutMs: null, pushes: true },
       );
       return {
         status: "pushed" as const,
@@ -3927,7 +4266,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,
         ["push", "--", remoteName, `HEAD:refs/heads/${publishBranch}`],
-        { timeoutMs: null },
+        { timeoutMs: null, pushes: true },
       );
       return {
         status: "pushed" as const,
@@ -3942,7 +4281,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "GitVcsDriver.pushCurrentBranch.pushUpstream",
         cwd,
         ["push", "--", destination.remoteName, `HEAD:refs/heads/${destination.branchName}`],
-        { timeoutMs: null },
+        { timeoutMs: null, pushes: true },
       );
       return {
         status: "pushed" as const,
@@ -3959,6 +4298,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     yield* executeGitWithStableDiagnostics("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"], {
       timeoutMs: null,
+      pushes: true,
     });
     return {
       status: "pushed" as const,
@@ -4679,7 +5019,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     const endOfSubject = result.stdout.indexOf("\n");
     return {
-      subject: result.stdout.slice(0, endOfSubject < 0 ? undefined : endOfSubject).slice(0, 300),
+      subject: truncateReviewSubject(
+        result.stdout.slice(0, endOfSubject < 0 ? undefined : endOfSubject),
+      ),
     };
   });
 
@@ -4745,7 +5087,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ) {
         return yield* reviewCommitError(cwd, "Could not read branch commit metadata.");
       }
-      commits.push({ sha, subject: subject.slice(0, REVIEW_BRANCH_SUBJECT_LIMIT), committedAt });
+      commits.push({ sha, subject: truncateReviewSubject(subject), committedAt });
     }
     if (result.stdoutTruncated && commits.length === 0) {
       return yield* reviewCommitError(cwd, "Branch commit metadata exceeds the response limit.");
@@ -5184,7 +5526,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (bytes.includes(0)) {
       return yield* fileError("fs.readFile", `Cannot expand binary file '${input.newPath}'.`);
     }
-    const contents = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+    const contents = decodeGitText(bytes);
     if (!contents.includes("$Id:")) return contents;
     const collapsed = contents.replace(GIT_IDENT_KEYWORD, () => "$Id$");
     if (collapsed === contents) return contents;
@@ -7138,6 +7480,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     commit: Effect.fnUntraced(function* (cwd, subject, body, options) {
       return yield* withListRefsInvalidation(cwd, commit(cwd, subject, body, options));
     }),
+    pushHooks,
     resolvePushTarget,
     pushCurrentBranch: Effect.fnUntraced(function* (cwd, fallbackBranch, options) {
       return yield* withListRefsInvalidation(cwd, pushCurrentBranch(cwd, fallbackBranch, options));

@@ -41,7 +41,7 @@ const Soak = Schema.Struct({
   childProcessesPerHour: Schema.optional(Schema.Number),
 });
 
-const MachineState = Schema.Struct({
+export const MachineState = Schema.Struct({
   /** The highest 1-minute load average read through the run; none on Windows. */
   load1: Schema.NullOr(Schema.Number),
   /** Cores other node, T3 and agent processes kept busy over the run; Linux only. */
@@ -421,7 +421,13 @@ export const HEAVY_LOAD_PER_CPU = 0.75;
 export const HEAVY_OTHER_CPU_SHARE = 0.25;
 
 /** One line per side whose runs shared the machine with heavy load, so its numbers are suspect. */
-export function loadWarnings(side: string, metrics: ServerMetrics) {
+export function loadWarnings(
+  side: string,
+  metrics: {
+    readonly meta: { readonly cpus?: unknown };
+    readonly runs: ReadonlyArray<{ readonly machine?: MachineState | undefined }>;
+  },
+) {
   const cpus = typeof metrics.meta.cpus === "number" ? metrics.meta.cpus : null;
   if (cpus === null) return [];
   const loaded = metrics.runs.flatMap(({ machine }) =>
