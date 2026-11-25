@@ -97,5 +97,11 @@ relative paths and writes remain constrained by
 
 Signed asset URLs are bearer credentials for a single canonical file, rechecked by device/inode
 identity on serve ([`AssetAccess.ts`](../../apps/server/src/assets/AssetAccess.ts)). They never
-grant access to sibling files, and because `filesystem:read` is checked only at mint time, an issued
-URL remains valid until it expires even if the session or grant is revoked.
+grant access to sibling files, with one exception: an HTML page inside its thread's workspace is
+issued a workspace grant, so that it can load its own stylesheets and scripts. That grant serves
+non-hidden preview asset types in the page's directory and below, resolved inside the canonical
+workspace root on every request, and follows the files at those paths rather than their device/inode
+identity. This applies whether the client asked for the page as a workspace file or by its absolute
+path, because only the server can tell that a real path lies under a root registered through a
+symlink. Because `filesystem:read` is checked only at mint time, an issued URL remains valid until
+it expires even if the session or grant is revoked.
