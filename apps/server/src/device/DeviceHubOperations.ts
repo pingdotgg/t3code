@@ -81,6 +81,9 @@ export const makeDeviceHubOperations = (options: {
   readonly token?: string | undefined;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
+  readonly prepareAndroidShutdown?: (
+    serial: string,
+  ) => Effect.Effect<(() => Effect.Effect<boolean>) | null>;
   /** Android gates listing AVDs, which the hub does not report until they boot. */
   readonly platformAvailable: (platform: DevicePlatform) => Effect.Effect<boolean>;
 }): DeviceOperations => {
@@ -316,6 +319,10 @@ export const makeDeviceHubOperations = (options: {
 
   const shutdown: DeviceOperations["shutdown"] = Effect.fn("DeviceHubOperations.shutdown")(
     function* (device) {
+      const recover =
+        device.platform === "android" && options.prepareAndroidShutdown !== undefined
+          ? yield* options.prepareAndroidShutdown(device.id)
+          : null;
       const postShutdown = (path: string, body: Record<string, string>, timeout?: Duration.Input) =>
         postJson(path, body, "shutdown").pipe(
           Effect.flatMap((request) => hubJson(request, HubActionResult, "shutdown", timeout)),
@@ -353,7 +360,10 @@ export const makeDeviceHubOperations = (options: {
             ANDROID_SHUTDOWN_TIMEOUT,
           ).pipe(
             Effect.catch((cause) =>
-              emulatorExited(device.id).pipe(
+              (recover ? recover() : Effect.succeed(false)).pipe(
+                Effect.flatMap((recovered) =>
+                  recovered ? Effect.succeed(true) : emulatorExited(device.id),
+                ),
                 Effect.flatMap((exited) =>
                   exited
                     ? Effect.logInfo("Android emulator has exited", {

@@ -40,6 +40,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import { releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
+import { prepareWindowsEmulatorShutdown } from "./windowsEmulatorShutdown.ts";
 import { deviceHubNodeArgs } from "./deviceHubNodeArgs.ts";
 import {
   agentDeviceStateDir,
@@ -951,6 +952,12 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       token: running.hub.token,
       http: httpClient,
       run,
+      ...(hostPlatform === "win32"
+        ? {
+            prepareAndroidShutdown: (serial: string) =>
+              prepareWindowsEmulatorShutdown(run, Number(running.hub.child.pid), serial),
+          }
+        : {}),
       platformAvailable: (platform) =>
         platformAvailability(platform).pipe(Effect.map((availability) => availability.available)),
     }),
