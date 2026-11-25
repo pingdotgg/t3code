@@ -26,8 +26,11 @@ const tailnetName = JSON.parse(
 ).Self.DNSName.replace(/\.$/, "");
 
 const linked = { linkedEnvironmentsEnabled: true };
-// Generated thread titles go through Claude too; answer them before any scripted turn can.
-const title = (text) => ({ match: "title", repeat: true, steps: [{ text }] });
+// Generated thread titles; text generation runs the CLI with --json-schema.
+const title = (text, match = "") => ({
+  match: `"title"[\\s\\S]*${match}`,
+  json: { title: text, needsRefinement: false },
+});
 const E2E_OUTPUT = `Running 144 tests using 8 workers
 
   ✘ checkout.spec.ts:42 › applies a coupon
@@ -117,7 +120,7 @@ NodeFS.writeFileSync(vars, "{}");
 
 const macbook = await startEnvironment(NodePath.join(root, "macbook"), {
   web: true,
-  env: { T3_DEV_REPLAY_VARS: vars },
+  env: { FAKE_CLAUDE_VARS: vars },
 });
 console.log(`MacBook: ${macbook.label} ${macbook.environmentId} web ${macbook.webOrigin}`);
 const devbox = await startEnvironment(NodePath.join(root, "devbox"), {

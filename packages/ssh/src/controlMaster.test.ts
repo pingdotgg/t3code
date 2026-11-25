@@ -487,7 +487,10 @@ describe("owned control master", () => {
         .pipe(Effect.provideService(HostProcess.Platform, "win32"));
 
       assert.equal(harness.count("master"), 0);
-      for (const entry of harness.spawned) {
+      // Windows sign-in first asks ssh.exe for its version, which opens no connection.
+      const connections = harness.spawned.filter((entry) => entry.args.join(" ") !== "-V");
+      assert.isAbove(connections.length, 0);
+      for (const entry of connections) {
         assert.deepEqual(optionValues(entry.args, "ControlPath"), ["ControlPath=none"]);
       }
     }).pipe(Effect.provide(harness.layer()), Effect.scoped);

@@ -236,5 +236,11 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
       request: { type: "attachment.cleanup", attachmentIds },
     });
   }
+  effects.push({
+    id: `effect:${command.commandId}:thread-content.purge`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "thread-content.purge" },
+  });
   return { events, effects };
 });

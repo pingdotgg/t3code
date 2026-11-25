@@ -34,5 +34,5 @@ Lathe devcontainer
   cp .env.example .env  optional: enable T3 Connect cloud features
                         (public identifiers, not secrets)
 
-Details: docs/internals/devcontainer.md
+Details: docs/operations/01_devcontainer.md
 EOF

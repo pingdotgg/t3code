@@ -215,6 +215,10 @@ function LicenseHeaderAction({
           onKeyDown={(event) => {
             if (event.key !== "Escape") return;
             event.preventDefault();
+            event.stopPropagation();
+            // Unmounting the focused input lets the dialog move focus to a control whose
+            // tooltip would swallow the next Esc; the surface keeps Esc closing Settings.
+            event.currentTarget.closest<HTMLElement>("[data-app-modal]")?.focus();
             onQueryChange("");
             onSearchOpenChange(false);
           }}

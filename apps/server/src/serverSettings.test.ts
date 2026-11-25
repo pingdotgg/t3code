@@ -15,6 +15,8 @@ import {
   SecretProviderId,
   ServerSettings,
   ServerSettingsPatch,
+  CliproxyUsageLimitSourceConfig,
+  ModelproxyUsageLimitSourceConfig,
   UsageLimitSourceId,
   type SimlockDeviceHostConfig,
 } from "@lathe/contracts";
@@ -42,6 +44,19 @@ import * as ServerSettingsModule from "./serverSettings.ts";
 import { SECRET_REDACTED } from "./settingsSecrets.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
+
+const encodeServerSettings = Schema.encodeSync(ServerSettings);
+// Clients from before HTTP sources decode only "cliproxy" and the fork's "modelproxy", and reject
+// the whole settings payload otherwise.
+const decodePreHttpUsageLimitSources = Schema.decodeUnknownSync(
+  Schema.Record(
+    UsageLimitSourceId,
+    Schema.Union([
+      Schema.Struct({ ...CliproxyUsageLimitSourceConfig.fields, kind: Schema.Literal("cliproxy") }),
+      ModelproxyUsageLimitSourceConfig,
+    ]),
+  ),
+);
 
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
@@ -1065,6 +1080,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("falls back to the defaults when only a legacy field is rejected", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const raw = '{"agentFeedback":{"mode":"auto"},"providers":1}';
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, raw);
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.equal(settings.agentFeedback.mode, "off");
+      assert.isFalse(settings.continueThreadsAfterServerUpdate);
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("keeps a default-off provider's new instance disabled and sparse on disk", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
@@ -1775,6 +1806,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const antigravity = ProviderInstanceId.make("antigravity");
         const openCode = ProviderInstanceId.make("opencode");
         const hub = UsageLimitSourceId.make("hub");
+        const quota = UsageLimitSourceId.make("quota");
+        const gateway = UsageLimitSourceId.make("gateway");
         const router = ProviderInstanceId.make("openrouter");
         const withUsage = yield* serverSettings.updateSettings({
           cloudSpeechCredentials: { openai: usageReference, xai: "literal-fixture" },
@@ -1791,6 +1824,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
               kind: "cliproxy",
               url: "https://hub.test",
               managementKey: usageReference,
+              enabled: true,
+            },
+            [quota]: {
+              kind: "http",
+              url: "https://quota.test/v1",
+              managementKey: "",
+              enabled: true,
+            },
+            // Fork: clients from before HTTP sources already decode a modelproxy gateway.
+            [gateway]: {
+              kind: "modelproxy",
+              url: "https://gateway.test",
+              issuer: "https://auth.test/realms/main",
+              clientId: "lathe",
+              clientSecret: "",
               enabled: true,
             },
           },
@@ -1842,6 +1890,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           legacyHub?.kind === "cliproxy" ? legacyHub.managementKey : undefined,
           SECRET_REDACTED,
         );
+        assert.deepEqual(
+          Object.keys(
+            decodePreHttpUsageLimitSources(encodeServerSettings(legacy).usageLimitSources),
+          ),
+          [hub, gateway],
+        );
+        assert.equal(
+          ServerSettingsModule.redactServerSettingsForClient(withUsage, {
+            secretReferences: false,
+            httpUsageLimitSources: true,
+          }).usageLimitSources[quota]?.kind,
+          "http",
+        );
         assert.equal(legacy.textGenerators[router]?.apiKey, SECRET_REDACTED);
         assert.equal(legacy.easDeviceHosts[0]?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.simlockDeviceHosts[0]?.agentToken, SECRET_REDACTED);
@@ -1868,6 +1929,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           echoedHub?.kind === "cliproxy" ? echoedHub.managementKey : undefined,
           usageReference,
         );
+        assert.equal(echoed.usageLimitSources[quota]?.kind, "http");
         assert.deepEqual(echoed.textGenerators[router]?.apiKey, usageReference);
         assert.deepEqual(echoed.cloudSpeechCredentials, {
           openai: usageReference,
@@ -2428,6 +2490,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.isFalse(settings.projectSettingsFolded);
       assert.isFalse(settings.continueThreadsAfterServerUpdate);
       assert.equal(settings.usageHistoryRetentionDays, "unlimited");
+      assert.isTrue(settings.requireConnectDeviceApproval);
+      assert.isFalse(settings.enablePreviewTunnel);
+      assert.isFalse(settings.enableAgentBrowserAccess);
+      assert.equal(settings.defaultRuntimeMode, "approval-required");
       assert.deepEqual(settings.projectSettingsOverrides, {});
 
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), broken);

@@ -13,7 +13,7 @@ import {
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
 } from "@lathe/shared/markdownLinks";
-import { taskListMarkerOffset } from "@lathe/shared/markdownTaskList";
+import { taskListMarkerOffset } from "@lathe/shared/markdownTaskEdits";
 import { isHostPath, resolveWorkspaceFilePath } from "@lathe/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import {
@@ -21,14 +21,7 @@ import {
   AuthOrchestrationOperateScope,
   SOURCE_CONTROL_MEDIA_ASSET,
 } from "@lathe/contracts";
-import {
-  CHAT_MARKDOWN_REMARK_PLUGINS,
-  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-  CHAT_MARKDOWN_REHYPE_PLUGINS,
-  chatMarkdownImageSource,
-  decodeMarkdownLinkEscapes,
-  remarkAssistantInsights,
-} from "@lathe/shared/markdownPipeline";
+import { chatMarkdownImageSource } from "@lathe/shared/markdownHast";
 import { useAtomValue } from "@effect/atom-react";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
@@ -94,34 +87,19 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
-import type {
-  Components,
-  ExtraProps as ReactMarkdownExtraProps,
-  Options as ReactMarkdownOptions,
-} from "react-markdown";
-import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
-import type { Pluggable, PluggableList } from "unified";
-import { defaultUrlTransform } from "react-markdown";
 import { isDocumentCitation, parseCitationHref } from "@lathe/shared/assistantCitations";
 import { parseComposerContextHref } from "@lathe/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@lathe/shared/threadLinks";
 import { AssistantCitationEmbed } from "./chat/AssistantCitationChip";
 import { DocumentCitationChip } from "./chat/DocumentCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
-import { mathKind } from "@lathe/shared/markdownMath";
-import remarkMath from "remark-math";
+import { artifactTemplateFromHastProperties } from "@lathe/shared/codexArtifactTemplates";
 import {
-  artifactTemplateFromHastProperties,
+  decodeMarkdownLinkEscapes,
   renderCodexInlineDirectivesAsMarkdown,
-} from "@lathe/shared/codexMarkdownDirectives";
+} from "../markdown/markdownText";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
-import { MarkdownMath } from "./chat/MarkdownMath";
-import {
-  parseInlineCodeLanguage,
-  rehypeSourceLines,
-  remarkHeadingIds,
-  type MarkdownDocumentSection,
-} from "../markdown-document";
+import { parseInlineCodeLanguage, type MarkdownDocumentSection } from "../markdown-document";
 import {
   resolveMarkdownMediaPreview,
   type ExpandedImagePreview,
@@ -138,11 +116,11 @@ import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipProvider, SharedTooltipTrigger } from "./ui/shared-tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
-import { contextMenuSourceOf } from "../contextMenuSource";
+import { contextMenuSourceOf, openContextMenuFromKeyboard } from "../contextMenuSource";
 import {
   PreferredEditorEnvironmentRequiredError,
   useOpenInPreferredEditor,
@@ -222,6 +200,15 @@ import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { IssueLinkPreview, IssueLinkPreviewFallback } from "./issue/IssueLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { createMarkdownRenderer } from "./chat/markdownRenderer";
+import type { MarkdownExtensions, WordsHastOptions } from "../markdown/wordsHast";
+import {
+  type MarkdownIslandOptions,
+  renderHastWithIslands,
+  withProperties,
+} from "./chat/markdownIslands";
+import type { Element as HastElement, ElementContent, Root as HastRoot } from "hast";
+import { matchInlineSkills } from "@lathe/shared/inlineSkills";
+import { collectComposerModelMentions } from "@lathe/client-runtime/composer-model-mentions";
 import { splitMarkdownBlocks } from "./chat/markdownStreamBlocks";
 import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { MarkdownTable } from "./chat/MarkdownTable";
@@ -238,9 +225,7 @@ import {
 import { MarkdownExternalLinkContent } from "./chat/MarkdownExternalLink";
 import { MarkdownFileLink } from "./chat/MarkdownFileLink";
 import { canUseMarkdownFileShellActions } from "./chat/MarkdownFileLink.logic";
-import { rehypeChipPunctuation } from "./chat/markdownChipPunctuation";
-import { handleMarkdownFragmentClick, rehypeHeadingIds } from "./chat/markdownFragments";
-import { rehypeTextDirection } from "./chat/markdownTextDirection";
+import { githubHeadingSlug, handleMarkdownFragmentClick } from "./chat/markdownFragments";
 import { hastHasText, hastPlainTextDeep, plainHastText } from "./chat/markdownHast.logic";
 import {
   extractCodeBlock,
@@ -277,8 +262,8 @@ interface ChatMarkdownProps {
   imageBaseDir?: string | undefined;
   workspaceMutationId?: string | null | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
-  /** Keep one list per configuration (a module constant): it keys the shared parse cache. */
-  extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+  /** Keep one object per configuration (a module constant): it keys the shared parse cache. */
+  extensions?: MarkdownExtensions | undefined;
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
   /** Loads media a source control host keeps behind a credential through the server, which holds
       `cwd`'s; without it a private repository's uploads load unauthenticated and 404. */
@@ -304,7 +289,8 @@ export interface ChatMarkdownContextReference {
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
-const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
+const NO_EXTENSIONS: MarkdownExtensions = {};
+const NO_PRECEDING_HEADINGS: ReadonlyArray<string> = [];
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
@@ -438,35 +424,29 @@ function normalizeMarkdownLinkHrefKey(href: string): string {
     : rewrittenHref;
 }
 
-// Heading ids are added after sanitizing, which would prefix them a second time.
-const CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS = [
-  ...CHAT_MARKDOWN_REHYPE_PLUGINS,
-  rehypeHeadingIds,
-  rehypeTextDirection,
-  rehypeChipPunctuation,
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+/** A component per element, with the hast node it renders, as react-markdown typed them. */
+type MarkdownComponents = {
+  [Tag in keyof React.JSX.IntrinsicElements]?: React.ComponentType<
+    React.JSX.IntrinsicElements[Tag] & { node?: HastElement | undefined }
+  >;
+};
 
-const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
-  rehypeHeadingIds,
-  rehypeTextDirection,
-  rehypeChipPunctuation,
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
-
-// A file's headings take their slugs before sanitizing, so a section of a long
-// file can continue the count of the headings before it.
-const DOCUMENT_REMARK_PLUGINS = [remarkHeadingIds] satisfies NonNullable<
-  ReactMarkdownOptions["remarkPlugins"]
->;
-
-// Source lines go on after sanitizing, which would strip the attributes.
-const DOCUMENT_REHYPE_PLUGINS = [
-  ...CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS,
-  rehypeSourceLines,
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
-const DOCUMENT_LITERAL_REHYPE_PLUGINS = [
-  ...CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS,
-  rehypeSourceLines,
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+// react-markdown's defaultUrlTransform: relative URLs, and absolute ones with a safe protocol.
+const SAFE_PROTOCOL = /^(?:https?|ircs?|mailto|xmpp)$/i;
+function safeUrl(value: string): string {
+  const colon = value.indexOf(":");
+  const before = (character: string) => {
+    const at = value.indexOf(character);
+    return at !== -1 && colon > at;
+  };
+  return colon === -1 ||
+    before("/") ||
+    before("?") ||
+    before("#") ||
+    SAFE_PROTOCOL.test(value.slice(0, colon))
+    ? value
+    : "";
+}
 
 function markdownUrlTransform(href: string) {
   if (parseCitationHref(href)) return href;
@@ -474,7 +454,7 @@ function markdownUrlTransform(href: string) {
   if (parseThreadLinkHref(href)) return href;
   if (isWindowsDrivePathHref(href)) return href;
   if (isLocalEditorFileHref(href)) return href;
-  return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
+  return rewriteMarkdownFileUriHref(href) ?? safeUrl(href);
 }
 
 const NO_MARKDOWN_EDITORS: ReadonlyArray<EditorId> = [];
@@ -517,11 +497,16 @@ const markdownServerConfigFieldsAtom = Atom.family((environmentId: EnvironmentId
   }).pipe(Atom.withLabel("markdown-server-config-fields")),
 );
 
-function fileLinkSourcesKey(
+interface BlockFileLinkSources {
+  readonly hrefs: ReadonlyArray<string>;
+  readonly spans: ReadonlyArray<string>;
+}
+
+function blockFileLinkSources(
   text: string,
   cwd: string | undefined,
   imageBaseDir: string | undefined,
-): string {
+): BlockFileLinkSources {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
     .filter((href) => !parseComposerContextHref(href))
     .map(decodeMarkdownLinkEscapes)
@@ -530,7 +515,47 @@ function fileLinkSourcesKey(
   const spans = extractInlineCodeSpans(text).filter((span) =>
     resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd),
   );
-  return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
+  return { hrefs, spans };
+}
+
+// Links and code spans never cross blocks: a streamed reply rescans only its open last block.
+const MAX_CACHED_BLOCK_CHARS = 2_000_000;
+const finishedBlockFileLinkSources = new Map<string, BlockFileLinkSources>();
+let cachedBlockChars = 0;
+
+function fileLinkSourcesKey(
+  text: string,
+  cwd: string | undefined,
+  imageBaseDir: string | undefined,
+  streamingBlocks: ReadonlyArray<string> | null,
+): string {
+  if (!streamingBlocks) {
+    const { hrefs, spans } = blockFileLinkSources(text, cwd, imageBaseDir);
+    return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
+  }
+  const config = `${cwd ?? ""}\u0000${imageBaseDir ?? ""}\u0000`;
+  const hrefs = new Set<string>();
+  const spans = new Set<string>();
+  const last = streamingBlocks.length - 1;
+  for (const [index, block] of streamingBlocks.entries()) {
+    // The last block still grows; caching each of its prefixes would only fill the cache.
+    const key = config + block;
+    let sources = index === last ? undefined : finishedBlockFileLinkSources.get(key);
+    if (!sources) {
+      sources = blockFileLinkSources(block, cwd, imageBaseDir);
+      if (index !== last) {
+        if (cachedBlockChars + key.length > MAX_CACHED_BLOCK_CHARS) {
+          finishedBlockFileLinkSources.clear();
+          cachedBlockChars = 0;
+        }
+        finishedBlockFileLinkSources.set(key, sources);
+        cachedBlockChars += key.length;
+      }
+    }
+    for (const href of sources.hrefs) hrefs.add(href);
+    for (const span of sources.spans) spans.add(span);
+  }
+  return JSON.stringify([[...hrefs], [...spans]]);
 }
 
 function resolveFileLinkSources(
@@ -556,30 +581,33 @@ function resolveFileLinkSources(
   return { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath };
 }
 
-function useChatMarkdownState({
-  text,
-  inline = false,
-  cwd,
-  agentDirectories,
-  threadRef,
-  pullRequestPanelRef,
-  environmentId: explicitEnvironmentId,
-  onTaskListChange,
-  isStreaming = false,
-  skills = EMPTY_MARKDOWN_SKILLS,
-  onUseArtifactTemplate,
-  onRepairMermaid,
-  onRunShellCommand,
-  imageBaseDir,
-  workspaceMutationId,
-  onImageExpand,
-  renderContextReference,
-  headingLevelOffset = 0,
-  sourceControlMedia = false,
-  asDocument = false,
-  documentSection,
-  sourceControlMediaRepository,
-}: ChatMarkdownProps) {
+function useChatMarkdownState(
+  {
+    text,
+    inline = false,
+    cwd,
+    agentDirectories,
+    threadRef,
+    pullRequestPanelRef,
+    environmentId: explicitEnvironmentId,
+    onTaskListChange,
+    isStreaming = false,
+    skills = EMPTY_MARKDOWN_SKILLS,
+    onUseArtifactTemplate,
+    onRepairMermaid,
+    onRunShellCommand,
+    imageBaseDir,
+    workspaceMutationId,
+    onImageExpand,
+    renderContextReference,
+    headingLevelOffset = 0,
+    sourceControlMedia = false,
+    asDocument = false,
+    documentSection,
+    sourceControlMediaRepository,
+  }: ChatMarkdownProps,
+  streamingBlocks: ReadonlyArray<string> | null,
+) {
   const gt = useGT();
   const messages = useMessages();
   const resolvedTheme = useRenderedAppearance();
@@ -685,7 +713,7 @@ function useChatMarkdownState({
             target !== null &&
             resolveRemoteOpenState({
               target,
-              sshTarget: null,
+              routes: [],
               remoteOpenTargets: undefined,
               isDesktopRenderer: window.desktopBridge !== undefined,
               hostEnvironmentId: appAtomRegistry.get(hostEnvironmentIdAtom),
@@ -776,10 +804,11 @@ function useChatMarkdownState({
   // A markdown file always typesets its math, as on GitHub; chat math is a setting.
   const mathEnabled = useClientSettings((settings) => settings.mathRenderingEnabled) || asDocument;
   const documentLineOffset = (documentSection?.startLine ?? 1) - 1;
+  const documentPrecedingHeadings = documentSection?.precedingHeadings ?? NO_PRECEDING_HEADINGS;
   // Keyed by the file links found, not the text, so streamed text that adds none keeps the
   // renderer context, and every block reading it, unchanged.
   // A template literal marks the key as a string, so the compiler memoizes the maps on its value.
-  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir)}`;
+  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir, isStreaming ? (streamingBlocks ?? splitMarkdownBlocks(text) ?? [text]) : null)}`;
   const { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath } =
     resolveFileLinkSources(fileLinksKey, cwd, imageBaseDir);
   const resolveThreadPullRequest = (
@@ -868,9 +897,10 @@ function useChatMarkdownState({
     }
     const query = workspaceLinkLookupQuery(workspaceRelativePath, cwd);
     if (query === null) return null;
+    const basenameLookup = needsWorkspaceBasenameLookup(workspaceRelativePath);
     // Search can be truncated or still scanning, so it cannot rule out the literal
     // path. A path with a folder opens as written whenever it exists.
-    if (!needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+    if (!basenameLookup) {
       const metadata = await getFilesystemMetadata({
         environmentId,
         input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
@@ -905,34 +935,48 @@ function useChatMarkdownState({
     const agentRoots = (agentDirectories?.() ?? []).filter((root) => root !== cwd);
     if (otherRoots.length === 0 && agentRoots.length === 0) return null;
     // Another project's file never replaces a thread-local file the search missed.
-    if (needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+    if (basenameLookup) {
       const metadata = await getFilesystemMetadata({
         environmentId,
         input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
       });
       if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
     }
-    const projectMatch = pickProjectLinkMatch(
-      workspaceRelativePath,
-      await Promise.all(otherRoots.map(searchRoot)),
-    );
+    const projectSearches = await Promise.all(otherRoots.map(searchRoot));
+    const projectMatch = pickProjectLinkMatch(workspaceRelativePath, [own, ...projectSearches]);
     if (projectMatch !== null || agentRoots.length === 0) return projectMatch;
-    // No project has the file, so it opens where the agent last worked, as written.
+    // An unresolved project lookup falls back to the agent's working directories.
     const agentPaths = agentRoots.map((root) =>
       resolveWorkspaceFilePath(workspaceRelativePath, root),
     );
     const metadata = await getFilesystemMetadata({ environmentId, input: { paths: agentPaths } });
     if (metadata._tag !== "Success") return null;
     const literal = agentPaths.find((_, index) => metadata.value.entries[index]?.kind === "file");
-    if (literal !== undefined || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+    if (literal !== undefined || !basenameLookup) {
       return literal ?? null;
     }
     return findAgentDirectoryMatch(workspaceRelativePath, agentRoots, searchRoot);
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
+    // The panel reads relative paths from the thread's folder. A pull request body's `cwd` is the
+    // checkout of its repository, which can be another folder.
+    const shell = readThreadShell(threadRef);
+    const panelRoot =
+      shell?.worktreePath ??
+      projects.find(
+        (project) => project.environmentId === environmentId && project.id === shell?.projectId,
+      )?.workspaceRoot;
     const openAt = (path: string) =>
-      useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
+      useRightPanelStore
+        .getState()
+        .openFile(
+          threadRef,
+          cwd && panelRoot !== undefined && cwd !== panelRoot
+            ? resolveWorkspaceFilePath(path, cwd)
+            : path,
+          fileLinkMeta.line,
+        );
     if (
       fileLinkMeta.workspaceLookupPath === null ||
       !cwd ||
@@ -1056,6 +1100,7 @@ function useChatMarkdownState({
   const componentState = {
     asDocument,
     documentLineOffset,
+    documentPrecedingHeadings,
     canOperateHost,
     canOperatePreview,
     cwd,
@@ -1126,7 +1171,7 @@ function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
   return function MarkdownHeading({
     node: _node,
     ...props
-  }: ComponentProps<typeof Tag> & ReactMarkdownExtraProps) {
+  }: ComponentProps<typeof Tag> & { node?: HastElement | undefined }) {
     const { headingLevelOffset } = use(ChatMarkdownRendererContext);
     return (
       <Tag
@@ -1414,7 +1459,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
               }) !== "app"
             ) {
               // Open desktop Alt-clicks before Chromium downloads them so link routers can read the held key.
-              if (isElectron && event.altKey) {
+              // Editor links also go over IPC: the desktop popup handler only passes web links.
+              if (isElectron && (event.altKey || isLocalEditorFileHref(href))) {
                 event.preventDefault();
                 event.stopPropagation();
                 void readLocalApi()
@@ -1439,6 +1485,22 @@ const CHAT_MARKDOWN_COMPONENTS = {
               if (isBrowserSettingsReadError(squashAtomCommandFailure(result))) return;
               void readLocalApi()?.shell.openExternal(href);
             });
+          }}
+          onAuxClick={(event) => {
+            // A middle-click raises no click event, and the desktop popup handler only passes web links.
+            if (!isElectron || event.button !== 1 || !href || !isLocalEditorFileHref(href)) return;
+            event.preventDefault();
+            void readLocalApi()
+              ?.shell.openExternal(href)
+              .catch((cause) =>
+                reportMarkdownActionFailure(
+                  { operation: "open-link-external", target: href },
+                  cause,
+                ),
+              );
+          }}
+          onKeyDown={(event) => {
+            if (href && faviconHost) openContextMenuFromKeyboard(event);
           }}
           onContextMenu={(event) => {
             if (!href || !faviconHost) return;
@@ -1556,12 +1618,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       if (issuePreviewTarget !== null) {
         return <IssueLinkPreview link={link} originalUrl={href} target={issuePreviewTarget} />;
       }
-      return (
-        <Tooltip>
-          <TooltipTrigger render={link} />
-          <TooltipPopup side="top">{href}</TooltipPopup>
-        </Tooltip>
-      );
+      return <SharedTooltipTrigger render={link} label={href} />;
     }
 
     const label = nodeToPlainText(children);
@@ -1590,19 +1647,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       imageBaseDir,
       inlineCodeFileLinkMetaByText,
       fileLinkChip,
-      mathEnabled,
-      inline,
     } = use(ChatMarkdownRendererContext);
-    const math = mathEnabled ? mathKind(className) : null;
-    if (math) {
-      return (
-        <MarkdownMath
-          tex={nodeToPlainText(children)}
-          display={math === "display"}
-          focusable={!inline}
-        />
-      );
-    }
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
       const inlineLanguage = asDocument ? parseInlineCodeLanguage(codeText) : null;
@@ -1839,46 +1884,28 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const {
-      asDocument,
-      documentLineOffset,
-      resolvedTheme,
-      diffThemeName,
-      isStreaming,
-      onRepairMermaid,
-      onRunShellCommand,
-      inline,
-      mathEnabled,
-    } = use(ChatMarkdownRendererContext);
+    const { resolvedTheme, diffThemeName, isStreaming, onRepairMermaid, onRunShellCommand } = use(
+      ChatMarkdownRendererContext,
+    );
     const text = use(ChatMarkdownTextContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
     }
 
-    // Drawn blocks replace the `pre`, so a layout-free wrapper carries its source lines.
+    // Drawn blocks replace the `pre`, so a layout-free wrapper carries the source lines a
+    // document stamps on it.
+    const sourceStart = node?.properties.dataSourceStart;
+    const sourceEnd = node?.properties.dataSourceEnd;
     const sourceLined = (block: ReactNode) =>
-      asDocument && node?.position ? (
-        <div
-          className="contents"
-          data-source-start={node.position.start.line + documentLineOffset}
-          data-source-end={node.position.end.line + documentLineOffset}
-        >
+      sourceStart == null ? (
+        block
+      ) : (
+        <div className="contents" data-source-start={sourceStart} data-source-end={sourceEnd}>
           {block}
         </div>
-      ) : (
-        block
       );
     const language = extractFenceLanguage(codeBlock.className);
-    if (
-      mathEnabled &&
-      language === "math" &&
-      (!isStreaming ||
-        mathKind(codeBlock.className) === "display" ||
-        isClosedCodeFence(node, text, codeBlock.code))
-    ) {
-      return sourceLined(<MarkdownMath tex={codeBlock.code} display focusable={!inline} />);
-    }
     if (language?.toLowerCase() === "mermaid") {
       return sourceLined(
         <MermaidDiagram
@@ -1928,82 +1955,570 @@ const CHAT_MARKDOWN_COMPONENTS = {
       </MarkdownCodeBlock>,
     );
   },
-} satisfies Components;
+} satisfies MarkdownComponents;
 
-const REMARK_MATH: Pluggable = [remarkMath, { singleDollarTextMath: true }];
-// Shared lists, so every message with the same options shares a processor and its cache.
-const CHAT_MARKDOWN_REMARK_PLUGIN_SETS = {
-  plain: CHAT_MARKDOWN_REMARK_PLUGINS,
-  breaks: CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-  math: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS],
-  mathBreaks: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
-} satisfies Record<string, PluggableList>;
+const markdownOptions = new WeakMap<MarkdownExtensions, Map<string, WordsHastOptions>>();
 
-const combinedPlugins = new WeakMap<PluggableList, WeakMap<PluggableList, PluggableList>>();
-
-// One combined list per pair, so a stable extra list shares a renderer and its parse cache.
-const INSIGHT_REMARK_PLUGINS: PluggableList = [remarkAssistantInsights];
-
-function withExtraPlugins(shared: PluggableList, extra: PluggableList): PluggableList {
-  if (extra.length === 0) return shared;
-  let byShared = combinedPlugins.get(extra);
-  if (!byShared) combinedPlugins.set(extra, (byShared = new WeakMap()));
-  let combined = byShared.get(shared);
-  if (!combined) byShared.set(shared, (combined = [...shared, ...extra]));
-  return combined;
+/** One options object per configuration, so equal messages share a renderer and its cache. */
+function wordsOptions(
+  extensions: MarkdownExtensions,
+  flags: Omit<WordsHastOptions, "extensions">,
+): WordsHastOptions {
+  let byFlags = markdownOptions.get(extensions);
+  if (!byFlags) markdownOptions.set(extensions, (byFlags = new Map()));
+  const key = `${+flags.math}${+flags.breaks}${+flags.escapeHtml}${+flags.insights}`;
+  let options = byFlags.get(key);
+  if (!options) byFlags.set(key, (options = { ...flags, extensions }));
+  return options;
 }
 
 const markdownRenderers = new WeakMap<
-  PluggableList,
-  WeakMap<PluggableList, ReturnType<typeof createMarkdownRenderer>>
+  WordsHastOptions,
+  ReturnType<typeof createMarkdownRenderer>
 >();
 
-function markdownRenderer(remarkPlugins: PluggableList, rehypePlugins: PluggableList) {
-  let byRehype = markdownRenderers.get(remarkPlugins);
-  if (!byRehype) markdownRenderers.set(remarkPlugins, (byRehype = new WeakMap()));
-  let renderer = byRehype.get(rehypePlugins);
+function markdownRenderer(markdown: WordsHastOptions) {
+  let renderer = markdownRenderers.get(markdown);
   if (!renderer) {
     renderer = createMarkdownRenderer({
-      remarkPlugins,
-      rehypePlugins,
+      markdown,
       components: CHAT_MARKDOWN_COMPONENTS,
       urlTransform: markdownUrlTransform,
     });
-    byRehype.set(rehypePlugins, renderer);
+    markdownRenderers.set(markdown, renderer);
   }
   return renderer;
 }
 
+type ChatMarkdownComponentState = ReturnType<typeof useChatMarkdownState>["componentState"];
+
+function hastClassName(node: HastElement): string | undefined {
+  const { className } = node.properties;
+  return Array.isArray(className) ? className.join(" ") : (className as string | undefined);
+}
+
+// Paragraphs and list items turn skill and model mentions in their text into chips, except in
+// code and links, as SkillInlineText does.
+function hastTextHasChip(node: HastElement, skills: ReadonlyArray<ServerProviderSkill>): boolean {
+  return node.children.some((child) =>
+    child.type === "text"
+      ? (skills.length > 0 && !matchInlineSkills(child.value, skills).next().done) ||
+        collectComposerModelMentions(child.value).length > 0
+      : child.type === "element" &&
+        child.tagName !== "code" &&
+        child.tagName !== "a" &&
+        hastTextHasChip(child, skills),
+  );
+}
+
+const HEADING_LEVELS: Record<string, number> = { h1: 1, h2: 2, h3: 3, h4: 4, h5: 5, h6: 6 };
+
+const markdownIslandOptionsByState = new WeakMap<
+  ChatMarkdownComponentState,
+  MarkdownIslandOptions
+>();
+
+/** Which elements need CHAT_MARKDOWN_COMPONENTS, and what the others' components add. */
+function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslandOptions {
+  const cached = markdownIslandOptionsByState.get(state);
+  if (cached) return cached;
+  const {
+    asDocument,
+    cwd,
+    headingLevelOffset,
+    imageBaseDir,
+    inlineCodeFileLinkMetaByText,
+    onTaskListChange,
+    skills,
+  } = state;
+  const options: MarkdownIslandOptions = {
+    components: CHAT_MARKDOWN_COMPONENTS,
+    variant: String(headingLevelOffset),
+    isIsland: (node) => {
+      switch (node.tagName) {
+        case "a":
+        case "img":
+        case "pre":
+        case "details":
+        case "table":
+          return true;
+        case "blockquote":
+          return GITHUB_ALERT_PRESENTATIONS[String(node.properties.dataAlert ?? "")] !== undefined;
+        case "div":
+          return artifactTemplateFromHastProperties(node.properties) !== null;
+        case "input":
+          return node.properties.type === "checkbox" && onTaskListChange !== undefined;
+        case "code": {
+          if (node.properties.dataInlineCode == null) return false;
+          const codeText = hastPlainTextDeep(node);
+          return (
+            (asDocument && parseInlineCodeLanguage(codeText) !== null) ||
+            (inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
+              resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd)) != null
+          );
+        }
+        case "p":
+        case "li":
+          return hastTextHasChip(node, skills);
+        default:
+          return false;
+      }
+    },
+    staticElement: (node) => {
+      const level = HEADING_LEVELS[node.tagName];
+      if (level !== undefined) {
+        return headingLevelOffset > 0
+          ? withProperties(node, { ariaLevel: Math.min(level + headingLevelOffset, 6) })
+          : node;
+      }
+      switch (node.tagName) {
+        case "ol": {
+          const itemValues = node.children.flatMap((child) =>
+            child.type === "element" && child.tagName === "li" ? [child.properties.value] : [],
+          );
+          const gutter = orderedListGutterStyle(itemValues, node.properties.start);
+          if (!gutter) return node;
+          const authored = typeof node.properties.style === "string" ? node.properties.style : "";
+          return withProperties(node, {
+            style: `${authored}${authored ? ";" : ""}--list-gutter:${gutter["--list-gutter"]}`,
+          });
+        }
+        case "li":
+          return hastClassName(node)?.includes("task-list-item")
+            ? withProperties(node, { dataListItemOffset: node.position?.start.offset })
+            : node;
+        case "input":
+          return node.properties.type === "checkbox"
+            ? withProperties(node, { readOnly: true })
+            : node;
+        default:
+          return node;
+      }
+    },
+  };
+  markdownIslandOptionsByState.set(state, options);
+  return options;
+}
+
+/** One-based, inclusive lines of a document's source. */
+interface SourceLines {
+  readonly start: number;
+  readonly end: number;
+}
+
+// The blocks a document quote names by line.
+const SOURCE_LINE_BLOCKS = new Set([
+  "blockquote",
+  "dd",
+  "dt",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "li",
+  "p",
+  "pre",
+  "table",
+  "td",
+  "th",
+  "tr",
+]);
+
+const ATX_HEADING_LINE = /^ {0,3}#{1,6}(?:[ \t]|$)/;
+const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/;
+const THEMATIC_BREAK = /^ {0,3}([-*_])[ \t]*(?:\1[ \t]*){2,}$/;
+const TABLE_DELIMITER_ROW = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+const LINK_DEFINITION_LINE = /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*\S/;
+// A comment on one line renders nothing.
+const HTML_COMMENT_LINE = /^ {0,3}<!--(?!-?>)(?:(?!-->).)*-->[ \t]*$/;
+// A line led by an inline tag with text after it starts a paragraph, not an HTML block.
+const INLINE_HTML_LINE =
+  /^ {0,3}<(?:a|abbr|b|br|code|em|i|img|kbd|mark|s|small|span|strong|sub|sup|u)\b[^<>]*>[ \t]*\S/i;
+// CommonMark's HTML blocks that end a paragraph (its kinds 1 to 6); any other tag continues it.
+const HTML_BLOCK_LINE =
+  /^ {0,3}<(?:!--|\?|![A-Za-z]|!\[CDATA\[|(?:pre|script|style|textarea)(?:[\s>]|$)|\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[\s>]|\/>|$))/i;
+
+interface SourceSegment {
+  kind: "heading" | "rule" | "quote" | "table" | "text" | "unknown";
+  start: number;
+  end: number;
+}
+
+const SEGMENT_TAGS: Record<SourceSegment["kind"], RegExp> = {
+  heading: /^h[1-6]$/,
+  rule: /^hr$/,
+  quote: /^blockquote$/,
+  table: /^table$/,
+  text: /^p$/,
+  unknown: /^$/,
+};
+
+/**
+ * The blocks written on lines `from` to `to`, none of which is a list or code: Words positions
+ * those itself. Raw HTML and footnotes are `unknown`, as the text does not say how many blocks
+ * they render, or where.
+ */
+function sourceSegments(lines: ReadonlyArray<string>, from: number, to: number): SourceSegment[] {
+  const segments: SourceSegment[] = [];
+  let open: SourceSegment | null = null;
+  const begin = (kind: SourceSegment["kind"], line: number): SourceSegment => {
+    const segment: SourceSegment = { kind, start: line, end: line };
+    segments.push(segment);
+    return segment;
+  };
+  for (let number = from; number <= to; number++) {
+    const line = lines[number - 1]!;
+    if (line.trim() === "") {
+      open = null;
+    } else if (open?.kind === "unknown") {
+      open.end = number;
+    } else if (HTML_COMMENT_LINE.test(line)) {
+      open = null;
+    } else if (
+      /^ {0,3}</.test(line) &&
+      (open === null ? !INLINE_HTML_LINE.test(line) : HTML_BLOCK_LINE.test(line))
+    ) {
+      open = begin("unknown", number);
+    } else if (ATX_HEADING_LINE.test(line)) {
+      begin("heading", number);
+      open = null;
+    } else if (open?.kind === "text" && SETEXT_UNDERLINE.test(line)) {
+      open.kind = "heading";
+      open.end = number;
+      open = null;
+    } else if (THEMATIC_BREAK.test(line)) {
+      begin("rule", number);
+      open = null;
+    } else if (/^ {0,3}>/.test(line)) {
+      if (open?.kind === "quote") open.end = number;
+      else open = begin("quote", number);
+    } else if (open === null) {
+      // A link definition renders nothing; a footnote's text renders at the end of the document.
+      if (LINK_DEFINITION_LINE.test(line)) continue;
+      open = begin(/^ {0,3}\[\^/.test(line) ? "unknown" : "text", number);
+    } else if (open.kind === "text" && line.includes("|") && TABLE_DELIMITER_ROW.test(line)) {
+      // The line before the delimiter row is the header; any lines before that are a paragraph.
+      if (open.end > open.start) {
+        open.end = number - 2;
+        open = begin("table", number - 1);
+      } else {
+        open.kind = "table";
+      }
+      open.end = number;
+    } else {
+      open.end = number;
+    }
+  }
+  return segments;
+}
+
+/** The first words of a block's text, which the lines it was written on also hold. */
+function leadingWords(node: HastElement): string[] {
+  for (const child of node.children) {
+    if (child.type === "text") {
+      const words = child.value.match(/[\p{L}\p{N}]{2,}/gu);
+      if (words) return words.slice(0, 3);
+    } else if (child.type === "element" && child.tagName !== "svg") {
+      const words = leadingWords(child);
+      if (words.length > 0) return words;
+    }
+  }
+  return [];
+}
+
+/**
+ * The source lines of a rendered document's blocks. Words positions only list items, code and
+ * math, so the blocks between those are matched, in order and from both ends, to the blocks
+ * written on the lines between. A block that matches neither way takes all the lines left over.
+ */
+function documentSourceLines(tree: HastRoot, text: string): Map<HastElement, SourceLines> {
+  const lines: string[] = [];
+  const lineStarts: number[] = [];
+  let offset = 0;
+  for (const line of text.split("\n")) {
+    lines.push(line.endsWith("\r") ? line.slice(0, -1) : line);
+    lineStarts.push(offset);
+    offset += line.length + 1;
+  }
+  const lineAt = (at: number) => {
+    let low = 0;
+    let high = lineStarts.length - 1;
+    while (low < high) {
+      const middle = (low + high + 1) >> 1;
+      if (lineStarts[middle]! <= at) low = middle;
+      else high = middle - 1;
+    }
+    return low + 1;
+  };
+  const positioned = (node: HastElement): SourceLines | null => {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start === undefined || end === undefined) return null;
+    return { start: lineAt(start), end: lineAt(Math.max(start, end - 1)) };
+  };
+  // Footnotes render at the end of the document, wherever they were written.
+  const elements = (node: HastRoot | HastElement) =>
+    (node.children as ElementContent[]).filter(
+      (child): child is HastElement =>
+        child.type === "element" &&
+        !(child.tagName === "section" && child.properties.dataFootnotes !== undefined),
+    );
+
+  /** What is known of an element's extent, whatever its tag. */
+  const known = new Map<HastElement, SourceLines>();
+  const findPositioned = (node: HastRoot | HastElement) => {
+    for (const child of elements(node)) {
+      if (child.tagName === "li" || child.tagName === "pre") {
+        const span = positioned(child);
+        if (span) known.set(child, span);
+      }
+      findPositioned(child);
+    }
+  };
+  findPositioned(tree);
+
+  /** A top-level block Words positions whole: code, a list by its items, display math. */
+  const anchor = (block: HastElement): SourceLines | null => {
+    if (block.tagName === "pre") return known.get(block) ?? null;
+    if (block.tagName === "ul" || block.tagName === "ol") {
+      const items = elements(block).map((item) => known.get(item));
+      const first = items[0];
+      const last = items.at(-1);
+      return first && last && !items.includes(undefined)
+        ? { start: first.start, end: last.end }
+        : null;
+    }
+    if (block.properties.dataMarkdownMath === "display") {
+      const drawn = elements(block)[0];
+      return drawn ? positioned(drawn) : null;
+    }
+    return null;
+  };
+  /** The extent of what Words positions inside a block, which the block's own lines cover. */
+  const within = (node: HastElement): SourceLines | null => {
+    let span = positioned(node);
+    for (const child of elements(node)) {
+      const inner = within(child);
+      if (!inner) continue;
+      span = span
+        ? { start: Math.min(span.start, inner.start), end: Math.max(span.end, inner.end) }
+        : inner;
+    }
+    return span;
+  };
+  /** Whether `block` can be what `segment`'s lines render: its tag, its text and what it holds. */
+  const renders = (segment: SourceSegment, block: HastElement): boolean => {
+    if (!SEGMENT_TAGS[segment.kind].test(block.tagName)) return false;
+    const inner = within(block);
+    if (inner && (inner.start < segment.start || inner.end > segment.end)) return false;
+    const source = lines.slice(segment.start - 1, segment.end).join("\n");
+    let at = 0;
+    for (const word of leadingWords(block)) {
+      const found = source.indexOf(word, at);
+      if (found < 0) return false;
+      at = found + word.length;
+    }
+    return true;
+  };
+  const place = (block: HastElement, { start, end }: SourceSegment) => {
+    known.set(block, { start, end });
+    if (block.tagName !== "table") return;
+    const rows = elements(block).flatMap((section) =>
+      section.tagName === "tr" ? [section] : elements(section),
+    );
+    // A header row, the delimiter row, then one line for each body row.
+    if (rows.length !== end - start) return;
+    for (const [index, row] of rows.entries()) {
+      const line = start + (index === 0 ? 0 : index + 1);
+      known.set(row, { start: line, end: line });
+    }
+  };
+  /** Blocks between two anchors, matched to what lines `from` to `to` write. */
+  const placeRun = (run: ReadonlyArray<HastElement>, from: number, to: number) => {
+    if (run.length === 0) return;
+    const segments = sourceSegments(lines, from, to);
+    const pairs = Math.min(run.length, segments.length);
+    let head = 0;
+    while (head < pairs && renders(segments[head]!, run[head]!)) head++;
+    let tail = 0;
+    while (tail < pairs - head && renders(segments.at(-1 - tail)!, run.at(-1 - tail)!)) tail++;
+    for (let index = 0; index < head; index++) place(run[index]!, segments[index]!);
+    for (let index = 1; index <= tail; index++) place(run.at(-index)!, segments.at(-index)!);
+    // What matched neither way shares the lines left between: raw HTML, or blocks out of step.
+    let start = head > 0 ? segments[head - 1]!.end + 1 : from;
+    let end = tail > 0 ? segments.at(-tail)!.start - 1 : to;
+    while (start <= end && lines[start - 1]!.trim() === "") start++;
+    while (end >= start && lines[end - 1]!.trim() === "") end--;
+    if (start > end) return;
+    for (const block of run.slice(head, run.length - tail)) known.set(block, { start, end });
+  };
+
+  let from = 1;
+  let run: HastElement[] = [];
+  for (const block of elements(tree)) {
+    const span = anchor(block);
+    if (!span) {
+      run.push(block);
+      continue;
+    }
+    placeRun(run, from, span.start - 1);
+    run = [];
+    from = span.end + 1;
+    if (block.tagName !== "ul" && block.tagName !== "ol") known.set(block, span);
+  }
+  placeRun(run, from, lines.length);
+
+  // A block inside another takes the lines of the nearest block around it that has some.
+  const stamped = new Map<HastElement, SourceLines>();
+  const spread = (node: HastRoot | HastElement, nearest: SourceLines | undefined) => {
+    for (const child of elements(node)) {
+      const span = known.get(child) ?? nearest;
+      if (
+        span &&
+        (SOURCE_LINE_BLOCKS.has(child.tagName) || child.properties.dataMarkdownMath === "display")
+      ) {
+        stamped.set(child, span);
+      }
+      spread(child, span);
+    }
+  };
+  spread(tree, undefined);
+  return stamped;
+}
+
+/**
+ * A later section of a long file counts its headings on from the ones before it, so a repeated
+ * heading keeps the anchor it has in the whole file.
+ */
+function sectionHeadingIds(
+  tree: HastRoot,
+  precedingHeadings: ReadonlyArray<string>,
+): Map<HastElement, string> {
+  const seen = new Map<string, number>();
+  for (const heading of precedingHeadings) {
+    const slug = githubHeadingSlug(heading);
+    seen.set(slug, (seen.get(slug) ?? 0) + 1);
+  }
+  const ids = new Map<HastElement, string>();
+  const visit = (node: HastRoot | HastElement) => {
+    for (const child of node.children) {
+      if (child.type !== "element") continue;
+      if (HEADING_LEVELS[child.tagName] === undefined) {
+        visit(child);
+        continue;
+      }
+      const slug = githubHeadingSlug(hastPlainTextDeep(child));
+      const first = `user-content-${slug}`;
+      const id = child.properties.id;
+      // An id the author wrote stays. The renderer wrote the others from the heading's slug.
+      if (
+        !slug ||
+        typeof id !== "string" ||
+        !id.startsWith(first) ||
+        !/^(?:-\d+)?$/.test(id.slice(first.length))
+      ) {
+        continue;
+      }
+      const count = seen.get(slug) ?? 0;
+      seen.set(slug, count + 1);
+      ids.set(child, count === 0 ? first : `${first}-${count}`);
+    }
+  };
+  visit(tree);
+  return ids;
+}
+
+const documentTrees = new WeakMap<
+  HastRoot,
+  { lineOffset: number; precedingHeadings: ReadonlyArray<string>; tree: HastRoot }
+>();
+
+/**
+ * A markdown file's tree: each block stamped with the file lines it was written on, so a
+ * selection can name the lines it quotes, and a later section's headings numbered after the
+ * ones before it. `lineOffset` is how many lines of the file come before `text`. The parsed
+ * tree is shared with other renders and stays as it is.
+ */
+function documentTree(
+  tree: HastRoot,
+  text: string,
+  lineOffset: number,
+  precedingHeadings: ReadonlyArray<string>,
+): HastRoot {
+  const cached = documentTrees.get(tree);
+  if (cached?.lineOffset === lineOffset && cached.precedingHeadings === precedingHeadings) {
+    return cached.tree;
+  }
+  const lines = documentSourceLines(tree, text);
+  const ids = precedingHeadings.length > 0 ? sectionHeadingIds(tree, precedingHeadings) : null;
+  const stamp = (node: HastElement): HastElement => {
+    let children: ElementContent[] | undefined;
+    for (const [index, child] of node.children.entries()) {
+      if (child.type !== "element") continue;
+      const next = stamp(child);
+      if (next === child) continue;
+      children ??= node.children.slice();
+      children[index] = next;
+    }
+    const span = lines.get(node);
+    const id = ids?.get(node);
+    if (!children && !span && id === undefined) return node;
+    return {
+      ...node,
+      properties: {
+        ...node.properties,
+        ...(span
+          ? { dataSourceStart: span.start + lineOffset, dataSourceEnd: span.end + lineOffset }
+          : {}),
+        ...(id === undefined ? {} : { id }),
+      },
+      children: children ?? node.children,
+    };
+  };
+  const stamped: HastRoot = {
+    ...tree,
+    children: tree.children.map((child) => (child.type === "element" ? stamp(child) : child)),
+  };
+  documentTrees.set(tree, { lineOffset, precedingHeadings, tree: stamped });
+  return stamped;
+}
+
 const MarkdownSource = memo(function MarkdownSource({
   text,
-  remarkPlugins,
-  rehypePlugins,
-  shared,
+  markdown,
   cache,
 }: {
   text: string;
-  remarkPlugins: PluggableList;
-  rehypePlugins: PluggableList;
-  /** The plugins are one of the shared sets. */
-  shared: boolean;
+  markdown: WordsHastOptions;
   /** The text will not change again; streamed text would only fill the cache with prefixes. */
   cache: boolean;
 }) {
-  // Per-instance plugins, such as the incremental parser, set up their state on every render.
-  const render = shared
-    ? markdownRenderer(remarkPlugins, rehypePlugins)
-    : createMarkdownRenderer({
-        remarkPlugins,
-        rehypePlugins,
-        components: CHAT_MARKDOWN_COMPONENTS,
-        urlTransform: markdownUrlTransform,
-      });
-  const element = render(text);
+  const render = markdownRenderer(markdown);
+  const entry = render.parse(text);
   // oxlint-disable-next-line lathe/no-unreasoned-state-sync -- Caching during render would make React Compiler rebuild the element when `cache` flips.
   useEffect(() => {
-    if (shared && cache) render.remember(text, element);
-  }, [render, text, element, shared, cache]);
-  return <ChatMarkdownTextContext value={text}>{element}</ChatMarkdownTextContext>;
+    if (cache) render.remember(text, entry);
+  }, [render, text, entry, cache]);
+  const islandState = use(ChatMarkdownRendererContext);
+  return (
+    <ChatMarkdownTextContext value={text}>
+      {islandState
+        ? renderHastWithIslands(
+            islandState.asDocument
+              ? documentTree(
+                  entry.tree,
+                  text,
+                  islandState.documentLineOffset,
+                  islandState.documentPrecedingHeadings,
+                )
+              : entry.tree,
+            markdownIslandOptions(islandState),
+          )
+        : render.element(entry)}
+    </ChatMarkdownTextContext>
+  );
 });
 
 function ChatMarkdown({
@@ -2012,7 +2527,7 @@ function ChatMarkdown({
   inline = false,
   lineBreaks = false,
   parseRawHtml = true,
-  extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
+  extensions = NO_EXTENSIONS,
   documentSection,
   onTaskListChange,
   renderInsights = false,
@@ -2025,74 +2540,31 @@ function ChatMarkdown({
       ? (input: { markerOffset: number; checked: boolean }) =>
           onTaskListChange({ ...input, markerOffset: input.markerOffset + sectionOffset })
       : onTaskListChange;
-  const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
-    useChatMarkdownState({
-      text,
-      inline,
-      ...props,
-      documentSection,
-      onTaskListChange: onSectionTaskListChange,
-    });
-  const hasInsights = renderInsights && text.includes("★ Insight");
-  // Streaming re-renders only the last block; offsets for task edits need the whole text.
+  // Streaming re-renders only the last block; offsets for task edits, extensions that read the
+  // whole message, and a document's source lines need the whole text.
   const streamingBlocks =
-    props.isStreaming === true && !inline && extraRemarkPlugins.length === 0 && !onTaskListChange
-      ? splitMarkdownBlocks(text)
-      : null;
-  const incrementalParsing =
     props.isStreaming === true &&
-    !hasInsights &&
-    streamingBlocks === null &&
-    extraRemarkPlugins.length === 0 &&
-    /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
+    !inline &&
+    extensions === NO_EXTENSIONS &&
+    !onTaskListChange &&
+    !props.asDocument
+      ? (splitMarkdownBlocks(text) ?? [text])
+      : null;
+  const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
+    useChatMarkdownState(
+      { text, inline, ...props, documentSection, onTaskListChange: onSectionTaskListChange },
+      streamingBlocks,
+    );
   const Root = inline ? "span" : "div";
   const bindMarkdownRef = (node: HTMLElement | null) => {
     markdownRef.current = node;
   };
-  const sharedRemarkPlugins =
-    CHAT_MARKDOWN_REMARK_PLUGIN_SETS[
-      componentState.mathEnabled
-        ? lineBreaks
-          ? "mathBreaks"
-          : "math"
-        : lineBreaks
-          ? "breaks"
-          : "plain"
-    ];
-  // A section of a long file numbers its headings and source lines from where it
-  // starts, so its plugin options are its own and its parses are not shared.
-  const precedingHeadings = props.asDocument ? documentSection?.precedingHeadings : undefined;
-  const firstLine = props.asDocument ? documentSection?.startLine : undefined;
-  const sectionPlugins = precedingHeadings !== undefined || firstLine !== undefined;
-  const baseRemarkPlugins = !props.asDocument
-    ? sharedRemarkPlugins
-    : precedingHeadings
-      ? [...sharedRemarkPlugins, [remarkHeadingIds, { precedingHeadings }] satisfies Pluggable]
-      : withExtraPlugins(sharedRemarkPlugins, DOCUMENT_REMARK_PLUGINS);
-  const rehypePlugins: PluggableList = !props.asDocument
-    ? parseRawHtml
-      ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-      : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
-    : firstLine === undefined
-      ? parseRawHtml
-        ? DOCUMENT_REHYPE_PLUGINS
-        : DOCUMENT_LITERAL_REHYPE_PLUGINS
-      : [
-          ...(parseRawHtml
-            ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-            : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS),
-          [rehypeSourceLines, { firstLine }] satisfies Pluggable,
-        ];
-  // The incremental parser keeps per-instance state, so its output is not shared.
-  const uncachedPlugins = incrementalParsing || sectionPlugins;
-  const remarkPlugins = incrementalParsing
-    ? [...baseRemarkPlugins, ...extraRemarkPlugins, createIncrementalMarkdownPlugin()]
-    : withExtraPlugins(
-        hasInsights
-          ? withExtraPlugins(INSIGHT_REMARK_PLUGINS, baseRemarkPlugins)
-          : baseRemarkPlugins,
-        extraRemarkPlugins,
-      );
+  const markdown = wordsOptions(extensions, {
+    math: componentState.mathEnabled,
+    breaks: lineBreaks,
+    escapeHtml: !parseRawHtml,
+    insights: renderInsights && text.includes("★ Insight"),
+  });
   const blocks = streamingBlocks ?? [text];
 
   return (
@@ -2108,18 +2580,18 @@ function ChatMarkdown({
       onCopy={handleCopy}
     >
       <ChatMarkdownRendererContext value={componentState}>
-        {blocks.map((source, index) => (
-          <MarkdownSource
-            // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
-            key={index}
-            text={source}
-            remarkPlugins={remarkPlugins}
-            rehypePlugins={rehypePlugins}
-            shared={!uncachedPlugins}
-            // Every block before the last is finished, so its parse can be reused.
-            cache={!props.isStreaming || index < blocks.length - 1}
-          />
-        ))}
+        <SharedTooltipProvider>
+          {blocks.map((source, index) => (
+            <MarkdownSource
+              // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
+              key={index}
+              text={source}
+              markdown={markdown}
+              // Every block before the last is finished, so its parse can be reused.
+              cache={!props.isStreaming || index < blocks.length - 1}
+            />
+          ))}
+        </SharedTooltipProvider>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
         <ExpandedImageDialog preview={localMediaPreview} onClose={closeLocalMediaPreview} />

@@ -9,6 +9,7 @@ import {
   compactAccessibilityTree,
   findAccessibleWindow,
   isWaylandSession,
+  MAX_ACCESSIBILITY_TREE_DEPTH,
 } from "./snapShot.ts";
 
 const ACCESSIBILITY_TIMEOUT_MS = 3_000;
@@ -160,7 +161,7 @@ async function readCapturedWindowAccessibility(
         Math.abs(accessibleBounds.x - matchingBounds.x) <= 2 &&
         Math.abs(accessibleBounds.y - matchingBounds.y) <= 2));
   const flatRead = window
-    .tree()
+    .tree(MAX_ACCESSIBILITY_TREE_DEPTH)
     .then((tree) => {
       progress.accessibleText =
         accessibleWindowText(tree, SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS) || undefined;

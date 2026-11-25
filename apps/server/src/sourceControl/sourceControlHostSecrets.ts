@@ -101,7 +101,7 @@ const collectUsageLimitSecretReferences = (
   sources: ServerSettings["usageLimitSources"],
 ): ReadonlyArray<SecretReference> =>
   Object.values(sources).flatMap((source) =>
-    source.kind === "cliproxy" && isSecretReference(source.managementKey)
+    source.kind !== "modelproxy" && isSecretReference(source.managementKey)
       ? [source.managementKey]
       : [],
   );

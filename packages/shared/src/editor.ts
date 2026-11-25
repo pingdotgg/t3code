@@ -37,9 +37,10 @@ const isVersionedBundle = (entry: string, name: string) => {
   return /^\d[\d.]*$/.test(entry.slice(name.length + 1, -".app".length));
 };
 
-// OpenZFS's event daemon is also named zed; it rejects `--version` instead of starting.
-const isZedEditor = Effect.fn("editor.isZedEditor")(
-  function* (command: string) {
+// OpenZFS's event daemon is also named zed, and the Cursor Agent CLI installs a cursor script
+// that fails without an IDE behind it; both reject `--version` instead of starting.
+const isEditorCommand = Effect.fn("editor.isEditorCommand")(
+  function* (command: string, isZed: boolean) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const handle = yield* spawner.spawn(
       ChildProcess.make(command, ["--version"], {
@@ -52,10 +53,12 @@ const isZedEditor = Effect.fn("editor.isZedEditor")(
       [handle.stdout.pipe(Stream.decodeText(), Stream.runHead), handle.exitCode],
       { concurrency: "unbounded" },
     );
-    return exitCode === 0 && Option.getOrElse(stdout, () => "").startsWith("Zed");
+    return exitCode === 0 && (!isZed || Option.getOrElse(stdout, () => "").startsWith("Zed"));
   },
   Effect.scoped,
-  Effect.timeout("2 seconds"),
+  // A slow first start after an update must not hide a working Cursor.
+  (probe, _command, isZed) =>
+    Effect.timeoutOrElse(probe, { duration: "2 seconds", orElse: () => Effect.succeed(!isZed) }),
   Effect.catchCause(() => Effect.succeed(false)),
 );
 
@@ -69,6 +72,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   // Prefer Zed's macOS bundle because OpenZFS also installs a zed executable.
   const preferBundle = platform === "darwin" && editor.id === "zed";
   const preferZeditor = platform === "linux" && editor.id === "zed";
+  const probeCursor = editor.id === "cursor" && platform !== "win32";
   if (platform === "win32" && editor.id === "zed") {
     const isStable = (resolved: string) => !isPrereleaseZedPath(resolved);
     let firstCommand: string | undefined;
@@ -83,7 +87,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       if (firstCommand === undefined && matches.length > 0) firstCommand = command;
     }
     if (firstCommand !== undefined) return Option.some({ command: firstCommand, baseArgs });
-  } else if (!preferBundle && !preferZeditor) {
+  } else if (!preferBundle && !preferZeditor && !probeCursor) {
     for (const command of editor.commands) {
       if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
     }
@@ -95,7 +99,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const names = installNames[editor.id] ?? [editor.label];
   const command = editor.commands[0];
   const jetbrains = editor.launchStyle === "line-column";
-  const candidates: string[] = [];
+  const candidates: string[] = probeCursor ? [...editor.commands] : [];
   let toolbox: { dir: string; suffix: string } | undefined;
 
   if (platform === "darwin") {
@@ -216,14 +220,15 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const probeZed = editor.id === "zed" && platform !== "win32";
   const rejected = new Set<string>();
   for (const candidate of candidates) {
-    // OpenZFS zed can shadow the editor's zed in an earlier PATH entry.
+    // An earlier PATH entry can hold OpenZFS zed or the Cursor Agent CLI's cursor script.
     const matches =
-      probeZed && candidate === "zed"
+      (probeZed || probeCursor) && candidate === command
         ? yield* resolveCommandPaths(candidate, { env, until: () => false })
         : [yield* resolveCommandPath(candidate, { env })];
     for (const resolved of matches) {
       if (resolved === null || rejected.has(resolved)) continue;
-      if (probeZed && path.basename(candidate) === "zed" && !(yield* isZedEditor(resolved))) {
+      const probed = probeCursor || (probeZed && path.basename(candidate) === "zed");
+      if (probed && !(yield* isEditorCommand(resolved, probeZed))) {
         rejected.add(resolved);
         continue;
       }

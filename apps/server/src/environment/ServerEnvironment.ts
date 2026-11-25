@@ -232,6 +232,8 @@ export const make = Effect.gen(function* () {
       issues: LATHE_SHOWS_UPSTREAM_ISSUES,
       linkedThreadRefreshes: true,
       issueLinkedThreads: LATHE_SHOWS_UPSTREAM_ISSUES,
+      // Fork: standalone issue trackers feed upstream's Issues, which Roadmap replaces.
+      issueTrackerAccounts: LATHE_SHOWS_UPSTREAM_ISSUES,
       sideChats: true,
       vcsBranchStatus: true,
       inlineMessageContext: true,
@@ -310,11 +312,13 @@ export const make = Effect.gen(function* () {
       linkFence: true,
       linkThreadStream: true,
       linkClientPairing: true,
+      linkPairingForLink: true,
       mcpApprovalCodes: true,
       peerLinkPairingCodes: true,
       mcpHostedApproval: true,
       shellThreadFamilies: true,
       shellOlderSettled: true,
+      agentFeedback: true,
     },
   };
 

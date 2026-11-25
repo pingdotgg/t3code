@@ -78,4 +78,17 @@ describe("resolveTimelineMinimapPreview", () => {
       "The cache misses on a cold start. Where do README.md and math.ts cover this?",
     );
   });
+
+  it("does not split a surrogate pair at the preview slice boundary", () => {
+    const linkStart = "[Build log](https://example.com/builds/1042/log?sig=";
+    const linkEnd = ") ";
+    const pad = "a".repeat(1_499 - linkStart.length - linkEnd.length);
+    const preview = resolveTimelineMinimapPreview({
+      id: "turn-1",
+      rowIndex: 0,
+      userText: `${linkStart}${pad}${linkEnd}🎉 the release build passed`,
+      assistantText: null,
+    });
+    expect(preview?.userText).toBe("Build log");
+  });
 });

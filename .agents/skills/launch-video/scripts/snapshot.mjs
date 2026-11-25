@@ -82,10 +82,57 @@ async function freeze(known) {
   });
   for (const el of clone.querySelectorAll("script, noscript, style, link, base")) el.remove();
 
+  // Open shadow roots (the diff viewer draws inside one) become declarative shadow DOM.
+  const sheetText = (root) =>
+    [...root.adoptedStyleSheets]
+      .map((sheet) => {
+        try {
+          return [...sheet.cssRules].map((r) => r.cssText).join("\n");
+        } catch {
+          return "";
+        }
+      })
+      .join("\n");
+  const rootsIn = (root) =>
+    [...root.querySelectorAll("*")]
+      .filter((el) => el.shadowRoot)
+      .flatMap((el) => [el.shadowRoot, ...rootsIn(el.shadowRoot)]);
+  const shadowHtml = (root) => {
+    const nested = rootsIn(root);
+    // Adopted sheets do not serialize. Each root gets them as its last <style>, where they keep
+    // their precedence over the root's own styles, just for the serialization.
+    const added = [root, ...nested].map((r) => {
+      const style = document.createElement("style");
+      style.textContent = rewrite(sheetText(r), location.href);
+      r.append(style);
+      return style;
+    });
+    let inner;
+    try {
+      inner = root.getHTML({ shadowRoots: nested });
+    } finally {
+      for (const style of added) style.remove();
+    }
+    // The asset pass above never enters shadow trees, so localize their images here.
+    inner = inner.replace(
+      /(<img\b[^>]*?\ssrc=")([^"]+)"/g,
+      (_, head, url) => `${head}${local(url.replaceAll("&amp;", "&"), location.href)}"`,
+    );
+    return `<template shadowrootmode="open">${rewrite(inner, location.href)}</template>`;
+  };
+  source.forEach((el, i) => {
+    if (!el.shadowRoot) return;
+    copies[i].insertAdjacentHTML("afterbegin", shadowHtml(el.shadowRoot));
+  });
+
   const head = clone.querySelector("head");
   const styleEl = document.createElement("style");
   styleEl.textContent = css;
   head.append(styleEl);
+  const viewport = document.createElement("meta");
+  viewport.name = "kit-viewport";
+  viewport.content = `${innerWidth}x${innerHeight}`;
+  head.append(viewport);
   const restore = document.createElement("script");
   restore.textContent = `for (const el of document.querySelectorAll("[data-kit-scroll]")) { const [x, y] = el.dataset.kitScroll.split(",").map(Number); el.scrollLeft = x; el.scrollTop = y; }`;
   clone.querySelector("body").append(restore);

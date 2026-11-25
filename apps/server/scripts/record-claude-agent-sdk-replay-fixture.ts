@@ -82,6 +82,13 @@ const CLAUDE_RECORDINGS = {
     queryMode: "streaming",
     enableTools: true,
   },
+  // Record with ANTHROPIC_BASE_URL at a CLIProxyAPI hub whose upstream accounts answer 429.
+  usage_limit: {
+    prompts: [SIMPLE_PROMPT],
+    defaultTranscriptFile: "fixtures/usage_limit/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
+  },
   multi_turn: {
     prompts: [MULTI_TURN_FIRST_PROMPT, MULTI_TURN_SECOND_PROMPT],
     defaultTranscriptFile: "fixtures/multi_turn/claude_transcript.ndjson",

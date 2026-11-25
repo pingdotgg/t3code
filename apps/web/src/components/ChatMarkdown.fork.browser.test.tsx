@@ -6,7 +6,7 @@ import "../index.css";
 
 import { filesystemEnvironment } from "../state/filesystem";
 import { splitMarkdownDocument } from "../markdown-document";
-import { setMarkdownTaskChecked } from "@lathe/shared/markdownTaskList";
+import { setMarkdownTaskChecked } from "@lathe/shared/markdownTaskEdits";
 
 const { workspaceSearch, filesystemMetadata, renderMermaid } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
@@ -108,10 +108,12 @@ describe("ChatMarkdown documents", () => {
     setup();
     const text = "Energy is $E = mc^2$ here.\n\n$$\n\\int_0^1 x\\,dx\n$$";
     await using document = await render(<ChatMarkdown cwd="/tmp/project" text={text} asDocument />);
-    await vi.waitFor(() => expect(document.container.querySelectorAll(".katex")).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(document.container.querySelectorAll("[data-markdown-math]")).toHaveLength(2),
+    );
 
     await using chat = await render(<ChatMarkdown cwd="/tmp/project" text={text} />);
-    expect(chat.container.querySelector(".katex")).toBeNull();
+    expect(chat.container.querySelector("[data-markdown-math]")).toBeNull();
     expect(chat.container.textContent).toContain("$E = mc^2$");
   });
 

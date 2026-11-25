@@ -189,7 +189,7 @@ export function enumerateHourStarts(sinceTime: string, untilTime: string): reado
 }
 
 function hourOptions(hour12: boolean): Intl.DateTimeFormatOptions {
-  return hour12 ? { hour: "numeric" } : { hour: "2-digit", hourCycle: "h23" };
+  return hour12 ? { hour: "numeric", hour12: true } : { hour: "2-digit", hourCycle: "h23" };
 }
 
 function formatHour(formatter: Intl.DateTimeFormat, date: Date, hour12: boolean): string {

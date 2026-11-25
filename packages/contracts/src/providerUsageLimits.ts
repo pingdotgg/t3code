@@ -108,6 +108,8 @@ export const UsageLimitSourceAccount = Schema.Struct({
   email: Schema.optional(TrimmedNonEmptyString),
   plan: Schema.optional(TrimmedNonEmptyString),
   workspaceId: Schema.optional(TrimmedNonEmptyString),
+  /** The models the hub routes to this account. */
+  models: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   usageLimits: ServerProviderUsageLimits,
   /** Present on `modelproxy` sources only. */
   proxy: Schema.optional(UsageLimitSourceProxyAccount),
@@ -198,9 +200,29 @@ export const UsageLimitSourceProxyStatus = Schema.Struct({
 });
 export type UsageLimitSourceProxyStatus = typeof UsageLimitSourceProxyStatus.Type;
 
+export const HttpQuotaAccount = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  windows: Schema.Array(
+    Schema.Struct({
+      id: ServerProviderUsageWindow.fields.id,
+      kind: ServerProviderUsageWindow.fields.kind,
+      label: ServerProviderUsageWindow.fields.label,
+      usedPercent: ServerProviderUsageWindow.fields.usedPercent,
+      resetsAt: ServerProviderUsageWindow.fields.resetsAt,
+    }),
+  ),
+});
+
+export const HttpQuotaResponse = Schema.Struct({
+  version: Schema.Literal(1),
+  accounts: Schema.Array(HttpQuotaAccount),
+});
+
 export const UsageLimitSourceSnapshot = Schema.Struct({
   id: UsageLimitSourceId,
-  kind: Schema.Literals(["cliproxy", "modelproxy"]),
+  kind: Schema.Literals(["cliproxy", "modelproxy", "http"]),
   label: TrimmedNonEmptyString,
   /** Origin of the hub, which also serves the agents sent through it. */
   origin: Schema.optional(TrimmedNonEmptyString),
@@ -208,6 +230,7 @@ export const UsageLimitSourceSnapshot = Schema.Struct({
   endpoint: Schema.optional(TrimmedNonEmptyString),
   checkedAt: IsoDateTime,
   accounts: ForwardCompatibleArray(UsageLimitSourceAccount),
+  quotaAccounts: Schema.optional(ForwardCompatibleArray(HttpQuotaAccount)),
   error: Schema.optional(TrimmedNonEmptyString),
   /** Present on `modelproxy` sources, even while signed out. */
   proxy: Schema.optional(UsageLimitSourceProxyStatus),

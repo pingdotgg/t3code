@@ -2,7 +2,7 @@ import { isProviderSkillUserInvocable } from "@lathe/client-runtime/providerSkil
 import type { ServerProviderSkill } from "@lathe/contracts";
 import { assistantCitationLabel } from "@lathe/shared/assistantCitations";
 import { formatProviderSkillDisplayName } from "@lathe/shared/inlineSkills";
-import { fileBasename } from "@lathe/shared/path";
+import { fileDisplayName } from "@lathe/shared/path";
 import {
   CircleDashedIcon,
   ImageIcon,
@@ -89,7 +89,7 @@ export function CollapsedComposerPromptPreview(props: {
             key={key}
             kind="mention"
             icon={<PierreEntryIcon pathValue={segment.path} kind="file" theme={props.theme} />}
-            label={fileBasename(segment.path)}
+            label={fileDisplayName(segment.path)}
           />
         );
       case "context-reference": {

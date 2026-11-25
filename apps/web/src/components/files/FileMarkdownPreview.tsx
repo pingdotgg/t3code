@@ -41,9 +41,12 @@ export function MarkdownDocument(props: {
   readonly imageBaseDir?: string | undefined;
   readonly threadRef?: ScopedThreadRef | undefined;
   readonly workspaceMutationId?: string | null | undefined;
+  /** Replaces the page's own width and padding, as for one piece of a chunked file. */
+  readonly className?: string | undefined;
   readonly onTaskListChange?: TaskListChange | undefined;
 }) {
   const text = maskMarkdownFrontmatter(props.text);
+  const layoutClassName = props.className ?? "mx-auto max-w-4xl px-8 py-7";
   const sections = splitMarkdownDocument(text);
   const shownSections = useShownSections(sections);
   // Callers pass a fresh callback each render; a stable one keeps the
@@ -62,13 +65,13 @@ export function MarkdownDocument(props: {
         threadRef={props.threadRef}
         workspaceMutationId={props.workspaceMutationId}
         asDocument
-        className="chat-markdown-document mx-auto max-w-4xl px-8 py-7"
+        className={`chat-markdown-document ${layoutClassName}`}
         onTaskListChange={onTaskListChange}
       />
     );
   }
   return (
-    <div className="mx-auto max-w-4xl px-8 py-7">
+    <div className={layoutClassName}>
       {shownSections.map((section, index) => (
         // Sections are joined by the newline a whole render puts between
         // blocks, so text offsets for comments match either way. A section
@@ -100,6 +103,7 @@ export function FileMarkdownPreview(props: {
   readonly text: string;
   readonly threadRef: ScopedThreadRef;
   readonly workspaceMutationId: string | null;
+  readonly className?: string;
   readonly onTaskListChange?: TaskListChange | undefined;
 }) {
   const lastSeparator = Math.max(
@@ -108,7 +112,7 @@ export function FileMarkdownPreview(props: {
   );
   const imageBaseDir =
     lastSeparator >= 0
-      ? resolvePathLinkTarget(props.relativePath.slice(0, lastSeparator), props.cwd)
+      ? resolvePathLinkTarget(props.relativePath.slice(0, lastSeparator + 1), props.cwd)
       : props.cwd;
 
   const { sourceRef: bindSource } = props;
@@ -126,6 +130,7 @@ export function FileMarkdownPreview(props: {
         imageBaseDir={imageBaseDir}
         threadRef={props.threadRef}
         workspaceMutationId={props.workspaceMutationId}
+        className={props.className}
         onTaskListChange={props.onTaskListChange}
       />
     </div>

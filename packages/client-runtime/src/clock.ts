@@ -104,6 +104,29 @@ export function recordServerClock(
   );
 }
 
+/**
+ * A timestamp stamped by the host is never in its own future, so it gives a
+ * lower bound on the host's clock. Raises a stale negative offset (for example
+ * when a VM or WSL clock catches up after host sleep) without shifting a clock
+ * that already agrees.
+ */
+export function observeServerTime(
+  environmentId: EnvironmentId,
+  serverTimeMs: number,
+  receivedAtMs: number,
+): void {
+  const currentOffset = serverClockOffsets.get(environmentId);
+  if (
+    currentOffset === undefined ||
+    !Number.isFinite(serverTimeMs) ||
+    !Number.isFinite(receivedAtMs)
+  ) {
+    return;
+  }
+  if (receivedAtMs + currentOffset >= serverTimeMs) return;
+  serverClockOffsets.set(environmentId, serverTimeMs - receivedAtMs);
+}
+
 /** Converts client epoch milliseconds to the environment's clock. */
 export function toServerClock(environmentId: EnvironmentId, clientMs: number): number {
   return clientMs + (serverClockOffsets.get(environmentId) ?? 0);

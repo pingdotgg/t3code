@@ -1,4 +1,5 @@
 import type { ProviderInstanceEnvironment } from "@lathe/contracts";
+import { stripAppImageRuntimeEnv } from "@lathe/shared/appImageRuntimeEnv";
 import * as HostProcess from "@lathe/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
@@ -45,8 +46,10 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,
 ) {
+  // Commands the agent runs inherit this env; the AppImage mount's libraries would shadow the system's.
+  const hostEnv = stripAppImageRuntimeEnv(baseEnv);
   if (!environment || environment.length === 0) {
-    return baseEnv;
+    return hostEnv;
   }
 
   const home = yield* HostProcess.HomeDirectory;
@@ -60,11 +63,12 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
     // parent environment back in.
     const name = windows ? variable.name.toUpperCase() : variable.name;
     if (windows) {
-      for (const inherited of Object.keys(baseEnv)) {
+      for (const inherited of Object.keys(hostEnv)) {
         if (inherited.toUpperCase() === name) overrides[inherited] = undefined;
       }
     }
     overrides[name] = expandHomeVariable(name, variable.value, home);
   }
-  return overlayEnvironment(baseEnv, overrides);
+  // Outside an AppImage hostEnv is baseEnv itself, so later shell discovery still reads through.
+  return overlayEnvironment(hostEnv, overrides);
 });

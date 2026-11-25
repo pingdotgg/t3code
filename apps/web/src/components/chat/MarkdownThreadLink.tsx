@@ -49,6 +49,7 @@ export function MarkdownThreadLink(props: {
   // A thread on a machine this client is not connected to still reads through the one that links to it.
   const linkedLabel = useLinkedEnvironments(
     connected || writtenRef.environmentId === props.environmentId ? null : props.environmentId,
+    writtenRef.environmentId,
   ).get(writtenRef.environmentId);
   // A shell cached from an earlier connection does not make the thread open there now.
   const linked =

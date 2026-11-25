@@ -5,6 +5,7 @@
  */
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
+  HttpQuotaResponse,
   UsageLimitSourceError,
   type UsageLimitSourceAccountLoginInput,
   type UsageLimitSourceAccountLoginResult,
@@ -23,6 +24,7 @@ import {
   type UsageLimitSourceSnapshot,
 } from "@lathe/contracts";
 import { resolveServerBackgroundActivitySettings } from "@lathe/shared/backgroundActivitySettings";
+import { antigravityWindowLimitsModel, hubRoutes } from "@lathe/shared/usageLimits";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -31,11 +33,14 @@ import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as HttpClientError from "effect/http/HttpClientError";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as SecretResolver from "@lathe/secret-provider-core/server/SecretResolver";
@@ -47,6 +52,33 @@ import { makeCliproxyApi } from "./cliproxyApi.ts";
 import { makeModelproxyAccountLogin } from "./modelproxyAccountLogin.ts";
 import { makeModelproxyApi, mapModelproxyStatus, type ModelproxyStatus } from "./modelproxyApi.ts";
 import { makeModelproxyAuth } from "./modelproxyAuth.ts";
+
+const decodeHttpQuotaJson = Schema.decodeUnknownEffect(Schema.fromJsonString(HttpQuotaResponse));
+const decodeHttpQuotaResponse = Effect.fn("UsageLimitSources.decodeHttpQuotaResponse")(function* (
+  response: HttpClientResponse.HttpClientResponse,
+) {
+  let bytes = 0;
+  const text = yield* response.stream.pipe(
+    Stream.mapEffect((chunk) => {
+      bytes += chunk.byteLength;
+      return bytes > 1024 * 1024
+        ? Effect.fail(
+            new HttpClientError.DecodeError({
+              request: response.request,
+              response,
+              description: "HTTP quota response exceeds 1 MiB.",
+            }),
+          )
+        : Effect.succeed(chunk);
+    }),
+    Stream.decodeText(),
+    Stream.runFold(
+      () => "",
+      (text, chunk) => text + chunk,
+    ),
+  );
+  return yield* decodeHttpQuotaJson(text);
+});
 
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
@@ -170,7 +202,9 @@ function keepLastGoodReadings(
             candidate.email === account.email &&
             candidate.workspaceId === account.workspaceId,
         );
-        return last && !last.usageLimits.unavailable ? last : account;
+        if (!last || last.usageLimits.unavailable) return account;
+        // Only the reading is lent; an unread model list stays unknown.
+        return { ...last, models: account.models };
       }),
     };
   });
@@ -207,6 +241,7 @@ export const make = Effect.gen(function* () {
   const pendingRedeems = yield* Ref.make(new Map<string, string>());
   const random = yield* SecureRandom.SecureRandom;
   const accountLogins = yield* makeModelproxyAccountLogin;
+  const http = yield* HttpClient.HttpClient;
   const settingsService = yield* Settings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -306,7 +341,7 @@ export const make = Effect.gen(function* () {
       id,
       kind: config.kind,
       label,
-      ...(url && /^https?:$/.test(url.protocol)
+      ...(config.kind === "cliproxy" && url && /^https?:$/.test(url.protocol)
         ? {
             origin: url.origin,
             endpoint: `${url.origin}${url.pathname.replace(/(\/management\.html)?\/*$/i, "")}`,
@@ -315,6 +350,38 @@ export const make = Effect.gen(function* () {
       checkedAt,
     } as const;
     const managementKey = yield* readManagementKey(config);
+    if (config.kind === "http") {
+      if (!url || !/^https?:$/.test(url.protocol) || url.username || url.password) {
+        return { snapshot: { ...base, accounts: [], error: "Invalid HTTP quota source URL." } };
+      }
+      if (typeof config.managementKey !== "string" && !managementKey) {
+        return {
+          snapshot: { ...base, accounts: [], error: "Could not resolve the quota source token." },
+        };
+      }
+      const request = HttpClientRequest.get(url).pipe(
+        HttpClientRequest.setHeader("Accept", "application/json"),
+      );
+      const result = yield* http
+        .execute(
+          managementKey
+            ? request.pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${managementKey}`))
+            : request,
+        )
+        .pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.flatMap(decodeHttpQuotaResponse),
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+          Effect.timeout("10 seconds"),
+          Effect.result,
+        );
+      return {
+        snapshot:
+          result._tag === "Success"
+            ? { ...base, accounts: [], quotaAccounts: result.success.accounts }
+            : { ...base, accounts: [], error: "Could not read the HTTP quota source." },
+      };
+    }
     if (managementKey.length === 0) {
       return { snapshot: { ...base, accounts: [], error: missingManagementKey(config) } };
     }
@@ -803,7 +870,7 @@ export const layer = Layer.effect(UsageLimitSources, make).pipe(
   Layer.provide(SecretResolverLayer.layer),
 );
 
-/** A hub answers with a usage limit only when every account it routes the driver to is spent. */
+/** A hub returns a usage limit only when every account it routes the model to is spent. */
 export function hubPoolResetAt(
   sources: ReadonlyArray<UsageLimitSourceSnapshot>,
   driver: ProviderDriverKind,
@@ -811,21 +878,22 @@ export function hubPoolResetAt(
   now: number,
 ): string | null {
   let earliest: number | null = null;
-  for (const source of sources) {
-    for (const account of source.accounts) {
-      if (account.driver !== driver) continue;
-      // An unread account may be the one still blocked, so its refill is unknown.
-      if (account.usageLimits.unavailable) return null;
-      const spent = account.usageLimits.windows.filter(
-        (window) => window.usedPercent >= 100 && windowLimitsModel(window, model),
-      );
-      if (spent.length === 0) return null;
-      const resets = spent.map((window) => Date.parse(window.resetsAt ?? ""));
-      if (resets.some((reset) => !Number.isFinite(reset))) return null;
-      const recoversAt = Math.max(...resets);
-      if (recoversAt <= now) return null;
-      earliest = earliest === null ? recoversAt : Math.min(earliest, recoversAt);
-    }
+  const routes = hubRoutes(sources, driver, model);
+  for (const account of sources.flatMap((source) => source.accounts).filter(routes)) {
+    // An unread account may be the one still blocked, so its refill is unknown.
+    if (account.usageLimits.unavailable) return null;
+    const spent = account.usageLimits.windows.filter(
+      (window) =>
+        window.usedPercent >= 100 &&
+        windowLimitsModel(window, model) &&
+        (account.driver !== "antigravity" || antigravityWindowLimitsModel(window, model)),
+    );
+    if (spent.length === 0) return null;
+    const resets = spent.map((window) => Date.parse(window.resetsAt ?? ""));
+    if (resets.some((reset) => !Number.isFinite(reset))) return null;
+    const recoversAt = Math.max(...resets);
+    if (recoversAt <= now) return null;
+    earliest = earliest === null ? recoversAt : Math.min(earliest, recoversAt);
   }
   return earliest === null ? null : DateTime.formatIso(DateTime.makeUnsafe(earliest));
 }

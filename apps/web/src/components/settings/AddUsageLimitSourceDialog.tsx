@@ -1,9 +1,4 @@
-import {
-  type EnvironmentId,
-  type SecretReference,
-  type UnifiedSettings,
-  UsageLimitSourceId,
-} from "@lathe/contracts";
+import { type EnvironmentId, type SecretReference, type UnifiedSettings } from "@lathe/contracts";
 import { T, useGT } from "gt-react";
 import { useId, useState } from "react";
 
@@ -24,7 +19,7 @@ import { SecretInput } from "./SecretInput";
 import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 import { Label } from "../ui/label";
 
-type SourceKind = "cliproxy" | "modelproxy";
+type SourceKind = "cliproxy" | "http" | "modelproxy";
 
 /** Send the secret once to server secret storage; settings retain only a redaction marker. */
 export function AddUsageLimitSourceDialog({
@@ -54,11 +49,21 @@ export function AddUsageLimitSourceDialog({
   const [issuer, setIssuer] = useState("");
   const [clientId, setClientId] = useState("");
   const trimmedUrl = url.trim();
+  const http = kind === "http";
+  const endpoint = URL.parse(trimmedUrl);
   const canSave =
-    trimmedUrl.length > 0 &&
-    (kind === "cliproxy"
-      ? keyValid && managementKey !== ""
-      : secret.trim().length > 0 && issuer.trim().length > 0 && clientId.trim().length > 0);
+    kind === "modelproxy"
+      ? trimmedUrl.length > 0 &&
+        secret.trim().length > 0 &&
+        issuer.trim().length > 0 &&
+        clientId.trim().length > 0
+      : keyValid &&
+        (http
+          ? endpoint !== null &&
+            /^https?:$/.test(endpoint.protocol) &&
+            !endpoint.username &&
+            !endpoint.password
+          : trimmedUrl.length > 0 && managementKey !== "");
 
   const reset = () => {
     setKind("cliproxy");
@@ -73,12 +78,7 @@ export function AddUsageLimitSourceDialog({
 
   const save = () => {
     if (!canSave) return;
-    const hubId = sourceIdFromUrl(trimmedUrl, sources);
-    // Fork: a gateway takes its own prefix; a saved URL keeps the ID it already has.
-    const id =
-      kind === "cliproxy"
-        ? hubId
-        : UsageLimitSourceId.make(hubId.replace(/^cliproxy-/, "modelproxy-"));
+    const id = sourceIdFromUrl(trimmedUrl, sources, kind);
     const common = {
       ...(label.trim() ? { label: label.trim() } : {}),
       url: trimmedUrl,
@@ -88,15 +88,15 @@ export function AddUsageLimitSourceDialog({
     updateSettings({
       usageLimitSources: {
         [id]:
-          kind === "cliproxy"
-            ? { kind, ...common, managementKey }
-            : {
+          kind === "modelproxy"
+            ? {
                 kind,
                 ...common,
                 issuer: issuer.trim(),
                 clientId: clientId.trim(),
                 clientSecret: secret.trim(),
-              },
+              }
+            : { kind, ...common, managementKey },
       },
     });
     reset();
@@ -105,26 +105,34 @@ export function AddUsageLimitSourceDialog({
 
   const kindTitle: Record<SourceKind, string> = {
     cliproxy: gt("CLIProxyAPI hub"),
+    http: gt("HTTP quota source"),
     modelproxy: gt("modelproxy gateway"),
   };
-  const copy =
-    kind === "cliproxy"
-      ? {
-          title: gt("Add a CLIProxyAPI hub"),
-          description: gt(
-            "Show the quota of every account the hub pools. The management key stays on {environment}.",
-            { environment: environmentLabel },
-          ),
-          action: gt("Add hub"),
-        }
-      : {
-          title: gt("Add a modelproxy gateway"),
-          description: gt(
-            "Show which account the gateway is serving and how much headroom the pool has. You sign in as yourself; the client secret and your session stay on {environment}.",
-            { environment: environmentLabel },
-          ),
-          action: gt("Add gateway"),
-        };
+  const copy = {
+    cliproxy: {
+      title: gt("Add a CLIProxyAPI hub"),
+      description: gt(
+        "Show the quota of every account the hub pools. The management key stays on {environment}.",
+        { environment: environmentLabel },
+      ),
+      action: gt("Add hub"),
+    },
+    http: {
+      title: gt("Add an HTTP quota source"),
+      description: gt("Read quotas from an endpoint on {environment}.", {
+        environment: environmentLabel,
+      }),
+      action: gt("Add source"),
+    },
+    modelproxy: {
+      title: gt("Add a modelproxy gateway"),
+      description: gt(
+        "Show which account the gateway is serving and how much headroom the pool has. You sign in as yourself; the client secret and your session stay on {environment}.",
+        { environment: environmentLabel },
+      ),
+      action: gt("Add gateway"),
+    },
+  }[kind];
 
   return (
     <Dialog
@@ -153,7 +161,7 @@ export function AddUsageLimitSourceDialog({
                 <T>Kind</T>
               </Label>
               <div className="flex gap-1" role="radiogroup" aria-label={gt("Source kind")}>
-                {(["cliproxy", "modelproxy"] as const).map((option) => (
+                {(["cliproxy", "http", "modelproxy"] as const).map((option) => (
                   <Button
                     key={option}
                     type="button"
@@ -170,14 +178,22 @@ export function AddUsageLimitSourceDialog({
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="usage-source-url">
-                {kind === "cliproxy" ? <T>Hub URL</T> : <T>Gateway URL</T>}
+                {kind === "cliproxy" ? (
+                  <T>Hub URL</T>
+                ) : http ? (
+                  <T>Endpoint URL</T>
+                ) : (
+                  <T>Gateway URL</T>
+                )}
               </Label>
               <Input
                 id="usage-source-url"
                 placeholder={
                   kind === "cliproxy"
                     ? "https://hub.example.ts.net:8318"
-                    : "https://iris.example.com"
+                    : http
+                      ? "https://quota.example.com/v1"
+                      : "https://iris.example.com"
                 }
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
@@ -212,24 +228,30 @@ export function AddUsageLimitSourceDialog({
             ) : null}
             <div className="grid gap-1.5">
               <Label htmlFor="usage-source-key">
-                {kind === "cliproxy" ? <T>Management key</T> : <T>Client secret</T>}
+                {kind === "cliproxy" ? (
+                  <T>Management key</T>
+                ) : http ? (
+                  <T>Bearer token (optional)</T>
+                ) : (
+                  <T>Client secret</T>
+                )}
               </Label>
-              {kind === "cliproxy" ? (
+              {kind === "modelproxy" ? (
+                <SecretInput
+                  id="usage-source-key"
+                  value={secret}
+                  onChange={(event) => setSecret(event.target.value)}
+                />
+              ) : (
                 <SecretSourceInput
                   id="usage-source-key"
-                  aria-label={gt("Management key")}
+                  aria-label={http ? gt("Bearer token (optional)") : gt("Management key")}
                   value={keyDraft}
                   sources={secretSources}
                   environmentId={environmentId}
                   onChange={(event) => setKeyDraft(event.target.value)}
                   onSecretChange={(reference) => setKeyDraft(reference ?? "")}
                   onValidityChange={setKeyValid}
-                />
-              ) : (
-                <SecretInput
-                  id="usage-source-key"
-                  value={secret}
-                  onChange={(event) => setSecret(event.target.value)}
                 />
               )}
             </div>

@@ -19,6 +19,7 @@
     "@lathe/source-control-forgejo": "workspace:*",
     "@lathe/source-control-gitcafe": "workspace:*",
     "@lathe/source-control-github": "workspace:*",
-    "@lathe/source-control-gitlab": "workspace:*"
+    "@lathe/source-control-gitlab": "workspace:*",
+    "@lathe/source-control-tanstack-source": "workspace:*"
   }
 }

@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+/**
+ * App Store / Google Play screenshot harness (`pnpm screenshots:mobile --list`).
+ * Shares Metro port 8199 across checkouts (run one at a time; `--skip-build --skip-metro` reuses it).
+ * Needs Xcode + AXe (`AXE_PATH`) on iOS, `agent-device` for Duo fold pose, and Android SDK/AVD on Android.
+ * Outputs store-validated 24-bit RGB PNGs to `artifacts/app-store/screenshots/`; edit targets in `mobile-showcase.config.ts`.
+ */
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - Host-side simulator and emulator automation uses Node subprocess and timing APIs directly.
 
 import * as NodeChildProcess from "node:child_process";

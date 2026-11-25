@@ -6,17 +6,22 @@ import * as ForgejoDriver from "@lathe/source-control-forgejo/server/driver";
 import * as GitCafeDriver from "@lathe/source-control-gitcafe/server/driver";
 import * as GitHubDriver from "@lathe/source-control-github/server/driver";
 import * as GitLabDriver from "@lathe/source-control-gitlab/server/driver";
+import * as TanStackSourceDriver from "@lathe/source-control-tanstack-source/server/driver";
 
-/** In the shared registry's order, which is the order hosts are listed and probed in. */
+/**
+ * In the shared registry's order, which is the order hosts are listed and probed in. Feature
+ * flags leave some out; see `builtInDrivers.ts`.
+ */
 export const BUILT_IN_SOURCE_CONTROL_DRIVER_LIST = [
   GitHubDriver.driver,
   CursorOriginDriver.driver,
   GitLabDriver.driver,
   GitCafeDriver.driver,
+  TanStackSourceDriver.driver,
   ForgejoDriver.driver,
   BitbucketDriver.driver,
   AzureDevOpsDriver.driver,
-] as const;
+];
 
 export const sourceControlDefinitions = builtInSourceControlDefinitions;
 

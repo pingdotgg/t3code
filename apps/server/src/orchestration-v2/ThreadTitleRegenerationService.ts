@@ -69,9 +69,11 @@ function failureMessage(cause: Cause.Cause<unknown>): string {
     : [];
   const detail = lines.at(-1);
   if (detail === undefined) return "Title generation failed.";
-  return detail.length > MAX_FAILURE_MESSAGE_LENGTH
-    ? `${detail.slice(0, MAX_FAILURE_MESSAGE_LENGTH - 1)}…`
-    : detail;
+  if (detail.length <= MAX_FAILURE_MESSAGE_LENGTH) return detail;
+  const keep = MAX_FAILURE_MESSAGE_LENGTH - 1;
+  const last = detail.charCodeAt(keep - 1);
+  const end = keep - (last >= 0xd800 && last <= 0xdbff ? 1 : 0);
+  return `${detail.slice(0, end)}…`;
 }
 
 const make = Effect.gen(function* () {

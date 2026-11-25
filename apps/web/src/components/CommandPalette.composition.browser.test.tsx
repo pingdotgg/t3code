@@ -68,14 +68,19 @@ vi.mock("../hooks/useHandleNewThread", () => ({
   continueInNewThreadOptions: () => ({}),
 }));
 // Fork: roadmap. The add-project inputs under test do not need one, so the home serves none.
-vi.mock("./roadmap/useRoadmapThreadActions", () => ({
-  useRoadmapAvailability: () => ({
-    home: null,
-    supported: false,
-    homeConnected: false,
-    canChange: false,
-  }),
-}));
+vi.mock("./roadmap/useRoadmapThreadActions", () => {
+  const availability = { home: null, supported: false, homeConnected: false, canChange: false };
+  return {
+    useRoadmapAvailability: () => availability,
+    useRoadmapThreadActions: () => ({
+      availability,
+      actions: {
+        menuState: () => ({ attachedTitle: null, createInNewThread: false, canChange: false }),
+        handleMenuAction: () => null,
+      },
+    }),
+  };
+});
 vi.mock("./roadmap/RoadmapPaletteItems", () => ({
   ROADMAP_ATTACH_VIEW: "roadmap-attach",
   useRoadmapAttachPickerGroups: () => [],
@@ -88,7 +93,8 @@ vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
-  useAtomQueryRunner: () => async () => ({ _tag: "Success", value: undefined }),
+  // Doubles as the add-project folder scan, which finds nothing to track.
+  useAtomQueryRunner: () => async () => ({ _tag: "Success", value: { folders: [] } }),
 }));
 vi.mock("../state/environments", async (original) => ({
   ...(await original<typeof import("../state/environments")>()),

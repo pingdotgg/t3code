@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import { getPropertyName, unwrapExpression } from "../utils.ts";
 
 const MESSAGE =
-  "Untranslated copy. Wrap JSX text in <T>, props in gt(), and strings outside React in m(msg()). See docs/internals/i18n.md.";
+  "Untranslated copy. Wrap JSX text in <T>, props in gt(), and strings outside React in m(msg()). See docs/internals/14_i18n.md.";
 
 // Props and object keys whose string values users read.
 const COPY_NAMES = new Set([

@@ -96,9 +96,9 @@ export function secretProviderUses(
       uses(
         {
           settingsSchema:
-            source.kind === "cliproxy"
-              ? CliproxyUsageLimitSourceConfig
-              : ModelproxyUsageLimitSourceConfig,
+            source.kind === "modelproxy"
+              ? ModelproxyUsageLimitSourceConfig
+              : CliproxyUsageLimitSourceConfig,
         },
         `usage-limit:${id}`,
         source.label ?? source.url,

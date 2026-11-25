@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import type { RefObject } from "react";
 import type { ChatComposerProps } from "./ChatComposer";
 import {
+  type ChatAttachment,
   type ComposerContextClipboardFragment,
   type ComposerContextRecord,
   type EnvironmentId,
@@ -56,6 +57,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { countPreparingComposerImages } from "./preparingComposerImages";
+import type { QueuedAttachmentContextBinding } from "./composerContextUndo";
+import { matchRestorableQueuedAttachment } from "./queuedMessageEdit";
 
 const isUnreachable = Schema.is(
   Schema.Union([ConnectionTransientError, ConnectionBlockedError, EnvironmentRpcUnavailableError]),
@@ -91,6 +94,8 @@ export function useComposerContextImport(input: {
   readonly promptRef: RefObject<string>;
   readonly pendingThreadImportsRef: RefObject<Map<string, number>>;
   readonly addComposerFilesToDraft: (files: ComposerFileAttachment[]) => string[];
+  readonly removedQueuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding> | undefined;
+  readonly onRestoreQueuedAttachment?: ((attachment: ChatAttachment) => void) | undefined;
 }) {
   const {
     environmentId,
@@ -109,6 +114,8 @@ export function useComposerContextImport(input: {
     promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
+    removedQueuedAttachments,
+    onRestoreQueuedAttachment,
   } = input;
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
@@ -430,6 +437,19 @@ export function useComposerContextImport(input: {
         case "image":
         case "file": {
           if (skippedDependentAttachmentIds.has(record.contextId)) break;
+          if (questionAttachmentTarget === null && !conflicts) {
+            const restored = matchRestorableQueuedAttachment({
+              environmentId,
+              sourceEnvironmentId,
+              record,
+              removedQueuedAttachments: removedQueuedAttachments ?? [],
+            });
+            if (restored) {
+              onRestoreQueuedAttachment?.(restored.attachment);
+              rewritten.set(record.contextId, restored.contextId);
+              break;
+            }
+          }
           if (sourceEnvironmentId === null && !conflicts) {
             rewritten.set(record.contextId, record.contextId);
             break;

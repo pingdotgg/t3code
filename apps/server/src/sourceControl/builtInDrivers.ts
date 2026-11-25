@@ -3,6 +3,7 @@ import type {
   SourceControlDriverInstance,
 } from "@lathe/source-control-core/server/driver";
 import * as SourceControlRateLimit from "@lathe/source-control-core/server/SourceControlRateLimit";
+import * as FeatureFlags from "@lathe/shared/FeatureFlags";
 // Fork: roadmap.
 import * as GitHubIssueApi from "@lathe/source-control-github/server/GitHubIssueApi";
 import * as GitHubRest from "@lathe/source-control-github/server/GitHubRest";
@@ -24,9 +25,21 @@ export class SourceControlDrivers extends Context.Service<
   ReadonlyArray<SourceControlDriverEntry>
 >()("lathe/sourceControl/builtInDrivers/SourceControlDrivers") {}
 
-const make = Effect.forEach(BUILT_IN_SOURCE_CONTROL_DRIVER_LIST, (driver) =>
-  driver.make.pipe(Effect.map((instance) => ({ driver, instance }))),
-);
+/** Drivers offered only while their feature flag is on. */
+const FLAGGED_DRIVERS: Readonly<Record<string, "tanstackSource">> = {
+  "tanstack-source": "tanstackSource",
+};
+
+const make = Effect.gen(function* () {
+  const flags = yield* FeatureFlags.FeatureFlags;
+  const drivers = BUILT_IN_SOURCE_CONTROL_DRIVER_LIST.filter((driver) => {
+    const flag = FLAGGED_DRIVERS[driver.kind];
+    return flag === undefined || flags[flag];
+  });
+  return yield* Effect.forEach(drivers, (driver) =>
+    driver.make.pipe(Effect.map((instance) => ({ driver, instance }))),
+  );
+});
 
 export const layer = Layer.merge(
   Layer.effect(SourceControlDrivers, make),

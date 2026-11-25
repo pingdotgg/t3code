@@ -77,43 +77,133 @@ const realPath = (entry: string) =>
     });
   });
 
-const resolveWatchTarget = Effect.fn("watchDirectoryReplacements.resolveWatchTarget")(function* (
+const resolveLinkedPath = Effect.fn("watchDirectoryReplacements.resolveLinkedPath")(function* (
   entry: string,
+  link: string,
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const link = yield* fs.readLink(entry).pipe(Effect.option);
-  if (Option.isNone(link)) return entry;
-
   const resolved = yield* realPath(entry).pipe(Effect.option);
   if (Option.isSome(resolved)) return resolved.value;
 
   // A dangling link needs a watch on the directory where its target should appear.
-  const rawTarget = path.isAbsolute(link.value)
-    ? link.value
-    : `${path.dirname(entry)}${path.sep}${link.value}`;
+  const rawTarget = path.isAbsolute(link) ? link : `${path.dirname(entry)}${path.sep}${link}`;
   const parent = yield* realPath(path.dirname(rawTarget)).pipe(Effect.option);
-  const unresolved = Option.isSome(parent)
-    ? path.join(parent.value, path.basename(rawTarget))
-    : entry;
+  if (Option.isNone(parent)) return entry;
+
+  const unresolved = path.join(parent.value, path.basename(rawTarget));
   return yield* resolveSymlinkTarget(unresolved).pipe(Effect.orElseSucceed(() => unresolved));
 });
 
-/** Watch replacements of a configured directory, its symlink target, and the target's parent. */
-export const watchDirectoryPath = (directory: string, watchChild: Stream.Stream<void>) => {
+/** Watch replacements of a configured directory and nearby ancestors of its symlink target. */
+export const watchDirectoryPath = (
+  directory: string,
+  watchChild: Stream.Stream<void>,
+  consumeMissingObservation: Effect.Effect<boolean>,
+) => {
   const entry = NodePath.resolve(directory);
   return watchDirectoryReplacements(
     (ready) => watchDirectoryEntry(entry, ready),
     Stream.unwrap(
-      resolveWatchTarget(entry).pipe(
-        Effect.map((target) => {
-          if (target === entry) return watchChild;
-          return watchDirectoryReplacements(
-            (ready) => watchDirectoryEntry(NodePath.dirname(target), ready),
-            watchDirectoryReplacements((ready) => watchDirectoryEntry(target, ready), watchChild),
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let childEnded = false;
+        const watchContents = Stream.suspend(() => {
+          childEnded = false;
+          return watchChild.pipe(
+            Stream.onEnd(
+              Effect.sync(() => {
+                childEnded = true;
+              }),
+            ),
           );
-        }),
-      ),
+        });
+
+        const statIdentity = fs
+          .stat(entry)
+          .pipe(
+            Effect.map(
+              (info) =>
+                `${info.dev}:${info.ino.valueOrUndefined}:${info.birthtime.valueOrUndefined?.getTime()}`,
+            ),
+          );
+        // One probe per second catches replacements the watches cannot see: a link target's
+        // ancestors, or the entry becoming a link before macOS has armed the parent watch.
+        // A missing entry probes as null and a link whose target is missing as "".
+        const identity = fs.readLink(entry).pipe(
+          Effect.matchEffect({
+            onSuccess: (link) =>
+              statIdentity.pipe(
+                Effect.map((id) => `link:${id}:${link}`),
+                Effect.orElseSucceed(() => ""),
+              ),
+            onFailure: () =>
+              statIdentity.pipe(
+                Effect.map((id) => `plain:${id}`),
+                Effect.orElseSucceed(() => null),
+              ),
+          }),
+        );
+        // The identity of the tree the current watches were acquired on.
+        let previous: string | null | undefined;
+        return watchDirectoryReplacements(
+          (ready) => {
+            let retryDelay = 1;
+            let nextRetry = 0;
+            return Stream.tick("1 second").pipe(
+              Stream.mapEffect(() => identity),
+              Stream.zipWithIndex,
+              Stream.mapEffect(([current, tick]) =>
+                Effect.gen(function* () {
+                  // A catalog read can see the path missing even if both probes see the same inode.
+                  const sawMissing = Boolean(current) && (yield* consumeMissingObservation);
+                  const replaced = previous !== undefined && current !== previous;
+                  const firstProbe = previous === undefined;
+                  previous = current;
+
+                  if (replaced || sawMissing || !childEnded) {
+                    retryDelay = 1;
+                    nextRetry = tick + 1;
+                  }
+                  if (firstProbe) return false;
+                  if (replaced || sawMissing) return true;
+                  if (!childEnded || !current || tick < nextRetry) return false;
+
+                  // A stable inode can stay unwatchable due to permissions or OS watch limits.
+                  retryDelay = Math.min(60, retryDelay * 2);
+                  nextRetry = tick + retryDelay;
+                  return true;
+                }),
+              ),
+              Stream.tap(() => Deferred.succeed(ready, undefined)),
+              Stream.filter((rebuild) => rebuild),
+            );
+          },
+          Stream.unwrap(
+            // Probe before resolving so a tree swapped in between reads as a replacement.
+            identity.pipe(
+              Effect.tap((acquired) =>
+                Effect.sync(() => {
+                  previous = acquired;
+                }),
+              ),
+              Effect.andThen(fs.readLink(entry).pipe(Effect.option)),
+              Effect.flatMap((link) =>
+                Option.isSome(link) ? resolveLinkedPath(entry, link.value) : Effect.succeed(entry),
+              ),
+              Effect.map((target) => {
+                if (target === entry || target === NodePath.dirname(target)) return watchContents;
+                return watchDirectoryReplacements(
+                  (ready) => watchDirectoryEntry(NodePath.dirname(target), ready),
+                  watchDirectoryReplacements(
+                    (ready) => watchDirectoryEntry(target, ready),
+                    watchContents,
+                  ),
+                );
+              }),
+            ),
+          ),
+        );
+      }),
     ),
   );
 };
