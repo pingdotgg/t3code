@@ -181,6 +181,89 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.deepEqual(settings.providerModelPreferences?.[provider]?.modelOrder, ["luna", "sol"]);
     }).pipe(Effect.provide(layerServerSettings())),
   );
+  it.effect("persists delegation settings and replaces the whole block on update", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const defaults = { providerByVendor: {}, profiles: {} };
+      assert.deepEqual((yield* service.getSettings).delegation, defaults);
+      const initial = yield* decodeServerSettingsPatch({
+        delegation: {
+          providerByVendor: { openai: "pi-primary", google: "antigravity" },
+          profiles: {
+            worker: {
+              model: "openai:amazon-bedrock/global.openai.gpt-test:nightly",
+              options: { thinking: "high" },
+              deniedSkills: ["git-work", "team:plugin:git-work"],
+              checkout: "worktree",
+            },
+            reviewer: { model: "google:gemini-test", deniedSkills: [], checkout: "shared" },
+          },
+        },
+      });
+      yield* service.updateSettings(initial);
+      const persisted = yield* fs
+        .readFileString(config.settingsPath)
+        .pipe(Effect.flatMap(decodeServerSettingsJson));
+      assert.deepEqual(persisted.delegation, initial.delegation);
+      const replacement = yield* decodeServerSettingsPatch({
+        delegation: {
+          providerByVendor: { openai: "pi-primary" },
+          profiles: {
+            worker: {
+              model: "openai:amazon-bedrock/global.openai.gpt-test:nightly",
+              deniedSkills: [],
+              checkout: "shared",
+            },
+          },
+        },
+      });
+      const updated = yield* service.updateSettings(replacement);
+      assert.deepEqual(updated.delegation, replacement.delegation);
+      const unrelated = yield* service.updateSettings({ defaultAutoPull: true });
+      assert.deepEqual(unrelated.delegation, replacement.delegation);
+      yield* service.updateSettings({ delegation: defaults });
+      const cleared = yield* fs
+        .readFileString(config.settingsPath)
+        .pipe(Effect.flatMap(decodeServerSettingsJson));
+      assert.deepEqual(cleared.delegation, defaults);
+      assert.isTrue(cleared.defaultAutoPull);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("rejects incomplete or invalid delegation settings in both settings and patches", () =>
+    Effect.gen(function* () {
+      const valid = { model: "openai:pi-model", deniedSkills: [], checkout: "shared" };
+      for (const delegation of [
+        { providerByVendor: { other: "pi" }, profiles: {} },
+        { providerByVendor: { openai: "not an instance ID" }, profiles: {} },
+        { providerByVendor: {}, profiles: { ["a".repeat(65)]: valid } },
+        ...[
+          { model: "other:pi-model" },
+          { model: "openai:" },
+          { model: "openai: pi-model" },
+          { model: "openai:pi-model " },
+          { model: "openai:\0pi-model" },
+          { deniedSkills: undefined },
+          { checkout: undefined },
+          { deniedSkills: ["skill", "skill"] },
+          { deniedSkills: ["plugin::skill"] },
+          { deniedSkills: ["plugin:*"] },
+          { deniedSkills: ["Skill(skill:git-work)"] },
+          { options: { thinking: 1024 } },
+          { options: { effort: "high" } },
+        ].map((fields) => ({
+          providerByVendor: {},
+          profiles: { worker: { ...valid, ...fields } },
+        })),
+      ]) {
+        yield* decodeServerSettings({ delegation }).pipe(Effect.flip);
+        yield* decodeServerSettingsPatch({ delegation }).pipe(Effect.flip);
+      }
+    }),
+  );
+
   it.effect("persists and broadcasts model preferences to other connected clients", () =>
     Effect.scoped(
       Effect.gen(function* () {

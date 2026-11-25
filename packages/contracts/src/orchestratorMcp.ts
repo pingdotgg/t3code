@@ -44,6 +44,11 @@ import {
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import {
+  DelegationProfileName,
+  DelegationProviderByVendor,
+  DelegationSettings,
+} from "./settings.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
 const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
@@ -162,18 +167,27 @@ export const OrchestratorMcpTerminalDelegatedTaskStatus = Schema.Literals([
 export type OrchestratorMcpTerminalDelegatedTaskStatus =
   typeof OrchestratorMcpTerminalDelegatedTaskStatus.Type;
 
+const OrchestratorMcpDelegationTarget = Schema.StructWithRest(OrchestratorMcpTarget, [
+  Schema.Record(Schema.String, Schema.Unknown),
+]);
+
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   task: OrchestratorMcpPrompt,
+  profile: Schema.optional(DelegationProfileName),
+
   // Some providers send the whole target object as JSON text.
   target: Schema.optional(
-    Schema.Union([OrchestratorMcpTarget, Schema.fromJsonString(OrchestratorMcpTarget)]),
+    Schema.Union([
+      OrchestratorMcpDelegationTarget,
+      Schema.fromJsonString(OrchestratorMcpDelegationTarget),
+    ]),
   ),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree"]).annotate({
       description:
-        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Uncommitted edits stay out.",
+        "'shared' (default): parent checkout. 'worktree': separate checkout and branch. Omit with a profile.",
     }),
   ),
   mode: Schema.optional(
@@ -247,6 +261,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     description: "True only on the timed-out wait call. The child keeps running.",
   }),
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
+  notice: Schema.optional(Schema.String),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
 
@@ -637,6 +652,8 @@ export type OrchestratorMcpThreadInterruptResult = typeof OrchestratorMcpThreadI
 
 export const OrchestratorMcpCapabilitiesInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
+  profile: Schema.optional(DelegationProfileName),
+
   search: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(200)).annotate({
       description: "Match model ids and labels. Replaces the short list.",
@@ -694,6 +711,18 @@ export const OrchestratorMcpEnvironmentLinksResult = Schema.Struct({
 export type OrchestratorMcpEnvironmentLinksResult =
   typeof OrchestratorMcpEnvironmentLinksResult.Type;
 
+const delegationProfileFields = DelegationSettings.fields.profiles.value.schema.fields;
+const OrchestratorMcpProfileCapability = Schema.Struct({
+  name: DelegationProfileName,
+  model: delegationProfileFields.model,
+  providerInstanceId: Schema.NullOr(ProviderInstanceId),
+  options: delegationProfileFields.options.schema,
+  checkout: delegationProfileFields.checkout,
+  deniedSkillCount: NonNegativeInt,
+  canRunChildTask: Schema.Boolean,
+  constraints: Schema.Array(Schema.String),
+});
+
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   parentThreadId: Schema.NullOr(ThreadId),
   inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
@@ -702,6 +731,8 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
+  profiles: Schema.optionalKey(Schema.Array(OrchestratorMcpProfileCapability)),
+  providerByVendor: Schema.optionalKey(DelegationProviderByVendor),
   features: Schema.Struct({
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,

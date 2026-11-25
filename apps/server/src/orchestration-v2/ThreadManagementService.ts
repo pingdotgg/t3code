@@ -508,6 +508,7 @@ export interface ThreadManagementServiceShape {
   }) => Effect.Effect<boolean>;
   /** Receipt replays start no work; skip enablement checks with the same command id so settings cannot reject accepted retries. */
   readonly hasReceipt: (commandId: CommandId) => Effect.Effect<boolean>;
+  readonly replayDelegatedTask: Orchestrator.OrchestratorV2Shape["replayDelegatedTask"];
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
@@ -2004,6 +2005,7 @@ const make = Effect.gen(function* () {
     assertProviderInstanceEnabled,
     isProviderInstanceEnabledForProject,
     hasReceipt,
+    replayDelegatedTask: orchestrator.replayDelegatedTask,
     waitForThread,
     settleAfterRun,
     settleThread,

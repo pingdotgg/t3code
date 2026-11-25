@@ -8,7 +8,9 @@ import {
   isProviderNativeSubagentThread,
   MessageId,
   type ModelSelection,
+  OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpFailure,
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadReadResult,
@@ -29,6 +31,9 @@ import * as Tracer from "effect/Tracer";
 import { McpSchema, McpServer } from "effect/ai";
 
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
+import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -83,7 +88,9 @@ const queuedFollowupResult = "Queued delegated follow-up completed.";
 const decodeThreadRead = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 const longFollowupResult = "Long delegated follow-up line. ".repeat(1_500);
 
+const decodeCapabilitiesResult = Schema.decodeUnknownEffect(OrchestratorMcpCapabilitiesResult);
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
+const decodeToolFailure = Schema.decodeEffect(Schema.fromJsonString(OrchestratorMcpFailure));
 const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
   OrchestratorMcpThreadInterruptResult,
 );
@@ -205,6 +212,199 @@ const layerUnusedScheduledTaskStub = Layer.succeed(
 );
 
 describe("orchestrator MCP toolkit", () => {
+  it.effect("delegates a local Google profile and replays its receipt after removal", () =>
+    Effect.gen(function* () {
+      const cwd = "/repo/attached-caller-worktree";
+      const agy = ProviderInstanceId.make("agy-profile-test");
+      const model = "gemini-test";
+      const providers = [
+        makeProviderSnapshot({
+          instanceId: codexInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          model: codexModel,
+        }),
+        makeProviderSnapshot({
+          instanceId: agy,
+          driver: ProviderDriverKind.make("antigravity"),
+          model,
+        }),
+      ];
+      const registry = ProviderAdapterRegistry.layerFromAdapters(
+        providers.map(({ instanceId, driver }) => ({
+          instanceId,
+          driver,
+          getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+          planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+          openSession: () =>
+            Effect.die("This test exercises committed commands before provider execution."),
+        })),
+      );
+      const database = SqlitePersistence.layerMemory;
+      const orchestration = ProviderReplayHarness.layerWithRegistry(
+        { name: "mcp-delegation-profile", runtimePolicyOverride: { cwd } },
+        registry,
+        { databaseLayer: database, runEffectWorker: false },
+      );
+      const settingsLayer = ServerSettings.layerTest({
+        providerInstances: { [agy]: { driver: "antigravity", enabled: true } },
+        delegation: {
+          providerByVendor: { google: agy },
+          profiles: {
+            reviewer: {
+              model: `google:${model}`,
+              checkout: "shared",
+              deniedSkills: ["private:skill"],
+            },
+          },
+        },
+      });
+      const threads = ThreadManagementService.layer.pipe(
+        Layer.provideMerge(orchestration),
+        Layer.provide(
+          LegacyV1ThreadImporter.layer.pipe(Layer.provide(orchestration), Layer.provide(database)),
+        ),
+        Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(database))),
+        Layer.provideMerge(settingsLayer),
+      );
+      const layerTest = layerOrchestratorToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provideMerge(threads),
+        Layer.provide(registry),
+        Layer.provide(ProviderRegistryMock.layer(providers)),
+        Layer.provide(layerUnusedScheduledTaskStub),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(
+          Layer.mock(ProjectService.ProjectService)({ workspaceScanDirectory: Effect.succeed }),
+        ),
+        Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+        Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const server = yield* McpServer.McpServer;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("profile-parent-create"),
+          threadId: parentThreadId,
+          projectId,
+          title: "Profile parent",
+          modelSelection: codexSelection,
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: "attached-review",
+          worktreePath: cwd,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("profile-parent-start"),
+          threadId: parentThreadId,
+          messageId: MessageId.make("profile-parent-message"),
+          text: parentPrompt,
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        const invocation: McpInvocationContext.McpInvocationScope = {
+          environmentId: EnvironmentId.make("local-profile-test"),
+          requestNamespace: "profile-parent-session",
+          thread: {
+            threadId: parentThreadId,
+            providerSessionId: "profile-parent-session",
+            providerInstanceId: codexInstanceId,
+          },
+          client: undefined,
+          capabilities: new Set(["orchestration"]),
+          issuedAt: 1,
+        };
+        const invoke = (name: string, args: Record<string, unknown>, scope = invocation) =>
+          server
+            .callTool({ name, arguments: args })
+            .pipe(
+              Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+              Effect.provideService(McpSchema.McpServerClient, client),
+            );
+        const capabilityCall = yield* invoke("orchestrator_capabilities", { profile: "reviewer" });
+        const capabilities = yield* decodeCapabilitiesResult(capabilityCall.structuredContent);
+        expect(capabilities.profiles).toEqual([
+          {
+            name: "reviewer",
+            model: `google:${model}`,
+            providerInstanceId: agy,
+            checkout: "shared",
+            options: {},
+            deniedSkillCount: 1,
+            canRunChildTask: true,
+            constraints: ["skill limits not applied on Antigravity"],
+          },
+        ]);
+        const linkedCall = yield* invoke(
+          "orchestrator_capabilities",
+          {},
+          {
+            ...invocation,
+            thread: undefined,
+            client: {
+              sessionId: "peer-test",
+              label: "Peer",
+              access: "approval-required",
+              linked: true,
+            },
+          },
+        );
+        const linked = yield* decodeCapabilitiesResult(linkedCall.structuredContent);
+        expect(linked.profiles).toBeUndefined();
+        expect(linked.providerByVendor).toBeUndefined();
+        expect(linked.providers.map(({ providerInstanceId }) => providerInstanceId)).toContain(agy);
+
+        const contradictory = yield* invoke("delegate_task", {
+          task: delegatedPrompt,
+          profile: "reviewer",
+          target: '{"unexpected":true}',
+        });
+        expect(contradictory.isError).toBe(true);
+        const failureText = contradictory.content[0];
+        if (failureText?.type !== "text") throw new Error("Expected a tool failure");
+        const failure = yield* decodeToolFailure(failureText.text);
+        expect(failure.code).toBe("invalid_request");
+
+        const request = {
+          task: delegatedPrompt,
+          profile: "reviewer",
+          clientRequestId: "profile-review",
+        };
+        const start = yield* invoke("delegate_task", request);
+        const started = yield* decodeDelegateTaskResult(start.structuredContent);
+        expect(started).toMatchObject({
+          providerInstanceId: agy,
+          model,
+          notice: "skill limits not applied on Antigravity",
+        });
+        const child = yield* orchestrator.getThreadProjection(localChild(started.childThreadId));
+        expect(child.thread).toMatchObject({
+          worktreePath: cwd,
+          branch: "attached-review",
+          runtimeMode: "approval-required",
+        });
+        expect(child.runs[0]?.workspacePreparation).toBeUndefined();
+
+        yield* settings.updateSettings({
+          delegation: { providerByVendor: {}, profiles: {} },
+          providerInstances: {},
+        });
+        const retry = yield* invoke("delegate_task", request);
+        const replayed = yield* decodeDelegateTaskResult(retry.structuredContent);
+        expect(replayed).toEqual(started);
+        expect((yield* orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(1);
+      }).pipe(Effect.provide(layerTest));
+    }),
+  );
   it.live.each([
     { label: "distinct", result: queuedFollowupResult, latestSummary: queuedFollowupResult },
     { label: "identical", result: delegatedResult, latestSummary: null },

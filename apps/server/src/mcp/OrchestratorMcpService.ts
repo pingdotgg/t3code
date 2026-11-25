@@ -1,7 +1,9 @@
 import {
   CommandId,
+  type DelegationSettings,
   type RunId,
   idleCompactionOf,
+  type ServerSettings as Settings,
   isProviderAvailable,
   MessageId,
   type ModelSelection,
@@ -116,6 +118,7 @@ import {
   delegatedTaskRuns,
   runOutcome,
 } from "../orchestration-v2/RestartBackgroundNote.ts";
+import type { OrchestratorV2DispatchResult } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { placeholderThreadTitle } from "../orchestration-v2/placeholderThreadTitle.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -143,6 +146,14 @@ import {
 } from "./delegatedTaskModes.ts";
 import { assertTargetWithinLimits, isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
 import { WITHHELD, withoutWebhookUrlToken } from "../scheduledTasks/webhookUrlToken.ts";
+import {
+  advertisedModel,
+  antigravitySuffixedModel,
+  ANTIGRAVITY_SKILL_NOTICE,
+  resolveDelegationModel,
+  resolveDelegationRoute,
+} from "./delegationProfiles.ts";
+
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -431,29 +442,6 @@ function capabilityModelOption(descriptor: ProviderOptionDescriptor): Orchestrat
       descriptor.type === "boolean" ? [false, true] : descriptor.options.map((choice) => choice.id),
     ...(defaultValue === undefined ? {} : { default: defaultValue }),
   };
-}
-
-const advertisedModel = (provider: ServerProvider, model: string) =>
-  provider.models.find((candidate) => candidate.slug === model) ??
-  provider.models.find((candidate) =>
-    candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
-  );
-
-/** Antigravity 1.3 IDs append the thinking level (`gemini-3.8-flash-high`); the agent still accepts them. */
-function antigravitySuffixedModel(provider: ServerProvider, model: string) {
-  if (provider.driver !== "antigravity" || advertisedModel(provider, model)) return;
-  const separator = model.lastIndexOf("-");
-  if (separator === -1) return;
-  const family = model.slice(0, separator);
-  const value = model.slice(separator + 1);
-  const thinking = provider.models
-    .find((candidate) => candidate.slug === family)
-    ?.capabilities?.optionDescriptors?.find(
-      (descriptor) => descriptor.type === "select" && descriptor.role === "reasoning",
-    );
-  if (thinking?.type === "select" && thinking.options.some((choice) => choice.id === value)) {
-    return { model: family, thinking: { id: thinking.id, value } };
-  }
 }
 
 /** A folder's own provider config can add models that only its workspace snapshot lists. */
@@ -1711,36 +1699,117 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(threadManagementFailure));
 
-  const resolveTargetRechecking = (
-    input: Parameters<typeof resolveTarget>[0] & { readonly cwd: string | undefined },
-  ) => {
-    const instanceId =
-      input.target?.providerInstanceId ??
-      (input.target?.driverKind === undefined
-        ? input.parent.thread.modelSelection.instanceId
-        : undefined);
-    const resolved = resolveTarget({
-      ...input,
-      providers: withWorkspaceModels(input.providers, input.cwd),
-    });
+  const resolveInWorkspace = <A>(input: {
+    readonly instanceId: ServerProvider["instanceId"] | undefined;
+    readonly providers: ReadonlyArray<ServerProvider>;
+    readonly cwd: string | undefined;
+    readonly resolve: (
+      providers: ReadonlyArray<ServerProvider>,
+    ) => Effect.Effect<A, OrchestratorMcpFailure>;
+  }) => {
+    const { instanceId, providers, cwd, resolve } = input;
+    const resolved = resolve(withWorkspaceModels(providers, cwd));
     if (instanceId === undefined) return resolved;
     return resolved.pipe(
       Effect.catchIf(
         (error) => error.code === "provider_unavailable" || error.code === "model_unavailable",
         () =>
-          (input.cwd === undefined
+          (cwd === undefined
             ? providerRegistry.refreshInstance(instanceId)
             : providerRegistry
                 .refreshInstance(instanceId)
-                .pipe(Effect.andThen(scanWorkspace(instanceId, input.cwd)))
-          ).pipe(
-            Effect.flatMap((providers) =>
-              resolveTarget({ ...input, providers: withWorkspaceModels(providers, input.cwd) }),
-            ),
-          ),
+                .pipe(Effect.andThen(scanWorkspace(instanceId, cwd)))
+          ).pipe(Effect.flatMap((refreshed) => resolve(withWorkspaceModels(refreshed, cwd)))),
       ),
     );
   };
+
+  const resolveTargetRechecking = (
+    input: Parameters<typeof resolveTarget>[0] & { readonly cwd: string | undefined },
+  ) =>
+    resolveInWorkspace({
+      instanceId:
+        input.target?.providerInstanceId ??
+        (input.target?.driverKind === undefined
+          ? input.parent.thread.modelSelection.instanceId
+          : undefined),
+      providers: input.providers,
+      cwd: input.cwd,
+      resolve: (providers) => resolveTarget({ ...input, providers }),
+    });
+
+  const preflightProfile = Effect.fn("OrchestratorMcpService.preflightProfile")(function* (input: {
+    readonly route: Effect.Success<ReturnType<typeof resolveDelegationRoute>>;
+    readonly profile: DelegationSettings["profiles"][string];
+    readonly providers: ReadonlyArray<ServerProvider>;
+    readonly adapters: ReadonlySet<ServerProvider["instanceId"]>;
+    readonly settings: Settings;
+    readonly projectId: ProjectId | undefined;
+    readonly parentMode: RuntimeMode;
+    readonly requestedMode?: OrchestratorMcpDelegateTaskInput["runtimeMode"];
+    readonly refresh?: { readonly cwd: string | undefined };
+  }) {
+    const { instanceId, driver, vendor, model } = input.route;
+    if (instanceId === null) {
+      return yield* failure(
+        "provider_unavailable",
+        `No provider instance is mapped for ${vendor}.`,
+      );
+    }
+    const resolve = Effect.fnUntraced(function* (providers: ReadonlyArray<ServerProvider>) {
+      const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+      if (provider === undefined) {
+        return yield* failure(
+          "provider_unavailable",
+          `Provider instance ${instanceId} is not registered.`,
+        );
+      }
+      if (provider.driver !== driver) {
+        return yield* failure(
+          "provider_unavailable",
+          `The ${vendor} route maps to provider ${instanceId} with driver ${provider.driver}; it requires ${driver}.`,
+        );
+      }
+      if (
+        input.projectId !== undefined &&
+        !resolveProjectProviderInstanceEnabled(input.settings, input.projectId, instanceId)
+      ) {
+        return yield* failure(
+          "provider_unavailable",
+          `Provider instance ${instanceId} is disabled for this project.`,
+        );
+      }
+      const constraints = providerConstraints(provider, input.adapters.has(instanceId));
+      if (constraints.length > 0) {
+        return yield* failure(
+          "provider_unavailable",
+          `Provider ${instanceId} cannot run a child task: ${constraints.join(" ")}`,
+        );
+      }
+      const modelSelection = yield* resolveDelegationModel({
+        provider,
+        model,
+        profile: input.profile,
+      });
+      return { modelSelection, supportedRuntimeModes: provider.supportedRuntimeModes };
+    });
+    const target = yield* input.refresh === undefined
+      ? resolve(input.providers)
+      : resolveInWorkspace({
+          instanceId,
+          providers: input.providers,
+          cwd: input.refresh.cwd,
+          resolve,
+        });
+    if (input.profile.deniedSkills.length > 0 && driver !== "antigravity") {
+      return yield* failure(
+        "provider_unavailable",
+        `Provider ${instanceId} (${driver}) cannot enforce a skill deny list for a delegated task.`,
+      );
+    }
+    const runtimeMode = yield* resolveRuntimeMode(input.parentMode, input.requestedMode, target);
+    return { modelSelection: target.modelSelection, runtimeMode };
+  });
 
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
@@ -2344,6 +2413,49 @@ const make = Effect.gen(function* () {
    * A task that runs in a linked environment, answered from its row here:
    * the follower records its result once its thread there ends.
    */
+  const finishDelegation = Effect.fn("OrchestratorMcpService.finishDelegation")(function* (
+    scope: McpThreadInvocationScope,
+    input: OrchestratorMcpDelegateTaskInput,
+    key: string,
+    commandId: CommandId,
+    result: OrchestratorV2DispatchResult,
+    restore: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R> = (effect) =>
+      effect,
+  ) {
+    const taskEvent = result.storedEvents.find(
+      (stored) =>
+        stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
+    );
+    if (taskEvent?.event.type !== "subagent.updated") {
+      return yield* failure(
+        "orchestration_error",
+        "Delegated task command did not produce a task projection.",
+      );
+    }
+    const { id: taskId, childThreadId, driver } = taskEvent.event.payload;
+    if (childThreadId !== null && !result.replayed) {
+      const childRunEvent = result.storedEvents.find(
+        (stored) => stored.event.type === "run.created" && stored.event.threadId === childThreadId,
+      );
+      if (
+        childRunEvent?.event.type === "run.created" &&
+        childRunEvent.event.payload.workspacePreparation !== undefined
+      ) {
+        yield* threadLaunch.prepareRun({
+          commandId,
+          threadId: childThreadId,
+          runId: childRunEvent.event.payload.id,
+        });
+      }
+    }
+    const response = yield* input.mode === "wait"
+      ? awaitTask(scope, taskId, key, input.timeoutMs, restore)
+      : restore(readTask(scope, taskId, false, true));
+    return input.profile !== undefined && driver === "antigravity"
+      ? { ...response, notice: ANTIGRAVITY_SKILL_NOTICE }
+      : response;
+  });
+
   const readRemoteTask = Effect.fn("OrchestratorMcpService.readRemoteTask")(function* (
     scope: McpThreadInvocationScope,
     task: OrchestrationV2Subagent,
@@ -2998,6 +3110,21 @@ const make = Effect.gen(function* () {
 
     capabilities: Effect.fn("OrchestratorMcpService.capabilities")(function* (scope, input = {}) {
       const { parent, limits } = yield* loadCaller(scope, []);
+      if (scope.client?.linked === true && input.profile !== undefined) {
+        return yield* failure(
+          "invalid_request",
+          "Delegation profiles are available only in the calling environment.",
+        );
+      }
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
+      if (
+        input.profile !== undefined &&
+        !Object.hasOwn(settings.delegation.profiles, input.profile)
+      ) {
+        return yield* failure("invalid_request", `Unknown delegation profile ${input.profile}.`);
+      }
       const cwd = parent === undefined ? undefined : yield* parentWorkspaceCwd(parent);
       const machineProviders = yield* loadProviders;
       const unscanned =
@@ -3019,9 +3146,45 @@ const make = Effect.gen(function* () {
         cwd,
       );
       const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
-      const settings = yield* serverSettings.getSettings.pipe(
-        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
-      );
+      const profiles =
+        scope.client?.linked === true
+          ? undefined
+          : yield* Effect.forEach(
+              Object.entries(settings.delegation.profiles)
+                .filter(([name]) => input.profile === undefined || name === input.profile)
+                .toSorted(([left], [right]) => left.localeCompare(right)),
+              ([name, profile]) =>
+                Effect.gen(function* () {
+                  const route = yield* resolveDelegationRoute(
+                    settings.delegation.providerByVendor,
+                    profile.model,
+                  );
+                  const constraint = yield* preflightProfile({
+                    route,
+                    profile,
+                    providers,
+                    adapters: orchestrationCapableInstanceIds,
+                    settings,
+                    projectId: parent?.thread.projectId,
+                    parentMode: limits.runtimeMode,
+                  }).pipe(
+                    Effect.match({ onFailure: (error) => error.message, onSuccess: () => null }),
+                  );
+                  return {
+                    name,
+                    model: profile.model,
+                    providerInstanceId: route.instanceId,
+                    options: profile.options ?? {},
+                    checkout: profile.checkout,
+                    deniedSkillCount: profile.deniedSkills.length,
+                    canRunChildTask: constraint === null,
+                    constraints: [
+                      ...(constraint === null ? [] : [constraint]),
+                      ...(route.vendor === "google" ? [ANTIGRAVITY_SKILL_NOTICE] : []),
+                    ],
+                  };
+                }),
+            );
       const inherited = parent?.thread.modelSelection;
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
       return {
@@ -3087,6 +3250,9 @@ const make = Effect.gen(function* () {
             constraints: [...constraints],
           };
         }),
+        ...(profiles === undefined
+          ? {}
+          : { profiles, providerByVendor: settings.delegation.providerByVendor }),
         features: {
           appOwnedSubagents: true,
           asyncPolling: true,
@@ -3100,13 +3266,47 @@ const make = Effect.gen(function* () {
       };
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
-      const environmentId =
-        input.target === undefined
-          ? undefined
-          : PeerForwarding.remoteTarget(callerScope, input.target.environmentId);
+      yield* requireCapability(callerScope);
+      const scope = yield* requireThreadScope(callerScope, "delegate_task");
+      const environmentId = PeerForwarding.remoteTarget(callerScope, input.target?.environmentId);
+      const key = yield* requestKey(input.clientRequestId);
+      const commandId = stableCommandId({ scope, requestKey: key, operation: "delegate-task" });
+      if (
+        input.clientRequestId !== undefined &&
+        (input.profile !== undefined || environmentId === undefined)
+      ) {
+        const receipt = yield* threadManagement
+          .replayDelegatedTask({ commandId, parentThreadId: scope.thread.threadId })
+          .pipe(Effect.mapError(threadManagementFailure));
+        if (Option.isSome(receipt))
+          return yield* finishDelegation(scope, input, key, commandId, receipt.value);
+      }
+      let profiled:
+        | { readonly settings: Settings; readonly profile: DelegationSettings["profiles"][string] }
+        | undefined;
+      if (input.profile !== undefined) {
+        if (
+          input.isolation !== undefined ||
+          Object.keys(input.target ?? {}).some((member) => member !== "model")
+        ) {
+          return yield* failure(
+            "invalid_request",
+            "With a delegation profile, omit isolation and set only target.model if you need an override.",
+          );
+        }
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+        );
+        const profile = Object.hasOwn(settings.delegation.profiles, input.profile)
+          ? settings.delegation.profiles[input.profile]
+          : undefined;
+        if (profile === undefined) {
+          return yield* failure("invalid_request", `Unknown delegation profile ${input.profile}.`);
+        }
+        profiled = { settings, profile };
+      }
+      const isolation = profiled?.profile.checkout ?? input.isolation;
       if (input.target !== undefined && environmentId !== undefined) {
-        yield* requireCapability(callerScope);
-        const scope = yield* requireThreadScope(callerScope, "delegate_task");
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         const { taskId } = yield* remoteDelegation.delegate(scope, {
           ...input,
@@ -3116,7 +3316,7 @@ const make = Effect.gen(function* () {
           ? awaitTask(scope, taskId, taskId, input.timeoutMs)
           : readTask(scope, taskId, false, true);
       }
-      const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
+      const parent = yield* loadCallerRecords(scope.thread.threadId, ["runs"]);
       if (
         input.target?.projectId !== undefined &&
         input.target.projectId !== parent.thread.projectId
@@ -3140,35 +3340,45 @@ const make = Effect.gen(function* () {
         );
       }
       const providers = yield* loadProviders;
-      const key = yield* requestKey(input.clientRequestId);
-      const commandId = stableCommandId({
-        scope,
-        requestKey: key,
-        operation: "delegate-task",
-      });
-      const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
-      const target = yield* resolveTargetRechecking({
-        parent,
-        target: input.target,
-        providers,
-        cwd: yield* parentWorkspaceCwd(parent),
-        skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
-      });
-      const runtimeMode = yield* resolveRuntimeMode(
-        parent.thread.runtimeMode,
-        input.runtimeMode,
-        target,
-      );
+      const cwd = yield* parentWorkspaceCwd(parent);
+      const { modelSelection, runtimeMode } = yield* profiled === undefined
+        ? Effect.gen(function* () {
+            const target = yield* resolveTargetRechecking({
+              parent,
+              target: input.target,
+              providers,
+              cwd,
+            });
+            const runtimeMode = yield* resolveRuntimeMode(
+              parent.thread.runtimeMode,
+              input.runtimeMode,
+              target,
+            );
+            return { modelSelection: target.modelSelection, runtimeMode };
+          })
+        : preflightProfile({
+            route: yield* resolveDelegationRoute(
+              profiled.settings.delegation.providerByVendor,
+              input.target?.model ?? profiled.profile.model,
+            ),
+            profile: profiled.profile,
+            providers,
+            adapters: yield* loadOrchestrationCapableInstanceIds(),
+            settings: profiled.settings,
+            projectId: parent.thread.projectId,
+            parentMode: parent.thread.runtimeMode,
+            requestedMode: input.runtimeMode,
+            refresh: { cwd },
+          });
       const interactionMode = parent.thread.interactionMode;
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (
-        input.isolation === "worktree" &&
-        !isRetryOfAcceptedDelegation &&
+        isolation === "worktree" &&
         (yield* threadLaunch.isNonGitProject(parent.thread.projectId))
       ) {
         // A plain project folder has no commit of its own; `HEAD` leaves each repository on its default branch.
         workspaceStrategy = { type: "worktree", baseRef: "HEAD" };
-      } else if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
+      } else if (isolation === "worktree") {
         const project = yield* requireProject(parent.thread.projectId);
         const base = yield* gitDriver
           .resolveCommit({
@@ -3231,7 +3441,7 @@ const make = Effect.gen(function* () {
               parentNodeId,
               task: taskPrompt(input),
               ...(input.title === undefined ? {} : { title: input.title }),
-              modelSelection: target.modelSelection,
+              modelSelection,
               runtimeMode,
               interactionMode,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
@@ -3250,37 +3460,7 @@ const make = Effect.gen(function* () {
                     ),
               ),
             );
-          const taskEvent = result.storedEvents.find(
-            (stored) =>
-              stored.event.type === "subagent.updated" &&
-              stored.event.payload.origin === "app_owned",
-          );
-          if (taskEvent?.event.type !== "subagent.updated") {
-            return yield* failure(
-              "orchestration_error",
-              "Delegated task command did not produce a task projection.",
-            );
-          }
-          const taskId = taskEvent.event.payload.id;
-          const childThreadId = taskEvent.event.payload.childThreadId;
-          const childRunEvent = result.storedEvents.find(
-            (stored) =>
-              stored.event.type === "run.created" && stored.event.threadId === childThreadId,
-          );
-          if (
-            childThreadId !== null &&
-            childRunEvent?.event.type === "run.created" &&
-            childRunEvent.event.payload.workspacePreparation !== undefined
-          ) {
-            yield* threadLaunch.prepareRun({
-              commandId,
-              threadId: childThreadId,
-              runId: childRunEvent.event.payload.id,
-            });
-          }
-          return yield* input.mode === "wait"
-            ? awaitTask(scope, taskId, key, input.timeoutMs, restore)
-            : restore(readTask(scope, taskId, false, true));
+          return yield* finishDelegation(scope, input, key, commandId, result, restore);
         }),
       );
     }),

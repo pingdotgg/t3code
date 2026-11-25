@@ -1392,6 +1392,74 @@ export const CloudSpeechCredentials = Schema.Struct({
   openrouter: CloudSpeechCredential,
 });
 
+const delegationVendor = Schema.Literals(["openai", "anthropic", "google"]);
+export const DelegationModelReferenceParts = Schema.TemplateLiteralParser([
+  delegationVendor,
+  ":",
+  Schema.String.check(
+    Schema.isMaxLength(512),
+    Schema.isPattern(/^[^\s\p{Cc}](?:[^\p{Cc}]*[^\s\p{Cc}])?$/u),
+  ),
+]);
+
+export const DelegationProfileName = Schema.String.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/),
+);
+
+const isDelegationVendor = Schema.is(delegationVendor);
+const isDelegationProfileName = Schema.is(DelegationProfileName);
+
+export const DelegationProviderByVendor = Schema.Record(Schema.String, ProviderInstanceId).check(
+  Schema.makeFilter(
+    (routes) => Object.keys(routes).every(isDelegationVendor) || "Unknown delegation model vendor.",
+  ),
+);
+
+const rejectUnknownProfileFields = <const Fields extends Schema.Struct.Fields>(
+  schema: Schema.Struct<Fields>,
+) =>
+  Schema.StructWithRest(schema, [Schema.Record(Schema.String, Schema.Unknown)]).check(
+    Schema.makeFilter(
+      (value) =>
+        Object.keys(value).every((key) => Object.hasOwn(schema.fields, key)) ||
+        "Unknown delegation profile field.",
+    ),
+  );
+
+const DelegationProfileOptions = rejectUnknownProfileFields(
+  Schema.Struct({
+    thinking: Schema.optionalKey(
+      Schema.String.check(Schema.isMaxLength(32), Schema.isPattern(/^[a-z][a-z0-9_-]*$/)),
+    ),
+  }),
+);
+
+const DelegationProfile = rejectUnknownProfileFields(
+  Schema.Struct({
+    model: Schema.toEncoded(DelegationModelReferenceParts),
+    options: Schema.optionalKey(DelegationProfileOptions),
+    deniedSkills: Schema.Array(
+      Schema.String.check(
+        Schema.isMaxLength(192),
+        Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?::[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$/),
+      ),
+    ).check(Schema.isMaxLength(256), Schema.isUnique()),
+    checkout: Schema.Literals(["shared", "worktree"]),
+  }),
+);
+
+export const DelegationSettings = Schema.Struct({
+  providerByVendor: DelegationProviderByVendor,
+  profiles: Schema.Record(Schema.String, DelegationProfile).check(
+    Schema.makeFilter(
+      (profiles) =>
+        Object.keys(profiles).every(isDelegationProfileName) || "Invalid delegation profile name.",
+    ),
+  ),
+});
+export type DelegationSettings = typeof DelegationSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1610,6 +1678,9 @@ export const ServerSettings = Schema.Struct({
   // Schema.Unknown preserves unknown-driver configs across versions; see providerInstance.ts.
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  delegation: DelegationSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ providerByVendor: {}, profiles: {} })),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sourceControlHosts: Schema.Record(Schema.String, SourceControlHostSettings).pipe(
@@ -2019,6 +2090,7 @@ export const ServerSettingsPatch = Schema.Struct({
   offeredSourceControlProviders: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   // Replace whole maps to avoid half-merged driver configs.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  delegation: Schema.optionalKey(DelegationSettings),
   // Merge per source to avoid racing other edits; null removes an entry.
   usageLimitSources: Schema.optionalKey(
     Schema.Record(UsageLimitSourceId, Schema.NullOr(UsageLimitSourceConfig)),

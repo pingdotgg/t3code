@@ -437,6 +437,10 @@ export interface OrchestratorV2Shape {
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
+  readonly replayDelegatedTask: (input: {
+    readonly commandId: CommandId;
+    readonly parentThreadId: ThreadId;
+  }) => Effect.Effect<Option.Option<OrchestratorV2DispatchResult>, OrchestratorV2Error>;
   readonly autoArmLimitRecovery: (input: {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
@@ -16484,38 +16488,58 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
+  const readCommandReceiptResult = Effect.fn("orchestrationV2.dispatch.readReceiptResult")(
+    function* (
+      input: {
+        readonly commandId: CommandId;
+        readonly commandType: OrchestrationV2ServerCommand["type"];
+        readonly threadId: ThreadId;
+      },
+      receipt: CommandReceiptV2,
+    ) {
+      const { commandId, commandType, threadId } = input;
+      if (receipt.status === "rejected") {
+        return yield* new OrchestratorCommandPreviouslyRejectedError({
+          commandId,
+          commandType,
+          detail: receipt.error ?? "Previously rejected.",
+        });
+      }
+      // Receipts only prove execution for the thread they were recorded against.
+      if (receipt.threadId !== threadId) {
+        return yield* new OrchestratorCommandIdConflictError({
+          commandId,
+          commandType,
+          receiptThreadId: receipt.threadId,
+          commandThreadId: threadId,
+        });
+      }
+      const storedEvents = yield* eventSink.readByCommandId({ commandId }).pipe(
+        Stream.runCollect,
+        Effect.map((events): ReadonlyArray<OrchestrationV2StoredEvent> => Array.from(events)),
+        Effect.mapError(
+          (cause) => new OrchestratorDispatchError({ commandId, commandType, cause }),
+        ),
+      );
+      return {
+        sequence: receipt.resultSequence,
+        storedEvents,
+        replayed: true,
+      } satisfies OrchestratorV2DispatchResult;
+    },
+  );
+
   const replayCommandReceipt = Effect.fn("orchestrationV2.dispatch.replayReceipt")(function* (
     command: OrchestrationV2ServerCommand,
     receipt: CommandReceiptV2,
   ) {
-    if (receipt.status === "rejected") {
-      return yield* new OrchestratorCommandPreviouslyRejectedError({
+    const result = yield* readCommandReceiptResult(
+      {
         commandId: command.commandId,
         commandType: command.type,
-        detail: receipt.error ?? "Previously rejected.",
-      });
-    }
-    const dispatchThreadId = commandThreadId(command);
-    // Receipts only prove execution for the thread they were recorded against.
-    if (receipt.threadId !== dispatchThreadId) {
-      return yield* new OrchestratorCommandIdConflictError({
-        commandId: command.commandId,
-        commandType: command.type,
-        receiptThreadId: receipt.threadId,
-        commandThreadId: dispatchThreadId,
-      });
-    }
-    const storedEvents = yield* eventSink.readByCommandId({ commandId: command.commandId }).pipe(
-      Stream.runCollect,
-      Effect.map((events): ReadonlyArray<OrchestrationV2StoredEvent> => Array.from(events)),
-      Effect.mapError(
-        (cause) =>
-          new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause,
-          }),
-      ),
+        threadId: commandThreadId(command),
+      },
+      receipt,
     );
     if (command.type === "queue.resume" || command.type === "queued-run.start") {
       yield* mapDispatchError(command)(
@@ -16525,11 +16549,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
       );
     }
-    return {
-      sequence: receipt.resultSequence,
-      storedEvents,
-      replayed: true,
-    } satisfies OrchestratorV2DispatchResult;
+    return result;
   });
 
   /** `sideChatIds` are the live side chats a delete, archive, or unarchive cascades to, read under their locks. */
@@ -17429,6 +17449,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`).pipe(Effect.ignore);
     }),
     dispatch: dispatchWithReceipt,
+    replayDelegatedTask: Effect.fn("OrchestratorV2.replayDelegatedTask")(function* ({
+      commandId,
+      parentThreadId,
+    }) {
+      const commandType = "delegated_task.request" as const;
+      const receipt = yield* commandReceipts
+        .getByCommandId(commandId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorDispatchError({ commandId, commandType, cause }),
+          ),
+        );
+      if (Option.isNone(receipt)) return Option.none();
+      return Option.some(
+        yield* readCommandReceiptResult(
+          { commandId, commandType, threadId: parentThreadId },
+          receipt.value,
+        ),
+      );
+    }),
     autoArmLimitRecovery: Effect.fn("OrchestratorV2.autoArmLimitRecovery")(function (input) {
       return threadDispatch.withLock(
         input.threadId,
