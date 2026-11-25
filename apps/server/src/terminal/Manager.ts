@@ -1427,7 +1427,10 @@ function unfinishedSequenceReplay(session: TerminalSessionState): string {
   if (introducer === "\u001b[") {
     // The scanner has already handled bytes that end a CSI. Only intermediates, parameters,
     // and executed non-NUL controls affect its replay.
-    const body = held.slice(2, held.length - tail.length).replace(/[^\x01-\x0f\x20-\x3f]+/g, "");
+    const body = held
+      .slice(2, held.length - tail.length)
+      .replace(/[^\x01-\x0f\x20-\x3f]+/g, "")
+      .replace(/\r{2,}/g, "\r");
     const budget = MAX_SNAPSHOT_SEQUENCE_LENGTH - introducer.length - tail.length;
     if (body.length <= budget) return introducer + body + tail;
     const controls = body.replace(/[^\x01-\x0f]+/g, "");
