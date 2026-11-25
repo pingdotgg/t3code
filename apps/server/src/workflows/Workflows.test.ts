@@ -2927,7 +2927,7 @@ it.effect("a run says what it is about, and is found by it", () =>
 it.effect("an item finds its runs past the newest 500 runs of every subject", () =>
   Effect.gen(function* () {
     const exposed = exposedStore();
-    const { boot } = yield* harness(exposed.layer);
+    const { boot, clock } = yield* harness(exposed.layer);
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -2941,6 +2941,9 @@ it.effect("an item finds its runs past the newest 500 runs of every subject", ()
           key: "412",
           url,
         };
+        // Time stands still, so every run starts in the same instant as the target: only the
+        // order they were started in says which 500 are the newest.
+        yield* clock.close;
         const target = yield* workflows.start(
           "about",
           { subjects: [issue] },
@@ -2959,7 +2962,9 @@ it.effect("an item finds its runs past the newest 500 runs of every subject", ()
           });
           yield* store.runEnded(runId, "completed", null, null);
         }
+        yield* clock.open;
         const snapshot = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        assert.equal(snapshot.runs.length, 500);
         assert.isFalse(snapshot.runs.some((run) => run.runId === target.runId));
         const about = yield* workflows.about({ subject: url });
         assert.deepStrictEqual(

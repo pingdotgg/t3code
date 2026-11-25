@@ -1237,17 +1237,18 @@ export const make = Effect.gen(function* () {
           ? // Skipped runs are counted apart, so a trigger that skips most of what it brings does
             // not push the runs that did something out of the list. A paused run or one with a
             // question open is listed however old, since what waits on a person is built from it.
+            // rowid breaks ties: of a burst of runs sharing one started_at, the newest are kept.
             sql<RunSummaryRow>`
               SELECT ${summaryColumns} FROM (
                 SELECT ${summaryColumns} FROM workflow_runs
                 WHERE NOT (status = 'skipped' AND parent_run_id IS NULL)
-                ORDER BY started_at DESC LIMIT 500
+                ORDER BY started_at DESC, rowid DESC LIMIT 500
               )
               UNION ALL
               SELECT ${summaryColumns} FROM (
                 SELECT ${summaryColumns} FROM workflow_runs
                 WHERE status = 'skipped' AND parent_run_id IS NULL
-                ORDER BY started_at DESC LIMIT 500
+                ORDER BY started_at DESC, rowid DESC LIMIT 500
               )
               UNION
               SELECT ${summaryColumns} FROM workflow_runs
@@ -1259,7 +1260,7 @@ export const make = Effect.gen(function* () {
             `
           : sql<RunSummaryRow>`
               SELECT ${summaryColumns} FROM workflow_runs WHERE status = ${status}
-              ORDER BY started_at DESC LIMIT 500
+              ORDER BY started_at DESC, rowid DESC LIMIT 500
             `
       ).pipe(Effect.orDie);
     }),

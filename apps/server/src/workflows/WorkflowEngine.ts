@@ -1237,7 +1237,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           : yield* store.runsWhere({ subject: { kind: identity.kind, key: identity.key } })),
       ];
       const runs = [...new Map(found.map((row) => [row.run_id, row])).values()]
-        .toSorted((left, right) => (left.started_at < right.started_at ? 1 : -1))
+        .toSorted((left, right) =>
+          left.started_at === right.started_at ? 0 : left.started_at < right.started_at ? 1 : -1,
+        )
         .slice(0, 500)
         .map(toRun);
       const about = new Set(runs.map((run) => run.runId));
