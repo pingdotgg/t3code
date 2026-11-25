@@ -1153,6 +1153,8 @@ export const layer: Layer.Layer<
           ],
         });
         if (!settled.committed) return;
+        // The restarted start captures the same baseline; never let the two write at once.
+        yield* baseline;
         return CUT_TURN_SETTLED;
       }
       const loadFromProvider = Effect.fn("ProviderTurnStartService.loadFromProvider")(function* (
