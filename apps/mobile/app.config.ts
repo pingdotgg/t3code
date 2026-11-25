@@ -22,7 +22,6 @@ const iosBundleIdentifierOverride = (
   repoEnv.T3CODE_IOS_BUNDLE_ID ?? repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID
 )?.trim();
 const appNameOverride = repoEnv.T3CODE_APP_NAME?.trim();
-const isForkIdentityBuild = Boolean(iosBundleIdentifierOverride || appNameOverride);
 // Path to a 1024x1024 PNG, relative to the repository root.
 const appIconOverride = repoEnv.T3CODE_APP_ICON?.trim() || "assets/pseudocode/app-icon-1024.png";
 // App Store Connect rejects a reused build number, so fork TestFlight uploads set this.
@@ -32,10 +31,6 @@ const iosTeamIdOverride = (
   repoEnv.T3CODE_IOS_TEAM_ID ?? repoEnv.T3CODE_IOS_PERSONAL_TEAM_ID
 )?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
-
-// PseudoCode sends no crash reports. Compiled into the native project so Observe can never reach
-// Expo's ingest or the relay; `.invalid` never resolves (RFC 6761).
-const observeEndpointUrl = "https://observe.invalid";
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
 const androidAdaptiveForeground = "./assets/android-icon-foreground.png";
@@ -103,7 +98,6 @@ const VARIANT_CONFIG = {
     scheme: "t3code-dev",
     iosBundleIdentifier: "com.t3tools.t3code.dev",
     androidPackage: "com.t3tools.t3code.dev",
-    relyingParty: "clerk.t3.codes",
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
@@ -111,7 +105,6 @@ const VARIANT_CONFIG = {
     scheme: "t3code-preview",
     iosBundleIdentifier: "com.t3tools.t3code.preview",
     androidPackage: "com.t3tools.t3code.preview",
-    relyingParty: "clerk.t3.codes",
     assets: PREVIEW_ASSETS,
   },
   production: {
@@ -119,7 +112,6 @@ const VARIANT_CONFIG = {
     scheme: "t3code",
     iosBundleIdentifier: "com.t3tools.t3code",
     androidPackage: "com.t3tools.t3code",
-    relyingParty: "clerk.t3.codes",
     assets: RELEASE_ASSETS,
   },
 } as const;
@@ -138,8 +130,6 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
-// Copied thread links open the app. app.t3.codes/.well-known lists every variant's identifiers.
-const HOSTED_APP_HOST = "app.t3.codes";
 const iosBundleIdentifier = iosBundleIdentifierOverride ?? variant.iosBundleIdentifier;
 const overriddenAppIcon = fromRepoRoot(appIconOverride);
 
@@ -292,14 +282,7 @@ const config: ExpoConfig = {
   icon: overriddenAppIcon,
   userInterfaceStyle: "automatic",
   updates: {
-    // The update URL is upstream's Expo project, so fork identities opt in with "1".
-    enabled:
-      repoEnv.T3CODE_MOBILE_UPDATES_ENABLED === undefined
-        ? !isForkIdentityBuild
-        : repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    checkAutomatically: "ON_LOAD",
-    fallbackToCacheTimeout: 0,
+    enabled: false,
   },
   ios: {
     icon: overriddenAppIcon,
@@ -314,16 +297,6 @@ const config: ExpoConfig = {
       : isIosPersonalTeamBuild
         ? {}
         : { appleTeamId: "ARK85ZXQ4Z" }),
-    // Associated Domains needs a paid membership; Personal Team builds lose universal links.
-    ...(isIosPersonalTeamBuild
-      ? {}
-      : {
-          associatedDomains: [
-            `applinks:${variant.relyingParty}`,
-            `webcredentials:${variant.relyingParty}`,
-            `applinks:${HOSTED_APP_HOST}`,
-          ],
-        }),
     entitlements: {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
       ...(isIosPersonalTeamBuild
@@ -378,14 +351,6 @@ const config: ExpoConfig = {
     predictiveBackGestureEnabled: true,
     // expo-sensors declares this for its pedometer, which the app does not use.
     blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
-    intentFilters: [
-      {
-        action: "VIEW",
-        autoVerify: true,
-        data: [{ scheme: "https", host: HOSTED_APP_HOST, pathPrefix: "/threads/" }],
-        category: ["BROWSABLE", "DEFAULT"],
-      },
-    ],
   },
   web: {
     favicon: overriddenAppIcon,
@@ -554,17 +519,7 @@ const config: ExpoConfig = {
     EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID,
     EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID,
     EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME,
-    observability: {
-      tracesUrl: repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? null,
-      tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
-      tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
-    },
-    eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-      observe: { endpointUrl: observeEndpointUrl },
-    },
   },
-  owner: "pingdotgg",
   experiments: {
     // Metro only runs babel-plugin-react-compiler when this is set; see src/reactCompilerCoverage.test.ts.
     reactCompiler: true,

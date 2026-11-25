@@ -1,6 +1,8 @@
+import type * as NodeDns from "node:dns";
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
 
+import { isBlockedTelemetryHost } from "@t3tools/shared/telemetryBlocklist";
 import type * as Undici from "undici";
 
 // undici is external to the CLI bundle; Node single-executables can load it from disk only with require.
@@ -65,4 +67,30 @@ export function extendConnectionAttemptTimeout(): void {
   NodeNet.setDefaultAutoSelectFamilyAttemptTimeout(
     Math.max(NodeNet.getDefaultAutoSelectFamilyAttemptTimeout(), 1_000),
   );
+}
+
+type DnsLookup = (hostname: string, ...rest: Array<unknown>) => void;
+
+/**
+ * Upstream analytics hosts fail DNS in this process, so no fetch, http or WebSocket client reaches
+ * them. Patches the CommonJS `dns` object that `net` calls; the ESM namespace is read-only.
+ */
+export function refuseTelemetryHosts(
+  dns: { lookup: unknown } = NodeModule.createRequire(import.meta.url)(
+    "node:dns",
+  ) as typeof NodeDns,
+): void {
+  const lookup = dns.lookup as DnsLookup;
+  dns.lookup = function (this: unknown, hostname: string, ...rest: Array<unknown>) {
+    const callback = rest.at(-1);
+    if (!isBlockedTelemetryHost(String(hostname)) || typeof callback !== "function") {
+      return lookup.call(this, hostname, ...rest);
+    }
+    const error = Object.assign(new Error(`getaddrinfo ENOTFOUND ${hostname}`), {
+      code: "ENOTFOUND",
+      hostname,
+      syscall: "getaddrinfo",
+    });
+    queueMicrotask(() => callback(error));
+  } satisfies DnsLookup;
 }

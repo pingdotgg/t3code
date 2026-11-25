@@ -11,7 +11,7 @@ import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-e
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
 import { useFocusComposerOnThreadOpen } from "./chat/useFocusComposerOnThreadOpen";
-import { configuredHostedAppUrl } from "../hostedPairing";
+import { useShareableOrigin } from "../state/shareableOrigin";
 import {
   announcedRun,
   isDetailBehindShell,
@@ -2547,6 +2547,7 @@ export default function ChatView(props: ChatViewProps) {
     showScrollToBottom,
   ]);
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(activeThreadRef);
+  const activeThreadLinkOrigin = useShareableOrigin(activeThreadRef?.environmentId ?? null);
   const activeThreadReferenceCopyTarget =
     activeThreadRef === null || !isServerThread
       ? null
@@ -2557,7 +2558,7 @@ export default function ChatView(props: ChatViewProps) {
             openPanelPullRequestUrl,
             pullRequests: activeThread?.pullRequests,
             linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
-            hostedAppUrl: configuredHostedAppUrl(),
+            linkOrigin: activeThreadLinkOrigin,
           },
           messages,
         );

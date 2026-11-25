@@ -107,10 +107,6 @@
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
     },
-    "./feedback-request": {
-      "types": "./src/feedbackRequest.ts",
-      "default": "./src/feedbackRequest.ts"
-    },
     "./link-batch": {
       "types": "./src/linkBatch.ts",
       "default": "./src/linkBatch.ts"

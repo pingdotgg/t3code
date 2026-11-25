@@ -451,13 +451,6 @@ export function isSecretRequestActivityGroup(entry: ThreadFeedActivityGroup): bo
   );
 }
 
-export function isFeedbackRequestActivityGroup(entry: ThreadFeedActivityGroup): boolean {
-  return (
-    entry.activities.length === 1 &&
-    entry.activities[0]?.projectedItem.item.type === "feedback_request"
-  );
-}
-
 export function isLinkRequestActivityGroup(entry: ThreadFeedActivityGroup): boolean {
   return (
     entry.activities.length === 1 && entry.activities[0]?.projectedItem.item.type === "link_request"
@@ -506,7 +499,6 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
     item.type === "system_notice" ||
     item.type === "proposed_plan" ||
     item.type === "secret_request" ||
-    item.type === "feedback_request" ||
     item.type === "link_request"
   );
 }
@@ -629,8 +621,6 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       return "zap";
     case "secret_request":
       return "lock";
-    case "feedback_request":
-      return "message";
     case "link_request":
       return "globe";
   }
@@ -705,8 +695,6 @@ function itemSummary(
       return resolve(msg("Thread created"));
     case "secret_request":
       return item.label;
-    case "feedback_request":
-      return resolve(msg("Feedback for the T3 team"));
     case "link_request":
       return resolve(msg("Link {target}", { target: linkRequestTargetName(item, resolve) }));
     case "dynamic_tool": {
@@ -777,8 +765,6 @@ function itemPreview(item: OrchestrationV2TurnItem, resolve: MessageResolver): s
     case "secret_request":
     case "link_request":
       return item.reason || null;
-    case "feedback_request":
-      return item.preview.subject;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":

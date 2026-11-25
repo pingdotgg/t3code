@@ -34,7 +34,7 @@ describe("connectCliAuth", () => {
     vi.stubEnv("VITE_CLERK_CLI_OAUTH_CLIENT_ID", "oauthapp_123");
 
     const connectUrl =
-      "https://app.t3.codes/connect#state=state-1&challenge=challenge-1&port=34338";
+      "https://hosted.example/connect#state=state-1&challenge=challenge-1&port=34338";
     const redirectUrl = connectCliSignInRedirectUrl(
       { state: "state-1", challenge: "challenge-1", loopbackPort: 34338 },
       connectUrl,

@@ -369,9 +369,6 @@ import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
-  ServerPrepareTriageError,
-  ServerPrepareTriageInput,
-  ServerPrepareTriageResult,
   OtlpEndpointCheckResult,
   ServerConfig,
   ServerProviderUpdateError,
@@ -456,7 +453,6 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
-import { AgentFeedbackAnswerInput, AgentFeedbackRequestError } from "./agentFeedback.ts";
 import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
@@ -476,7 +472,6 @@ import {
   SourceControlRepositoryLookupInput,
   SourceControlAppAccess,
   SourceControlAppAccessInput,
-  SourceControlStarredInput,
   SourceControlSignInError,
   SourceControlSignInInput,
   SourceControlSignInPrompt,
@@ -632,7 +627,6 @@ export const WS_METHODS = {
   serverRetryResourceTelemetry: "server.retryResourceTelemetry",
   serverCheckOtlpEndpoint: "server.checkOtlpEndpoint",
   serverListTextGeneratorModels: "server.listTextGeneratorModels",
-  serverPrepareTriage: "server.prepareTriage",
   serverSignalProcess: "server.signalProcess",
   serverReportClientActivity: "server.reportClientActivity",
   serverGetUsageSummary: "server.getUsageSummary",
@@ -655,7 +649,6 @@ export const WS_METHODS = {
   scheduledTasksRunNow: "scheduledTasks.runNow",
   scheduledTasksRotateWebhookToken: "scheduledTasks.rotateWebhookToken",
   secretsAnswerRequest: "secrets.answerRequest",
-  agentFeedbackAnswerRequest: "agentFeedback.answerRequest",
   guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
@@ -722,8 +715,6 @@ export const WS_METHODS = {
   sourceControlSignInWait: "sourceControl.signInWait",
   sourceControlSignInCancel: "sourceControl.signInCancel",
   sourceControlAppAccess: "sourceControl.appAccess",
-  sourceControlStarred: "sourceControl.starred",
-  sourceControlStar: "sourceControl.star",
   projectCloneStart: "projectClone.start",
   projectCloneCancel: "projectClone.cancel",
   projectCloneRetry: "projectClone.retry",
@@ -1185,12 +1176,6 @@ const WsServerListTextGeneratorModelsRpc = Rpc.make(WS_METHODS.serverListTextGen
   error: Schema.Union([TextGeneratorError, EnvironmentAuthorizationError]),
 });
 
-const WsServerPrepareTriageRpc = Rpc.make(WS_METHODS.serverPrepareTriage, {
-  payload: ServerPrepareTriageInput,
-  success: ServerPrepareTriageResult,
-  error: Schema.Union([ServerPrepareTriageError, EnvironmentAuthorizationError]),
-});
-
 const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
   payload: UsageSummaryInput,
   success: UsageSummary,
@@ -1590,20 +1575,6 @@ const WsSourceControlSignInCancelRpc = Rpc.make(WS_METHODS.sourceControlSignInCa
 const WsSourceControlAppAccessRpc = Rpc.make(WS_METHODS.sourceControlAppAccess, {
   payload: SourceControlAppAccessInput,
   success: SourceControlAppAccess,
-  error: EnvironmentAuthorizationError,
-});
-
-// False when the server's forge account has not starred the repository or the forge cannot say.
-const WsSourceControlStarredRpc = Rpc.make(WS_METHODS.sourceControlStarred, {
-  payload: SourceControlStarredInput,
-  success: Schema.Boolean,
-  error: EnvironmentAuthorizationError,
-});
-
-// Stars the repository as the server's forge account. False when the forge refused or cannot star.
-const WsSourceControlStarRpc = Rpc.make(WS_METHODS.sourceControlStar, {
-  payload: SourceControlStarredInput,
-  success: Schema.Boolean,
   error: EnvironmentAuthorizationError,
 });
 
@@ -2436,11 +2407,6 @@ const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
 });
 
-const WsAgentFeedbackAnswerRequestRpc = Rpc.make(WS_METHODS.agentFeedbackAnswerRequest, {
-  payload: AgentFeedbackAnswerInput,
-  error: Schema.Union([AgentFeedbackRequestError, EnvironmentAuthorizationError]),
-});
-
 const WsScheduledTasksListWebhookDeliveriesRpc = Rpc.make(
   WS_METHODS.scheduledTasksListWebhookDeliveries,
   {
@@ -2563,7 +2529,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRetryResourceTelemetryRpc,
   WsServerCheckOtlpEndpointRpc,
   WsServerListTextGeneratorModelsRpc,
-  WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
@@ -2583,7 +2548,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsScheduledTasksRunNowRpc,
   WsScheduledTasksRotateWebhookTokenRpc,
   WsSecretsAnswerRequestRpc,
-  WsAgentFeedbackAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
   WsServerReportClientActivityRpc,
@@ -2631,8 +2595,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlSignInWaitRpc,
   WsSourceControlSignInCancelRpc,
   WsSourceControlAppAccessRpc,
-  WsSourceControlStarredRpc,
-  WsSourceControlStarRpc,
   WsProjectCloneStartRpc,
   WsProjectCloneCancelRpc,
   WsProjectCloneRetryRpc,

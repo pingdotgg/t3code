@@ -59,6 +59,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { copyThreadReference } from "../../lib/copyThreadReference";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useEnvironmentScope } from "../../state/session";
+import { readShareableOrigin } from "../../state/shareableOrigin";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   pendingDraftBranchNeedsRefs,
@@ -1241,7 +1242,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         const target = threadChipCopyTarget(
           { environmentId: thread.environmentId, threadId: thread.id },
           thread.title,
-          undefined,
+          readShareableOrigin(thread.environmentId),
           m,
         );
         void copyThreadReference(target).then((didCopy) => {

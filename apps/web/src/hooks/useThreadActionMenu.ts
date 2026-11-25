@@ -40,7 +40,7 @@ import {
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
-import { configuredHostedAppUrl } from "../hostedPairing";
+import { readShareableOrigin } from "../state/shareableOrigin";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
@@ -313,7 +313,12 @@ export function useThreadActionMenu(input: {
           return;
         case "copy-thread":
           void copyThreadReference(
-            threadChipCopyTarget(threadRef, thread.title, configuredHostedAppUrl(), m),
+            threadChipCopyTarget(
+              threadRef,
+              thread.title,
+              readShareableOrigin(threadRef.environmentId),
+              m,
+            ),
           );
           return;
         case "copy-thread-id":

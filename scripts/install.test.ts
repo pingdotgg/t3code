@@ -13,7 +13,7 @@ const launcherScript = (executable: string) =>
   `#!/bin/sh\nexec '${executable.replaceAll("'", "'\\''")}' "$@"\n`;
 
 const nightlies = Array.from({ length: 100 }, (_, index) => ({
-  tag_name: `v1.2.4-nightly.20261020.${200 - index}`,
+  tag_name: `pseudocode-v1.2.4-nightly.20261020.${200 - index}`,
 }));
 
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home", () => {
@@ -80,13 +80,14 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chan
       if (failures-- > 0) return response.writeHead(504).end();
       const url = new URL(request.url ?? "/", "http://fixture");
       const body =
-        url.pathname === "/pingdotgg/t3code/releases/latest" &&
+        url.pathname === "/pseudoseed/t3code_dev/releases/latest" &&
         request.headers.accept === "application/json"
-          ? { tag_name: "v1.2.3" }
-          : url.pathname === "/repos/pingdotgg/t3code/releases"
-            ? { "1": nightlies, "2": [{ tag_name: `v${version}` }, { tag_name: "v1.2.3" }] }[
-                url.searchParams.get("page") ?? ""
-              ]
+          ? { tag_name: "pseudocode-v1.2.3" }
+          : url.pathname === "/repos/pseudoseed/t3code_dev/releases"
+            ? {
+                "1": nightlies,
+                "2": [{ tag_name: `pseudocode-v${version}` }, { tag_name: "pseudocode-v1.2.3" }],
+              }[url.searchParams.get("page") ?? ""]
             : undefined;
       if (body === undefined) response.statusCode = 404;
       // The API pretty-prints and the installer reads it line by line.
@@ -146,7 +147,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
       const arch = HostProcess.Architecture.defaultValue() === "arm64" ? "arm64" : "x64";
       const archive = `t3-1.2.3-linux-${arch}.tar.gz`;
       const server = NodeHttp.createServer((request, response) => {
-        if (request.url === "/v1.2.3/SHA256SUMS")
+        if (request.url === "/pseudocode-v1.2.3/SHA256SUMS")
           return response.end(`${"0".repeat(64)}  ${archive}\n`);
         response.writeHead(404).end();
       });

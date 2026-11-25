@@ -337,7 +337,10 @@ describe("ssh tunnel scripts", () => {
           assert.include(result.stderr, "download attempt");
           // A bare curl error does not tell the user that t3 itself could not be downloaded.
           assert.include(result.stderr, ARCHIVE.archiveVersion);
-          assert.include(result.stderr, "https://github.com/pingdotgg/t3code/releases/download");
+          assert.include(
+            result.stderr,
+            `https://github.com/pseudoseed/t3code_dev/releases/download/pseudocode-v${ARCHIVE.archiveVersion}/SHA256SUMS`,
+          );
         } else {
           assert.notInclude(result.stderr, "download attempt");
           assert.include(result.stderr, "has no t3 release archive.");
@@ -347,6 +350,40 @@ describe("ssh tunnel scripts", () => {
       }
     },
   );
+
+  it("stops before downloading when the release lists no archive for the host", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
+    try {
+      const bin = NodePath.join(root, "bin");
+      NodeFS.mkdirSync(bin);
+      NodeFS.mkdirSync(NodePath.join(root, "home"));
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "uname"),
+        '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n',
+        { mode: 0o755 },
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "curl"),
+        `#!/bin/sh\nfor last; do :; done\nfor a; do case "$a" in http*) echo "fetch $a" >&2 ;; esac; done\necho "${"a".repeat(64)}  t3-${ARCHIVE.archiveVersion}-darwin-arm64.tar.gz" > "$last"\n`,
+        { mode: 0o755 },
+      );
+      const runner = NodePath.join(root, "run-t3.sh");
+      NodeFS.writeFileSync(runner, SshTunnel.buildRemoteT3RunnerScript(ARCHIVE));
+      const result = NodeChildProcess.spawnSync("sh", [runner, "--version"], {
+        encoding: "utf8",
+        env: { HOME: NodePath.join(root, "home"), PATH: `${bin}:${process.env.PATH ?? ""}` },
+      });
+      assert.notEqual(result.status, 0);
+      assert.include(result.stderr, "/SHA256SUMS");
+      assert.notInclude(result.stderr, ".tar.gz");
+      assert.include(
+        result.stderr,
+        `Release ${ARCHIVE.archiveVersion} publishes no t3 archive for linux-x64.`,
+      );
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it.each([
     { installed: ARCHIVE.archiveVersion, status: 0, reuses: true },

@@ -58,7 +58,6 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsCreateFromThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlCloneRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlPublishRepository]: AuthSourceControlWriteScope,
-  [WS_METHODS.sourceControlStar]: AuthSourceControlWriteScope,
   // Signing in replaces the server's GitHub credential, as saving a token in Settings does.
   [WS_METHODS.sourceControlSignInStart]: AuthSettingsWriteScope,
   [WS_METHODS.sourceControlSignInWait]: AuthSettingsWriteScope,
@@ -77,7 +76,6 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,
 
   // Starts an agent session on this environment that can read its logs and database.
-  [WS_METHODS.serverPrepareTriage]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
@@ -102,7 +100,6 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksPairClient]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksPairLink]: AuthAccessWriteScope,
   // Send stores and sends a report from a thread's turn: the bar of running that thread.
-  [WS_METHODS.agentFeedbackAnswerRequest]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

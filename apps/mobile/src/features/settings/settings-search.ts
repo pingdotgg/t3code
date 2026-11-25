@@ -168,7 +168,6 @@ const SETTINGS_SEARCH_TERMS = {
     msg("link machine", { $context: "settings search keyword" }),
     msg("fast worktree checkout", { $context: "settings search keyword" }),
     msg("clone cache", { $context: "settings search keyword" }),
-    msg("agent feedback", { $context: "settings search keyword" }),
   ],
   SettingsEnvironmentMaintenance: [
     msg("updates", { $context: "settings search keyword" }),

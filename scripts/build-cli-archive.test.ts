@@ -109,6 +109,33 @@ it.layer(NodeServices.layer)("build-cli-archive notarization", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("notarizes with a notarytool keychain profile instead of key files", () =>
+    Effect.gen(function* () {
+      const content = yield* makeContent();
+      const stub = stubSpawner(() => ({
+        exitCode: 0,
+        stdout: '{"id":"sub","status":"Accepted"}',
+      }));
+      yield* withStubs(
+        signMacArchiveContents({
+          repoRoot: content.root,
+          contentDir: content.contentDir,
+          executablePath: content.executablePath,
+          notarySubmissionFile: Option.none(),
+        }),
+        stub,
+        {
+          T3CODE_CLI_MAC_SIGN_IDENTITY: signedEnv.T3CODE_CLI_MAC_SIGN_IDENTITY,
+          APPLE_KEYCHAIN_PROFILE: "pseudocode",
+        },
+      );
+      const [submit] = notarySubcommands(stub.calls);
+      assert.equal(submit?.[0], "submit");
+      assert.includeMembers([...(submit ?? [])], ["--wait", "--keychain-profile", "pseudocode"]);
+      assert.notInclude([...(submit ?? [])], "--key");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("fails the gate unless Apple accepted the submission", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

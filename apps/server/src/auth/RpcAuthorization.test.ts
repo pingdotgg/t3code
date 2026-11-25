@@ -54,19 +54,6 @@ describe("RPC authorization scopes", () => {
     }
   });
 
-  it("lets only a session that operates threads approve sending a feedback report", () => {
-    // Guest links have no RPC session, and read-only sessions lack this scope.
-    expect(requiredScopeForRpcMethod(WS_METHODS.agentFeedbackAnswerRequest)).toBe(
-      AuthOrchestrationOperateScope,
-    );
-  });
-
-  it("keeps triage, which seeds an agent that reads logs and the database, behind operate scope", () => {
-    expect(requiredScopeForRpcMethod(WS_METHODS.serverPrepareTriage)).toBe(
-      AuthOrchestrationOperateScope,
-    );
-  });
-
   it("separates passive terminal observation from operations that can change a shell", () => {
     for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
