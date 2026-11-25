@@ -73,7 +73,16 @@ describe("UsageLimitsPooled next refill", () => {
         ...managedChatGpt(instanceId, instanceId),
         usageLimits: {
           checkedAt,
-          windows: [{ id: "weekly", label: "Weekly", kind: "weekly", usedPercent, resetsAt }],
+          windows: [
+            {
+              id: "session",
+              label: "Session",
+              kind: "session",
+              usedPercent: 0,
+              resetsAt: "2026-10-25T20:00:00.000Z",
+            },
+            { id: "weekly", label: "Weekly", kind: "weekly", usedPercent, resetsAt },
+          ],
         },
       };
     }
@@ -85,7 +94,8 @@ describe("UsageLimitsPooled next refill", () => {
           serverConfig: {
             providers: [
               account("Work", 20, "2026-10-25T17:00:00.000Z"),
-              account("Personal", 60, "2026-10-25T18:00:00.000Z"),
+              account("Later", 40, "2026-10-25T18:10:00.000Z"),
+              account("Personal", 60, "2026-10-25T18:01:00.000Z"),
             ],
           },
         },
@@ -99,7 +109,7 @@ describe("UsageLimitsPooled next refill", () => {
     await expect.element(screen.getByText(/^\+20% /)).not.toBeInTheDocument();
 
     await screen.rerender(
-      <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-25T18:00:00Z")} />,
+      <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-25T18:10:00Z")} />,
     );
     await expect.element(screen.getByText(/^\+\d+% /)).not.toBeInTheDocument();
   });
