@@ -60,6 +60,7 @@ export interface AuthorizedRemoteEnvironment {
   readonly socketUrl: string;
   readonly httpAuthorization: PreparedHttpAuthorization;
   readonly descriptor?: ExecutionEnvironmentDescriptor;
+  readonly secureChannelRequested?: true;
 }
 
 export interface AuthorizedRemoteHttpEnvironment {
@@ -184,6 +185,10 @@ export const make = Effect.gen(function* () {
   const tokenStore = yield* TokenStore.RemoteDpopAccessTokenStore;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const httpClient = yield* HttpClient.HttpClient;
+  // A platform that can run the secure channel asks for it on every DPoP RPC socket, so a server
+  // that supports it demands the handshake even when a tunnel hides its capability.
+  const secureChannel = signer.secureClientSocket !== undefined;
+  const secureChannelRequested = secureChannel ? { secureChannelRequested: true as const } : {};
   const tokenLock = yield* Semaphore.make(1);
   const directTokenLocks = yield* KeyedLock.make<string>();
   const tokenOwners = new Map<
@@ -299,6 +304,7 @@ export const make = Effect.gen(function* () {
                 }),
             ),
           ),
+        secureChannel,
         clientMetadata: presentation.metadata,
         connectionMethod: "relay",
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -639,6 +645,7 @@ export const make = Effect.gen(function* () {
                   proofError(msg("Could not create the websocket authorization proof.")),
                 ),
               ),
+          secureChannel,
           clientMetadata: presentation.metadata,
           connectionMethod: "direct",
         }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient), Effect.result);
@@ -662,6 +669,7 @@ export const make = Effect.gen(function* () {
         socketUrl: socket.success,
         descriptor,
         httpAuthorization: directHttpAuthorization(connection, credential),
+        ...secureChannelRequested,
       };
     },
   );
@@ -696,7 +704,12 @@ export const make = Effect.gen(function* () {
       token: TokenStore.RemoteDpopAccessToken,
       socketUrl: string,
       descriptor: ExecutionEnvironmentDescriptor,
-    ) => ({ ...httpAuthorization(token, endpoint?.httpBaseUrl), socketUrl, descriptor });
+    ) => ({
+      ...httpAuthorization(token, endpoint?.httpBaseUrl),
+      socketUrl,
+      descriptor,
+      ...secureChannelRequested,
+    });
     // A cached token comes without a descriptor. That read needs no ticket, so
     // it runs beside the ticket request, and a failed ticket abandons it.
     const openSocket = Effect.fnUntraced(function* (issued: IssuedDpopToken, timeoutMs?: number) {

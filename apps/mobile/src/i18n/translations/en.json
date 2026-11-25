@@ -5699,5 +5699,12 @@
   "1a1beecff68a6e61": "Verify Google account",
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
-  "201490988858b511": "withdrawn by {by}"
+  "201490988858b511": "withdrawn by {by}",
+  "58d7d08ed2365aac": "{host}'s identity changed",
+  "2c10f5e2a843f038": "Could not set up an encrypted connection to {host}",
+  "dcf6f4ea88e6d6f2": "If T3 Code on {host} was reinstalled or reset, remove {host} from this device and add it again to trust its new identity.",
+  "cd8c60ecfa5238ed": "If not, something between this device and {host} may be intercepting the connection.",
+  "0c749dab5288ee9f": "Something between this device and {host} may be changing the connection.",
+  "405ee04d8c932c58": "{host}'s identity changed since this device first connected. If you expected this, remove {host} from this device and add it again to trust its new identity.",
+  "f9f9ed1dc0b45f72": "Could not set up the encrypted connection to {host}."
 }

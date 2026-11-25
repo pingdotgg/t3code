@@ -24,6 +24,9 @@ import * as Socket from "effect/socket/Socket";
 
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { makeWsRpcProtocolClient, PING_TIMEOUT } from "../rpc/protocol.ts";
+import { prepareSecureRpcChannel } from "../rpc/secureChannel.ts";
+import * as Persistence from "../platform/persistence.ts";
+import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import {
   isLegacyUpdateHandoffLoss,
   localizeServerSelfUpdateError,
@@ -123,6 +126,18 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
       });
     }
 
+    const secure = yield* prepareSecureRpcChannel(
+      { ...prepared, descriptor },
+      {
+        signer: Option.getOrUndefined(yield* Effect.serviceOption(ManagedRelayDpopSigner)),
+        registrations: Option.getOrUndefined(
+          yield* Effect.serviceOption(Persistence.ConnectionRegistrationStore),
+        ),
+      },
+    );
+    const layerSocket = Socket.layerWebSocket(prepared.socketUrl, {
+      openTimeout: SOCKET_OPEN_TIMEOUT,
+    }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)));
     const result = yield* Effect.scoped(
       Effect.gen(function* () {
         const protocolContext = yield* Layer.build(
@@ -136,11 +151,12 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
           ).pipe(
             Layer.provide(
               Layer.mergeAll(
-                Socket.layerWebSocket(prepared.socketUrl, {
-                  openTimeout: SOCKET_OPEN_TIMEOUT,
-                }).pipe(
-                  Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)),
-                ),
+                secure === undefined
+                  ? layerSocket
+                  : Layer.effect(
+                      Socket.Socket,
+                      Effect.flatMap(Effect.service(Socket.Socket), secure.wrap),
+                    ).pipe(Layer.provide(layerSocket)),
                 RpcSerialization.layerJson,
               ),
             ),

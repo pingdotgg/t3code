@@ -34,7 +34,7 @@ import { requestConfirmDialog } from "~/confirmDialog";
 import { environmentCatalog } from "~/connection/catalog";
 import { cn } from "~/lib/utils";
 import type { EnvironmentPresentation } from "~/state/environments";
-import { usePreparedConnection } from "~/state/session";
+import { useEncryptedConnection, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -63,6 +63,7 @@ export function EnvironmentRoutesList({
     prepared._tag === "Some" && environment.connection.phase === "connected"
       ? connectionRouteId(prepared.value.target)
       : null;
+  const encrypted = useEncryptedConnection(environment.environmentId);
   const reorder = useAtomCommand(environmentCatalog.reorderRoutes, "Reorder routes");
   const removeRoute = useAtomCommand(environmentCatalog.removeRoute, "Remove route");
   const sensors = useSensors(
@@ -121,6 +122,7 @@ export function EnvironmentRoutesList({
                 route={route}
                 position={index + 1}
                 inUse={connectionRouteId(route.target) === activeRouteId}
+                encrypted={encrypted}
                 refused={environment.refusedRouteIds.includes(connectionRouteId(route.target))}
                 removable={canRemoveRoute(routes, route)}
                 onRemove={() => void confirmRemove(route)}
@@ -143,6 +145,7 @@ function SortableRouteRow({
   route,
   position,
   inUse,
+  encrypted,
   refused,
   removable,
   onRemove,
@@ -150,6 +153,7 @@ function SortableRouteRow({
   readonly route: ConnectionRoute;
   readonly position: number;
   readonly inUse: boolean;
+  readonly encrypted: boolean;
   readonly refused: boolean;
   readonly removable: boolean;
   readonly onRemove: () => void;
@@ -196,6 +200,11 @@ function SortableRouteRow({
           <p className="truncate text-2xs text-muted-foreground">
             {address}
             {isLearned(route) ? ` · ${gt("found automatically")}` : ""}
+          </p>
+        ) : null}
+        {inUse ? (
+          <p className="text-2xs text-muted-foreground">
+            {encrypted ? <T>Encrypted end to end</T> : <T>Not encrypted end to end</T>}
           </p>
         ) : null}
         {refused && address !== null ? (

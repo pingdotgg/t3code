@@ -12975,5 +12975,16 @@
   "201490988858b511": "retirada por {by}",
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
-  "92e129bf413a1220": "retirada"
+  "92e129bf413a1220": "retirada",
+  "58d7d08ed2365aac": "La identidad de {host} cambió",
+  "2c10f5e2a843f038": "No se pudo establecer una conexión cifrada con {host}",
+  "dcf6f4ea88e6d6f2": "Si T3 Code en {host} se reinstaló o restableció, quita {host} de este dispositivo y vuelve a agregarlo para confiar en su nueva identidad.",
+  "cd8c60ecfa5238ed": "Si no, algo entre este dispositivo y {host} podría estar interceptando la conexión.",
+  "0c749dab5288ee9f": "Algo entre este dispositivo y {host} podría estar alterando la conexión.",
+  "405ee04d8c932c58": "La identidad de {host} cambió desde que este dispositivo se conectó por primera vez. Si lo esperabas, quita {host} de este dispositivo y vuelve a agregarlo para confiar en su nueva identidad.",
+  "f9f9ed1dc0b45f72": "No se pudo establecer la conexión cifrada con {host}.",
+  "105ec16dc237c682": "No se pudo cargar la clave de identidad del entorno: {cause}",
+  "4087cfb94b7b50cb": "No se pudo guardar la clave de identidad del entorno: {cause}",
+  "1d0998793e5fffc0": "Cifrado de extremo a extremo",
+  "3c272f11ce5e9235": "Sin cifrado de extremo a extremo"
 }

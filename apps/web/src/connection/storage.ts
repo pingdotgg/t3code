@@ -1,6 +1,7 @@
 import {
   ConnectionCatalogDocument,
   type ConnectionCatalogDocument as ConnectionCatalogDocumentType,
+  catalogEnvironmentKey,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
   StoredOrchestrationShellSnapshot,
@@ -18,6 +19,7 @@ import {
   makeStoredShellSnapshotEncoder,
   makeStoredThreadSnapshotEncoder,
   makeThreadCacheWriteOrder,
+  pinEnvironmentKeyInCatalog,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import { msg } from "gt-react";
@@ -137,6 +139,8 @@ const PERSISTENCE_FAILURE = {
   "remove-vcs-refs": msg("Could not remove vcs refs: {cause}"),
   "clear-vcs-refs": msg("Could not clear vcs refs: {cause}"),
   "clear-environment": msg("Could not clear environment: {cause}"),
+  "load-environment-key": msg("Could not load the environment's identity key: {cause}"),
+  "pin-environment-key": msg("Could not save the environment's identity key: {cause}"),
 };
 
 function persistenceError(operation: keyof typeof PERSISTENCE_FAILURE, cause: unknown) {
@@ -796,6 +800,21 @@ export const layer = Layer.effectContext(
           return catalog
             .update((document) => setConnectionEnabledInCatalog(document, environmentId, enabled))
             .pipe(Effect.mapError((cause) => persistenceError("set-connection-enabled", cause)));
+        },
+      ),
+      environmentKey: Effect.fn("Persistence.ConnectionRegistrationStore.environmentKey")(
+        function (environmentId) {
+          return catalog.read.pipe(
+            Effect.map((document) => catalogEnvironmentKey(document, environmentId)),
+            Effect.mapError((cause) => persistenceError("load-environment-key", cause)),
+          );
+        },
+      ),
+      pinEnvironmentKey: Effect.fn("Persistence.ConnectionRegistrationStore.pinEnvironmentKey")(
+        function (environmentId, publicKey) {
+          return catalog
+            .update((document) => pinEnvironmentKeyInCatalog(document, environmentId, publicKey))
+            .pipe(Effect.mapError((cause) => persistenceError("pin-environment-key", cause)));
         },
       ),
     });

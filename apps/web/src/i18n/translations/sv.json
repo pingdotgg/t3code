@@ -12987,5 +12987,16 @@
   "201490988858b511": "återkallad av {by}",
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
-  "92e129bf413a1220": "återkallad"
+  "92e129bf413a1220": "återkallad",
+  "58d7d08ed2365aac": "Identiteten för {host} har ändrats",
+  "2c10f5e2a843f038": "Kunde inte upprätta en krypterad anslutning till {host}",
+  "dcf6f4ea88e6d6f2": "Om T3 Code på {host} har installerats om eller återställts tar du bort {host} från den här enheten och lägger till den igen för att lita på dess nya identitet.",
+  "cd8c60ecfa5238ed": "Om inte kan något mellan den här enheten och {host} avlyssna anslutningen.",
+  "0c749dab5288ee9f": "Något mellan den här enheten och {host} kan ändra anslutningen.",
+  "405ee04d8c932c58": "Identiteten för {host} har ändrats sedan den här enheten anslöt första gången. Om du väntade dig det tar du bort {host} från den här enheten och lägger till den igen för att lita på dess nya identitet.",
+  "f9f9ed1dc0b45f72": "Kunde inte upprätta den krypterade anslutningen till {host}.",
+  "105ec16dc237c682": "Kunde inte läsa in miljöns identitetsnyckel: {cause}",
+  "4087cfb94b7b50cb": "Kunde inte spara miljöns identitetsnyckel: {cause}",
+  "1d0998793e5fffc0": "Krypterad från ände till ände",
+  "3c272f11ce5e9235": "Inte krypterad från ände till ände"
 }

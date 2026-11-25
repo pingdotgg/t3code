@@ -6,7 +6,12 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 
 import { presentConnectionDiagnosis } from "./diagnosis.ts";
-import { mapManagedRelayError, mapRemoteEnvironmentError } from "./errors.ts";
+import {
+  environmentIdentityChangedError,
+  mapManagedRelayError,
+  mapRemoteEnvironmentError,
+  secureChannelFailedError,
+} from "./errors.ts";
 import {
   AVAILABLE_CONNECTION_STATE,
   ConnectionBlockedError,
@@ -54,6 +59,19 @@ const results = (state: SupervisorConnectionState, via?: "relay" | "direct") =>
   diagnose(state, via)?.hops.map((hop) => `${hop.hop}:${hop.result}`);
 
 describe("presentConnectionDiagnosis", () => {
+  it("tells a changed identity apart from an encrypted connection that failed", () => {
+    const changed = diagnose({
+      ...backoff(environmentIdentityChangedError({ host: "Mac mini", via: "relay" })),
+      phase: "blocked",
+      retryAt: null,
+    });
+    const failed = diagnose(backoff(secureChannelFailedError({ host: "Mac mini", via: "relay" })));
+
+    expect(changed?.headline).toBe("Mac mini's identity changed");
+    expect(changed?.steps[0]).toContain("remove Mac mini from this device and add it again");
+    expect(failed?.headline).toBe("Could not set up an encrypted connection to Mac mini");
+  });
+
   it("tells a working tunnel apart from T3 Code not answering", () => {
     expect(diagnose(backoff(unavailable("origin_unreachable")))?.headline).toBe(
       "Tunnel works, but T3 Code on Mac mini did not answer",

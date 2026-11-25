@@ -44,6 +44,8 @@ export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPer
       "remove-vcs-refs",
       "clear-vcs-refs",
       "clear-environment",
+      "load-environment-key",
+      "pin-environment-key",
     ]),
     message: Schema.String,
   },
@@ -80,6 +82,15 @@ export class ConnectionRegistrationStore extends Context.Service<
     readonly setEnabled: (
       environmentId: EnvironmentId,
       enabled: boolean,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
+    /** The environment's secure channel key, pinned on its first secure connection. */
+    readonly environmentKey: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<Option.Option<Uint8Array>, ConnectionPersistenceError>;
+    /** Kept only while the environment is registered; `remove` drops it. */
+    readonly pinEnvironmentKey: (
+      environmentId: EnvironmentId,
+      publicKey: Uint8Array,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/platform/persistence/ConnectionRegistrationStore") {}

@@ -137,6 +137,10 @@ function headline(
       return resolve(msg("{host}'s tunnel refused the connection", { host }));
     case "timeout":
       return resolve(msg("{host} did not answer in time", { host }));
+    case "identity_changed":
+      return resolve(msg("{host}'s identity changed", { host }));
+    case "secure_channel_failed":
+      return resolve(msg("Could not set up an encrypted connection to {host}", { host }));
     case "unknown":
     case null:
       break;
@@ -251,6 +255,28 @@ function steps(
     case "origin_unreachable":
     case "invalid_response":
       return [resolve(msg("Open or restart T3 Code on {host}.", { host })), checkHost];
+    case "identity_changed":
+      return [
+        resolve(
+          msg(
+            "If T3 Code on {host} was reinstalled or reset, remove {host} from this device and add it again to trust its new identity.",
+            { host },
+          ),
+        ),
+        resolve(
+          msg(
+            "If not, something between this device and {host} may be intercepting the connection.",
+            { host },
+          ),
+        ),
+      ];
+    case "secure_channel_failed":
+      return [
+        resolve(
+          msg("Something between this device and {host} may be changing the connection.", { host }),
+        ),
+        resolve(msg("Retry. If it keeps failing, copy the diagnostics.")),
+      ];
     // The relay saw these on its way to the host, so the fix is on the host.
     case "dns":
     case "tls":
@@ -317,6 +343,7 @@ function helpSection(
     case "approval_pending":
     case "not_linked":
     case "tunnel_not_enabled":
+    case "identity_changed":
       return "sign-in-account-or-link-problems";
     case "relay_error":
       return "t3-connect-returned-an-error";
@@ -326,6 +353,7 @@ function helpSection(
       return "the-hosts-tunnel-is-offline";
     case "origin_unreachable":
     case "invalid_response":
+    case "secure_channel_failed":
       return "the-tunnel-works-but-t3-code-does-not-answer";
     case "dns":
     case "tls":

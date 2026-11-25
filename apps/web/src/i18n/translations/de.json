@@ -12980,5 +12980,16 @@
   "201490988858b511": "zurückgezogen von {by}",
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
-  "92e129bf413a1220": "zurückgezogen"
+  "92e129bf413a1220": "zurückgezogen",
+  "58d7d08ed2365aac": "Die Identität von {host} hat sich geändert",
+  "2c10f5e2a843f038": "Verschlüsselte Verbindung zu {host} konnte nicht hergestellt werden",
+  "dcf6f4ea88e6d6f2": "Wenn T3 Code auf {host} neu installiert oder zurückgesetzt wurde, entferne {host} von diesem Gerät und füge es erneut hinzu, um seiner neuen Identität zu vertrauen.",
+  "cd8c60ecfa5238ed": "Andernfalls könnte etwas zwischen diesem Gerät und {host} die Verbindung abfangen.",
+  "0c749dab5288ee9f": "Etwas zwischen diesem Gerät und {host} verändert möglicherweise die Verbindung.",
+  "405ee04d8c932c58": "Die Identität von {host} hat sich seit der ersten Verbindung dieses Geräts geändert. Wenn du das erwartet hast, entferne {host} von diesem Gerät und füge es erneut hinzu, um seiner neuen Identität zu vertrauen.",
+  "f9f9ed1dc0b45f72": "Die verschlüsselte Verbindung zu {host} konnte nicht hergestellt werden.",
+  "105ec16dc237c682": "Der Identitätsschlüssel der Umgebung konnte nicht geladen werden: {cause}",
+  "4087cfb94b7b50cb": "Der Identitätsschlüssel der Umgebung konnte nicht gespeichert werden: {cause}",
+  "1d0998793e5fffc0": "Ende-zu-Ende-verschlüsselt",
+  "3c272f11ce5e9235": "Nicht Ende-zu-Ende-verschlüsselt"
 }

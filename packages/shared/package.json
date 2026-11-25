@@ -39,6 +39,10 @@
       "types": "./src/secureChannelSocket.ts",
       "import": "./src/secureChannelSocket.ts"
     },
+    "./secureChannelPeer": {
+      "types": "./src/secureChannelPeer.ts",
+      "import": "./src/secureChannelPeer.ts"
+    },
     "./composerPullRequestMatches": {
       "types": "./src/composerPullRequestMatches.ts",
       "import": "./src/composerPullRequestMatches.ts"

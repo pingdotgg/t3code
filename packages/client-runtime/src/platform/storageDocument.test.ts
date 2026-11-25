@@ -27,7 +27,9 @@ import {
 import {
   ConnectionCatalogDocument,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
+  catalogEnvironmentKey,
   catalogRoutes,
+  pinEnvironmentKeyInCatalog,
   setRoutesInCatalog,
   putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
@@ -285,6 +287,26 @@ describe("ConnectionCatalogDocument", () => {
 
     expect(putRemoteDpopTokenInCatalog(bearer, REMOTE_TOKEN)).toBe(bearer);
     expect(putRemoteDpopTokenInCatalog(otherRelay, REMOTE_TOKEN)).toBe(otherRelay);
+  });
+
+  it("keeps a registered environment's pinned key through storage and drops it on removal", () => {
+    const key = Uint8Array.from({ length: 32 }, (_, index) => index);
+    const json = Schema.fromJsonString(ConnectionCatalogDocument);
+    const registered = registerConnectionInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      new RelayConnectionRegistration({ target: RELAY_TARGET }),
+    );
+    const stored = Schema.decodeSync(json)(
+      Schema.encodeSync(json)(pinEnvironmentKeyInCatalog(registered, ENVIRONMENT_ID, key)),
+    );
+
+    expect(catalogEnvironmentKey(stored, ENVIRONMENT_ID)).toEqual(Option.some(key));
+    expect(
+      catalogEnvironmentKey(removeConnectionFromCatalog(stored, ENVIRONMENT_ID), ENVIRONMENT_ID),
+    ).toEqual(Option.none());
+    expect(pinEnvironmentKeyInCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT, ENVIRONMENT_ID, key)).toBe(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+    );
   });
 
   it("decodes a document written before the disabled list existed", () => {

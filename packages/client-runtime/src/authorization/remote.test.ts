@@ -314,6 +314,33 @@ describe("remote environment authorization", () => {
     }),
   );
 
+  it.effect("asks for the secure channel only in the upgrade proof", () =>
+    Effect.gen(function* () {
+      const fetch = recordedFetch(
+        Response.json({ message: "Not Found" }, { status: 404 }),
+        Response.json({ ticket: "old-ticket", expiresAt: "2026-05-01T12:05:00.000Z" }),
+      );
+      const proofs: Array<{ method: string; secureChannel?: boolean }> = [];
+
+      yield* resolveRemoteDpopWebSocketConnectionUrl({
+        wsBaseUrl: "wss://remote.example.com/",
+        httpBaseUrl: "https://remote.example.com/",
+        accessToken: "dpop-access-token",
+        secureChannel: true,
+        createProof: ({ method, secureChannel }) => {
+          proofs.push({ method, ...(secureChannel === undefined ? {} : { secureChannel }) });
+          return Effect.succeed(`proof-${proofs.length}`);
+        },
+      }).pipe(provideRemoteHttp(fetch.fetchFn));
+
+      expect(proofs).toEqual([
+        { method: "POST" },
+        { method: "POST" },
+        { method: "GET", secureChannel: true },
+      ]);
+    }),
+  );
+
   it.effect("names the signed-in Connect account and this device by hash only", () =>
     Effect.gen(function* () {
       const fetch = recordedFetch(

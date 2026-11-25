@@ -6,6 +6,7 @@ import {
   WsSubscribeServerConfigRpc,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { SECURE_CHANNEL_CLOSE_CODE } from "@t3tools/shared/secureChannelSocket";
 import {
   joinSocketFrameParts,
   SOCKET_FRAME_PARTS_QUERY_PARAM,
@@ -48,8 +49,15 @@ import {
   type ServerConfigProjection,
   withoutEnvironmentThemes,
 } from "../state/serverConfigProjection.ts";
-import { environmentMismatchError } from "../connection/errors.ts";
+import {
+  environmentIdentityChangedError,
+  environmentMismatchError,
+  secureChannelFailedError,
+} from "../connection/errors.ts";
 import { recordServerClock } from "../clock.ts";
+import * as Persistence from "../platform/persistence.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
+import { prepareSecureRpcChannel } from "./secureChannel.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 
@@ -63,6 +71,8 @@ export interface RpcSession {
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
   /** Frames received so far: proof the socket is alive that needs no reply. */
   readonly inboundFrames: Effect.Effect<number>;
+  /** Set when every frame on this session's socket is sealed end to end. */
+  readonly secureChannel?: true;
   readonly closed: Effect.Effect<never, ConnectionAttemptError>;
 }
 
@@ -141,7 +151,7 @@ const PING_TIMEOUT_SECONDS = Duration.toSeconds(PING_TIMEOUT);
 function mapSessionRpcError(
   error: InitialConfigError | ProbeError | ServerConfigSubscriptionError | ConnectionAttemptError,
   via: "relay" | "direct",
-  socketFailure: () => ConnectionTransientError,
+  socketFailure: (reason: Socket.SocketErrorReason) => ConnectionAttemptError,
 ): ConnectionAttemptError {
   switch (error._tag) {
     case "ConnectionBlockedError":
@@ -164,7 +174,7 @@ function mapSessionRpcError(
       });
     case "RpcClientError":
       return isSocketErrorReason(error.reason)
-        ? socketFailure()
+        ? socketFailure(error.reason)
         : new ConnectionTransientErrorClass({
             reason: "transport",
             detail: error.message,
@@ -183,6 +193,10 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
   options: RpcSessionOptions = {},
 ) {
   const webSocketConstructor = yield* Socket.WebSocketConstructor;
+  const secureChannelServices = {
+    signer: yield* ManagedRelay.ManagedRelayDpopSigner,
+    registrations: yield* Persistence.ConnectionRegistrationStore,
+  };
   const serverConfigInput: ServerConfigSubscriptionInput = {
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
     ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
@@ -203,10 +217,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       "connection.environment.id": connection.environmentId,
     });
 
+    const secure = yield* prepareSecureRpcChannel(connection, secureChannelServices);
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
     let pingTimedOut = false;
-    const socketFailure = () =>
+    const transportFailure = () =>
       new ConnectionTransientErrorClass({
         reason: "transport",
         // The network hint only fits a socket that never opened. Once it
@@ -230,11 +245,18 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
             : translatableDetail(msg("{host} disconnected.", { host: connection.label }))),
         ...socketFailureLocation(via),
       });
+    // Neither falls back to plaintext. A changed key waits for the user instead of retrying.
+    const socketFailure = (reason: Socket.SocketErrorReason): ConnectionAttemptError =>
+      secure?.keyChanged()
+        ? environmentIdentityChangedError({ host: connection.label, via })
+        : reason._tag === "SocketCloseError" && reason.code === SECURE_CHANNEL_CLOSE_CODE
+          ? secureChannelFailedError({ host: connection.label, via })
+          : transportFailure();
     const mapRpcError = (error: Parameters<typeof mapSessionRpcError>[0]) =>
       mapSessionRpcError(error, via, socketFailure);
     const hooks = RpcClient.ConnectionHooks.of({
       onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
-      onDisconnect: Effect.suspend(() => Deferred.fail(disconnected, socketFailure())).pipe(
+      onDisconnect: Effect.suspend(() => Deferred.fail(disconnected, transportFailure())).pipe(
         Effect.asVoid,
       ),
     });
@@ -250,9 +272,12 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     };
     const socketUrl = new URL(connection.socketUrl);
     socketUrl.searchParams.set(SOCKET_FRAME_PARTS_QUERY_PARAM, "1");
+    const rawSocket = Effect.service(Socket.Socket);
     const layerSocket = Layer.effect(
       Socket.Socket,
-      Effect.map(Effect.service(Socket.Socket), joinSocketFrameParts),
+      (secure === undefined ? rawSocket : Effect.flatMap(rawSocket, secure.wrap)).pipe(
+        Effect.map(joinSocketFrameParts),
+      ),
     ).pipe(
       Layer.provide(
         Socket.layerWebSocket(socketUrl.toString(), {
@@ -539,6 +564,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       ready: initialConfig.pipe(Effect.asVoid),
       probe,
       inboundFrames: Effect.sync(() => inboundFrames),
+      ...(secure === undefined ? {} : { secureChannel: true as const }),
       // The config stream also fails on disconnect, and only it can report a decode failure.
       closed: Deferred.await(configSubscriptionClosed),
     } satisfies RpcSession;

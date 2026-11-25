@@ -35,6 +35,7 @@ import { encodeOAuthScope, oauthScopeSetEquals } from "@t3tools/shared/oauthScop
 import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import type { SecureClientSocketOptions } from "@t3tools/shared/secureChannelSocket";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -46,6 +47,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpMethod from "effect/http/HttpMethod";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
+import type * as Socket from "effect/socket/Socket";
 import { msg } from "gt-i18n";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import { type MarkedText, markedTextEnglish } from "../errors/translatable.ts";
@@ -55,6 +57,8 @@ export interface ManagedRelayDpopProofInput {
   readonly method: HttpMethod.HttpMethod;
   readonly url: string;
   readonly accessToken?: string;
+  /** Adds the `t3sc` claim, which makes the server run the secure channel on that RPC socket. */
+  readonly secureChannel?: boolean;
 }
 
 export class ManagedRelayDpopKeyLoadError extends Schema.TaggedError<ManagedRelayDpopKeyLoadError>()(
@@ -342,6 +346,14 @@ export class ManagedRelayDpopSigner extends Context.Service<
     readonly createProof: (
       input: ManagedRelayDpopProofInput,
     ) => Effect.Effect<string, ManagedRelayDpopProofCreationError>;
+    /**
+     * Set on platforms that can run the secure channel: wraps an RPC socket in it, with this
+     * signer's proof key as the client identity.
+     */
+    readonly secureClientSocket?: (
+      socket: Socket.Socket,
+      options: Omit<SecureClientSocketOptions, "identity">,
+    ) => Effect.Effect<Socket.Socket, ManagedRelayDpopKeyLoadError>;
   }
 >()("@t3tools/client-runtime/relay/managedRelay/ManagedRelayDpopSigner") {}
 

@@ -1,4 +1,6 @@
 import {
+  catalogEnvironmentKey,
+  pinEnvironmentKeyInCatalog,
   putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
@@ -32,7 +34,9 @@ function targetPersistenceError(
     | "register-connection"
     | "set-connection-routes"
     | "remove-connection"
-    | "set-connection-enabled",
+    | "set-connection-enabled"
+    | "load-environment-key"
+    | "pin-environment-key",
   error: ConnectionTransientError,
 ) {
   return new Persistence.ConnectionPersistenceError({
@@ -87,6 +91,20 @@ export const layer = Layer.effectContext(
             .pipe(
               Effect.mapError((error) => targetPersistenceError("set-connection-enabled", error)),
             ),
+      ),
+      // Mobile does not run the secure channel yet; these keep the catalog field intact.
+      environmentKey: Effect.fn("Persistence.ConnectionRegistrationStore.environmentKey")(
+        (environmentId) =>
+          catalog.read.pipe(
+            Effect.map((document) => catalogEnvironmentKey(document, environmentId)),
+            Effect.mapError((error) => targetPersistenceError("load-environment-key", error)),
+          ),
+      ),
+      pinEnvironmentKey: Effect.fn("Persistence.ConnectionRegistrationStore.pinEnvironmentKey")(
+        (environmentId, publicKey) =>
+          catalog
+            .update((document) => pinEnvironmentKeyInCatalog(document, environmentId, publicKey))
+            .pipe(Effect.mapError((error) => targetPersistenceError("pin-environment-key", error))),
       ),
     });
     const profileStore = ProfileStore.make({

@@ -3,9 +3,14 @@
 import { msg } from "gt-i18n";
 import { MarkedText, translatableMessage } from "../errors/translatable.ts";
 import { normalizeDpopHtu, type DpopPublicJwk } from "@t3tools/shared/dpopCommon";
+import { SecureChannelError, type SecureChannelIdentity } from "@t3tools/shared/secureChannel";
+import { makeSecureClientSocket } from "@t3tools/shared/secureChannelSocket";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
+import type * as Aead from "effect/crypto/Aead";
 import * as Digest from "effect/crypto/Digest";
+import type * as Kdf from "effect/crypto/Kdf";
+import type * as KeyAgreement from "effect/crypto/KeyAgreement";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import * as Duration from "effect/Duration";
@@ -48,6 +53,7 @@ export const createProof = Effect.fn("DpopProof.createProof")(function* (input: 
   readonly method: string;
   readonly url: string;
   readonly accessToken?: string | undefined;
+  readonly secureChannel?: boolean | undefined;
   readonly key: DpopProofKey;
 }) {
   const htu = normalizeDpopHtu(input.url);
@@ -61,15 +67,37 @@ export const createProof = Effect.fn("DpopProof.createProof")(function* (input: 
     jti: yield* random.uuidV4(),
     iat: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
     ...(input.accessToken ? { ath: yield* sha256Base64Url(utf8(input.accessToken)) } : {}),
+    ...(input.secureChannel ? { t3sc: true } : {}),
   });
   const signature = yield* input.key.sign(utf8(`${header}.${payload}`));
   return `${header}.${payload}.${Base64Url.encode(signature)}`;
 });
 
-/** A relay DPoP signer that loads its key once and keeps it; a failed load is retried. */
+/** The proof key as a secure channel identity: the uncompressed SEC1 point and ES256 `r‖s`. */
+const secureChannelIdentity = Effect.fnUntraced(function* (key: DpopProofKey) {
+  const x = yield* Effect.fromResult(Base64Url.decode(key.publicJwk.x));
+  const y = yield* Effect.fromResult(Base64Url.decode(key.publicJwk.y));
+  return {
+    publicKey: Uint8Array.of(0x04, ...x, ...y),
+    sign: (message: Uint8Array) =>
+      key
+        .sign(message)
+        .pipe(
+          Effect.mapError((cause) => new SecureChannelError({ reason: "crypto_failure", cause })),
+        ),
+  } satisfies SecureChannelIdentity;
+});
+
+/**
+ * A relay DPoP signer that loads its key once and keeps it; a failed load is retried. A platform
+ * that supplies `secureChannelCrypto` can run the secure channel on its RPC sockets.
+ */
 export const layerSigner = <E, R>(options: {
   readonly keyStore: ManagedRelayDpopKeyLoadError["keyStore"];
   readonly loadOrCreateKey: Effect.Effect<DpopProofKey, E, R>;
+  readonly secureChannelCrypto?: Layer.Layer<
+    Aead.Aead | Digest.Digest | Kdf.Kdf | KeyAgreement.KeyAgreement
+  >;
 }) =>
   Layer.effect(
     ManagedRelayDpopSigner,
@@ -92,12 +120,28 @@ export const layerSigner = <E, R>(options: {
         },
       );
       const loadKey = Cache.get(keyCache, undefined);
+      const keyLoadError = (cause: unknown) =>
+        new ManagedRelayDpopKeyLoadError({ keyStore: options.keyStore, cause });
+      const crypto =
+        options.secureChannelCrypto === undefined
+          ? undefined
+          : yield* Layer.build(options.secureChannelCrypto);
+      const secureClientSocket: ManagedRelayDpopSigner["Service"]["secureClientSocket"] =
+        crypto === undefined
+          ? undefined
+          : (socket, socketOptions) =>
+              loadKey.pipe(
+                Effect.flatMap((loaded) => secureChannelIdentity(loaded.key)),
+                Effect.mapError(keyLoadError),
+                Effect.flatMap((identity) =>
+                  makeSecureClientSocket(socket, { ...socketOptions, identity }),
+                ),
+                Effect.provideContext(crypto),
+              );
       return ManagedRelayDpopSigner.of({
         thumbprint: loadKey.pipe(
           Effect.map((loaded) => loaded.thumbprint),
-          Effect.mapError(
-            (cause) => new ManagedRelayDpopKeyLoadError({ keyStore: options.keyStore, cause }),
-          ),
+          Effect.mapError(keyLoadError),
           Effect.withSpan("managedRelayDpopSigner.loadThumbprint"),
         ),
         createProof: Effect.fn("managedRelayDpopSigner.createProof")(function* (input) {
@@ -110,6 +154,7 @@ export const layerSigner = <E, R>(options: {
             Effect.mapError(creationError),
           );
         }),
+        ...(secureClientSocket === undefined ? {} : { secureClientSocket }),
       });
     }),
   );

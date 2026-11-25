@@ -9,6 +9,7 @@ import {
   WS_METHODS,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
+import { SECURE_CHANNEL_CLOSE_CODE } from "@t3tools/shared/secureChannelSocket";
 import { splitSocketFrame } from "@t3tools/shared/socketFrameParts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -34,6 +35,7 @@ import {
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import * as RpcSession from "./session.ts";
 import { toServerClock } from "../clock.ts";
 import { makeEnvironmentServerConfigState } from "../state/server.ts";
@@ -225,7 +227,15 @@ const makeFactory = Effect.fn("TestRpcSessionFactory.make")(function* (
     Queue.offerUnsafe(sockets.changes, undefined);
     return socket as unknown as globalThis.WebSocket;
   });
-  const layer = RpcSession.layer(options).pipe(Layer.provide(layerConstructor));
+  const layer = RpcSession.layer(options).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerConstructor,
+        Layer.mock(ManagedRelay.ManagedRelayDpopSigner)({}),
+        Layer.mock(Persistence.ConnectionRegistrationStore)({}),
+      ),
+    ),
+  );
   const factory = yield* RpcSession.RpcSessionFactory.pipe(Effect.provide(layer));
   return { factory, sockets };
 });
@@ -342,6 +352,67 @@ describe("RpcSessionFactory", () => {
           });
         }
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("names a secure channel close instead of reporting a plain disconnect", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const ready = yield* Effect.forkChild(Effect.flip(session.ready));
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* awaitRequest(socket);
+      socket.close(SECURE_CHANNEL_CLOSE_CODE, "Secure channel failed");
+
+      expect(yield* Fiber.join(ready)).toMatchObject({
+        _tag: "ConnectionTransientError",
+        failureCause: "secure_channel_failed",
+        detail: "Could not set up the encrypted connection to Test environment.",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("blocks retries when the environment presents a key other than the pinned one", () =>
+    Effect.gen(function* () {
+      const closedBySecureChannel = new Socket.SocketError({
+        reason: new Socket.SocketCloseError({ code: SECURE_CHANNEL_CLOSE_CODE }),
+      });
+      const services = Layer.mergeAll(
+        Layer.succeed(Socket.WebSocketConstructor, () => {
+          throw new Error("The fake secure channel never opens the raw socket.");
+        }),
+        Layer.mock(ManagedRelay.ManagedRelayDpopSigner)({
+          secureClientSocket: (_socket, options) =>
+            Effect.succeed(
+              Socket.make({
+                reader: options
+                  .verifyPeer({
+                    publicKey: new Uint8Array(32).fill(1),
+                    message: new Uint8Array(),
+                    signature: new Uint8Array(64),
+                  })
+                  .pipe(Effect.andThen(Effect.fail(closedBySecureChannel))),
+                writer: Effect.succeed({ write: () => Effect.void, writeAll: () => Effect.void }),
+              }),
+            ),
+        }),
+        Layer.mock(Persistence.ConnectionRegistrationStore)({
+          environmentKey: () => Effect.succeedSome(new Uint8Array(32)),
+        }),
+      );
+      const factory = yield* RpcSession.RpcSessionFactory.pipe(
+        Effect.provide(RpcSession.layer({}).pipe(Layer.provide(services))),
+      );
+      const session = yield* factory.connect({ ...PREPARED, secureChannelRequested: true });
+
+      expect(yield* Effect.flip(session.ready)).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        failureCause: "identity_changed",
+        detail:
+          "Test environment's identity changed since this device first connected. If you expected this, remove Test environment from this device and add it again to trust its new identity.",
+      });
+      expect(session.secureChannel).toBe(true);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("connects while a large config snapshot downloads at 4000 bytes per second", () =>

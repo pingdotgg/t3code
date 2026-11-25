@@ -62,6 +62,43 @@ export function environmentMismatchError(input: {
   });
 }
 
+/**
+ * The environment's secure channel key differs from the one pinned on its first secure
+ * connection. Retrying cannot fix it, and removing the environment drops the pin.
+ */
+export function environmentIdentityChangedError(input: {
+  readonly host: string;
+  readonly via: "relay" | "direct";
+}): ConnectionBlockedError {
+  return new ConnectionBlockedError({
+    reason: "configuration",
+    ...translatableDetail(
+      msg(
+        "{host}'s identity changed since this device first connected. If you expected this, remove {host} from this device and add it again to trust its new identity.",
+        { host: input.host },
+      ),
+    ),
+    hop: "server",
+    via: input.via,
+    failureCause: "identity_changed",
+  });
+}
+
+export function secureChannelFailedError(input: {
+  readonly host: string;
+  readonly via: "relay" | "direct";
+}): ConnectionTransientError {
+  return new ConnectionTransientError({
+    reason: "transport",
+    ...translatableDetail(
+      msg("Could not set up the encrypted connection to {host}.", { host: input.host }),
+    ),
+    hop: "server",
+    via: input.via,
+    failureCause: "secure_channel_failed",
+  });
+}
+
 function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError {
   const text = relayProtectedErrorText(error);
   const detail = markedTextEnglish(text);

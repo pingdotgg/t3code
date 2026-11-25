@@ -91,6 +91,8 @@ export const ConnectionFailureCause = Schema.Literals([
   "tunnel_pending",
   "tunnel_not_enabled",
   "approval_pending",
+  "identity_changed",
+  "secure_channel_failed",
 ]);
 export type ConnectionFailureCause = typeof ConnectionFailureCause.Type;
 
@@ -172,6 +174,8 @@ export interface PreparedConnection {
   readonly target: ConnectionTarget;
   /** What the server said about itself while this connection was prepared. */
   readonly descriptor?: ExecutionEnvironmentDescriptor;
+  /** The RPC socket's upgrade proof asked for the secure channel. */
+  readonly secureChannelRequested?: true;
 }
 
 export type SupervisorConnectionPhase =

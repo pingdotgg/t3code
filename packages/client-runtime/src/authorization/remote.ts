@@ -319,7 +319,10 @@ export const resolveRemoteDpopWebSocketConnectionUrl = Effect.fn(
     readonly method: "GET" | "POST";
     readonly url: string;
     readonly accessToken: string;
+    readonly secureChannel?: boolean;
   }) => Effect.Effect<string, E>;
+  /** Asks for the secure channel in the upgrade proof, which the tunnel cannot strip. */
+  readonly secureChannel?: boolean;
   readonly clientMetadata?: AuthClientPresentationMetadata;
   readonly connectionMethod?: ClientConnectionMethod;
   readonly timeoutMs?: number;
@@ -348,6 +351,7 @@ export const resolveRemoteDpopWebSocketConnectionUrl = Effect.fn(
     method: "GET",
     url: `${url.protocol === "wss:" ? "https:" : "http:"}//${url.host}${url.pathname}`,
     accessToken: Redacted.value(issued.ticket),
+    ...(input.secureChannel ? { secureChannel: true } : {}),
   });
   url.searchParams.set("wsTicket", Redacted.value(issued.ticket));
   url.searchParams.set("dpop", upgradeProof);

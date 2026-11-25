@@ -136,6 +136,15 @@ export function usePreparedConnection(environmentId: EnvironmentId | null) {
   );
 }
 
+/** Whether the live session's socket seals every frame end to end. */
+export function useEncryptedConnection(environmentId: EnvironmentId): boolean {
+  const session = useAtomValue(environmentSession.transportSessionAtom(environmentId));
+  return Option.exists(
+    AsyncResult.getOrElse(session, () => Option.none()),
+    (current) => current.secureChannel === true,
+  );
+}
+
 /** Each environment's prepared connection, in the order of the ids. */
 export const preparedConnectionsAtom = environmentAtomList(
   "web-prepared-connections",

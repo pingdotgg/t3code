@@ -1,5 +1,8 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
@@ -17,6 +20,13 @@ export const StoredConnectionCredential = Schema.Struct({
 });
 export type StoredConnectionCredential = typeof StoredConnectionCredential.Type;
 
+/** An environment's raw Ed25519 secure channel key, base64url. */
+export const StoredEnvironmentKey = Schema.Struct({
+  environmentId: EnvironmentId,
+  publicKey: Schema.String,
+});
+export type StoredEnvironmentKey = typeof StoredEnvironmentKey.Type;
+
 export const ConnectionCatalogDocument = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   targets: Schema.Array(PersistedConnectionTarget),
@@ -29,6 +39,7 @@ export const ConnectionCatalogDocument = Schema.Struct({
   disabledEnvironmentIds: Schema.Array(EnvironmentId).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
+  environmentKeys: Schema.optionalKey(Schema.Array(StoredEnvironmentKey)),
 });
 export type ConnectionCatalogDocument = typeof ConnectionCatalogDocument.Type;
 
@@ -168,6 +179,15 @@ export function removeConnectionFromCatalog(
       (value) => value,
       environmentId,
     ),
+    ...(next.environmentKeys === undefined
+      ? {}
+      : {
+          environmentKeys: removeCatalogValue(
+            next.environmentKeys,
+            (value) => value.environmentId,
+            environmentId,
+          ),
+        }),
     ...(next.githubRoutingPermissions === undefined
       ? {}
       : {
@@ -212,6 +232,35 @@ export function putRemoteDpopTokenInCatalog(
       document.remoteDpopTokens,
       (value) => value.environmentId,
       token,
+    ),
+  };
+}
+
+export function catalogEnvironmentKey(
+  document: ConnectionCatalogDocument,
+  environmentId: EnvironmentId,
+): Option.Option<Uint8Array> {
+  const stored = document.environmentKeys?.find((value) => value.environmentId === environmentId);
+  return stored === undefined
+    ? Option.none()
+    : Result.getSuccess(Base64Url.decode(stored.publicKey));
+}
+
+/** A key for an environment that is no longer registered is dropped, as removal would drop it. */
+export function pinEnvironmentKeyInCatalog(
+  document: ConnectionCatalogDocument,
+  environmentId: EnvironmentId,
+  publicKey: Uint8Array,
+): ConnectionCatalogDocument {
+  if (!document.targets.some((target) => target.environmentId === environmentId)) {
+    return document;
+  }
+  return {
+    ...document,
+    environmentKeys: replaceCatalogValue(
+      document.environmentKeys ?? [],
+      (value) => value.environmentId,
+      { environmentId, publicKey: Base64Url.encode(publicKey) },
     ),
   };
 }
