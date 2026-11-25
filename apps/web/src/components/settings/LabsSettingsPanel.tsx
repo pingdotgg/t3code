@@ -28,6 +28,7 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title={gt("Beta")}>
         <BoringSidebarRow />
+        <ThreadBoardRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -66,6 +67,28 @@ function BoringSidebarRow() {
         </div>
       ) : null}
     </SettingsRow>
+  );
+}
+
+function ThreadBoardRow() {
+  const searchableSetting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const gt = useGT();
+  return (
+    <SettingsRow
+      {...searchableSetting("thread-board")}
+      description={gt(
+        "Add a board of every thread to the sidebar footer. Threads move between Needs you, Working and Done on their own, grouped by project.",
+      )}
+      control={
+        <Switch
+          checked={settings.threadBoardEnabled}
+          onCheckedChange={(checked) => updateSettings({ threadBoardEnabled: Boolean(checked) })}
+          aria-label={gt("Thread board")}
+        />
+      }
+    />
   );
 }
 

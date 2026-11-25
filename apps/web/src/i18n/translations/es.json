@@ -12796,5 +12796,18 @@
   "012c67c7f1a99e33": "Fusión automática de la pila",
   "4a18481bea4b4ad5": "Nuevo dispositivo conectado a {environmentLabel}",
   "4144ab6aa487528a": "{device} se conectó a través de {product}. ¿No fuiste tú? Revísalo.",
-  "a10cfdb27152c757": "{count, plural, one {{count} dispositivo se conectó} other {{count} dispositivos se conectaron}} a través de {product}. ¿No fuiste tú? Revísalos."
+  "a10cfdb27152c757": "{count, plural, one {{count} dispositivo se conectó} other {{count} dispositivos se conectaron}} a través de {product}. ¿No fuiste tú? Revísalos.",
+  "73fcab31b833c7a3": "Te necesita",
+  "3d621619bad5946d": "Trabajando",
+  "1537f05cc9b5fbc1": "Hecho",
+  "c8d14c90bd6cd8dd": "Comprobaciones fallidas",
+  "378a63bdf3519c5e": "Atrás",
+  "6456fecfcaa2109d": "Buscar hilos en el tablero",
+  "f1f55521bea76543": "Tablero",
+  "485dca271e0cf399": "Tablero",
+  "3d9b354325f8f174": "Ningún hilo coincide.",
+  "1494b7c1d04e0d46": "El tablero está vacío. Aquí aparecen los hilos en curso, los que te esperan y los terminados.",
+  "6346a23d8d447014": "Añade al pie de la barra lateral un tablero con todos los hilos. Los hilos pasan solos entre Te necesita, Trabajando y Hecho, agrupados por proyecto.",
+  "cb65b071f68809cc": "Tablero de hilos",
+  "c662a9233320e2a3": "beta kanban columnas carriles resumen te necesita trabajando hecho"
 }

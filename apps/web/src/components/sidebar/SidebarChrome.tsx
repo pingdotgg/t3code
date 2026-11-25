@@ -1,11 +1,17 @@
-import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ChartNoAxesColumnIcon,
+  SettingsIcon,
+  SquareKanbanIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useAtomValue } from "@effect/atom-react";
-import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { useClientSettings, useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
   navigateHistory,
@@ -233,6 +239,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
+  const threadBoardEnabled = useClientSettings((settings) => settings.threadBoardEnabled);
   const pullRequestsSupported = usePullRequestsSupported();
   const issuesSupported = useIssuesSupported();
   const closeMobileSidebar = () => {
@@ -250,6 +257,10 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const handleIssuesClick = () => {
     closeMobileSidebar();
     void navigate({ to: "/issues", search: readIssueListPreferences() });
+  };
+  const handleBoardClick = () => {
+    closeMobileSidebar();
+    void navigate({ to: "/board" });
   };
   const handleSettingsClick = () => {
     closeMobileSidebar();
@@ -281,6 +292,13 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </SidebarMenuItem>
       ) : (
         <>
+          {threadBoardEnabled ? (
+            <SidebarUtilityItem
+              icon={<SquareKanbanIcon />}
+              label={gt("Board", { $context: "sidebar link to the thread board" })}
+              onClick={handleBoardClick}
+            />
+          ) : null}
           <SidebarUtilityItem
             icon={<SettingsIcon />}
             label={gt("Settings")}

@@ -61,13 +61,13 @@ drives the fake live simulation and the theme.
 - **Board layout:** **full screen**; the sidebar hides while the board is open. Top left, where
   the sidebar keeps them on the main page, sit Back (to the last thread), **New thread** and
   search, lined up with the left panel. New thread opens in that panel with a project picker;
-  the new card arrives under *Working* and you stay on the board.
+  the new card arrives under _Working_ and you stay on the board.
 - **Layout:** one **swimlane per project** (rows; projects with Needs-you cards first, then
-  sidebar order; collapsible; hidden when empty), crossed with three **lanes** (columns): *Needs you* → *Working* → *Done*.
+  sidebar order; collapsible; hidden when empty), crossed with three **lanes** (columns): _Needs you_ → _Working_ → _Done_.
   A project filter and a text filter sit in the header.
-- **Lanes:** *Needs you* holds approvals, questions, failed turns, usage limits and PRs with
-  failing checks, oldest wait first. *Working* holds setting up, working and waiting on
-  subagents. *Done* holds finished turns (diff or PR), the same word the sidebar uses. Other
+- **Lanes:** _Needs you_ holds approvals, questions, failed turns, usage limits and PRs with
+  failing checks, oldest wait first. _Working_ holds setting up, working and waiting on
+  subagents. _Done_ holds finished turns (diff or PR), the same word the sidebar uses. Other
   lanes sort newest first. A merged or settled thread leaves the board but stays in the
   sidebar, and it comes back with Reopen (thread view, or Undo right after settling).
 - **Snooze:** a snoozed thread leaves the board until it wakes, then returns to its lane on
@@ -93,29 +93,17 @@ drives the fake live simulation and the theme.
 
 ## Open questions
 
-From the data map; each has a recommendation.
-
-1. **Request text on cards.** Fetch thread detail for Needs-you cards only (client-only,
-   bounded), or add a short preview to the shell's `pendingRuntimeRequest` (server and wire
-   change). Recommendation: client-only first, measure, move to the server only if it costs.
-2. **Check details.** Show "Checks running" and "Checks failing" without counts, and failing
-   check names only when the PR is watched. Recommendation: yes; counts aren't worth a query
-   per card.
-3. **Diff chip.** Show it only for threads with a PR (from the snapshot), and the file list
-   only in the peek. Recommendation: yes.
-4. **Grey line while running.** Use the latest visible message for running threads too, or
-   drop the line while running and keep the status with its timer. Recommendation: latest
-   visible message.
+None right now.
 
 ## Phases
 
-| # | Phase | Output | Status |
-|---|-------|--------|--------|
-| 0 | Vision and setup | This doc, the fork, the T3 project | done |
-| 1 | UX prototype | Clickable mock with fake threads: lanes, card anatomy, click and Ctrl-click flow | done |
-| 2 | Data spike | Map lanes, cards and the peek to real thread state in client-runtime | done, 4 questions open |
-| 3 | Build | Board behind a Labs toggle, in small steps (shell → lanes → cards → peek → live polish) | - |
-| 4 | Upstream (optional) | Ideas discussion upstream with a demo | - |
+| #   | Phase               | Output                                                                                  | Status |
+| --- | ------------------- | --------------------------------------------------------------------------------------- | ------ |
+| 0   | Vision and setup    | This doc, the fork, the T3 project                                                      | done   |
+| 1   | UX prototype        | Clickable mock with fake threads: lanes, card anatomy, click and Ctrl-click flow        | done   |
+| 2   | Data spike          | Map lanes, cards and the peek to real thread state in client-runtime                    | done   |
+| 3   | Build               | Board behind a Labs toggle, in small steps (shell → lanes → cards → peek → live polish) | -      |
+| 4   | Upstream (optional) | Ideas discussion upstream with a demo                                                   | -      |
 
 ## Data map (phase 2)
 
@@ -124,19 +112,19 @@ wire type `OrchestrationV2ThreadShell` in `packages/contracts/src/orchestrationV
 already on the client for the sidebar, per environment. The board reads the same shells, so
 lanes and most of the card cost no new subscriptions.
 
-| Board needs | Source today | Gap |
-|---|---|---|
-| Lane: approval, question, failed, limited, working, waiting, finished | `resolveSidebarRowStatus` (`apps/web/src/components/Sidebar.logic.ts`) over shell flags: `hasPendingApprovals`, `hasPendingUserInput`, `source.pendingRuntimeRequest.kind`, `runtime` (`status`, `lastErrorClass`), `latestRun` | None. Lives in `apps/web`, fine for a web-only board. |
-| Off the board: settled, snoozed, woke | `settledOverride`, `snoozedUntil`; `effectiveSnoozed`, `threadWokeAt`, `canSnooze` in `client-runtime/src/state/threadSettled.ts`; commands in `threadCommands.ts` | None. |
-| PR chip, failing checks → *Needs you* | `pullRequests[].snapshot`: `state`, `checksState` (`passing`/`failing`/`pending`), `title`, `additions`/`deletions`; `resolveThreadCurrentPullRequestLink` | No "x of n" check count. Failing check names only in `watch.failedChecks` when the PR is watched. |
-| Grey line | `latestVisibleMessage` (`role`, `text`) | The running command or tool call is not in the shell. |
-| Request content (approval command, question and options) | Thread detail timeline only; the shell's `pendingRuntimeRequest` has `kind` and `createdAt`, no text | Needs thread detail per Needs-you card, or a short preview added to the shell (server and wire change). |
-| Failure and usage limit text | `runtime.lastError`, `lastErrorClass`, `usageLimitResetAt`, `limitRecovery` | None. |
-| Diff chip | PR snapshot `additions`/`deletions` when a PR exists | No per-turn diff stats in the shell (the sidebar's `latestRunDiff` is a stub returning null). |
-| Times: last activity, working duration, waiting since | `updatedAt`; `runtime.activityStartedAt` / `latestRun.startedAt`; `pendingRuntimeRequest.createdAt` | None. |
-| Queued follow-up | `hasQueuedTurnStart` (`threadSettled.ts`) | A flag, not a count. |
-| Started by a scheduled task | Not checked yet (`lineage`, `linkOrigin`, `workflowRun` are candidates) | Drop the chip for v1 unless one of these says it. |
-| Peek: summary, files, activity | Thread detail (`createEnvironmentThreadDetailAtoms`, `threadDetail.ts`), checkpoints (`threadCheckpoints.ts`) | Subscribe only while the peek is open. |
+| Board needs                                                           | Source today                                                                                                                                                                                                                    | Gap                                                                                                     |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Lane: approval, question, failed, limited, working, waiting, finished | `resolveSidebarRowStatus` (`apps/web/src/components/Sidebar.logic.ts`) over shell flags: `hasPendingApprovals`, `hasPendingUserInput`, `source.pendingRuntimeRequest.kind`, `runtime` (`status`, `lastErrorClass`), `latestRun` | None. Lives in `apps/web`, fine for a web-only board.                                                   |
+| Off the board: settled, snoozed, woke                                 | `settledOverride`, `snoozedUntil`; `effectiveSnoozed`, `threadWokeAt`, `canSnooze` in `client-runtime/src/state/threadSettled.ts`; commands in `threadCommands.ts`                                                              | None.                                                                                                   |
+| PR chip, failing checks → _Needs you_                                 | `pullRequests[].snapshot`: `state`, `checksState` (`passing`/`failing`/`pending`), `title`, `additions`/`deletions`; `resolveThreadCurrentPullRequestLink`                                                                      | No "x of n" check count. Failing check names only in `watch.failedChecks` when the PR is watched.       |
+| Grey line                                                             | `latestVisibleMessage` (`role`, `text`)                                                                                                                                                                                         | The running command or tool call is not in the shell.                                                   |
+| Request content (approval command, question and options)              | Thread detail timeline only; the shell's `pendingRuntimeRequest` has `kind` and `createdAt`, no text                                                                                                                            | Needs thread detail per Needs-you card, or a short preview added to the shell (server and wire change). |
+| Failure and usage limit text                                          | `runtime.lastError`, `lastErrorClass`, `usageLimitResetAt`, `limitRecovery`                                                                                                                                                     | None.                                                                                                   |
+| Diff chip                                                             | PR snapshot `additions`/`deletions` when a PR exists                                                                                                                                                                            | No per-turn diff stats in the shell (the sidebar's `latestRunDiff` is a stub returning null).           |
+| Times: last activity, working duration, waiting since                 | `updatedAt`; `runtime.activityStartedAt` / `latestRun.startedAt`; `pendingRuntimeRequest.createdAt`                                                                                                                             | None.                                                                                                   |
+| Queued follow-up                                                      | `hasQueuedTurnStart` (`threadSettled.ts`)                                                                                                                                                                                       | A flag, not a count.                                                                                    |
+| Started by a scheduled task                                           | Not checked yet (`lineage`, `linkOrigin`, `workflowRun` are candidates)                                                                                                                                                         | Drop the chip for v1 unless one of these says it.                                                       |
+| Peek: summary, files, activity                                        | Thread detail (`createEnvironmentThreadDetailAtoms`, `threadDetail.ts`), checkpoints (`threadCheckpoints.ts`)                                                                                                                   | Subscribe only while the peek is open.                                                                  |
 
 **Performance rule:** the board subscribes to nothing per card beyond the shells it already
 has. Thread detail is fetched for the open peek and, if we choose that route, for Needs-you
@@ -157,19 +145,19 @@ Add new entries at the bottom: date, decision, reason.
 - **2026-11-24** Prototype the UX with fake data before changing app code.
 - **2026-11-25** The board is a page next to the sidebar, like Pull requests, not an overlay.
   Reason: the thread list stays in reach, so new threads start the usual way from the sidebar.
-- **2026-11-25** No *Done* lane; merged or settled threads leave the board (sidebar keeps them,
+- **2026-11-25** No _Done_ lane; merged or settled threads leave the board (sidebar keeps them,
   Reopen brings them back). Reason: the lane added nothing and cost horizontal space.
 - **2026-11-25** Swimlanes per project crossed with the lanes. Reason: groups related threads.
-- **2026-11-25** Failed turns and PRs with failing checks go in *Needs you*.
+- **2026-11-25** Failed turns and PRs with failing checks go in _Needs you_.
 - **2026-11-25** Needs-you cards get quick actions; deeper triage stays in the peek.
 - **2026-11-25** Leaner cards: waiting cards drop the grey line (the status and the request say
   enough); project, branch and model leave the card.
 - **2026-11-25** The peek is a side panel with the popover's floating look.
-- **2026-11-25** Sorting: *Needs you* oldest wait first, other lanes newest first.
+- **2026-11-25** Sorting: _Needs you_ oldest wait first, other lanes newest first.
 - **2026-11-25** The peek moves to the left of the lanes; it keeps pushing them aside for now.
 - **2026-11-25** Entry point: the board icon in the sidebar footer.
 - **2026-11-25** The grey line comes from thread state; no LLM summary.
-- **2026-11-25** The third lane is called *Done*, matching the sidebar's word for a finished turn.
+- **2026-11-25** The third lane is called _Done_, matching the sidebar's word for a finished turn.
 - **2026-11-25** Trying a full-screen board with its own New thread buttons, after seeing the
   beside-the-sidebar page. Reason: start threads without leaving the board.
 - **2026-11-25** Keep the full-screen board. New thread and search move to the top left, where
@@ -184,6 +172,10 @@ Add new entries at the bottom: date, decision, reason.
 - **2026-11-25** Phase 1 is done; the prototype is the reference for the build.
 - **2026-11-25** Prototype merged into the fork's `main`; the build happens on
   `fork/thread-board`.
+- **2026-11-25** Data choices: request text comes from thread detail fetched only for Needs-you
+  cards (server preview only if that proves costly); checks show running/failing without
+  counts, failing names only when the PR is watched; the diff chip shows only with a PR (file
+  list in the peek); the grey line uses the latest visible message, also while running.
 
 ## Prior art (upstream, all closed)
 

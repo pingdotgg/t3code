@@ -520,6 +520,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "boring-sidebar",
     searchTerms: [msg("beta boring sidebar folder rows multiline branch pull request details")],
   },
+  {
+    id: "thread-board",
+    title: msg("Thread board"),
+    to: "/settings/labs",
+    searchTerms: [msg("beta kanban lanes swimlanes overview needs you working done")],
+  },
 
   {
     id: "tool-call-visibility",

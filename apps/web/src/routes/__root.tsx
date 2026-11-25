@@ -210,8 +210,9 @@ function RootRouteBranch() {
   );
   const appShell = (
     <CommandPalette>
-      {/* Setup starts with an empty workspace, so the Welcome page has no thread list. */}
-      <AppSidebarLayout showSidebar={!isWelcome}>
+      {/* Setup starts with an empty workspace, so the Welcome page has no thread list.
+          The thread board is full screen and lists every thread itself. */}
+      <AppSidebarLayout showSidebar={!isWelcome && pathname !== "/board"}>
         <Outlet />
       </AppSidebarLayout>
     </CommandPalette>

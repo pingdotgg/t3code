@@ -12808,5 +12808,18 @@
   "012c67c7f1a99e33": "Merga stacken automatiskt",
   "4a18481bea4b4ad5": "Ny enhet inloggad på {environmentLabel}",
   "4144ab6aa487528a": "{device} anslöt via {product}. Inte du? Granska den.",
-  "a10cfdb27152c757": "{count, plural, one {{count} enhet} other {{count} enheter}} anslöt via {product}. Inte du? Granska dem."
+  "a10cfdb27152c757": "{count, plural, one {{count} enhet} other {{count} enheter}} anslöt via {product}. Inte du? Granska dem.",
+  "73fcab31b833c7a3": "Behöver dig",
+  "3d621619bad5946d": "Arbetar",
+  "1537f05cc9b5fbc1": "Klar",
+  "c8d14c90bd6cd8dd": "Kontroller misslyckades",
+  "378a63bdf3519c5e": "Tillbaka",
+  "6456fecfcaa2109d": "Sök trådar på tavlan",
+  "f1f55521bea76543": "Tavla",
+  "485dca271e0cf399": "Tavla",
+  "3d9b354325f8f174": "Inga trådar matchar.",
+  "1494b7c1d04e0d46": "Tavlan är tom. Trådar som arbetar, väntar på dig eller är klara visas här.",
+  "6346a23d8d447014": "Lägger till en tavla med alla trådar längst ned i sidofältet. Trådarna flyttar själva mellan Behöver dig, Arbetar och Klar, grupperade per projekt.",
+  "cb65b071f68809cc": "Trådtavla",
+  "c662a9233320e2a3": "beta kanban kolumner banor översikt behöver dig arbetar klar"
 }

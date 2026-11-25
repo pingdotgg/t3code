@@ -12801,5 +12801,18 @@
   "012c67c7f1a99e33": "Merge automático da pilha",
   "4a18481bea4b4ad5": "Novo dispositivo conectado a {environmentLabel}",
   "4144ab6aa487528a": "{device} se conectou pelo {product}. Não foi você? Revise.",
-  "a10cfdb27152c757": "{count, plural, one {{count} dispositivo se conectou} other {{count} dispositivos se conectaram}} pelo {product}. Não foi você? Revise."
+  "a10cfdb27152c757": "{count, plural, one {{count} dispositivo se conectou} other {{count} dispositivos se conectaram}} pelo {product}. Não foi você? Revise.",
+  "73fcab31b833c7a3": "Precisa de você",
+  "3d621619bad5946d": "Trabalhando",
+  "1537f05cc9b5fbc1": "Pronta",
+  "c8d14c90bd6cd8dd": "Verificações falhando",
+  "378a63bdf3519c5e": "Voltar",
+  "6456fecfcaa2109d": "Pesquisar threads no quadro",
+  "f1f55521bea76543": "Quadro",
+  "485dca271e0cf399": "Quadro",
+  "3d9b354325f8f174": "Nenhuma thread corresponde.",
+  "1494b7c1d04e0d46": "O quadro está vazio. Threads em andamento, esperando por você ou prontas aparecem aqui.",
+  "6346a23d8d447014": "Adiciona ao rodapé da barra lateral um quadro com todas as threads. As threads passam sozinhas entre Precisa de você, Trabalhando e Pronta, agrupadas por projeto.",
+  "cb65b071f68809cc": "Quadro de threads",
+  "c662a9233320e2a3": "beta kanban colunas raias visão geral precisa de você trabalhando pronta"
 }
