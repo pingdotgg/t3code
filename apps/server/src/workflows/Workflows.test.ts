@@ -499,6 +499,13 @@ const pooled = [
     },
     (payload) => holdUntilDone(payload.id),
   ),
+  /** No pools, and step names that only look like a pool's. */
+  workflow("poolNamed", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, () =>
+    Effect.andThen(
+      step("pool:prepare", { returns: Schema.Void, ...once }, Effect.void),
+      Effect.asVoid(wait("pool:release", { returns: Schema.Null })),
+    ),
+  ),
   /** Two workflows that share a pool and ask for different limits. */
   workflow("narrow", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, (payload) =>
     within("m", { limit: 1 }, holdUntilDone(payload.id)),
@@ -2711,6 +2718,22 @@ it.effect("a workflow's concurrency place is held until its cleanup is done", ()
         yield* workflows.waitFor(first.runId, status("completed"));
         yield* workflows.waitFor(second.runId, (run) => run.detail === "done");
         assert.deepStrictEqual(entered, ["a", "end:a", "b"]);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a workflow without pools can still name its steps and waits pool:…", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const { runId } = yield* workflows.start("poolNamed", { id: "a" }, { idempotencyKey: "a" });
+        yield* workflows.waitFor(runId, (run) => run.detail === "pool:release");
+        const sent = yield* workflows.signal({ runId, wait: "pool:release" }, null, { id: "go" });
+        assert.equal(sent, "delivered");
+        yield* workflows.waitFor(runId, status("completed"));
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

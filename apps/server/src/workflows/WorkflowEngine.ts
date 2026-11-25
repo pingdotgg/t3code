@@ -42,7 +42,6 @@ import {
   engineTag,
   engineWorkflow,
   layerDefinition,
-  PLACE_PREFIX,
   text,
   wakeOf,
   type Woke,
@@ -1022,7 +1021,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const signal: Workflows["Service"]["signal"] = Effect.fn("Workflows.signal")(
     function* (address, value, options) {
       // A step queued for a place goes in when the pool gives it one, never on a signal.
-      if ("wait" in address && address.wait.startsWith(PLACE_PREFIX)) {
+      if ("wait" in address && (yield* store.queuesForPlace(address.runId, address.wait))) {
         return yield* new WorkflowInputError({
           problem: `${address.wait} waits for a place in a pool, and only the pool lets it in.`,
         });

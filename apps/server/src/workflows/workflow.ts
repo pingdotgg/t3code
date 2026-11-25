@@ -86,20 +86,13 @@ export type InRun =
   | WorkflowEngine.WorkflowInstance;
 
 /** Takes `name` for one step of the run. Step results and the step list are both kept by name. */
-export const claim = (name: string, internal = false) =>
+export const claim = (name: string, cleanup = false) =>
   Effect.flatMap(RunContext, (run) => {
     // The cleanup step's name is its own, or a body step would take it and cleanup never run.
-    if (name === END_STEP && !internal) {
+    if (name === END_STEP && !cleanup) {
       return Effect.die(
         new Error(
           `"${END_STEP}" is the name of workflow ${run.workflow}'s cleanup step. Name this step something else.`,
-        ),
-      );
-    }
-    if (name.startsWith(PLACE_PREFIX) && !internal) {
-      return Effect.die(
-        new Error(
-          `Step names starting with "${PLACE_PREFIX}" in workflow ${run.workflow} are kept for pools. Name "${name}" something else.`,
         ),
       );
     }
@@ -543,7 +536,8 @@ const waitClaimed = Effect.fnUntraced(function* <A, I>(
         "waiting",
         options.pool === undefined ? name : `queue ${options.pool.name}`,
       );
-      yield* deliverEarly(first, firstToken);
+      // Only the pool lets a queued step in, so no signal kept for its name is delivered.
+      if (options.pool === undefined) yield* deliverEarly(first, firstToken);
     }),
   });
   // A value that fit the wait's JSON Schema can still fail its codec. It was not for this wait,
@@ -614,7 +608,7 @@ const holding = Effect.fn("workflow.within")(function* <A, E, R>(
   body: Effect.Effect<A, E, R>,
   untilRunEnds = false,
 ): Effect.fn.Return<A, E, R | InRun> {
-  const run = yield* claim(name, true);
+  const run = yield* claim(name);
   yield* Effect.orDie(
     waitClaimed(run, "queue", name, {
       returns: Schema.Null,
@@ -840,8 +834,8 @@ const invokeAs = Effect.fn("workflow.invoke")(function* <P, A>(
   return { outcome: "completed", value: value as A };
 });
 
-/** Starts the name of every step that waits for a place in a pool; only a pool's grant wakes it. */
-export const PLACE_PREFIX = "pool:";
+/** Starts the name of every step that waits for a place in a pool. */
+const PLACE_PREFIX = "pool:";
 /** The step `onEnd` runs as. */
 export const END_STEP = "onEnd";
 const END_RETRY: StepRetry = { times: 3, schedule: Schedule.exponential("2 seconds") };

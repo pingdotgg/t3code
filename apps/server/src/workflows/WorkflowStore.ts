@@ -385,6 +385,8 @@ export class WorkflowStore extends Context.Service<
     /** The hook's token: the one kept for it, or `fresh` from now on. */
     readonly hookToken: (hookId: string, fresh: string) => Effect.Effect<string>;
     readonly steps: (runId: string) => Effect.Effect<ReadonlyArray<StepRow>>;
+    /** Whether the run's step of that name waits for a place in a pool. */
+    readonly queuesForPlace: (runId: string, name: string) => Effect.Effect<boolean>;
     /**
      * Keep that the run touched something: from a step, or with no step from what started it. A
      * later touch of the same thing keeps what it knows that is new and adds its step.
@@ -1344,6 +1346,12 @@ export const make = Effect.gen(function* () {
       `;
       return rows[0]?.token ?? fresh;
     }, Effect.orDie),
+    queuesForPlace: Effect.fn("WorkflowStore.queuesForPlace")(function* (runId, name) {
+      const rows = yield* sql`
+        SELECT 1 FROM workflow_steps WHERE run_id = ${runId} AND name = ${name} AND kind = 'queue'
+      `.pipe(Effect.orDie);
+      return rows.length > 0;
+    }),
     steps: Effect.fn("WorkflowStore.steps")(function* (runId) {
       return yield* sql<StepRow>`
         SELECT name, kind, status, attempts, detail, thread_id, environment_id, result_json,
