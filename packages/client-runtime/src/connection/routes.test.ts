@@ -364,6 +364,14 @@ describe("learned routes", () => {
         allowInsecure: false,
       }),
     ).toBeNull();
+    expect(
+      mergeLearnedRoutes({
+        entry: relayOnly,
+        activeRoute: RELAY,
+        reported: [{ httpBaseUrl: "http://[::ffff:127.0.0.1]:3773/" }],
+        allowInsecure: true,
+      }),
+    ).toBeNull();
   });
 
   it("removes learned routes along with the route whose credential they borrow", () => {

@@ -296,8 +296,8 @@ function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnaps
     !host ||
     isLocalLoopbackHost(host) ||
     isWildcardHost(host) ||
-    // Each machine resolves these to itself too; shared host classification leaves them out.
-    /\.localhost\.*$|^\[::ffff:(?:127\.|7f[\da-f]{2}:)/i.test(host);
+    // Each machine resolves .localhost names to itself; isLocalLoopbackHost leaves them out.
+    /\.localhost\.*$/i.test(host);
   return endpoint && !local ? endpoint : `${environmentId}:${source.id}`;
 }
 
