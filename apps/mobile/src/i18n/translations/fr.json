@@ -686,6 +686,7 @@
   "56b4ff3993c93eca": "{host} a envoyé une configuration de serveur incompatible.",
   "368c4d4f99c66bfb": "Mettez à jour le client et le serveur vers des versions compatibles.",
   "e5fd422e445391fc": "Échec de l’envoi. Touchez pour réessayer.",
+  "13b14784f8707ddd": "0 octet",
   "b2bc6bd92ea24e5c": "{size} Mo",
   "88f84178edbb7f57": "{size} Ko",
   "5a78fd0a1d8e9945": "{count} Mo",
