@@ -1552,6 +1552,7 @@
   "6848f5bbb2bd9eec": "Document PDF",
   "7873a79df0cf6d0e": "Page du navigateur",
   "0b55696e27387e4e": "Appuyez sur Shift+Escape pour quitter la page du navigateur.",
+  "90dfebe26eb86b2d": "Options de sélection de la page",
   "737d3c6bec93f9e6": "Choisir des fichiers pour la page",
   "e6a3fa7cfc14f86a": "Boîte de dialogue du navigateur",
   "61a552a67e9e3eac": "Réponse à la boîte de dialogue",
@@ -8813,7 +8814,7 @@
   "a9cdd8c7073be920": "Palette de commandes : afficher/masquer",
   "4e0943e8c7a465d1": "Sélecteur de fichiers : afficher/masquer",
   "df5fdcdf26a6b52a": "Recherche dans le projet : afficher/masquer",
-  "a8ff6d33b060736f": "Utilisation : ouvrir",
+  "0ca6fd2b8fcab2c3": "Utilisation : Afficher ou masquer",
   "a513d51b71b95674": "Thème : sélectionner",
   "1ffd8427452372e1": "Apparence : alterner",
   "3a3bb4a7551a87cc": "Éditeur de thème : afficher/masquer",
@@ -12229,6 +12230,7 @@
   "9c015d3d034316cb": "Utilisez les flèches pour ajuster la valeur active. Maintenez Shift pour des pas plus grands. Utilisez Home et End pour le minimum et le maximum. Appuyez sur Tab pour passer de la saturation à la luminosité.",
   "8639d5532561f87f": "Fermer",
   "e1186ad82ee08b33": "Fermer",
+  "a4579e548b768663": "Afficher la barre latérale",
   "a1b11a1cf39c9dc9": "Redimensionner la barre latérale",
   "c557090df5722838": "Afficher ou masquer la barre latérale",
   "bbde430e56272901": "Faites glisser pour redimensionner la barre latérale",
@@ -12279,10 +12281,26 @@
   "a16b48709357a5a7": "Gérer l’utilisation",
   "a00e74aaa421c524": "restant",
   "0e34c3076c08feb2": [
-    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    {
+      "t": "span",
+      "i": 1,
+      "c": [
+        "↻ +",
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        "%"
+      ]
+    },
     " ",
     "dans ",
-    { "i": 3, "k": "_gt_value_3", "v": "v" }
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    }
   ],
   "8bd6f07136317c8f": "Aucun fournisseur des environnements sélectionnés ne signale de limites d’abonnement.",
   "87f5d0c61b335f38": "Consultez l’utilisation dans ChatGPT avec votre compte connecté.",
@@ -12891,5 +12909,67 @@
   "f6a91589456cca50": "Approuvée",
   "c92657bb7f2293ff": "Approbation requise",
   "f1e5c1be1ac92361": "Approuver",
-  "fcb5f3c4d4753326": "Cette connexion ne peut pas approuver de commandes. Utilisez un client qui peut utiliser le terminal."
+  "fcb5f3c4d4753326": "Cette connexion ne peut pas approuver de commandes. Utilisez un client qui peut utiliser le terminal.",
+  "4e96712d839ccbff": "{who} a répondu {choice}",
+  "19097cfb8f5a79cf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " a répondu",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    "."
+  ],
+  "e7bbf693910057bf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " a répondu",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    ": ",
+    {
+      "i": 4,
+      "k": "_gt_value_4",
+      "v": "v"
+    }
+  ],
+  "3759768c5d342c22": [
+    "répondue",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " nécessite une raison."
+  ],
+  "91aadfc843c600de": "Vérifier le compte Google"
 }
