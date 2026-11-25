@@ -662,7 +662,10 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       );
       yield* harness.provider.onConfigOptionsUpdated(configOptions);
       expect((yield* nextSnapshot)[0]).toMatchObject({
-        models: buildAntigravityModelsFromSession({ configOptions }),
+        models: buildAntigravityModelsFromSession({ configOptions }, new Map(), {
+          defaultModel: "gemini-3.7-flash-high",
+          authoritative: false,
+        }),
         auth: before.auth,
         workspaceSnapshots: before.workspaceSnapshots,
         slashCommands: expectedCommands,
