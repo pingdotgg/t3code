@@ -1779,10 +1779,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
 
   // Folder rows only drag out to the composer; folders own their order, so nothing drops in the list.
-  const isContextDrag =
-    projectFolders !== null ||
-    dragState?.contextDrag === true ||
-    dragState?.activeSection === "working";
+  const isContextDrag = projectFolders !== null || dragState?.contextDrag === true;
   const dragTargetSection = isContextDrag ? null : (dragState?.targetSection ?? null);
   const finishThreadDrag = (started: boolean) => {
     dragSensorRef.current = null;
@@ -2111,6 +2108,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     settledVisibleCount,
     routeThreadKey: routeRowThreadKey,
     snoozedThreadCount: snoozedThreads.length,
+    workingThreadCount: workingThreads.length,
   });
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
@@ -2196,7 +2194,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return;
     const drop = {
       key: activeKey,
-      sourceSection: activeSection,
+      // Server state has no Working section, so these threads read as active until the pin lands.
+      sourceSection: activeSection === "working" ? "active" : activeSection,
       section: target.section,
       occurredAt: new Date().toISOString(),
       clearsSnooze:
@@ -3708,6 +3707,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 label={gt("Active", { $context: "sidebar section" })}
                                 showHint={
                                   from !== null &&
+                                  from !== "working" &&
                                   (activeThreads.length === 0 ||
                                     (from === "active" &&
                                       activeThreads.length === 1 &&
@@ -3775,6 +3775,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 label={gt("Settled", { $context: "sidebar section" })}
                                 showHint={
                                   from !== null &&
+                                  from !== "working" &&
                                   (renderedSettledThreads.length === 0 ||
                                     (from === "settled" &&
                                       renderedSettledThreads.length === 1 &&
