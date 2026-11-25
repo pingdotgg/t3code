@@ -127,7 +127,6 @@ export const make = Effect.fn("NpmRelease.make")(function* () {
       );
       const channel =
         spec === "nightly" ? "nightly" : spec === "latest" ? "stable" : cliReleaseChannelOf(spec);
-      // Checked before the cache so an earlier answer cannot serve a release the policy forbids.
       if (managedUpdateRefusal(policy.document, channel) !== undefined) {
         yield* Effect.logInfo("npm release lookup refused by managed policy", { spec });
         return null;

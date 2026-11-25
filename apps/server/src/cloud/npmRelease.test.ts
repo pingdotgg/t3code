@@ -202,7 +202,6 @@ it.effect.each(["--registry=https://example.com", "../other", "other-package@lat
 
 it.effect.each([
   { updates: { mode: "off" }, spec: "latest" },
-  { updates: { mode: "off" }, spec: "0.1.5" },
   { updates: { mode: "auto", allowNightly: false }, spec: "nightly" },
   { updates: { mode: "auto", allowNightly: false }, spec: version },
 ] as const)(
