@@ -1,5 +1,5 @@
+import { type ServerProvider, ServerProviderModel } from "@t3tools/contracts";
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
-import { ServerProviderModel } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
@@ -11,10 +11,11 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import { createMuseSdkHost, makeMuseEnvironment } from "./sdk.ts";
 import { parseMuseVersion } from "./maintenance.ts";
 import {
-  discoverMuseModels,
   museModelCapabilities,
+  probeMuseHost,
   resolveMuseStartupTimeoutMs,
 } from "./modelCatalog.ts";
+import type { MuseAccountState } from "./protocol.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -36,6 +37,36 @@ const MUSE_PRESENTATION = {
 } as const;
 
 const FALLBACK_CAPABILITIES = museModelCapabilities();
+// A login usually names its account by email. A display name such as
+// "Team @ Meta" stays a label so Settings never shows it as an address.
+const EMAIL_ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * The credential `account/read` reports. A login names its account, which is
+ * how Limits counts one Meta subscription once across environments.
+ * States this version does not know stay `unknown`, as without the method.
+ */
+export function museAccountAuth(account: MuseAccountState | undefined): ServerProvider["auth"] {
+  const label = account?.label?.trim();
+  switch (account?.state) {
+    case "accountLogin":
+      return {
+        status: "authenticated",
+        type: "accountLogin",
+        ...(label ? (EMAIL_ADDRESS.test(label) ? { email: label } : { label }) : {}),
+      };
+    case "apiKey":
+    case "envKey":
+      return { status: "authenticated", type: "apiKey", label: "API key" };
+    case "loggedOut":
+      // A keyless endpoint needs no login, and nothing here can vouch for it.
+      return account.credentialRequired === false
+        ? { status: "unknown" }
+        : { status: "unauthenticated" };
+    default:
+      return { status: "unknown" };
+  }
+}
 
 export const makePendingMuseProvider = Effect.fn("makePendingMuseProvider")(function* (
   settings: MuseSettings,
@@ -132,13 +163,13 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
     });
   }
 
-  const catalog = yield* discoverMuseModels(settings, museEnvironment, cwd, createHost).pipe(
+  const probe = yield* probeMuseHost(settings, museEnvironment, cwd, createHost).pipe(
     Effect.scoped,
-    // Startup shares the override, so the catalog keeps its 4 seconds on top of it.
-    Effect.timeoutOption(resolveMuseStartupTimeoutMs(museEnvironment) + 4_000),
+    // Reserve the catalog's four seconds and the optional account probe's two seconds.
+    Effect.timeoutOption(resolveMuseStartupTimeoutMs(museEnvironment) + 6_000),
     Effect.result,
   );
-  if (Result.isFailure(catalog) || Option.isNone(catalog.success)) {
+  if (Result.isFailure(probe) || Option.isNone(probe.success)) {
     return snapshot({
       installed: true,
       version,
@@ -148,13 +179,27 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
         "Muse Code SDK could not read the model catalog. Check your Muse installation and run `muse login` on this T3 server host.",
     });
   }
-  const models = catalog.success.value;
-  // MSP has no auth signal and serves cached models while logged out; failures surface on first turn.
+  const { models, account } = probe.success.value;
+  // model/list answers from Muse's cache even when logged out, so the login comes from
+  // the experimental account/read. Without it, auth failures surface on the first turn.
+  const auth = museAccountAuth(account);
+  if (auth.status === "unauthenticated") {
+    return snapshot(
+      {
+        installed: true,
+        version,
+        status: "error",
+        auth,
+        message: "Muse Code is not signed in. Run `muse login` on this T3 server host.",
+      },
+      models,
+    );
+  }
   return snapshot(
     {
       installed: true,
       version,
-      auth: { status: "unknown" },
+      auth,
       ...(models.length > 0
         ? { status: "ready" }
         : {
