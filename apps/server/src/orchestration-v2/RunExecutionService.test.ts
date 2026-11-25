@@ -966,7 +966,11 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
 
     const input = yield* Deferred.await(started);
     assert.deepEqual(input.appContext, [
-      { key: "mcp_app_turn-item_provider_codex_native-item_call-1", text: "2 overdue" },
+      {
+        key: "mcp_app_turn-item_provider_codex_native-item_call-1",
+        text: "2 overdue",
+        updatedAt: "2026-11-23T14:02:17.000Z",
+      },
     ]);
   }).pipe(
     Effect.provide(
@@ -982,6 +986,7 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
                     server: "my tools>",
                     tool: "list",
                     text: "2 overdue",
+                    updatedAt: "2026-11-23T14:02:17.000Z",
                   },
                 ]),
             }),

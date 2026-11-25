@@ -873,6 +873,10 @@
   "05b16c85cb1e18bd": "Aucun dépôt",
   "04ea9e0e663983fd": "Tous les dépôts",
   "c07bd24ff49e85d9": "{count, plural, one {{count} dépôt} other {{count} dépôts}}",
+  "1b799ebfa94c2408": "Approbation des hooks de push",
+  "81d703184fe5112e": "Exécuter les hooks de push de ce dépôt ?",
+  "027b0d65c7a67af6": "Fichier de hook",
+  "ade585910165bb52": "Hook configuré",
   "e94aa66471dae6aa": "Pourquoi cette question ?",
   "228a325b5708e675": "L’accès complet ignore les approbations, mais une règle « ask » dans les paramètres de l’agent correspond à cette action ; il demande donc quand même. Supprimez ou restreignez cette règle pour ne plus voir ces demandes.",
   "3f9101f696c738a8": "L’accès complet ignore les approbations, mais l’agent s’arrête quand même pour quelques contrôles de sécurité qui lui sont propres et qu’aucun paramètre ne peut ignorer, comme une suppression dont il ne peut pas vérifier le chemin. T3 Code ne peut pas les désactiver ; vérifiez donc la demande et approuvez-la si elle correspond à ce que vous attendez.",
@@ -1298,7 +1302,7 @@
   "c13753167634f7aa": "Fichier lu",
   "5ce648cd03020fd9": "Lecture de {path} +{count} autres",
   "5d6c2898401c94e6": "Lecture de {path}",
-  "612170d804b03320": "{count, plural, one {{count} enregistrement d’utilisation mal formé ou incohérent a été ignoré ; l’utilisation peut être incomplète.} other {{count} enregistrements d’utilisation mal formés ou incohérents ont été ignorés ; l’utilisation peut être incomplète.}}",
+  "69150fe436b3a0c2": "{count, plural, one {{count} enregistrement d’utilisation mal formé ou incohérent a été ignoré ; l’utilisation peut être incomplète.} other {{count} enregistrements d’utilisation mal formés ou incohérents ont été ignorés ; l’utilisation peut être incomplète.}}",
   "ee448ceb6820ce2f": "{environment} utilise une ancienne version du serveur et est exclu des totaux.",
   "732708950237004e": "Ce client est plus ancien que le serveur de {environment} ; son utilisation est exclue des totaux.",
   "9758c2ede06aa19b": "{hour} aujourd’hui",
@@ -5692,5 +5696,6 @@
   "1a1beecff68a6e61": "Vérifier le compte Google",
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
-  "201490988858b511": "retirée par {by}"
+  "201490988858b511": "retirée par {by}",
+  "46d614fa7b4bf1e5": "Exécutions de workflow"
 }

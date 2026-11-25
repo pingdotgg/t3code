@@ -7649,6 +7649,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         close: (sdkMessages) => Queue.shutdown(sdkMessages),
         freshQueueOnReopen: true,
       });
+      const noteSetAt = "2026-11-23T14:02:17.000Z";
       const runTurn = Effect.fnUntraced(function* (ordinal: number, note: string) {
         yield* harness.runtime.startTurn({
           ...makeClaudeTestTurnInput({
@@ -7660,7 +7661,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             text: "What did the app report?",
             attachments: [],
           }),
-          appContext: [{ key: "mcp_app_item-1", text: note }],
+          appContext: [{ key: "mcp_app_item-1", text: note, updatedAt: noteSetAt }],
         });
         return lastOffered();
       });
@@ -7731,8 +7732,72 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       yield* finishTurn(4);
       // Compaction summarizes the note away, so the next turn carries it again.
-      assert.include(yield* runTurn(5, "Created Jira issue PROJ-43"), "PROJ-43");
+      // The resent note says when it was set, so it does not read as news.
+      assert.include(
+        yield* runTurn(5, "Created Jira issue PROJ-43"),
+        `<external_mcp_app_item-1 updated_at="${noteSetAt}">Created Jira issue PROJ-43`,
+      );
     }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  // regression: #42982 a server restart resent every stored note to a session that already had it
+  it.effect("does not resend an MCP app note Claude already has after the adapter restarts", () =>
+    Effect.gen(function* () {
+      const note = "Slack draft card: the message was sent.";
+      const startTurn = Effect.fnUntraced(function* (
+        harness: Effect.Success<ReturnType<typeof makeWakeHarnessWithOptions>>,
+        providerThread: OrchestrationV2ProviderThread,
+        ordinal: number,
+      ) {
+        yield* harness.runtime.startTurn({
+          ...makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`mcp-app-restart-${ordinal}`),
+            providerTurnOrdinal: ordinal,
+            text: "Anything new?",
+            attachments: [],
+          }),
+          appContext: [{ key: "mcp_app_item-1", text: note }],
+        });
+        const content = harness.offeredMessages.at(-1)?.message.content;
+        return typeof content === "string"
+          ? content
+          : (content ?? []).map((block) => (block.type === "text" ? block.text : "")).join("\n");
+      });
+
+      const before = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        freshQueueOnReopen: true,
+      });
+      assert.include(yield* startTurn(before, before.providerThread, 0), note);
+      yield* before.offerAndWait(
+        makeResultFrame({ uuid: "mcp-app-restart-result-0", result: "Done." }),
+      );
+      yield* Queue.take(before.terminalReceipts);
+      const persisted = before.events
+        .filter((event) => event.type === "provider_thread.updated")
+        .at(-1)?.providerThread;
+      assert.isDefined(persisted);
+
+      // A new adapter resumes the same native session, whose history already holds the note.
+      const after = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        freshQueueOnReopen: true,
+      });
+      assert.notInclude(yield* startTurn(after, persisted!, 1), note);
+    }).pipe(
+      Effect.scoped,
       Effect.provide(
         Layer.mergeAll(
           IdAllocator.layer,
@@ -8186,6 +8251,112 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision: "decline" }),
         );
         assert.include(String(late.cause), "No pending Claude runtime request");
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect("shows what T3 Code's own tool asks without naming a server", () =>
+      Effect.gen(function* () {
+        const { harness, elicit, awaitCard } = yield* startElicitationTurn();
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        const message = "Push tools and run this repository's hook file .husky/pre-push?";
+        const pushHooks = { branch: "tools", files: [".husky/pre-push"], commands: [] };
+        yield* sessions.recordApprovalRequest(harness.threadId, { message, pushHooks });
+        const cards = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
+              ? [event.turnItem]
+              : [],
+          );
+        const own: ElicitationRequest = {
+          serverName: "t3-code",
+          message,
+          mode: "form",
+          requestedSchema: { type: "object", properties: {} },
+        };
+
+        yield* elicit(own);
+        yield* awaitCard(1);
+        assert.deepInclude(cards().at(-1), { prompt: message, pushHooks });
+        assert.notProperty(cards().at(-1), "appName");
+
+        // Asked by a server T3 Code did not register: its name is shown, as for any server.
+        yield* elicit({ ...own, serverName: "deploys", displayName: "T3 Code" });
+        yield* awaitCard(2);
+        assert.deepInclude(cards().at(-1), { prompt: message, appName: "T3 Code" });
+        assert.notProperty(cards().at(-1), "pushHooks");
+
+        // Under T3 Code's name, but nothing T3 Code asked this thread.
+        yield* elicit({ ...own, message: "Push tools?" });
+        yield* awaitCard(3);
+        assert.deepInclude(cards().at(-1), { prompt: "Push tools?", appName: "t3-code" });
+        assert.notProperty(cards().at(-1), "pushHooks");
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect("asks the person every time T3 Code's own tool asks", () =>
+      Effect.gen(function* () {
+        const { harness, elicit, awaitCard } = yield* startElicitationTurn();
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        const message = "Push tools and run this repository's hook file .husky/pre-push?";
+        const pushHooks = { branch: "tools", files: [".husky/pre-push"], commands: [] };
+        const own: ElicitationRequest = {
+          serverName: "t3-code",
+          message,
+          mode: "form",
+          requestedSchema: { type: "object", properties: {} },
+        };
+        const card = () =>
+          harness.events.findLast(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+          );
+
+        const firstAsked = yield* sessions.recordApprovalRequest(harness.threadId, {
+          message,
+          pushHooks,
+        });
+        const first = yield* elicit(own);
+        const firstRequest = yield* awaitCard(1);
+        // Shown, and not answered by anything but the person.
+        assert.notProperty(
+          yield* sessions.findApprovalRequest(harness.threadId, message),
+          "approved",
+        );
+        // Nothing to remember an answer by: each request is for what the hooks are then.
+        const firstCard = card();
+        assert.deepInclude(firstCard?.type === "turn_item.updated" ? firstCard.turnItem : {}, {
+          options: [
+            { decision: "cancel", label: "Cancel" },
+            { decision: "decline", label: "Decline" },
+            { decision: "accept", label: "Approve" },
+          ],
+        });
+        // A client that answers for the session anyway approves this one request.
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: firstRequest.id,
+          decision: "acceptForSession",
+        });
+        assert.deepEqual(yield* Fiber.join(first), { action: "accept", content: {} });
+        // What the person answered in the app stays with the request T3 Code made.
+        assert.deepInclude(yield* sessions.takeApprovalRequest(harness.threadId, firstAsked), {
+          approved: true,
+        });
+
+        const secondAsked = yield* sessions.recordApprovalRequest(harness.threadId, {
+          message,
+          pushHooks,
+        });
+        const second = yield* elicit(own);
+        const secondRequest = yield* awaitCard(2);
+        assert.isUndefined(second.pollUnsafe());
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: secondRequest.id,
+          decision: "decline",
+        });
+        assert.deepEqual(yield* Fiber.join(second), { action: "decline" });
+        assert.deepInclude(yield* sessions.takeApprovalRequest(harness.threadId, secondAsked), {
+          approved: false,
+        });
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
@@ -22239,6 +22410,310 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  // Frame order captured from Claude Code 2.1.332: the fork's work arrives only after task_notification.
+  it.effect("shows a forked skill's commands and reply in its subagent thread", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-forked-skill-activity"),
+          text: "/fork-probe go",
+          attachments: [],
+        }),
+      );
+      const forkParent = "forked-command-fork-probe";
+      for (const frame of [
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-forked-activity",
+          description: "/fork-probe",
+          prompt: "go",
+          subagent_type: "general-purpose",
+          task_type: "local_agent",
+          skip_transcript: true,
+          ambient: true,
+          uuid: "00000000-0000-4000-8000-000000000a01",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "task-forked-activity",
+          status: "completed",
+          summary: "/fork-probe",
+          output_file: "",
+          uuid: "00000000-0000-4000-8000-000000000a02",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "user",
+          parent_tool_use_id: forkParent,
+          message: { role: "user", content: [{ type: "text", text: "go" }] },
+          uuid: "00000000-0000-4000-8000-000000000a03",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "assistant",
+          parent_tool_use_id: forkParent,
+          message: {
+            model: "claude-haiku-5-5",
+            id: "msg_fork_bash",
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu-fork-bash",
+                name: "Bash",
+                input: { command: "cat hello.txt", description: "Read hello.txt" },
+              },
+            ],
+          },
+          uuid: "00000000-0000-4000-8000-000000000a04",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "user",
+          parent_tool_use_id: forkParent,
+          message: {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: "toolu-fork-bash", content: "greetings" },
+            ],
+          },
+          uuid: "00000000-0000-4000-8000-000000000a05",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "assistant",
+          parent_tool_use_id: forkParent,
+          message: {
+            model: "claude-haiku-5-5",
+            id: "msg_fork_reply",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "text", text: "FORK-REPORT greetings" }],
+          },
+          uuid: "00000000-0000-4000-8000-000000000a06",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000a07",
+          result: "FORK-REPORT greetings",
+        }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* Queue.take(harness.terminalReceipts);
+
+      const routing = subagentRouting(harness.events, ["toolu-fork-bash"]);
+      assert.isDefined(routing.childThreadId);
+      assert.deepEqual(
+        [...(routing.toolThreadIds.get("toolu-fork-bash") ?? [])],
+        [routing.childThreadId],
+        "the fork's Bash call never reached its subagent thread",
+      );
+      assert.include(routing.assistantTexts(routing.childThreadId), "FORK-REPORT greetings");
+      const subagent = harness.events
+        .filter((event) => event.type === "subagent.updated")
+        .at(-1)?.subagent;
+      assert.notEqual(subagent?.result, "/fork-probe", "the skill's name became its result");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("shows a forked skill's work from its transcript while it runs, once", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-fork-" });
+      const subagentsDir = NodePath.join(
+        configDir,
+        "projects",
+        "-workspace",
+        WAKE_NATIVE_SESSION,
+        "subagents",
+      );
+      yield* fileSystem.makeDirectory(subagentsDir, { recursive: true });
+      const forkParent = "forked-command-fork-probe";
+      const bashCall = {
+        type: "assistant" as const,
+        parent_tool_use_id: forkParent,
+        message: {
+          model: "claude-haiku-5-5",
+          id: "msg_fork_live_bash",
+          type: "message",
+          role: "assistant",
+          stop_reason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu-fork-live-bash",
+              name: "Bash",
+              input: { command: "cat hello.txt", description: "Read hello.txt" },
+            },
+          ],
+        },
+        uuid: "00000000-0000-4000-8000-000000000b04",
+        session_id: WAKE_NATIVE_SESSION,
+      };
+      yield* fileSystem.writeFileString(
+        NodePath.join(subagentsDir, "agent-task-forked-live.jsonl"),
+        `${JSON.stringify(bashCall)}\n`,
+      );
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: { CLAUDE_CONFIG_DIR: configDir },
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-forked-skill-live"),
+          text: "/fork-probe go",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-forked-live",
+          description: "/fork-probe",
+          prompt: "go",
+          subagent_type: "general-purpose",
+          task_type: "local_agent",
+          uuid: "00000000-0000-4000-8000-000000000b01",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* TestClock.adjust("1 second");
+      yield* harness.until(
+        () => subagentRouting(harness.events, ["toolu-fork-live-bash"]).toolThreadIds.size > 0,
+      );
+      const running = harness.events
+        .filter((event) => event.type === "subagent.updated")
+        .at(-1)?.subagent;
+      assert.equal(running?.status, "running", "the fork's command appeared only after it ended");
+
+      // As captured from Claude Code 2.1.332: the fork's report is written to its transcript
+      // just before task_notification and never sent on the stream.
+      yield* fileSystem.writeFileString(
+        NodePath.join(subagentsDir, "agent-task-forked-live.jsonl"),
+        `${JSON.stringify(bashCall)}\n${JSON.stringify({
+          type: "assistant",
+          parent_tool_use_id: forkParent,
+          message: {
+            model: "claude-haiku-5-5",
+            id: "msg_fork_live_reply",
+            type: "message",
+            role: "assistant",
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: "FORK-REPORT greetings" }],
+          },
+          uuid: "00000000-0000-4000-8000-000000000b06",
+          session_id: WAKE_NATIVE_SESSION,
+        })}\n`,
+      );
+      for (const frame of [
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "task-forked-live",
+          status: "completed",
+          summary: "/fork-probe",
+          output_file: "",
+          uuid: "00000000-0000-4000-8000-000000000b02",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          uuid: "00000000-0000-4000-8000-000000000b09",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame(bashCall),
+        claudeSdkFrame({
+          type: "user",
+          parent_tool_use_id: forkParent,
+          message: {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: "toolu-fork-live-bash", content: "greetings" },
+            ],
+          },
+          uuid: "00000000-0000-4000-8000-000000000b05",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: {
+            model: "claude-haiku-5-5",
+            id: "msg_root_live_reply",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "text", text: "FORK-REPORT greetings" }],
+          },
+          uuid: "00000000-0000-4000-8000-000000000b08",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000b07",
+          result: "FORK-REPORT greetings",
+        }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* Queue.take(harness.terminalReceipts);
+
+      const routing = subagentRouting(harness.events, ["toolu-fork-live-bash"]);
+      const toolItemIds = new Set(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "toolu-fork-live-bash"
+            ? [event.turnItem.id]
+            : [],
+        ),
+      );
+      assert.equal(toolItemIds.size, 1, "the fork's command was shown twice");
+      const completedCall = harness.events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "toolu-fork-live-bash",
+      );
+      assert.equal(
+        completedCall?.type === "turn_item.updated" ? completedCall.turnItem.status : undefined,
+        "completed",
+      );
+      assert.deepEqual(routing.assistantTexts(routing.childThreadId), ["FORK-REPORT greetings"]);
+      const subagent = harness.events
+        .filter((event) => event.type === "subagent.updated")
+        .at(-1)?.subagent;
+      assert.equal(subagent?.result, "FORK-REPORT greetings");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   it.effect.each([
