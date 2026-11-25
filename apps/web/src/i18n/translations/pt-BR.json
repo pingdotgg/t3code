@@ -12838,7 +12838,6 @@
   "084cdbd230901fd6": "Não foi possível enviar sua mensagem.",
   "f20fcc56c1195909": "Enfileirar um acompanhamento…",
   "31edc03e0a69bc68": "Enviar um acompanhamento…",
-  "04a8e01a4e2ffa8b": "Última mensagem do agente",
   "cb290ed8899e0ba7": [
     "Abrir pull request #",
     {
@@ -12849,5 +12848,7 @@
   ],
   "39b4070d872d2028": "Adiar",
   "6badf1ab0be9364c": "Abrir quadro",
-  "aed763efb0a6d555": "Nova thread"
+  "aed763efb0a6d555": "Nova thread",
+  "e2f5a3551c85ac34": "Você",
+  "7433207270b89442": "Mensagens mais recentes"
 }

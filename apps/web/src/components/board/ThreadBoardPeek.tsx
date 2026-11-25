@@ -97,7 +97,7 @@ export function ThreadBoardPeek(props: {
           />
         ) : null}
 
-        <LatestAgentMessage threadRef={threadRef} cwd={thread.worktreePath ?? undefined} />
+        <LatestExchange threadRef={threadRef} cwd={thread.worktreePath ?? undefined} />
 
         {pullRequest === null ? null : (
           <PullRequestRow threadRef={threadRef} url={pullRequest.url} number={pullRequest.number} />
@@ -110,23 +110,46 @@ export function ThreadBoardPeek(props: {
   );
 }
 
-function LatestAgentMessage(props: { threadRef: ScopedThreadRef; cwd: string | undefined }) {
+/**
+ * The user's latest message and the agent's latest reply, in the order they were sent, so a
+ * follow-up sent from the peek shows up at once below the reply it answers.
+ */
+function LatestExchange(props: { threadRef: ScopedThreadRef; cwd: string | undefined }) {
   const items = useQuietThreadVisibleTurnItems(props.threadRef);
-  const latest = items.findLast((entry) => entry.item.type === "assistant_message");
-  const text = useAssistantMessageText(props.threadRef, latest?.item.id);
-  if (text === null || text.trim().length === 0) return null;
+  const userIndex = items.findLastIndex((entry) => entry.item.type === "user_message");
+  const agentIndex = items.findLastIndex((entry) => entry.item.type === "assistant_message");
+  const userItem = items[userIndex]?.item;
+  const userText = userItem?.type === "user_message" ? userItem.text.trim() : "";
+  const agentText = useAssistantMessageText(props.threadRef, items[agentIndex]?.item.id)?.trim();
+  if (userText.length === 0 && !agentText) return null;
+
+  const userMessage =
+    userText.length === 0 ? null : (
+      <div key="user" className="flex flex-col items-end gap-1">
+        <span className="text-2xs font-medium text-muted-foreground">
+          <T>You</T>
+        </span>
+        <p className="max-w-5/6 rounded-xl bg-muted px-3 py-2 text-sm whitespace-pre-wrap">
+          {userText}
+        </p>
+      </div>
+    );
+  const agentMessage = !agentText ? null : (
+    <ChatMarkdown
+      key="agent"
+      text={agentText}
+      cwd={props.cwd}
+      threadRef={props.threadRef}
+      environmentId={props.threadRef.environmentId}
+      className="text-sm"
+    />
+  );
   return (
-    <section className="flex flex-col gap-1.5">
+    <section className="flex flex-col gap-3">
       <h3 className="text-xs font-semibold text-muted-foreground">
-        <T>Latest message from the agent</T>
+        <T>Latest messages</T>
       </h3>
-      <ChatMarkdown
-        text={text}
-        cwd={props.cwd}
-        threadRef={props.threadRef}
-        environmentId={props.threadRef.environmentId}
-        className="text-sm"
-      />
+      {userIndex > agentIndex ? [agentMessage, userMessage] : [userMessage, agentMessage]}
     </section>
   );
 }

@@ -81,9 +81,10 @@ drives the fake live simulation and the theme.
   diff and queued chips. Project, branch and model stay off the card (the swimlane and the peek
   carry them).
 - **Click:** opens the **peek**, a panel on the **left** of the lanes with the popover's
-  floating look, pushing the lanes aside: summary, pending request, PR checks, changed files,
-  recent activity, actions (Stop, Create/Open PR, Settle) and a composer. You stay on the board.
-  A follow-up sent while the agent runs is queued.
+  floating look, pushing the lanes aside: pending request, the latest exchange (your last
+  message and the agent's last reply, in the order sent, so a follow-up shows at once), PR,
+  changed files, recent activity, actions (Stop, Create/Open PR, Settle, Snooze) and a
+  composer. You stay on the board. A follow-up sent while the agent runs is queued.
 - **Ctrl-click (Cmd-click on macOS):** navigates to the full thread view. The peek also has
   "Open thread", and the thread view links back to the board.
 - **Keyboard:** arrows move between cards (up/down walk a lane across projects), Enter peeks,
@@ -196,7 +197,7 @@ Add new entries at the bottom: date, decision, reason.
 - **2026-11-25** Correction to the data map: the shell carries no message text, so the grey line
   is not free; it is left out until decided (open question 1).
 - **2026-11-25** No grey line on cards. Reason: the shell carries no message text, and cards
-  stay lean; the peek shows the latest message instead.
+  stay lean; the peek shows the latest exchange instead.
 - **2026-11-25** Quick actions on Needs-you cards: approve or decline (with the provider's other
   options in a menu) and one-click answers for a single single-choice question; anything richer
   opens the thread. Upstream has no single "retry", "switch model" or "fix checks" action that

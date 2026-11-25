@@ -12838,7 +12838,6 @@
   "084cdbd230901fd6": "Deine Nachricht konnte nicht gesendet werden.",
   "f20fcc56c1195909": "Folgenachricht einreihen…",
   "31edc03e0a69bc68": "Folgenachricht senden…",
-  "04a8e01a4e2ffa8b": "Letzte Nachricht des Agenten",
   "cb290ed8899e0ba7": [
     "Pull Request #",
     {
@@ -12850,5 +12849,7 @@
   ],
   "39b4070d872d2028": "Schlummern",
   "6badf1ab0be9364c": "Board öffnen",
-  "aed763efb0a6d555": "Neuer Thread"
+  "aed763efb0a6d555": "Neuer Thread",
+  "e2f5a3551c85ac34": "Du",
+  "7433207270b89442": "Neueste Nachrichten"
 }

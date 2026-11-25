@@ -12847,7 +12847,6 @@
   "084cdbd230901fd6": "Could not send your message.",
   "f20fcc56c1195909": "Queue a follow-up…",
   "31edc03e0a69bc68": "Send a follow-up…",
-  "04a8e01a4e2ffa8b": "Latest message from the agent",
   "cb290ed8899e0ba7": [
     "Open pull request #",
     {
@@ -12858,5 +12857,7 @@
   ],
   "39b4070d872d2028": "Snooze",
   "6badf1ab0be9364c": "Open board",
-  "aed763efb0a6d555": "New thread"
+  "aed763efb0a6d555": "New thread",
+  "e2f5a3551c85ac34": "You",
+  "7433207270b89442": "Latest messages"
 }

@@ -12833,7 +12833,6 @@
   "084cdbd230901fd6": "No se pudo enviar tu mensaje.",
   "f20fcc56c1195909": "Poner en cola un seguimiento…",
   "31edc03e0a69bc68": "Enviar un seguimiento…",
-  "04a8e01a4e2ffa8b": "Último mensaje del agente",
   "cb290ed8899e0ba7": [
     "Abrir pull request #",
     {
@@ -12844,5 +12843,7 @@
   ],
   "39b4070d872d2028": "Posponer",
   "6badf1ab0be9364c": "Abrir tablero",
-  "aed763efb0a6d555": "Nuevo hilo"
+  "aed763efb0a6d555": "Nuevo hilo",
+  "e2f5a3551c85ac34": "Tú",
+  "7433207270b89442": "Últimos mensajes"
 }

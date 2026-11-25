@@ -12838,7 +12838,6 @@
   "084cdbd230901fd6": "Impossible d’envoyer votre message.",
   "f20fcc56c1195909": "Mettre une relance en file…",
   "31edc03e0a69bc68": "Envoyer une relance…",
-  "04a8e01a4e2ffa8b": "Dernier message de l’agent",
   "cb290ed8899e0ba7": [
     "Ouvrir la pull request #",
     {
@@ -12849,5 +12848,7 @@
   ],
   "39b4070d872d2028": "Mettre en veille",
   "6badf1ab0be9364c": "Ouvrir le tableau",
-  "aed763efb0a6d555": "Nouveau fil"
+  "aed763efb0a6d555": "Nouveau fil",
+  "e2f5a3551c85ac34": "Vous",
+  "7433207270b89442": "Derniers messages"
 }

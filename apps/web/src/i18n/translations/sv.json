@@ -12845,7 +12845,6 @@
   "084cdbd230901fd6": "Det gick inte att skicka ditt meddelande.",
   "f20fcc56c1195909": "Köa en uppföljning…",
   "31edc03e0a69bc68": "Skicka en uppföljning…",
-  "04a8e01a4e2ffa8b": "Agentens senaste meddelande",
   "cb290ed8899e0ba7": [
     "Öppna pull request #",
     {
@@ -12856,5 +12855,7 @@
   ],
   "39b4070d872d2028": "Snooza",
   "6badf1ab0be9364c": "Öppna tavlan",
-  "aed763efb0a6d555": "Ny tråd"
+  "aed763efb0a6d555": "Ny tråd",
+  "e2f5a3551c85ac34": "Du",
+  "7433207270b89442": "Senaste meddelanden"
 }
