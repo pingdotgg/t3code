@@ -338,6 +338,12 @@ it.effect.each([
         if (cancel === "after its limit") cancelled = yield* cancelTask;
         assert.equal(cancelled, cancelStatus);
 
+        if (resumed) {
+          // A parent that is not told the child will resume replaces it and never cancels it.
+          const status = yield* service.taskStatus(scope, task.id);
+          assert.match(status.summary ?? "", /resum/i);
+        }
+
         yield* TestClock.adjust("1 minute");
         yield* sweep;
         const childAfter = yield* orchestrator.getThreadProjection(childThreadId);
