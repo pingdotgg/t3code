@@ -26,6 +26,8 @@ const API_ERROR =
   /Error (\d{3}), Message: ((?:(?!, Status: |Error \d{3}, Message: ).)+), Status: ([A-Z_]+|\d{3}[^,\n]*)/s;
 // Antigravity 1.5 with a Google account writes "STATUS (code NNN): message".
 const STATUS_ERROR = /(?<![A-Z_])([A-Z_]+) \(code (\d{3})\): (\P{Cc}+)/u;
+// Any other harness error, such as a rejected stream chunk; the harness may repeat it as "E: E".
+const HARNESS_ERROR = /agent executor error: (\P{Cc}+)/u;
 // Newer Antigravity builds attach the HTTP JSON body (pretty-printed or compact) to the error step.
 const ERROR_JSON_START = /\{\s*"error"\s*:/g;
 const decodeVerificationError = Schema.decodeUnknownOption(
@@ -154,6 +156,15 @@ function statusError(text: string) {
   return match === null ? null : ([match[0], match[2], match[3], match[1]] as const);
 }
 
+function harnessError(text: string) {
+  const line = HARNESS_ERROR.exec(text)?.[1]?.trim();
+  if (line === undefined) return undefined;
+  const half = (line.length - 2) / 2;
+  return line.slice(half, half + 2) === ": " && line.slice(0, half) === line.slice(half + 2)
+    ? line.slice(0, half)
+    : line;
+}
+
 function balancedJsonObject(text: string, start: number): string | undefined {
   let depth = 0;
   let inString = false;
@@ -256,7 +267,7 @@ function turnFailure(
     return reusable(
       makeProviderFailure({
         class: "provider_error",
-        message: "Antigravity stopped this turn because of an error.",
+        message: harnessError(text) ?? "Antigravity stopped this turn because of an error.",
       }),
     );
   }
