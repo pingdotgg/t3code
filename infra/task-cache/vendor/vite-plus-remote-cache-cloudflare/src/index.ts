@@ -1,5 +1,4 @@
 import { authorize, githubKeys, type WriteIdentity } from './auth.ts';
-import { cborResponse } from './cbor.ts';
 import { cleanup, getScope, selectBlob } from './database.ts';
 import { errorResponse, HttpError, unavailable } from './errors.ts';
 import { fetchMetadata } from './fetch.ts';
@@ -47,25 +46,17 @@ export default {
         scopeId = route[1]!;
         operation = route[2]!.startsWith('blob/') ? 'blob' : route[2]!;
       }
-      const limiter =
-        operation === 'store' || url.pathname.endsWith('/store')
-          ? env.STORE_LIMITER
-          : env.READ_LIMITER;
-      const rateLimit = await deadline.run(
-        limiter.limit({ key: known ? `${scopeId}:${operation}` : 'unknown' }),
-      );
-      if (!rateLimit.success) throw new HttpError(429, 'rate_limit');
       if (!known || url.search || request.method !== (operation === 'blob' ? 'GET' : 'POST'))
         throw new HttpError(404, 'unknown_route');
-      release = admission.acquire(operation === 'store');
+      release = await admission.acquire(operation === 'store', deadline.abortSignal);
       const scope = await deadline.run(getScope(env.INDEX, scopeId, stats));
       if (operation === 'store') {
         identity = await deadline.run(authorize(request, scope, keys));
         response = await store(request, env, ctx, scope, identity, limits, deadline, stats);
         outcome = 'stored';
       } else if (operation === 'fetch') {
-        const result = await fetchMetadata(request, env, scopeId, limits, deadline, stats);
-        response = cborResponse(result);
+        const result = await fetchMetadata(request, env, ctx, scopeId, limits, deadline, stats);
+        response = result.response;
         outcome = result.kind;
       } else {
         const selected = await deadline.run(selectBlob(env.INDEX, scopeId, route[3]!, stats));
