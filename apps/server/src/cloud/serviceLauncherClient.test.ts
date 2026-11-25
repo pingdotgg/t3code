@@ -7,7 +7,9 @@ import { assert, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
@@ -145,6 +147,64 @@ it.effect.each([3, SERVICE_LAUNCHER_PROTOCOL])(
       const restartedClient = yield* makeClient(restarted, "1.1.0");
       expect(yield* restartedClient.prepareTrial({ baseDir })).toEqual(committed);
       assert.equal(yield* fs.readLink(installed), exe("1.0.0"));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// regression: #42653 an older launcher can commit durably but reply after the 30-second wait
+it.effect.each([
+  { status: "committed" as const, continues: true },
+  { status: "pending" as const, continues: false },
+])(
+  "after an unanswered prepared, a $status service state decides the trial",
+  ({ status, continues }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-trial-timeout-" });
+      const baseDir = path.join(root, ".t3");
+      const pending = {
+        id: "update-1",
+        fromVersion: "1.0.0",
+        targetVersion: "1.1.0",
+        dbPath: "/tmp/state.sqlite",
+        status: "pending" as const,
+      };
+      const committed = {
+        id: pending.id,
+        fromVersion: pending.fromVersion,
+        targetVersion: pending.targetVersion,
+        status: "committed" as const,
+      };
+      yield* fs.makeDirectory(path.join(baseDir, "runtime"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(baseDir, "runtime", "service-state.json"),
+        JSON.stringify(
+          status === "committed"
+            ? { protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion: "1.1.0", update: committed }
+            : { protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion: "1.0.0", update: pending },
+        ),
+      );
+      const host = new FakeLauncherProcess({
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        childVersion: "1.1.0",
+        update: pending,
+      });
+      host.env["HOME"] = root;
+      const client = yield* makeClient(host, "1.1.0").pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+      );
+      const prepared = yield* Effect.forkChild(Effect.exit(client.prepareTrial({ baseDir })), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust("30 seconds");
+      const exit = yield* Fiber.join(prepared);
+      if (continues) {
+        expect(exit).toEqual(Exit.succeed(committed));
+      } else {
+        expect(exit).toEqual(
+          Exit.fail(new ServiceLauncherClient.ServiceLauncherClientError({ operation: "timeout" })),
+        );
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
