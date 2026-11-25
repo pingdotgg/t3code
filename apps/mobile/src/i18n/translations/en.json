@@ -5699,5 +5699,11 @@
   "1a1beecff68a6e61": "Verify Google account",
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
-  "201490988858b511": "withdrawn by {by}"
+  "201490988858b511": "withdrawn by {by}",
+  "098549c08bf45d23": "5h",
+  "af4bf3c8cde6720c": "12h",
+  "8f126b32d299db76": "180d",
+  "deb55022bc10a6d6": "Past 5 hours",
+  "65fef2cf613dd798": "Past 12 hours",
+  "fca7cf4e1ffd7cad": "Past 180 days"
 }

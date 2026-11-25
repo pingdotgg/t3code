@@ -112,10 +112,13 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "usage.cost",
   "usage.tokens",
   "usage.limits",
+  "usage.period.5h",
+  "usage.period.12h",
   "usage.period.day",
   "usage.period.week",
   "usage.period.month",
   "usage.period.quarter",
+  "usage.period.180d",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;

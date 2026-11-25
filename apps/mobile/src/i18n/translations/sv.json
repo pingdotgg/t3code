@@ -5697,5 +5697,11 @@
   "1a1beecff68a6e61": "Verifiera Google-konto",
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
-  "201490988858b511": "återkallad av {by}"
+  "201490988858b511": "återkallad av {by}",
+  "098549c08bf45d23": "5 h",
+  "af4bf3c8cde6720c": "12 h",
+  "8f126b32d299db76": "180 d",
+  "deb55022bc10a6d6": "Senaste 5 timmarna",
+  "65fef2cf613dd798": "Senaste 12 timmarna",
+  "fca7cf4e1ffd7cad": "Senaste 180 dagarna"
 }

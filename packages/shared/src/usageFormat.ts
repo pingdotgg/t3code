@@ -288,8 +288,29 @@ export function formatRelativeHourShort(
   return formatDateTimeShort(hourStart, timeZone, hour12, locale);
 }
 
+export const USAGE_WINDOW_IDS = ["5h", "12h", "24h", "7d", "30d", "90d", "180d"] as const;
+export type UsageWindowId = (typeof USAGE_WINDOW_IDS)[number];
+
+const USAGE_WINDOW_SPECS: Record<
+  UsageWindowId,
+  { readonly duration: number; readonly resolution: UsageResolution }
+> = {
+  "5h": { duration: 5, resolution: "hour" },
+  "12h": { duration: 12, resolution: "hour" },
+  "24h": { duration: 24, resolution: "hour" },
+  "7d": { duration: 7, resolution: "day" },
+  "30d": { duration: 30, resolution: "day" },
+  "90d": { duration: 90, resolution: "day" },
+  "180d": { duration: 180, resolution: "day" },
+};
+
+export function makeUsageWindow(id: UsageWindowId, now = new Date()): UsageSummaryInput {
+  const { duration, resolution } = USAGE_WINDOW_SPECS[id];
+  return makeWindow(duration, now, resolution);
+}
+
 export function makeWindow(
-  days: number,
+  duration: number,
   now = new Date(),
   resolution: UsageResolution = "day",
 ): UsageSummaryInput {
@@ -314,7 +335,7 @@ export function makeWindow(
   const untilDay = format.format(now);
   if (resolution === "hour") {
     const untilTimeMs = Math.floor(now.getTime() / 60_000) * 60_000;
-    const sinceTimeMs = untilTimeMs - 24 * HOUR_MS;
+    const sinceTimeMs = untilTimeMs - duration * HOUR_MS;
     const sinceTime = new Date(sinceTimeMs);
     const untilTime = new Date(untilTimeMs);
     return {
@@ -330,7 +351,7 @@ export function makeWindow(
   const [year = 0, month = 1, dayOfMonth = 1] = untilDay
     .split("-")
     .map((part) => Number.parseInt(part, 10));
-  const start = new Date(Date.UTC(year, month - 1, dayOfMonth - (days - 1)));
+  const start = new Date(Date.UTC(year, month - 1, dayOfMonth - (duration - 1)));
   return {
     sinceDay: UsageDay.make(start.toISOString().slice(0, 10)),
     untilDay: UsageDay.make(untilDay),

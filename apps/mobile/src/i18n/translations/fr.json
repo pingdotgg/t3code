@@ -5691,5 +5691,11 @@
   "1a1beecff68a6e61": "Vérifier le compte Google",
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
-  "201490988858b511": "retirée par {by}"
+  "201490988858b511": "retirée par {by}",
+  "098549c08bf45d23": "5 h",
+  "af4bf3c8cde6720c": "12 h",
+  "8f126b32d299db76": "180 j",
+  "deb55022bc10a6d6": "Dernières 5 heures",
+  "65fef2cf613dd798": "Dernières 12 heures",
+  "fca7cf4e1ffd7cad": "180 derniers jours"
 }
