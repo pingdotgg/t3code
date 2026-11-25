@@ -16,7 +16,9 @@ it.each([204, 404, "offline"] as const)(
       { model: { api: "openai-completions" }, ui: { notify: assert.fail } },
     );
 
-    assert.deepEqual(bridge.sessionTerminationAttempts, ["1"]);
+    assert.deepEqual(bridge.sessionTerminationAttempts, [
+      { sessionId: "1", authorization: "Bearer fixture-token" },
+    ]);
     assert.include(bridge.getActiveTools(), "tool_search");
     assert.notInclude(bridge.getActiveTools(), "mcp__t3_code__orchestrator_capabilities");
     const result = await bridge.callModelTool("mcp__t3-code__preview_snapshot", {});

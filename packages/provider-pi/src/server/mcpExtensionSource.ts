@@ -220,14 +220,14 @@ function createMcpClient(endpoint: string, token: string) {
   };
 
   return {
-    async connect(signal: AbortSignal) {
+    async closePreviousSession() {
       if (sessionId !== undefined) {
         // Release the previous session if discovery failed after initialize.
         try {
           const response = await fetch(endpoint, {
             method: "DELETE",
             headers: headers(),
-            signal: AbortSignal.any([signal, AbortSignal.timeout(1_000)]),
+            signal: AbortSignal.timeout(1_000),
           });
           await response.body?.cancel();
         } catch {
@@ -235,6 +235,8 @@ function createMcpClient(endpoint: string, token: string) {
         }
         sessionId = undefined;
       }
+    },
+    async connect(signal: AbortSignal) {
       await request(
         "initialize",
         {
@@ -484,6 +486,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   const ensureStarted = () => {
     if (started !== undefined) return started;
     const attempt = (async () => {
+      await client.closePreviousSession();
       const signal = AbortSignal.timeout(10_000);
       await client.connect(signal);
       catalog = await client.listTools(signal);

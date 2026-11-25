@@ -71,7 +71,10 @@ export async function loadMcpBridge(
   const requests: Array<{ readonly method: string; readonly params?: unknown }> = [];
   let activeTools = ["read"];
   let session = 0;
-  const sessionTerminationAttempts: string[] = [];
+  const sessionTerminationAttempts: Array<{
+    readonly sessionId: string | undefined;
+    readonly authorization: string | undefined;
+  }> = [];
   let bridgeSourcePath = "/fixture/pi-t3-extension.ts";
   const transports: Array<{
     readonly url: string;
@@ -133,7 +136,10 @@ export async function loadMcpBridge(
       });
       const sessionId = transport.headers["mcp-session-id"];
       if (transport.method === "DELETE") {
-        sessionTerminationAttempts.push(sessionId!);
+        sessionTerminationAttempts.push({
+          sessionId,
+          authorization: transport.headers.authorization,
+        });
         const deleteResult = options.startupRetry?.deleteResult ?? 204;
         if (deleteResult === "offline") throw new Error("Network unavailable");
         return new Response(null, { status: deleteResult });
