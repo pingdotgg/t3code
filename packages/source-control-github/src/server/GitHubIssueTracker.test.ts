@@ -137,6 +137,24 @@ const NO_STATUSES = {
   },
 };
 
+/** A detail answer as the github.com query gets it, with the repository's statuses folded in. */
+function withStatuses(
+  detail: string,
+  statusRead: { readonly planningStatuses: unknown; readonly issue: object },
+) {
+  const data = JSON.parse(detail).data;
+  return {
+    data: {
+      ...data,
+      repository: {
+        ...data.repository,
+        planningStatuses: statusRead.planningStatuses,
+        issue: { ...data.repository.issue, ...statusRead.issue },
+      },
+    },
+  };
+}
+
 const decodeVariables = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({
@@ -213,7 +231,9 @@ function tracker(onRequest: (variables: unknown) => void, templateRepository?: u
                       },
                     },
                   })
-                : DETAIL_RESPONSE;
+                : query.includes("query IssueDetailWithStatus")
+                  ? JSON.stringify(withStatuses(DETAIL_RESPONSE, NO_STATUSES.data.repository))
+                  : DETAIL_RESPONSE;
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -462,8 +482,11 @@ describe("GitHubIssueTracker", () => {
         if (request.url === "https://api.github.com/graphql") {
           const { query, variables } = decodeVariables(text);
           const operation = query.match(/(?:query|mutation)\s+(\w+)/)?.[1];
-          if (operation === "IssueDetail") {
-            response = fixture;
+          if (operation === "IssueDetailWithStatus") {
+            response = withStatuses(JSON.stringify(fixture), {
+              planningStatuses,
+              issue: { viewerCanSetStatus: false, status: planningStatuses.nodes[1] },
+            });
           } else if (operation === "IssueStatuses") {
             response = {
               data: {
@@ -566,23 +589,29 @@ describe("GitHubIssueTracker", () => {
     }),
   );
 
-  it.effect("lists issues without statuses when GitHub refuses the status fields", () =>
+  it.effect("lists and reads issues without statuses when GitHub refuses the status fields", () =>
     Effect.gen(function* () {
       const operations: string[] = [];
+      const page = { hasNextPage: false, endCursor: null };
+      const detail = JSON.parse(DETAIL_RESPONSE);
+      Object.assign(detail.data.repository.issue, {
+        labels: { pageInfo: page, nodes: [] },
+        closedByPullRequestsReferences: { pageInfo: page, nodes: [] },
+      });
       const http = HttpClient.make((request) => {
         if (request.body._tag !== "Uint8Array") return Effect.die("Expected a JSON request.");
         const { query } = decodeVariables(new TextDecoder().decode(request.body.body));
         const operation = query.match(/query\s+(\w+)/)?.[1] ?? "";
         operations.push(operation);
         const body =
-          operation === "IssueSearchWithStatus"
+          operation === "IssueSearchWithStatus" || operation === "IssueDetailWithStatus"
             ? {
                 data: null,
                 errors: [{ message: "Field 'status' doesn't exist on type 'Issue'" }],
               }
-            : {
-                data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } },
-              };
+            : operation === "IssueDetail"
+              ? detail
+              : { data: { search: { pageInfo: page, nodes: [] } } };
         return Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
@@ -603,7 +632,23 @@ describe("GitHubIssueTracker", () => {
         limit: 10,
       });
       expect(listing.items).toEqual([]);
-      expect(operations).toEqual(["IssueSearchWithStatus", "IssueSearch"]);
+      const issue = yield* api.getIssue({
+        cwd: "/w",
+        host: "github.com",
+        scope: "acme/web",
+        key: "42",
+      });
+      expect(issue.state).toEqual({
+        category: "closed",
+        name: "Duplicate",
+        closeReason: "duplicate",
+      });
+      expect(operations).toEqual([
+        "IssueSearchWithStatus",
+        "IssueSearch",
+        "IssueDetailWithStatus",
+        "IssueDetail",
+      ]);
     }),
   );
 
