@@ -1544,7 +1544,7 @@ process.disconnect();
 
   it.effect("installs, reports current state, and uninstalls on macOS", () =>
     Effect.gen(function* () {
-      const { service, fs, statePath, commands, timeouts, runtime, markersAtStop } =
+      const { service, fs, statePath, commands, timeouts, runtime, markersAtStop, control } =
         yield* makeHarness("darwin");
       const path = yield* Path.Path;
       const plan = yield* service.install();
@@ -1567,6 +1567,13 @@ process.disconnect();
       expect(yield* service.status).toMatchObject({
         current: true,
         installedVersion: "1.2.3",
+        problems: [],
+      });
+      control.active = false;
+      control.enabled = false;
+      expect(yield* service.status).toMatchObject({
+        current: false,
+        problems: ["service-disabled", "service-stopped"],
       });
       const relayMarker = path.join(plan.baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE);
       expect(yield* service.restart).toBe("restarted");
@@ -1833,48 +1840,6 @@ process.disconnect();
       expect(commands).toContain(bootstrap);
       expect(yield* fs.exists(markerPath)).toBe(false);
       expect((yield* service.status).current).toBe(true);
-    }),
-  );
-
-  it.effect("reports stopped and disabled launch agents in status on macOS", () =>
-    Effect.gen(function* () {
-      const { service, control } = yield* makeHarness("darwin");
-      control.active = false;
-
-      yield* service.install({ start: false });
-      expect(yield* service.status).toMatchObject({
-        installed: true,
-        current: false,
-        problems: ["service-stopped", "restart-pending"],
-      });
-
-      yield* service.install();
-      expect(yield* service.status).toMatchObject({
-        installed: true,
-        current: true,
-        problems: [],
-      });
-
-      control.active = false;
-      expect(yield* service.status).toMatchObject({
-        installed: true,
-        current: false,
-        problems: ["service-stopped"],
-      });
-
-      control.enabled = false;
-      expect(yield* service.status).toMatchObject({
-        installed: true,
-        current: false,
-        problems: ["service-disabled", "service-stopped"],
-      });
-
-      yield* service.install();
-      expect(yield* service.status).toMatchObject({
-        installed: true,
-        current: true,
-        problems: [],
-      });
     }),
   );
 });

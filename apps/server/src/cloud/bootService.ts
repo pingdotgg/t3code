@@ -1140,8 +1140,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     );
     const problems: BootServiceProblem[] = [];
     if (
-      succeeded(disabled) &&
       Option.isSome(disabled) &&
+      disabled.value.code === 0 &&
       // Older macOS versions print `true` instead of `disabled`.
       (disabled.value.stdout.includes(`"${BOOT_SERVICE_LAUNCHD_LABEL}" => disabled`) ||
         disabled.value.stdout.includes(`"${BOOT_SERVICE_LAUNCHD_LABEL}" => true`))
