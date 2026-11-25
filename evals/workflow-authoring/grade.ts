@@ -13,6 +13,8 @@ import * as Stream from "effect/Stream";
 
 import WorkflowsMigration from "../../apps/server/src/persistence/Migrations/110_Workflows.ts";
 import WorkflowRunTagsMigration from "../../apps/server/src/persistence/Migrations/115_WorkflowRunTags.ts";
+import WorkflowMailSenderMigration from "../../apps/server/src/persistence/Migrations/117_WorkflowMailSender.ts";
+import WorkflowPoolsMigration from "../../apps/server/src/persistence/Migrations/118_WorkflowPools.ts";
 import type { WorkflowDefinition } from "../../apps/server/src/workflows/workflow.ts";
 import {
   type AgentResult,
@@ -75,7 +77,14 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
   const path = yield* Path.Path;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflow-eval-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
-  yield* Effect.provide(Effect.andThen(WorkflowsMigration, WorkflowRunTagsMigration), database);
+  yield* Effect.provide(
+    WorkflowsMigration.pipe(
+      Effect.andThen(WorkflowRunTagsMigration),
+      Effect.andThen(WorkflowMailSenderMigration),
+      Effect.andThen(WorkflowPoolsMigration),
+    ),
+    database,
+  );
   const turns: Array<AgentTurnInput> = [];
   const asked = new Map<string, AgentTurnInput>();
   const agents = WorkflowAgents.of({

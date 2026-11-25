@@ -96,7 +96,14 @@ export class Workflows extends Context.Service<
     readonly signal: (
       address: WorkflowStore.SignalAddress,
       value: Schema.Json,
-      options: { readonly id: string; readonly ttl?: Duration.Input },
+      options: {
+        readonly id: string;
+        readonly ttl?: Duration.Input;
+        /** Who sent it, kept with an answer to a question. */
+        readonly answeredBy?: string | undefined;
+        /** The client session that sent it, where one did. A name is shared; this is not. */
+        readonly answeredBySession?: string | undefined;
+      },
     ) => Effect.Effect<"delivered" | "buffered", WorkflowInputError>;
     /**
      * Answer the question a run asks a person. One answer per time it is asked: a second, a
@@ -106,10 +113,21 @@ export class Workflows extends Context.Service<
       runId: string,
       name: string,
       value: Schema.Json,
+      /** Who answered, as the server knows them; kept with the answer. */
+      answeredBy?: { readonly label: string; readonly sessionId?: string | undefined },
     ) => Effect.Effect<void, WorkflowInputError>;
     /** Run a paused run's failed step again. */
     readonly resume: (runId: string) => Effect.Effect<void, WorkflowError>;
     readonly cancel: (runId: string, reason?: string) => Effect.Effect<void, WorkflowError>;
+    /**
+     * End a run's open question unanswered, as its timeout would: its `ask` returns `None` and the
+     * run goes on. `not_open` when the question was answered, timed out or never asked.
+     */
+    readonly withdraw: (
+      runId: string,
+      name: string,
+      options: { readonly by: string; readonly reason?: string | undefined },
+    ) => Effect.Effect<"withdrawn" | "not_open", WorkflowError>;
     readonly get: (runId: string) => Effect.Effect<
       {
         readonly run: WorkflowStore.WorkflowRun;
@@ -183,6 +201,7 @@ export const disabled = Workflows.of({
   answer: refuse,
   resume: refuse,
   cancel: refuse,
+  withdraw: refuse,
   get: Effect.fn("Workflows.get")(function* (runId) {
     return yield* new WorkflowRunNotFoundError({ runId });
   }),
@@ -239,6 +258,7 @@ export const off = Workflows.of({
   answer: refuseOff,
   resume: refuseOff,
   cancel: refuseOff,
+  withdraw: refuseOff,
   get: refuseOff,
   list: refuseOff,
   questions: refuseOff(),
