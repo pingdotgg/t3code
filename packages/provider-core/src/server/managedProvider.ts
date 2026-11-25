@@ -341,9 +341,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     snapshot.installed &&
     snapshot.status === "ready" &&
     snapshot.auth.status === "authenticated" &&
-    (input.pollUsageLimits === true
-      ? snapshot.usageLimits?.unavailable?.reason !== "unsupported"
-      : snapshot.usageLimits?.unavailable?.reason === "probeFailed");
+    (input.pollUsageLimits === true || snapshot.usageLimits?.unavailable?.reason === "probeFailed");
 
   const needsProviderRefresh = (snapshot: ServerProvider) =>
     input.refreshOnInterval !== false &&

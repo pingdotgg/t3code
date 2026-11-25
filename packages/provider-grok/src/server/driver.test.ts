@@ -286,7 +286,6 @@ it.layer(layerTest)("GrokDriver", (it) => {
   );
 });
 
-const billedPercents: Array<number> = [];
 const layerUsageTest = TestProviderHost.layer().pipe(
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(IdAllocator.layer),
@@ -296,21 +295,6 @@ const layerUsageTest = TestProviderHost.layer().pipe(
     Layer.succeed(
       ProviderEventLoggers.ProviderEventLoggers,
       ProviderEventLoggers.NoOpProviderEventLoggers,
-    ),
-  ),
-  Layer.provideMerge(
-    Layer.succeed(
-      HttpClient.HttpClient,
-      HttpClient.make((request) =>
-        Effect.succeed(
-          request.url === GROK_USAGE_URL
-            ? HttpClientResponse.fromWeb(
-                request,
-                Response.json({ config: { creditUsagePercent: billedPercents.shift() } }),
-              )
-            : HttpClientResponse.fromWeb(request, new Response(null, { status: 404 })),
-        ),
-      ),
     ),
   ),
 );
@@ -356,7 +340,18 @@ it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
             `await import(pathToFileURL(${JSON.stringify(agentPath)}).href);`,
           ].join("\n"),
         });
-        billedPercents.splice(0, billedPercents.length, 97, 9);
+        const billedPercents = [97, 9];
+        // Only Grok's billing endpoint answers; version advisories see an unknown latest version.
+        const httpClient = HttpClient.make((request) =>
+          Effect.succeed(
+            request.url === GROK_USAGE_URL
+              ? HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({ config: { creditUsagePercent: billedPercents.shift() } }),
+                )
+              : HttpClientResponse.fromWeb(request, new Response(null, { status: 404 })),
+          ),
+        );
 
         const instance = yield* GrokDriver.create({
           instanceId: ProviderInstanceId.make("grok-usage"),
@@ -367,7 +362,7 @@ it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
             { name: "XAI_API_KEY", value: "", sensitive: false },
           ],
           config: { ...GrokDriver.defaultConfig(), binaryPath },
-        });
+        }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
         const usedPercent = (percent: number) =>
           instance.snapshot.streamChanges.pipe(
             Stream.filter(
