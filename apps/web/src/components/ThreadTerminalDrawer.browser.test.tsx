@@ -5,6 +5,7 @@ import {
 import {
   EnvironmentId,
   ThreadId,
+  TerminalProcessChangedError,
   type ScopedThreadRef,
   type FilesystemEntryMetadata,
   type ResolvedKeybindingsConfig,
@@ -23,6 +24,7 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 
 const fixture = vi.hoisted(() => ({
   statusByThreadId: new Map<string, "starting" | "running" | "exited">(),
+  supportsConditionalWrites: true,
   pendingSurfaces: [] as Array<() => void>,
   typeIntoSurface: null as ((data: string) => void) | null,
   pressKey: null as ((event: KeyboardEvent) => boolean) | null,
@@ -39,7 +41,8 @@ const fixture = vi.hoisted(() => ({
   surfaceOptions: [] as GhosttyTerminalSurfaceOptions[],
   reportedSize: null as { cols: number; rows: number } | null,
   resizeCommand: {},
-  runWrite: (): Promise<{ _tag: "Success" }> => Promise.resolve({ _tag: "Success" }),
+  runWrite: (): Promise<{ _tag: "Success" } | AsyncResult.Failure<void, unknown>> =>
+    Promise.resolve({ _tag: "Success" }),
   runResize: (_input: unknown): Promise<AsyncResult.AsyncResult<unknown, unknown>> =>
     Promise.resolve(AsyncResult.success(undefined)),
   metadata: new Map<
@@ -98,6 +101,7 @@ vi.mock("../state/terminalSessions", async () => {
       ...EMPTY_TERMINAL_SESSION_STATE,
       summary: summary(threadId, 123),
       pid: 123,
+      supportsConditionalWrites: fixture.supportsConditionalWrites,
       status: fixture.statusByThreadId.get(threadId) ?? "closed",
       version: 1,
     });
@@ -137,6 +141,7 @@ vi.mock("../state/terminalSessions", async () => {
           worktreePath: null,
           status: "running",
           pid,
+          supportsConditionalWrites: fixture.supportsConditionalWrites,
           history: "",
           exitCode: null,
           exitSignal: null,
@@ -270,6 +275,7 @@ function setup(originalStatus: "starting" | "exited" = "exited") {
   fixture.reportedSize = null;
   fixture.runResize = () => Promise.resolve(AsyncResult.success(undefined));
   fixture.runWrite = () => Promise.resolve({ _tag: "Success" });
+  fixture.supportsConditionalWrites = true;
   fixture.metadata.clear();
   useRightPanelStore.setState(useRightPanelStore.getInitialState());
   useTerminalUiStateStore.setState(useTerminalUiStateStore.getInitialState());
@@ -455,10 +461,16 @@ it("drops the rest of a split paste when the shell restarts mid-paste", async ()
   expect(fixture.writes.map(({ data }) => data.length)).toEqual([65_536, 5]);
 });
 
-it.each([123, 456])(
-  "targets the original process when a new attachment snapshot reports PID %i",
-  async (pid) => {
+it.each([
+  { pid: 123, guarded: true, recovers: true },
+  { pid: 456, guarded: true, recovers: true },
+  { pid: 123, guarded: false, recovers: true },
+  { pid: 456, guarded: false, recovers: false },
+])(
+  "recovers interrupted paste with conditional writes $guarded and attachment PID $pid",
+  async ({ pid, guarded, recovers }) => {
     const { other: threadRef } = setup();
+    fixture.supportsConditionalWrites = guarded;
     let settleWrite = () => {};
     fixture.runWrite = () =>
       new Promise((resolve) => {
@@ -483,13 +495,37 @@ it.each([123, 456])(
     expect(
       fixture.messages.filter((message) => message.includes("paste interrupted")),
     ).toHaveLength(1);
-    expect(fixture.writes).toEqual([
-      { threadId: threadRef.threadId, data: large.slice(0, 65_536) },
-      { threadId: threadRef.threadId, data: "\x1b[201~", expectedPid: 123 },
-      { threadId: threadRef.threadId, data: "after" },
+    const identity = guarded ? { expectedPid: 123 } : {};
+    expect(fixture.writes.map(({ threadId: _, ...write }) => write)).toEqual([
+      { data: large.slice(0, 65_536), ...identity },
+      ...(recovers ? [{ data: "\x1b[201~", ...identity }] : []),
+      { data: "after" },
     ]);
   },
 );
+
+it.each([1, 2])("stops a split paste when the server rejects chunk %i", async (rejectedChunk) => {
+  const { other: threadRef } = setup();
+  fixture.runWrite = async () =>
+    fixture.writes.length === rejectedChunk || fixture.writes.at(-1)?.data === "\x1b[201~"
+      ? AsyncResult.failure(Cause.fail(new TerminalProcessChangedError()))
+      : { _tag: "Success" };
+  await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  const paste = `\x1b[200~${"p".repeat(140_000)}\x1b[201~`;
+  await act(async () => {
+    fixture.typeIntoSurface?.(paste);
+    fixture.typeIntoSurface?.("after");
+  });
+  const attempted = [paste.slice(0, 65_536)];
+  if (rejectedChunk > 1) attempted.push(paste.slice(65_536, 131_072), "\x1b[201~");
+  expect(fixture.writes.map(({ data, expectedPid }) => ({ data, expectedPid }))).toEqual([
+    ...attempted.map((data) => ({ data, expectedPid: 123 })),
+    { data: "after", expectedPid: undefined },
+  ]);
+});
 
 it("closes an interrupted paste after disposal before input from a remounted view", async () => {
   const { other: threadRef } = setup();

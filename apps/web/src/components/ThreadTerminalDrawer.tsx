@@ -29,6 +29,7 @@ import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
+  TerminalProcessChangedError,
   type ContextMenuItem,
   type ProviderInstanceId,
   type ResolvedKeybindingsConfig,
@@ -963,12 +964,16 @@ function TerminalSessionViewport({
       };
 
       const canWriteInput = () => readEnvironmentScope(environmentId, AuthTerminalOperateScope);
-      const writeInputChunk = (data: string, kind?: "binary" | "reply") =>
+      const writeInputChunk = (data: string, kind?: "binary" | "reply", expectedPid?: number) =>
         retainedTerminalWrite.current({
           environmentId,
-          input: kind
-            ? { threadId, terminalId, data, [kind]: true }
-            : { threadId, terminalId, data },
+          input: {
+            threadId,
+            terminalId,
+            data,
+            ...(kind === undefined ? {} : { [kind]: true }),
+            ...(expectedPid === undefined ? {} : { expectedPid }),
+          },
         });
       const sendTerminalInput = (
         data: string,
@@ -992,7 +997,7 @@ function TerminalSessionViewport({
         };
         return writeInput(
           data,
-          async (chunk) => {
+          async (chunk, bracketed) => {
             if (terminalRef.current !== terminal) return "not-dispatched";
             const currentSession = appAtomRegistry.get(terminalSessionAtom);
             if (
@@ -1001,10 +1006,14 @@ function TerminalSessionViewport({
             ) {
               return "not-dispatched";
             }
-            const result = await writeInputChunk(chunk, kind);
+            const expectedPid =
+              bracketed && session.supportsConditionalWrites ? session.pid : undefined;
+            if (expectedPid === null) return "not-dispatched";
+            const result = await writeInputChunk(chunk, kind, expectedPid);
             if (result._tag === "Success") return true;
+            const error = squashAtomCommandFailure(result);
+            if (error instanceof TerminalProcessChangedError) return "not-dispatched";
             if (terminalRef.current === terminal && !isAtomCommandInterrupted(result)) {
-              const error = squashAtomCommandFailure(result);
               report(thrownErrorMessage(error, m) ?? fallbackError);
             }
             return false;
@@ -1013,13 +1022,29 @@ function TerminalSessionViewport({
           async () => {
             if (session.pid === null) return true;
             if (!canWriteInput()) return false;
-            const result = await retainedTerminalWrite.current({
-              environmentId,
-              input: { threadId, terminalId, data: "\x1b[201~", expectedPid: session.pid },
-            });
+            if (!session.supportsConditionalWrites) {
+              const current =
+                terminalRef.current === terminal
+                  ? appAtomRegistry.get(terminalSessionAtom)
+                  : AsyncResult.getOrElse(
+                      appAtomRegistry.get(
+                        terminalEnvironment.metadata({ environmentId, input: null }),
+                      ),
+                      () => [],
+                    ).find((item) => item.threadId === threadId && item.terminalId === terminalId);
+              if (current?.pid == null) return false;
+              if (current.pid !== session.pid || current.status === "exited") return true;
+              if (current.status !== "running") return false;
+            }
+            const result = await writeInputChunk(
+              "\x1b[201~",
+              undefined,
+              session.supportsConditionalWrites ? session.pid : undefined,
+            );
             if (result._tag === "Success") return true;
+            const error = squashAtomCommandFailure(result);
+            if (error instanceof TerminalProcessChangedError) return true;
             if (!isAtomCommandInterrupted(result)) {
-              const error = squashAtomCommandFailure(result);
               report(thrownErrorMessage(error, m) ?? m(msg("Failed to close interrupted paste")));
             }
             return false;
