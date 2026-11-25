@@ -12821,5 +12821,21 @@
   "1494b7c1d04e0d46": "Tavlan är tom. Trådar som arbetar, väntar på dig eller är klara visas här.",
   "6346a23d8d447014": "Lägger till en tavla med alla trådar längst ned i sidofältet. Trådarna flyttar själva mellan Behöver dig, Arbetar och Klar, grupperade per projekt.",
   "cb65b071f68809cc": "Trådtavla",
-  "c662a9233320e2a3": "beta kanban kolumner banor översikt behöver dig arbetar klar"
+  "c662a9233320e2a3": "beta kanban kolumner banor översikt behöver dig arbetar klar",
+  "aa14acb0ea65d943": "Kontroller körs",
+  "ed6de08d060de82d": "Kontroller godkända",
+  "c12b82206b5d49d5": "Det gick inte att skicka ditt svar.",
+  "3309c31b04fa9b11": "Ett gästmeddelande väntar på att du skickar eller avvisar det.",
+  "280ddac5f0bacdee": "Användningsgränsen är nådd.",
+  "6eefe92669568985": [
+    "Användningsgränsen är nådd. Återställs",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "30e5685f395a35b8": "Öppna pull request"
 }

@@ -12814,5 +12814,21 @@
   "1494b7c1d04e0d46": "O quadro está vazio. Threads em andamento, esperando por você ou prontas aparecem aqui.",
   "6346a23d8d447014": "Adiciona ao rodapé da barra lateral um quadro com todas as threads. As threads passam sozinhas entre Precisa de você, Trabalhando e Pronta, agrupadas por projeto.",
   "cb65b071f68809cc": "Quadro de threads",
-  "c662a9233320e2a3": "beta kanban colunas raias visão geral precisa de você trabalhando pronta"
+  "c662a9233320e2a3": "beta kanban colunas raias visão geral precisa de você trabalhando pronta",
+  "aa14acb0ea65d943": "Verificações em andamento",
+  "ed6de08d060de82d": "Verificações aprovadas",
+  "c12b82206b5d49d5": "Não foi possível enviar sua resposta.",
+  "3309c31b04fa9b11": "Uma mensagem de convidado aguarda você enviar ou descartar.",
+  "280ddac5f0bacdee": "Limite de uso atingido.",
+  "6eefe92669568985": [
+    "Limite de uso atingido. Redefine",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "30e5685f395a35b8": "Abrir pull request"
 }

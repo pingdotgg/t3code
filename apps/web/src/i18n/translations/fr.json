@@ -12814,5 +12814,21 @@
   "1494b7c1d04e0d46": "Le tableau est vide. Les fils en cours, ceux qui attendent une action de votre part et ceux qui sont terminés apparaissent ici.",
   "6346a23d8d447014": "Ajoute en bas de la barre latérale un tableau de tous les fils. Les fils passent d’eux-mêmes entre Pour vous, En cours et Terminé, regroupés par projet.",
   "cb65b071f68809cc": "Tableau des fils",
-  "c662a9233320e2a3": "bêta kanban colonnes couloirs vue d’ensemble pour vous en cours terminé"
+  "c662a9233320e2a3": "bêta kanban colonnes couloirs vue d’ensemble pour vous en cours terminé",
+  "aa14acb0ea65d943": "Vérifications en cours",
+  "ed6de08d060de82d": "Vérifications réussies",
+  "c12b82206b5d49d5": "Impossible d’envoyer votre réponse.",
+  "3309c31b04fa9b11": "Un message d’invité attend que vous l’envoyiez ou le rejetiez.",
+  "280ddac5f0bacdee": "Limite d’utilisation atteinte.",
+  "6eefe92669568985": [
+    "Limite d’utilisation atteinte. Réinitialisation",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "30e5685f395a35b8": "Ouvrir la pull request"
 }
