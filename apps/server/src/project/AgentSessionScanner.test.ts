@@ -1419,6 +1419,55 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("attributes a Pi session only to its complete header workspace", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-01-01T00:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const piAgentDir = yield* makeTempDir("t3code-pi-agent-");
+        const projects = yield* makeTempDir("t3code-projects-");
+        const workspace = path.join(projects, "session-workspace");
+        const otherWorkspace = path.join(projects, "other-workspace");
+        yield* fileSystem.makeDirectory(workspace);
+        yield* fileSystem.makeDirectory(otherWorkspace);
+        const header = { type: "session", version: 3, id: "pi-session" };
+
+        yield* writeTranscript({
+          filePath: path.join(piAgentDir, "sessions", "--workspace--", "pi-session.jsonl"),
+          contents: [
+            encodeTranscriptRecord({ ...header, cwd: otherWorkspace }).slice(0, -1),
+            encodeTranscriptRecord({
+              type: "message",
+              id: "prompt",
+              parentId: null,
+              cwd: otherWorkspace,
+              timestamp: "2026-01-01T00:00:00.000Z",
+              message: { role: "user", content: "Review this project" },
+            }),
+            // An invalid timestamp fails record decoding but must not hide the workspace.
+            encodeTranscriptRecord({ ...header, cwd: workspace, timestamp: null }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath, piAgentDir });
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          piAgentDir,
+          workspaceRoot: workspace,
+        });
+
+        expect(
+          result.candidates.map((candidate) => path.relative(projects, candidate.path)),
+        ).toEqual(["session-workspace"]);
+        expect(threads).toMatchObject([{ providerSessionId: "pi-session" }]);
+      }),
+    );
+
     it.effect("reads a complete transcript record at the exact chunk boundary", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
