@@ -305,6 +305,14 @@ const projectFaviconAsset = Effect.fn("AssetAccess.projectFaviconAsset")(functio
     : null;
 });
 
+// Only the symlinked components differ, so an unresolvable path still gets compared as written.
+const resolveRealPathOrSelf = Effect.fn("AssetAccess.resolveRealPathOrSelf")(function* (
+  filePath: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.realPath(filePath).pipe(Effect.orElseSucceed(() => filePath));
+});
+
 const resolveCanonicalFile = Effect.fn("AssetAccess.resolveCanonicalFile")(function* (
   filePath: string,
 ) {
@@ -502,8 +510,13 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     const path = yield* Path.Path;
     const fileSystem = yield* FileSystem.FileSystem;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+    // A root registered through a symlink spells the same file differently from the real path
+    // an agent writes, so both sides are compared after resolving their symlinks.
     const relativePath = path.isAbsolute(input.requestedPath)
-      ? path.relative(input.workspaceRoot, input.requestedPath)
+      ? path.relative(
+          yield* resolveRealPathOrSelf(input.workspaceRoot),
+          yield* resolveRealPathOrSelf(input.requestedPath),
+        )
       : input.requestedPath;
     const resolved = yield* workspacePaths
       .resolveRelativePathWithinRoot({ workspaceRoot: input.workspaceRoot, relativePath })

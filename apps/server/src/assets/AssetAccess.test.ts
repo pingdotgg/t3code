@@ -1163,6 +1163,74 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "opens a page reached through its real path in a workspace registered by a symlink",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-asset-symlinked-root-",
+        });
+        const realRoot = path.join(directory, "Documents", "project");
+        const symlinkedRoot = path.join(directory, "git-repos", "project");
+        yield* fileSystem.makeDirectory(path.join(realRoot, "repro"), { recursive: true });
+        yield* fileSystem.makeDirectory(path.join(directory, "git-repos"), { recursive: true });
+        yield* fileSystem.symlink(realRoot, symlinkedRoot);
+        const htmlPath = path.join(realRoot, "repro", "index.html");
+        const cssPath = path.join(realRoot, "repro", "style.css");
+        yield* fileSystem.writeFileString(htmlPath, '<link rel="stylesheet" href="style.css">');
+        yield* fileSystem.writeFileString(cssPath, "body { color: red; }");
+
+        const result = yield* issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: htmlPath,
+          },
+          workspaceRoot: symlinkedRoot,
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+
+        expect(yield* resolveAsset(token, "index.html")).toEqual({
+          kind: "file",
+          path: yield* fileSystem.realPath(htmlPath),
+          renderIntent: "file-preview",
+        });
+        expect(yield* resolveAsset(token, "style.css")).toEqual({
+          kind: "file",
+          path: yield* fileSystem.realPath(cssPath),
+          renderIntent: "file-preview",
+        });
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "still rejects an absolute path whose symlink leaves the workspace",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-asset-symlink-escape-",
+        });
+        const root = path.join(directory, "workspace");
+        yield* fileSystem.makeDirectory(root);
+        const outside = path.join(directory, "outside");
+        yield* fileSystem.makeDirectory(outside);
+        const page = path.join(outside, "index.html");
+        yield* fileSystem.writeFileString(page, "<!doctype html>");
+        yield* fileSystem.symlink(outside, path.join(root, "escape"));
+
+        const error = yield* issueAssetUrl({
+          resource: { _tag: "workspace-file", threadId: ThreadId.make("thread-1"), path: page },
+          workspaceRoot: root,
+        }).pipe(Effect.flip);
+        expect(error._tag).toBe("AssetWorkspacePathValidationError");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
