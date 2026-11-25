@@ -4122,6 +4122,8 @@
   "ac7416afe98ba5f8": "Fragmento de terminal, {label}",
   "bf04d61dc50685dc": "Línea {lineStart}",
   "000e3bef072f07c8": "Líneas {lineStart}–{lineEnd}",
+  "f3c70064a22a0c76": "{terminalLabel} línea {lineStart}",
+  "8ba6febaabeb6f14": "{terminalLabel} líneas {lineStart}–{lineEnd}",
   "b3336a0e9a6e3fba": "Salida de terminal capturada",
   "8d24730972ce4fd3": "Fragmento de terminal, {label}, caducado",
   "dd8f1439c88ef92b": "El contexto de la terminal caducó. Quita y vuelve a añadir {label} para incluirlo en tu mensaje.",
