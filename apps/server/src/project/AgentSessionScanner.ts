@@ -1822,19 +1822,13 @@ export const make = Effect.gen(function* () {
     });
 
     // Scan one more slice per deferred transcript each round so large files share the remaining budget.
-    let pending = prefixes.flatMap((result, index) =>
-      result !== null && typeof result === "object" ? [index] : [],
-    );
-    while (pending.length > 0) {
-      const nextRound: Array<number> = [];
-      for (const index of pending) {
-        const result = prefixes[index];
+    for (let resumed = true; resumed;) {
+      resumed = false;
+      for (const [index, result] of prefixes.entries()) {
         if (result === null || typeof result !== "object") continue;
-        const next = yield* result.resume;
-        prefixes[index] = next;
-        if (next !== null && typeof next === "object") nextRound.push(index);
+        prefixes[index] = yield* result.resume;
+        resumed = true;
       }
-      pending = nextRound;
     }
 
     for (const [index, transcript] of transcripts.entries()) {
