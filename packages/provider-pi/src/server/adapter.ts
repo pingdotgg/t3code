@@ -4037,8 +4037,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     boundary.target.completedAt !== null &&
                     boundary.turn.completedAt !== null
                   ) {
-                    const live = piSessionListing(yield* request({ type: "get_entries" }));
-                    if (!live?.entries.has(boundary.entryId)) {
+                    // The persisted file avoids sending the whole tree over RPC before forking.
+                    const live = yield* readSessionFile(path.resolve(cwd, currentFile));
+                    if (live !== null && !live.entries.has(boundary.entryId)) {
                       sourceFile = yield* findHistoricalForkSession(currentFile, boundary);
                       if (sourceFile === undefined)
                         return yield* protocolError("Pi rollback entry was not found in a session");
