@@ -128,7 +128,7 @@ vi.mock("../state/terminalSessions", async () => {
   const metadata = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<AsyncResult.AsyncResult<ReadonlyArray<TerminalSummary>>>(
       AsyncResult.waiting(AsyncResult.success([])),
-    ),
+    ).pipe(Atom.keepAlive),
   );
   fixture.terminalMetadata = metadata;
   fixture.setMetadataPid = (thread, pid) =>
