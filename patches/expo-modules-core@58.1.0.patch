@@ -1,5 +1,5 @@
 diff --git a/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt b/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt
-index c732ab4..2e3f40e 100644
+index c732ab419395526d42a51df664e63afe88a79302..2e3f40e1f966167584ceb853faad8f84889a9b74 100644
 --- a/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt
 +++ b/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt
 @@ -3,6 +3,7 @@ package expo.modules.kotlin.views
