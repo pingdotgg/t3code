@@ -1083,9 +1083,11 @@ export async function extractDocumentText(path: string, extension: string): Prom
         raw = part.fallback;
       }
       // Resolve image boundaries here, after inline markup has been flattened.
+      // Pending cell whitespace has already used its share of the output budget.
       if (
         (isImageDescription || afterImageDescription) &&
         endsWithWord &&
+        !(cellDepth > 0 && started && space) &&
         /^\u00ad*[\p{L}\p{M}\p{N}_]/u.test(raw)
       )
         raw = " " + raw;
