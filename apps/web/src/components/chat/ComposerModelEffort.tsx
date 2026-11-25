@@ -6,7 +6,7 @@ import {
 } from "@t3tools/client-runtime/model-traits";
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
-import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
+import { getProviderOptionCurrentLabel, isSpeedSelectDescriptor } from "@t3tools/shared/model";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
@@ -38,12 +38,12 @@ import {
 type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 type BooleanDescriptor = Extract<ProviderOptionDescriptor, { type: "boolean" }>;
 
-/** Service tiers, Claude's Fast mode, and Ultracode sit in the footer, not the column. */
+/** Speed selects, Claude's Fast mode, and Ultracode sit in the footer, not the column. */
 function splitSpeed(
   selects: ReadonlyArray<SelectDescriptor>,
   toggles: ReadonlyArray<BooleanDescriptor>,
 ) {
-  const speedSelect = selects.find((descriptor) => descriptor.id === "serviceTier") ?? null;
+  const speedSelect = selects.find(isSpeedSelectDescriptor) ?? null;
   const fastToggle = toggles.find((descriptor) => descriptor.id === "fastMode") ?? null;
   const ultracodeToggle = toggles.find((descriptor) => descriptor.id === "ultracode") ?? null;
   return {

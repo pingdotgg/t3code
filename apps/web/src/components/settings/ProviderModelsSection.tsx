@@ -7,7 +7,11 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { isReasoningControl } from "@t3tools/client-runtime/model-traits";
-import { type CustomModelDefinition, normalizeCustomModelSlug } from "@t3tools/shared/model";
+import {
+  type CustomModelDefinition,
+  isSpeedSelectDescriptor,
+  normalizeCustomModelSlug,
+} from "@t3tools/shared/model";
 
 import { useStableCallback } from "../../hooks/useStableCallback";
 import type { MessageResolver } from "../../i18n/messages";
@@ -49,8 +53,7 @@ function describeModelCapabilities(
   const hasFastMode = descriptors.some(
     (descriptor) =>
       descriptor.id === "fastMode" ||
-      (descriptor.id === "serviceTier" &&
-        descriptor.type === "select" &&
+      (isSpeedSelectDescriptor(descriptor) &&
         descriptor.options.some((option) => option.id === "fast" || option.label === "Fast")),
   );
   if (hasFastMode) labels.push(resolve(msg("Fast mode")));

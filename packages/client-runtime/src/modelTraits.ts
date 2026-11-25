@@ -4,6 +4,7 @@ import {
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   isClaudeUltrathinkPrompt,
+  isSpeedSelectDescriptor,
 } from "@t3tools/shared/model";
 import { REASONING_EFFORT_OPTION_IDS } from "./state/threadExecution.ts";
 import { mFallback, msg } from "gt-i18n";
@@ -141,7 +142,7 @@ export function buildTraitsTriggerDisplay(
       }
       continue;
     }
-    if (descriptor.id === "serviceTier" && descriptor.type === "select") {
+    if (isSpeedSelectDescriptor(descriptor)) {
       const currentValue = getProviderOptionCurrentValue(descriptor);
       const fastTier = descriptor.options.find(({ label }) => label === "Fast");
       const ultrafastTier = descriptor.options.find(({ label }) => label === "Ultrafast");

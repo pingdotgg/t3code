@@ -345,6 +345,19 @@ export function getProviderOptionCurrentLabel(
   );
 }
 
+/**
+ * True for the select that picks a model's response speed: a native adapter's `serviceTier`, or
+ * the `speed` option an ACP agent such as Devin advertises under its own id. Clients show it as
+ * the composer's speed control instead of a generic option row.
+ */
+export function isSpeedSelectDescriptor(
+  descriptor: ProviderOptionDescriptor,
+): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> {
+  return (
+    descriptor.type === "select" && (descriptor.id === "serviceTier" || descriptor.id === "speed")
+  );
+}
+
 export function buildProviderOptionSelectionsFromDescriptors(
   descriptors: ReadonlyArray<ProviderOptionDescriptor> | null | undefined,
 ): Array<ProviderOptionSelection> | undefined {

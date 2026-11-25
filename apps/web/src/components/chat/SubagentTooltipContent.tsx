@@ -12,7 +12,7 @@ import {
   subagentDetailPreview,
 } from "@t3tools/client-runtime/state/subagent-display";
 import { readSelectedEffortValue } from "@t3tools/client-runtime/state/thread-execution";
-import { resolveSelectableModel } from "@t3tools/shared/model";
+import { isSpeedSelectDescriptor, resolveSelectableModel } from "@t3tools/shared/model";
 import { getTraitsSpeedDisplay, TraitsSpeedIcon } from "./TraitsSpeed";
 import { useGT, useMessages } from "gt-react";
 import type { ReactNode } from "react";
@@ -101,8 +101,7 @@ export function SubagentTooltipContent(props: {
             );
           }
           if (
-            descriptor.id === "serviceTier" &&
-            descriptor.type === "select" &&
+            isSpeedSelectDescriptor(descriptor) &&
             typeof saved?.value === "string" &&
             descriptor.options.some((option) => option.id === saved.value)
           ) {

@@ -10,7 +10,11 @@ import { expect, it } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
-import { ComposerEffortColumn, describeComposerEffort } from "./ComposerModelEffort";
+import {
+  ComposerEffortColumn,
+  ComposerPickerFooter,
+  describeComposerEffort,
+} from "./ComposerModelEffort";
 import type { TraitsSelectionInput } from "./TraitsPicker";
 
 // Shaped like Devin over ACP: its session mode comes first, and its reasoning id is its own.
@@ -82,6 +86,12 @@ function Column() {
       <div data-model-picker-effort>
         <ComposerEffortColumn traits={traits} />
       </div>
+      <ComposerPickerFooter
+        traits={traits}
+        runtimeMode="full-access"
+        runtimeModeOptions={[]}
+        onRuntimeModeChange={() => {}}
+      />
       <p role="status">{describeComposerEffort(traits, "bars", "sm").suffix}</p>
     </>
   );
@@ -100,15 +110,17 @@ it("draws an agent's reasoning as bars and keeps its mode out of the levels", as
   // Up and Down walk from the levels through the option rows without opening their menus.
   await userEvent.tab();
   await expect.element(screen.getByRole("radio", { name: "Medium" })).toHaveFocus();
-  await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
-  const speed = screen.getByRole("button", { name: "Speed: Standard" });
-  await expect.element(speed).toHaveFocus();
+  await userEvent.keyboard("{ArrowDown}{ArrowDown}");
+  const mode = screen.getByRole("button", { name: "Session Mode: Bypass Permissions" });
+  await expect.element(mode).toHaveFocus();
   await expect.element(page.getByRole("menuitemradio")).not.toBeInTheDocument();
   await userEvent.keyboard("{ArrowRight}");
-  await expect.element(page.getByRole("menuitemradio", { name: "Standard" })).toHaveFocus();
+  await expect
+    .element(page.getByRole("menuitemradio", { name: "Bypass Permissions" }))
+    .toHaveFocus();
   await userEvent.keyboard("{ArrowLeft}");
   await expect.element(page.getByRole("menuitemradio")).not.toBeInTheDocument();
-  await expect.element(speed).toHaveFocus();
+  await expect.element(mode).toHaveFocus();
 
   await userEvent.click(screen.getByText("Auto-approve tools"));
   await expect
@@ -121,6 +133,23 @@ it("draws an agent's reasoning as bars and keeps its mode out of the levels", as
     .element(screen.getByRole("button", { name: "Session Mode: Plan" }))
     .toBeInTheDocument();
   await expect.element(page.getByRole("menuitemradio")).not.toBeInTheDocument();
+});
+
+it("puts an agent's speed option in the footer and marks Fast on the trigger", async () => {
+  await using screen = await render(<Column />, { router: false }); // no routes involved
+  await expect.element(screen.getByRole("button", { name: /^Speed/ })).not.toBeInTheDocument();
+  const speed = screen.getByRole("radiogroup", { name: "Speed" });
+  await expect
+    .element(speed.getByRole("radio", { name: "Standard" }))
+    .toHaveAttribute("aria-checked", "true");
+  const status = screen.getByRole("status");
+  expect(status.element().querySelector(".lucide-zap")).toBeNull();
+
+  await userEvent.click(speed.getByRole("radio", { name: "Fast" }));
+  await expect
+    .element(speed.getByRole("radio", { name: "Fast" }))
+    .toHaveAttribute("aria-checked", "true");
+  expect(status.element().querySelector(".lucide-zap")).not.toBeNull();
 });
 
 it("focuses a reasoning level by its first letter without selecting it", async () => {

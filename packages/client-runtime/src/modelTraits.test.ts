@@ -32,4 +32,37 @@ describe("buildTraitsTriggerDisplay", () => {
     ).toBe(input.label);
     expect(getDescriptorStringValue(descriptor)).toBe(input.value);
   });
+
+  // Shaped like Devin over ACP, whose speed option carries its own id.
+  it.each([
+    { currentValue: "fast", speedLabel: "Fast", label: "Medium Fast" },
+    { currentValue: "standard", speedLabel: null, label: "Medium · Standard" },
+  ])("reads an agent speed option as the speed tier: $currentValue", (input) => {
+    expect(
+      buildTraitsTriggerDisplay({
+        descriptors: [
+          {
+            id: "thought_level",
+            label: "Thinking",
+            type: "select",
+            role: "reasoning",
+            currentValue: "medium",
+            options: [{ id: "medium", label: "Medium" }],
+          },
+          {
+            id: "speed",
+            label: "Speed",
+            type: "select",
+            currentValue: input.currentValue,
+            options: [
+              { id: "standard", label: "Standard" },
+              { id: "fast", label: "Fast" },
+            ],
+          },
+        ],
+        primarySelectDescriptorId: "thought_level",
+        ultrathinkPromptControlled: false,
+      }),
+    ).toEqual({ label: input.label, speedLabel: input.speedLabel, ultracode: false });
+  });
 });
