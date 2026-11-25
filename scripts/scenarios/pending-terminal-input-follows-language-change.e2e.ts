@@ -20,6 +20,7 @@ test(
           ? ready.then(() => load.call(this))
           : load.call(this);
       };
+      return null;
     });
 
     try {
@@ -28,6 +29,7 @@ test(
       await expect(input).toHaveAttribute("aria-label", "Terminal input");
       await browser.evaluate(() => {
         document.querySelector(".t3-ghostty-input")!.setAttribute("data-original-terminal", "");
+        return null;
       });
 
       await screen.getByRole("button", "Settings", { exact: true }).tap();
