@@ -2575,6 +2575,107 @@ it.effect("a watcher sees a question leave when it is withdrawn while its run is
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect(
+  "a run that pauses while an answer is being delivered gets the answer on its resume",
+  () =>
+    Effect.gen(function* () {
+      // Between the wake's look at the run and its delivery, `bad` fails and pauses the run.
+      let armed: string | undefined;
+      let failBad: Effect.Effect<void> = Effect.void;
+      const paused = yield* Deferred.make<void>();
+      const store = Layer.effect(
+        WorkflowStore.WorkflowStore,
+        Effect.map(WorkflowStore.make, (real) =>
+          WorkflowStore.WorkflowStore.of({
+            ...real,
+            waitSignalled: (runId, ...rest) =>
+              Effect.tap(real.waitSignalled(runId, ...rest), (taken) =>
+                Effect.sync(() => void (taken ? (armed = runId) : undefined)),
+              ),
+            runPaused: (runId, ...rest) =>
+              Effect.andThen(real.runPaused(runId, ...rest), Deferred.succeed(paused, undefined)),
+            run: (runId) =>
+              Effect.flatMap(real.run(runId), (row) => {
+                if (armed !== runId) return Effect.succeed(row);
+                armed = undefined;
+                return Effect.as(Effect.andThen(failBad, Deferred.await(paused)), row);
+              }),
+          }),
+        ),
+      );
+      const { failures, latch, boot } = yield* harness(store);
+      failBad = Deferred.succeed(latch.bad, undefined).pipe(Effect.asVoid);
+      yield* Ref.set(failures, 1);
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const { runId } = yield* workflows.start("doubting", {}, { idempotencyKey: "d1" });
+          yield* workflows.waitFor(
+            runId,
+            (run) => run.status === "waiting" && run.detail === "sure",
+          );
+          yield* workflows.answer(runId, "sure", { choice: "Yes" });
+          assert.equal((yield* workflows.waitFor(runId, status("paused"))).pauses, 1);
+          // The engine replays it for the wake, but its failed step waits for the resume.
+          // The resume runs `bad` again and delivers the answer the claim kept.
+          yield* workflows.resume(runId);
+          const done = yield* workflows.waitFor(runId, status("completed"));
+          assert.deepStrictEqual(done.result, "1 Yes");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a step of a paused run waits for the resume, even when the engine replays it", () =>
+  Effect.gen(function* () {
+    // The row is paused while the engine still runs, as when a wake preempts a failing step.
+    let real: WorkflowStore.WorkflowStore["Service"] | undefined;
+    let workEnded = false;
+    const next = yield* Deferred.make<"looked" | "took">();
+    const store = Layer.effect(
+      WorkflowStore.WorkflowStore,
+      Effect.map(WorkflowStore.make, (made) => {
+        real = made;
+        return WorkflowStore.WorkflowStore.of({
+          ...made,
+          stepEnded: (runId, name, ...rest) =>
+            Effect.tap(made.stepEnded(runId, name, ...rest), () =>
+              Effect.sync(() => void (name === "work" ? (workEnded = true) : undefined)),
+            ),
+          run: (runId) =>
+            Effect.tap(made.run(runId), () =>
+              workEnded ? Deferred.succeed(next, "looked") : Effect.void,
+            ),
+          stepStarted: (runId, name, ...rest) =>
+            Effect.andThen(
+              name === "take" ? Deferred.succeed(next, "took") : Effect.void,
+              made.stepStarted(runId, name, ...rest),
+            ),
+        });
+      }),
+    );
+    const { counts, latch, boot } = yield* harness(store);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const { runId } = yield* workflows.start(
+          "owned",
+          { mode: "busy" },
+          { idempotencyKey: "p" },
+        );
+        yield* Deferred.await(latch.entered);
+        yield* real!.runPaused(runId, "work: a sibling failed");
+        yield* Deferred.succeed(latch.release, undefined);
+        // The next step looks at the run before it starts, and finds it paused.
+        assert.equal(yield* Deferred.await(next), "looked");
+        yield* workflows.resume(runId);
+        assert.equal((yield* workflows.waitFor(runId, status("completed"))).status, "completed");
+        assert.equal((yield* Ref.get(counts)).take, 1);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it("tags refuses a list with a gap in it", () => {
   // The same list `tags([, "pr"])` makes: a first entry that was never set.
   const gapped = new Array<string>(2);
