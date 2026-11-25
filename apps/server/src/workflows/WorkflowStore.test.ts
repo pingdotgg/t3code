@@ -786,7 +786,7 @@ it.effect("reads that run on every change or sweep do not read every run", () =>
   ),
 );
 
-it.effect("a run waiting on a question is listed however many runs started after it", () =>
+it.effect("a run waiting on you is listed however many runs started after it", () =>
   withStore(
     Effect.gen(function* () {
       const store = yield* WorkflowStore.WorkflowStore;
@@ -812,6 +812,8 @@ it.effect("a run waiting on a question is listed however many runs started after
         watchJson: null,
         deadline: null,
       });
+      yield* start("paused");
+      yield* store.runPaused("paused", "gave up", true);
       for (let index = 0; index < 500; index++) {
         yield* TestClock.adjust("1 second");
         yield* start(`new-${index}`);
@@ -821,9 +823,10 @@ it.effect("a run waiting on a question is listed however many runs started after
         (yield* store.requests).map((wait) => wait.run_id),
         ["old"],
       );
-      // Needs you lists the open questions of the runs it is sent; one it is not sent is lost.
+      // Needs you lists the paused runs and open questions it is sent; one it is not sent is lost.
       const listed = new Set((yield* store.runs(undefined)).map((run) => run.run_id));
       assert.isTrue(listed.has("old"));
+      assert.isTrue(listed.has("paused"));
     }),
   ),
 );
