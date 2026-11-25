@@ -42,13 +42,18 @@ export function rowPhasesChanged(
 }
 
 // Mirrors the Dynamic Island's compact and minimal views (apps/mobile/src/widgets/AgentActivity.tsx):
-// the first attention row, else a failed row, else done or working. Starting and
-// running are left as one state so routine progress keeps priority 5.
+// the hero row's phase (attention, else failed, else working, else the first row)
+// and whether all work is done. Starting and running share one state so routine
+// progress keeps priority 5.
 function islandSummary(aggregate: RelayAgentActivityAggregateState): string {
-  const attention = aggregate.activities.find((row) => isAttentionPhase(row.phase));
-  if (attention) return attention.phase;
-  if (aggregate.activities.some((row) => row.phase === "failed")) return "failed";
-  return aggregate.activeCount === 0 ? "done" : "working";
+  const { activities } = aggregate;
+  const hero =
+    activities.find((row) => isAttentionPhase(row.phase))?.phase ??
+    (activities.some((row) => row.phase === "failed") ? "failed" : undefined) ??
+    (activities.some((row) => row.phase === "starting" || row.phase === "running")
+      ? "working"
+      : activities[0]?.phase);
+  return `${aggregate.activeCount === 0 ? "done" : "active"}:${hero ?? "none"}`;
 }
 
 export function islandSummaryChanged(

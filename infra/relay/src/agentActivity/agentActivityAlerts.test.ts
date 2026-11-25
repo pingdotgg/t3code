@@ -49,6 +49,11 @@ describe("islandSummaryChanged", () => {
     expect(islandSummaryChanged(running, finishedFirst)).toBe(false);
   });
 
+  it("flags the only working row going stale", () => {
+    const running = aggregate(1, [row("a", "running")]);
+    expect(islandSummaryChanged(running, aggregate(1, [row("a", "stale", "Waiting")]))).toBe(true);
+  });
+
   it("flags attention, failure and completion of all work", () => {
     const running = aggregate(1, [row("a", "running")]);
     expect(islandSummaryChanged(running, aggregate(1, [row("a", "waiting_for_input")]))).toBe(true);
