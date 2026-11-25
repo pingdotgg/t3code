@@ -7711,6 +7711,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       assert.deepEqual(result, { authorizationUrl: "https://linear.example/authorize" });
       assert.deepEqual(authenticated, ["linear"]);
+
+      // The sign-in's process has none of a turn's launch settings, so the next turn replaces it.
+      assert.equal(harness.processQueues.length, 2);
+      yield* reopened.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: resumed,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mcp-sign-in-reopened-2"),
+          text: "Use Linear",
+          attachments: [],
+        }),
+      );
+      assert.equal(harness.processQueues.length, 3);
     }).pipe(
       Effect.scoped,
       Effect.provide(

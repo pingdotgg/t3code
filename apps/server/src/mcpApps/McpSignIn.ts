@@ -14,11 +14,13 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import * as RuntimePolicy from "../orchestration-v2/RuntimePolicy.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 
 /**
  * Signs an agent's MCP server in through the session that reported it needs
- * one. Agents keep the credential themselves, so this never starts a session.
+ * one, reopening it when it was released while idle. Agents keep the
+ * credential themselves, so this never starts a new conversation.
  */
 export class McpSignIn extends Context.Service<
   McpSignIn,
@@ -37,27 +39,68 @@ const isSignInError = Schema.is(ProviderMcpSignInError);
 const make = Effect.gen(function* () {
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
 
   const fail = (server: string, detail: string) => new ProviderMcpSignInError({ server, detail });
   const stopped = (server: string) =>
     fail(server, "The agent session has ended. Send a message, then sign in again.");
+  const unsupported = (server: string) =>
+    fail(server, "This agent can't sign MCP servers in from T3 Code.");
 
   const resolve = Effect.fn("McpSignIn.resolve")(function* (input: ProviderMcpSignInStartInput) {
     const projection = yield* threadManagement.getThreadRecords(input.threadId, [
       "providerThreads",
+      "providerSessions",
     ]);
+    const { thread } = projection;
     const providerThread = projection.providerThreads.find(
       (candidate) => candidate.id === input.providerThreadId,
     );
     if (providerThread?.providerSessionId == null) return yield* stopped(input.server);
-    const runtime = Option.getOrUndefined(
-      yield* providerSessions.get(providerThread.providerSessionId),
-    );
-    if (runtime === undefined) return yield* stopped(input.server);
-    if (runtime.mcpSignIn === undefined) {
-      return yield* fail(input.server, "This agent can't sign MCP servers in from T3 Code.");
+    const providerSessionId = providerThread.providerSessionId;
+    const live = Option.getOrUndefined(yield* providerSessions.get(providerSessionId));
+    if (live !== undefined) {
+      if (live.mcpSignIn === undefined) return yield* unsupported(input.server);
+      return { providerThread, mcpSignIn: live.mcpSignIn };
     }
-    return { providerThread, mcpSignIn: runtime.mcpSignIn };
+    // Only the thread's current agent is reopened, the way a turn would open it.
+    if (
+      thread.deletedAt !== null ||
+      providerThread.id !== thread.activeProviderThreadId ||
+      providerThread.providerInstanceId !== thread.modelSelection.instanceId
+    ) {
+      return yield* stopped(input.server);
+    }
+    const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
+      thread,
+      modelSelection: thread.modelSelection,
+    });
+    const existingSession = projection.providerSessions.find(
+      (candidate) => candidate.id === providerSessionId,
+    );
+    const session = yield* providerSessions.open({
+      threadId: thread.id,
+      providerSessionId,
+      modelSelection: thread.modelSelection,
+      runtimePolicy: resolvedRuntimePolicy,
+      ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
+      ...(providerThread.nativeThreadRef?.nativeId == null
+        ? {}
+        : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
+      ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+        ? {}
+        : {
+            initialProviderItemIdentityVersion: providerThread.nativeMetadata.itemIdentityVersion,
+          }),
+    });
+    if (session.mcpSignIn === undefined) return yield* unsupported(input.server);
+    const resumed = yield* session.resumeThread({
+      providerThread,
+      threadId: thread.id,
+      modelSelection: thread.modelSelection,
+      runtimePolicy: resolvedRuntimePolicy,
+    });
+    return { providerThread: resumed, mcpSignIn: session.mcpSignIn };
   });
 
   /** Adapter and lookup failures can echo URLs or tokens, so callers see only a generic line. */
