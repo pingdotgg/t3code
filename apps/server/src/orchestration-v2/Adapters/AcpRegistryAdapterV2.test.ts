@@ -670,6 +670,15 @@ describe("AcpRegistryAdapterV2", () => {
     assert.notInclude(rejected.message, "token=secret");
   });
 
+  it("marks a Devin prompt rejection retryable when Devin says it is", () => {
+    const emptyResponse = new EffectAcpErrors.AcpRequestError({
+      code: -32021,
+      errorMessage: "The model ended its turn without a response. Send a message to continue.",
+      data: { "cognition.ai/errorKind": "empty_response", "cognition.ai/retryable": true },
+    });
+    assert.equal(acpRegistryPromptFailure("devin", emptyResponse).retryable, true);
+  });
+
   describe("the agent's own pickers", () => {
     type Frame = Record<string, unknown>;
     const outbound = (method: string, params: unknown = "<any>"): Frame => ({
