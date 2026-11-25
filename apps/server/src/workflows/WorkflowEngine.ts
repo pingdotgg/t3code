@@ -1152,6 +1152,12 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
             });
       return rows.map(toRun);
     }),
+    about: Effect.fn("Workflows.about")(function* (subject) {
+      const runs = (yield* store.runsWhere({ subject })).map(toRun);
+      const about = new Set(runs.map((run) => run.runId));
+      const open = yield* questions;
+      return { runs, questions: open.filter((question) => about.has(question.runId)) };
+    }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (runId, done) {
       // Subscribed before the first look, so a change in between is not missed.
       const changes = yield* PubSub.subscribe(store.changes);

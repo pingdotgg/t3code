@@ -3,7 +3,6 @@ import {
   groupWorkflowRuns,
   readWorkflowQuestion,
   workflowRunState,
-  workflowRunsAbout,
 } from "@t3tools/client-runtime/workflows";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { StackActions, useNavigation } from "@react-navigation/native";
@@ -19,27 +18,25 @@ import { serverEnvironment } from "../../state/server";
 import { PullRequestSectionHeading } from "../pull-requests/PullRequestSectionHeading";
 import { WORKFLOW_TONE_CLASS, WorkflowChip } from "./WorkflowsScreen";
 
-/** The workflow runs about a pull request or issue, on its own screen; hidden while there are none. */
+/** The workflow runs whose subject is the item at `url`, on its own screen; hidden while none. */
 export function WorkflowRunsAbout(props: {
   readonly environmentId: EnvironmentId;
-  readonly item: Parameters<typeof workflowRunsAbout>[1];
+  readonly url: string;
 }) {
   const gt = useGT();
   const m = useMessages();
   const navigation = useNavigation();
   const enabled = useServerConfigs().get(props.environmentId)?.settings.workflowsEnabled === true;
-  const live = useEnvironmentQuery(
+  const about = useEnvironmentQuery(
     enabled
-      ? serverEnvironment.workflowsLive({ environmentId: props.environmentId, input: {} })
+      ? serverEnvironment.workflowRunsAbout({
+          environmentId: props.environmentId,
+          input: { subject: props.url },
+        })
       : null,
   );
-  const snapshot = live.data;
-  if (!snapshot) return null;
-  const about = new Set(workflowRunsAbout(snapshot.runs, props.item).map((run) => run.runId));
-  if (about.size === 0) return null;
-  const nodes = allWorkflowRunNodes(
-    groupWorkflowRuns(snapshot.workflows, snapshot.runs, snapshot.questions),
-  ).filter((node) => about.has(node.run.runId));
+  if (!about.data || about.data.runs.length === 0) return null;
+  const nodes = allWorkflowRunNodes(groupWorkflowRuns([], about.data.runs, about.data.questions));
   return (
     <View className="gap-2">
       <PullRequestSectionHeading>{gt("Workflow runs")}</PullRequestSectionHeading>

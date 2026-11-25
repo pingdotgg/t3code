@@ -259,6 +259,15 @@ export const WorkflowRunsSubscribeInput = Schema.Struct({
 
 export const WorkflowRunGetInput = Schema.Struct({ runId: Schema.String });
 
+/** Runs whose subject is at this web address, or whose subject's key it is, such as a thread id. */
+export const WorkflowRunsAboutInput = Schema.Struct({ subject: Schema.String });
+/** Those runs, newest first and 500 at most, with the questions they have open. */
+export const WorkflowRunsAbout = Schema.Struct({
+  runs: Schema.Array(WorkflowRun),
+  questions: Schema.Array(WorkflowQuestion),
+});
+export type WorkflowRunsAbout = typeof WorkflowRunsAbout.Type;
+
 /**
  * Something a run touched: an issue, a pull request, or a kind added later. `kind` is open, so a
  * client shows a kind it does not know by its title and `url`. `key` is the thing's identity in

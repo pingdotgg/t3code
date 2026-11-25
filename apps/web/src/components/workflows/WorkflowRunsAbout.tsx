@@ -2,7 +2,6 @@ import {
   allWorkflowRunNodes,
   groupWorkflowRuns,
   readWorkflowQuestion,
-  workflowRunsAbout,
 } from "@t3tools/client-runtime/workflows";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
@@ -13,26 +12,23 @@ import { serverEnvironment } from "../../state/server";
 import { useWorkflowEnvironmentIds } from "./useWorkflowEnvironmentIds";
 import { WorkflowChip, WorkflowStateWord } from "./WorkflowRunFeed";
 
-/** The workflow runs that are about a pull request or issue, on that item's own view. */
+/** The workflow runs whose subject is the item at `url`, on that item's own view. */
 export function WorkflowRunsAbout({
   environmentId,
-  item,
+  url,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly item: Parameters<typeof workflowRunsAbout>[1];
+  readonly url: string;
 }) {
   const gt = useGT();
   const enabled = useWorkflowEnvironmentIds().includes(environmentId);
-  const live = useEnvironmentQuery(
-    enabled ? serverEnvironment.workflowsLive({ environmentId, input: {} }) : null,
+  const about = useEnvironmentQuery(
+    enabled
+      ? serverEnvironment.workflowRunsAbout({ environmentId, input: { subject: url } })
+      : null,
   );
-  const snapshot = live.data;
-  if (!snapshot) return null;
-  const about = new Set(workflowRunsAbout(snapshot.runs, item).map((run) => run.runId));
-  if (about.size === 0) return null;
-  const nodes = allWorkflowRunNodes(
-    groupWorkflowRuns(snapshot.workflows, snapshot.runs, snapshot.questions),
-  ).filter((node) => about.has(node.run.runId));
+  if (!about.data || about.data.runs.length === 0) return null;
+  const nodes = allWorkflowRunNodes(groupWorkflowRuns([], about.data.runs, about.data.questions));
   return (
     <section className="mt-3 space-y-1">
       <h3 className="text-xs font-medium text-muted-foreground">{gt("Workflow runs")}</h3>

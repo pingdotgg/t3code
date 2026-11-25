@@ -2411,6 +2411,8 @@ export const layerWsRpc = (
         [WS_METHODS.workflowsCounts]: (_input) => workflows.counts,
         [WS_METHODS.workflowsGet]: (input) =>
           workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+        [WS_METHODS.workflowsAbout]: (input) =>
+          workflows.about(input.subject).pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsAnswer]: (input) =>
           workflows
             .answer(input.runId, input.name, {

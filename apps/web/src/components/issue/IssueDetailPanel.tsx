@@ -727,17 +727,7 @@ export function IssueDetailPanel({
             )}
           </PullRequestMetaLine>
 
-          <WorkflowRunsAbout
-            environmentId={environmentId}
-            item={{
-              issue: {
-                tracker: reference.tracker,
-                host: reference.host ?? detail.host,
-                scope: reference.scope,
-                key: reference.key,
-              },
-            }}
-          />
+          <WorkflowRunsAbout environmentId={environmentId} url={detail.url} />
 
           <div className="mt-4 space-y-2">
             <PullRequestMetaRow icon={<TagIcon className="size-3.5" />} label={gt("Labels")}>

@@ -127,6 +127,17 @@ export class Workflows extends Context.Service<
       /** Only runs about this: their subject's web address, or its key, such as a thread id. */
       readonly subject?: string;
     }) => Effect.Effect<ReadonlyArray<WorkflowStore.WorkflowRun>, WorkflowInputError>;
+    /**
+     * The runs about `subject` (as `list` reads it) and the questions they have open, for the
+     * view of the item itself: the runs list is the newest runs of every subject.
+     */
+    readonly about: (subject: string) => Effect.Effect<
+      {
+        readonly runs: ReadonlyArray<WorkflowStore.WorkflowRun>;
+        readonly questions: ReadonlyArray<WorkflowQuestion>;
+      },
+      WorkflowInputError
+    >;
     /** The run once `done` holds for it. Looks now, then on every change to the run. */
     readonly waitFor: (
       runId: string,
@@ -193,6 +204,9 @@ export const disabled = Workflows.of({
   list: Effect.fn("Workflows.list")(function* () {
     return yield* Effect.succeed<ReadonlyArray<WorkflowStore.WorkflowRun>>([]);
   }),
+  about: Effect.fn("Workflows.about")(function* () {
+    return yield* Effect.succeed({ runs: [], questions: [] });
+  }),
   waitFor: Effect.fn("Workflows.waitFor")(function* () {
     return yield* Effect.never;
   }),
@@ -245,6 +259,7 @@ export const off = Workflows.of({
   cancel: refuseOff,
   get: refuseOff,
   list: refuseOff,
+  about: refuseOff,
   questions: refuseOff(),
   hooks: refuseOff(),
   stored: refuseOff,

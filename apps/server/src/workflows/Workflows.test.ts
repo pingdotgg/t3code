@@ -2473,6 +2473,54 @@ it.effect("a run says what it is about, and is found by it", () =>
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("an item finds its runs past the newest 500 runs of every subject", () =>
+  Effect.gen(function* () {
+    const exposed = exposedStore();
+    const { boot } = yield* harness(exposed.layer);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const store = yield* exposed.store;
+        const url = "https://github.com/acme/app/issues/412";
+        const issue = {
+          projectId: "p1",
+          tracker: "github",
+          host: "github.com",
+          scope: "acme/app",
+          key: "412",
+          url,
+        };
+        const target = yield* workflows.start(
+          "about",
+          { subjects: [issue] },
+          { idempotencyKey: "target" },
+        );
+        yield* workflows.waitFor(target.runId, status("waiting"));
+        for (let n = 0; n < 500; n++) {
+          const runId = `other-${n}`;
+          yield* store.runStarted({
+            runId,
+            workflow: "about",
+            version: 1,
+            engineTag: "about@1",
+            idempotencyKey: runId,
+            input: { subjects: [] },
+          });
+          yield* store.runEnded(runId, "completed", null, null);
+        }
+        const snapshot = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        assert.isFalse(snapshot.runs.some((run) => run.runId === target.runId));
+        const about = yield* workflows.about(url);
+        assert.deepStrictEqual(
+          about.runs.map((run) => run.runId),
+          [target.runId],
+        );
+        assert.deepStrictEqual(about.questions, []);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("a workflow can take an agent's failure as an answer and go on", () =>
   Effect.gen(function* () {
     const { boot, agents } = yield* harness();

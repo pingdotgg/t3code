@@ -619,6 +619,9 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     list: Effect.fn("Workflows.list")(function* (...input) {
       return yield* (yield* current).list(...input);
     }),
+    about: Effect.fn("Workflows.about")(function* (...input) {
+      return yield* (yield* current).about(...input);
+    }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (...input) {
       // A reload replaces the engine, and a wait on the old one would never hear of the run again.
       while (true) {
@@ -880,6 +883,9 @@ export const gate = Effect.fn("WorkflowRuntime.gate")(function* <E, R>(
     }),
     list: Effect.fn("Workflows.list")(function* (...input) {
       return yield* (yield* current).list(...input);
+    }),
+    about: Effect.fn("Workflows.about")(function* (...input) {
+      return yield* (yield* current).about(...input);
     }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (...input) {
       // Off, nothing changes a run; a wait goes on once workflows are on again.

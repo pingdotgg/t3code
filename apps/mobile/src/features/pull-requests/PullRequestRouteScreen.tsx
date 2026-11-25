@@ -393,14 +393,7 @@ function PullRequestOverview(props: {
       </Animated.View>
       <WorkflowRunsAbout
         environmentId={EnvironmentId.make(props.params.environmentId)}
-        item={{
-          pullRequest: {
-            host: props.params.host ?? (URL.canParse(pr.url) ? new URL(pr.url).hostname : ""),
-            repository: props.params.repository,
-            number: props.params.number,
-            url: pr.url,
-          },
-        }}
+        url={pr.url}
       />
     </View>
   );

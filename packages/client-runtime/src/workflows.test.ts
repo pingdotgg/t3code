@@ -1,6 +1,5 @@
 import {
   applyWorkflowRunsUpdate,
-  type IssueRef,
   type WorkflowQuestion,
   type WorkflowRun,
   type WorkflowRunReference,
@@ -27,7 +26,6 @@ import {
   workflowRunLists,
   workflowRunNow,
   workflowRunRefreshKey,
-  workflowRunsAbout,
   workflowReferenceIssue,
   workflowReferenceLabel,
   workflowReferencePullRequest,
@@ -624,60 +622,6 @@ describe("workflow references", () => {
     expect(workflowReferenceIssue(pullRequest)).toBeNull();
     expect(workflowReferenceIssue(reference({ address: { key: 1 } }))).toBeNull();
     expect(workflowReferenceIssue(machine)).toBeNull();
-  });
-
-  it("finds the runs about a pull request or issue, however its host is written", () => {
-    const github = "github" as IssueRef["tracker"];
-    const runs = [
-      run("on-pr", { subject: pullRequest }),
-      run("on-issue", { subject: issue("412") }),
-      run("on-thread", {
-        subject: reference({ kind: "thread", key: "t1", address: { threadId: "t1" } }),
-      }),
-      run("plain"),
-    ];
-    const ids = (found: ReadonlyArray<WorkflowRun>) => found.map((each) => each.runId);
-    expect(
-      ids(
-        workflowRunsAbout(runs, {
-          pullRequest: { host: "GitHub.com", repository: "Me/App", number: 418 },
-        }),
-      ),
-    ).toEqual(["on-pr"]);
-    expect(
-      ids(
-        workflowRunsAbout(runs, {
-          pullRequest: { host: "github.com", repository: "me/app", number: 419 },
-        }),
-      ),
-    ).toEqual([]);
-    // An issue's address without a host matches nothing: which host it is on is not known.
-    expect(
-      ids(
-        workflowRunsAbout(runs, {
-          issue: { tracker: github, host: "github.com", scope: "me/app", key: "412" },
-        }),
-      ),
-    ).toEqual([]);
-    const onHost = run("on-host", {
-      subject: reference({
-        key: "412",
-        address: {
-          projectId: "p1",
-          tracker: "github",
-          host: "github.com",
-          scope: "me/app",
-          key: "412",
-        },
-      }),
-    });
-    expect(
-      ids(
-        workflowRunsAbout([...runs, onHost], {
-          issue: { tracker: github, host: "GITHUB.COM", scope: "ME/app", key: "412" },
-        }),
-      ),
-    ).toEqual(["on-host"]);
   });
 
   it("opens a thread subject as its thread, and names a web address by its host", () => {

@@ -3,7 +3,6 @@ import type { MFunctionType } from "gt-i18n/types";
 import {
   type IssueRef,
   type PullRequestRef,
-  threadIssueKeysEqual,
   WorkflowIssueAddress,
   WorkflowPullRequestAddress,
   WorkflowReferenceKind,
@@ -18,8 +17,6 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
-
-import { threadPullRequestKeysEqual } from "./threadPullRequests.ts";
 
 export interface WorkflowQuestionView {
   readonly title: string;
@@ -848,46 +845,6 @@ export function workflowReferenceLabel(reference: WorkflowRunSubject): string {
   if (reference.title !== "") return reference.title;
   if (reference.url !== null && URL.canParse(reference.url)) return new URL(reference.url).host;
   return reference.kind;
-}
-
-/** The runs whose subject is this pull request or issue, in the order they are given. */
-export function workflowRunsAbout(
-  runs: ReadonlyArray<WorkflowRun>,
-  item:
-    | {
-        readonly pullRequest: Pick<PullRequestRef, "repository" | "number"> & {
-          readonly host: string;
-          /** Its web address, which names the host a self-hosted forge is reached at. */
-          readonly url?: string;
-        };
-      }
-    | { readonly issue: Pick<IssueRef, "tracker" | "scope" | "key"> & { readonly host: string } },
-): ReadonlyArray<WorkflowRun> {
-  return runs.filter((run) => {
-    if (run.subject === undefined) return false;
-    if ("pullRequest" in item) {
-      const pullRequest = workflowReferencePullRequest(run.subject);
-      return (
-        pullRequest?.host !== undefined &&
-        threadPullRequestKeysEqual(
-          {
-            host: pullRequest.host,
-            repository: pullRequest.repository,
-            number: pullRequest.number,
-          },
-          item.pullRequest,
-        )
-      );
-    }
-    const issue = workflowReferenceIssue(run.subject);
-    return (
-      issue?.host !== undefined &&
-      threadIssueKeysEqual(
-        { tracker: issue.tracker, host: issue.host, scope: issue.scope, key: issue.key },
-        item.issue,
-      )
-    );
-  });
 }
 
 /** The references a step touched, in the order the run first touched them. */
