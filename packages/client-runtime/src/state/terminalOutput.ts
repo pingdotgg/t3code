@@ -279,14 +279,19 @@ function resetOutput(
 const CLEAR_TERMINAL_TEXT = "\u001b[H\u001b[2J\u001b[3J";
 
 /** Earlier output stays retained so a replay from the start restores those modes. */
-function clearOutput(current: TerminalOutputState, maxBufferBytes: number): TerminalOutputState {
+function clearOutput(
+  current: TerminalOutputState,
+  maxBufferBytes: number,
+  pendingControlSequence = "",
+): TerminalOutputState {
+  const data = CLEAR_TERMINAL_TEXT + pendingControlSequence;
   // The erase rides over the budget: trimming here would evict the output that set those modes.
   const cleared = appendOutput(
     current,
-    CLEAR_TERMINAL_TEXT,
+    data,
     maxBufferBytes <= 0
       ? maxBufferBytes
-      : Math.max(maxBufferBytes, current.retainedBytes + CLEAR_TERMINAL_TEXT.length),
+      : Math.max(maxBufferBytes, current.retainedBytes + textEncoder.encode(data).byteLength),
   );
   return { ...cleared, textStartOffset: cleared.nextOffset };
 }

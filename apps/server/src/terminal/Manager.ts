@@ -3889,9 +3889,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.gen(function* () {
         const terminalId = input.terminalId;
         const session = yield* requireSession(input.threadId, terminalId);
+        let queuedExit: PendingProcessEvent | undefined;
         // Discard pre-clear output while keeping the parser in sync with the PTY.
         for (const event of session.pendingProcessEvents.slice(session.pendingProcessEventIndex)) {
           if (event?.type === "exit") {
+            queuedExit = event;
             session.pendingHistoryControlSequence = "";
             break;
           }
@@ -3903,9 +3905,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           }
         }
         session.history.clear();
-        session.pendingProcessEvents = [];
+        session.pendingProcessEvents = queuedExit ? [queuedExit] : [];
         session.pendingProcessEventIndex = 0;
         const eventStamp = advanceEventSequence(session);
+        const pendingControlSequence = unfinishedSequenceReplay(session);
         // A drain waits for the key to go idle, which never happens while the shell keeps
         // printing; every reader of the file flushes it first.
         yield* persistWorker.enqueue(toSessionKey(input.threadId, terminalId), {
@@ -3917,6 +3920,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           threadId: input.threadId,
           terminalId,
           sequence: eventStamp.sequence,
+          ...(pendingControlSequence === "" ? {} : { pendingControlSequence }),
         });
       }),
     );
