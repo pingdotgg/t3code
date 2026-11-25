@@ -774,6 +774,8 @@ export interface ClaudeAgentSdkQueryOpenInput {
   readonly options: ClaudeAgentSdkQueryOptions;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+  /** Reports the step the CLI is on before the turn can start, such as `mcp`; `undefined` ends it. */
+  readonly onStartupPhase?: (phase: string | undefined) => Effect.Effect<void>;
 }
 
 export interface ClaudeAgentSdkQuerySession {
@@ -1858,6 +1860,8 @@ export const layerQueryRunner: Layer.Layer<
                       orElse: timedOut("initialize"),
                     }),
                   );
+                  const onStartupPhase = input.onStartupPhase ?? (() => Effect.void);
+                  yield* onStartupPhase("mcp");
                   // Errors and mcp_status can echo headers; log only server names.
                   const failed = yield* Effect.tryPromise({
                     try: () => queryRuntime.setMcpServers(mcpServers),
@@ -1869,6 +1873,8 @@ export const layerQueryRunner: Layer.Layer<
                       duration: CLAUDE_MCP_REGISTRATION_TIMEOUT,
                       orElse: timedOut("setMcpServers"),
                     }),
+                    // A timed-out registration reopens the CLI, which boots before it registers again.
+                    Effect.ensuring(Effect.suspend(() => onStartupPhase(undefined))),
                   );
                   if (failed.length > 0) {
                     yield* Effect.logWarning("orchestration-v2.claude-mcp-servers-unavailable", {
@@ -2425,6 +2431,67 @@ function parseClaudeInteger(text: string): number {
     return Number.parseInt(value.replace(/[_,\u00A0\u202F ]/g, ""), 10);
   }
   return Number.parseInt(value, 10);
+}
+
+const CLAUDE_SLEEP_DURATION = String.raw`(?:\d[\w.]*|\$\(\([\d\s+*/%-]+\)\)|\$\{\w+(?::?[-=]\d[\w.]*)?\}|\$\w+)`;
+const CLAUDE_SLEEP_TIMER_START = new RegExp(
+  String.raw`^[ \t\n]*sleep[ \t]+(?:${CLAUDE_SLEEP_DURATION}|"${CLAUDE_SLEEP_DURATION}"|'\d[\w.]*')[ \t]*(?:$|;|&&|\n)`,
+);
+// Bash separates words only with spaces and tabs, so `\s` would read `true\rnpm` as `true`.
+const CLAUDE_SLEEP_TIMER_REPORT = /^[ \t]*(?:$|(?:date|echo|printf|true|:)(?:[ \t]|$))/;
+
+// A background command that only sleeps for a finite time, then at most prints the time or a
+// note, is a timer the agent set to check back, which Claude wakes it for when it ends. Any other
+// step (`sleep 5 && npm run dev`) may never end, so that command is not a timer.
+function isClaudeSleepTimer(command: string | undefined): boolean {
+  const start = command === undefined ? null : CLAUDE_SLEEP_TIMER_START.exec(command);
+  if (command === undefined || start === null) return false;
+  const steps = splitClaudeSleepTimerSteps(command.slice(start[0].length));
+  return steps !== undefined && steps.every((step) => CLAUDE_SLEEP_TIMER_REPORT.test(step));
+}
+
+// Splits at unquoted `;`, `&&` and newlines. Gives up on anything a report never needs that could
+// run or hide another command: pipes, `||`, a lone `&`, subshells, heredocs, substitutions, `${…}`,
+// `$'…'`, comments, and unbalanced quotes or escapes.
+function splitClaudeSleepTimerSteps(tail: string): string[] | undefined {
+  const steps: string[] = [];
+  let step = "";
+  let quote: string | undefined;
+  for (let index = 0; index < tail.length; index++) {
+    const char = tail[index] ?? "";
+    const next = tail[index + 1] ?? "";
+    if (quote === "'") {
+      if (char === "'") quote = undefined;
+      step += char;
+      continue;
+    }
+    if (char === "\\") {
+      if (next === "") return undefined;
+      step += char + next;
+      index++;
+      continue;
+    }
+    if (char === "`" || (char === "$" && "({'\"".includes(next) && next !== "")) return undefined;
+    if (quote === '"') {
+      if (char === '"') quote = undefined;
+      step += char;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+    } else if (char === ";" || char === "\n" || (char === "&" && next === "&")) {
+      steps.push(step);
+      step = "";
+      if (char === "&") index++;
+      continue;
+    } else if (char === "&" ? next !== ">" && tail[index - 1] !== ">" : "|()<#".includes(char)) {
+      return undefined;
+    }
+    step += char;
+  }
+  if (quote !== undefined) return undefined;
+  steps.push(step);
+  return steps;
 }
 
 // Claude Code defers MCP tools behind ToolSearch, so the agent only finds
@@ -6172,6 +6239,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       Effect.provideService(Path.Path, path),
     );
 
+  // Outlives sessions: idle release reopens one every few minutes. A connected server is forgotten,
+  // so losing its sign-in later is announced again.
+  const announcedMcpSignIns = new Set<string>();
+  const mcpSignInKey = (nativeThreadId: string, server: string) =>
+    `${nativeThreadId}\u0000${server}`;
+
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
     driver: CLAUDE_PROVIDER,
@@ -6670,6 +6743,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           return Queue.offer(events, event).pipe(Effect.asVoid);
         };
+
+        let reportedStartupPhase: string | undefined;
+        const reportStartupPhase = Effect.fn("ClaudeAdapterV2.reportStartupPhase")(function* (
+          phase: string | undefined,
+        ) {
+          if (phase === reportedStartupPhase) return;
+          reportedStartupPhase = phase;
+          yield* emitProviderEvent({
+            type: "provider_session.updated",
+            driver: CLAUDE_PROVIDER,
+            providerSession: {
+              ...session,
+              ...(phase === undefined ? {} : { startupPhase: phase }),
+              updatedAt: yield* DateTime.now,
+            },
+          });
+        });
+        // Only a process's first API request is startup; a reused process is already connected.
+        const requestedQueries = new WeakSet<ClaudeAgentSdkQuerySession>();
+        let connectingTurn: ActiveClaudeTurnContext | undefined;
 
         const persistAttachmentBudget = Effect.fnUntraced(function* (nativeThreadId: string) {
           const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
@@ -7179,17 +7272,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId: string,
             task: OrchestrationV2PendingBackgroundTask,
           ) {
-            const startedMonitor = yield* Ref.modify(
+            const startedWait = yield* Ref.modify(
               pendingBackgroundTasksByNativeThread,
               (current) => {
                 const roster = new Map(rosterForNativeThread(current, nativeThreadId));
-                const startedMonitor =
-                  task.kind === "monitor" && roster.get(task.taskId)?.kind !== "monitor";
+                const previous = roster.get(task.taskId);
+                const startedWait =
+                  task.kind === "monitor"
+                    ? previous?.kind !== "monitor"
+                    : task.kind === "command" &&
+                      previous?.command === undefined &&
+                      isClaudeSleepTimer(task.command);
                 roster.set(task.taskId, task);
-                return [startedMonitor, new Map(current).set(nativeThreadId, roster)] as const;
+                return [startedWait, new Map(current).set(nativeThreadId, roster)] as const;
               },
             );
-            if (startedMonitor) {
+            if (startedWait) {
               yield* addTaskIdsToNativeThreadSet(
                 awaitedBackgroundTasksByNativeThread,
                 nativeThreadId,
@@ -9016,8 +9114,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return liveQuery;
         });
 
-        // Keyed by native thread and server: one notice per server for as long as the session runs.
-        const announcedMcpSignIns = new Set<string>();
         /** Claude reports a server that needs a sign-in only in its status, which settles after start. */
         const announceMcpSignIns = Effect.fn("ClaudeAdapterV2.announceMcpSignIns")(function* (
           liveQuery: ClaudeLiveQueryContext,
@@ -9033,9 +9129,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
           liveQuery.checkMcpSignIns = statuses.some((status) => status.status === "pending");
           for (const status of statuses) {
+            const key = mcpSignInKey(liveQuery.nativeThreadId, status.name);
+            if (status.status === "connected") announcedMcpSignIns.delete(key);
             // Every claude.ai connector the user never connected reports this too.
             if (status.status !== "needs-auth" || status.scope === "claudeai") continue;
-            const key = `${liveQuery.nativeThreadId}\u0000${status.name}`;
             if (announcedMcpSignIns.has(key)) continue;
             announcedMcpSignIns.add(key);
             const nativeItemId = `mcp-sign-in:${context.providerTurnId}:${status.name}`;
@@ -9764,6 +9861,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? { ...requested, status: "failed" as const, failure: retryBudgetFailure }
               : requested;
           input.context.steersClosed = true;
+          if (connectingTurn === input.context) {
+            connectingTurn = undefined;
+            yield* reportStartupPhase(undefined);
+          }
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.status === "completed") {
             yield* assistantDeltas.flushTurn(input.context.nativeTurnId);
@@ -11188,6 +11289,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 message.status === "requesting") ||
               (lifecycle?.state === "started" && lifecycle.uuid === context.promptUuid)
             ) {
+              if (
+                message.type === "system" &&
+                message.subtype === "status" &&
+                !requestedQueries.has(input.query)
+              ) {
+                requestedQueries.add(input.query);
+                connectingTurn = context;
+                yield* reportStartupPhase("connecting");
+              }
               const since = yield* DateTime.now;
               context.unansweredRequestSince = since;
               const previousWatch = context.unansweredRequestWatch;
@@ -11215,6 +11325,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ) {
               context.unansweredRequestSince = undefined;
               yield* clearUnansweredRequestWatch(context);
+              if (connectingTurn === context) {
+                connectingTurn = undefined;
+                yield* reportStartupPhase(undefined);
+              }
             }
           }
           const focusedPlugin = claudeFocusRequestedPanePlugin(message);
@@ -13646,11 +13760,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   providerSessionId: input.providerSessionId,
                   options: queryOptions,
                   ...(turnInput.resume ? { resume: true } : {}),
+                  onStartupPhase: reportStartupPhase,
                 })
-                .pipe(Effect.map((querySession) => ({ program, querySession }))),
+                .pipe(
+                  Effect.map((querySession) => ({ program, querySession })),
+                  Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
+                ),
             ),
           );
-          // The SDK spawns the CLI per turn, so only the open waits for a provider update.
+          // The SDK spawns the CLI when a query opens, so only the open waits for a provider update.
           const { program, querySession } = yield* (
             adapterOptions.installationGate === undefined
               ? openQueryRuntime
@@ -13758,6 +13876,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.claudeCodeVersion = message.claude_code_version;
                   }
                   if (message.type === "system" && message.subtype === "init") {
+                    for (const server of message.mcp_servers ?? []) {
+                      if (server.status === "connected") {
+                        announcedMcpSignIns.delete(
+                          mcpSignInKey(context.nativeThreadId, server.name),
+                        );
+                      }
+                    }
                     // Recorded frames from older CLIs can omit the list.
                     context.checkMcpSignIns = (message.mcp_servers ?? []).some(
                       (server) =>

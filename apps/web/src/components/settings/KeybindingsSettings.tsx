@@ -158,10 +158,10 @@ function KeybindingsSearchInput({
         value={query}
         onChange={(event) => onChange(event.currentTarget.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
+          if (!isBareEscape(event) || event.nativeEvent.isComposing || event.keyCode === 229)
             return;
           event.preventDefault();
-          if (query.length > 0) {
+          if (query.length > 0 || event.repeat) {
             event.stopPropagation();
             onChange("");
           } else event.currentTarget.blur();
@@ -756,6 +756,13 @@ function rowKeybindingTarget(row: KeybindingRow): ServerRemoveKeybindingInput {
   };
 }
 
+// Esc with a modifier is not a cancel.
+function isBareEscape(event: KeyboardEvent<HTMLInputElement>) {
+  return (
+    event.key === "Escape" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
+  );
+}
+
 function useKeybindingRowEditor({
   row,
   allRows,
@@ -804,9 +811,9 @@ function useKeybindingRowEditor({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (isBareEscape(event)) {
       const field = event.currentTarget;
       flushSync(() =>
         setDraft({
@@ -1195,9 +1202,9 @@ function useNewKeybindingDraft({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (isBareEscape(event)) {
       setDraft({ keyDraft: "", isRecording: false });
       event.currentTarget.blur();
       return;

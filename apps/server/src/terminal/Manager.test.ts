@@ -8,7 +8,7 @@ import {
   ProjectId,
   ThreadId,
   TerminalCwdNotFoundError,
-  type TerminalAttachStreamEvent,
+  TerminalAttachStreamEvent,
   type TerminalEvent,
   type TerminalOpenInput,
   ProviderDriverKind,
@@ -1205,6 +1205,45 @@ it.layer(
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("backs off polling a steady command and still sees it exit within five seconds", () =>
+    Effect.gen(function* () {
+      const shell = { pid: 9000, ppid: 1, name: "zsh" };
+      let table = [shell, { pid: 200, ppid: 9000, name: "node" }];
+      let queries = 0;
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+        subprocessPollIntervalMs: 1_000,
+        processKillGraceMs: 0,
+        processTable: Effect.sync(() => {
+          queries += 1;
+          return table;
+        }),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      const activity = Effect.map(getEvents, (events) =>
+        events.flatMap((event) =>
+          event.type === "activity" ? [event.hasRunningSubprocess ? event.label : null] : [],
+        ),
+      );
+      yield* manager.open(openInput());
+
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* activity).toEqual(["node"]);
+      expect(queries).toBeGreaterThanOrEqual(115);
+      expect(queries).toBeLessThanOrEqual(125);
+
+      table = [...table, { pid: 201, ppid: 200, name: "esbuild" }];
+      ptyAdapter.processes[0]!.emitData("rebuilt\r\n");
+      queries = 0;
+      yield* TestClock.adjust("1 second");
+      expect(queries).toBe(1);
+
+      yield* TestClock.adjust("1 minute");
+      table = [shell];
+      yield* TestClock.adjust("5 seconds");
+      expect(yield* activity).toEqual(["node", null]);
+      yield* manager.close({ threadId: "thread-1" });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   // Answers process-table queries after `queryDuration`, honoring the caller's
   // timeout the way ProcessRunner's `timedOutResult` mode does.
   const slowProcessTable = (
@@ -1882,6 +1921,43 @@ it.layer(
       yield* Queue.take(outputs);
       yield* manager.close({ threadId: "thread-1" });
       expect(yield* readFileString(yield* historyLogPath(logsDir))).toBe("A\u001b\\B");
+    }),
+  );
+
+  it.effect.each([
+    { name: "NUL padding", body: "31" + "\u0000".repeat(4_096) + "\r", replay: "31\r" },
+    { name: "DEL padding", body: "31" + "\u007f".repeat(4_096) + "\r", replay: "31\r" },
+    { name: "non-ASCII padding", body: "31" + "é".repeat(4_096) + "\r", replay: "31\r" },
+    { name: "over-budget parameters", body: "1".repeat(5_000) + "\r", replay: "\r" },
+    {
+      name: "parameters filling the budget",
+      body: "1".repeat(4_094) + "\r",
+      replay: "1".repeat(4_094),
+    },
+    { name: "repeated carriage returns", body: "31" + "\r".repeat(4_094), replay: "31\r" },
+    {
+      name: "over-budget line feeds",
+      body: "31" + "\n".repeat(4_094),
+      replay: "31" + "\n".repeat(4_092),
+    },
+  ])("replays an unfinished CSI with $name on attach", ({ body, replay }) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const input = openInput();
+      const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
+      yield* live;
+      const process = ptyAdapter.processes[0]!;
+      process.emitData("prompt\u001b[" + body);
+      yield* live;
+
+      const joining = yield* Stream.toPull(manager.attachOutputStream(input, "joining"));
+      const [event] = yield* joining;
+      if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+      process.emitData("mX");
+      const [output] = yield* joining;
+      if (output?.type !== "output") throw new Error("Expected live terminal output");
+
+      expect(event.snapshot.history + output.data).toBe("prompt\u001b[" + replay + "mX");
     }),
   );
 
@@ -3022,8 +3098,10 @@ it.layer(
         ["darwin", "/opt/homebrew/bin/bash", ["-l"]],
         ["linux", "/bin/bash", undefined],
         ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", ["--login", "-i"]],
+        ["win32", "C:/Program Files/Git/bin/bash.exe", ["--login", "-i"]],
         ["darwin", "/bin/zsh", ["-o", "nopromptsp"]],
         ["linux", "/bin/zsh", ["-o", "nopromptsp"]],
+        ["linux", "/opt/team\\zsh", undefined],
         ["win32", "pwsh.exe", POWERSHELL_ARGS],
       ] as const) {
         const { manager, ptyAdapter } = yield* createManager(5, {
@@ -3262,6 +3340,115 @@ it.layer(
       yield* manager.attachStream({ ...openInput(), restartIfNotRunning: true }, () => Effect.void);
       yield* expectRetained();
     }),
+  );
+
+  it.effect(
+    "keeps a title update hidden when the history limit cuts through the previous title",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        const input = openInput();
+        const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
+        yield* live;
+        const process = ptyAdapter.processes[0]!;
+        // UTF-8 exceeds the wire history budget while the string fits the parser's held text limit.
+        process.emitData("\u001b]0;");
+        yield* live;
+        const titleChunk = "界".repeat(8_192);
+        for (let index = 0; index < 24; index += 1) {
+          process.emitData(titleChunk);
+          yield* live;
+        }
+        // The second OSC's escape ends the first title without a separate terminator.
+        process.emitData("\u001b]0;Build ");
+        yield* live;
+
+        const joining = yield* Stream.toPull(
+          manager.attachOutputStream(
+            { ...input, maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES },
+            "joining",
+          ),
+        );
+        const [event] = yield* joining;
+        if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+        process.emitData("progress\u0007ready\r\n");
+        const [output] = yield* joining;
+        if (output?.type !== "output") throw new Error("Expected live terminal output");
+
+        const state = terminalSequenceStateAfter(0, event.snapshot.history);
+        const firstVisible = terminalSequenceEnd(state, output.data);
+        expect(output.data.slice(firstVisible)).toBe("ready\r\n");
+      }),
+  );
+
+  it.effect.each([
+    {
+      name: "title with no history budget",
+      pending: "\u001b]0;Build ",
+      tail: "progress\u0007",
+      budget: 0,
+      history: "",
+      viewer: "attach",
+      supportsSnapshotSequenceState: true,
+    },
+    {
+      name: "title beyond the pending prefix limit",
+      pending: "\u001b]0;" + "x".repeat(4_096),
+      tail: "progress\u0007",
+      budget: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+      history: "before\r\n",
+      viewer: "attach",
+      supportsSnapshotSequenceState: true,
+    },
+    ...(["attach", "observe", "resync"] as const).map((viewer) => ({
+      name: `long title for a legacy ${viewer} viewer`,
+      pending: "\u001b]0;" + "x".repeat(4_096),
+      tail: "progress\u0007",
+      budget: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+      history: "before\r\n\u001b]",
+      viewer,
+      supportsSnapshotSequenceState: false,
+    })),
+  ] as const)(
+    "keeps a snapshot's $name out of visible output",
+    ({ pending, tail, budget, history, viewer, supportsSnapshotSequenceState }) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        const input = openInput();
+        const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
+        yield* live;
+        const process = ptyAdapter.processes[0]!;
+        process.emitData("before\r\n" + pending);
+        yield* live;
+
+        const viewerInput = { ...input, supportsSnapshotSequenceState };
+        const joining = yield* Stream.toPull(
+          viewer === "attach"
+            ? manager.attachOutputStream({ ...viewerInput, maxHistoryBytes: budget }, "joining")
+            : terminalOutputStream((listener, cleanup) =>
+                viewer === "observe"
+                  ? manager.observeStream(viewerInput, listener, cleanup)
+                  : manager.resyncStream(viewerInput, listener, cleanup),
+              ),
+        );
+        const [event] = yield* joining;
+        if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+        // The parser state must survive the wire schema's bounds check.
+        const wireEvent = Schema.fromJsonString(TerminalAttachStreamEvent);
+        const decoded = yield* Schema.decodeEffect(wireEvent)(
+          yield* Schema.encodeEffect(wireEvent)(event),
+        );
+        if (decoded.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+        expect(decoded.snapshot.history).toBe(history);
+        const omitted = decoded.snapshot.historySequenceState;
+        expect(omitted !== undefined).toBe(supportsSnapshotSequenceState);
+        const state = omitted ?? terminalSequenceStateAfter(0, decoded.snapshot.history);
+
+        process.emitData(tail + "ready");
+        const [output] = yield* joining;
+        if (output?.type !== "output") throw new Error("Expected terminal output");
+        expect(output.data.slice(terminalSequenceEnd(state, output.data))).toBe("ready");
+      }),
   );
 
   it.effect("does not replay in-flight output already included in an observer snapshot", () =>

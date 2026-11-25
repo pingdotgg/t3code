@@ -609,6 +609,43 @@ it.effect.each([
     ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("marks the default branch of a primary remote that is not named origin", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      const remote = yield* makeTmpDir("git-remote-");
+      yield* git(remote, ["init", "--bare"]);
+      yield* git(cwd, ["branch", "-M", "trunk"]);
+      yield* git(cwd, ["remote", "add", "upstream", remote]);
+      yield* git(cwd, ["push", "upstream", "trunk"]);
+      yield* git(cwd, [
+        "symbolic-ref",
+        "refs/remotes/upstream/HEAD",
+        "refs/remotes/upstream/trunk",
+      ]);
+      yield* git(cwd, ["checkout", "-b", "other"]);
+      // "other" sorts ahead of "trunk" by name when their commit times tie.
+      yield* git(cwd, ["commit", "--allow-empty", "-m", "newer"]);
+      yield* git(cwd, ["checkout", "-b", "feature", "trunk"]);
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+
+      const status = yield* driver.statusDetailsLocal(cwd);
+      yield* git(cwd, ["checkout", "trunk"]);
+      assert.isTrue((yield* driver.statusDetailsLocal(cwd)).isDefaultBranch);
+      yield* git(cwd, ["checkout", "feature"]);
+      assert.isFalse(status.isDefaultBranch);
+
+      const refs = (yield* driver.listRefs({ cwd, refresh: true, includeMatchingRemoteRefs: true }))
+        .refs;
+      assert.isTrue(refs.find((ref) => ref.name === "trunk")?.isDefault);
+      assert.isTrue(refs.find((ref) => ref.name === "upstream/trunk")?.isDefault);
+      const names = refs.map((ref) => ref.name);
+      assert.isBelow(names.indexOf("trunk"), names.indexOf("other"));
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"] as const)(
   "discovers only the common directory during worktree creation from %s",
   (location) =>
@@ -4740,6 +4777,91 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("shows GBK-encoded files as readable text in the review diff and expansion", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const before = "// 初始中文注释\nint a = 1;\n";
+        const after = "// 修改后的中文注释\nint a = 2;\n";
+        // GBK bytes of `before` and `after`.
+        const writeMain = (hex: string) =>
+          Effect.sync(() =>
+            NodeFS.writeFileSync(NodePath.join(cwd, "main.c"), Buffer.from(hex, "hex")),
+          );
+        yield* writeMain("2f2f20b3f5cabcd6d0cec4d7a2cacd0a696e742061203d20313b0a");
+        yield* git(cwd, ["add", "main.c"]);
+        yield* git(cwd, ["commit", "-m", "add GBK file"]);
+        yield* writeMain("2f2f20d0deb8c4baf3b5c4d6d0cec4d7a2cacd0a696e742061203d20323b0a");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        const diff = preview.sources.map((source) => source.diff).join("\n");
+        assert.include(diff, "-// 初始中文注释");
+        assert.include(diff, "+// 修改后的中文注释");
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, { oldPath: "main.c", newPath: "main.c" }),
+        );
+        assert.deepStrictEqual(contents, { oldContents: before, newContents: after });
+      }),
+    );
+
+    // macOS and Windows filesystems reject file names that are not valid UTF-8.
+    it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+      "keeps UTF-8 paths intact next to a non-UTF-8 path in NUL-separated output",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          for (const name of ["文档.md", "café.md"]) {
+            NodeFS.writeFileSync(NodePath.join(cwd, name), "x\n");
+          }
+          NodeFS.writeFileSync(
+            Buffer.concat([
+              Buffer.from(`${cwd}/Gro`),
+              Buffer.from([0xf6, 0xdf]),
+              Buffer.from("e.c"),
+            ]),
+            "x\n",
+          );
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          const result = yield* driver.execute({
+            operation: "test.lsFilesOthers",
+            cwd,
+            args: ["ls-files", "-z", "--others"],
+          });
+          const paths = result.stdout.split("\0");
+          assert.include(paths, "文档.md");
+          assert.include(paths, "café.md");
+        }),
+    );
+
+    it.effect("keeps truncated UTF-8 output as UTF-8 when the cap cuts a character", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const blob = yield* driver.execute({
+          operation: "test.hashObject",
+          cwd,
+          args: ["hash-object", "-w", "--stdin"],
+          stdin: "a中文中文\n",
+        });
+
+        // "a" + "中" + the first byte of "文": the cap lands inside a UTF-8 character.
+        const result = yield* driver.execute({
+          operation: "test.catFile",
+          cwd,
+          args: ["cat-file", "-p", blob.stdout.trim()],
+          maxOutputBytes: 5,
+          appendTruncationMarker: true,
+        });
+        assert.isTrue(result.stdoutTruncated);
+        assert.strictEqual(result.stdout, "a中\uFFFD");
+      }),
+    );
+
     it.effect("reads a base ref that looks like an option as a revision", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -6936,6 +7058,50 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           // Selecting the existing local branch remains an explicit, attached checkout.
           assert.equal((yield* driver.switchRef({ cwd, refName: "feature" })).refName, "feature");
           assert.equal(yield* git(cwd, ["symbolic-ref", "HEAD"]), "refs/heads/feature");
+        }),
+    );
+
+    it.effect(
+      "tracks the real branch name and refuses local collisions for remotes containing slashes",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const slashedRemote = yield* makeTmpDir("git-remote-slashed-");
+          yield* git(slashedRemote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "team/origin", slashedRemote]);
+          yield* git(cwd, ["push", "team/origin", "HEAD:refs/heads/feature/demo"]);
+          yield* git(cwd, ["push", "team/origin", "HEAD:refs/heads/conflict"]);
+          yield* git(cwd, ["fetch", "team/origin"]);
+
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const switched = yield* driver.switchRef({ cwd, refName: "team/origin/feature/demo" });
+
+          assert.equal(switched.refName, "feature/demo");
+          assert.equal(yield* git(cwd, ["branch", "--show-current"]), "feature/demo");
+          assert.equal(
+            yield* git(cwd, ["for-each-ref", "--format=%(upstream)", "refs/heads/feature/demo"]),
+            "refs/remotes/team/origin/feature/demo",
+          );
+          assert.equal(
+            yield* git(cwd, ["for-each-ref", "--format=%(refname)", "refs/heads/origin"]),
+            "",
+          );
+
+          yield* git(cwd, ["checkout", "--no-track", "-b", "conflict"]);
+          yield* git(cwd, ["commit", "--allow-empty", "-m", "Local conflict work"]);
+          yield* git(cwd, ["checkout", initialBranch]);
+
+          const conflicted = yield* driver
+            .switchRef({ cwd, refName: "team/origin/conflict" })
+            .pipe(Effect.flip);
+
+          assert.equal(conflicted.reason, "branch_already_exists");
+          assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+          assert.equal(
+            yield* git(cwd, ["for-each-ref", "--format=%(refname)", "refs/heads/origin"]),
+            "",
+          );
         }),
     );
 

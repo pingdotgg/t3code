@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import type { DatabaseMigrationProgress } from "./server.ts";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
@@ -1110,6 +1111,7 @@ export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
+  getDatabaseMigrationProgress?: () => Promise<DatabaseMigrationProgress | null>;
   /** `null` until the desktop host has read the login shell's environment; ask again later. */
   getRelayTelemetryEnabled: () => boolean | null;
   getPathForFile: (file: File) => string;
