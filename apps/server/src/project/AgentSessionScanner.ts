@@ -1248,11 +1248,14 @@ export const make = Effect.gen(function* () {
               }
             };
             // Claude writes cwd before message, so a record with a large image need not be read to its end.
+            // Pi uses a small header, which must be complete before its cwd is trusted.
             let topLevelCwd: string | null = null;
             const createReader = () =>
               createTranscriptJsonReader(reserveSelected, selectCwdPath, {
                 onTopLevelString: (key, value) => {
-                  if (key === "cwd" && value.trim().length > 0) topLevelCwd ??= value;
+                  if (source !== "pi" && key === "cwd" && value.trim().length > 0) {
+                    topLevelCwd ??= value;
+                  }
                 },
               });
             let reader = createReader();
