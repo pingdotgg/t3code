@@ -962,6 +962,7 @@ function TerminalSessionViewport({
         }
       };
 
+      const readInputSession = () => appAtomRegistry.get(terminalSessionAtom);
       const metadataAtom = terminalEnvironment.metadata({ environmentId, input: null });
       const canWriteInput = () => readEnvironmentScope(environmentId, AuthTerminalOperateScope);
       const writeInputChunk = (data: string, kind?: "binary" | "reply") =>
@@ -996,9 +997,9 @@ function TerminalSessionViewport({
         return writeInput(
           data,
           async (chunk) => {
-            if (terminalRef.current !== terminal) return "not-dispatched";
-            const currentSession = appAtomRegistry.get(terminalSessionAtom);
+            const currentSession = readInputSession();
             if (
+              terminalRef.current !== terminal ||
               currentSession.lifecycleVersion !== lifecycleVersion ||
               writableSessionGeneration(currentSession, canWriteInput()) !== generation
             ) {
