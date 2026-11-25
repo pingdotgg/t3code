@@ -1160,6 +1160,51 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  // Enterprise Server validates the whole document before `@include` runs, and its schema has no
+  // pull request stacks, so naming the fields at all fails the request.
+  it.effect("lists pull requests on Enterprise Server without naming stack fields", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(2, 1))));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "ghe.example.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      expect(callAt(0)).toMatchObject({ kind: "graphql", host: "ghe.example.com" });
+      expect(queryAt(0)).not.toMatch(/\bstack(Entry)?\b/);
+    }),
+  );
+
+  it.effect("reads a pull request summary on Enterprise Server without naming stack fields", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(encodeJson({ data: { _0_repository: { pullRequest: null } } }))),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const read = yield* cli
+        .getPullRequestSummary({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "ghe.example.com",
+          number: 7,
+        })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      yield* Fiber.join(read);
+
+      expect(callAt(0)).toMatchObject({ kind: "graphql", host: "ghe.example.com" });
+      expect(queryAt(0)).not.toMatch(/\bstack(Entry)?\b/);
+    }),
+  );
+
   it.effect("coalesces concurrent identity verification for the same host and credential", () =>
     Effect.gen(function* () {
       mockedExecute.mockImplementation(() =>
