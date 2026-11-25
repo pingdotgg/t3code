@@ -21,7 +21,7 @@ import {
 } from "../pullRequest/PullRequestListRow";
 import { PullRequestActorLabel } from "../pullRequest/pullRequestPresentation";
 import { ThreadDetailsControl, ThreadDetailsMoreButton } from "./ThreadDetailsControl";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 function LinkedIssueRow({
   link,
@@ -107,22 +107,20 @@ function LinkedIssueRow({
   );
   return compact ? (
     <div className="pb-1.5">
-      <Tooltip>
-        <TooltipTrigger
-          render={<ThreadDetailsControl part="title" render={<a {...anchorProps} />} />}
-        >
-          {glyph}
-          <span className="min-w-0 flex-1 line-clamp-2 whitespace-normal leading-4.5">{title}</span>
-        </TooltipTrigger>
-        <TooltipPopup
-          side="top"
-          align="start"
-          variant="glass"
-          className="w-80 max-w-[calc(100vw-2rem)]"
-        >
-          <div className="flex min-w-0 items-center gap-2">{lines}</div>
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={<ThreadDetailsControl part="title" render={<a {...anchorProps} />} />}
+        label={
+          <>
+            <div className="flex min-w-0 items-center gap-2">{lines}</div>
+          </>
+        }
+        align="start"
+        variant="glass"
+        className="w-80 max-w-[calc(100vw-2rem)]"
+      >
+        {glyph}
+        <span className="min-w-0 flex-1 line-clamp-2 whitespace-normal leading-4.5">{title}</span>
+      </SharedTooltipTrigger>
       <div className="flex h-5 min-w-0 items-center gap-1.5 ps-9 pe-2.5 text-xs text-muted-foreground">
         <span aria-hidden className="shrink-0 tabular-nums">
           {link.displayKey}

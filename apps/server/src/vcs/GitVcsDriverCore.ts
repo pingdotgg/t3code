@@ -37,6 +37,7 @@ import {
   trimAsciiWhitespace,
   type VcsRef,
 } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
@@ -104,6 +105,13 @@ const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const GIT_IDENT_KEYWORD = /\$Id:[^$\n]*\$/g;
 const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
+const truncateReviewSubject = (subject: string) =>
+  subject.slice(
+    0,
+    splitsSurrogatePair(subject, REVIEW_BRANCH_SUBJECT_LIMIT)
+      ? REVIEW_BRANCH_SUBJECT_LIMIT - 1
+      : REVIEW_BRANCH_SUBJECT_LIMIT,
+  );
 const REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES = 128 * 1024;
 // Client patch parsers require a/ and b/ prefixes; override user diff prefix settings.
 export const PATCH_RENDER_PREFIX_ARGS = ["--src-prefix=a/", "--dst-prefix=b/"] as const;
@@ -5011,7 +5019,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     const endOfSubject = result.stdout.indexOf("\n");
     return {
-      subject: result.stdout.slice(0, endOfSubject < 0 ? undefined : endOfSubject).slice(0, 300),
+      subject: truncateReviewSubject(
+        result.stdout.slice(0, endOfSubject < 0 ? undefined : endOfSubject),
+      ),
     };
   });
 
@@ -5077,7 +5087,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ) {
         return yield* reviewCommitError(cwd, "Could not read branch commit metadata.");
       }
-      commits.push({ sha, subject: subject.slice(0, REVIEW_BRANCH_SUBJECT_LIMIT), committedAt });
+      commits.push({ sha, subject: truncateReviewSubject(subject), committedAt });
     }
     if (result.stdoutTruncated && commits.length === 0) {
       return yield* reviewCommitError(cwd, "Branch commit metadata exceeds the response limit.");
