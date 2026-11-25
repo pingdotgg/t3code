@@ -16,11 +16,15 @@ import * as MobileDatabase from "./mobile-database";
 import * as MobilePreferences from "./mobile-preferences";
 import * as MobileSecureStorage from "./mobile-secure-storage";
 
-function storeWith(initialPayload: string | null) {
+function storeWith(initialPayload: string | null, options?: { readonly databaseFails: boolean }) {
   let stored: MobileDatabase.StoredPreferencesJson | null =
     initialPayload === null ? null : { payload: initialPayload, updatedAt: 1 };
   const database = {
-    loadPreferencesJson: Effect.sync(() => Option.fromNullishOr(stored)),
+    loadPreferencesJson: options?.databaseFails
+      ? Effect.fail(
+          new MobileDatabase.MobileDatabaseError({ operation: "load-preferences", cause: "busy" }),
+        )
+      : Effect.sync(() => Option.fromNullishOr(stored)),
     savePreferencesJson: (payload: string, updatedAt: number) =>
       Effect.sync(() => {
         stored = { payload, updatedAt };
@@ -53,6 +57,14 @@ describe("MobilePreferencesStore", () => {
       const loaded = yield* Effect.exit(store.load);
       expect(Exit.isFailure(loaded)).toBe(true);
     }).pipe(Effect.provide(storeWith("{not json"))),
+  );
+
+  it.effect("fails the load when the database read fails and nothing else is stored", () =>
+    Effect.gen(function* () {
+      const store = yield* MobilePreferences.MobilePreferencesStore;
+      const loaded = yield* Effect.exit(store.load);
+      expect(Exit.isFailure(loaded)).toBe(true);
+    }).pipe(Effect.provide(storeWith(null, { databaseFails: true }))),
   );
 
   it.effect("a save replaces unreadable preferences", () =>

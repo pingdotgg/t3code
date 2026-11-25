@@ -599,7 +599,9 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
       (storedPreferences === null ||
         (Option.isSome(storedJson) && fallback.updatedAt > storedJson.value.updatedAt));
 
+    // A failed database read may hide saved preferences, so it counts as unreadable too.
     let unreadable =
+      !databaseAvailable ||
       (Option.isSome(storedJson) && storedJson.value.payload.trim() !== "") ||
       Boolean(fallbackJson?.trim());
     let parsed: Preferences | null = null;
