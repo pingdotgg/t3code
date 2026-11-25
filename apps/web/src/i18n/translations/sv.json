@@ -3669,8 +3669,19 @@
   "419719298a7acaea": "Zooma ut",
   "ed8d5db95359cff4": "Återställ zoom",
   "8c32e9085e525c19": "Zooma in",
+  "836c9607050d0923": "Stoppa sidan",
   "18daf3df927c7251": "Öppna i helskärm",
   "b45bd7726f36df8f": "Sidan är inte tillgänglig",
+  "6f6ddfe9c57bfd67": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " stoppad"
+  ],
+  "2b81a1785a811cc2": "Kör igen",
+  "93bb54d6e57465b5": "Stoppa sidan",
   "f66c9318201502e0": "Öppna i helskärm",
   "dc0b188b0761f98a": [
     "Det gick inte att läsa in ",

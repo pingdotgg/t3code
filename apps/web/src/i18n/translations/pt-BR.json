@@ -3669,8 +3669,19 @@
   "419719298a7acaea": "Diminuir zoom",
   "ed8d5db95359cff4": "Redefinir zoom",
   "8c32e9085e525c19": "Aumentar zoom",
+  "836c9607050d0923": "Parar página",
   "18daf3df927c7251": "Abrir em tela cheia",
   "b45bd7726f36df8f": "Página indisponível",
+  "6f6ddfe9c57bfd67": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " parada"
+  ],
+  "2b81a1785a811cc2": "Executar novamente",
+  "93bb54d6e57465b5": "Parar página",
   "f66c9318201502e0": "Abrir em tela cheia",
   "dc0b188b0761f98a": [
     "Não foi possível carregar ",

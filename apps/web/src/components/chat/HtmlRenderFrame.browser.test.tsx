@@ -52,6 +52,23 @@ describe("HtmlRenderFrame", () => {
     expect(onFullscreenChange).toHaveBeenLastCalledWith(false);
   });
 
+  it("unloads a stopped page and runs it again on request", async () => {
+    setup();
+    await using screen = await render(
+      <HtmlRenderFrame
+        environmentId={EnvironmentId.make("environment")}
+        htmlRender={{ attachmentId: "stoppable", title: "Spinner", height: 200 }}
+        threadRef={undefined}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Stop page" }));
+    expect(screen.container.querySelector("iframe")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Run again" }));
+    await expect.element(screen.getByTitle("Spinner")).toBeInTheDocument();
+  });
+
   it("reopens at the page height it last measured", async () => {
     setup();
     using page = (() => {

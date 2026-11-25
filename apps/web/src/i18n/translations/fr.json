@@ -3669,8 +3669,19 @@
   "419719298a7acaea": "Zoom arrière",
   "ed8d5db95359cff4": "Réinitialiser le zoom",
   "8c32e9085e525c19": "Zoom avant",
+  "836c9607050d0923": "Arrêter la page",
   "18daf3df927c7251": "Ouvrir en plein écran",
   "b45bd7726f36df8f": "Page indisponible",
+  "6f6ddfe9c57bfd67": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " arrêtée"
+  ],
+  "2b81a1785a811cc2": "Relancer",
+  "93bb54d6e57465b5": "Arrêter la page",
   "f66c9318201502e0": "Ouvrir en plein écran",
   "dc0b188b0761f98a": [
     "Impossible de charger ",

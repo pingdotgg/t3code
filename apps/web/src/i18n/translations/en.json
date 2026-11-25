@@ -3669,8 +3669,19 @@
   "419719298a7acaea": "Zoom out",
   "ed8d5db95359cff4": "Reset zoom",
   "8c32e9085e525c19": "Zoom in",
+  "836c9607050d0923": "Stop page",
   "18daf3df927c7251": "Open full screen",
   "b45bd7726f36df8f": "Page unavailable",
+  "6f6ddfe9c57bfd67": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " stopped"
+  ],
+  "2b81a1785a811cc2": "Run again",
+  "93bb54d6e57465b5": "Stop page",
   "f66c9318201502e0": "Open full screen",
   "dc0b188b0761f98a": [
     "Unable to load ",

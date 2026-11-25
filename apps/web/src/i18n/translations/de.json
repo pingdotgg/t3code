@@ -3670,8 +3670,19 @@
   "419719298a7acaea": "Verkleinern",
   "ed8d5db95359cff4": "Zoom zurücksetzen",
   "8c32e9085e525c19": "Vergrößern",
+  "836c9607050d0923": "Seite stoppen",
   "18daf3df927c7251": "Vollbild öffnen",
   "b45bd7726f36df8f": "Seite nicht verfügbar",
+  "6f6ddfe9c57bfd67": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " gestoppt"
+  ],
+  "2b81a1785a811cc2": "Erneut ausführen",
+  "93bb54d6e57465b5": "Seite stoppen",
   "f66c9318201502e0": "Vollbild öffnen",
   "dc0b188b0761f98a": [
     {

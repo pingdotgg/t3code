@@ -6,7 +6,7 @@ import {
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { T, useGT, Var } from "gt-react";
-import { Maximize2Icon } from "lucide-react";
+import { Maximize2Icon, PlayIcon, SquareIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
@@ -64,12 +64,17 @@ export function HtmlRenderFrame(props: {
   };
   // The frame keeps the first URL it loads, so later mints do not reload the page.
   const [loaded, setLoaded] = useState<{ src: string; expiresAt: number } | null>(null);
-  const assetUrl = useLongLivedAssetUrl(loaded === null ? props.environmentId : null, resource);
-  if (loaded === null && assetUrl._tag === "Success") {
+  // A stopped page is unloaded, so a runaway script stops using the CPU; running it again mints a fresh URL.
+  const [stopped, setStopped] = useState(false);
+  const assetUrl = useLongLivedAssetUrl(
+    loaded === null && !stopped ? props.environmentId : null,
+    resource,
+  );
+  if (loaded === null && !stopped && assetUrl._tag === "Success") {
     setLoaded({ src: assetUrl.url, expiresAt: assetUrl.expiresAt });
   }
   const src = loaded?.src ?? null;
-  const failed = loaded === null && assetUrl._tag === "Failure";
+  const failed = loaded === null && !stopped && assetUrl._tag === "Failure";
   const refresh = useAssetUrlRefresh(props.environmentId, resource);
   const [expandedSrc, setExpandedSrc] = useState<string | null>(null);
   const { onFullscreenChange } = props;
@@ -85,7 +90,17 @@ export function HtmlRenderFrame(props: {
 
   return (
     <div ref={observeBox} className="group/html-render relative" style={{ height }}>
-      {src !== null ? (
+      {stopped ? (
+        <div className="flex size-full items-center justify-center gap-2 text-muted-foreground text-xs">
+          <T>
+            <Var>{title}</Var> stopped
+          </T>
+          <Button size="xs" variant="outline" onClick={() => setStopped(false)}>
+            <PlayIcon />
+            <T>Run again</T>
+          </Button>
+        </div>
+      ) : src !== null ? (
         <>
           <HtmlRenderDocument
             src={src}
@@ -100,6 +115,26 @@ export function HtmlRenderFrame(props: {
             onFullscreenChange={onFullscreenChange}
           />
           <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={gt("Stop page")}
+                    size="icon-xs"
+                    variant="glass"
+                    onClick={() => {
+                      setStopped(true);
+                      setLoaded(null);
+                    }}
+                  />
+                }
+              >
+                <SquareIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="left">
+                <T>Stop page</T>
+              </TooltipPopup>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 render={

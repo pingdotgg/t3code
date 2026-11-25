@@ -3669,8 +3669,19 @@
   "419719298a7acaea": "Alejar",
   "ed8d5db95359cff4": "Restablecer zoom",
   "8c32e9085e525c19": "Acercar",
+  "836c9607050d0923": "Detener página",
   "18daf3df927c7251": "Abrir a pantalla completa",
   "b45bd7726f36df8f": "Página no disponible",
+  "6f6ddfe9c57bfd67": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " detenida"
+  ],
+  "2b81a1785a811cc2": "Volver a ejecutar",
+  "93bb54d6e57465b5": "Detener página",
   "f66c9318201502e0": "Abrir a pantalla completa",
   "dc0b188b0761f98a": [
     "No se puede cargar ",
