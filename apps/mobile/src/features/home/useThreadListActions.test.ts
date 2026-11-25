@@ -42,6 +42,9 @@ vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useRef: (current: unknown) => ({ current }),
 }));
+vi.mock("../../lib/useStableCallback", () => ({
+  useStableCallback: (callback: unknown) => callback,
+}));
 vi.mock("react-native", () => ({
   Alert: {
     alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
