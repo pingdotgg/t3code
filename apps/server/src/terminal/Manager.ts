@@ -2609,6 +2609,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
         const toEvict = inactiveSessions.length - maxRetainedInactiveSessions;
         for (const session of inactiveSessions.slice(0, toEvict)) {
+          // Startup counts toward the retention threshold, but a pending shell must stay attachable.
+          if (session.status === "starting") continue;
           const key = toSessionKey(session.threadId, session.terminalId);
           sessions.delete(key);
           closedSessionKeys.add(key);
