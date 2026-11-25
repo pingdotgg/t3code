@@ -119,7 +119,15 @@ const make = Effect.gen(function* () {
     const tools = yield* resolved.mcpApps
       .listTools({ providerThread: resolved.providerThread, server: resolved.app.server })
       .pipe(Effect.mapError(adapterFailure(threadId)));
-    return tools.find((tool) => tool.name === name);
+    // Codex registers connector tools as "<connector>.<tool>", but widgets use local names.
+    const { app } = resolved;
+    const separator = app.tool.indexOf(".");
+    let registeredName = name;
+    if (app.server === "codex_apps" && separator > 0) {
+      const prefix = app.tool.slice(0, separator + 1);
+      if (!name.startsWith(prefix)) registeredName = prefix + name;
+    }
+    return tools.find((tool) => tool.name === registeredName);
   });
 
   const toolInfo = Effect.fn("McpAppRequests.toolInfo")(function* (input: McpAppToolInfoInput) {
@@ -145,7 +153,7 @@ const make = Effect.gen(function* () {
       .callTool({
         providerThread: resolved.providerThread,
         server: resolved.app.server,
-        tool: input.name,
+        tool: tool.name,
         arguments: input.arguments,
       })
       .pipe(Effect.mapError(adapterFailure(input.threadId)));

@@ -35,7 +35,7 @@ const deepParent = (id: ThreadId): ThreadId | null => {
   return depth === 1 ? threadId : deepForkId(depth - 1);
 };
 
-const appItem = (output: unknown): OrchestrationV2TurnItem => ({
+const appItem = (output: unknown, toolName = "weather.get_weather"): OrchestrationV2TurnItem => ({
   id: itemId,
   threadId,
   runId: null,
@@ -51,7 +51,7 @@ const appItem = (output: unknown): OrchestrationV2TurnItem => ({
   completedAt: null,
   updatedAt: DateTime.makeUnsafe(0),
   type: "dynamic_tool",
-  toolName: "weather.get_weather",
+  toolName,
   input: {},
   output,
 });
@@ -175,6 +175,51 @@ describe("McpAppRequests", () => {
       });
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps }))),
   );
+
+  it.effect("resolves a Codex widget's local tool name within its originating connector", () => {
+    const dataTool = {
+      name: "datadog._dd_wfd",
+      inputSchema: { type: "object" },
+      annotations: { readOnlyHint: true },
+      _meta: { ui: { visibility: ["app"] } },
+    };
+    const tools = [
+      { ...dataTool, name: "other._dd_wfd" },
+      dataTool,
+      { ...dataTool, name: "datadog.model_only", _meta: { ui: { visibility: ["model"] } } },
+    ];
+    return Effect.gen(function* () {
+      const requests = yield* McpAppRequests.McpAppRequests;
+      for (const name of ["_dd_wfd", "datadog._dd_wfd"]) {
+        assert.deepEqual(yield* requests.toolInfo({ threadId, itemId, name }), {
+          callable: true,
+          readOnly: true,
+          tool: dataTool,
+        });
+        yield* requests.callTool({ threadId, itemId, name, arguments: {} });
+        assert.deepEqual(calls.at(-1), { server: "codex_apps", tool: dataTool.name });
+      }
+      const before = calls.length;
+      for (const name of ["other._dd_wfd", "model_only"]) {
+        assert.isFalse((yield* requests.toolInfo({ threadId, itemId, name })).callable);
+        assert.equal(
+          yield* reason(requests.callTool({ threadId, itemId, name, arguments: {} })),
+          "tool-not-callable",
+        );
+      }
+      assert.equal(calls.length, before);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          item: appItem(
+            { t3McpApp: { ...app, server: "codex_apps", tool: "datadog.get_datadog_metric" } },
+            "codex_apps.datadog.get_datadog_metric",
+          ),
+          mcpApps: { ...mcpApps, listTools: () => Effect.succeed(tools) },
+        }),
+      ),
+    );
+  });
 
   it.effect("refuses tools hidden from apps or missing from the server", () =>
     Effect.gen(function* () {
