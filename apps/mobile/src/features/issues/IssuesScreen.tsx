@@ -165,7 +165,8 @@ export function IssuesScreen(
   const continuable = [...held].filter(([, page]) => Object.keys(page.nextCursors).length > 0);
   const moreFailure = [...held.values()].find((page) => page.moreFailure)?.moreFailure ?? null;
   const loadMore = async (retry = false) => {
-    if (loading.current || (moreFailure !== null && !retry)) return;
+    // With nothing to continue, the spinner and new pages would only re-fire onEndReached forever.
+    if (loading.current || continuable.length === 0 || (moreFailure !== null && !retry)) return;
     loading.current = true;
     setLoadingMore(true);
     const loaded = await Promise.all(

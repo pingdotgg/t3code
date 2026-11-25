@@ -1019,7 +1019,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           } as never);
 
         yield* post({ origin: "http://192.168.1.50:5733", "sec-fetch-site": "same-origin" });
-        yield* post({ origin: "http://localhost:13773" });
+        const session = yield* post({ origin: "http://localhost:13773" });
+        // A client learns which session is its own, to tell its answers from another client's.
+        const own = yield* serverAuth.getSessionState({
+          cookies: { [sessions.cookieName]: exchanged.sessionToken },
+          headers: { host: "localhost:13773", origin: "http://localhost:13773" },
+        } as never);
+        expect(own.sessionId).toBe(session.sessionId);
 
         const otherPort = yield* Effect.flip(
           post({ origin: "http://localhost:3000", "sec-fetch-site": "same-site" }),

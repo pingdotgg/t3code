@@ -18,6 +18,8 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+const antigravityThoughtLevel = process.env.T3_ACP_ANTIGRAVITY_THOUGHT_LEVEL === "1";
+const antigravityResumeThoughtLevel = process.env.T3_ACP_RESUME_THOUGHT_LEVEL;
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
@@ -124,6 +126,7 @@ let currentModeId = antigravityProfile
     ? copilotModeId("agent")
     : "ask";
 let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
+let currentAntigravityThoughtLevel = "high";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
@@ -159,6 +162,9 @@ process.once("SIGINT", () => {
 });
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+  if (process.env.T3_ACP_OMIT_MODEL_OPTIONS === "1") {
+    return [];
+  }
   if (antigravityProfile) {
     return [
       {
@@ -177,6 +183,30 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
         currentValue: currentModeId,
         options: availableModes.map((mode) => ({ value: mode.id, name: mode.name })),
       },
+      ...(antigravityThoughtLevel
+        ? [
+            {
+              configId: "thought_level",
+              name: "Thinking Level",
+              category: "thought_level",
+              type: "select" as const,
+              currentValue: currentAntigravityThoughtLevel,
+              options:
+                currentModelId === "gemini-test-high"
+                  ? [
+                      { value: "low", name: "Low" },
+                      { value: "medium", name: "Medium" },
+                      { value: "high", name: "High" },
+                    ]
+                  : [
+                      { value: "low", name: "Low" },
+                      { value: "medium", name: "Medium" },
+                      { value: "high", name: "High" },
+                      { value: "xhigh", name: "Extra" },
+                    ],
+            },
+          ]
+        : []),
     ];
   }
   if (parameterizedModelPicker) {
@@ -662,6 +692,9 @@ const program = Effect.gen(function* () {
         },
       });
       if (antigravityProfile) {
+        if (antigravityResumeThoughtLevel) {
+          currentAntigravityThoughtLevel = antigravityResumeThoughtLevel;
+        }
         yield* publishAntigravityCommands(request.sessionId);
       }
       return {
@@ -890,6 +923,12 @@ const program = Effect.gen(function* () {
       }
       if (request.configId === "model" && typeof request.value === "string") {
         currentModelId = request.value;
+        if (antigravityProfile && antigravityThoughtLevel) {
+          currentAntigravityThoughtLevel = request.value === "gemini-test-high" ? "medium" : "high";
+        }
+      }
+      if (request.configId === "thought_level" && typeof request.value === "string") {
+        currentAntigravityThoughtLevel = request.value;
       }
       if (request.configId === "agent" && typeof request.value === "string") {
         currentAgent = request.value;
@@ -1344,6 +1383,15 @@ const program = Effect.gen(function* () {
             status: "completed",
             rawInput: { query: "TODO" },
             rawOutput: "src/a.ts: TODO",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-grep-output",
+            title: "Grep",
+            kind: "search",
+            status: "completed",
+            rawInput: { pattern: "needle", path: "src" },
+            rawOutput: "src/a.ts:3:const needle = 1;\nsrc/b.ts:9:needle();",
           },
           {
             sessionUpdate: "tool_call_update",

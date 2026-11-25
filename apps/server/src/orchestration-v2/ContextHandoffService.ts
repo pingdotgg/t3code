@@ -151,11 +151,24 @@ type ForkHistorySource = Pick<OrchestrationV2ThreadProjection, "thread" | "runs"
 /** Visible rows of `source`'s own runs through `throughRun` since its latest `/clear` boundary. */
 const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHistoryItems")(
   function* (
-    projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
+    projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords" | "getForkSourceRunIds">,
     source: ForkHistorySource,
     throughRun: Pick<OrchestrationV2Run, "ordinal">,
+    fork: OrchestrationV2AppThread,
   ) {
-    const throughRuns = source.runs.filter((run) => run.ordinal <= throughRun.ordinal);
+    const inheritedRunIds = fork.lineage.sideChat
+      ? null
+      : new Set(yield* projectionStore.getForkSourceRunIds(fork.id));
+    const throughRuns = source.runs
+      .filter((run) => run.ordinal <= throughRun.ordinal && (inheritedRunIds?.has(run.id) ?? true))
+      .map((run) =>
+        run.status === "rolled_back" && inheritedRunIds !== null
+          ? {
+              ...run,
+              status: run.startedAt === null ? ("cancelled" as const) : ("completed" as const),
+            }
+          : run,
+      );
     const { turnItems } = yield* projectionStore.getThreadRecords(source.thread.id, ["turnItems"], {
       turnItemRunIds: [
         ...throughRuns.map((run) => run.id),
@@ -164,7 +177,10 @@ const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHis
     });
     const bounded = turnItemsSinceContextBoundary({ runs: throughRuns, turnItems });
     return {
-      items: visibleConversationItems(source, bounded.turnItems),
+      items: visibleConversationItems(
+        { runs: throughRuns, attempts: source.attempts },
+        bounded.turnItems,
+      ),
       cleared: bounded.boundary > 0,
     };
   },
@@ -174,7 +190,7 @@ const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHis
 export const readInheritedHandoffItems = Effect.fn(
   "orchestrationV2.contextHandoff.readInheritedHandoffItems",
 )(function* (
-  projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
+  projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords" | "getForkSourceRunIds">,
   thread: OrchestrationV2AppThread,
 ) {
   const segments: Array<ReadonlyArray<OrchestrationV2TurnItem>> = [];
@@ -192,7 +208,7 @@ export const readInheritedHandoffItems = Effect.fn(
       .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
     const forkRun = source?.runs.find((run) => run.id === runId);
     if (source === null || forkRun === undefined) break;
-    const own = yield* readOwnHistoryItems(projectionStore, source, forkRun);
+    const own = yield* readOwnHistoryItems(projectionStore, source, forkRun, current);
     segments.unshift(own.items);
     if (own.cleared) break;
     current = source.thread;
@@ -204,11 +220,12 @@ export const readInheritedHandoffItems = Effect.fn(
 export const readForkHistoryItems = Effect.fn(
   "orchestrationV2.contextHandoff.readForkHistoryItems",
 )(function* (
-  projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
+  projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords" | "getForkSourceRunIds">,
   source: ForkHistorySource,
   throughRun: Pick<OrchestrationV2Run, "ordinal">,
+  fork: OrchestrationV2AppThread,
 ) {
-  const own = yield* readOwnHistoryItems(projectionStore, source, throughRun);
+  const own = yield* readOwnHistoryItems(projectionStore, source, throughRun, fork);
   if (own.cleared) return own.items;
   return [...(yield* readInheritedHandoffItems(projectionStore, source.thread)), ...own.items];
 });

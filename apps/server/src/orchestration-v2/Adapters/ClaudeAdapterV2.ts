@@ -6760,8 +6760,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             },
           });
         });
-        // Only a turn's first API request is startup; later ones are the model at work.
-        const requestedTurns = new WeakSet<ActiveClaudeTurnContext>();
+        // Only a process's first API request is startup; a reused process is already connected.
+        const requestedQueries = new WeakSet<ClaudeAgentSdkQuerySession>();
         let connectingTurn: ActiveClaudeTurnContext | undefined;
 
         const persistAttachmentBudget = Effect.fnUntraced(function* (nativeThreadId: string) {
@@ -11292,9 +11292,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (
                 message.type === "system" &&
                 message.subtype === "status" &&
-                !requestedTurns.has(context)
+                !requestedQueries.has(input.query)
               ) {
-                requestedTurns.add(context);
+                requestedQueries.add(input.query);
                 connectingTurn = context;
                 yield* reportStartupPhase("connecting");
               }
@@ -13768,7 +13768,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ),
             ),
           );
-          // The SDK spawns the CLI per turn, so only the open waits for a provider update.
+          // The SDK spawns the CLI when a query opens, so only the open waits for a provider update.
           const { program, querySession } = yield* (
             adapterOptions.installationGate === undefined
               ? openQueryRuntime
