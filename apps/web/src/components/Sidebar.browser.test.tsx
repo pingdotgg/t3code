@@ -13,7 +13,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
@@ -83,10 +83,8 @@ function project(id: string): Project {
   };
 }
 
-beforeEach(() => {
-  // Rows of an environment that is not connected are hidden; the fixtures live in "local".
-  vi.mocked(useConnectedEnvironmentIds).mockReturnValue([EnvironmentId.make("local")]);
-});
+// Rows of an environment that is not connected are hidden; the fixtures live in "local".
+vi.mocked(useConnectedEnvironmentIds).mockReturnValue([EnvironmentId.make("local")]);
 
 describe("sidebar header new thread", () => {
   it.each([
