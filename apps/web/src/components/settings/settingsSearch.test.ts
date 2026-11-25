@@ -245,9 +245,15 @@ describe("searchSettings", () => {
       ["Native sessions", "providers"],
       ["CODEX_HOME path", "providers"],
       ["Shadow home path", "providers"],
+      ["Dynamic workflow size", "providers"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
     }
+    const chinese = (message: string) =>
+      decodeMsg(message) === "Dynamic workflow size" ? "动态工作流规模" : message;
+    expect(searchSettings("动态工作流规模", SETTINGS_SEARCH_ITEMS, chinese)[0]?.id).toBe(
+      "providers",
+    );
   });
 
   it("keeps catalog result ids unique", () => {

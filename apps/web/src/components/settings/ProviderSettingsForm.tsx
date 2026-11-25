@@ -110,6 +110,7 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
   ["CLAUDE_CONFIG_DIR path", msg("CLAUDE_CONFIG_DIR path")],
   ["Auto-compact after", msg("Auto-compact after")],
   ["Compact idle threads", msg("Compact idle threads")],
+  ["Dynamic workflow size", msg("Dynamic workflow size")],
   ["Sign-in method", msg("Sign-in method")],
   ["API key", msg("API key")],
   ["GCP project", msg("GCP project")],
@@ -159,6 +160,12 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
     "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
     msg(
       "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
+    ),
+  ],
+  [
+    "How many agents Claude aims for in a workflow. A guideline, not a hard limit. Use default keeps Claude Code's own setting.",
+    msg(
+      "How many agents Claude aims for in a workflow. A guideline, not a hard limit. Use default keeps Claude Code's own setting.",
     ),
   ],
   [
@@ -249,6 +256,10 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
   ["Before the cache expires (beta)", msg("Before the cache expires (beta)")],
   ["Never", msg("Never", { $context: "option, never compact idle threads" })],
   ["Use default", msg("Use default")],
+  ["Small (under 5 agents)", msg("Small (under 5 agents)")],
+  ["Medium (under 10 agents)", msg("Medium (under 10 agents)")],
+  ["Large (under 50 agents)", msg("Large (under 50 agents)")],
+  ["Unrestricted", msg("Unrestricted", { $context: "workflow size option, no agent count" })],
   ["Google account", msg("Google account")],
   ["Gemini API key", msg("Gemini API key")],
   ["Local command", msg("Local command")],
