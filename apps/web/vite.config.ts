@@ -129,6 +129,17 @@ const browserTestProject = {
       "pdfjs-dist",
       "sql.js",
       "tiff",
+      // Fork: ci-fork.yml runs MessagesTimeline.browser.test.tsx alone, and since the app left the
+      // remark pipeline only that test imports it (through @lathe/shared/threadFindText).
+      "@lathe/shared > mdast-util-directive",
+      "@lathe/shared > micromark-extension-directive",
+      "@lathe/shared > micromark-util-character",
+      "@lathe/shared > micromark-util-decode-string",
+      "@lathe/shared > rehype-raw",
+      "@lathe/shared > rehype-sanitize",
+      "@lathe/shared > remark-breaks",
+      "@lathe/shared > remark-gfm",
+      "@lathe/shared > remark-rehype",
     ],
   },
   test: {
