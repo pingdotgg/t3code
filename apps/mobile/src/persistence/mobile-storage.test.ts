@@ -78,6 +78,20 @@ describe("mobile device identity", () => {
     }),
   );
 
+  it.effect("reads the keychain once, however many environments ask for the identity", () =>
+    Effect.gen(function* () {
+      values.set(deviceIdKey, "existing-device");
+      const storage = yield* makeStorage;
+
+      yield* Effect.all(
+        Array.from({ length: 12 }, () => storage.loadOrCreateAgentAwarenessDeviceId),
+        { concurrency: "unbounded" },
+      );
+      expect(yield* storage.loadOrCreateAgentAwarenessDeviceId).toBe("existing-device");
+      expect(getItemAsync).toHaveBeenCalledTimes(1);
+    }),
+  );
+
   it.effect("retries a failed first write without retaining an unpersisted identity", () =>
     Effect.gen(function* () {
       setItemAsync.mockRejectedValueOnce(new Error("Secure storage unavailable"));

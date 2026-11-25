@@ -16,3 +16,25 @@ import "@formatjs/intl-pluralrules/locale-data/pt";
 import "@formatjs/intl-pluralrules/locale-data/ru";
 import "@formatjs/intl-pluralrules/locale-data/sv";
 import "@formatjs/intl-pluralrules/locale-data/zh";
+
+// GT builds a new Intl.PluralRules for every plural message it formats, and the polyfill's
+// constructor compares the locale with every locale it knows. One launch formats over a hundred
+// plural messages, so equal arguments share one instance. An instance holds no state that changes.
+const PolyfilledPluralRules = Intl.PluralRules;
+const sharedPluralRules = new Map<string, Intl.PluralRules>();
+// The property is read-only in the lib types; the polyfill defines it the same way.
+Object.defineProperty(Intl, "PluralRules", {
+  configurable: true,
+  writable: true,
+  value: new Proxy(PolyfilledPluralRules, {
+    construct(target, args: ConstructorParameters<typeof Intl.PluralRules>) {
+      const key = JSON.stringify(args);
+      let rules = sharedPluralRules.get(key);
+      if (rules === undefined) {
+        rules = new target(...args);
+        sharedPluralRules.set(key, rules);
+      }
+      return rules;
+    },
+  }),
+});

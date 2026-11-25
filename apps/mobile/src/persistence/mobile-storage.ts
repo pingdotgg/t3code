@@ -131,18 +131,32 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
     yield* secureStorage.setItem(key, encoded);
   });
 
-  const loadOrCreateRandomId = Effect.fn("MobileStorage.loadOrCreateRandomId")(function* (
+  // An id never changes once stored. Every environment asks for it when it connects,
+  // and each keychain read waits for the one before it.
+  const knownIds = new Map<string, string>();
+  const readOrCreateRandomId = Effect.fn("MobileStorage.loadOrCreateRandomId")(function* (
     key: string,
   ) {
+    const known = knownIds.get(key);
+    if (known !== undefined) return known;
     const existing = yield* secureStorage.getItem(key);
-    if (existing?.trim()) return existing;
+    if (existing?.trim()) {
+      knownIds.set(key, existing);
+      return existing;
+    }
     const created = yield* Effect.tryPromise({
       try: () => import("../lib/uuid").then(({ uuidv4 }) => uuidv4()),
       catch: (cause) => new MobileDeviceIdGenerationError({ cause }),
     });
     yield* secureStorage.setItem(key, created);
+    knownIds.set(key, created);
     return created;
   }, deviceIdLock.withPermits(1));
+  const loadOrCreateRandomId = (key: string) =>
+    Effect.suspend(() => {
+      const known = knownIds.get(key);
+      return known === undefined ? readOrCreateRandomId(key) : Effect.succeed(known);
+    });
   const loadOrCreateAgentAwarenessDeviceId = loadOrCreateRandomId(AGENT_AWARENESS_DEVICE_ID_KEY);
 
   const loadAgentAwarenessDeviceId = secureStorage
