@@ -576,12 +576,10 @@ const normalizeShellCommand = Effect.fn("terminal.normalizeShellCommand")(functi
 });
 
 function basenameForPlatform(command: string, platform: NodeJS.Platform): string {
-  const normalized =
-    platform === "win32" ? command.replaceAll("/", "\\") : command.replaceAll("\\", "/");
-  const parts = normalized
-    .split(platform === "win32" ? /\\+/ : /\/+/)
+  const parts = command
+    .split(platform === "win32" ? /[\\/]+/ : /\/+/)
     .filter((part) => part.length > 0);
-  return parts.at(-1) ?? normalized;
+  return parts.at(-1) ?? command;
 }
 
 function joinWindowsPath(...parts: ReadonlyArray<string>): string {
@@ -924,7 +922,7 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const powershell = windowsPowerShellPath(yield* HostProcess.Environment);
   const command =
-    '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
+    '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
   const result = yield* processRunner
     .run({
       command: powershell,

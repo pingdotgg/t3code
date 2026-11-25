@@ -60,7 +60,7 @@ property of `T3`: take what you use at the top of the file, as the quick start d
 (`const { workflow, step, daily } = T3;`), or write `T3.step(…)` in full. A bare `daily(…)` or
 `step(…)` without that line is a `ReferenceError`.
 
-- **Definitions & body**: `workflow`, `step`, `agent`, `ask`, `wait`, `sleep`, `title`, `stop`, `skip`, `invoke`
+- **Definitions & body**: `workflow`, `step`, `agent`, `ask`, `wait`, `sleep`, `title`, `stop`, `skip`, `invoke`, `within`
 - **Inside `step` / `onEnd` only**: `store`, `signal`, `signalAll`, `start`, `runs`, `cancel`
 - **Trackers & hosts**: `issues`, `pullRequests` (triggers, step calls, and `pullRequests.wait` in the body)
 - **Triggers**: `every`, `daily`, `webhook`
@@ -93,6 +93,7 @@ Schema.Record(Schema.String, Schema.Number); // two arguments, not an object
 | `triggers`    | No       | Array of triggers that start runs automatically.                                                                                                                                            |
 | `resumeAfter` | No       | Durations to wait before auto-resuming a paused run. Defaults to `["5 minutes", "20 minutes", "80 minutes"]`. The server checks about every 15 seconds, so shorter waits act as 15 seconds. |
 | `asks`        | No       | The kinds of question it asks, each with a label: `{ feature: "Feature wanted?" }`. An `ask` names one as its `kind`; a question of a kind not listed here shows under Other.               |
+| `concurrency` | No       | At most this many runs of the workflow at once; later ones queue (see Pools and limits).                                                                                                    |
 | `onEnd`       | No       | `(payload, { id, outcome, reason }) => Effect`: cleanup hook run once when the run ends.                                                                                                    |
 
 The body is `Effect.fn(function* (payload, run) { … })`, where `run.id` is the run's id. Use `yield*` on every primitive.
@@ -215,6 +216,41 @@ workflow(
 | `cancel(runId, reason)`                                 | `step` / `onEnd` | Cancels another run (stops agents, withdraws questions, cancels invoked children, runs `onEnd`). Cannot cancel self—use `stop`.                                                                                                                                                                      |
 
 End subject keys with a separator (e.g. `issue/412/`), so `runs({ workflow: fix, keyPrefix: "issue/412/" })` does not match `issue/4120`.
+
+## Pools and limits
+
+`within(pool, { limit }, body)` runs `body` (one call, or an `Effect.gen` of several) holding one of `limit` places in the named pool, and returns what `body` returns. A pool is shared by every run of every workflow on the server. When all places are taken, the call waits in arrival order and its run shows as queued (`waiting`, detail `queue <pool>`). The place is given back when `body` ends or fails, and when the run ends, is cancelled or pauses. A resumed run goes ahead of the queue and takes back every place it held, in every pool, all at once; until they are all free it holds none and shows as queued.
+
+`limit: 1` is a lock. When calls on one pool name ask for different limits, a call goes in only while the pool holds fewer than its own limit and fewer than the smallest limit of those already inside, and nobody who asked later goes in ahead of it. So a `limit: 1` call always runs alone, but it waits for whoever is inside, two `limit: 2` calls included. Prefer one limit per pool name.
+
+A run holds several places in one pool only by calling `within` side by side (`Effect.all` over several `within` calls). Never call `within` for a pool from inside that same pool, or for the workflow's own name when it has a `concurrency`: the run could wait for itself, so it pauses with an error instead. A run that `invoke`s another while holding a place the other needs is not caught and waits forever; keep `invoke` outside such a `within`. Step and wait names starting with `@pool:` are reserved for the queue steps (`@pool:<pool>`, then `@pool:<pool>#2` for a second call in the same run) and pause the run if you use one. A queue step cannot be signalled: `signal` to it is refused.
+
+`concurrency: N` in the workflow's options does the same for whole runs: its runs, across versions, share a pool named after the workflow, and each keeps its place until it ends, `onEnd` included.
+
+```ts
+const { workflow, within, agent, step } = T3;
+
+workflow(
+  "release",
+  { version: 1, payload: Schema.Struct({ branch: Schema.String }), concurrency: 8 },
+  Effect.fn(function* (payload) {
+    const built = yield* within(
+      "builders",
+      { limit: 2 },
+      agent("build", { project: "/home/me/app", brief: `Build ${payload.branch}.` }),
+    );
+    yield* within(
+      "deploy",
+      { limit: 1 },
+      step("deploy", { returns: Schema.Void }, deploy(built.value)),
+    );
+  }),
+);
+```
+
+(`deploy` is your own Effect helper.)
+
+A paused or cancelled run gives its place back at once, so anything of it still finishing, such as the other calls of an `Effect.all` inside the `within`, can overlap with the next holder.
 
 ## Store and signals
 
