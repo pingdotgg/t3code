@@ -121,6 +121,7 @@ const PROPER_NOUNS = [
   "Claude",
   "Claude Code",
   "Cursor",
+  "Devin",
   "Grok",
   "Grok Build",
   "OpenCode",

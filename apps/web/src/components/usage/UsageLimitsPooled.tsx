@@ -15,6 +15,7 @@ import {
 import { T, Var, useGT, useMessages } from "gt-react";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
+import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import {
   createContext,
@@ -47,6 +48,10 @@ import {
   formatResetsIn,
   resetCreditChoices,
 } from "@t3tools/shared/usageLimitsCopy";
+
+/** Hub-only drivers like Devin have no client registration; fall back to the shared display names. */
+const driverLabel = (driver: LimitAccount["driver"]) =>
+  providerClients.get(driver)?.label ?? PROVIDER_DISPLAY_NAMES[driver] ?? String(driver);
 
 function accountInitials(email: string): string {
   const [local = "", domain = ""] = email.split("@");
@@ -87,11 +92,7 @@ function AccountAvatar({
     return (
       <ProviderInstanceIcon
         driverKind={account.driver}
-        displayName={
-          account.displayName ??
-          providerClients.get(account.driver)?.label ??
-          String(account.driver)
-        }
+        displayName={account.displayName ?? driverLabel(account.driver)}
         accentColor={account.accentColor}
         showBadge={Boolean(account.displayName)}
         indicatorBackground="var(--popover)"
@@ -118,11 +119,7 @@ function AccountName({
       </span>
     );
   }
-  return (
-    <span className={className}>
-      {providerClients.get(account.driver)?.label ?? String(account.driver)}
-    </span>
-  );
+  return <span className={className}>{driverLabel(account.driver)}</span>;
 }
 
 function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
@@ -168,9 +165,7 @@ function SegmentPopover({
       <div className="flex min-w-0 flex-col gap-0.5">
         <span className="flex items-center gap-2 text-sm font-medium text-foreground">
           <AccountAvatar account={account} />
-          <span className="truncate">
-            {account.displayName ?? providerClients.get(account.driver)?.label ?? account.driver}
-          </span>
+          <span className="truncate">{account.displayName ?? driverLabel(account.driver)}</span>
         </span>
         {account.email ? (
           <RedactedSensitiveText
@@ -646,7 +641,7 @@ function PoolWindowCard({
 
 function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
   const color = barColor(pool.driver);
-  const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
+  const label = driverLabel(pool.driver);
   const windows = displayLimitWindows(pool);
   const m = useMessages();
   return (
