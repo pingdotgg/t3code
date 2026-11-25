@@ -12,6 +12,7 @@ import {
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
+import { SkillName } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
@@ -37,6 +38,26 @@ export class ContextHandoffBackgroundWorkError extends Schema.TaggedError<Contex
     return "The target provider still has background work running. Wait for it to finish or stop it before retrying the handoff.";
   }
 }
+
+export class ClaudeSkillDenyRefusalError extends Schema.TaggedError<ClaudeSkillDenyRefusalError>()(
+  "ClaudeSkillDenyRefusalError",
+  {
+    skillName: SkillName,
+    source: Schema.Literals([
+      "MCP",
+      "plugin or MCP namespace",
+      "skill-directory plugin",
+      "unknown",
+      "unsupported permission path",
+    ]),
+  },
+) {
+  override get message() {
+    return `Cannot deny Claude skill "${this.skillName}" (source: ${this.source}).`;
+  }
+}
+
+const decodeClaudeSkillDenyRefusal = Schema.decodeUnknownOption(ClaudeSkillDenyRefusalError);
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
@@ -124,6 +145,13 @@ function curatedCauseMessages(cause: unknown): {
       if (typeof cause !== "object") break;
       const tag = (cause as Record<string, unknown>)._tag;
       switch (tag) {
+        case "ClaudeSkillDenyRefusalError": {
+          const refusal = decodeClaudeSkillDenyRefusal(cause);
+          if (Option.isSome(refusal)) {
+            return { known: refusal.value.message, category: categoryMessage() };
+          }
+          break;
+        }
         case "ContextHandoffBudgetError":
           return { known: new ContextHandoffBudgetError().message, category: categoryMessage() };
         case "ContextHandoffBackgroundWorkError":

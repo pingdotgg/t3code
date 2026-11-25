@@ -98,6 +98,7 @@ import {
   type ChatAttachment,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ClaudeSettings,
+  SkillName,
   TrimmedNonEmptyString,
   defaultInstanceIdForDriver,
   isCompactionCommandMessage,
@@ -231,6 +232,7 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
+  ClaudeSkillDenyRefusalError,
   makeProviderFailure,
   makeProviderRetryTurnItem,
   PROVIDER_RETRY_BUDGET_MS,
@@ -6215,15 +6217,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     cwd: string | null,
   ) {
     if (names.length === 0) return undefined;
-    const refuse = (name: string, source: string) =>
-      new ProviderAdapter.ProviderAdapterProtocolError({
-        driver: CLAUDE_PROVIDER,
-        detail: `Cannot deny Claude skill "${name}" (source: ${source}).`,
-      });
+    const isSkillName = Schema.is(SkillName);
+    const refuse = (skillName: string, source: ClaudeSkillDenyRefusalError["source"]) =>
+      new ClaudeSkillDenyRefusalError({ skillName, source });
     for (const name of names) {
+      if (!isSkillName(name)) {
+        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+          driver: CLAUDE_PROVIDER,
+          detail: "The Claude skill deny list has an invalid skill name",
+        });
+      }
       if (/^mcp__.+__.+$/.test(name)) return yield* refuse(name, "MCP");
       if (name.includes(":")) return yield* refuse(name, "plugin or MCP namespace");
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(name)) return yield* refuse(name, "unknown");
     }
     const workingDirectory = path.resolve(cwd ?? ".");
     const configDirectory = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim();
@@ -6288,15 +6293,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     .replace(/^([a-zA-Z]):/, (_drive, letter: string) => `/${letter.toLowerCase()}`)
                 : absolute;
             if (!normalized.startsWith("/") || /[\\*?()[\]{}]/.test(normalized)) {
-              return yield* refuse(name, `unsupported permission path ${absolute}`);
+              return yield* refuse(name, "unsupported permission path");
             }
             const suffix = isDirectorySkill && absolute !== canonicalFile ? "/**" : "";
             readRules.add(`Read(/${normalized}${suffix})`);
           }
         }
       }
-      if (!found)
-        return yield* refuse(name, "unknown; no personal or project skill file was found");
+      if (!found) return yield* refuse(name, "unknown");
       readRules.add(`Read(.claude/skills/${name}/**)`);
       readRules.add(`Read(.claude/commands/${name}.md)`);
     }

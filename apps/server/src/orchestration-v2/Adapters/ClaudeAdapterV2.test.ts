@@ -3666,10 +3666,9 @@ describe("ClaudeAdapterV2 native session identity", () => {
         }),
       );
       assert.equal(error._tag, "ProviderAdapterOpenSessionError");
-      if (error._tag === "ProviderAdapterOpenSessionError") {
-        assert.include(String(error.cause), name);
-        assert.include(String(error.cause), source);
-      }
+      const message = makeProviderFailure({ cause: error }).message;
+      assert.include(message, name);
+      assert.include(message, source);
     }),
   );
 

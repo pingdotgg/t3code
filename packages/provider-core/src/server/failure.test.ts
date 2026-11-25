@@ -203,12 +203,43 @@ it("tells the user to sign in only when an ACP agent answers auth_required", () 
   assert.isUndefined(knownProviderFailureMessage(sessionOpenFailure(-32603)));
 });
 
+it.each([
+  { skillName: "fixture-plugin:private-skill", source: "plugin or MCP namespace" },
+  { skillName: "mcp__fixture__private-skill", source: "MCP" },
+  { skillName: "missing-skill", source: "unknown" },
+])(
+  "shows a denied Claude skill and its $source source without exposing defect text",
+  ({ skillName, source }) => {
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const cause = new ProviderAdapter.ProviderAdapterOpenSessionError({
+      driver,
+      providerSessionId: ProviderSessionId.make("provider-session:private-id"),
+      cause: new ProviderAdapter.ProviderAdapterProtocolError({
+        driver,
+        detail: "The workspace contains /private/workspace",
+        cause: {
+          _tag: "ClaudeSkillDenyRefusalError",
+          skillName,
+          source,
+          message: "Untrusted message",
+        },
+      }),
+    });
+    assert.equal(
+      makeProviderFailure({ cause: Cause.fail(cause) }).message,
+      `Cannot deny Claude skill "${skillName}" (source: ${source}).`,
+    );
+  },
+);
+
 it("keeps unrecognized reasons and provider text out of category messages", () => {
   for (const cause of [
     "Private launch command",
     { _tag: "ProviderAdapterProtocolError", detail: "Pi model 'private-config' is invalid" },
     { _tag: "ProviderAdapterProtocolError", reason: "private-config" },
     { _tag: "ProviderAdapterProtocolError", reason: "constructor" },
+    { _tag: "ClaudeSkillDenyRefusalError", skillName: "private-skill", source: "/private/config" },
+    { _tag: "ClaudeSkillDenyRefusalError", skillName: "/private/config", source: "unknown" },
     { _tag: "constructor", cause: "private-config" },
     {
       _tag: "CodexAppServerRequestError",
