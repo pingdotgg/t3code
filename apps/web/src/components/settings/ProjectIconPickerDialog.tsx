@@ -2,7 +2,7 @@ import { deriveProjectIdentity } from "../../projectIdentity";
 import { ProjectMonogram } from "../ProjectMonogram";
 import type { ProjectIconColor, ProjectIconOverride } from "@t3tools/contracts";
 import { T, useGT, useMessages } from "gt-react";
-import { createElement, useState } from "react";
+import { createElement, useState, type KeyboardEvent } from "react";
 import {
   filterProjectIconNames,
   firstEmoji,
@@ -111,6 +111,22 @@ function ProjectIconPickerBody({
           : { kind: "emoji", emoji },
     );
     onClose();
+  };
+  const saveOnEnter = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (
+      event.key !== "Enter" ||
+      event.repeat ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      event.nativeEvent.isComposing ||
+      event.keyCode === 229
+    ) {
+      return;
+    }
+    event.preventDefault();
+    save();
   };
 
   return (
@@ -232,6 +248,7 @@ function ProjectIconPickerBody({
                 id="project-monogram"
                 value={letters}
                 onChange={(event) => setLetters(event.currentTarget.value)}
+                onKeyDown={saveOnEnter}
                 aria-describedby="project-monogram-hint"
                 aria-invalid={!validMonogram}
                 autoComplete="off"
@@ -276,6 +293,7 @@ function ProjectIconPickerBody({
                   const nextEmoji = firstEmoji(value);
                   if (nextEmoji) setEmoji(nextEmoji);
                 }}
+                onKeyDown={saveOnEnter}
               />
             </div>
           </>
