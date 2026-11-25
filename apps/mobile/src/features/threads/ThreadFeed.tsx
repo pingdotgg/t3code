@@ -4379,7 +4379,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                 : {})}
               scrollToOverflowEnabled
               estimatedItemSize={180}
-              alignItemsAtEnd
               initialScrollAtEnd
               onReady={() => {
                 setLoadedListKey(feedThreadKey);
