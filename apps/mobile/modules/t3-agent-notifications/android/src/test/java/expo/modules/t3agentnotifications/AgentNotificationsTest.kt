@@ -192,7 +192,8 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
       )
     )
 
-    val alert = manager.activeNotifications.single { it.tag.startsWith("t3-agent-alert") }.notification
+    val alerts = manager.activeNotifications.filter { it.tag.startsWith("t3-agent-alert") }
+    val alert = alerts.single().notification
     val text = alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
     assertEquals("Failed: Test project", text)
   }
@@ -616,7 +617,8 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   @Test
   fun alertsAndActivityUseVersionAppropriatePriorityAndPromotion() {
     AgentNotifications.receive(context, update("work", true))
-    val alert = manager.activeNotifications.single { it.tag.startsWith("t3-agent-alert") }.notification
+    val alerts = manager.activeNotifications.filter { it.tag.startsWith("t3-agent-alert") }
+    val alert = alerts.single().notification
     val card = manager.activeNotifications.single { it.tag == "t3-agent-activity" }.notification
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
       assertEquals(Notification.PRIORITY_HIGH, alert.priority)
