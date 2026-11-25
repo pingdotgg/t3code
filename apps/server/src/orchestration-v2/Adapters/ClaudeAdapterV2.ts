@@ -8987,7 +8987,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           };
           if (backgrounded) {
             // A command moved to the background drops its foreground tail; the hold restarts its output from the file.
-            foregroundTailCalls.delete(input.taskId);
             yield* stopTaskOutputTail(toolCall.nativeItemId);
             yield* emitProviderEvent({
               type: "command_output.background",
@@ -9024,6 +9023,37 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (foregroundTailCalls.size <= 64) break;
               foregroundTailCalls.delete(oldest);
             }
+          }
+        });
+        // A foreground command Claude moved to the background keeps streaming until its notification.
+        const promoteForegroundTail = (input: {
+          readonly root: string | undefined;
+          readonly sessionId: string | undefined;
+          readonly taskId: unknown;
+        }) => {
+          const { root, sessionId, taskId } = input;
+          const toolCall = typeof taskId === "string" ? foregroundTailCalls.get(taskId) : undefined;
+          return root === undefined ||
+            sessionId === undefined ||
+            typeof taskId !== "string" ||
+            toolCall === undefined
+            ? Effect.void
+            : startTaskOutputTail({ root, sessionId, taskId, toolCall, backgrounded: true });
+        };
+        const promoteForegroundTailsInRoster = Effect.fnUntraced(function* (
+          root: string | undefined,
+          message: SDKMessage,
+        ) {
+          const roster = Reflect.get(message, "tasks");
+          for (const entry of Array.isArray(roster) ? roster : []) {
+            yield* promoteForegroundTail({
+              root,
+              sessionId: message.session_id,
+              taskId:
+                entry !== null && typeof entry === "object"
+                  ? Reflect.get(entry, "task_id")
+                  : undefined,
+            });
           }
         });
 
@@ -11078,6 +11108,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_notification") {
             yield* stopTaskOutputTail(backgroundTaskOutputTailKey(message.task_id));
+            foregroundTailCalls.delete(message.task_id);
             yield* endClaudeMonitorTasks((taskId) => taskId === message.task_id);
             yield* Ref.update(toolUseIdsByTaskId, (current) => {
               if (!current.has(message.task_id)) return current;
@@ -11354,6 +11385,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 message,
                 activeContext: null,
               });
+              if (isClaudeBackgroundTasksChangedMessage(message)) {
+                yield* promoteForegroundTailsInRoster(liveQuery.taskOutputRoot, message);
+              }
               yield* bufferWakeMessage({ nativeThreadId: liveQuery.nativeThreadId, message });
             }
             return;
@@ -12000,27 +12034,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message,
               activeContext: context,
             });
-            const roster = Reflect.get(message, "tasks");
-            // A foreground command Claude moved to the background keeps streaming until its notification.
-            for (const entry of Array.isArray(roster) ? roster : []) {
-              const taskId = Reflect.get(entry ?? {}, "task_id");
-              const toolCall =
-                typeof taskId === "string" ? foregroundTailCalls.get(taskId) : undefined;
-              if (
-                liveQuery.taskOutputRoot !== undefined &&
-                typeof taskId === "string" &&
-                toolCall !== undefined &&
-                message.session_id !== undefined
-              ) {
-                yield* startTaskOutputTail({
-                  root: liveQuery.taskOutputRoot,
-                  sessionId: message.session_id,
-                  taskId,
-                  toolCall,
-                  backgrounded: true,
-                });
-              }
-            }
+            yield* promoteForegroundTailsInRoster(liveQuery.taskOutputRoot, message);
             return;
           }
 
@@ -12368,6 +12382,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               !isClaudeToolResultError(toolResult)
                 ? yield* captureClaudeMcpApp({ liveQuery, toolCall, output })
                 : undefined;
+            // Hold a moved command's output before its row settles, so open views keep streaming.
+            if (message.type === "user") {
+              yield* promoteForegroundTail({
+                root: liveQuery.taskOutputRoot,
+                sessionId: message.session_id,
+                taskId: Reflect.get(Object(message.tool_use_result), "backgroundTaskId"),
+              });
+            }
             yield* settleToolCall({
               context,
               toolCall,

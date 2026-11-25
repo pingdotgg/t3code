@@ -15507,11 +15507,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("keeps streaming a foreground Bash command Claude moves to the background", () =>
+  it.effect.each([
+    { result: "the roster", structured: false },
+    { result: "its tool result", structured: true },
+  ])("streams a Bash command moved to the background via $result", ({ structured }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const temp = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-moved-output-" });
+      const temp = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-moved-output-",
+      });
       const harness = yield* makeWakeHarnessWithOptions({ environment: { TEMP: temp } });
       const now = yield* DateTime.now;
       const toolUseId = "toolu_moved_bash";
@@ -15542,7 +15547,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             type: "message",
             role: "assistant",
             content: [
-              { type: "tool_use", id: toolUseId, name: "Bash", input: { command: "pnpm install" } },
+              {
+                type: "tool_use",
+                id: toolUseId,
+                name: "Bash",
+                input: { command: "pnpm install" },
+              },
             ],
             stop_reason: null,
             stop_sequence: null,
@@ -15582,6 +15592,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ],
           },
           parent_tool_use_id: null,
+          ...(structured
+            ? { tool_use_result: { backgroundTaskId: taskId, backgroundedByUser: true } }
+            : {}),
           uuid: "00000000-0000-4000-8000-000000000c03",
           session_id: WAKE_NATIVE_SESSION,
         }),
@@ -15635,6 +15648,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       // The hold resets the hub's copy, so rereading the file from the start duplicates nothing.
       assert.deepEqual(output, ["installing\n", "<held>", "installing\n", "done\n", "<released>"]);
+      if (structured) {
+        // Holding before the row settles keeps an open Details view streaming.
+        const held = harness.events.findIndex(
+          (event) => event.type === "command_output.background",
+        );
+        const settled = harness.events.findIndex(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.status !== "running",
+        );
+        assert.isAbove(settled, held);
+      }
     }).pipe(
       Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provide(
