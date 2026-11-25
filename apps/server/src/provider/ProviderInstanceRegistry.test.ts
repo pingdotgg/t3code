@@ -196,9 +196,9 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }),
     ),
     Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
-    // Keep background npm version checks out of the registry fixture's temporary directory.
-    Layer.provideMerge(ServerSettings.layerTest({ enableProviderUpdateChecks: false })),
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(layerTestHttpClient),
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(
       Layer.succeed(
         ProviderEventLoggers.ProviderEventLoggers,
