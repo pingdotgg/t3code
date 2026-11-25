@@ -2290,7 +2290,6 @@ export const make = Effect.gen(function* () {
           ) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
-          transcriptsRemaining -= 1;
           bytesRemaining -= identity.size;
           const snapshot = yield* readTranscript(transcript.filePath, identity, candidate.source);
           if (snapshot === null) {
@@ -2340,13 +2339,14 @@ export const make = Effect.gen(function* () {
             if (candidate.source === "codex" && inheritedRecords === null) {
               return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
             }
-            // Never recorded as imported, so charging them would starve real sessions every run.
-            transcriptsRemaining += 1;
             return Option.none<AgentSessionRecentThread>();
           }
           if (parsedThread === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
+          // Unusable transcripts still cost bytes, but charging a slot would block older
+          // sessions on every retry because those files are never recorded as imported.
+          transcriptsRemaining -= 1;
           let savedTitle: string | undefined;
           if (candidate.source === "codex") {
             const names =
