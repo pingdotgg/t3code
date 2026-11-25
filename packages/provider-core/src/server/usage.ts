@@ -129,6 +129,8 @@ export type ProviderUsageReader<Config, R> =
         ReadonlyArray<{
           readonly dir: string;
           readonly fileName?: string;
+          /** Top-level folders of `dir` that copy another host's transcripts; never counted here. */
+          readonly excludeFolder?: (name: string) => boolean;
           readonly refreshing?: true;
         }>,
         never,

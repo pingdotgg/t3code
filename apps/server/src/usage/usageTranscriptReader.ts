@@ -77,13 +77,14 @@ function fnv1a(buffer: Buffer): number {
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
-  options?: { readonly fileName?: string },
+  options?: { readonly fileName?: string; readonly excludeFolder?: (name: string) => boolean },
 ): Promise<{
   readonly files: readonly TranscriptFile[];
   readonly walked: readonly string[];
   readonly failedPaths: number;
 }> {
   const fileName = options?.fileName;
+  const excludeFolder = options?.excludeFolder;
   let failedPaths = 0;
   let reading = 0;
   const waiting: Array<() => void> = [];
@@ -106,7 +107,9 @@ export async function listTranscriptFiles(
     const found = await Promise.all(
       entries.map((entry) => {
         const child = NodePath.join(dir, entry.name);
-        if (entry.isDirectory()) return walk(child);
+        if (entry.isDirectory()) {
+          return dir === root && excludeFolder?.(entry.name) ? [] : walk(child);
+        }
         return (
           fileName !== undefined
             ? entry.name === fileName

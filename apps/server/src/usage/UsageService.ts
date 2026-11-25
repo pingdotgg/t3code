@@ -111,6 +111,7 @@ interface TranscriptSource {
   readonly volumeId: string;
   readonly physicalSourceId?: string;
   readonly fileName?: string;
+  readonly excludeFolder?: (name: string) => boolean;
 }
 
 const RatesCacheFile = Schema.Struct({
@@ -404,7 +405,7 @@ export const make = Effect.gen(function* () {
         yield* usageInstances(driver, settings),
         (instance) => reader.directories(instance, { awaitRefresh }),
       );
-      for (const { dir: directory, fileName, refreshing } of directories.flat()) {
+      for (const { dir: directory, fileName, excludeFolder, refreshing } of directories.flat()) {
         if (refreshing) {
           const key = `${provider}\0${directory}`;
           if (seen.has(key)) continue;
@@ -447,6 +448,7 @@ export const make = Effect.gen(function* () {
           volumeId,
           ...(sourceId === undefined ? {} : { physicalSourceId: sourceId }),
           ...(fileName === undefined ? {} : { fileName }),
+          ...(excludeFolder === undefined ? {} : { excludeFolder }),
         });
       }
     }
@@ -687,6 +689,7 @@ export const make = Effect.gen(function* () {
     readonly volumeId: string;
     readonly physicalSourceId?: string;
     readonly hostId?: string;
+    readonly excludeFolder?: (name: string) => boolean;
     readonly status?: UsageSource["status"];
     readonly message?: string;
     readonly files:
@@ -706,12 +709,13 @@ export const make = Effect.gen(function* () {
     windowStartMs: number,
     fromMemory: boolean,
   ) {
-    const { provider, format, dir, volumeId, physicalSourceId, fileName } = source;
+    const { provider, format, dir, volumeId, physicalSourceId, fileName, excludeFolder } = source;
     const identity = {
       provider,
       dir,
       volumeId,
       ...(physicalSourceId === undefined ? {} : { physicalSourceId }),
+      ...(excludeFolder === undefined ? {} : { excludeFolder }),
     };
     const exists = yield* fileSystem
       .exists(dir)
@@ -723,7 +727,10 @@ export const make = Effect.gen(function* () {
     // scanSummary aggregates the saved files, as it does for a deleted directory.
     if (fromMemory) return { ...identity, files: [] } satisfies ScannedDir;
     const { files, walked, failedPaths } = yield* Effect.promise(() =>
-      listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
+      listTranscriptFiles(dir, windowStartMs, {
+        ...(fileName === undefined ? {} : { fileName }),
+        ...(excludeFolder === undefined ? {} : { excludeFolder }),
+      }),
     );
     const read = yield* Effect.forEach(
       files,
@@ -929,22 +936,25 @@ export const make = Effect.gen(function* () {
     // Deleted transcripts' saved usage still aggregates and deduplicates normally.
     const retainedSinceMs = Math.max(windowStartMs, retentionCutoffMs);
     // Saved paths are files below a scanned root, so their folder decides; folders repeat thousands of times.
-    const withinDir = (dir: string) => {
+    // Files saved from before a folder was excluded stay out with it.
+    const withinDir = (dir: string, excludeFolder?: (name: string) => boolean) => {
       const foldersWithin = new Map<string, boolean>();
       return (filePath: string) => {
         const folder = path.dirname(filePath);
         let within = foldersWithin.get(folder);
         if (within === undefined) {
-          within = isWithinDirectory(folder, dir);
+          within =
+            isWithinDirectory(folder, dir) &&
+            !excludeFolder?.(path.relative(dir, folder).split(path.sep)[0] ?? "");
           foldersWithin.set(folder, within);
         }
         return within;
       };
     };
-    const filesByDir = scannedDirs.map(({ provider, dir, files }) => {
+    const filesByDir = scannedDirs.map(({ provider, dir, files, excludeFolder }) => {
       const retainedFiles = [...(files ?? [])];
       const livePaths = new Set(retainedFiles.map((file) => file.path));
-      const isRetained = withinDir(dir);
+      const isRetained = withinDir(dir, excludeFolder);
       for (const [filePath, entry] of fileCache) {
         if (
           entry.provider !== provider ||

@@ -132,6 +132,11 @@ export const claudeUsageFormat: TranscriptUsageFormat<void> = {
   parseProjected: (projected) => parseClaudeRecord(projected),
 };
 
+// Claude Code mirrors a session it runs on another host over SSH into `projects/ssh-<sessionId>/`.
+// That host reads its own copy, so counting the mirror here counts its requests twice. A project
+// folder is its absolute path with separators as `-`, so it never starts with `ssh-`.
+const isRemoteSessionMirror = (name: string) => name.startsWith("ssh-");
+
 export const claudeUsageReader: ProviderUsageReader<ClaudeSettings, Path.Path> = {
   kind: "transcripts",
   provider: "claude",
@@ -144,6 +149,6 @@ export const claudeUsageReader: ProviderUsageReader<ClaudeSettings, Path.Path> =
     const home = configured
       ? expandHomePath(configured, homeDirectory)
       : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDirectory, ".claude");
-    return [{ dir: path.resolve(home, "projects") }];
+    return [{ dir: path.resolve(home, "projects"), excludeFolder: isRemoteSessionMirror }];
   }),
 };
