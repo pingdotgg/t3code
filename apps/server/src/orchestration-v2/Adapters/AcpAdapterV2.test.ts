@@ -625,6 +625,7 @@ it.effect("detaches owned ACP processes on POSIX hosts but not on Windows", () =
 );
 
 const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
 const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   readonly environment: (runtimeOrdinal: number) => Readonly<Record<string, string>>;
@@ -1646,6 +1647,101 @@ describe("AcpAdapterV2", () => {
         return assert.fail("expected a failed terminal");
       }
       assert.deepEqual(failed.failure, notFound);
+      assert.deepEqual(promptTexts.slice(3), ["continue"], "a turn resumes only once");
+    }).pipe(Effect.provide(layerTest)),
+  );
+  it.live("resends a resumable prompt error's prompt once before failing the turn", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("acp-test-prompt-error-resume");
+      const threadId = ThreadId.make("thread-acp-prompt-error-resume");
+      const emptyReply = {
+        class: "provider_error",
+        message: "The model ended its turn without a response.",
+        code: "-32021",
+        retryable: true,
+      } as const;
+      const promptTexts: Array<string> = [];
+      // Prompts 1, 3 and 4 are rejected: turn 1 resumes and completes, turn 2 fails after one resume.
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          promptErrorResumeWith: (error) => (isAcpRequestError(error) ? "continue" : undefined),
+          promptFailure: () => emptyReply,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: (payload) =>
+                Effect.suspend(() => {
+                  promptTexts.push(
+                    payload.prompt
+                      .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                      .join("\n"),
+                  );
+                  return promptTexts.length === 2
+                    ? Effect.succeed({ stopReason: "end_turn" as const })
+                    : Effect.fail(
+                        new EffectAcpErrors.AcpRequestError({
+                          code: -32021,
+                          errorMessage: emptyReply.message,
+                          method: "session/prompt",
+                        }),
+                      );
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-error-resume"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const runTurn = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal,
+            }),
+          );
+          return Array.from(
+            yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
+          );
+        });
+
+      const resumed = (yield* runTurn(1)).at(-1);
+      assert.equal(resumed?.type === "turn.terminal" ? resumed.status : null, "completed");
+      assert.deepEqual(promptTexts.slice(1), ["continue"]);
+
+      const failed = (yield* runTurn(2)).at(-1);
+      if (failed?.type !== "turn.terminal" || failed.status !== "failed") {
+        return assert.fail("expected a failed terminal");
+      }
+      assert.deepEqual(failed.failure, emptyReply);
       assert.deepEqual(promptTexts.slice(3), ["continue"], "a turn resumes only once");
     }).pipe(Effect.provide(layerTest)),
   );

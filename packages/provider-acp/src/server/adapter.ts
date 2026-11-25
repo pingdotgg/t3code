@@ -745,6 +745,8 @@ export interface AcpAdapterV2Flavor {
   readonly restartRuntimeAfterInterrupt?: boolean;
   /** Prompt failures after which the agent process keeps failing until replaced. */
   readonly restartRuntimeAfterPromptError?: (error: unknown) => boolean;
+  /** A rejected prompt the native session survives: the turn sends this prompt once before failing. */
+  readonly promptErrorResumeWith?: (error: unknown) => string | undefined;
   readonly restartRuntimeOnEveryInterrupt?: boolean;
   readonly terminateRuntimeProcessGroupOnInterrupt?: boolean;
   readonly preserveRuntimeOnSettledInterrupt?: boolean;
@@ -9501,6 +9503,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               context.appContextOffered = settle.appContext.before;
             }
           };
+          const resumeTurn = Effect.fn("AcpAdapterV2.resumeTurn")(function* (
+            text: string,
+            failure: OrchestrationV2ProviderFailure,
+            failTurn: Effect.Effect<void>,
+          ) {
+            context.outcomeResumed = true;
+            yield* reportProviderRetry({ sessionId: context.nativeThreadId, failure });
+            yield* steerWithPrompt({
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              providerThread: context.input.providerThread,
+              providerTurnId: context.providerTurnId,
+              message: { ...context.input.message, text, attachments: [] },
+            }).pipe(
+              Effect.catchCause(() =>
+                runRuntimeCallbackAtGeneration(
+                  settle.generation,
+                  Effect.gen(function* () {
+                    if (context.finalized || context.interrupted) return;
+                    yield* Ref.set(runtimeRestartRequired, true);
+                    yield* failTurn;
+                  }),
+                ),
+              ),
+              Effect.forkIn(sessionScope),
+            );
+          });
           return prompt(superseded).pipe(
             // Settle the wire before the completion callback's permit so a settled-soft
             // Stop sees the native return. Capture usage only before finalize: a late
@@ -9589,33 +9618,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     steersWithPrompt &&
                     !context.outcomeResumed
                   ) {
-                    context.outcomeResumed = true;
-                    yield* reportProviderRetry({
-                      sessionId: context.nativeThreadId,
-                      failure: hiddenFailure.failure,
-                    });
-                    yield* steerWithPrompt({
-                      threadId: context.input.threadId,
-                      runId: context.input.runId,
-                      providerThread: context.input.providerThread,
-                      providerTurnId: context.providerTurnId,
-                      message: { ...context.input.message, text: resumeWith, attachments: [] },
-                    }).pipe(
-                      Effect.catchCause(() =>
-                        runRuntimeCallbackAtGeneration(
-                          settle.generation,
-                          Effect.gen(function* () {
-                            if (context.finalized || context.interrupted) return;
-                            yield* Ref.set(runtimeRestartRequired, true);
-                            yield* terminalizeOpenForegroundTools(context, "failed");
-                            yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
-                              childTurnsContinue: hasSurvivingBackgroundWork(context),
-                              threadDisposition: hiddenFailure.threadDisposition,
-                            });
-                          }),
-                        ),
-                      ),
-                      Effect.forkIn(sessionScope),
+                    yield* resumeTurn(
+                      resumeWith,
+                      hiddenFailure.failure,
+                      Effect.gen(function* () {
+                        yield* terminalizeOpenForegroundTools(context, "failed");
+                        yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
+                          childTurnsContinue: hasSurvivingBackgroundWork(context),
+                          threadDisposition: hiddenFailure.threadDisposition,
+                        });
+                      }),
                     );
                     return;
                   }
@@ -9704,6 +9716,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       error.success._tag === "AcpRequestError" &&
                       error.success.code === -32800);
                   const failure = Cause.squash(cause);
+                  const resumeWith =
+                    interrupted || context.outcomeResumed
+                      ? undefined
+                      : flavor.promptErrorResumeWith?.(failure);
+                  if (resumeWith !== undefined) {
+                    const providerFailure =
+                      flavor.promptFailure?.(failure) ??
+                      makeProviderFailure({ cause: failure, class: "provider_error" });
+                    yield* resumeTurn(
+                      resumeWith,
+                      providerFailure,
+                      Effect.gen(function* () {
+                        yield* terminalizeOpenForegroundTools(context, "failed", {
+                          unstartedOnly: true,
+                        });
+                        yield* finalizeTurn(context, "failed", providerFailure);
+                      }),
+                    );
+                    return;
+                  }
                   // A resumed prompt stands in for an outcome failure, which always restarts.
                   if (
                     !interrupted &&
