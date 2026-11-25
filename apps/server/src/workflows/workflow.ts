@@ -86,13 +86,21 @@ export type InRun =
   | WorkflowEngine.WorkflowInstance;
 
 /** Takes `name` for one step of the run. Step results and the step list are both kept by name. */
-export const claim = (name: string, cleanup = false) =>
+export const claim = (name: string, internal = false) =>
   Effect.flatMap(RunContext, (run) => {
     // The cleanup step's name is its own, or a body step would take it and cleanup never run.
-    if (name === END_STEP && !cleanup) {
+    if (name === END_STEP && !internal) {
       return Effect.die(
         new Error(
           `"${END_STEP}" is the name of workflow ${run.workflow}'s cleanup step. Name this step something else.`,
+        ),
+      );
+    }
+    // Nor can a body step take the name a pool queues at, whatever the pool is called.
+    if (name.startsWith(PLACE_PREFIX) && !internal) {
+      return Effect.die(
+        new Error(
+          `Names starting with "${PLACE_PREFIX}" are kept for the steps that queue for a place in a pool. Name "${name}" in workflow ${run.workflow} something else.`,
         ),
       );
     }
@@ -635,6 +643,12 @@ export const wait = <A, I>(
   return Effect.orDie(waitAs("wait", name, options));
 };
 
+/** The pools the code running here holds a place in, and what took each. */
+const PoolsHeld = Context.Reference<ReadonlyMap<string, "within" | "concurrency">>(
+  "t3/workflows/workflow/PoolsHeld",
+  { defaultValue: () => new Map() },
+);
+
 const checkLimit = (what: string, limit: unknown) => {
   if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1) {
     throw new Error(`${what} takes a whole number of places of 1 or more, as in { limit: 4 }.`);
@@ -652,18 +666,36 @@ const holding = Effect.fn("workflow.within")(function* <A, E, R>(
   body: Effect.Effect<A, E, R>,
   untilRunEnds = false,
 ): Effect.fn.Return<A, E, R | InRun> {
-  const run = yield* claim(name);
+  // Waiting for a place in a pool while holding one in it is a run that can wait for itself.
+  const around = yield* PoolsHeld;
+  if (around.has(pool)) {
+    const outer = around.get(pool) === "concurrency";
+    const workflowName = (yield* RunContext).workflow;
+    return yield* Effect.die(
+      new Error(
+        `within("${pool}") in workflow ${workflowName} is called inside ${
+          outer ? `its concurrency, which is the pool "${pool}"` : `within("${pool}")`
+        }. A run cannot wait for a place in a pool it already holds one in: it could wait for itself. Take the inner one out, or name it another pool.`,
+      ),
+    );
+  }
+  const run = yield* claim(name, true);
   yield* Effect.orDie(
     waitClaimed(run, "queue", name, {
       returns: Schema.Null,
       pool: { name: pool, size: limit },
     }),
   );
-  if (untilRunEnds) return yield* body;
+  const inside = Effect.provideService(
+    body,
+    PoolsHeld,
+    new Map(around).set(pool, untilRunEnds ? "concurrency" : "within"),
+  );
+  if (untilRunEnds) return yield* inside;
   // A run that pauses or ends inside gives its place back there; this is the body finishing,
   // or failing in a way its caller may catch and carry on from.
   const leave = Activity.make({ name: `${name}/leave`, execute: run.placeLeft(name) });
-  const value = yield* body.pipe(
+  const value = yield* inside.pipe(
     Effect.tapError((error) => (Predicate.isTagged(error, "StepFailed") ? Effect.void : leave)),
   );
   yield* leave;
@@ -671,10 +703,10 @@ const holding = Effect.fn("workflow.within")(function* <A, E, R>(
 });
 
 /**
- * Run `body` holding one of `limit` places in the pool `pool`, shared by every run on the server.
- * When all are taken the step queues, first come first served, and the run shows as queued. The
- * place is given back when `body` ends, or its run pauses or ends; a resumed run queues for it again.
- * `limit: 1` is a lock.
+ * Run `body` holding one of `limit` places in the pool `pool`, shared by every run on the server,
+ * queueing first come first served when all are taken. The place is given back when `body` ends,
+ * or its run pauses or ends; a resumed run takes back all it held at once, ahead of the queue.
+ * `limit: 1` is a lock. Called for a pool from inside that pool, it pauses the run with an error.
  */
 export const within = <A, E, R>(
   pool: string,
@@ -878,8 +910,8 @@ const invokeAs = Effect.fn("workflow.invoke")(function* <P, A>(
   return { outcome: "completed", value: value as A };
 });
 
-/** Starts the name of every step that waits for a place in a pool. */
-const PLACE_PREFIX = "pool:";
+/** Starts the name of every step that waits for a place in a pool, and of no step of a body. */
+const PLACE_PREFIX = "@pool:";
 /** The step `onEnd` runs as. */
 export const END_STEP = "onEnd";
 const END_RETRY: StepRetry = { times: 3, schedule: Schedule.exponential("2 seconds") };

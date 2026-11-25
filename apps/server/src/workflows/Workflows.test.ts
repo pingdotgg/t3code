@@ -448,6 +448,9 @@ const control = [
 ];
 
 const lockFailures = { left: 0 };
+const fanFailures = { left: 0 };
+/** Starts the name of the step a run queues at for a place in a pool. */
+const PLACE = "@pool:";
 /** The runs that got into a pool, in the order they did. */
 const entered: Array<string> = [];
 const holdUntilDone = (id: string) =>
@@ -514,6 +517,66 @@ const pooled = [
   ),
   workflow("wide", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, (payload) =>
     within("m", { limit: 2 }, holdUntilDone(payload.id)),
+  ),
+  /** Holds two places in `q` side by side, and fails in one of them while `fanFailures` lasts. */
+  workflow("fan", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, (payload) =>
+    Effect.asVoid(
+      Effect.all(
+        ["x", "y"].map((side) =>
+          within(
+            "q",
+            { limit: 2 },
+            Effect.gen(function* () {
+              yield* step(
+                `entered ${side}`,
+                { returns: Schema.Number, ...once },
+                Effect.sync(() => entered.push(`${payload.id}/${side}`)),
+              );
+              yield* wait(`go ${side}`, { returns: Schema.Null });
+              yield* step(
+                `try ${side}`,
+                { returns: Schema.Number, ...once },
+                Effect.suspend(() =>
+                  fanFailures.left-- > 0 ? Effect.fail("not yet") : Effect.succeed(1),
+                ),
+              );
+              yield* wait(`done ${side}`, { returns: Schema.Null });
+            }),
+          ),
+        ),
+        { concurrency: "unbounded" },
+      ),
+    ),
+  ),
+  /** Names of its own that look like the ones a pool's queue step had before. */
+  workflow(
+    "soloNamed",
+    { version: 1, payload: Schema.Struct({ id: Schema.String }), concurrency: 1 },
+    (payload) =>
+      within(
+        "w",
+        { limit: 1 },
+        Effect.andThen(
+          step("pool:soloNamed", { returns: Schema.Void, ...once }, Effect.void),
+          Effect.andThen(
+            step("pool:w", { returns: Schema.Void, ...once }, Effect.void),
+            holdUntilDone(payload.id),
+          ),
+        ),
+      ),
+  ),
+  /** A step named as only a pool's own queue step may be. */
+  workflow("placeNamed", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, () =>
+    step(`${PLACE}mine`, { returns: Schema.Void, ...once }, Effect.void),
+  ),
+  /** Asks for a place in a pool from inside that pool. */
+  workflow("nested", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, (payload) =>
+    within("n", { limit: 2 }, within("n", { limit: 2 }, holdUntilDone(payload.id))),
+  ),
+  workflow(
+    "soloNested",
+    { version: 1, payload: Schema.Struct({ id: Schema.String }), concurrency: 2 },
+    (payload) => within("soloNested", { limit: 2 }, holdUntilDone(payload.id)),
   ),
   /** Fails inside its lock, carries on outside it, and holds there. */
   workflow("caught", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, (payload) =>
@@ -2938,7 +3001,7 @@ it.effect(
           // A queued run is active and says where it is in line.
           const last = yield* workflows.get(ids[9]!);
           assert.deepStrictEqual([last.run.status, last.run.detail], ["waiting", "queue p"]);
-          const queued = last.steps.find((one) => one.name === "pool:p");
+          const queued = last.steps.find((one) => one.name === `${PLACE}p`);
           assert.deepStrictEqual(
             [queued?.kind, queued?.status, queued?.ahead],
             ["queue", "running", 7],
@@ -2989,7 +3052,7 @@ it.effect("a workflow with a concurrency runs that many at once and queues the r
         assert.deepStrictEqual(entered, ["a"]);
         // Only the pool lets a queued run in; a signal to where it waits is refused.
         const refused = yield* Effect.flip(
-          workflows.signal({ runId: second.runId, wait: "pool:solo" }, null, { id: "jump" }),
+          workflows.signal({ runId: second.runId, wait: `${PLACE}solo` }, null, { id: "jump" }),
         );
         assert.equal(refused._tag, "WorkflowInputError");
         assert.equal((yield* workflows.get(second.runId)).run.detail, "queue solo");
@@ -3117,7 +3180,9 @@ it.effect("a run that pauses gives its place back, and once resumed queues for i
         assert.equal(queued.detail, "queue q");
         assert.deepStrictEqual(entered, ["b"]);
         // Its timeline shows it queued again at the step that holds the place, first in line.
-        const step = (yield* workflows.get(first.runId)).steps.find((one) => one.name === "pool:q");
+        const step = (yield* workflows.get(first.runId)).steps.find(
+          (one) => one.name === `${PLACE}q`,
+        );
         assert.deepStrictEqual([step?.status, step?.ahead], ["running", 0]);
         yield* workflows.signal({ runId: second.runId, wait: "done" }, null, { id: "done-b" });
         yield* workflows.waitFor(first.runId, (run) => run.detail === "done");
@@ -3163,6 +3228,189 @@ it.effect("a resumed run given its place back just as the server stopped is paus
         yield* workflows.signal({ runId: third.runId, wait: "done" }, null, { id: "done-c" });
         yield* workflows.waitFor(first.runId, (run) => run.detail === "done");
         assert.deepStrictEqual(entered, ["b", "c", "a"]);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+/** In its pool and holding there, or paused; a run is also `waiting` for a moment as it queues. */
+const settled = (run: WorkflowRun) => run.status === "paused" || run.detail === "done";
+
+it.effect.each(["finds the queue just opened", "was kept as the queue opened"] as const)(
+  "a signal that %s does not let the queued step in",
+  (how) =>
+    Effect.gen(function* () {
+      entered.length = 0;
+      const atQueue = yield* Deferred.make<void>();
+      const open = yield* Deferred.make<void>();
+      const atSignal = yield* Deferred.make<void>();
+      const send = yield* Deferred.make<void>();
+      let armed = false;
+      const held = Effect.andThen(Deferred.succeed(atSignal, undefined), Deferred.await(send));
+      // Stops the second run before its queue step is written, and the signal either past the
+      // check that there is no queue there, or once it found no wait and was kept.
+      const store = Layer.effect(
+        WorkflowStore.WorkflowStore,
+        Effect.map(WorkflowStore.make, (real) =>
+          WorkflowStore.WorkflowStore.of({
+            ...real,
+            stepStarted: (runId, name, kind) =>
+              Effect.andThen(
+                kind === "queue" && armed
+                  ? Effect.andThen(Deferred.succeed(atQueue, undefined), Deferred.await(open))
+                  : Effect.void,
+                real.stepStarted(runId, name, kind),
+              ),
+            signalSeen: (id) =>
+              Effect.andThen(
+                id === "jump" && how === "finds the queue just opened" ? held : Effect.void,
+                real.signalSeen(id),
+              ),
+            mailPut: (mail) =>
+              Effect.andThen(
+                real.mailPut(mail),
+                mail.signalId === "jump" && how === "was kept as the queue opened"
+                  ? held
+                  : Effect.void,
+              ),
+          }),
+        ),
+      );
+      const { boot } = yield* harness(store);
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const first = yield* workflows.start("solo", { id: "a" }, { idempotencyKey: "a" });
+          yield* workflows.waitFor(first.runId, (run) => run.detail === "done");
+          armed = true;
+          const second = yield* workflows.start("solo", { id: "b" }, { idempotencyKey: "b" });
+          yield* Deferred.await(atQueue);
+          const sent = yield* Effect.forkChild(
+            Effect.exit(
+              workflows.signal({ runId: second.runId, wait: `${PLACE}solo` }, null, { id: "jump" }),
+            ),
+          );
+          yield* Deferred.await(atSignal);
+          yield* Deferred.succeed(open, undefined);
+          yield* workflows.waitFor(second.runId, (run) => run.detail === "queue solo");
+          yield* Deferred.succeed(send, undefined);
+          const exit = yield* Fiber.join(sent);
+          assert.isTrue(Exit.isFailure(exit));
+          // Still queued behind the first, which a signal to anything else of it shows.
+          yield* workflows.signal({ runId: first.runId, wait: "nothing" }, null, { id: "other" });
+          assert.equal((yield* workflows.get(second.runId)).run.detail, "queue solo");
+          assert.deepStrictEqual(entered, ["a"]);
+          // And a signal kept for that name is not what lets it in later either.
+          yield* workflows.signal({ runId: first.runId, wait: "done" }, null, { id: "done-a" });
+          yield* workflows.waitFor(second.runId, (run) => run.detail === "done");
+          assert.deepStrictEqual(entered, ["a", "b"]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a workflow's own step names never meet the name its pools queue at", () =>
+  Effect.gen(function* () {
+    entered.length = 0;
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        // Under a concurrency and inside `within`, with steps named like both.
+        const { runId } = yield* workflows.start("soloNamed", { id: "a" }, { idempotencyKey: "a" });
+        const held = yield* workflows.waitFor(runId, settled);
+        assert.deepStrictEqual([held.status, held.detail], ["waiting", "done"]);
+        assert.deepStrictEqual(entered, ["a"]);
+        // The names a pool does queue at are refused for a step, saying so.
+        const own = yield* workflows.start("placeNamed", { id: "a" }, { idempotencyKey: "a" });
+        const paused = yield* workflows.waitFor(own.runId, status("paused"));
+        assert.equal(
+          paused.detail,
+          `Names starting with "${PLACE}" are kept for the steps that queue for a place in a pool. Name "${PLACE}mine" in workflow placeNamed something else.`,
+        );
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("asking for a place in a pool from inside that pool pauses the run, saying why", () =>
+  Effect.gen(function* () {
+    entered.length = 0;
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const nested = yield* workflows.start("nested", { id: "a" }, { idempotencyKey: "a" });
+        const paused = yield* workflows.waitFor(nested.runId, settled);
+        assert.deepStrictEqual(
+          [paused.status, paused.detail],
+          [
+            "paused",
+            'within("n") in workflow nested is called inside within("n"). A run cannot wait for a place in a pool it already holds one in: it could wait for itself. Take the inner one out, or name it another pool.',
+          ],
+        );
+        // A workflow's concurrency is a pool named after it, held for the whole body.
+        const solo = yield* workflows.start("soloNested", { id: "b" }, { idempotencyKey: "b" });
+        const second = yield* workflows.waitFor(solo.runId, settled);
+        assert.deepStrictEqual(
+          [second.status, second.detail],
+          [
+            "paused",
+            'within("soloNested") in workflow soloNested is called inside its concurrency, which is the pool "soloNested". A run cannot wait for a place in a pool it already holds one in: it could wait for itself. Take the inner one out, or name it another pool.',
+          ],
+        );
+        assert.deepStrictEqual(entered, []);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("two paused runs with different limits in one pool both go on once resumed", () =>
+  Effect.gen(function* () {
+    entered.length = 0;
+    lockFailures.left = 1;
+    fanFailures.left = 1;
+    const { boot, database } = yield* harness();
+    const places = Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql<{ readonly state: string; readonly n: number | bigint }>`
+        SELECT state, COUNT(*) AS n FROM workflow_pool_places GROUP BY state ORDER BY state
+      `,
+    ).pipe(
+      Effect.map((rows) => rows.map((row) => `${row.state} ${Number(row.n)}`)),
+      Effect.provide(database),
+    );
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        // One run holds two places at a limit of two, and pauses.
+        const wide = yield* workflows.start("fan", { id: "a" }, { idempotencyKey: "a" });
+        yield* workflows.waitFor(
+          wide.runId,
+          (run) => run.status === "waiting" && entered.length === 2,
+        );
+        assert.deepStrictEqual(yield* places, ["held 2"]);
+        yield* workflows.signal({ runId: wide.runId, wait: "go x" }, null, { id: "go-x" });
+        yield* workflows.waitFor(wide.runId, status("paused"));
+        // Another takes the emptied pool as a lock, and pauses too.
+        const lock = yield* workflows.start("locked", { id: "b" }, { idempotencyKey: "b" });
+        yield* workflows.waitFor(lock.runId, status("paused"));
+        assert.deepStrictEqual(yield* places, ["away 3"]);
+
+        yield* workflows.resume(wide.runId);
+        assert.deepStrictEqual(yield* places, ["away 1", "held 2"]);
+        yield* workflows.waitFor(wide.runId, (run) => run.detail === "done x");
+        yield* workflows.resume(lock.runId);
+        const queued = yield* workflows.waitFor(lock.runId, (run) => run.status === "waiting");
+        assert.equal(queued.detail, "queue q");
+        assert.deepStrictEqual(yield* places, ["held 2", "returning 1"]);
+        for (const name of ["go y", "done x", "done y"]) {
+          yield* workflows.signal({ runId: wide.runId, wait: name }, null, { id: name });
+        }
+        yield* workflows.waitFor(wide.runId, status("completed"));
+        yield* workflows.waitFor(lock.runId, (run) => run.detail === "done");
+        assert.deepStrictEqual(entered.slice(2), ["b"]);
+        assert.deepStrictEqual(yield* places, ["held 1"]);
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
