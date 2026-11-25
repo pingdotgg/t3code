@@ -101,7 +101,6 @@ function DashboardProjectIcon({
   const src = dashboardIconUrl(icon, useRenderedAppearance());
   return (
     <ProjectFaviconImage
-      key={src}
       src={src}
       className={className}
       fallbackIcon={FolderCodeIcon}

@@ -13,6 +13,7 @@ const entries = parseDashboardIcons({
   plex: { base: "svg", aliases: [] },
   plexamp: { base: "png", aliases: [] },
   "home-assistant": { base: "svg", aliases: [] },
+  homer: { base: "svg", aliases: [] },
   broken: { base: "gif" },
 });
 const names = (icons: ReadonlyArray<{ name: string }>) => icons.map(({ name }) => name);
@@ -48,7 +49,10 @@ describe("findDashboardIcons", () => {
 
   it("suggests icons named in the project name when there is no query", () => {
     expect(names(findDashboardIcons(entries, " ", "My Plex Server"))).toEqual(["plex", "plexamp"]);
-    expect(names(findDashboardIcons(entries, "", "Home Assistant"))).toEqual(["home-assistant"]);
+    expect(names(findDashboardIcons(entries, "", "home-assistant-config"))).toEqual([
+      "home-assistant",
+      "homer",
+    ]);
     expect(names(findDashboardIcons(entries, "", "github-actions-runner"))).toEqual(["github"]);
     expect(findDashboardIcons(entries, "", "zz")).toEqual([]);
   });

@@ -149,8 +149,10 @@ function ProjectIconPickerBody({
               value === "emoji" ||
               value === "monogram" ||
               value === "dashboard-icon"
-            )
+            ) {
               setMode(value);
+              setQuery("");
+            }
           }}
         >
           <Toggle value="lucide">

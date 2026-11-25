@@ -68,6 +68,7 @@ it("suggests dashboard icons from the project name and saves the pick", async ()
       />,
     );
     expect(fetchMock).not.toHaveBeenCalled();
+    await userEvent.type(page.getByRole("searchbox"), "folder");
     await userEvent.click(page.getByRole("button", { name: "Logos" }));
     await expect.element(page.getByRole("button", { name: "docker" })).not.toBeInTheDocument();
     await userEvent.click(page.getByRole("button", { name: "plex" }));

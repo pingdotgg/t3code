@@ -90,9 +90,10 @@ export function findDashboardIcons(
       60,
     );
   }
-  const words = [compact(projectName), ...projectName.toLowerCase().split(/[^a-z0-9]+/)].filter(
-    (word) => word.length >= 3,
-  );
+  const parts = projectName.toLowerCase().split(/[^a-z0-9]+/);
+  // Adjacent pairs catch names written as one word, like "Home Assistant" → homeassistant.
+  const pairs = parts.slice(1).map((part, index) => `${parts[index]}${part}`);
+  const words = [compact(projectName), ...parts, ...pairs].filter((word) => word.length >= 3);
   return ranked(
     entries,
     ({ keys: [name = ""] }) =>
