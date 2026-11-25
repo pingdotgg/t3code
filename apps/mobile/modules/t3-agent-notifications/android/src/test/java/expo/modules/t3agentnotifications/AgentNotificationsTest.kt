@@ -180,14 +180,14 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     AgentNotifications.receive(
       context,
       update("newer", false) + mapOf(
-        "updated_at" to (now + 2000).toString(),
+        "alert_updated_at" to (now + 2000).toString(),
         "alert_body" to "Failed: Test project",
       )
     )
     AgentNotifications.receive(
       context,
       update("older", false) + mapOf(
-        "updated_at" to (now + 1000).toString(),
+        "alert_updated_at" to (now + 1000).toString(),
         "alert_body" to "Done: Test project",
       )
     )

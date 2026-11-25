@@ -191,8 +191,9 @@ object AgentNotifications {
     // alert_id is unique per turn; keying on the thread makes its next alert replace this one.
     val id = (threadGroup ?: alertId).hashCode()
     val group = threadGroup ?: ALERT_TAG
-    val updatedAt = data["updated_at"]?.toLongOrNull() ?: 0L
-    // FCM can deliver an earlier turn's push late; it must not overwrite the thread's newer alert.
+    // A late or retried push for an earlier turn must not overwrite the thread's newer alert.
+    // updated_at is the relay's send time, which a retry advances, so order by the turn's time.
+    val updatedAt = data["alert_updated_at"]?.toLongOrNull() ?: 0L
     val newer = threadGroup != null && manager(context).activeNotifications.any {
       it.tag == ALERT_TAG && it.id == id &&
         it.notification.extras.getLong(ALERT_UPDATED_AT, 0L) > updatedAt
