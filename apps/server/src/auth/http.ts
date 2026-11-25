@@ -138,7 +138,9 @@ export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope
   );
 }
 
-function failEnvironmentOperationForbidden(reason: "current_session_revoke_not_allowed") {
+export function failEnvironmentOperationForbidden(
+  reason: "current_session_revoke_not_allowed" | "team_thread_access_denied",
+) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
       Effect.fail(

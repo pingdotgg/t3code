@@ -9,6 +9,9 @@ import {
 } from "../auth.ts";
 import {
   TeamCreateInviteInput,
+  TeamCreateViewInput,
+  TeamDeleteViewInput,
+  TeamDeleteViewResult,
   TeamInitializeInput,
   TeamInitializeResult,
   TeamInviteCreatedResult,
@@ -18,11 +21,18 @@ import {
   TeamOperationError,
   TeamRevokeInviteInput,
   TeamRevokeInviteResult,
+  TeamSetThreadLockedInput,
+  TeamSetThreadViewInput,
   TeamStateSnapshot,
   TeamStateStreamEvent,
+  TeamThreadAttribution,
   TeamThreadFollowInput,
   TeamThreadFollowResult,
+  TeamUpdateMemberRoleInput,
+  TeamUpdateMemberStatusInput,
   TeamUpdateMyPseudoInput,
+  TeamUpdateViewInput,
+  TeamView,
 } from "./schemas.ts";
 
 export const TEAM_WS_METHODS = {
@@ -30,8 +40,15 @@ export const TEAM_WS_METHODS = {
   teamSubscribeState: "team.subscribeState",
   teamInitialize: "team.initialize",
   teamUpdateMyPseudo: "team.updateMyPseudo",
+  teamUpdateMemberRole: "team.updateMemberRole",
+  teamUpdateMemberStatus: "team.updateMemberStatus",
   teamCreateInvite: "team.createInvite",
   teamRevokeInvite: "team.revokeInvite",
+  teamCreateView: "team.createView",
+  teamUpdateView: "team.updateView",
+  teamDeleteView: "team.deleteView",
+  teamSetThreadView: "team.setThreadView",
+  teamSetThreadLocked: "team.setThreadLocked",
   teamListThreadAttributions: "team.listThreadAttributions",
   teamFollowThread: "team.followThread",
   teamUnfollowThread: "team.unfollowThread",
@@ -41,8 +58,15 @@ export const TEAM_WS_METHODS = {
 export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamInitialize]: AuthAccessWriteScope,
   [TEAM_WS_METHODS.teamUpdateMyPseudo]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamUpdateMemberRole]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamUpdateMemberStatus]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamCreateInvite]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamRevokeInvite]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamCreateView]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamUpdateView]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamDeleteView]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamSetThreadView]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamSetThreadLocked]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamFollowThread]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamUnfollowThread]: AuthOrchestrationReadScope,
 } as const;
@@ -82,6 +106,18 @@ const WsTeamUpdateMyPseudoRpc = Rpc.make(TEAM_WS_METHODS.teamUpdateMyPseudo, {
   error: TeamRpcError,
 });
 
+const WsTeamUpdateMemberRoleRpc = Rpc.make(TEAM_WS_METHODS.teamUpdateMemberRole, {
+  payload: TeamUpdateMemberRoleInput,
+  success: TeamMember,
+  error: TeamRpcError,
+});
+
+const WsTeamUpdateMemberStatusRpc = Rpc.make(TEAM_WS_METHODS.teamUpdateMemberStatus, {
+  payload: TeamUpdateMemberStatusInput,
+  success: TeamMember,
+  error: TeamRpcError,
+});
+
 const WsTeamCreateInviteRpc = Rpc.make(TEAM_WS_METHODS.teamCreateInvite, {
   payload: TeamCreateInviteInput,
   success: TeamInviteCreatedResult,
@@ -91,6 +127,36 @@ const WsTeamCreateInviteRpc = Rpc.make(TEAM_WS_METHODS.teamCreateInvite, {
 const WsTeamRevokeInviteRpc = Rpc.make(TEAM_WS_METHODS.teamRevokeInvite, {
   payload: TeamRevokeInviteInput,
   success: TeamRevokeInviteResult,
+  error: TeamRpcError,
+});
+
+const WsTeamCreateViewRpc = Rpc.make(TEAM_WS_METHODS.teamCreateView, {
+  payload: TeamCreateViewInput,
+  success: TeamView,
+  error: TeamRpcError,
+});
+
+const WsTeamUpdateViewRpc = Rpc.make(TEAM_WS_METHODS.teamUpdateView, {
+  payload: TeamUpdateViewInput,
+  success: TeamView,
+  error: TeamRpcError,
+});
+
+const WsTeamDeleteViewRpc = Rpc.make(TEAM_WS_METHODS.teamDeleteView, {
+  payload: TeamDeleteViewInput,
+  success: TeamDeleteViewResult,
+  error: TeamRpcError,
+});
+
+const WsTeamSetThreadViewRpc = Rpc.make(TEAM_WS_METHODS.teamSetThreadView, {
+  payload: TeamSetThreadViewInput,
+  success: TeamThreadAttribution,
+  error: TeamRpcError,
+});
+
+const WsTeamSetThreadLockedRpc = Rpc.make(TEAM_WS_METHODS.teamSetThreadLocked, {
+  payload: TeamSetThreadLockedInput,
+  success: TeamThreadAttribution,
   error: TeamRpcError,
 });
 
@@ -123,8 +189,15 @@ export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamSubscribeStateRpc,
   WsTeamInitializeRpc,
   WsTeamUpdateMyPseudoRpc,
+  WsTeamUpdateMemberRoleRpc,
+  WsTeamUpdateMemberStatusRpc,
   WsTeamCreateInviteRpc,
   WsTeamRevokeInviteRpc,
+  WsTeamCreateViewRpc,
+  WsTeamUpdateViewRpc,
+  WsTeamDeleteViewRpc,
+  WsTeamSetThreadViewRpc,
+  WsTeamSetThreadLockedRpc,
   WsTeamListThreadAttributionsRpc,
   WsTeamFollowThreadRpc,
   WsTeamUnfollowThreadRpc,

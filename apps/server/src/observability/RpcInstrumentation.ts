@@ -286,6 +286,13 @@ const RPC_AGGREGATES = {
   [TEAM_WS_METHODS.teamFollowThread]: "team",
   [TEAM_WS_METHODS.teamUnfollowThread]: "team",
   [TEAM_WS_METHODS.teamListFollowedThreads]: "team",
+  [TEAM_WS_METHODS.teamUpdateMemberRole]: "team",
+  [TEAM_WS_METHODS.teamUpdateMemberStatus]: "team",
+  [TEAM_WS_METHODS.teamCreateView]: "team",
+  [TEAM_WS_METHODS.teamUpdateView]: "team",
+  [TEAM_WS_METHODS.teamDeleteView]: "team",
+  [TEAM_WS_METHODS.teamSetThreadView]: "team",
+  [TEAM_WS_METHODS.teamSetThreadLocked]: "team",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";
