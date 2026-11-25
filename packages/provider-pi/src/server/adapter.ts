@@ -2186,6 +2186,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             failureItemOrdinal: itemOrdinal(turn, failureItemId),
             status: "failed",
             failure,
+            ...(!closed && [...piAsyncRuns.values()].some((run) => run.turn === turn)
+              ? { childTurnsContinue: true }
+              : {}),
             ...(turn.activeProviderRetry === null
               ? {}
               : {
