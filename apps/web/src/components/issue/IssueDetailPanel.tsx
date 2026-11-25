@@ -902,6 +902,10 @@ export function IssueDetailPanel({
                           render={
                             <a href={item.comment.url} target="_blank" rel="noopener noreferrer" />
                           }
+                          onClick={(event) => {
+                            event.preventDefault();
+                            void openLink(item.comment.url!, { event }).catch(console.error);
+                          }}
                         >
                           {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
                         </InlineButton>
