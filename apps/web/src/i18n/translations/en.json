@@ -3802,6 +3802,21 @@
     },
     " app left its page and was stopped"
   ],
+  "796b81c4875c4feb": [
+    "The ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " app needs a newer ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " server on this environment. Update the server to use it."
+  ],
   "5ef18e4d39b398bf": [
     "Unable to load the ",
     {
@@ -4627,6 +4642,7 @@
   "7f0f9b1ee42892db": "Output is no longer available.",
   "e470bb79fa74a6ae": "Tool output image",
   "e8c80b6d40c0944c": "Search result",
+  "76cf478e5674fd12": "{count, plural, one {{count} match} other {{count} matches}}",
   "8d1906900b5c95c7": [
     "exit ",
     {
@@ -7509,9 +7525,20 @@
   "dc87902396b8ade4": "Letters, digits, '-', or '_'.",
   "251dfec07b7c3612": "This driver has no required configuration. You can add the instance now.",
   "08fe32f007e788f1": "Configure manually",
+  "65300794c1edb929": "Bearer token (optional)",
   "84eb2878dc17d3eb": "Management key",
   "7ac196c1e8175928": "Defaults to the hub's host name",
+  "0c026221dcd2820b": "Add an HTTP quota source",
   "e3548407052e9e12": "Add a CLIProxyAPI hub",
+  "d185c750156b2121": [
+    "Read quotas from an endpoint on ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "432e85a50e2e7964": [
     "Show the quota of every account the hub pools, next to the providers on",
     " ",
@@ -7522,7 +7549,9 @@
     },
     ". The key stays on that server."
   ],
+  "2324770ba91371ac": "Endpoint URL",
   "556a695b117565ac": "Hub URL",
+  "e4e5b75bba51396c": "Bearer token (optional)",
   "e62cedcbcdbafc75": "Management key",
   "f1b3d0634ec035cb": "Label (optional)",
   "52814dd6f7d0a15c": "Add hub",
@@ -8793,7 +8822,7 @@
   "a9cdd8c7073be920": "Command Palette: Toggle",
   "4e0943e8c7a465d1": "File Picker: Toggle",
   "df5fdcdf26a6b52a": "Project Search: Toggle",
-  "a8ff6d33b060736f": "Usage: Open",
+  "0ca6fd2b8fcab2c3": "Usage: Toggle",
   "a513d51b71b95674": "Theme: Select",
   "1ffd8427452372e1": "Appearance: Cycle",
   "3a3bb4a7551a87cc": "Theme Editor: Toggle",
@@ -11517,10 +11546,11 @@
       "v": "v"
     }
   ],
-  "f54364b854a07918": "No hubs configured.",
+  "39f64d971ba424b5": "No usage sources configured.",
+  "dbd877abdc2c7c81": "HTTP quota source",
   "4cf6a373a7535324": "{name} · Disabled",
-  "1d1e9cda847bd398": "The hub's management key is deleted from this server. Its accounts leave the Limits view; the hub itself is untouched. Add it again with the URL and key to bring them back.",
-  "c9bee4f93481b77a": "Remove hub",
+  "c792e744936dbe1b": "Add HTTP source",
+  "4032a03ee5301037": "The saved connection and its credentials are removed from this environment.",
   "0424112d5a0ecd71": "Auto",
   "3f0e1b77e45d53a9": "Tap to toggle, hold to talk",
   "45928549c050a1b4": "Hold",
@@ -11850,6 +11880,10 @@
   "6826fa9579c22035": "beta share guest invite link teammate watch t3 connect tunnel",
   "f10c06cba0cdf7fe": "beta link another machine vps peer agents work there delegate",
   "bc0b409d89ce086e": "beta workflow durable runs automation steps schedule webhook folder",
+  "933dabf0700708af": "How many skipped runs each workflow keeps in its history. Older skipped runs are deleted; runs that did something are always kept.",
+  "f172d7e5deb24f75": "Reset skipped runs kept to default",
+  "ba94015389f327bc": "Skipped runs kept",
+  "4b2669dcdb7d3776": "workflow history retention delete old skipped runs webhook",
   "4a21cf825a2045b0": "beta tab autocomplete predict next message claude codex ghost text",
   "fea2dc36585c4a20": "Simlock device hosts (alpha)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lease gateway",
@@ -12065,11 +12099,14 @@
   "37ffec8201f153c1": "Failed",
   "984b361806ce8d25": "Woke",
   "c6e8abc00ae470d2": "Done",
+  "353b08f4363dbb2c": "Pending",
   "f31a95961de19433": "Issue {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} linked issue} other {{count} linked issues}}",
   "8cf699ae75fd8067": "Pinned",
   "be451f475c514b37": "Dismiss Woke notification",
   "e9ced65134f2f36c": "Wake thread now",
+  "374dac09151d4578": "Pending",
+  "a8f30f631e2b010e": "Waiting to sync with its environment",
   "aca5896600bf173e": "You're currently checked out on another branch.",
   "f665b5be60d8c144": [
     "Handed off from ",
@@ -12202,6 +12239,7 @@
   "9c015d3d034316cb": "Use arrow keys to adjust the focused value. Hold Shift for larger steps. Use Home and End for the minimum and maximum. Press Tab to move between saturation and brightness.",
   "8639d5532561f87f": "Close",
   "e1186ad82ee08b33": "Close",
+  "a4579e548b768663": "Show sidebar",
   "a1b11a1cf39c9dc9": "Resize Sidebar",
   "c557090df5722838": "Toggle Sidebar",
   "bbde430e56272901": "Drag to resize sidebar",
@@ -12251,6 +12289,12 @@
   "8bcab2ef61de6518": "$0 cap",
   "a16b48709357a5a7": "Manage usage",
   "a00e74aaa421c524": "left",
+  "0e34c3076c08feb2": [
+    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    " ",
+    "in ",
+    { "i": 3, "k": "_gt_value_3", "v": "v" }
+  ],
   "8bd6f07136317c8f": "No provider on the selected environments reports subscription limits.",
   "87f5d0c61b335f38": "View usage in ChatGPT with your connected account.",
   "5b4c71b36b979e80": "Cost",
@@ -12598,9 +12642,13 @@
   "5459bf696a187c26": "Could not load workflow runs",
   "d57c35d43b0f163a": "This run is not here",
   "b9aae2f7cdb1a379": "No workflow runs yet",
+  "45a94c724845ec1d": "Other",
   "8f15f66e545af7c0": "Which runs",
   "b6409289e0c9a4dd": "Workflow",
   "035cb02ca1ae4952": "All {count} workflows",
+  "8eeb9cb07d7c59e1": "Kind of question",
+  "e4d1316c85ed7066": "No questions of this kind wait on you.",
+  "e2131cbec8accfe3": "All kinds",
   "46d614fa7b4bf1e5": "Workflow runs",
   "1c635faa2fb45b8b": "Has not run yet.",
   "156ff7b625287a1e": "Hide skipped",
@@ -12642,6 +12690,7 @@
   ],
   "ed8ce6ebc73dc12d": "Open the file",
   "5d8d278ff828102d": "All workflows",
+  "3b0f1659172107e4": "All kinds",
   "39459da07479f482": "Agent",
   "7741243632056b81": "{step} · transcript",
   "c512071143a5ba32": "This thread is no longer there.",
@@ -12807,5 +12856,50 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Cancel stack auto-merge",
-  "012c67c7f1a99e33": "Auto-merge stack"
+  "012c67c7f1a99e33": "Auto-merge stack",
+  "4a18481bea4b4ad5": "New device signed in to {environmentLabel}",
+  "4144ab6aa487528a": "{device} connected through {product}. Not you? Review it.",
+  "a10cfdb27152c757": "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. Not you? Review them.",
+  "e0856d6a402ad821": "{organization}'s policy does not allow project worktree layout commands.",
+  "206811f6f441bfc7": "This project sets up worktrees with its own command, which nobody has approved as it is written now. This connection cannot approve it: approve it from a client that can use the terminal.",
+  "b8087c9a70c26da9": "Could not approve the worktree layout command.",
+  "49eda70cfd56e621": "Runs when a worktree thread starts, and when its folder is restored",
+  "188ccaa1199f5611": "Runs when a thread's worktree is removed",
+  "7e8476e7306acabe": "Let this project run its worktree commands?",
+  "8e11914556fd8b13": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " sets up worktree threads with its own commands from ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "t3.json"
+    },
+    ". They run on this environment's machine with your permissions, outside any agent sandbox. You are asked again whenever their text changes."
+  ],
+  "46807acd02a4ff72": "Approve and continue",
+  "a9cb97fca6a6576b": "Create command",
+  "90f45a354884ccdd": "Remove command",
+  "78e308ada516928b": "Could not approve the command",
+  "a0c772d32a233da6": "Could not revoke the approval",
+  "0cdc8cdbed3e5eae": "Worktree layout",
+  "c17b25519e2b194e": "Could not load the worktree layout commands",
+  "5ccd5614c65f8d1f": "Revoke approval of the {kind} command",
+  "80c3794a5fa12f3a": "Approve the {kind} command",
+  "f206891e124c77b0": [
+    "This project's ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "t3.json"
+    },
+    " sets up worktree threads with its own commands. They run on this environment's machine with your permissions, and only as approved here: a command whose text changes needs approval again."
+  ],
+  "f6a91589456cca50": "Approved",
+  "c92657bb7f2293ff": "Needs approval",
+  "f1e5c1be1ac92361": "Approve",
+  "fcb5f3c4d4753326": "This connection cannot approve commands. Use a client that can use the terminal."
 }

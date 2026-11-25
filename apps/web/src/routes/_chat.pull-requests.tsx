@@ -1,4 +1,5 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { type PullRequestListSort } from "../components/pullRequest/pullRequestListPreferences";
@@ -60,7 +61,10 @@ export const Route = createFileRoute("/_chat/pull-requests")({
       ? { selectedEnvironmentId: raw.selectedEnvironmentId as EnvironmentId }
       : {}),
     // Always include free-text keys to override numeric values in the parent route's unvalidated search.
-    q: typeof raw.q === "string" && raw.q ? raw.q.slice(0, 200) : undefined,
+    q:
+      typeof raw.q === "string" && raw.q
+        ? raw.q.slice(0, splitsSurrogatePair(raw.q, 200) ? 199 : 200)
+        : undefined,
     ...(raw.draft === "only" || raw.draft === "hide" ? { draft: raw.draft } : {}),
     ...(raw.review === "approved" ||
     raw.review === "changes-requested" ||

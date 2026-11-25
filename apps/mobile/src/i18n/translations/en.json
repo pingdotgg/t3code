@@ -4341,6 +4341,21 @@
     },
     " app left its page and was stopped"
   ],
+  "796b81c4875c4feb": [
+    "The ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " app needs a newer ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " server on this environment. Update the server to use it."
+  ],
   "5ef18e4d39b398bf": [
     "Unable to load the ",
     {
@@ -4903,6 +4918,7 @@
   "306a6f95ad9d52f7": "Unsent",
   "11276ab6c58b7a25": "Opens the draft in the new task composer. Swipe left to discard.",
   "99950f3a28d425fa": "Sends when the environment reconnects. Opens the task for editing. Swipe left to delete.",
+  "d71048f4fb9cf44a": "Waiting to sync",
   "0a260c7744afd0be": "Waiting",
   "ad78fae7d373cf21": "Working",
   "be451f475c514b37": "Dismiss Woke notification",
@@ -5331,6 +5347,9 @@
   "744127f8dfad7d22": "Connect an environment to see its workflow runs.",
   "b9aae2f7cdb1a379": "No workflow runs yet",
   "ace8fc1c643cf9f6": "A workflow ties agents, code, schedules and questions to you into one run that survives restarts. Write one on your computer, under Workflows, then Definitions.",
+  "fc9c3a00cfc18b55": "All kinds",
+  "e4d1316c85ed7066": "No questions of this kind wait on you.",
+  "45a94c724845ec1d": "Other",
   "86798f07ba2d7f4d": "Search issues",
   "484cd83bb303bab8": "Search pull requests",
   "75ed31fcea4f741a": "Filter issues",
@@ -5618,5 +5637,13 @@
   "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
   "99d51127f573296b": "Another account",
   "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
-  "892f08d21b8e48a9": "Merge {layers} into {base} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} once their requirements are met. This may happen immediately."
+  "892f08d21b8e48a9": "Merge {layers} into {base} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} once their requirements are met. This may happen immediately.",
+  "89bf40eb2503b6c5": "New device signed in to {environment}",
+  "c94b5fe9ef372bc0": "{device} connected through {product}. If this was not you, remove it in Settings → Access in T3 Code on that computer.",
+  "bec67d0ed485f885": "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. If this was not you, remove them in Settings → Access in T3 Code on that computer.",
+  "18c30aa94d0a807f": "Connection diagnostics",
+  "eb287395a09cd288": "Send connection traces",
+  "6787f93bbf6ce0b6": "Helps the T3 Code team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About T3 Code > Diagnostics.",
+  "0b1e4aecbd38e0cf": "When the app connects to a computer through {product}, it sends the T3 Code team how long each step took, any error type, an ID for this app session, and the app version. Traces never include your threads, prompts, or code.",
+  "e0856d6a402ad821": "{organization}'s policy does not allow project worktree layout commands."
 }

@@ -3801,6 +3801,21 @@
     },
     " salió de su página y se detuvo"
   ],
+  "796b81c4875c4feb": [
+    "La app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " necesita un servidor de ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " más reciente en este entorno. Actualiza el servidor para usarla."
+  ],
   "5ef18e4d39b398bf": [
     "No se puede cargar la app ",
     {
@@ -4625,6 +4640,7 @@
   "7f0f9b1ee42892db": "La salida ya no está disponible.",
   "e470bb79fa74a6ae": "Imagen de salida de la herramienta",
   "e8c80b6d40c0944c": "Resultado de búsqueda",
+  "76cf478e5674fd12": "{count, plural, one {{count} coincidencia} other {{count} coincidencias}}",
   "8d1906900b5c95c7": [
     "salida ",
     {
@@ -7502,9 +7518,20 @@
   "dc87902396b8ade4": "Letras, dígitos, '-' o '_'.",
   "251dfec07b7c3612": "Este driver no tiene configuración obligatoria. Puedes añadir la instancia ahora.",
   "08fe32f007e788f1": "Configurar manualmente",
+  "65300794c1edb929": "Token de portador (opcional)",
   "84eb2878dc17d3eb": "Clave de gestión",
   "7ac196c1e8175928": "Por defecto, el nombre de host del hub",
+  "0c026221dcd2820b": "Añadir una fuente de cuotas HTTP",
   "e3548407052e9e12": "Añadir un hub de CLIProxyAPI",
+  "d185c750156b2121": [
+    "Consulta las cuotas desde un punto de conexión en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "432e85a50e2e7964": [
     "Muestra la cuota de cada cuenta que agrupa el hub, junto a los proveedores en",
     " ",
@@ -7515,7 +7542,9 @@
     },
     ". La clave se queda en ese servidor."
   ],
+  "2324770ba91371ac": "URL del punto de conexión",
   "556a695b117565ac": "URL del hub",
+  "e4e5b75bba51396c": "Token de portador (opcional)",
   "e62cedcbcdbafc75": "Clave de gestión",
   "f1b3d0634ec035cb": "Etiqueta (opcional)",
   "52814dd6f7d0a15c": "Añadir hub",
@@ -8783,7 +8812,7 @@
   "a9cdd8c7073be920": "Paleta de comandos: alternar",
   "4e0943e8c7a465d1": "Selector de archivos: alternar",
   "df5fdcdf26a6b52a": "Búsqueda en el proyecto: alternar",
-  "a8ff6d33b060736f": "Uso: abrir",
+  "0ca6fd2b8fcab2c3": "Uso: Mostrar u ocultar",
   "a513d51b71b95674": "Tema: seleccionar",
   "1ffd8427452372e1": "Apariencia: alternar",
   "3a3bb4a7551a87cc": "Editor de temas: alternar",
@@ -11502,10 +11531,11 @@
       "v": "v"
     }
   ],
-  "f54364b854a07918": "No hay hubs configurados.",
+  "39f64d971ba424b5": "No hay fuentes de uso configuradas.",
+  "dbd877abdc2c7c81": "Fuente de cuotas HTTP",
   "4cf6a373a7535324": "{name} · Deshabilitado",
-  "1d1e9cda847bd398": "La clave de gestión del hub se elimina de este servidor. Sus cuentas salen de la vista Límites; el hub en sí no se toca. Vuelve a añadirlo con la URL y la clave para recuperarlas.",
-  "c9bee4f93481b77a": "Quitar hub",
+  "c792e744936dbe1b": "Añadir fuente HTTP",
+  "4032a03ee5301037": "La conexión guardada y sus credenciales se eliminan de este entorno.",
   "0424112d5a0ecd71": "Automático",
   "3f0e1b77e45d53a9": "Toca para alternar, mantén para hablar",
   "45928549c050a1b4": "Mantener",
@@ -11835,6 +11865,10 @@
   "6826fa9579c22035": "beta compartir invitado invitar enlace compañero ver t3 connect túnel",
   "f10c06cba0cdf7fe": "beta vincular otra máquina vps agentes pares trabajar allí delegar",
   "bc0b409d89ce086e": "beta flujo de trabajo workflow ejecuciones duraderas automatización pasos programación webhook carpeta",
+  "933dabf0700708af": "Cuántas ejecuciones omitidas conserva cada flujo de trabajo en su historial. Las ejecuciones omitidas más antiguas se eliminan; las que hicieron algo se conservan siempre.",
+  "f172d7e5deb24f75": "Restablecer las ejecuciones omitidas conservadas al valor predeterminado",
+  "ba94015389f327bc": "Ejecuciones omitidas conservadas",
+  "4b2669dcdb7d3776": "workflow flujo historial retención eliminar antiguas ejecuciones omitidas webhook history retention skipped runs",
   "4a21cf825a2045b0": "beta tab autocompletar predecir siguiente mensaje claude codex texto fantasma",
   "fea2dc36585c4a20": "Hosts de dispositivos Simlock (alfa)",
   "9d834d178130180e": "beta alfa simlock callstack simulador emulador ios android grupo préstamo gateway",
@@ -12050,11 +12084,14 @@
   "37ffec8201f153c1": "Falló",
   "984b361806ce8d25": "Reactivado",
   "c6e8abc00ae470d2": "Hecho",
+  "353b08f4363dbb2c": "Pendiente",
   "f31a95961de19433": "Incidencia {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} incidencia vinculada} other {{count} incidencias vinculadas}}",
   "8cf699ae75fd8067": "Fijados",
   "be451f475c514b37": "Descartar notificación de reactivación",
   "e9ced65134f2f36c": "Reactivar hilo ahora",
+  "374dac09151d4578": "Pendiente",
+  "a8f30f631e2b010e": "Esperando para sincronizar con su entorno",
   "aca5896600bf173e": "Ahora mismo tienes otra rama en el checkout.",
   "f665b5be60d8c144": [
     "Traspasado desde ",
@@ -12187,6 +12224,7 @@
   "9c015d3d034316cb": "Usa las flechas para ajustar el valor enfocado. Mantén Shift para pasos más grandes. Usa Inicio y Fin para el mínimo y el máximo. Pulsa Tab para pasar entre saturación y brillo.",
   "8639d5532561f87f": "Cerrar",
   "e1186ad82ee08b33": "Cerrar",
+  "a4579e548b768663": "Mostrar barra lateral",
   "a1b11a1cf39c9dc9": "Cambiar el tamaño de la barra lateral",
   "c557090df5722838": "Alternar barra lateral",
   "bbde430e56272901": "Arrastra para cambiar el tamaño de la barra lateral",
@@ -12236,6 +12274,12 @@
   "8bcab2ef61de6518": "Límite de 0 $",
   "a16b48709357a5a7": "Gestionar uso",
   "a00e74aaa421c524": "restante",
+  "0e34c3076c08feb2": [
+    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    " ",
+    "en ",
+    { "i": 3, "k": "_gt_value_3", "v": "v" }
+  ],
   "8bd6f07136317c8f": "Ningún proveedor de los entornos seleccionados informa de límites de suscripción.",
   "87f5d0c61b335f38": "Consulta el uso en ChatGPT con tu cuenta conectada.",
   "5b4c71b36b979e80": "Coste",
@@ -12583,9 +12627,13 @@
   "5459bf696a187c26": "No se pudieron cargar las ejecuciones de flujos de trabajo",
   "d57c35d43b0f163a": "Esta ejecución no está aquí",
   "b9aae2f7cdb1a379": "Aún no hay ejecuciones de flujos de trabajo",
+  "45a94c724845ec1d": "Otras",
   "8f15f66e545af7c0": "Qué ejecuciones",
   "b6409289e0c9a4dd": "Flujo de trabajo",
   "035cb02ca1ae4952": "Los {count} flujos de trabajo",
+  "8eeb9cb07d7c59e1": "Tipo de pregunta",
+  "e4d1316c85ed7066": "No hay preguntas de este tipo esperándote.",
+  "e2131cbec8accfe3": "Todos los tipos",
   "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo",
   "1c635faa2fb45b8b": "Aún no se ha ejecutado.",
   "156ff7b625287a1e": "Ocultar omitidos",
@@ -12627,6 +12675,7 @@
   ],
   "ed8ce6ebc73dc12d": "Abrir el archivo",
   "5d8d278ff828102d": "Todos los flujos de trabajo",
+  "3b0f1659172107e4": "Todos los tipos",
   "39459da07479f482": "Agente",
   "7741243632056b81": "{step} · transcripción",
   "c512071143a5ba32": "Este hilo ya no existe.",
@@ -12793,5 +12842,50 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Cancelar la fusión automática de la pila",
-  "012c67c7f1a99e33": "Fusión automática de la pila"
+  "012c67c7f1a99e33": "Fusión automática de la pila",
+  "4a18481bea4b4ad5": "Nuevo dispositivo conectado a {environmentLabel}",
+  "4144ab6aa487528a": "{device} se conectó a través de {product}. ¿No fuiste tú? Revísalo.",
+  "a10cfdb27152c757": "{count, plural, one {{count} dispositivo se conectó} other {{count} dispositivos se conectaron}} a través de {product}. ¿No fuiste tú? Revísalos.",
+  "e0856d6a402ad821": "La política de {organization} no permite comandos de diseño de worktrees de proyectos.",
+  "206811f6f441bfc7": "Este proyecto prepara los worktrees con su propio comando, que nadie ha aprobado tal como está escrito ahora. Esta conexión no puede aprobarlo: apruébalo desde un cliente que pueda usar el terminal.",
+  "b8087c9a70c26da9": "No se pudo aprobar el comando de diseño de worktrees.",
+  "49eda70cfd56e621": "Se ejecuta cuando empieza un hilo en un worktree y cuando se restaura su carpeta",
+  "188ccaa1199f5611": "Se ejecuta cuando se elimina el worktree de un hilo",
+  "7e8476e7306acabe": "¿Permitir que este proyecto ejecute sus comandos de worktree?",
+  "8e11914556fd8b13": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " prepara los hilos en worktrees con sus propios comandos de ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "t3.json"
+    },
+    ". Se ejecutan en la máquina de este entorno con tus permisos, fuera de cualquier sandbox de agente. Se te volverá a preguntar cada vez que cambie su texto."
+  ],
+  "46807acd02a4ff72": "Aprobar y continuar",
+  "a9cb97fca6a6576b": "Comando de creación",
+  "90f45a354884ccdd": "Comando de eliminación",
+  "78e308ada516928b": "No se pudo aprobar el comando",
+  "a0c772d32a233da6": "No se pudo revocar la aprobación",
+  "0cdc8cdbed3e5eae": "Diseño de worktrees",
+  "c17b25519e2b194e": "No se pudieron cargar los comandos de diseño de worktrees",
+  "5ccd5614c65f8d1f": "Revocar la aprobación del comando {kind}",
+  "80c3794a5fa12f3a": "Aprobar el comando {kind}",
+  "f206891e124c77b0": [
+    "El ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "t3.json"
+    },
+    " de este proyecto prepara los hilos en worktrees con sus propios comandos. Se ejecutan en la máquina de este entorno con tus permisos y solo tal como se aprobaron aquí: un comando cuyo texto cambia necesita aprobación de nuevo."
+  ],
+  "f6a91589456cca50": "Aprobado",
+  "c92657bb7f2293ff": "Necesita aprobación",
+  "f1e5c1be1ac92361": "Aprobar",
+  "fcb5f3c4d4753326": "Esta conexión no puede aprobar comandos. Usa un cliente que pueda usar el terminal."
 }

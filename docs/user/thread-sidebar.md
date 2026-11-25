@@ -4,6 +4,16 @@ Use a new thread for a separate task. Choose **New worktree** when its code chan
 need a separate branch and working directory. Threads in the same checkout share its
 branch, so T3 Code refuses a branch switch there while one of them is working.
 
+## Resize or hide the sidebar
+
+On web and desktop, drag the sidebar's right edge to resize it. Continue left past its minimum
+width to preview hiding it, then release to keep it hidden. Dragging back right before releasing
+shows it again and continues resizing.
+
+Move the mouse to the middle of the left window edge to find a handle. Drag it right or click
+it to show the sidebar again. Dragging back to the edge before releasing hides the preview
+and leaves it hidden. The sidebar toggle and shortcut still keep it open.
+
 ## Start a thread
 
 On web and desktop, **New thread** opens the project picker when you have more than one
@@ -176,6 +186,12 @@ when the thread settles** enabled in Settings > Projects > Actions. You can also
 `"stopOnSettle": true` on a `t3.json` action and import it there. Start the command through
 that action so T3 can stop its terminal and child processes. Commands started through an
 agent's own shell tools are managed by the provider.
+
+You can settle or snooze a thread while its environment is offline. The thread shows
+**Pending** (**Waiting to sync** on mobile), and the change is sent when the environment
+reconnects. Undo, Un-settle, or Wake before then cancels it. If the thread changed there in
+the meantime, the environment's state wins and your change is dropped. A thread with a
+pending settle cannot be snoozed until it syncs.
 
 To reclaim disk space from settled work, turn on **Run in the thread's worktree when the
 thread settles** for one of the project's actions, or set `"runOnSettle": true` on a

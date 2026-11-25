@@ -260,7 +260,7 @@ export const layer: Layer.Layer<
         yield* taskFolders.restore({
           taskFolder,
           branch,
-          projectCommands: TaskFolders.linkRunsProjectCommands(context.thread.linkOrigin),
+          projectCommands: TaskFolders.projectCommandsForLink(context.thread.linkOrigin),
           recreate: (checkout) =>
             gitWorkflow.pruneWorktrees({ cwd: checkout.repositoryPath }).pipe(
               Effect.andThen(

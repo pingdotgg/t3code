@@ -3802,6 +3802,21 @@
     },
     " lämnade sin sida och stoppades"
   ],
+  "796b81c4875c4feb": [
+    "Appen ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " behöver en nyare ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "-server i den här miljön. Uppdatera servern för att använda den."
+  ],
   "5ef18e4d39b398bf": [
     "Det gick inte att läsa in appen ",
     {
@@ -4626,6 +4641,7 @@
   "7f0f9b1ee42892db": "Utdata är inte längre tillgängliga.",
   "e470bb79fa74a6ae": "Bild från verktygsutdata",
   "e8c80b6d40c0944c": "Sökresultat",
+  "76cf478e5674fd12": "{count, plural, one {{count} träff} other {{count} träffar}}",
   "8d1906900b5c95c7": [
     "avslutningskod ",
     {
@@ -7508,9 +7524,20 @@
   "dc87902396b8ade4": "Bokstäver, siffror, '-' eller '_'.",
   "251dfec07b7c3612": "Den här drivrutinen har ingen obligatorisk konfiguration. Du kan lägga till instansen nu.",
   "08fe32f007e788f1": "Konfigurera manuellt",
+  "65300794c1edb929": "Bearer-token (valfritt)",
   "84eb2878dc17d3eb": "Hanteringsnyckel",
   "7ac196c1e8175928": "Standard är hubbens värdnamn",
+  "0c026221dcd2820b": "Lägg till en HTTP-källa för kvoter",
   "e3548407052e9e12": "Lägg till en CLIProxyAPI-hubb",
+  "d185c750156b2121": [
+    "Hämta kvoter från en slutpunkt på ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "432e85a50e2e7964": [
     "Visa kvoten för alla konton som hubben samlar, bredvid leverantörerna på",
     " ",
@@ -7521,7 +7548,9 @@
     },
     ". Nyckeln stannar på den servern."
   ],
+  "2324770ba91371ac": "Slutpunktens URL",
   "556a695b117565ac": "Hubb-URL",
+  "e4e5b75bba51396c": "Bearer-token (valfritt)",
   "e62cedcbcdbafc75": "Hanteringsnyckel",
   "f1b3d0634ec035cb": "Etikett (valfritt)",
   "52814dd6f7d0a15c": "Lägg till hubb",
@@ -8791,7 +8820,7 @@
   "a9cdd8c7073be920": "Kommandopalett: växla",
   "4e0943e8c7a465d1": "Filväljare: växla",
   "df5fdcdf26a6b52a": "Projektsökning: växla",
-  "a8ff6d33b060736f": "Användning: öppna",
+  "0ca6fd2b8fcab2c3": "Användning: Visa eller dölj",
   "a513d51b71b95674": "Tema: välj",
   "1ffd8427452372e1": "Utseende: växla mellan",
   "3a3bb4a7551a87cc": "Temaredigerare: växla",
@@ -11515,10 +11544,11 @@
       "v": "v"
     }
   ],
-  "f54364b854a07918": "Inga hubbar konfigurerade.",
+  "39f64d971ba424b5": "Inga användningskällor har konfigurerats.",
+  "dbd877abdc2c7c81": "HTTP-källa för kvoter",
   "4cf6a373a7535324": "{name} · Inaktiverad",
-  "1d1e9cda847bd398": "Hubbens hanteringsnyckel tas bort från den här servern. Dess konton försvinner från vyn Gränser; själva hubben påverkas inte. Lägg till den igen med URL och nyckel för att få tillbaka dem.",
-  "c9bee4f93481b77a": "Ta bort hubb",
+  "c792e744936dbe1b": "Lägg till HTTP-källa",
+  "4032a03ee5301037": "Den sparade anslutningen och dess autentiseringsuppgifter tas bort från den här miljön.",
   "0424112d5a0ecd71": "Auto",
   "3f0e1b77e45d53a9": "Tryck för att växla, håll ned för att prata",
   "45928549c050a1b4": "Håll ned",
@@ -11848,6 +11878,10 @@
   "6826fa9579c22035": "beta dela gäst bjud in länk kollega titta t3 connect tunnel",
   "f10c06cba0cdf7fe": "beta länka en annan dator vps peer agenter arbetar där delegera",
   "bc0b409d89ce086e": "beta arbetsflöde workflow beständiga körningar automatisering steg schema webhook mapp",
+  "933dabf0700708af": "Hur många överhoppade körningar varje arbetsflöde behåller i sin historik. Äldre överhoppade körningar tas bort; körningar som gjorde något behålls alltid.",
+  "f172d7e5deb24f75": "Återställ antal sparade överhoppade körningar till standard",
+  "ba94015389f327bc": "Sparade överhoppade körningar",
+  "4b2669dcdb7d3776": "arbetsflöde historik lagring ta bort gamla överhoppade körningar webhook workflow history retention skipped runs",
   "4a21cf825a2045b0": "beta tabb autokomplettering förutsäg nästa meddelande claude codex spöktext",
   "fea2dc36585c4a20": "Simlock-enhetsvärdar (alfa)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lån gateway",
@@ -12063,11 +12097,14 @@
   "37ffec8201f153c1": "Misslyckades",
   "984b361806ce8d25": "Väckt",
   "c6e8abc00ae470d2": "Klar",
+  "353b08f4363dbb2c": "Väntar",
   "f31a95961de19433": "Ärende {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} länkat ärende} other {{count} länkade ärenden}}",
   "8cf699ae75fd8067": "Fäst",
   "be451f475c514b37": "Stäng aviseringen Väckt",
   "e9ced65134f2f36c": "Väck tråden nu",
+  "374dac09151d4578": "Väntar",
+  "a8f30f631e2b010e": "Väntar på synkronisering med sin miljö",
   "aca5896600bf173e": "Du har en annan gren utcheckad just nu.",
   "f665b5be60d8c144": [
     "Överlämnad från ",
@@ -12200,6 +12237,7 @@
   "9c015d3d034316cb": "Använd piltangenterna för att justera det fokuserade värdet. Håll ned Shift för större steg. Använd Home och End för minsta och högsta värde. Tryck Tab för att växla mellan mättnad och ljusstyrka.",
   "8639d5532561f87f": "Stäng",
   "e1186ad82ee08b33": "Stäng",
+  "a4579e548b768663": "Visa sidofältet",
   "a1b11a1cf39c9dc9": "Ändra storlek på sidofältet",
   "c557090df5722838": "Växla sidofält",
   "bbde430e56272901": "Dra för att ändra storlek på sidofältet",
@@ -12249,6 +12287,12 @@
   "8bcab2ef61de6518": "Tak på 0 $",
   "a16b48709357a5a7": "Hantera användning",
   "a00e74aaa421c524": "kvar",
+  "0e34c3076c08feb2": [
+    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    " ",
+    "om ",
+    { "i": 3, "k": "_gt_value_3", "v": "v" }
+  ],
   "8bd6f07136317c8f": "Ingen leverantör i de valda miljöerna rapporterar abonnemangsgränser.",
   "87f5d0c61b335f38": "Visa användning i ChatGPT med ditt anslutna konto.",
   "5b4c71b36b979e80": "Kostnad",
@@ -12596,9 +12640,13 @@
   "5459bf696a187c26": "Kunde inte läsa in arbetsflödeskörningarna",
   "d57c35d43b0f163a": "Den här körningen finns inte här",
   "b9aae2f7cdb1a379": "Inga arbetsflödeskörningar än",
+  "45a94c724845ec1d": "Övrigt",
   "8f15f66e545af7c0": "Vilka körningar",
   "b6409289e0c9a4dd": "Arbetsflöde",
   "035cb02ca1ae4952": "Alla arbetsflöden ({count})",
+  "8eeb9cb07d7c59e1": "Typ av fråga",
+  "e4d1316c85ed7066": "Inga frågor av den här typen väntar på dig.",
+  "e2131cbec8accfe3": "Alla typer",
   "46d614fa7b4bf1e5": "Arbetsflödeskörningar",
   "1c635faa2fb45b8b": "Har inte körts än.",
   "156ff7b625287a1e": "Dölj överhoppade",
@@ -12640,6 +12688,7 @@
   ],
   "ed8ce6ebc73dc12d": "Öppna filen",
   "5d8d278ff828102d": "Alla arbetsflöden",
+  "3b0f1659172107e4": "Alla typer",
   "39459da07479f482": "Agent",
   "7741243632056b81": "{step} · transkript",
   "c512071143a5ba32": "Den här tråden finns inte längre.",
@@ -12805,5 +12854,50 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Avbryt automatisk merge för stacken",
-  "012c67c7f1a99e33": "Merga stacken automatiskt"
+  "012c67c7f1a99e33": "Merga stacken automatiskt",
+  "4a18481bea4b4ad5": "Ny enhet inloggad på {environmentLabel}",
+  "4144ab6aa487528a": "{device} anslöt via {product}. Inte du? Granska den.",
+  "a10cfdb27152c757": "{count, plural, one {{count} enhet} other {{count} enheter}} anslöt via {product}. Inte du? Granska dem.",
+  "e0856d6a402ad821": "Policyn för {organization} tillåter inte projekts layoutkommandon för worktrees.",
+  "206811f6f441bfc7": "Det här projektet förbereder worktrees med ett eget kommando, som ingen har godkänt som det är skrivet nu. Den här anslutningen kan inte godkänna det: godkänn det från en klient som får använda terminalen.",
+  "b8087c9a70c26da9": "Det gick inte att godkänna layoutkommandot för worktrees.",
+  "49eda70cfd56e621": "Körs när en worktree-tråd startar och när dess mapp återställs",
+  "188ccaa1199f5611": "Körs när en tråds worktree tas bort",
+  "7e8476e7306acabe": "Låta det här projektet köra sina worktree-kommandon?",
+  "8e11914556fd8b13": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " förbereder worktree-trådar med egna kommandon från ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "t3.json"
+    },
+    ". De körs på den här miljöns dator med dina behörigheter, utanför alla agentsandlådor. Du får frågan igen varje gång deras text ändras."
+  ],
+  "46807acd02a4ff72": "Godkänn och fortsätt",
+  "a9cb97fca6a6576b": "Kommando för att skapa",
+  "90f45a354884ccdd": "Kommando för att ta bort",
+  "78e308ada516928b": "Det gick inte att godkänna kommandot",
+  "a0c772d32a233da6": "Det gick inte att återkalla godkännandet",
+  "0cdc8cdbed3e5eae": "Worktree-layout",
+  "c17b25519e2b194e": "Kunde inte läsa in layoutkommandona för worktrees",
+  "5ccd5614c65f8d1f": "Återkalla godkännandet av kommandot {kind}",
+  "80c3794a5fa12f3a": "Godkänn kommandot {kind}",
+  "f206891e124c77b0": [
+    "Projektets ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "t3.json"
+    },
+    " förbereder worktree-trådar med egna kommandon. De körs på den här miljöns dator med dina behörigheter, och bara så som de godkänts här: ett kommando vars text ändras behöver godkännas igen."
+  ],
+  "f6a91589456cca50": "Godkänt",
+  "c92657bb7f2293ff": "Behöver godkännande",
+  "f1e5c1be1ac92361": "Godkänn",
+  "fcb5f3c4d4753326": "Den här anslutningen kan inte godkänna kommandon. Använd en klient som får använda terminalen."
 }
