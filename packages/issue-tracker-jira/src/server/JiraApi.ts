@@ -273,7 +273,7 @@ const SIGNED_OUT_REASONS = ["authentication_denied", "authenticated_failed", "ou
 /** A proxy or SSO front end answers a rejected token with its own page, or a 200 for anonymous. */
 const isSignInPage = (response: HttpClientResponse.HttpClientResponse) =>
   response.headers["x-ausername"] === "anonymous" ||
-  (response.headers["content-type"] ?? "").includes("text/html");
+  (response.headers["content-type"] ?? "").toLowerCase().includes("text/html");
 
 type Query = Readonly<Record<string, string | number | undefined>>;
 

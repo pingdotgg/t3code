@@ -55,10 +55,10 @@ describe("markdownToWiki", () => {
   it("writes headings, emphasis, inline code and links", () => {
     expect(
       markdownToWiki(
-        "## Plan\nSome **bold** and *italic* and __also bold__ with `code` and [the docs](https://docs.example.com/a_b_c).\n<https://example.com/x>",
+        "## Plan\nSome **bold** and *italic* and __also bold__ but not foo__bar__baz with `code` and [the docs](https://docs.example.com/a_b_c).\n<https://example.com/x>",
       ),
     ).toBe(
-      "h2. Plan\nSome *bold* and _italic_ and *also bold* with {{code}} and [the docs|https://docs.example.com/a_b_c].\n[https://example.com/x]",
+      "h2. Plan\nSome *bold* and _italic_ and *also bold* but not foo__bar__baz with {{code}} and [the docs|https://docs.example.com/a_b_c].\n[https://example.com/x]",
     );
   });
 

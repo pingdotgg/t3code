@@ -122,7 +122,7 @@ export function markdownToWiki(markdown: string): string {
 function inlineMarkdownToWiki(text: string): string {
   return text
     .replace(
-      /\*\*(?=\S)(.+?)(?<=\S)\*\*|__(?=\S)(.+?)(?<=\S)__/g,
+      /\*\*(?=\S)(.+?)(?<=\S)\*\*|(?<!\w)__(?=\S)(.+?)(?<=\S)__(?!\w)/g,
       (_, star, underscore) => `\u0001${star ?? underscore}\u0001`,
     )
     .replace(ITALIC_MD, "$1_$2_")
