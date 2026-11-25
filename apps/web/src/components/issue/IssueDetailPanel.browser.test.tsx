@@ -24,10 +24,10 @@ const detail = vi.hoisted(() => ({
   commentCount: 0,
   projectId: "project-1",
   projectTitle: "Project",
-  writable: false,
+  writable: true,
   capabilities: {
     create: false,
-    edit: false,
+    edit: true,
     comment: false,
     labels: false,
     assignees: false,
@@ -40,7 +40,7 @@ const detail = vi.hoisted(() => ({
   viewerPermissions: {
     setState: false,
     comment: false,
-    edit: false,
+    edit: true,
     labels: false,
     assignees: false,
   },
@@ -61,13 +61,13 @@ vi.mock(import("~/state/issues"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const actual = await original();
   const detailAtom = Atom.make(AsyncResult.success(detail));
-  const canWrite = Atom.make(true);
+  const allowed = Atom.make(true);
   return {
     ...actual,
     issueEnvironment: {
       ...actual.issueEnvironment,
       detail: (() => detailAtom) as never,
-      comment: { ...actual.issueEnvironment.comment, permissionAtom: () => canWrite },
+      comment: { ...actual.issueEnvironment.comment, permissionAtom: () => allowed },
     },
   };
 });
@@ -140,39 +140,23 @@ describe("IssueDetailPanel", () => {
 
   it("Escape cancels the title edit without closing the right panel sheet", async () => {
     setComments([]);
-    const editable = detail as {
-      writable: boolean;
-      capabilities: { edit: boolean };
-      viewerPermissions: { edit: boolean };
-    };
-    editable.writable = editable.capabilities.edit = editable.viewerPermissions.edit = true;
-    using _restore = {
-      [Symbol.dispose]: () => {
-        editable.writable = editable.capabilities.edit = editable.viewerPermissions.edit = false;
-      },
-    };
     const onCloseSheet = vi.fn();
     await using _screen = await render(
       <RightPanelSheet animationDurationMs={0} open onClose={onCloseSheet}>
-        <IssueDetailPanel
-          environmentId={"env-1" as never}
-          reference={reference}
-          threadRef={{ environmentId: "env-1", threadId: "thread-1" } as never}
-        />
+        <IssueDetailPanel environmentId={"env-1" as never} reference={reference} />
       </RightPanelSheet>,
     );
     await act(() =>
-      (page.getByRole("button", { name: "Edit title" }).element() as HTMLElement).focus(),
+      (page.getByRole("button", { name: "Edit title" }).element() as HTMLElement).click(),
     );
-    await userEvent.keyboard("{Enter}");
-    const title = page.getByRole("textbox", { name: "Issue title" });
-    await expect.element(title).toHaveFocus();
+    const input = page.getByRole("textbox", { name: "Issue title" });
+    await expect.element(input).toHaveFocus();
 
     await userEvent.keyboard("{Escape}");
-    await expect.element(title).not.toBeInTheDocument();
+    await expect.element(input).not.toBeInTheDocument();
     expect(onCloseSheet).not.toHaveBeenCalled();
 
     await userEvent.keyboard("{Escape}");
-    expect(onCloseSheet).toHaveBeenCalledOnce();
+    expect(onCloseSheet).toHaveBeenCalledTimes(1);
   });
 });

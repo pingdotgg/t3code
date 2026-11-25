@@ -680,6 +680,7 @@ export function IssueDetailPanel({
                 onChange={(event) => setTitleDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key !== "Escape") return;
+                  event.preventDefault();
                   event.stopPropagation();
                   setEditing(null);
                 }}
