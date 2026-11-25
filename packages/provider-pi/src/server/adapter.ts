@@ -1492,7 +1492,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const output = piToolOutput(resultRecord, toolName);
         const readPath =
           toolName === "read"
-            ? (recordString(args, "path") ?? recordString(args, "file_path"))?.trim()
+            ? (recordString(args, "path") ?? recordString(args, "file_path"))
+                ?.replace(/^@/, "")
+                .trim()
             : undefined;
         const viewedImagePath =
           readPath &&
