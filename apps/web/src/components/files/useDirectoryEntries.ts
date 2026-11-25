@@ -137,7 +137,17 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   };
 
   const load = function loadDirectory(directoryPath: string, refresh = false): Promise<void> {
-    if (stale.current.delete(directoryPath)) refresh = true;
+    if (stale.current.delete(directoryPath)) {
+      refresh = true;
+      // Descendants left expanded under it were skipped too; read them after it.
+      const prefix = directoryPath === "" ? "" : `${directoryPath}/`;
+      const descendants = [...stale.current].filter((path) => path.startsWith(prefix));
+      for (const path of descendants) stale.current.delete(path);
+      if (descendants.length > 0)
+        queueMicrotask(() => {
+          for (const path of descendants) if (active.current) void loadDirectory(path, true);
+        });
+    }
     const existing = requests.current.get(directoryPath);
     if (existing) {
       if (!refresh) return existing;
@@ -191,25 +201,24 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     ...entries.filter((entry) => entry.kind === "directory").map((entry) => entry.path),
   ]);
 
-  /** Re-reads the root and the `open` folders (all loaded folders when omitted). */
+  /** Re-reads the root and the `open` folders whose ancestors are all open (all loaded folders when omitted). */
   const refresh = (open?: ReadonlySet<string>) => {
     if (sweep.current) {
       queuedSweep.current = () => refresh(open);
       return;
     }
-    const reachable = new Set([""]);
+    const shown = new Set([""]);
     const pending = [""];
     for (let path = pending.pop(); path !== undefined; path = pending.pop()) {
       for (const entry of listings.current.get(path) ?? []) {
-        if (entry.kind !== "directory") continue;
-        reachable.add(entry.path);
+        if (entry.kind !== "directory" || (open && !open.has(entry.path))) continue;
+        shown.add(entry.path);
         pending.push(entry.path);
       }
     }
     const paths: string[] = [];
     for (const path of requested.current) {
-      if (!reachable.has(path)) continue;
-      if (!open || path === "" || open.has(path)) paths.push(path);
+      if (shown.has(path)) paths.push(path);
       else if (loaded.current.has(path)) stale.current.add(path);
     }
     if (paths.length === 0) return;

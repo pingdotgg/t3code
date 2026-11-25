@@ -335,3 +335,35 @@ it("merges refreshes asked for during a running refresh into one rerun after it"
   expect(state.calls).toHaveLength(9);
   expect(state.view.isPending).toBe(false);
 });
+
+it("skips a folder left expanded under a collapsed parent and reads both when the parent opens", async () => {
+  const state = setup();
+  // The hook probe does not navigate.
+  await using _screen = await render(<state.Probe />, { router: false });
+  const parent = { path: "a", kind: "directory" } as const;
+  const child = { path: "a/b", kind: "directory" } as const;
+  await state.settle(0, [parent]);
+  await act(async () => {
+    void state.view.load("a");
+  });
+  await state.settle(1, [child]);
+  await act(async () => {
+    void state.view.load("a/b");
+  });
+  await state.settle(2, [{ path: "a/b/file.ts", kind: "file" }]);
+
+  // `a` is collapsed while `a/b` keeps its own expanded state.
+  await act(async () => state.view.refresh(new Set(["a/b"])));
+  expect(state.calls.slice(3).map((call) => call.path)).toEqual([""]);
+  await state.settle(3, [parent]);
+
+  await act(async () => {
+    void state.view.load("a");
+  });
+  expect(state.calls.slice(4).map((call) => call.path)).toEqual(["a", "a/b"]);
+  await state.settle(4, []);
+  expect(state.view.entries).toEqual([parent]);
+  expect(state.view.error).toBeNull();
+  await state.settle(5, []);
+  expect(state.view.isPending).toBe(false);
+});
