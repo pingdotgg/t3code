@@ -22241,6 +22241,130 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // Frame order captured from Claude Code 2.1.332: the fork's work arrives only after task_notification.
+  it.effect("shows a forked skill's commands and reply in its subagent thread", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-forked-skill-activity"),
+          text: "/fork-probe go",
+          attachments: [],
+        }),
+      );
+      const forkParent = "forked-command-fork-probe";
+      for (const frame of [
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-forked-activity",
+          description: "/fork-probe",
+          prompt: "go",
+          subagent_type: "general-purpose",
+          task_type: "local_agent",
+          skip_transcript: true,
+          ambient: true,
+          uuid: "00000000-0000-4000-8000-000000000a01",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "task-forked-activity",
+          status: "completed",
+          summary: "/fork-probe",
+          output_file: "",
+          uuid: "00000000-0000-4000-8000-000000000a02",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "user",
+          parent_tool_use_id: forkParent,
+          message: { role: "user", content: [{ type: "text", text: "go" }] },
+          uuid: "00000000-0000-4000-8000-000000000a03",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "assistant",
+          parent_tool_use_id: forkParent,
+          message: {
+            model: "claude-haiku-5-5",
+            id: "msg_fork_bash",
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu-fork-bash",
+                name: "Bash",
+                input: { command: "cat hello.txt", description: "Read hello.txt" },
+              },
+            ],
+          },
+          uuid: "00000000-0000-4000-8000-000000000a04",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "user",
+          parent_tool_use_id: forkParent,
+          message: {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: "toolu-fork-bash", content: "greetings" },
+            ],
+          },
+          uuid: "00000000-0000-4000-8000-000000000a05",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "assistant",
+          parent_tool_use_id: forkParent,
+          message: {
+            model: "claude-haiku-5-5",
+            id: "msg_fork_reply",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "text", text: "FORK-REPORT greetings" }],
+          },
+          uuid: "00000000-0000-4000-8000-000000000a06",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000a07",
+          result: "FORK-REPORT greetings",
+        }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* Queue.take(harness.terminalReceipts);
+
+      const routing = subagentRouting(harness.events, ["toolu-fork-bash"]);
+      assert.isDefined(routing.childThreadId);
+      assert.deepEqual(
+        [...(routing.toolThreadIds.get("toolu-fork-bash") ?? [])],
+        [routing.childThreadId],
+        "the fork's Bash call never reached its subagent thread",
+      );
+      assert.include(routing.assistantTexts(routing.childThreadId), "FORK-REPORT greetings");
+      const subagent = harness.events
+        .filter((event) => event.type === "subagent.updated")
+        .at(-1)?.subagent;
+      assert.notEqual(subagent?.result, "/fork-probe", "the skill's name became its result");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     {
       source: "custom model",
