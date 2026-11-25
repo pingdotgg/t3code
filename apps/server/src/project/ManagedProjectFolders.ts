@@ -32,11 +32,15 @@ export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailab
   {
     baseDir: Schema.String,
     repositoryRoot: Schema.optional(Schema.String),
+    scratchDir: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
     if (this.repositoryRoot === undefined) {
       return "Threads without a project are not available on this environment.";
+    }
+    if (this.scratchDir !== undefined) {
+      return `Threads without a project are off because T3CODE_SCRATCH_DIR ${this.scratchDir} is inside the Git repository ${this.repositoryRoot}. Point T3CODE_SCRATCH_DIR at a folder outside it, or unset it, then restart T3 Code.`;
     }
     return `Threads without a project are off because the T3 home ${this.baseDir} is inside the Git repository ${this.repositoryRoot}. If that repository was created by mistake, move ${this.repositoryRoot}/.git out of the way; otherwise point T3CODE_HOME (or --base-dir) at a folder outside it. Then restart T3 Code.`;
   }
@@ -66,9 +70,18 @@ export class ScratchProjectError extends Schema.TaggedError<ScratchProjectError>
   }
 }
 
-/** Where No project threads keep their folders, whether or not this T3 home allows them. */
+/** The No project's own folder, whether or not this T3 home allows it. */
 export const scratchFolderRoot = (baseDir: string, path: Path.Path) =>
   path.resolve(baseDir, "scratch");
+
+/** Folders whose children can be No project thread folders: the default root and T3CODE_SCRATCH_DIR. */
+export const scratchThreadParents = (
+  config: { readonly baseDir: string; readonly scratchDir?: string | undefined },
+  path: Path.Path,
+) => [
+  scratchFolderRoot(config.baseDir, path),
+  ...(config.scratchDir === undefined ? [] : [config.scratchDir]),
+];
 
 export type ScratchError = ScratchUnavailableError | ScratchFolderError | ScratchProjectError;
 
@@ -252,18 +265,36 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // Scratch inside a checkout would inherit its git status and checkpoints; require a data dir outside work trees.
+  const repositoryRootOf = (directory: string) =>
+    gitWorkflow
+      .repositoryRoot(directory)
+      .pipe(Effect.catchIf(isGitMissing, () => Effect.succeed(null)));
+  // Scratch inside a checkout would inherit its git status and checkpoints; keep it outside work trees.
   const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
-    gitWorkflow.repositoryRoot(config.baseDir).pipe(
-      Effect.catchIf(isGitMissing, () => Effect.succeed(null)),
+    Effect.gen(function* () {
+      const baseRepository = yield* repositoryRootOf(config.baseDir);
+      if (baseRepository !== null || config.scratchDir === undefined) {
+        return { repositoryRoot: baseRepository, scratchDir: undefined };
+      }
+      // The configured folder may not exist yet; ask Git about its nearest existing ancestor.
+      let existing = config.scratchDir;
+      while (!(yield* fileSystem.exists(existing)) && path.dirname(existing) !== existing) {
+        existing = path.dirname(existing);
+      }
+      return { repositoryRoot: yield* repositoryRootOf(existing), scratchDir: config.scratchDir };
+    }).pipe(
       Effect.flatMap(
-        (repositoryRoot): Effect.Effect<Result.Result<string, ScratchUnavailableError>> => {
+        ({
+          repositoryRoot,
+          scratchDir,
+        }): Effect.Effect<Result.Result<string, ScratchUnavailableError>> => {
           if (repositoryRoot === null) {
             return Effect.succeed(Result.succeed(scratchFolderRoot(config.baseDir, path)));
           }
           const unavailable = new ScratchUnavailableError({
             baseDir: config.baseDir,
             repositoryRoot,
+            scratchDir,
           });
           return Effect.logWarning(unavailable.message).pipe(Effect.as(Result.fail(unavailable)));
         },
@@ -369,12 +400,13 @@ const make = Effect.gen(function* () {
     const root = yield* scratchRoot;
     if (Option.isNone(root)) return Option.none();
     if (!(yield* isScratchRoot(input.projectId, root.value))) return Option.none();
+    const threadRoot = config.scratchDir ?? root.value;
     const date = DateTime.formatIso(yield* DateTime.now).slice(0, 10);
     const words = folderWords(input.text);
     const id = input.threadId.toLowerCase().replace(/[^a-z0-9]/g, "");
     const folderFor = (idPart: string) =>
-      path.join(root.value, [date, words, idPart].filter(Boolean).join("-"));
-    yield* makeScratchFolder(root.value);
+      path.join(threadRoot, [date, words, idPart].filter(Boolean).join("-"));
+    yield* makeScratchFolder(threadRoot);
     const fullFolder = folderFor(id);
     return yield* claimFreeFolder(
       (attempt) =>
