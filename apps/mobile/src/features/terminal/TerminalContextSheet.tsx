@@ -98,31 +98,34 @@ export function TerminalContextSheet(props: {
         }
         renderItem={({ item: line, index }) => {
           const selected = index >= range.start && index <= range.end;
+          const edge =
+            (index === 0 ? " rounded-t-xl" : "") +
+            (index === lines.length - 1 ? " rounded-b-xl" : "");
           return (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={gt("Line {number}: {line}", { number: index + 1, line })}
-              accessibilityState={{ selected }}
-              onPress={() => selectLine(index)}
-              className={
-                selected
-                  ? "flex-row gap-3 bg-primary/10 px-3 py-2"
-                  : "flex-row gap-3 bg-card-alt px-3 py-2"
-              }
-            >
-              <Text
-                className="w-10 text-right text-sm text-foreground-muted"
-                style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+            <View className={`overflow-hidden bg-card-alt${edge}`}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={gt("Line {number}: {line}", { number: index + 1, line })}
+                accessibilityState={{ selected }}
+                onPress={() => selectLine(index)}
+                className={
+                  selected ? "flex-row gap-3 bg-primary/10 px-3 py-2" : "flex-row gap-3 px-3 py-2"
+                }
               >
-                {index + 1}
-              </Text>
-              <Text
-                className="flex-1 text-sm text-foreground"
-                style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
-              >
-                {line || " "}
-              </Text>
-            </Pressable>
+                <Text
+                  className="w-10 text-right text-sm text-foreground-muted"
+                  style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+                >
+                  {index + 1}
+                </Text>
+                <Text
+                  className="flex-1 text-sm text-foreground"
+                  style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+                >
+                  {line || " "}
+                </Text>
+              </Pressable>
+            </View>
           );
         }}
       />
