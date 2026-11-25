@@ -249,6 +249,45 @@ describe("GuestPage", () => {
     await expect.element(screen.getByLabelText("Model: GPT-5.4")).toBeVisible();
   });
 
+  it("omits MCP App frames instead of rendering an unavailable-app error", async () => {
+    const mcpAppItems: ReadonlyArray<OrchestrationV2TurnItem> = [
+      items[0]!,
+      {
+        ...itemBase("mcp-app-tool", 1),
+        type: "dynamic_tool",
+        toolName: "weather.get_weather",
+        input: null,
+        output: {
+          t3McpApp: {
+            attachmentId: "thread-a-mcp-app",
+            server: "weather",
+            tool: "get_weather",
+            resourceUri: "ui://weather/card.html",
+          },
+          result: { content: [] },
+        },
+      },
+      reply("reply", 2, "Forecast ready."),
+    ];
+    using _page = visit(`/guest?share=${SHARE_ID}`);
+    using _session = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async () => new Response(null, { status: 204 }));
+    using _stream = vi
+      .spyOn(window, "EventSource")
+      .mockImplementation(
+        fakeEventSource(opening([run("run-1", 1, "completed")], mcpAppItems)) as never,
+      );
+    using socket = vi.spyOn(window, "WebSocket");
+    const container = document.createElement("div");
+    container.style.cssText = "height: 900px; width: 900px; display: flex; flex-direction: column;";
+    await using screen = await render(<GuestPage />, { container });
+
+    await expect.element(screen.getByText("Forecast ready.")).toBeVisible();
+    expect(screen.container.textContent).not.toContain("Unable to load the weather app");
+    expect(socket).not.toHaveBeenCalled();
+  });
+
   it("sends attached files with the message, as form data", async () => {
     using _page = visit(`/guest?share=${SHARE_ID}`);
     using fetchSpy = vi

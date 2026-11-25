@@ -30,6 +30,8 @@ const NO_ENVIRONMENT_ID = EnvironmentId.make("guest");
 const NO_TURN_DIFFS: ReadonlyArray<never> = [];
 const NO_OPTIMISTIC_MESSAGES: ReadonlyArray<never> = [];
 const ignore = () => {};
+// MCP Apps need a live environment to load their HTML asset and call tools.
+const omitMcpApp = () => null;
 
 /**
  * A thread's own timeline, built from its projection alone and read-only: every action that would
@@ -51,6 +53,7 @@ export function ReadOnlyThreadTimeline(props: {
   readonly onImageExpand: (preview: ExpandedImagePreview) => void;
   readonly onFileOpen: (file: ChatFileAttachment) => void;
   readonly renderHtmlRender: (row: Extract<TimelineRow, { kind: "html-render" }>) => ReactNode;
+  readonly renderMcpApp?: (row: Extract<TimelineRow, { kind: "mcp-app" }>) => ReactNode;
   readonly renderFooter?: (items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>) => ReactNode;
   /** What stands below the timeline, where the composer would. */
   readonly children: (controls: { readonly scrollToEnd: () => void }) => ReactNode;
@@ -113,6 +116,7 @@ export function ReadOnlyThreadTimeline(props: {
             onFileOpen={props.onFileOpen}
             onFileDownload={props.onFileOpen}
             renderHtmlRender={props.renderHtmlRender}
+            renderMcpApp={props.renderMcpApp ?? omitMcpApp}
             turnItemSource={props.turnItemSource}
             historyControls={props.historyControls}
             activeThreadEnvironmentId={NO_ENVIRONMENT_ID}
