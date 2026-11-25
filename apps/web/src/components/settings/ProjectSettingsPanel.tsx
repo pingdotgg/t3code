@@ -14,7 +14,7 @@ import {
   useProjectGroupUpdate,
   type ProjectGroupUpdate,
 } from "../../hooks/useProjectGroupUpdate";
-import { Navigate, useNavigate } from "@tanstack/react-router";
+import { Navigate, useLocation, useNavigate } from "@tanstack/react-router";
 import { InfoIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
 import { T, useGT, useMessages } from "gt-react";
@@ -66,7 +66,6 @@ import {
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
-import { useRenderedSettingsPathname } from "./useRenderedSettingsPathname";
 
 const ProjectIconPickerDialog = lazy(() =>
   import("./ProjectIconPickerDialog").then((module) => ({
@@ -185,7 +184,7 @@ export function ProjectSettingsPanel({
 }) {
   const gt = useGT();
   const groups = useSettingsProjectGroups();
-  const pathname = useRenderedSettingsPathname();
+  const pathname = useLocation({ select: (location) => location.pathname });
 
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
   const members =
