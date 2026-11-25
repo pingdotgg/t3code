@@ -366,11 +366,18 @@ function* table(node: XmlNode): Generator<TextPart, void> {
     for (let index = 0; index < repeat; index++) {
       if (++rowCount > 10_000) throw new Truncation("Row limit");
       let column = 0;
+      let gap = 0;
       for (const cell of cells) {
         const count = repeatCount(cell.attrs["number-columns-repeated"]);
+        // Word emits no cell for columns covered by w:gridSpan; pad before the next cell.
+        const tcPr = cell.name === "tc" ? children(cell).find((c) => c.name === "tcPr") : undefined;
+        const val = tcPr && children(tcPr).find((c) => c.name === "gridSpan")?.attrs.val;
+        const span = val ? Math.max(1, Number.parseInt(val, 10) || 1) : 1;
         for (let i = 0; i < count; i++) {
-          if (column >= 512) throw new Truncation("Column limit");
-          if (column++) yield "\t";
+          column += span;
+          if (column > 512) throw new Truncation("Column limit");
+          if (gap) yield "\t".repeat(gap);
+          gap = span;
           // LibreOffice hides the contents a merge covers; the cell still holds its column.
           if (covered(cell)) continue;
           yield CELL_START;
