@@ -22,7 +22,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 import { issues, pullRequests } from "./forgeApi.ts";
-import { cancel, runs, signalAll, start } from "./stepServices.ts";
+import { cancel, runs, signalAll, start, withdraw } from "./stepServices.ts";
 import {
   type InRun,
   invoke,
@@ -172,6 +172,29 @@ const definitions = (
           { concurrency: 2 },
         ),
         ([bad, sib]) => `${bad} ${Option.getOrElse(sib, () => "none")}`,
+      ),
+    ),
+    /** Fails `bad` beside an open question, as long as `failures` says. */
+    workflow("doubting", { version: 1, payload: Schema.Struct({}), returns: Schema.String }, () =>
+      Effect.map(
+        Effect.all(
+          [
+            step(
+              "bad",
+              { returns: Schema.Number, ...once },
+              Effect.andThen(
+                Deferred.await(latch.bad),
+                Effect.flatMap(
+                  Ref.getAndUpdate(failures, (left) => Math.max(0, left - 1)),
+                  (left) => (left > 0 ? Effect.fail("the dependency is down") : Effect.succeed(1)),
+                ),
+              ),
+            ),
+            ask("sure", { title: "Sure?", choices: ["Yes", "No"] }),
+          ],
+          { concurrency: 2 },
+        ),
+        ([bad, sure]) => `${bad} ${Option.isSome(sure) ? sure.value.choice : "none"}`,
       ),
     ),
     workflow(
@@ -648,6 +671,32 @@ const sorted = [
           }),
           (found) => found.map((run) => `${run.key} ${run.tags.join("+")}`).toSorted(),
         ),
+      ),
+  ),
+  /** Asks, and when the question is withdrawn asks again. */
+  workflow(
+    "wanting",
+    { version: 1, payload: Schema.Struct({}), returns: Schema.String },
+    Effect.fn(function* () {
+      const wanted = yield* ask("wanted", { title: "Wanted?", choices: ["Yes", "No"] });
+      if (Option.isSome(wanted)) return wanted.value.choice;
+      const again = yield* ask("again", { title: "Still wanted?", choices: ["Yes", "No"] });
+      return Option.match(again, { onNone: () => "never", onSome: (it) => `then ${it.choice}` });
+    }),
+  ),
+  /** Withdraws another run's question from a step. */
+  workflow(
+    "withdrawer",
+    {
+      version: 1,
+      payload: Schema.Struct({ run: Schema.String, name: Schema.String }),
+      returns: Schema.String,
+    },
+    (payload) =>
+      step(
+        "withdraw",
+        { returns: Schema.String, ...once },
+        withdraw({ run: payload.run, name: payload.name, reason: "settled elsewhere" }),
       ),
   ),
 ];
@@ -2298,6 +2347,86 @@ it.effect("a step finds runs by their key, wakes everyone at a key, and cancels 
         assert.equal(left.status, "paused");
         assert.include(left.detail ?? "", "cannot cancel itself");
       }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a withdrawn question ends unanswered, and its run goes on and can ask again", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const { runId } = yield* workflows.start("wanting", {}, { idempotencyKey: "w1" });
+        yield* workflows.waitFor(runId, (run) => run.detail === "wanted");
+        const withdrawer = Effect.fn(function* (key: string, name: string) {
+          const run = yield* workflows.start(
+            "withdrawer",
+            { run: runId, name },
+            { idempotencyKey: key },
+          );
+          const ended = yield* workflows.waitFor(run.runId, status("completed"));
+          return [ended.result, run.runId] as const;
+        });
+        // A run withdraws it from a step; the step that asked records who and why.
+        const [withdrawn, by] = yield* withdrawer("x1", "wanted");
+        assert.equal(withdrawn, "withdrawn");
+        yield* workflows.waitFor(runId, (run) => run.detail === "again");
+        assert.deepStrictEqual(
+          (yield* workflows.questions).map((question) => question.name),
+          ["again"],
+        );
+        const asked = (yield* workflows.get(runId)).steps.find((step) => step.name === "wanted");
+        assert.deepStrictEqual(
+          [asked?.status, asked?.detail, asked?.result],
+          [
+            "completed",
+            `withdrawn by run ${by}: settled elsewhere`,
+            { withdrawn: { by: `run ${by}`, reason: "settled elsewhere" } },
+          ],
+        );
+        // Already gone, so nothing to withdraw; a question that is still open is withdrawn once.
+        assert.equal((yield* withdrawer("x2", "wanted"))[0], "not_open");
+        assert.equal(yield* workflows.withdraw(runId, "again", { by: "t3 CLI" }), "withdrawn");
+        assert.equal(yield* workflows.withdraw(runId, "again", { by: "t3 CLI" }), "not_open");
+        const done = yield* workflows.waitFor(runId, status("completed"));
+        assert.equal(done.result, "never");
+        const again = (yield* workflows.get(runId)).steps.find((step) => step.name === "again");
+        assert.equal(again?.detail, "withdrawn by t3 CLI");
+        assert.deepStrictEqual(again?.result, { withdrawn: { by: "t3 CLI", reason: null } });
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a watcher sees a question leave when it is withdrawn while its run is paused", () =>
+  Effect.gen(function* () {
+    const { failures, latch, boot } = yield* harness();
+    yield* Ref.set(failures, 1);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const { runId } = yield* workflows.start("doubting", {}, { idempotencyKey: "d1" });
+        yield* workflows.waitFor(runId, (run) => run.status === "waiting" && run.detail === "sure");
+        yield* Deferred.succeed(latch.bad, undefined);
+        yield* workflows.waitFor(runId, status("paused"));
+        // Subscribed once the run is paused: nothing else about it changes from here on.
+        const listed = yield* Deferred.make<ReadonlyArray<string>>();
+        const left = yield* Workflows.wholeLists(workflows.watch).pipe(
+          Stream.map((list) => list.questions.map((question) => question.name)),
+          Stream.tap((names) => Deferred.succeed(listed, names)),
+          Stream.drop(1),
+          Stream.filter((names) => names.length === 0),
+          Stream.runHead,
+          Effect.timeoutOption("30 seconds"),
+          Effect.forkScoped,
+        );
+        assert.deepStrictEqual(yield* Deferred.await(listed), ["sure"]);
+        assert.equal(yield* workflows.withdraw(runId, "sure", { by: "t3 CLI" }), "withdrawn");
+        // The paused run is not woken, so the claim itself has to be what tells the watcher.
+        assert.deepStrictEqual(Option.flatten(yield* Fiber.join(left)), Option.some([]));
+        assert.equal((yield* workflows.get(runId)).run.status, "paused");
+      }).pipe(Effect.scoped),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );

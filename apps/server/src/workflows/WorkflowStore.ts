@@ -480,14 +480,19 @@ export const make = Effect.gen(function* () {
       SELECT request_json, opened_at FROM workflow_waits WHERE run_id = ${runId} AND name = ${name}
     `.pipe(Effect.orDie);
     if (wait === undefined || wait.request_json === null) return;
-    const expired =
-      woke !== null &&
-      typeof woke === "object" &&
-      (woke as { readonly expired?: unknown }).expired === true;
+    const claim =
+      woke !== null && typeof woke === "object"
+        ? (woke as { readonly expired?: unknown; readonly withdrawn?: unknown })
+        : {};
     yield* tell(runId, `${runId}:${name}:${wait.opened_at}`, at, {
       type: "workflow.input_resolved",
       step: name,
-      resolution: expired ? "expired" : "answered",
+      resolution:
+        claim.withdrawn !== undefined
+          ? "withdrawn"
+          : claim.expired === true
+            ? "expired"
+            : "answered",
     });
   });
 
@@ -737,6 +742,8 @@ export const make = Effect.gen(function* () {
               ? Effect.flatMap(now, (at) => questionClaimed(runId, name, woke, at))
               : Effect.void,
           ),
+          // A paused run is not woken, so nothing else would tell a watcher the wait is taken.
+          Effect.tap((taken) => (taken ? PubSub.publish(changes, runId) : Effect.void)),
         ),
     ),
     waitsToWake: Effect.gen(function* () {
@@ -797,7 +804,10 @@ export const make = Effect.gen(function* () {
           ),
           Effect.orDie,
         );
-      if (outcome === "delivered") yield* questionClaimed(runId, name, woke, at);
+      if (outcome === "delivered") {
+        yield* questionClaimed(runId, name, woke, at);
+        yield* PubSub.publish(changes, runId);
+      }
       return outcome;
     }),
     prunable: Effect.fn("WorkflowStore.prunable")(function* (before, limit) {
@@ -1152,8 +1162,8 @@ export const make = Effect.gen(function* () {
       return yield* (
         status === undefined
           ? // Skipped runs are counted apart, so a trigger that skips most of what it brings does
-            // not push the runs that did something out of the list. A run with a question open is
-            // listed however old, since what waits on a person is built from this list.
+            // not push the runs that did something out of the list. A paused run or one with a
+            // question open is listed however old, since what waits on a person is built from it.
             sql<RunSummaryRow>`
               SELECT ${summaryColumns} FROM (
                 SELECT ${summaryColumns} FROM workflow_runs
@@ -1168,7 +1178,7 @@ export const make = Effect.gen(function* () {
               )
               UNION
               SELECT ${summaryColumns} FROM workflow_runs
-              WHERE run_id IN (
+              WHERE status = 'paused' OR run_id IN (
                 SELECT run_id FROM workflow_waits
                 WHERE request_json IS NOT NULL AND signalled_at IS NULL
               )
