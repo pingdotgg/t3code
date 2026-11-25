@@ -249,6 +249,47 @@ describe("GuestPage", () => {
     await expect.element(screen.getByLabelText("Model: GPT-5.4")).toBeVisible();
   });
 
+  it("shows an MCP App tool call without trying to load the app from an environment", async () => {
+    using _page = visit(`/guest?share=${SHARE_ID}`);
+    using _session = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async () => new Response(null, { status: 204 }));
+    const appItems: ReadonlyArray<OrchestrationV2TurnItem> = [
+      items[0]!,
+      {
+        ...itemBase("jira", 1),
+        type: "dynamic_tool",
+        toolName: "jira.create_issue",
+        input: null,
+        output: {
+          t3McpApp: {
+            attachmentId: "app-1",
+            server: "jira",
+            tool: "create_issue",
+            resourceUri: "ui://jira/issue",
+          },
+          result: { content: [{ type: "text", text: "Created PROJ-1" }] },
+        },
+      },
+      reply("reply", 2, "Filed the issue."),
+    ];
+    using _stream = vi
+      .spyOn(window, "EventSource")
+      .mockImplementation(
+        fakeEventSource(opening([run("run-1", 1, "completed")], appItems)) as never,
+      );
+    const container = document.createElement("div");
+    container.style.cssText = "height: 900px; width: 900px; display: flex; flex-direction: column;";
+    await using screen = await render(<GuestPage />, { container });
+
+    await expect.element(screen.getByText("Filed the issue.")).toBeVisible();
+    // Guests reach no environment, so the frame must not mount and wait on one.
+    await vi.waitFor(() => {
+      expect(screen.container.textContent).not.toContain("Unable to load the jira app");
+      expect(screen.container.querySelector("iframe")).toBeNull();
+    });
+  });
+
   it("sends attached files with the message, as form data", async () => {
     using _page = visit(`/guest?share=${SHARE_ID}`);
     using fetchSpy = vi
