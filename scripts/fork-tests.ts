@@ -121,6 +121,7 @@ function runTests(
   env: NodeJS.ProcessEnv = process.env,
   name = "test run",
   idleLimitMs = targetedIdleLimitMs,
+  stop?: AbortSignal,
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     const child = NodeChildProcess.spawn(command, args, {
@@ -130,6 +131,15 @@ function runTests(
       env,
     });
     child.on("error", reject);
+    const killGroup = () => {
+      if (child.pid === undefined) return;
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+      }
+    };
+    stop?.addEventListener("abort", killGroup, { once: true });
     let lastOutput = Date.now();
     child.stdout.on("data", (chunk) => {
       lastOutput = Date.now();
@@ -143,14 +153,11 @@ function runTests(
       if (Date.now() - lastOutput < idleLimitMs || child.pid === undefined) return;
       clearInterval(watchdog);
       console.error(`fork-tests: ${name}: no output for ${idleLimitMs / 1000}s; stopping the run.`);
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch (error) {
-        if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
-      }
+      killGroup();
     }, 1000);
     child.on("close", (code) => {
       clearInterval(watchdog);
+      stop?.removeEventListener("abort", killGroup);
       resolve(code ?? 1);
     });
   });
@@ -192,6 +199,7 @@ async function runFullSuite(filterArgs: ReadonlyArray<string>): Promise<number> 
   const started = performance.now();
   const plan = fullProcessPlan(await discoverProjects(), filterArgs, NodeOS.availableParallelism());
   const env = fullSuiteEnvironment(process.env);
+  const firstFailure = new AbortController();
   const reports = await Promise.all(
     [{ name: "Node.js workflow tests", args: ["--test", nodeTestFiles] }, ...plan].map(
       async ({ name, args }, index) => {
@@ -199,7 +207,14 @@ async function runFullSuite(filterArgs: ReadonlyArray<string>): Promise<number> 
         let code: number;
         try {
           if (index === 0) {
-            code = await runTests(process.execPath, args, env, name);
+            code = await runTests(
+              process.execPath,
+              args,
+              env,
+              name,
+              fullSuiteIdleLimitMs,
+              firstFailure.signal,
+            );
           } else {
             using directory = NodeFS.mkdtempDisposableSync(NodePath.join(NodeOS.tmpdir(), "t3-"));
             code = await runTests(
@@ -214,18 +229,30 @@ async function runFullSuite(filterArgs: ReadonlyArray<string>): Promise<number> 
               },
               name,
               fullSuiteIdleLimitMs,
+              firstFailure.signal,
             );
           }
         } catch (error) {
           console.error(`fork-tests: ${name}:`, error);
           code = 1;
         }
-        return { name, code, seconds: (performance.now() - processStarted) / 1000 };
+        const stopped = firstFailure.signal.aborted;
+        if (code !== 0 && !stopped) {
+          console.error(`fork-tests: ${name} failed; stopping the other test processes.`);
+          firstFailure.abort();
+        }
+        return {
+          name,
+          code,
+          stopped: code !== 0 && stopped,
+          seconds: (performance.now() - processStarted) / 1000,
+        };
       },
     ),
   );
-  for (const { name, code, seconds } of reports) {
-    console.log(`fork-tests: ${name}: exit ${code}, ${seconds.toFixed(1)}s`);
+  for (const { name, code, stopped, seconds } of reports) {
+    const outcome = stopped ? "stopped after another failure" : `exit ${code}`;
+    console.log(`fork-tests: ${name}: ${outcome}, ${seconds.toFixed(1)}s`);
   }
   console.log(`fork-tests: total wall time: ${((performance.now() - started) / 1000).toFixed(1)}s`);
   return aggregateExitCode(reports.map(({ code }) => code));

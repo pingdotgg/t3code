@@ -178,5 +178,10 @@
     "file": "apps/server/src/watchDirectoryReplacements.test.ts",
     "test": "rebuilds when a probe sees a tree other than the one the watches were acquired on",
     "reason": "Clean v0.1.12 also fails this file's timing-dependent watch tests on this macOS runner, a different test on each run."
+  },
+  {
+    "file": "apps/web/src/components/files/AttachmentFilePreview.browser.test.tsx",
+    "test": "reauthorizes a failed image when retry is clicked",
+    "reason": "Upstream v0.1.12 test, unchanged by the fork, fails in the full parallel run and passes alone."
   }
 ]
