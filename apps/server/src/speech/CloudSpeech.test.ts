@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { expect, vi } from "vite-plus/test";
 import * as ServerSettings from "../serverSettings.ts";
@@ -170,12 +171,14 @@ it.effect("uploads to OpenRouter only for a listed exact model, as zero-retentio
   }),
 );
 
+const encodeCloudError = Schema.encodeSync(CloudSpeechError);
+
 const cloudError = <E extends { readonly _tag: string }>(error: E | CloudSpeechError) => {
   if (error._tag !== "CloudSpeechError") throw error;
   return error as CloudSpeechError;
 };
 
-it.effect("shows OpenRouter's own reason when it refuses a zero-retention request", () =>
+it.effect("classifies OpenRouter zero-retention refusals without echoing upstream text", () =>
   Effect.gen(function* () {
     const upstream = vi.fn<typeof fetch>(async (input) =>
       new URL(String(input)).pathname.endsWith("/models")
@@ -227,37 +230,53 @@ it.effect("shows OpenRouter's own reason when it refuses a zero-retention reques
       },
     });
     const wrapped = yield* refuse(403, zdrBody(403));
-    expect(wrapped.reason).toBe("rejected-key");
-    expect(wrapped.detail).toBe(
-      "ElevenLabs: Only users from the enterprise or trial tier can use ZRM mode.",
-    );
-    expect(wrapped.message).toContain("OpenRouter said: ElevenLabs: Only users");
-    expect(wrapped.message).not.toContain("authorization_error");
-    const missing = yield* refuse(404, { error: { message: "No ZDR endpoints" } });
-    expect(missing.reason).toBe("model-unavailable");
-    expect(missing.detail).toBe("No ZDR endpoints");
-    const long = yield* refuse(403, {
-      error: { message: `line one\n\n  line two ${"x".repeat(400)}` },
+    expect(wrapped).toMatchObject({
+      reason: "rejected-key",
+      refusal: "zero-retention-unavailable",
     });
-    expect(long.detail).toHaveLength(300);
-    expect(long.detail).toMatch(/^line one line two x/);
-    // Generic wrapper text, an empty message and an unparseable body keep the old copy.
-    for (const body of [
-      { error: { message: "Provider returned error", metadata: { raw: "not json" } } },
-      { error: { message: "Provider returned error", metadata: { raw: '{"detail":{}}' } } },
-      { error: { message: "  " } },
-      "not json",
-    ]) {
-      const plain = yield* refuse(403, body);
-      expect(plain.detail).toBeUndefined();
-      expect(plain.reason).toBe("rejected-key");
+    expect(wrapped.message).toContain("zero data retention");
+    expect(wrapped.message).not.toMatch(/rejected/);
+    // No upstream text survives in the attributes or the message.
+    const encoded = JSON.stringify(encodeCloudError(wrapped));
+    for (const leaked of ["ElevenLabs", "enterprise", "authorization_error", "ZRM"]) {
+      expect(encoded + wrapped.message).not.toContain(leaked);
     }
-    expect((yield* refuse(401, { error: { message: "bad key" } })).detail).toBeUndefined();
-    expect((yield* refuse(429, { error: { message: "slow down" } })).detail).toBeUndefined();
+    const missing = yield* refuse(404, {
+      error: { message: "No endpoints found matching your data policy (Zero data retention)." },
+    });
+    expect(missing).toMatchObject({
+      reason: "model-unavailable",
+      refusal: "zero-retention-unavailable",
+    });
+    // Unrelated refusals keep their old copy and carry no category.
+    for (const [status, body, reason] of [
+      [
+        403,
+        { error: { message: "Provider returned error", metadata: { raw: "forbidden" } } },
+        "rejected-key",
+      ],
+      [
+        403,
+        {
+          error: {
+            message: "Provider returned error",
+            metadata: { raw: JSON.stringify({ detail: { message: "Invalid API key" } }) },
+          },
+        },
+        "rejected-key",
+      ],
+      [403, { error: { message: "This key may not use ZDR" } }, "rejected-key"],
+      [404, { error: { message: "No such model" } }, "model-unavailable"],
+      [403, "not json", "rejected-key"],
+    ] as const) {
+      const plain = yield* refuse(status, body);
+      expect(plain.reason).toBe(reason);
+      expect("refusal" in plain).toBe(false);
+    }
   }),
 );
 
-it.effect("ignores the response body of a 403 from OpenAI", () =>
+it.effect("does not classify the body of a 403 from OpenAI", () =>
   Effect.gen(function* () {
     const upstream = vi.fn<typeof fetch>(async () =>
       Response.json({ error: { message: "upstream detail" } }, { status: 403 }),
@@ -282,7 +301,7 @@ it.effect("ignores the response body of a 403 from OpenAI", () =>
         .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
     );
     expect(failure).toMatchObject({ reason: "rejected-key" });
-    expect("detail" in failure).toBe(false);
+    expect("refusal" in failure).toBe(false);
   }),
 );
 

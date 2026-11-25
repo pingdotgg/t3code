@@ -53,19 +53,15 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
       "model-unavailable",
       "unavailable",
     ]),
-    /** The provider's own explanation, when it gave one that the reason alone would misstate. */
-    detail: Schema.optionalKey(Schema.String),
+    /** Why the provider refused, when the reason alone would misstate it. */
+    refusal: Schema.optionalKey(Schema.Literal("zero-retention-unavailable")),
   },
   { httpApiStatus: 422 },
 ) {
   override get message() {
     const name = CLOUD_SPEECH_PROVIDER_NAMES[this.provider];
-    const base = this.baseMessage(name);
-    if (!this.detail) return base;
-    return `${base} ${name} said: ${this.detail}${/[.!?]$/.test(this.detail) ? "" : "."}`;
-  }
-
-  private baseMessage(name: string) {
+    if (this.refusal)
+      return `${name} couldn’t route this model with zero data retention, so your provider key or plan may not allow it. Choose another model in Settings → Voice or check the provider’s zero-retention settings.`;
     switch (this.reason) {
       case "missing-key":
         return `Add your ${name} API key in Settings → Voice.`;

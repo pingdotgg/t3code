@@ -98,26 +98,29 @@ it.each([
   }
 });
 
-it("appends the provider's detail to the reason and round-trips it", () => {
+it("shows fixed zero-retention copy for the refusal and round-trips it", () => {
   const plain = new CloudSpeechError({ provider: "openrouter", reason: "rejected-key" });
-  const detailed = new CloudSpeechError({
+  const refused = new CloudSpeechError({
     provider: "openrouter",
     reason: "rejected-key",
-    detail: "ElevenLabs: Only enterprise users can use ZRM mode",
+    refusal: "zero-retention-unavailable",
   });
-  expect(detailed.message).toBe(
-    `${plain.message} OpenRouter said: ElevenLabs: Only enterprise users can use ZRM mode.`,
+  expect(plain.message).toContain("rejected this API key");
+  expect(refused.message).toContain(
+    "OpenRouter couldn’t route this model with zero data retention",
   );
-  expect(new CloudSpeechError({ ...detailed, detail: "Stop!" }).message).toMatch(
-    / OpenRouter said: Stop!$/,
-  );
-  const encoded = encodeCloudError(detailed);
+  const encoded = encodeCloudError(refused);
   expect(encoded).toEqual({
     _tag: "CloudSpeechError",
     provider: "openrouter",
     reason: "rejected-key",
-    detail: "ElevenLabs: Only enterprise users can use ZRM mode",
+    refusal: "zero-retention-unavailable",
   });
-  expect(decodeCloudError(encoded).message).toBe(detailed.message);
-  expect(encodeCloudError(plain)).not.toHaveProperty("detail");
+  expect(decodeCloudError(encoded).message).toBe(refused.message);
+  // An error from an older server has no refusal and still decodes.
+  expect(encodeCloudError(plain)).not.toHaveProperty("refusal");
+  expect(
+    decodeCloudError({ _tag: "CloudSpeechError", provider: "openrouter", reason: "rejected-key" })
+      .message,
+  ).toBe(plain.message);
 });
