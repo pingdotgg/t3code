@@ -26,11 +26,18 @@ import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { DurableDeferred, WorkflowEngine } from "effect/workflow";
+import {
+  DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT,
+  type WorkflowRunsUpdate,
+  workflowQuestionKey,
+} from "@t3tools/contracts";
 
 import { checkOutput, rejectionText } from "../orchestration-v2/runOutput.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { isMissedFixedTimeRun, nextScheduledRunAt } from "../scheduledTasks/Schedule.ts";
 import { constantTimeEquals } from "../scheduledTasks/webhookVerification.ts";
 import {
+  answerStamped,
   END_STEP,
   type EngineWorkflow,
   engineTag,
@@ -44,7 +51,7 @@ import {
 import { issueReference, noteFor, stepReferences } from "./runReferences.ts";
 import { forStep, KeyValues, layerKeyValues, EngineLink, layerEngineLink } from "./stepServices.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
-import { settleTurn, TurnEnd, TurnWatch } from "./workflowAgent.ts";
+import { answerProblem, settleTurn, TurnEnd, TurnWatch } from "./workflowAgent.ts";
 import {
   type Issue,
   isSettled,
@@ -58,6 +65,7 @@ import {
 } from "./WorkflowForge.ts";
 import {
   hookId as hookIdOf,
+  WorkflowHookBusyError,
   WorkflowInputError,
   WorkflowNotRegisteredError,
   WorkflowRunNotFoundError,
@@ -72,12 +80,19 @@ const DEFAULT_SIGNAL_TTL = Duration.days(7);
 const RESUME_LOOK_EVERY = Duration.millis(25);
 const RESUME_LOOKS = 80;
 const WATCH_SETTLE = Duration.millis(100);
+// What a watcher was last sent, as text to compare against, by run and by question.
+interface Sent {
+  readonly runs: Map<string, string>;
+  readonly questions: Map<string, { runId: string; name: string; text: string }>;
+}
 const END_TRIES = 5;
 // How long a cancelled run's cleanup rests after each failed try before the sweep tries again.
 const END_AFTER = ["5 minutes", "20 minutes", "80 minutes", "5 hours"] as const;
 // An ended run's engine journal only answers replays that will not come; the run's own rows stay.
 const PRUNE_AFTER = Duration.hours(1);
 const PRUNE_BATCH = 100;
+// Skipped runs deleted per sweep, small enough that the writer lock is never held for long.
+const SKIPPED_PRUNE_BATCH = 500;
 // Delivery ids that common senders put on a request and keep when they send it again.
 const DELIVERY_HEADERS = [
   "x-github-delivery",
@@ -87,6 +102,8 @@ const DELIVERY_HEADERS = [
   "webhook-id",
   "idempotency-key",
 ];
+// The relay's limit for one hook, kept here too: a hook's URL can be called without the relay.
+const HOOK_RUNS_PER_MINUTE = 60;
 const CANCEL_WAITS = Duration.seconds(30);
 const decodeTurnWatch = Schema.decodeUnknownEffect(Schema.toCodecJson(TurnWatch));
 const encodeTurnEnd = Schema.encodeEffect(Schema.toCodecJson(TurnEnd));
@@ -102,6 +119,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const trackers = Option.getOrElse(yield* Effect.serviceOption(WorkflowForge), () => unavailable);
   const messages = yield* Effect.serviceOption(MessageStorage.MessageStorage);
   const sharding = yield* Effect.serviceOption(Sharding.Sharding);
+  const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   // The engine reads its own tables as BigInts. The rest of the server's queries must not.
   const plain =
     <Args extends ReadonlyArray<unknown>, A, E>(call: (...args: Args) => Effect.Effect<A, E>) =>
@@ -144,19 +162,19 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       .toSorted(([left], [right]) => right.version - left.version)[0];
 
   /** When the sweep resumes a paused run; undefined once it has used up its tries. */
-  const resumesAt = (row: WorkflowStore.RunRow) => {
+  const resumesAt = (row: WorkflowStore.RunSummaryRow) => {
     if (row.status !== "paused" || Number(row.held) === 1) return undefined;
     const rest = definitionByTag.get(row.engine_tag)?.resumeAfter[Number(row.pauses) - 1];
     return rest === undefined
       ? undefined
       : DateTime.addDuration(DateTime.makeUnsafe(row.updated_at), Duration.fromInputUnsafe(rest));
   };
-  const toRun = (row: WorkflowStore.RunRow): WorkflowStore.WorkflowRun => {
+  const toRun = (row: WorkflowStore.RunSummaryRow): WorkflowStore.WorkflowRun => {
     const resumes = resumesAt(row);
     return toRunAt(row, resumes === undefined ? null : DateTime.formatIso(resumes));
   };
   const toRunAt = (
-    row: WorkflowStore.RunRow,
+    row: WorkflowStore.RunSummaryRow,
     resumes: string | null,
   ): WorkflowStore.WorkflowRun => ({
     runId: row.run_id,
@@ -171,6 +189,10 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     resumesAt: resumes,
     parentRunId: row.parent_run_id,
     parentStep: row.parent_wait,
+    // Left out of a run with none: most have none, and every run is in each whole list sent.
+    ...(row.tags_json === "[]"
+      ? {}
+      : { tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string> }),
     startedAt: row.started_at,
     updatedAt: row.updated_at,
     endedAt: row.ended_at,
@@ -553,6 +575,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       };
     }),
   );
+  const hookStarts = new Map<string, ReadonlyArray<number>>();
   const deliver: Workflows["Service"]["deliver"] = Effect.fn("Workflows.deliver")(
     function* (delivery) {
       const hook = hooks.find((candidate) => candidate.hookId === delivery.hookId);
@@ -578,11 +601,17 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         (sent === undefined ? undefined : `${sent}:${delivery.request.headers[sent]}`) ??
         delivery.deliveryId ??
         (yield* random.uuidV4());
-      return Option.some(
-        yield* start(hook.workflow, delivery.request, {
-          idempotencyKey: `hook:${hook.hookId}:${key}`,
-        }),
-      );
+      const idempotencyKey = `hook:${hook.hookId}:${key}`;
+      // A retry of a run that exists starts nothing, so it takes none of the minute.
+      if ((yield* store.runByKey(hook.workflow, idempotencyKey)) === undefined) {
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        const recent = (hookStarts.get(hook.hookId) ?? []).filter((at) => now - at < 60_000);
+        if (recent.length >= HOOK_RUNS_PER_MINUTE) {
+          return yield* new WorkflowHookBusyError({ hook: hook.name });
+        }
+        hookStarts.set(hook.hookId, [...recent, now]);
+      }
+      return Option.some(yield* start(hook.workflow, delivery.request, { idempotencyKey }));
     },
   );
 
@@ -710,6 +739,15 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         ),
       );
     }
+    const kept = yield* Option.match(settings, {
+      onNone: () => Effect.succeed(DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT),
+      onSome: (service) =>
+        service.getSettings.pipe(
+          Effect.map((current) => current.workflowSkippedRunsKept),
+          Effect.orElseSucceed(() => DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT),
+        ),
+    });
+    yield* store.pruneSkipped(kept, SKIPPED_PRUNE_BATCH);
   });
 
   const sweep: Workflows["Service"]["sweep"] = Effect.gen(function* () {
@@ -776,13 +814,21 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     Effect.forEach(
       waits.filter((wait) => wait.request_json !== null),
       (wait) =>
-        Effect.map(store.latestThread(wait.run_id), (thread) => ({
-          runId: wait.run_id,
-          name: wait.name,
-          request: WorkflowStore.jsonValue(wait.request_json ?? "null"),
-          askedAt: wait.opened_at,
-          thread,
-        })),
+        Effect.map(store.latestThread(wait.run_id), (thread) => {
+          const request = WorkflowStore.jsonValue(wait.request_json ?? "null");
+          const kind =
+            request !== null && typeof request === "object" && !Array.isArray(request)
+              ? (request as { readonly kind?: unknown }).kind
+              : undefined;
+          return {
+            runId: wait.run_id,
+            name: wait.name,
+            request,
+            ...(typeof kind === "string" ? { kind } : {}),
+            askedAt: wait.opened_at,
+            thread,
+          };
+        }),
     ),
   );
   const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -804,7 +850,18 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       const found = latest(name);
       return found === undefined
         ? []
-        : [{ name, version: found[0].version, triggers: found[0].triggers.map(triggerText) }];
+        : [
+            {
+              name,
+              version: found[0].version,
+              triggers: found[0].triggers.map(triggerText),
+              ...(Object.keys(found[0].asks).length === 0
+                ? {}
+                : {
+                    asks: Object.entries(found[0].asks).map(([kind, label]) => ({ kind, label })),
+                  }),
+            },
+          ];
     },
   );
   const snapshot = Effect.all({
@@ -822,6 +879,41 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         Stream.fromSubscription(changes).pipe(
           Stream.debounce(WATCH_SETTLE),
           Stream.mapEffect(() => snapshot),
+        ),
+      ).pipe(
+        // Each list is told as what differs from the one before, which this watcher already has.
+        // A list with no difference is still sent: a client reads an open run's steps again on it.
+        Stream.mapAccum(
+          () => undefined as Sent | undefined,
+          (sent, next) => {
+            const now: Sent = {
+              runs: new Map(next.runs.map((run) => [run.runId, JSON.stringify(run)])),
+              questions: new Map(
+                next.questions.map((question) => [
+                  workflowQuestionKey(question),
+                  { runId: question.runId, name: question.name, text: JSON.stringify(question) },
+                ]),
+              ),
+            };
+            const update: WorkflowRunsUpdate =
+              sent === undefined
+                ? next
+                : {
+                    _tag: "changed",
+                    runs: next.runs.filter(
+                      (run) => sent.runs.get(run.runId) !== now.runs.get(run.runId),
+                    ),
+                    removed: [...sent.runs.keys()].filter((runId) => !now.runs.has(runId)),
+                    questions: next.questions.filter((question) => {
+                      const key = workflowQuestionKey(question);
+                      return sent.questions.get(key)?.text !== now.questions.get(key)?.text;
+                    }),
+                    closed: [...sent.questions]
+                      .filter(([key]) => !now.questions.has(key))
+                      .map(([, { runId, name }]) => ({ runId, name })),
+                  };
+            return [now, [update]] as const;
+          },
         ),
       );
     }),
@@ -841,25 +933,66 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }),
   );
 
+  /**
+   * A signal to a question, as its wait receives it: with who sent it and when, which the sender
+   * does not get to say. Undefined for a wait that is not a question, or one asked before answers
+   * kept that, whose closed schema would refuse them.
+   */
+  const answerOf = Effect.fn("WorkflowEngine.answerOf")(function* (
+    wait: { readonly request_json: string | null; readonly schema_json: string },
+    value: Schema.Json,
+    sender: WorkflowStore.SignalSender,
+  ) {
+    if (wait.request_json === null || typeof value !== "object" || value === null) return undefined;
+    if (Array.isArray(value)) return undefined;
+    const problem = answerProblem(WorkflowStore.jsonValue(wait.request_json), value);
+    if (problem !== undefined) return yield* new WorkflowInputError({ problem });
+    return stamped(wait, value, sender);
+  });
+  /** `answerOf` without the words for an answer that lacks its reason, which the schema refuses too. */
+  const stamped = (
+    wait: { readonly request_json: string | null; readonly schema_json: string },
+    value: Schema.Json,
+    sender: WorkflowStore.SignalSender,
+  ) => {
+    const answer = answerStamped(
+      { request: wait.request_json !== null, schemaJson: wait.schema_json },
+      value,
+      sender,
+    );
+    return answer === undefined ? undefined : { expired: false, value: answer };
+  };
   const signal: Workflows["Service"]["signal"] = Effect.fn("Workflows.signal")(
     function* (address, value, options) {
       // A sender's retry of a signal that already woke a wait is not a second signal.
       if (yield* store.signalSeen(options.id)) return "delivered" as const;
       const valueJson = WorkflowStore.jsonText(value);
       const woke = { expired: false, value };
+      // Who sent it and when it came, said once here and by no one else, however it is delivered.
+      // A retry of a signal that is still kept is that signal: its first arrival says both.
+      const arrived: WorkflowStore.SignalSender = {
+        answeredBy: options.answeredBy,
+        answeredBySession: options.answeredBySession,
+        answeredAt: DateTime.formatIso(yield* DateTime.now),
+      };
+      let sender = (yield* store.mailSender(options.id)) ?? arrived;
       // One signal per wait: a wait another signal took first sends this one to the next.
       while (true) {
         const wait = yield* store.waitAt(address);
         if (wait === undefined) break;
+        const answered = yield* answerOf(wait, value, sender);
         const schema = WorkflowStore.jsonValue(wait.schema_json) as Record<string, Schema.Json>;
-        const checked = yield* checkOutput(schema, valueJson);
+        const checked = yield* checkOutput(
+          schema,
+          answered === undefined ? valueJson : WorkflowStore.jsonText(answered.value),
+        );
         if (Result.isFailure(checked)) {
           return yield* new WorkflowInputError({
             problem: `The value does not fit what ${wait.name} waits for. ${rejectionText(checked.failure)}`,
           });
         }
-        if (yield* store.waitSignalled(wait.run_id, wait.name, woke, options.id)) {
-          yield* wake(wait, woke);
+        if (yield* store.waitSignalled(wait.run_id, wait.name, answered ?? woke, options.id)) {
+          yield* wake(wait, answered ?? woke);
           return "delivered" as const;
         }
         // Refused for its id: the same signal, sent again at once, woke a wait.
@@ -872,17 +1005,22 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         ),
       );
       if (yield* store.signalSeen(options.id)) return "delivered" as const;
-      yield* store.mailPut({ signalId: options.id, address, valueJson, expiresAt });
+      yield* store.mailPut({ signalId: options.id, address, valueJson, expiresAt, sender });
+      // A copy the same signal kept first, while this one looked for a wait, is the one that stays.
+      sender = (yield* store.mailSender(options.id)) ?? sender;
       // The wait may have opened and looked for mail between the look above and this write.
       while (true) {
         const late = yield* store.waitAt(address);
         if (late === undefined) return "buffered" as const;
         const schema = WorkflowStore.jsonValue(late.schema_json) as Record<string, Schema.Json>;
         // Kept for a wait it fits; this one, the oldest on the channel, is not it.
-        if (Result.isFailure(yield* checkOutput(schema, valueJson))) return "buffered" as const;
-        const outcome = yield* store.mailDeliver(options.id, late.run_id, late.name, woke);
+        const answered = stamped(late, value, sender) ?? woke;
+        if (Result.isFailure(yield* checkOutput(schema, WorkflowStore.jsonText(answered.value)))) {
+          return "buffered" as const;
+        }
+        const outcome = yield* store.mailDeliver(options.id, late.run_id, late.name, answered);
         if (outcome === "delivered") {
-          yield* wake(late, woke);
+          yield* wake(late, answered);
           return "delivered" as const;
         }
         // The kept copy went to a wait that opened, or was dropped as already delivered.
@@ -891,12 +1029,17 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     },
   );
   const answer: Workflows["Service"]["answer"] = Effect.fn("Workflows.answer")(
-    function* (runId, name, value) {
+    function* (runId, name, value, answeredBy) {
       const wait = yield* store.waitAt({ runId, wait: name });
       // Answered already, or never asked: kept, it would answer whatever asks there next.
       if (wait === undefined || wait.request_json === null) return;
       // Named by this asking of the question, so every answer to it is one signal.
-      yield* signal({ runId, wait: name }, value, { id: `answer:${wait.token}` });
+      yield* signal({ runId, wait: name }, value, {
+        id: `answer:${wait.token}`,
+        ...(answeredBy === undefined
+          ? {}
+          : { answeredBy: answeredBy.label, answeredBySession: answeredBy.sessionId }),
+      });
     },
   );
   const signalAll = Effect.fn("WorkflowEngine.signalAll")(function* (
@@ -999,6 +1142,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         title: row.title,
         status: row.status,
         detail: row.detail,
+        tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string>,
         startedAt: row.started_at,
         endedAt: row.ended_at,
       }));
@@ -1045,7 +1189,11 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       };
     }),
     list: Effect.fn("Workflows.list")(function* (filter) {
-      return (yield* store.runs(filter?.status)).map(toRun);
+      const rows =
+        filter?.tag === undefined
+          ? yield* store.runs(filter?.status)
+          : yield* store.runsWhere({ status: filter.status, tag: filter.tag });
+      return rows.map(toRun);
     }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (runId, done) {
       // Subscribed before the first look, so a change in between is not missed.
