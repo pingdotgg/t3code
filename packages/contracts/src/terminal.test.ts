@@ -4,15 +4,25 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   chunkTerminalWrite,
   DEFAULT_TERMINAL_ID,
+  skipTerminalSnapshotContinuation,
   TERMINAL_WRITE_MAX_LENGTH,
   TerminalError,
   TerminalOpenInput,
   TerminalProviderEnvironmentError,
+  terminalSequenceStateAfter,
 } from "./terminal.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 const encodeTerminalError = Schema.encodeUnknownSync(TerminalError);
 const decodeTerminalError = Schema.decodeUnknownSync(TerminalError);
+
+describe("skipTerminalSnapshotContinuation", () => {
+  it("replays the next-line control that ends an omitted DCS", () => {
+    const state = terminalSequenceStateAfter(0, "\u001bPz");
+    const replay = skipTerminalSnapshotContinuation(state, "\u0085ready");
+    expect(replay.data).toBe("\u001bEready");
+  });
+});
 
 function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> {
   return Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;
