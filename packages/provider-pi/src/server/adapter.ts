@@ -4109,16 +4109,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     if (
                       walkPiBranch(listing.entries, listing.leafId, targetId)?.reachedStop !== true
                     ) {
-                      const previousTurn = rollbackInput.providerThreadTurns.reduce<
-                        OrchestrationV2ProviderTurn | undefined
-                      >(
-                        (previous, turn) =>
-                          turn.ordinal < target.ordinal &&
-                          (previous === undefined || turn.ordinal > previous.ordinal)
-                            ? turn
-                            : previous,
-                        undefined,
-                      );
+                      const previousTurn = rollbackInput.providerThreadTurns
+                        .filter((turn) => turn.ordinal < target.ordinal)
+                        .sort((a, b) => b.ordinal - a.ordinal)[0];
                       const earliestPromptAt =
                         previousTurn?.completedAt ?? rollbackInput.providerThread.createdAt;
                       sourceFile = yield* findHistoricalCheckpointSession(
