@@ -9632,8 +9632,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 return Effect.gen(function* () {
                   holding = true;
                   context.promptAwaitingAnswer += 1;
-                  // A live request already attached to this turn stays answerable; resend once it clears.
-                  if (yield* hasPendingRequestForTurn(context.providerTurnId)) {
+                  // Serialize with question admission so a request being admitted is not cancelled.
+                  const decision = yield* runRuntimeCallbackAtGeneration(
+                    generation,
+                    Effect.gen(function* () {
+                      if (yield* hasPendingRequestForTurn(context.providerTurnId)) {
+                        return "await_live" as const;
+                      }
+                      yield* cancelMatchingPendingRuntimeRequests(
+                        (request) =>
+                          request.runtimeRequest.providerTurnId !== context.providerTurnId,
+                        false,
+                      );
+                      return "cancel_orphan" as const;
+                    }),
+                  );
+                  if (Option.isNone(decision) || stopped()) return yield* error;
+                  if (decision.value === "await_live") {
                     yield* awaitPromptAnswer(
                       stopped,
                       hasPendingRequestForTurn(context.providerTurnId),
@@ -9648,10 +9663,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       resend,
                     );
                   }
-                  yield* cancelMatchingPendingRuntimeRequests(
-                    (request) => request.runtimeRequest.providerTurnId !== context.providerTurnId,
-                    false,
-                  );
                   yield* Effect.logWarning("orchestration-v2.acp-orphaned-answer-wait-cancelled", {
                     driver,
                     providerSessionId: input.providerSessionId,
@@ -10548,7 +10559,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const steered = yield* runRuntimeCallbackAtGeneration(
                 generation,
                 Effect.gen(function* () {
-                  if (context.finalized || context.interrupted) return false;
+                  if (context.finalized || context.interrupted) return "ended" as const;
+                  if (
+                    context.promptAwaitingAnswer > 0 ||
+                    (yield* hasPendingRequestForTurn(context.providerTurnId))
+                  ) {
+                    return "declined" as const;
+                  }
                   const compactionMarker = (yield* Ref.get(compactionMarkers)).get(
                     context.nativeThreadId,
                   );
@@ -10627,10 +10644,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     },
                   ).pipe(Effect.forkIn(sessionScope));
                   yield* Deferred.succeed(released, undefined);
-                  return true;
+                  return "steered" as const;
                 }),
               );
-              if (!Option.contains(steered, true)) {
+              if (Option.contains(steered, "declined")) {
+                return yield* new ProviderAdapter.ProviderAdapterSteerDeclinedError({
+                  driver,
+                  providerThreadId: turnInput.providerThread.id,
+                  providerTurnId: turnInput.providerTurnId,
+                });
+              }
+              if (!Option.contains(steered, "steered")) {
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver,
                   detail: `Provider turn ${turnInput.providerTurnId} ended before it could be steered.`,
