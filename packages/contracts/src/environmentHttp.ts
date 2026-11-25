@@ -134,6 +134,7 @@ export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.T
 
 export const EnvironmentOperationForbiddenReason = Schema.Literals([
   "current_session_revoke_not_allowed",
+  "team_thread_access_denied",
 ]);
 export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
 
@@ -420,6 +421,7 @@ const EnvironmentOrchestrationSnapshotErrors = [
 ] as const;
 const EnvironmentOrchestrationThreadSnapshotErrors = [
   EnvironmentScopeRequiredError,
+  EnvironmentOperationForbiddenError,
   EnvironmentResourceNotFoundError,
   EnvironmentInternalError,
 ] as const;
@@ -767,6 +769,7 @@ export const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
 const EnvironmentOrchestrationThreadHistoryErrors = [
   EnvironmentRequestInvalidError,
   EnvironmentScopeRequiredError,
+  EnvironmentOperationForbiddenError,
   EnvironmentResourceNotFoundError,
   EnvironmentInternalError,
 ] as const;

@@ -305,9 +305,15 @@ import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
 import * as TeamService from "./team/TeamService.ts";
 import {
+  assertCanReadAssetResource,
+  filterSearchThreadsResultForSession,
+  filterShellSnapshotForSession,
+  filterThreadRecordByReadableIds,
+  guardThreadStreamForSession,
   makeTeamWsRpcHandlers,
   recordTeamDispatchEvents,
   recordTeamThreadLaunch,
+  withTeamShellAccessUpdates,
 } from "./team/wsHandlers.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -1165,14 +1171,20 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
 );
 
 export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subscribeShell")(
-  function* (input: {
-    readonly afterSequence?: number;
-    readonly httpSnapshotFallback?: true;
-    readonly knownProjectIdentities?: string;
-    readonly requestCompletionMarker?: boolean;
-    readonly omitIdleSubagents?: boolean;
-    readonly omitOlderSettled?: boolean;
-  }) {
+  function* (
+    input: {
+      readonly afterSequence?: number;
+      readonly httpSnapshotFallback?: true;
+      readonly knownProjectIdentities?: string;
+      readonly requestCompletionMarker?: boolean;
+      readonly omitIdleSubagents?: boolean;
+      readonly omitOlderSettled?: boolean;
+    },
+    teamSession?: {
+      readonly teamService: TeamService.TeamService["Service"];
+      readonly sessionId: AuthSessionId;
+    },
+  ) {
     const sql = yield* SqlClient.SqlClient;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
@@ -1217,11 +1229,19 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       });
       subagentThreadIds = forSubscriber.subagentThreadIds;
       const enriched = yield* enrichProjectShells(forSubscriber.snapshot.projects);
+      const rawSnapshot = {
+        ...forSubscriber.snapshot,
+        projects: enriched.projects,
+      } as OrchestrationV2ShellSnapshot;
+      const snapshot = teamSession
+        ? yield* filterShellSnapshotForSession(
+            teamSession.teamService,
+            teamSession.sessionId,
+            rawSnapshot,
+          )
+        : rawSnapshot;
       return {
-        snapshot: {
-          ...forSubscriber.snapshot,
-          projects: enriched.projects,
-        } as OrchestrationV2ShellSnapshot,
+        snapshot,
         resolvedRepositoryIdentityRoots: enriched.resolvedRepositoryIdentityRoots,
       };
     });
@@ -1394,7 +1414,10 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
               });
             });
       const highWater = yield* applicationEvents.latestApplicationSequence;
-      if (!(yield* canResumeShellFrom(applicationEvents, input.afterSequence, highWater))) {
+      if (
+        (teamSession !== undefined && (yield* teamSession.teamService.isTeamConfigured())) ||
+        !(yield* canResumeShellFrom(applicationEvents, input.afterSequence, highWater))
+      ) {
         return yield* fromSnapshot;
       }
 
@@ -1442,7 +1465,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       ),
     );
 
-    return stream.pipe(
+    const baseStream = stream.pipe(
       dedupeShellEnrichment,
       Stream.mapError(
         (cause) =>
@@ -1452,6 +1475,24 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
           }),
       ),
     );
+    return teamSession
+      ? withTeamShellAccessUpdates(
+          teamSession.teamService,
+          teamSession.sessionId,
+          () =>
+            loadSnapshot().pipe(
+              Effect.map((loaded) => loaded.snapshot),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetShellSnapshotError({
+                    message: "Failed to refresh the application shell after a team access change",
+                    cause,
+                  }),
+              ),
+            ),
+          baseStream,
+        )
+      : baseStream;
   },
 );
 
@@ -1987,11 +2028,15 @@ export const layerWsRpc = (
           listProjects: projectStore.listShells(),
           latestSequence: applicationEvents.latestApplicationSequence,
         });
+        const readableIds = yield* teamService.filterReadableThreadIds(
+          currentSessionId,
+          threads.archivedThreads.map((thread) => thread.id),
+        );
         return {
           schemaVersion: threads.schemaVersion,
           snapshotSequence,
           projects,
-          threads: threads.archivedThreads,
+          threads: threads.archivedThreads.filter((thread) => readableIds.has(thread.id)),
         } as const;
       }).pipe(
         Effect.flatMap((snapshot) =>
@@ -2024,7 +2069,14 @@ export const layerWsRpc = (
               (cause) => new OrchestrationV2GetShellSnapshotError({ message, cause }),
             ),
           );
-          return { snapshotSequence, threads: threads.threads };
+          const readableIds = yield* teamService.filterReadableThreadIds(
+            currentSessionId,
+            threads.threads.map((thread) => thread.id),
+          );
+          return {
+            snapshotSequence,
+            threads: threads.threads.filter((thread) => readableIds.has(thread.id)),
+          };
         },
       );
 
@@ -2065,95 +2117,148 @@ export const layerWsRpc = (
               ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
               : {}),
           }).pipe(
+            Effect.andThen(teamService.assertCanDispatchCommand(currentSessionId, command)),
             Effect.andThen(
-              startup
-                .enqueueCommand(
-                  (command.type === "prepared-run.retry"
-                    ? threadLaunch.retryPreparation(command)
-                    : ThreadMessageIntake.dispatchCommand(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
-                        {
-                          managesProviders:
-                            currentSession.scopes.includes(AuthProvidersManageScope),
-                        },
-                      )
-                  ).pipe(Effect.provide(intakeContext)),
-                )
-                .pipe(
-                  Effect.tap((result) =>
-                    result.replayed
-                      ? Effect.void
-                      : recordTeamDispatchEvents(
-                          teamService,
-                          currentSessionId,
-                          result.storedEvents,
-                        ).pipe(Effect.andThen(recordClientCommandAnalytics(command))),
-                  ),
-                  Effect.map((result) => ({ sequence: result.sequence })),
-                  Effect.mapError((cause) => {
-                    if (cause._tag === "EnvironmentAuthorizationError") return cause;
-                    const detail = userFacingDispatchErrorMessage(cause);
-                    return new OrchestrationV2DispatchCommandError({
-                      commandId: command.commandId,
-                      commandType: command.type,
-                      message: detail ?? "Failed to dispatch orchestration V2 command",
-                      ...(detail === undefined ? {} : { detail }),
-                      cause,
-                    });
-                  }),
-                ),
+              Effect.gen(function* () {
+                const preparedAttribution =
+                  command.type === "thread.create"
+                    ? yield* teamService.prepareThreadAttribution({
+                        sessionId: currentSessionId,
+                        threadId: command.threadId,
+                      })
+                    : false;
+                return yield* startup
+                  .enqueueCommand(
+                    (command.type === "prepared-run.retry"
+                      ? threadLaunch.retryPreparation(command)
+                      : ThreadMessageIntake.dispatchCommand(
+                          ThreadManagementService.withCreationProvenance(command, {
+                            createdBy: "user",
+                            creationSource:
+                              "creationSource" in command ? command.creationSource : "web",
+                          }),
+                          {
+                            managesProviders:
+                              currentSession.scopes.includes(AuthProvidersManageScope),
+                          },
+                        )
+                    ).pipe(Effect.provide(intakeContext)),
+                  )
+                  .pipe(
+                    Effect.onError(() =>
+                      preparedAttribution && command.type === "thread.create"
+                        ? teamService.rollbackPreparedThreadAttribution(command.threadId)
+                        : Effect.void,
+                    ),
+                    Effect.tap((result) =>
+                      result.replayed
+                        ? Effect.void
+                        : recordTeamDispatchEvents(
+                            teamService,
+                            currentSessionId,
+                            result.storedEvents,
+                          ).pipe(Effect.andThen(recordClientCommandAnalytics(command))),
+                    ),
+                    Effect.map((result) => ({ sequence: result.sequence })),
+                  );
+              }).pipe(
+                Effect.mapError((cause) => {
+                  if (cause._tag === "EnvironmentAuthorizationError") return cause;
+                  const detail = userFacingDispatchErrorMessage(cause);
+                  return new OrchestrationV2DispatchCommandError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    message: detail ?? "Failed to dispatch orchestration V2 command",
+                    ...(detail === undefined ? {} : { detail }),
+                    cause,
+                  });
+                }),
+              ),
             ),
           ),
-        [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),
+        [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) =>
+          teamService
+            .assertCanPostInThread(currentSessionId, input.threadId)
+            .pipe(Effect.andThen(threadManagement.stopWorkflow(input))),
         [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: (input) =>
-          threadManagement.forceStopThread(input),
+          teamService
+            .assertCanPostInThread(currentSessionId, input.threadId)
+            .pipe(Effect.andThen(threadManagement.forceStopThread(input))),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           readWorkflowScript({ scriptPath: input.scriptPath }),
         [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: (input) =>
-          nativeChildWork.getNativeChildWork(input),
+          teamService
+            .assertCanReadThread(currentSessionId, input.threadId)
+            .pipe(Effect.andThen(nativeChildWork.getNativeChildWork(input))),
         [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>
-          threadManagement.getTurnItem(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new OrchestrationV2GetThreadProjectionError({
-                  threadId: input.threadId,
-                  message: "Failed to load turn item",
-                  cause,
-                }),
+          teamService.assertCanReadThread(currentSessionId, input.threadId).pipe(
+            Effect.andThen(
+              threadManagement.getTurnItem(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: "Failed to load turn item",
+                      cause,
+                    }),
+                ),
+              ),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: (input) =>
-          checkpointDiffQuery.getTurnDiff(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new OrchestrationGetTurnDiffError({
-                  message: "Failed to load turn diff",
-                  cause,
-                }),
+          teamService.assertCanReadThread(currentSessionId, input.threadId).pipe(
+            Effect.andThen(
+              checkpointDiffQuery.getTurnDiff(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationGetTurnDiffError({
+                      message: "Failed to load turn diff",
+                      cause,
+                    }),
+                ),
+              ),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: (input) =>
-          checkpointDiffQuery.getFullThreadDiff(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new OrchestrationGetFullThreadDiffError({
-                  message: "Failed to load full thread diff",
-                  cause,
-                }),
+          teamService.assertCanReadThread(currentSessionId, input.threadId).pipe(
+            Effect.andThen(
+              checkpointDiffQuery.getFullThreadDiff(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationGetFullThreadDiffError({
+                      message: "Failed to load full thread diff",
+                      cause,
+                    }),
+                ),
+              ),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.searchThread]: (input) =>
-          threadManagement
-            .searchThread(input)
-            .pipe(Effect.mapError((cause) => new OrchestrationV2SearchThreadError({ cause }))),
+          teamService
+            .assertCanReadThread(currentSessionId, input.threadId)
+            .pipe(
+              Effect.andThen(
+                threadManagement
+                  .searchThread(input)
+                  .pipe(
+                    Effect.mapError((cause) => new OrchestrationV2SearchThreadError({ cause })),
+                  ),
+              ),
+            ),
         [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: (input) =>
-          threadManagement
-            .searchThreadStream(input)
-            .pipe(Stream.mapError((cause) => new OrchestrationV2SearchThreadError({ cause }))),
+          Stream.unwrap(
+            teamService
+              .assertCanReadThread(currentSessionId, input.threadId)
+              .pipe(
+                Effect.as(
+                  threadManagement
+                    .searchThreadStream(input)
+                    .pipe(
+                      Stream.mapError((cause) => new OrchestrationV2SearchThreadError({ cause })),
+                    ),
+                ),
+              ),
+          ),
         [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (input) =>
           ThreadSearch.searchThreadsWithOlderSettledRows({
             request: input,
@@ -2164,6 +2269,9 @@ export const layerWsRpc = (
               threadManagement.readShellSnapshot({ location: "active", threadIds }),
             latestSequence: applicationEvents.latestApplicationSequence,
           }).pipe(
+            Effect.flatMap((result) =>
+              filterSearchThreadsResultForSession(teamService, currentSessionId, result),
+            ),
             Effect.mapError(
               (cause) =>
                 new OrchestrationSearchThreadsError({
@@ -2175,9 +2283,21 @@ export const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
           getOrchestrationV2ArchivedShellSnapshot,
         [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input) =>
-          readOmittableShellRows({ familyOf: input.threadId }, "Failed to load the thread family"),
+          teamService
+            .assertCanReadThread(currentSessionId, input.threadId)
+            .pipe(
+              Effect.andThen(
+                readOmittableShellRows(
+                  { familyOf: input.threadId },
+                  "Failed to load the thread family",
+                ),
+              ),
+            ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input) =>
           threadManagement.getThreadLinkMetadata(input.threadIds).pipe(
+            Effect.flatMap((metadata) =>
+              filterThreadRecordByReadableIds(teamService, currentSessionId, metadata),
+            ),
             Effect.mapError(
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({
@@ -2188,6 +2308,9 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: (input) =>
           threadManagement.getThreadTitles(input.threadIds).pipe(
+            Effect.flatMap((titles) =>
+              filterThreadRecordByReadableIds(teamService, currentSessionId, titles),
+            ),
             Effect.mapError(
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({
@@ -2204,6 +2327,19 @@ export const layerWsRpc = (
               threadManagement.readShellSnapshot({ location: "active", threadIds }),
             latestSequence: applicationEvents.latestApplicationSequence,
           }).pipe(
+            Effect.flatMap((page) =>
+              teamService
+                .filterReadableThreadIds(
+                  currentSessionId,
+                  page.threads.map((thread) => thread.id),
+                )
+                .pipe(
+                  Effect.map((readableIds) => ({
+                    ...page,
+                    threads: page.threads.filter((thread) => readableIds.has(thread.id)),
+                  })),
+                ),
+            ),
             Effect.mapError(
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({
@@ -2219,6 +2355,7 @@ export const layerWsRpc = (
           ).pipe(Effect.map(({ threads }) => ({ threadIds: threads.map((thread) => thread.id) }))),
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(teamService.assertCanReadThread(currentSessionId, input.threadId)),
             Effect.andThen(
               // Bound compatibility snapshots so pre-pagination clients cannot materialize unlimited transcripts.
               threadManagement
@@ -2250,163 +2387,215 @@ export const layerWsRpc = (
             "orchestration_v2.project_id": input.projectId,
           }).pipe(
             Effect.andThen(
-              startup
-                .enqueueCommand(
-                  threadLaunch
-                    .checkWorktreeBase({
+              teamService.assertCanLaunchThread({
+                sessionId: currentSessionId,
+                ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+                ...(input.reuseExistingThread === undefined
+                  ? {}
+                  : { reuseExistingThread: input.reuseExistingThread }),
+                ...(input.teamViewId === undefined ? {} : { viewId: input.teamViewId }),
+                ...(input.teamLocked === undefined ? {} : { locked: input.teamLocked }),
+              }),
+            ),
+            Effect.andThen(
+              Effect.gen(function* () {
+                const isTeam = yield* teamService.isTeamConfigured();
+                const resolvedThreadId =
+                  input.threadId ??
+                  (isTeam && input.reuseExistingThread !== true
+                    ? ThreadId.make(yield* random.uuidV4().pipe(Effect.orDie))
+                    : undefined);
+                const preparedAttribution =
+                  isTeam && input.reuseExistingThread !== true && resolvedThreadId !== undefined
+                    ? yield* teamService.prepareThreadAttribution({
+                        sessionId: currentSessionId,
+                        threadId: resolvedThreadId,
+                        ...(input.teamViewId === undefined ? {} : { viewId: input.teamViewId }),
+                        ...(input.teamLocked === undefined ? {} : { locked: input.teamLocked }),
+                      })
+                    : false;
+                return yield* startup
+                  .enqueueCommand(
+                    threadLaunch
+                      .checkWorktreeBase({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        workspaceStrategy: input.workspaceStrategy,
+                      })
+                      .pipe(
+                        Effect.andThen(
+                          ThreadMessageIntake.launchThread({
+                            commandId: input.commandId,
+                            ...(resolvedThreadId === undefined
+                              ? {}
+                              : { threadId: resolvedThreadId }),
+                            ...(input.reuseExistingThread === undefined
+                              ? {}
+                              : { reuseExistingThread: input.reuseExistingThread }),
+                            projectId: input.projectId,
+                            title: input.title,
+                            ...(input.generateTitle === undefined
+                              ? {}
+                              : { generateTitle: input.generateTitle }),
+                            modelSelection: input.modelSelection,
+                            runtimeMode: input.runtimeMode,
+                            interactionMode: input.interactionMode,
+                            workspaceStrategy: input.workspaceStrategy,
+                            ...(input.initialMessage === undefined
+                              ? {}
+                              : {
+                                  initialMessage: {
+                                    ...(input.initialMessage.messageId === undefined
+                                      ? {}
+                                      : { messageId: input.initialMessage.messageId }),
+                                    text: input.initialMessage.text,
+                                    attachments: input.initialMessage.attachments,
+                                    ...(input.initialMessage.context === undefined
+                                      ? {}
+                                      : { context: input.initialMessage.context }),
+                                  },
+                                }),
+                            createdBy: "user",
+                            creationSource: input.creationSource ?? "web",
+                          }),
+                        ),
+                        Effect.provide(intakeContext),
+                      ),
+                  )
+                  .pipe(
+                    Effect.onError(() =>
+                      preparedAttribution && resolvedThreadId !== undefined
+                        ? teamService.rollbackPreparedThreadAttribution(resolvedThreadId)
+                        : Effect.void,
+                    ),
+                    // A resumed launch is a retry of one already counted.
+                    Effect.tap((result) =>
+                      recordTeamThreadLaunch(teamService, currentSessionId, result, {
+                        ...(input.teamViewId === undefined ? {} : { viewId: input.teamViewId }),
+                        ...(input.teamLocked === undefined ? {} : { locked: input.teamLocked }),
+                      }),
+                    ),
+                    Effect.tap((result) =>
+                      result.resumed
+                        ? Effect.void
+                        : analytics
+                            .record("client.thread.started", {
+                              ...originProps,
+                              workspaceStrategy: input.workspaceStrategy.type,
+                            })
+                            .pipe(
+                              Effect.andThen(
+                                input.initialMessage === undefined
+                                  ? Effect.void
+                                  : analytics.record("client.turn.requested", originProps),
+                              ),
+                              Effect.ignore,
+                            ),
+                    ),
+                    Effect.map((result) => ({
+                      ...result,
+                      projection: projectThreadProjectionForWire(result.projection),
+                    })),
+                  );
+              }).pipe(
+                Effect.catchTags({
+                  AttachmentClaimError: (cause) =>
+                    new OrchestrationV2ThreadLaunchError({
                       commandId: input.commandId,
                       projectId: input.projectId,
-                      workspaceStrategy: input.workspaceStrategy,
-                    })
-                    .pipe(
-                      Effect.andThen(
-                        ThreadMessageIntake.launchThread({
-                          commandId: input.commandId,
-                          ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-                          ...(input.reuseExistingThread === undefined
-                            ? {}
-                            : { reuseExistingThread: input.reuseExistingThread }),
-                          projectId: input.projectId,
-                          title: input.title,
-                          ...(input.generateTitle === undefined
-                            ? {}
-                            : { generateTitle: input.generateTitle }),
-                          modelSelection: input.modelSelection,
-                          runtimeMode: input.runtimeMode,
-                          interactionMode: input.interactionMode,
-                          workspaceStrategy: input.workspaceStrategy,
-                          ...(input.initialMessage === undefined
-                            ? {}
-                            : {
-                                initialMessage: {
-                                  ...(input.initialMessage.messageId === undefined
-                                    ? {}
-                                    : { messageId: input.initialMessage.messageId }),
-                                  text: input.initialMessage.text,
-                                  attachments: input.initialMessage.attachments,
-                                  ...(input.initialMessage.context === undefined
-                                    ? {}
-                                    : { context: input.initialMessage.context }),
-                                },
-                              }),
-                          createdBy: "user",
-                          creationSource: input.creationSource ?? "web",
-                        }),
-                      ),
-                      Effect.provide(intakeContext),
-                    ),
-                )
-                .pipe(
-                  // A resumed launch is a retry of one already counted.
-                  Effect.tap((result) =>
-                    recordTeamThreadLaunch(teamService, currentSessionId, result),
-                  ),
-                  Effect.tap((result) =>
-                    result.resumed
-                      ? Effect.void
-                      : analytics
-                          .record("client.thread.started", {
-                            ...originProps,
-                            workspaceStrategy: input.workspaceStrategy.type,
-                          })
-                          .pipe(
-                            Effect.andThen(
-                              input.initialMessage === undefined
-                                ? Effect.void
-                                : analytics.record("client.turn.requested", originProps),
-                            ),
-                            Effect.ignore,
-                          ),
-                  ),
-                  Effect.map((result) => ({
-                    ...result,
-                    projection: projectThreadProjectionForWire(result.projection),
-                  })),
-                  Effect.catchTags({
-                    AttachmentClaimError: (cause) =>
-                      new OrchestrationV2ThreadLaunchError({
-                        commandId: input.commandId,
-                        projectId: input.projectId,
-                        message: cause.message,
-                        cause,
-                      }),
-                    ThreadLaunchError: (cause) =>
-                      new OrchestrationV2ThreadLaunchError({
-                        commandId: input.commandId,
-                        projectId: input.projectId,
-                        message: "Failed to launch thread",
-                        cause,
-                      }),
-                    ServerRuntimeStartupError: (cause) =>
-                      new OrchestrationV2ThreadLaunchError({
-                        commandId: input.commandId,
-                        projectId: input.projectId,
-                        message: "Failed to launch thread",
-                        cause,
-                      }),
-                    ThreadManagementProviderInstanceDisabledError: (cause) =>
-                      new OrchestrationV2ThreadLaunchError({
-                        commandId: input.commandId,
-                        projectId: input.projectId,
-                        message: cause.message,
-                        cause,
-                      }),
-                    ThreadLaunchBaseRefError: (cause) =>
-                      new OrchestrationV2ThreadLaunchError({
-                        commandId: input.commandId,
-                        projectId: input.projectId,
-                        message: cause.message,
-                        cause,
-                      }),
-                    ThreadLaunchBranchExistsError: (cause) =>
-                      new OrchestrationV2ThreadLaunchError({
-                        commandId: input.commandId,
-                        projectId: input.projectId,
-                        message: cause.message,
-                        cause,
-                      }),
-                    ThreadLaunchBranchConflictError: (cause) =>
-                      new OrchestrationV2ThreadLaunchError({
-                        commandId: input.commandId,
-                        projectId: input.projectId,
-                        message: cause.message,
-                        cause,
-                      }),
-                    ThreadLaunchNotRepositoryError: (cause) =>
-                      new OrchestrationV2ThreadLaunchError({
-                        commandId: input.commandId,
-                        projectId: input.projectId,
-                        message: cause.message,
-                        cause,
-                      }),
-                    TaskFolderError: (cause) =>
-                      new OrchestrationV2ThreadLaunchError({
-                        commandId: input.commandId,
-                        projectId: input.projectId,
-                        message: cause.message,
-                        cause,
-                      }),
-                  }),
-                ),
+                      message: cause.message,
+                      cause,
+                    }),
+                  ThreadLaunchError: (cause) =>
+                    new OrchestrationV2ThreadLaunchError({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      message: "Failed to launch thread",
+                      cause,
+                    }),
+                  ServerRuntimeStartupError: (cause) =>
+                    new OrchestrationV2ThreadLaunchError({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      message: "Failed to launch thread",
+                      cause,
+                    }),
+                  ThreadManagementProviderInstanceDisabledError: (cause) =>
+                    new OrchestrationV2ThreadLaunchError({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      message: cause.message,
+                      cause,
+                    }),
+                  ThreadLaunchBaseRefError: (cause) =>
+                    new OrchestrationV2ThreadLaunchError({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      message: cause.message,
+                      cause,
+                    }),
+                  ThreadLaunchBranchExistsError: (cause) =>
+                    new OrchestrationV2ThreadLaunchError({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      message: cause.message,
+                      cause,
+                    }),
+                  ThreadLaunchBranchConflictError: (cause) =>
+                    new OrchestrationV2ThreadLaunchError({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      message: cause.message,
+                      cause,
+                    }),
+                  ThreadLaunchNotRepositoryError: (cause) =>
+                    new OrchestrationV2ThreadLaunchError({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      message: cause.message,
+                      cause,
+                    }),
+                  TaskFolderError: (cause) =>
+                    new OrchestrationV2ThreadLaunchError({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      message: cause.message,
+                      cause,
+                    }),
+                }),
+              ),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
-          Stream.unwrap(subscribeOrchestrationV2Shell(input)),
-        [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
           Stream.unwrap(
-            Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
-              Effect.andThen(threadViewers.view(input.threadId)),
-              Effect.andThen(subscribeOrchestrationV2Thread(input)),
+            subscribeOrchestrationV2Shell(input, { teamService, sessionId: currentSessionId }),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
+          guardThreadStreamForSession(
+            teamService,
+            currentSessionId,
+            input.threadId,
+            Stream.unwrap(
+              Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+                Effect.andThen(teamService.assertCanReadThread(currentSessionId, input.threadId)),
+                Effect.andThen(threadViewers.view(input.threadId)),
+                Effect.andThen(subscribeOrchestrationV2Thread(input)),
+              ),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (input) =>
           Stream.unwrap(
             Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+              Effect.andThen(teamService.assertCanReadThread(currentSessionId, input.threadId)),
               Effect.as(commandOutputHub.subscribe(input)),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
-          providerSessionManager.subscribePromptSuggestion(input.threadId),
+          Stream.unwrap(
+            teamService
+              .assertCanReadThread(currentSessionId, input.threadId)
+              .pipe(Effect.as(providerSessionManager.subscribePromptSuggestion(input.threadId))),
+          ),
         [WS_METHODS.workflowsSubscribe]: (_input) => workflows.watch,
         [WS_METHODS.workflowsCounts]: (_input) => workflows.counts,
         [WS_METHODS.workflowsGet]: (input) =>
@@ -2451,6 +2640,7 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.secretsAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(teamService.assertCanPostInThread(currentSessionId, input.threadId)),
             Effect.andThen(secretRequests.answer(input)),
           ),
         [WS_METHODS.agentFeedbackAnswerRequest]: (input) => feedbackStore.answer(input),
@@ -3193,6 +3383,7 @@ export const layerWsRpc = (
         [WS_METHODS.assetsCreateUrl]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
+            yield* assertCanReadAssetResource(teamService, currentSessionId, input.resource);
             const path = yield* Path.Path;
             if (
               input.resource._tag === "attachment" ||
@@ -3273,7 +3464,13 @@ export const layerWsRpc = (
             });
           }),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>
-          persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
+          teamService
+            .assertCanPostInThread(currentSessionId, input.threadId)
+            .pipe(
+              Effect.andThen(
+                persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
+              ),
+            ),
         [WS_METHODS.subscribeVcsBranch]: (input) => vcsStatusBroadcaster.streamBranchStatus(input),
         [WS_METHODS.vcsRefreshBranch]: (input) =>
           vcsStatusBroadcaster.refreshBranchStatus(input).pipe(Effect.asVoid),

@@ -128,6 +128,62 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
         `;
     }),
   },
+  {
+    id: 3,
+    name: "TeamViewsAndLocking",
+    up: Effect.fn("TeamMigrations.TeamViewsAndLocking")(function* (sql: SqlClient.SqlClient) {
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_views (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            description TEXT,
+            is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+            read_roles_json TEXT NOT NULL,
+            read_member_ids_json TEXT NOT NULL,
+            post_roles_json TEXT NOT NULL,
+            post_member_ids_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_team_views_team_default
+            ON team_views (team_id)
+            WHERE is_default = 1
+        `;
+      yield* sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_team_views_team_name_lower
+            ON team_views (team_id, LOWER(name))
+        `;
+      yield* sql`
+          CREATE INDEX IF NOT EXISTS idx_team_thread_meta_team_view
+            ON team_thread_meta (team_id, view_id)
+        `;
+      // Backfill the built-in Default View for workspaces initialized before Milestone 3.
+      yield* sql`
+          INSERT OR IGNORE INTO team_views (
+            id, team_id, name, description, is_default,
+            read_roles_json, read_member_ids_json,
+            post_roles_json, post_member_ids_json,
+            created_at, updated_at
+          )
+          SELECT
+            default_view_id,
+            id,
+            'Default',
+            NULL,
+            1,
+            '["owner","admin","modo","regular"]',
+            '[]',
+            '["owner","admin","modo","regular"]',
+            '[]',
+            created_at,
+            updated_at
+          FROM team_workspaces
+        `;
+    }),
+  },
 ];
 
 /**

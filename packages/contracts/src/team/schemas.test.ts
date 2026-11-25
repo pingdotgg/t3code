@@ -4,9 +4,18 @@ import {
   buildTeamJoinDeepLink,
   buildTeamJoinWebUrl,
   canAssignTeamRole,
+  canChangeTeamMemberRole,
+  canChangeThreadTeamView,
   canManageTeamInvites,
+  canManageTeamViews,
+  canMemberCreateThreadInTeamView,
+  canMemberPostInTeamThread,
+  canMemberReadTeamThread,
+  canModifyTeamMember,
+  canToggleTeamThreadLock,
   isValidTeamPseudo,
   parseTeamJoinLink,
+  resolveTeamThreadPostBlockReason,
   shouldNotifyTeamMemberForThread,
   TeamMemberId,
 } from "./schemas.ts";
@@ -27,6 +36,135 @@ describe("team role hierarchy", () => {
     expect(canAssignTeamRole("modo", "modo")).toBe(true);
     expect(canAssignTeamRole("admin", "owner")).toBe(false);
     expect(canAssignTeamRole("owner", "owner")).toBe(true);
+
+    expect(canModifyTeamMember("regular", "regular")).toBe(false);
+    expect(canModifyTeamMember("modo", "regular")).toBe(true);
+    expect(canModifyTeamMember("modo", "modo")).toBe(true);
+    expect(canModifyTeamMember("modo", "admin")).toBe(false);
+    expect(canModifyTeamMember("admin", "owner")).toBe(false);
+    expect(canChangeTeamMemberRole("modo", "regular", "modo")).toBe(true);
+    expect(canChangeTeamMemberRole("modo", "admin", "regular")).toBe(false);
+    expect(canChangeTeamMemberRole("admin", "modo", "owner")).toBe(false);
+
+    expect(canManageTeamViews("regular")).toBe(false);
+    expect(canManageTeamViews("modo")).toBe(false);
+    expect(canManageTeamViews("admin")).toBe(true);
+    expect(canManageTeamViews("owner")).toBe(true);
+
+    expect(canChangeThreadTeamView("regular")).toBe(false);
+    expect(canChangeThreadTeamView("modo")).toBe(true);
+    expect(canToggleTeamThreadLock("modo")).toBe(false);
+    expect(canToggleTeamThreadLock("admin")).toBe(true);
+  });
+});
+
+describe("team view read/post and locking rules", () => {
+  const owner = {
+    id: TeamMemberId.make("m-owner"),
+    role: "owner" as const,
+    status: "active" as const,
+  };
+  const admin = {
+    id: TeamMemberId.make("m-admin"),
+    role: "admin" as const,
+    status: "active" as const,
+  };
+  const modo = {
+    id: TeamMemberId.make("m-modo"),
+    role: "modo" as const,
+    status: "active" as const,
+  };
+  const regular = {
+    id: TeamMemberId.make("m-regular"),
+    role: "regular" as const,
+    status: "active" as const,
+  };
+  const suspended = {
+    id: TeamMemberId.make("m-suspended"),
+    role: "admin" as const,
+    status: "suspended" as const,
+  };
+
+  const adminOnlyView = {
+    readRule: { roles: ["owner", "admin"] as const, memberIds: [] as const },
+    postRule: { roles: ["owner", "admin"] as const, memberIds: [] as const },
+  };
+  const readOnlyForRegularView = {
+    readRule: { roles: ["owner", "admin", "modo", "regular"] as const, memberIds: [] as const },
+    postRule: { roles: ["owner", "admin", "modo"] as const, memberIds: [] as const },
+  };
+  const memberWhitelistedView = {
+    readRule: { roles: ["admin"] as const, memberIds: [regular.id] as const },
+    postRule: { roles: ["admin"] as const, memberIds: [] as const },
+  };
+
+  it("enforces view readRule while keeping owner/admin visibility and blocking inactive members", () => {
+    expect(canMemberReadTeamThread({ member: owner, view: adminOnlyView })).toBe(true);
+    expect(canMemberReadTeamThread({ member: admin, view: adminOnlyView })).toBe(true);
+    expect(canMemberReadTeamThread({ member: modo, view: adminOnlyView })).toBe(false);
+    expect(canMemberReadTeamThread({ member: regular, view: adminOnlyView })).toBe(false);
+    expect(canMemberReadTeamThread({ member: suspended, view: readOnlyForRegularView })).toBe(
+      false,
+    );
+    expect(canMemberReadTeamThread({ member: regular, view: memberWhitelistedView })).toBe(true);
+  });
+
+  it("allows creating unlocked threads in readable views and restricts locked creation to owner/admin", () => {
+    expect(canMemberCreateThreadInTeamView(regular, readOnlyForRegularView, false)).toBe(true);
+    expect(canMemberCreateThreadInTeamView(regular, readOnlyForRegularView, true)).toBe(false);
+    expect(canMemberCreateThreadInTeamView(modo, readOnlyForRegularView, true)).toBe(false);
+    expect(canMemberCreateThreadInTeamView(admin, readOnlyForRegularView, true)).toBe(true);
+    expect(canMemberCreateThreadInTeamView(regular, adminOnlyView, false)).toBe(false);
+  });
+
+  it("enforces postRule on colleagues while allowing creators on unlocked threads and only owner/admin on locked threads", () => {
+    // Creator can post in own unlocked thread even when view.postRule excludes their role.
+    expect(
+      canMemberPostInTeamThread({
+        member: regular,
+        attribution: { creatorMemberId: regular.id, locked: false },
+        view: readOnlyForRegularView,
+      }),
+    ).toBe(true);
+
+    // Colleague without postRule cannot post in another's thread.
+    expect(
+      resolveTeamThreadPostBlockReason({
+        member: regular,
+        attribution: { creatorMemberId: owner.id, locked: false },
+        view: readOnlyForRegularView,
+      }),
+    ).toBe("view_read_only");
+
+    // Locking overrides even the thread creator (regular or modo).
+    expect(
+      resolveTeamThreadPostBlockReason({
+        member: regular,
+        attribution: { creatorMemberId: regular.id, locked: true },
+        view: readOnlyForRegularView,
+      }),
+    ).toBe("locked");
+    expect(
+      resolveTeamThreadPostBlockReason({
+        member: modo,
+        attribution: { creatorMemberId: modo.id, locked: true },
+        view: readOnlyForRegularView,
+      }),
+    ).toBe("locked");
+    expect(
+      resolveTeamThreadPostBlockReason({
+        member: admin,
+        attribution: { creatorMemberId: regular.id, locked: true },
+        view: readOnlyForRegularView,
+      }),
+    ).toBe("ok");
+    expect(
+      resolveTeamThreadPostBlockReason({
+        member: owner,
+        attribution: { creatorMemberId: regular.id, locked: true },
+        view: readOnlyForRegularView,
+      }),
+    ).toBe("ok");
   });
 });
 

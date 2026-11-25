@@ -48,6 +48,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import { AuthMcpClientAccess } from "./auth.ts";
+import { TeamViewId } from "./team/schemas.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
@@ -4172,6 +4173,8 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  teamViewId: Schema.optional(TeamViewId),
+  teamLocked: Schema.optional(Schema.Boolean),
   initialMessage: Schema.optional(
     Schema.Struct({
       messageId: Schema.optional(MessageId),
