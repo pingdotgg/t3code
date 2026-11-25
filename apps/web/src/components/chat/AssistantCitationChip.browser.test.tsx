@@ -116,12 +116,28 @@ describe("citation comment source disappearance", () => {
     expect(textarea()).toBeNull();
   });
 
+  it("keeps a draft open and unsaved when the cited row unmounts mid-typing", async () => {
+    using source = setup();
+    const onSave = vi.fn(() => true);
+    await using _screen = await mount(source.sourceAnchor, onSave);
+    await typeComment("if it's a good bug rep");
+    await removeSource();
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(textarea()?.value).toBe("if it's a good bug rep");
+
+    await typeComment("if it's a good bug report");
+    await clickButton("Save");
+    expect(onSave).toHaveBeenCalledExactlyOnceWith("if it's a good bug report");
+  });
+
   it("preserves a rejected save and allows a later retry", async () => {
     using source = setup();
     const onSave = vi.fn(() => false);
     await using _screen = await mount(source.sourceAnchor, onSave);
     await typeComment("keep this draft");
     await removeSource();
+    await clickButton("Save");
 
     expect(onSave).toHaveBeenCalledWith("keep this draft");
     expect(textarea()?.value).toBe("keep this draft");
@@ -148,6 +164,19 @@ describe("citation comment caret", () => {
     expect(input.scrollTop).toBe(input.scrollHeight - input.clientHeight);
     await userEvent.keyboard("!");
     expect(input.value).toBe(`${comment}!`);
+  });
+
+  it("saves with Tab then Enter after typing a comment", async () => {
+    using _source = setup();
+    const onSave = vi.fn(() => true);
+    await using _screen = await mount(undefined, onSave);
+    await vi.waitFor(() => expect(document.activeElement).toBe(textarea()));
+
+    await userEvent.keyboard("agreed");
+    await userEvent.keyboard("{Tab}");
+    await userEvent.keyboard("{Enter}");
+
+    expect(onSave).toHaveBeenCalledWith("agreed");
   });
 });
 

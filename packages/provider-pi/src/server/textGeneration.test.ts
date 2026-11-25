@@ -199,6 +199,34 @@ it.effect("reports Pi's turn error when the reply is empty", () =>
   }),
 );
 
+it.effect("reports a provider failure when Pi has already streamed valid commit text", () =>
+  Effect.gen(function* () {
+    const reply = JSON.stringify({ subject: "Update README", body: "" });
+    const result = yield* generateCommitMessage(
+      [
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: reply }],
+            stopReason: "error",
+            errorMessage: "Stream ended without finish_reason",
+          },
+        },
+      ],
+      reply,
+    ).pipe(Effect.result);
+
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.equal(
+        result.failure.detail,
+        "Pi could not generate text: the model provider reported an error.",
+      );
+    }
+  }),
+);
+
 it.effect("keeps Pi's raw error text out of the error", () =>
   Effect.gen(function* () {
     const error = yield* generateCommitMessage([
@@ -253,6 +281,17 @@ it.effect.each([
       const textGeneration = yield* makePiTextGeneration(
         { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
         {},
+        (_driver, detected) =>
+          Effect.succeed(
+            detected === "0.84.2"
+              ? {
+                  status: "broken" as const,
+                  message: null,
+                  recommendedVersion: null,
+                  recommendedRange: ">=1.0.0",
+                }
+              : undefined,
+          ),
       ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
 
       const generation = textGeneration.generateCommitMessage({
@@ -268,7 +307,7 @@ it.effect.each([
       });
       if (version === "0.84.2") {
         const error = yield* generation.pipe(Effect.flip);
-        assert.include(error.detail, "Pi 0.84.3 or newer");
+        assert.include(error.detail, "Pi 0.84.2 does not work");
         assert.deepEqual(pi.received, []);
         return;
       }

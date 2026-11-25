@@ -127,8 +127,8 @@ cannot enforce, so upgrade T3 Code before you deploy a policy that uses them.
 ## Settings
 
 Each key under `settings` is a setting's path in the server's `settings.json`, such as
-`storageCleanup.logsAfterDays`. To find a path, change the setting in T3 Code and look in
-`settings.json` under `~/.t3/userdata`.
+`storageCleanup.logsAfterDays`. Run `t3 policy settings` to list every path a policy can manage,
+with its default.
 
 - `"locked": false` sets a default. It applies wherever the user has not chosen a value of their
   own, and users can change it.
@@ -169,6 +169,8 @@ A few settings need care:
     "connect": false,
     "webhookTasks": false,
     "browserCookieImport": false,
+    "previewTunnel": false,
+    "worktreeLayoutCommands": false,
     "telemetry": false,
     "providers": {
       "allowedDrivers": ["claudeAgent", "codex"],
@@ -248,11 +250,21 @@ so restart T3 Code after that.
 
 - `webhookTasks: false`: scheduled tasks cannot use webhook triggers. Existing webhook tasks stay
   but do not run, and cannot be turned back on. Users can still edit or delete them.
+  Workflow webhooks are refused too.
 - `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
   browser.
+- `previewTunnel: false`: other devices cannot load this machine's `localhost` pages themselves.
+  Browser tabs stream from it instead, and port forwarding and **Open on this device** are
+  unavailable. This wins over the user's
+  [Preview tunnel setting](./remote-access.md#browser-on-a-remote-environment).
+- `worktreeLayoutCommands: false`: T3 Code does not run the
+  [worktree layout commands](./multi-repo-projects.md#lay-the-folder-out-yourself) a project's
+  `t3.json` declares, whether or not a user approved them. Such a project gets no new worktree
+  threads; existing thread folders are restored as plain checkouts and removed without the
+  project's `remove` command.
 - `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
-  relay connection traces. A policy cannot turn them on. A browser that opens the server, such as
-  app.t3.codes, still sends its own relay traces.
+  relay connection traces, and neither does a browser opened from the server. A policy cannot turn
+  them on. The hosted web app at app.t3.codes and the mobile app still send their own relay traces.
 
 ### Providers
 

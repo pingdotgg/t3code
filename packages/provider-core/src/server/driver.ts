@@ -14,6 +14,7 @@ import type {
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+import type * as Stream from "effect/Stream";
 
 import type * as ProviderAdapter from "./ProviderAdapter.ts";
 import type { ProviderAuthController } from "./auth.ts";
@@ -24,6 +25,8 @@ import type { ProviderUsageReader } from "./usage.ts";
 
 export interface ProviderDriverMetadata {
   readonly displayName: string;
+  /** Unlabeled snapshots leave displayName out instead of reporting this one. */
+  readonly snapshotOmitsDisplayName?: boolean;
   /** Defaults to true; false rejects multiple instances of a global resource. */
   readonly supportsMultipleInstances?: boolean;
   readonly hasDefaultInstance?: boolean;
@@ -48,6 +51,11 @@ export interface ProviderInstance {
   readonly snapshotForCwd?: (
     cwd: string,
   ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
+  /**
+   * Cwds whose workspace skills or models may have changed. The registry rescans only cwds already
+   * requested. The stream must end when the instance is torn down.
+   */
+  readonly workspaceRescans?: Stream.Stream<string>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   readonly invalidateCaches?: Effect.Effect<void>;
   /** Moves a long-lived service onto a newly updated binary before its version is read back. */

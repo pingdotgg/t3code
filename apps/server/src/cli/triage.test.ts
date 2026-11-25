@@ -1,21 +1,174 @@
-// @effect-diagnostics nodeBuiltinImport:off - CLI integration spawns a fake agent from PATH.
+// @effect-diagnostics nodeBuiltinImport:off -- Exercise the CLI with isolated executable fixtures.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeStream from "node:stream";
+import * as NodeURL from "node:url";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { TRIAGE_PROMPT_FILE_NAME } from "@t3tools/contracts";
-import * as NetService from "@t3tools/shared/Net";
 import { assert, it } from "@effect/vitest";
+import { TRIAGE_PROMPT_FILE_NAME } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
-import { vi } from "vite-plus/test";
+import * as TestConsole from "effect/testing/TestConsole";
+import { expect, vi } from "vite-plus/test";
 
 import { cli } from "../binCli.ts";
 import { buildTriageLaunchPrompt } from "../triage/triagePrompt.ts";
+import { matchAgentAnswer, pickAgent } from "./triage.ts";
+
+const cliPath = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
+
+async function fixture(commands: ReadonlyArray<string>) {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-triage-"));
+  const bin = NodePath.join(root, "bin");
+  const record = NodePath.join(root, "launch.json");
+  await NodeFSP.mkdir(bin);
+  const script = NodePath.join(root, "agent.cjs");
+  await NodeFSP.writeFile(
+    script,
+    `require("node:fs").writeFileSync(process.env.TRIAGE_TEST_RECORD, JSON.stringify({ command: process.argv[2], args: process.argv.slice(3), cwd: process.cwd() }));`,
+  );
+  for (const command of commands) {
+    const windows = HostProcess.Platform.defaultValue() === "win32";
+    const executable = NodePath.join(bin, windows ? `${command}.cmd` : command);
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    await NodeFSP.writeFile(
+      executable,
+      windows
+        ? `@"${process.execPath}" "${script}" ${command} %*\r\n`
+        : `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} ${quote(command)} "$@"\n`,
+      { mode: 0o755 },
+    );
+  }
+  return {
+    root,
+    record,
+    run: (args: ReadonlyArray<string>) =>
+      new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+        const child = NodeChildProcess.spawn(
+          process.execPath,
+          [cliPath, "triage", "--base-dir", NodePath.join(root, "home with spaces"), ...args],
+          {
+            env: {
+              ...process.env,
+              PATH: bin,
+              TRIAGE_TEST_RECORD: record,
+            },
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (data) => (stdout += String(data)));
+        child.stderr.on("data", (data) => (stderr += String(data)));
+        child.once("error", reject);
+        child.once("close", (code) => resolve({ code, stdout, stderr }));
+      }),
+    async [Symbol.asyncDispose]() {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    },
+  };
+}
+
+it.live.each([
+  { commands: ["agy", "codex"], agent: "antigravity", command: "agy", model: "test-model" },
+  { commands: ["agy"], agent: undefined, command: "agy", model: undefined },
+  { commands: ["agy", "codex"], agent: "codex", command: "codex", model: "test-model" },
+  { commands: ["agy", "codex", "claude"], agent: "claude", command: "claude", model: undefined },
+])(
+  "launches $command with the triage prompt (agent=$agent, model=$model)",
+  ({ commands, agent, command, model }) =>
+    Effect.promise(async () => {
+      await using setup = await fixture(commands);
+      const result = await setup.run([
+        ...(agent === undefined ? [] : ["--agent", agent]),
+        ...(model === undefined ? [] : ["--model", model]),
+      ]);
+      expect(result.code, result.stdout + result.stderr).toBe(0);
+      const launch = JSON.parse(await NodeFSP.readFile(setup.record, "utf8")) as {
+        command: string;
+        args: string[];
+        cwd: string;
+      };
+      expect(launch.command).toBe(command);
+      expect(launch.args.slice(0, -1)).toEqual([
+        ...(model === undefined ? [] : ["--model", model]),
+        ...(command === "agy" ? ["--prompt-interactive"] : []),
+      ]);
+      expect(launch.args.at(-1)).toContain(NodePath.join(launch.cwd, "triage-playbook.md"));
+      expect(
+        await NodeFSP.readFile(NodePath.join(launch.cwd, "triage-playbook.md"), "utf8"),
+      ).toContain("context.md");
+    }),
+);
+
+it.each([
+  { answer: "2", picked: "codex" },
+  { answer: " 1 ", picked: "claude" },
+  { answer: "CLAUDE", picked: "claude" },
+  { answer: "1.5", picked: undefined },
+  { answer: "1x", picked: undefined },
+  { answer: "2codex", picked: undefined },
+  { answer: "3", picked: undefined },
+])("the agent picker reads $answer as $picked", ({ answer, picked }) => {
+  expect(matchAgentAnswer([{ id: "claude" }, { id: "codex" }], answer)?.id).toBe(picked);
+});
+
+it.effect.each([
+  { label: "Ctrl+C", key: "\x03" },
+  { label: "Ctrl+D", key: "\x04" },
+])("returns undefined when the agent picker is cancelled with $label", ({ key }) =>
+  Effect.gen(function* () {
+    const input = new NodeStream.PassThrough();
+    const output = Object.assign(new NodeStream.PassThrough(), { isTTY: true });
+    output.once("data", () => input.write(key));
+
+    const picked = yield* pickAgent(
+      [
+        { id: "claude", label: "Claude Code" },
+        { id: "codex", label: "Codex" },
+      ],
+      input,
+      output,
+    );
+
+    assert.isUndefined(picked);
+  }),
+);
+
+it.live(
+  "requires an explicit choice when Codex and Antigravity are installed without a terminal",
+  () =>
+    Effect.promise(async () => {
+      await using setup = await fixture(["agy", "codex"]);
+      const result = await setup.run([]);
+      expect(result.code).toBe(1);
+      expect(result.stdout + result.stderr).toContain("--agent antigravity");
+      expect(result.stdout + result.stderr).toContain("--agent codex");
+      expect(result.stdout + result.stderr).not.toContain("Starting");
+      await expect(NodeFSP.stat(setup.record)).rejects.toMatchObject({ code: "ENOENT" });
+    }),
+);
+
+it.live("reports the missing agy executable when Antigravity is explicitly requested", () =>
+  Effect.promise(async () => {
+    await using setup = await fixture(["codex"]);
+    const result = await setup.run(["--agent", "antigravity"]);
+    expect(result.code).toBe(1);
+    expect(result.stdout + result.stderr).toContain(
+      "`agy` is not installed or was not found on PATH.",
+    );
+    await expect(NodeFSP.stat(setup.record)).rejects.toMatchObject({ code: "ENOENT" });
+  }),
+);
 
 const FAILING_AGENT_POSIX = `#!/bin/sh
 echo "Error: There is not enough space on the disk. (os error 112)" >&2
@@ -72,4 +225,52 @@ it.live("a failed agent launch points at the prompt it could not run", () =>
       Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),
     ),
   ),
+);
+
+it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "starts an agent found through a relative PATH entry from the session directory",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-triage-bin-" });
+      // Relative to this process, as an entry like "." is to the server that checked it.
+      const relativeBinDir = NodePath.relative(process.cwd(), binDir);
+      // Nested deeper than the entry climbs, so from the session directory it leads nowhere.
+      const climbs = relativeBinDir.split(NodePath.sep).filter((part) => part === "..").length;
+      const baseDir = NodePath.join(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-triage-cli-" }),
+        ...Array.from({ length: climbs }, () => "nested"),
+      );
+      NodeFS.mkdirSync(baseDir, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(binDir, "codex"), FAILING_AGENT_POSIX, { mode: 0o755 });
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          vi.stubEnv("PATH", relativeBinDir);
+          vi.stubEnv("CODEX_HOME", NodePath.join(baseDir, "codex-home"));
+        }),
+        () => Effect.sync(() => vi.unstubAllEnvs()),
+      );
+      const previousExitCode = process.exitCode;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          process.exitCode = previousExitCode;
+        }),
+      );
+
+      yield* Command.runWith(cli, { version: "0.0.0" })([
+        "triage",
+        "--agent",
+        "codex",
+        "--base-dir",
+        baseDir,
+      ]);
+
+      // The fake agent ran and exited 1, rather than failing to start.
+      assert.equal(process.exitCode, 1);
+      assert.include((yield* TestConsole.logLines).join("\n"), "Codex exited with code 1.");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),
+      ),
+    ),
 );

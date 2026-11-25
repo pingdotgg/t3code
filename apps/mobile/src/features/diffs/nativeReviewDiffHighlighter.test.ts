@@ -287,6 +287,12 @@ describe("highlightNativeReviewDiffVisibleRows", () => {
           (token: { color: string | null }) => token.color !== null,
         ),
       ).toBe(true);
+      // The blocked neighbor is colored from its patch while its source loads.
+      await vi.waitFor(() => expect(chunks).toHaveBeenCalledTimes(2));
+      const provisional = chunks.mock.calls[1]![0];
+      const neighborIds = Array.from({ length: 5 }, (_, index) => `neighbor-${index}`);
+      expect(Object.keys(provisional.tokensByRowId)).toEqual(neighborIds);
+      expect(provisional.retryableRowIds).toEqual(neighborIds);
     } finally {
       neighborResponse.resolve({ oldContents: "", newContents: source });
       await highlighting;
@@ -606,8 +612,10 @@ describe("source context", () => {
     expect(result.tokensByRowId["new-tail"]).toEqual(newTokens[2]);
   });
 
-  it("leaves mismatched and unavailable source revisions plain", async () => {
+  it("uses patch grammar for mismatched and unavailable source revisions", async () => {
     const rows = [sourceRow("add", 3)];
+    const patchTokens = (await highlight(rows)).tokensByRowId[rows[0]!.id];
+    expect(patchTokens!.some((token) => token.color !== null)).toBe(true);
     for (const source of [null, { oldContents: "", newContents: "different revision" }]) {
       const result = await highlightNativeReviewDiffVisibleRows({
         rows,
@@ -617,9 +625,7 @@ describe("source context", () => {
         lastRowIndex: 0,
         overscanRows: 0,
       });
-      expect(result.tokensByRowId[rows[0]!.id]).toEqual([
-        { content: NEW_SOURCE[2], color: null, fontStyle: null },
-      ]);
+      expect(result.tokensByRowId[rows[0]!.id]).toEqual(patchTokens);
     }
   });
 });

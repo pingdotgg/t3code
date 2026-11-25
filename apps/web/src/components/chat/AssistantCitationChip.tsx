@@ -5,6 +5,7 @@ import {
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useGT } from "gt-react";
 import { PencilIcon, QuoteIcon } from "lucide-react";
 import {
   useEffect,
@@ -122,6 +123,7 @@ export function AssistantCitationEmbed({
   leading: boolean;
   trailing: boolean;
 }) {
+  const gt = useGT();
   const wholeResponse = citation.prefix === "" && citation.suffix === "";
   const { comment, ...quoted } = citation;
   return (
@@ -129,7 +131,7 @@ export function AssistantCitationEmbed({
       citation={citation}
       copyMarkdown={serializeAssistantCitation(citation)}
       cardCopyMarkdown={serializeAssistantCitation(quoted)}
-      label={`Go to quoted response: ${assistantCitationLabel(quoted)}`}
+      label={gt("Go to quoted response: {label}", { label: assistantCitationLabel(quoted) })}
       comment={comment}
       leading={leading}
       trailing={trailing}
@@ -162,11 +164,12 @@ export function ResponseReplyCard({
   leading: boolean;
   trailing: boolean;
 }) {
+  const gt = useGT();
   return (
     <ResponseCard
       citation={record.citation}
       copyMarkdown={copyMarkdown}
-      label={`Go to the response this replies to: ${record.label}`}
+      label={gt("Go to the response this replies to: {label}", { label: record.label })}
       title={record.subagents?.map((subagent) => subagent.title).join(", ")}
       preview={flat(record.citation.text)}
       leading={leading}
@@ -192,6 +195,7 @@ export function AssistantCitationChip({
     onRestoreFocus?: () => void;
   };
 }) {
+  const gt = useGT();
   const sourceLinkProps = useCitationSourceLinkProps(citation);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
@@ -215,13 +219,9 @@ export function AssistantCitationChip({
     if (dismissal.kind === "commit") return commentEditor?.onSave(dismissal.comment) ?? true;
     return dismissal.kind !== "keep-open";
   };
+  // The timeline virtualizes rows, so a vanished source is routine; the user may still be typing.
   const onSourceUnavailable = useEffectEvent(() => {
-    if (!sourceAnchor) return;
-    if (settleDraftOnClose("none")) {
-      commentEditor?.onOpenChange(false);
-    } else {
-      setUnavailableSourceAnchor(sourceAnchor);
-    }
+    if (sourceAnchor) setUnavailableSourceAnchor(sourceAnchor);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the cited DOM source while the comment editor is open and reacts when it disappears
   useEffect(() => {
@@ -256,7 +256,7 @@ export function AssistantCitationChip({
     <Link
       {...sourceLinkProps}
       className="inline-flex min-w-0 items-center gap-[0.2em] self-baseline text-inherit no-underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current rounded-sm"
-      aria-label={`View cited assistant text: ${label}`}
+      aria-label={gt("View cited assistant text: {label}", { label })}
     >
       <QuoteIcon aria-hidden="true" />
       <ContextChipLabel className="max-w-[16em]" dir={textDirection(label)}>
@@ -284,7 +284,9 @@ export function AssistantCitationChip({
           }}
         >
           <PopoverTrigger
-            aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
+            aria-label={
+              citation.comment ? gt("Edit citation comment") : gt("Add comment to citation")
+            }
             data-citation-comment-trigger="true"
             render={<ContextChipAction />}
           >
@@ -323,7 +325,7 @@ export function AssistantCitationChip({
                   : undefined
               }
               ref={commentPopupRef}
-              aria-label="Edit citation comment"
+              aria-label={gt("Edit citation comment")}
               width="md"
               padding="compact"
               onPointerDown={(event) => event.stopPropagation()}

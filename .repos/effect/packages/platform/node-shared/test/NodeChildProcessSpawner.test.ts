@@ -474,3 +474,17 @@ it.live("scope release returns when stdout is unread and backpressured", () =>
 
     assert.isBelow(releaseMillis, 2_000)
   }).pipe(Effect.provide(NodeServices)))
+
+it.live("scope release closes stdin for a child that drains it on the kill signal", () =>
+  Effect.gen(function*() {
+    const releaseMillis = yield* timed(Effect.scoped(Effect.gen(function*() {
+      const handle = yield* ChildProcess.make(process.execPath, [
+        "-e",
+        // Exits with EOF on SIGTERM, or after 3 seconds if stdin stays open.
+        "process.on(\"SIGTERM\", () => process.stdin.on(\"end\", () => process.exit(0)).resume()); console.log(\"READY\"); setTimeout(() => process.exit(1), 3_000)"
+      ], { stdin: Stream.never })
+      yield* Stream.runHead(handle.stdout)
+    })))
+
+    assert.isBelow(releaseMillis, 2_000)
+  }).pipe(Effect.provide(NodeServices)))
