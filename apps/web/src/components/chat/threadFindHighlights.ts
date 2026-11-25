@@ -1,4 +1,4 @@
-import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
+import { findThreadSearchRanges } from "@t3tools/shared/threadSearch";
 import { useEffect, useEffectEvent, useRef } from "react";
 import { THREAD_FIND_BLOCK_TAGS } from "@t3tools/shared/threadFindBlockTags";
 
@@ -32,16 +32,16 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
     const flush = () => {
       let startIndex = 0;
       let endIndex = 0;
-      for (const offset of findThreadSearchOccurrences(text, query)) {
-        while (startIndex < nodes.length && nodes[startIndex]!.end <= offset) startIndex++;
+      for (const match of findThreadSearchRanges(text, query)) {
+        while (startIndex < nodes.length && nodes[startIndex]!.end <= match.start) startIndex++;
         if (endIndex < startIndex) endIndex = startIndex;
-        while (endIndex < nodes.length && nodes[endIndex]!.end < offset + query.length) endIndex++;
+        while (endIndex < nodes.length && nodes[endIndex]!.end < match.end) endIndex++;
         const start = nodes[startIndex];
         const end = nodes[endIndex];
         if (!start || !end) continue;
         const range = container.ownerDocument.createRange();
-        range.setStart(start.node, offset - start.start);
-        range.setEnd(end.node, offset + query.length - end.start);
+        range.setStart(start.node, match.start - start.start);
+        range.setEnd(end.node, match.end - end.start);
         const occurrence = occurrenceByRowId.get(rowId) ?? 0;
         ranges.push({ rowId, occurrence, range });
         occurrenceByRowId.set(rowId, occurrence + 1);
