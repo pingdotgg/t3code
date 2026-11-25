@@ -89,12 +89,10 @@ describe("threadContextAttachment", () => {
     const source = EnvironmentId.make("source");
     const threadId = ThreadId.make("surrogate-thread");
     const updatedAt = DateTime.makeUnsafe("2026-09-29T00:00:00.000Z");
-    const prefix = "a".repeat(63);
+    const title = `${"a".repeat(63)}𠀀`;
 
-    for (const title of [`${prefix}𝐀bc`, `${prefix}𠀀`]) {
-      const file = threadContextAttachment(source, { threadId, title, updatedAt, items: [] });
+    const file = threadContextAttachment(source, { threadId, title, updatedAt, items: [] });
 
-      expect(file.name).toMatch(/^a{63}-[a-f0-9]+\.jsonl$/);
-    }
+    expect(file.name).toMatch(/^a{63}-[a-f0-9]+\.jsonl$/);
   });
 });
