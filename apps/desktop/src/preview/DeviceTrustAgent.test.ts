@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const { fetchHelper } = vi.hoisted(() => ({ fetchHelper: vi.fn() }));
 vi.mock("electron", () => ({
@@ -44,4 +44,27 @@ it("consumes only a bridge URL issued for the exact authentication origin and me
       headers: new Headers({ Origin: auth, "Content-Type": "text/plain;charset=UTF-8" }),
     }),
   );
+});
+
+describe("only recognizes the agent's own requests from the authentication page", () => {
+  const auth = "https://auth.kolide.com";
+  const agent = "http://127.0.0.1:12519/v1/cmd";
+  it.each([
+    ["https://unrelated.test", agent, "xhr"],
+    ["https://auth.kolide.com.unrelated.test", agent, "xhr"],
+    [undefined, agent, "xhr"],
+    [auth, "http://127.0.0.1:12520/v1/cmd", "xhr"],
+    [auth, "http://127.0.0.1:12519/other", "xhr"],
+    [auth, agent, "mainFrame"],
+  ] as const)("ignores %s %s (%s)", (initiatorOrigin, url, resourceType) => {
+    const route = makeDeviceTrustAgent(() => "fixture-token");
+    expect(
+      route.beforeRequest({
+        initiatorOrigin,
+        url,
+        resourceType,
+        method: "POST",
+      } as Electron.OnBeforeRequestListenerDetails),
+    ).toBeNull();
+  });
 });

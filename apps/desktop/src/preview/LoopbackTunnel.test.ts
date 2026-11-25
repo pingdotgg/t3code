@@ -247,7 +247,7 @@ it.effect("routes only the Device Trust page's agent request away from the remot
       tunnelled: true,
     });
     expect(intercept).toBeDefined();
-    const request = (initiatorOrigin: string | undefined, url: string, resourceType = "xhr") => {
+    const request = (initiatorOrigin: string, url: string) => {
       const { protocol, hostname } = new URL(url);
       if (!urls.includes(`${protocol}//${hostname}/*`)) return Promise.resolve({});
       return new Promise<Electron.CallbackResponse>((resolve) =>
@@ -255,7 +255,7 @@ it.effect("routes only the Device Trust page's agent request away from the remot
           {
             initiatorOrigin,
             url,
-            resourceType,
+            resourceType: "xhr",
             method: "POST",
           } as Electron.OnBeforeRequestListenerDetails,
           resolve,
@@ -267,16 +267,7 @@ it.effect("routes only the Device Trust page's agent request away from the remot
     expect(yield* Effect.promise(() => request(auth, agent))).toEqual({
       redirectURL: expect.stringMatching(/^t3code-device-trust:\/\/agent\/[\da-f-]+$/),
     });
-    for (const [origin, url, type] of [
-      ["https://unrelated.test", agent, "xhr"],
-      ["https://auth.kolide.com.unrelated.test", agent, "xhr"],
-      [undefined, agent, "xhr"],
-      [auth, "http://127.0.0.1:12520/v1/cmd", "xhr"],
-      [auth, "http://127.0.0.1:12519/other", "xhr"],
-      [auth, agent, "mainFrame"],
-    ] as const) {
-      expect(yield* Effect.promise(() => request(origin, url, type))).toEqual({});
-    }
+    expect(yield* Effect.promise(() => request("https://unrelated.test", agent))).toEqual({});
   }),
 );
 
