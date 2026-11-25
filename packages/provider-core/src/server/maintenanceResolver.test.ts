@@ -127,7 +127,11 @@ function stdoutSpawner(
   exitCodeOf: (args: ReadonlyArray<string>) => number = () => 0,
 ) {
   return ChildProcessSpawner.make((command) => {
-    const { command: executable, args, options: spawnOptions } = command as unknown as {
+    const {
+      command: executable,
+      args,
+      options: spawnOptions,
+    } = command as unknown as {
       readonly command: string;
       readonly args: ReadonlyArray<string>;
       readonly options: { readonly env: Record<string, unknown> };
@@ -521,7 +525,6 @@ it.layer(
         writeExecutable(NodePath.join(npmBinDir, "npm"));
         const binaryPath = NodePath.join(tempDir, ".local/bin/native-package-tool");
         writeExecutable(binaryPath);
-        const userCacheDir = NodePath.join(tempDir, "user-npm-cache");
         const cacheDirs: string[] = [];
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           nativePackageToolUpdate,
@@ -530,8 +533,7 @@ it.layer(
           Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
-            // Stands in for an npm view killed mid-download: the partial packument it wrote is
-            // still in the cache it wrote it to when the probe answers, as npm leaves it.
+            // The partial packument a killed `npm view` leaves behind in its cache.
             stdoutSpawner((_command, _args, options) => {
               const cacheDir = options.env?.npm_config_cache;
               if (typeof cacheDir !== "string") return '"1.2.0"';
@@ -556,14 +558,13 @@ it.layer(
           ),
           Effect.provideService(
             HttpClient.HttpClient,
-            HttpClient.make(() => Effect.die("the npm view answer must not fall back to the registry")),
+            HttpClient.make(() =>
+              Effect.die("the npm view answer must not fall back to the registry"),
+            ),
           ),
         );
         expect(cacheDirs).toHaveLength(1);
-        const throwawayCacheDir = cacheDirs[0]!;
-        expect(throwawayCacheDir).not.toBe(userCacheDir);
-        expect(NodeFS.existsSync(throwawayCacheDir)).toBe(false);
-        expect(NodeFS.existsSync(userCacheDir)).toBe(false);
+        expect(NodeFS.existsSync(cacheDirs[0]!)).toBe(false);
       }),
     { skip: !symlinksSupported },
   );

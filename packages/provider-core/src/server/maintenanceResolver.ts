@@ -415,7 +415,6 @@ const runProbe = Effect.fn("runProbe")(function* (
   args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
   okExitCodes: ReadonlyArray<number> = [0],
-  cacheDir?: string,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const collect = Effect.gen(function* () {
@@ -423,7 +422,7 @@ const runProbe = Effect.fn("runProbe")(function* (
     const resolved = yield* resolveSpawnCommand(command, args, { env, extendEnv: true });
     const child = yield* spawner.spawn(
       ChildProcess.make(resolved.command, resolved.args, {
-        env: cacheDir ? { ...env, npm_config_cache: cacheDir } : env,
+        env,
         extendEnv: true,
         shell: resolved.shell,
       }),
@@ -450,17 +449,6 @@ const runProbe = Effect.fn("runProbe")(function* (
         subcommand: args[0],
         errorTag: causeErrorTag(cause),
       }).pipe(Effect.as(null)),
-    ),
-    // A killed npm leaves its partial packument in the cache's tmp directory; the probe owns
-    // removing the cache it handed npm, once the child is gone.
-    Effect.ensuring(
-      cacheDir
-        ? Effect.ignore(
-            Effect.flatMap(FileSystem.FileSystem, (fileSystem) =>
-              fileSystem.remove(cacheDir, { recursive: true, force: true }),
-            ),
-          )
-        : Effect.void,
     ),
   );
 });
@@ -1324,20 +1312,23 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
   if (!npmPath) return capabilities;
   const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
   const lookup = Effect.gen(function* () {
-    // `npm view` downloads the whole packument before answering, and a probe killed on timeout or
-    // interruption leaves that partial download in the cache's tmp directory. A throwaway cache
-    // keeps that off the user's npm cache; `runProbe` removes it once the child is gone.
-    const cacheDir = yield* Effect.flatMap(FileSystem.FileSystem, (fileSystem) =>
+    // A killed `npm view` leaves its partial packument in the cache's tmp directory, so the probe
+    // gets a throwaway cache, removed after `runProbe` has killed the child.
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cacheDir = yield* Effect.acquireRelease(
       fileSystem.makeTempDirectory({ prefix: "t3-npm-view-" }),
-    ).pipe(Effect.orElseSucceed(() => undefined));
+      (directory) => Effect.ignore(fileSystem.remove(directory, { recursive: true, force: true })),
+    ).pipe(Effect.option);
     return yield* runProbe(
       npmPath,
       ["view", "--global", "--json", `${packageName}@latest`, "version"],
-      env,
-      [0],
-      cacheDir,
+      Option.match(cacheDir, {
+        onNone: () => env,
+        onSome: (npm_config_cache) => ({ ...env, npm_config_cache }),
+      }),
     );
   }).pipe(
+    Effect.scoped,
     Effect.map((stdout) => {
       const value = stdout ? Option.getOrNull(decodeNpmViewVersion(stdout.trim())) : null;
       return nonEmptyString(typeof value === "string" ? value : value?.[0]);
