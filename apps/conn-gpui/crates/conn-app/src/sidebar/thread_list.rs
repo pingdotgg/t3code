@@ -312,7 +312,9 @@ pub(crate) fn render_thread_sidebar(
             "sidebar-new-thread",
             header_icon(IconName::SquarePen, tokens),
             tokens,
-            cx.listener(|app, _event, window, cx| app.start_new_thread(None, Some(window), cx)),
+            cx.listener(|app, _event, window, cx| {
+                app.start_general_draft(Some(window), cx).detach()
+            }),
         )
         .a11y_button("sidebar.new-thread", "New thread")
         .aria_keyshortcuts("Meta+N")

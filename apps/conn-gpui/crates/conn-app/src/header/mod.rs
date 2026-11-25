@@ -91,9 +91,7 @@ pub(crate) fn render_chat_header(
         .selected_thread_id
         .as_deref()
         .and_then(|id| shell.find_thread(id));
-    let active_project = active_thread
-        .and_then(|t| shell.project(&t.project_id))
-        .or_else(|| draft_project_id.and_then(|id| shell.project(id)));
+    let active_project = active_thread.and_then(|t| shell.project(&t.project_id));
 
     let thread_title = if draft_project_id.is_some() {
         "New thread"
@@ -178,7 +176,7 @@ pub(crate) fn render_chat_header(
                     .hover(move |s| s.text_color(fg))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |app, _, window, cx| {
-                        app.start_new_thread(Some(project_id.clone()), Some(window), cx);
+                        app.open_project_draft(project_id.clone(), Some(window), cx);
                     }))
                     .conn_tooltip(format!("New thread in {}", project.title), tokens)
                     .child(render_project_favicon(

@@ -14,7 +14,6 @@ use super::Composer;
 pub(super) enum Popover {
     ModelPicker,
     FooterPermissions,
-    StripPermissions,
     Implement,
     ContextMeter,
     Stash,
@@ -37,7 +36,6 @@ impl Composer {
         let flags = [
             (Popover::ModelPicker, self.model_picker_open),
             (Popover::FooterPermissions, self.footer_permissions_open),
-            (Popover::StripPermissions, self.strip_permissions_open),
             (Popover::Implement, self.implement_menu_open),
             (Popover::ContextMeter, self.context_meter_open),
             (Popover::Stash, self.stash.menu_open),
@@ -58,7 +56,6 @@ impl Composer {
                 self.permission_preview = None;
             }
             Popover::FooterPermissions => self.footer_permissions_open = false,
-            Popover::StripPermissions => self.strip_permissions_open = false,
             Popover::Implement => self.implement_menu_open = false,
             Popover::ContextMeter => self.context_meter_open = false,
             Popover::Stash => self.stash.menu_open = false,

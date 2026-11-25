@@ -5,7 +5,7 @@ need a separate branch and working directory.
 
 ## Start a thread
 
-On web and desktop, **New thread** opens the project picker when you have more than one
+On web and Electron desktop, **New thread** opens the project picker when you have more than one
 open project in the default or project-grouped sidebar. Archived projects don't count. **Shift-click** to start in
 the current project, or use a project's own new-thread action. A new thread carries
 your model and mode selections, unless the destination project has its own model default.
@@ -24,7 +24,7 @@ if that project exists there. Otherwise it selects an environment that has it.
 
 ### Start without a project
 
-A thread does not need a project. To start one without a project, click **or
+On web and Electron desktop, click **or
 start without a project** under a new thread's heading, pick **No project** from
 the project menu in that heading or from **New thread in...** in the command
 palette, or press `mod+alt+n`. On mobile, pick **No project** from the project
@@ -48,9 +48,9 @@ get branch and diff controls.
 
 ### File a General thread under an Orbit project
 
-In Conn GPUI, a General thread on the agent node can appear under an Orbit
-project in the sidebar. When the conversation identifies one project, the agent
-can file it there. For example, work on the Mini host belongs under its machine
+In Conn GPUI, click **New thread** or press `⌘N` to start in General on the agent node.
+Choose a model, attach any files, and send your first message. When the conversation
+identifies one project, the agent can file it there. For example, work on the Mini host belongs under its machine
 project. You can ask the agent to change the filing or return the thread to
 General. The thread keeps its working directory on the agent node. Open a
 delegated thread on another machine from its parent’s task card.

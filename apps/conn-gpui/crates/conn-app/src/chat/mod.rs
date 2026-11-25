@@ -88,31 +88,12 @@ const UI_FONT_PX: f32 = 13.0;
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
 const MONO_FONT_FAMILY: &str = crate::theme::MONO_FONT;
 
-/// Project option selectable from the new-thread draft hero's project combobox.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct DraftProjectOption {
-    pub(crate) id: String,
-    pub(crate) title: String,
-    pub(crate) pinned: bool,
-    /// The server's scratch ("no project") project; hidden from the combobox.
-    pub(crate) is_scratch: bool,
-    /// Shell record for the row favicon.
-    pub(crate) shell: conn_state::ProjectShell,
-}
-
 /// View state rendered while composing a brand-new thread before `orchestration.launchThread`.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DraftViewInfo {
     /// The draft's id; its text and attachments are stored under it, whatever project it targets.
     pub(crate) draft_id: String,
-    pub(crate) project_id: String,
-    pub(crate) project_title: String,
-    pub(crate) projects: Vec<DraftProjectOption>,
     pub(crate) launching: bool,
-    /// The draft targets the server's scratch project (`isScratchDraft`).
-    pub(crate) is_scratch: bool,
-    /// The server offers a scratch workspace (`scratchWorkspaceRoot`).
-    pub(crate) scratch_available: bool,
 }
 
 /// One human user bubble's render inputs.
@@ -194,12 +175,6 @@ pub(crate) enum ChatEvent {
     InteractionModeSelected(String),
     /// Workspace or branch change from the composer context strip.
     Branch(composer::BranchAction),
-    /// Switch which project a new-thread draft will launch in.
-    DraftProjectSelected(String),
-    /// Retarget the draft at the server's scratch project (`or start without a project`).
-    DraftStartScratch,
-    /// `Add project` from the draft project combobox.
-    DraftAddProject,
     /// `Open provider setup` for an instance (the status banner, the model picker).
     OpenProviderSetup(String),
     /// Start a new thread from the empty state CTA.
@@ -235,7 +210,6 @@ pub(crate) struct ChatView {
     has_projects: bool,
     connected: bool,
     draft: Option<DraftViewInfo>,
-    hero: draft_hero::DraftHeroState,
     error_banner: Option<String>,
     /// The live provider catalog the status banner reads.
     server_config: std::sync::Arc<conn_state::providers::ServerConfigState>,
@@ -496,14 +470,12 @@ impl ChatView {
             },
         );
 
-        let hero = draft_hero::DraftHeroState::new(window, cx);
         Self {
             tokens,
             has_thread: false,
             has_projects: false,
             connected: false,
             draft: None,
-            hero,
             error_banner: None,
             server_config: std::sync::Arc::default(),
             environment_key: None,
@@ -765,9 +737,6 @@ impl ChatView {
         let is_draft = draft.is_some();
         let launching = draft.as_ref().is_some_and(|d| d.launching);
         if self.draft != draft {
-            if !is_draft {
-                self.hero.menu_open = false;
-            }
             self.draft = draft;
             cx.notify();
         }
@@ -1691,7 +1660,7 @@ impl ChatView {
                     .child(if self.has_projects {
                         "Pick a thread or start a new one"
                     } else if self.connected {
-                        "Add a project to start a thread"
+                        "Start a new thread"
                     } else {
                         "Connect to a conn-server"
                     }),
@@ -1704,13 +1673,13 @@ impl ChatView {
                     .child(if self.has_projects {
                         "Select an existing thread in the sidebar or press ⌘N to compose a new one."
                     } else if self.connected {
-                        "Use the Add project button in the sidebar to register a local folder."
+                        "Press ⌘N to compose your first message."
                     } else {
                         "Open Settings → Connections to connect to an Orbit Node or local conn-server."
                     }),
             );
 
-        if self.has_projects {
+        if self.has_projects || self.connected {
             card = card.child(
                 div()
                     .id("chat-empty-new-thread")
@@ -1777,7 +1746,11 @@ impl ChatView {
             .justify_center()
             .px(px(32.0))
             .py(px(48.0))
+            .flex_col()
             .child(card)
+            .when_some(self.error_banner.as_deref(), |el, error| {
+                el.child(self.render_error_banner(error, cx))
+            })
             .into_any_element()
     }
 
@@ -3661,14 +3634,14 @@ impl Render for ChatView {
             c.sync_draft_key(draft_key.as_deref(), window, cx)
         });
 
-        if let Some(draft) = self.draft.clone() {
+        if self.draft.is_some() {
             return div()
                 .flex()
                 .flex_col()
                 .size_full()
                 .min_h_0()
                 .min_w_0()
-                .child(self.render_draft_hero(&draft, window, cx));
+                .child(self.render_draft_hero(cx));
         }
 
         let lane = self.sent_lane_px.get();

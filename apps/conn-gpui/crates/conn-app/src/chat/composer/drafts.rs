@@ -26,11 +26,6 @@ fn saved_content(text: &str, attachments: &[PendingAttachment]) -> DraftContent 
 }
 
 impl Composer {
-    /// The live draft holds text or attachments.
-    pub(crate) fn has_live_content(&self, cx: &App) -> bool {
-        !self.attachments.is_empty() || !self.textarea.read(cx).value().trim().is_empty()
-    }
-
     /// Calls `visit(key, text, attachment count)` for every draft the composer holds: each
     /// parked one, then the live one under the active key.
     pub(crate) fn visit_drafts(&self, cx: &App, mut visit: impl FnMut(&str, &str, usize)) {

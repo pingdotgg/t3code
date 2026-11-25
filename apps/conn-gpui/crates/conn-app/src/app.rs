@@ -262,7 +262,7 @@ pub(crate) struct ConnApp {
     ended_threads: HashSet<String>,
     /// Active new-thread draft; sent with `orchestration.launchThread` on first message.
     draft: Option<DraftThreadState>,
-    /// `server.getConfig` `scratchWorkspaceRoot`; `None` hides `or start without a project`.
+    /// Scratch workspace reported by the primary server.
     scratch_workspace_root: Option<String>,
     /// Project id returned by `projects.ensureScratch`, before the shell lists it.
     scratch_project_id: Option<String>,
@@ -498,7 +498,16 @@ impl ConnApp {
                     app.send_prompt("Continue where you left off.".to_owned(), cx);
                 }
                 crate::chat::ChatEvent::ImplementPlanInNewThread { text } => {
-                    app.start_new_thread(None, Some(window), cx);
+                    let Some(project) = app
+                        .layout
+                        .selected_thread_id
+                        .as_deref()
+                        .and_then(|id| app.shell.find_thread(id))
+                        .map(|t| t.project_id.clone())
+                    else {
+                        return;
+                    };
+                    app.open_project_draft(project, Some(window), cx);
                     if let Some(draft) = app.draft.as_mut() {
                         draft.interaction_mode = "default".to_owned();
                     }
@@ -572,16 +581,11 @@ impl ConnApp {
                 crate::chat::ChatEvent::Branch(action) => {
                     app.handle_branch_action(action.clone(), cx)
                 }
-                crate::chat::ChatEvent::DraftProjectSelected(project_id) => {
-                    app.set_draft_project(project_id.clone(), cx);
-                }
-                crate::chat::ChatEvent::DraftStartScratch => app.start_draft_scratch(cx),
-                crate::chat::ChatEvent::DraftAddProject => app.add_project_via_picker(window, cx),
                 crate::chat::ChatEvent::OpenProviderSetup(instance_id) => {
                     app.open_provider_setup(instance_id, window, cx);
                 }
                 crate::chat::ChatEvent::StartNewThread => {
-                    app.start_new_thread(None, Some(window), cx);
+                    app.start_general_draft(Some(window), cx).detach();
                 }
                 crate::chat::ChatEvent::OpenConnections => {
                     app.open_settings_page(
@@ -862,7 +866,7 @@ impl ConnApp {
                         app.set_theme(id, cx);
                     }
                     PaletteEvent::Action(PaletteAction::NewThread) => {
-                        app.start_new_thread(None, Some(window), cx);
+                        app.start_general_draft(Some(window), cx).detach();
                     }
                     PaletteEvent::Action(PaletteAction::ToggleSidebar) => app.toggle_sidebar(cx),
                     PaletteEvent::Action(PaletteAction::ToggleRightPanel) => {
@@ -1221,35 +1225,9 @@ impl ConnApp {
         self.sync_files_subscription();
         let selected = self.layout.selected_thread_id.as_deref();
         let shell_thread = selected.and_then(|id| self.shell.find_thread(id));
-        let draft_view = self.draft.as_ref().map(|draft| {
-            let project = self.shell.project(&draft.project_id);
-            let projects = self
-                .shell
-                .projects
-                .iter()
-                .filter(|p| p.archived_at.is_none())
-                .map(|p| crate::chat::DraftProjectOption {
-                    id: p.id.clone(),
-                    title: p.title.clone(),
-                    pinned: matches!(p.pinned_at, Some(Some(_))),
-                    is_scratch: self.is_scratch_project(&p.id, Some(&p.workspace_root)),
-                    shell: p.clone(),
-                })
-                .collect();
-            crate::chat::DraftViewInfo {
-                draft_id: draft.draft_id.clone(),
-                project_id: draft.project_id.clone(),
-                project_title: project
-                    .map(|p| p.title.clone())
-                    .unwrap_or_else(|| draft.project_id.clone()),
-                projects,
-                launching: draft.launching,
-                is_scratch: self.is_scratch_project(
-                    &draft.project_id,
-                    project.map(|p| p.workspace_root.as_str()),
-                ),
-                scratch_available: self.scratch_root_for_project(&draft.project_id).is_some(),
-            }
+        let draft_view = self.draft.as_ref().map(|draft| crate::chat::DraftViewInfo {
+            draft_id: draft.draft_id.clone(),
+            launching: draft.launching,
         });
         let title = if self.draft.is_some() {
             Some("New thread".to_owned())
@@ -1810,58 +1788,9 @@ impl ConnApp {
         .detach();
     }
 
-    /// Picks the default project id for a new thread, honoring explicit selection, the active
-    /// workspace filter (Orbit workspace or project id), currently selected project, or first
-    /// non-archived project.
-    fn resolve_new_thread_project(&self, requested: Option<String>) -> Option<String> {
-        if let Some(id) = requested
-            && self.shell.project(&id).is_some()
-        {
-            return Some(id);
-        }
-        if let Some(ws_id) = self.active_workspace.as_deref() {
-            if let Some(orbit_ws) = self.orbit.workspaces.iter().find(|w| w.id == ws_id) {
-                if let Some(sel) = self
-                    .layout
-                    .selected_project_id
-                    .as_deref()
-                    .and_then(|id| self.shell.project(id))
-                    && conn_desktop::orbit::workspace_matches_project(
-                        orbit_ws,
-                        &sel.id,
-                        &sel.title,
-                        &sel.workspace_root,
-                    )
-                {
-                    return Some(sel.id.clone());
-                }
-                if let Some(matched) = self.shell.projects.iter().find(|p| {
-                    p.archived_at.is_none()
-                        && conn_desktop::orbit::workspace_matches_project(
-                            orbit_ws,
-                            &p.id,
-                            &p.title,
-                            &p.workspace_root,
-                        )
-                }) {
-                    return Some(matched.id.clone());
-                }
-            } else if self.shell.project(ws_id).is_some() {
-                return Some(ws_id.to_owned());
-            }
-        }
-        self.layout
-            .selected_project_id
-            .clone()
-            .filter(|id| self.shell.project(id).is_some())
-            .or_else(|| {
-                self.shell
-                    .projects
-                    .iter()
-                    .find(|p| p.archived_at.is_none())
-                    .or_else(|| self.shell.projects.first())
-                    .map(|p| p.id.clone())
-            })
+    #[cfg(feature = "automation")]
+    pub(crate) fn active_draft_id(&self) -> Option<&str> {
+        self.draft.as_ref().map(|d| d.draft_id.as_str())
     }
 
     /// Sets the runtime mode (`approval-required`, `full-access`, ...) for the active draft.
@@ -1878,20 +1807,85 @@ impl ConnApp {
         }
     }
 
-    /// Starts a new thread draft in `project_id` (or the active workspace/project). The
-    /// composer's first send launches it via `orchestration.launchThread`.
-    pub(crate) fn start_new_thread(
+    /// Opens General on the primary server, even when the selected thread lives on a linked server.
+    pub(crate) fn start_general_draft(
         &mut self,
-        project_id: Option<String>,
         window: Option<&mut Window>,
         cx: &mut Context<'_, Self>,
-    ) {
-        let Some(project_id) = self.resolve_new_thread_project(project_id) else {
-            if let Some(window) = window {
-                self.add_project_via_picker(window, cx);
-            }
-            return;
+    ) -> gpui_kit::Task<Option<String>> {
+        if let Some(project) = self.shell.projects.iter().find(|p| {
+            p.archived_at.is_none()
+                && self.linked_environment_of_project(&p.id).is_none()
+                && self.is_scratch_project(&p.id, Some(&p.workspace_root))
+        }) {
+            return gpui_kit::Task::ready(Some(self.open_project_draft(
+                project.id.clone(),
+                window,
+                cx,
+            )));
+        }
+        let Some(connection) = self.connection.clone() else {
+            self.chat.update(cx, |chat, cx| {
+                chat.set_error(
+                    Some("Connect to the agent node to start a thread.".to_owned()),
+                    cx,
+                )
+            });
+            return gpui_kit::Task::ready(None);
         };
+        let generation = self.connection_gen;
+        let previous_thread = self.layout.selected_thread_id.clone();
+        let previous_draft = self.draft.as_ref().map(|d| d.draft_id.clone());
+        let window = window.map(|w| w.window_handle());
+        cx.spawn(async move |this, cx| {
+            use conn_contract::rpc::projects::ensure_scratch;
+            let result = connection
+                .call::<ensure_scratch::Payload, ensure_scratch::Success>(
+                    "projects.ensureScratch",
+                    &conn_contract::ServerProbePayload {},
+                )
+                .await;
+            this.update(cx, |app, cx| {
+                if app.connection_gen != generation
+                    || app.layout.selected_thread_id != previous_thread
+                    || app.draft.as_ref().map(|d| &d.draft_id) != previous_draft.as_ref()
+                {
+                    return None;
+                }
+                match result {
+                    Ok(project) => {
+                        app.scratch_project_id = Some(project.project_id.clone());
+                        let id = app.open_project_draft(project.project_id, None, cx);
+                        if let Some(window) = window {
+                            let chat = app.chat.clone();
+                            let _ = window.update(cx, |_, window, cx| {
+                                chat.update(cx, |chat, cx| chat.focus_composer(window, cx))
+                            });
+                        }
+                        Some(id)
+                    }
+                    Err(err) => {
+                        app.chat.update(cx, |chat, cx| {
+                            chat.set_error(
+                                Some(format!("Could not open a General thread. {err}")),
+                                cx,
+                            )
+                        });
+                        None
+                    }
+                }
+            })
+            .ok()
+            .flatten()
+        })
+    }
+
+    pub(crate) fn open_project_draft(
+        &mut self,
+        project_id: String,
+        window: Option<&mut Window>,
+        cx: &mut Context<'_, Self>,
+    ) -> String {
         let template = self.shell.threads_for_project(&project_id).next();
         let project_model = self
             .shell
@@ -1924,6 +1918,14 @@ impl ConnApp {
             .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_else(|| "full-access".to_owned());
         let interaction_mode = template
+            .filter(|_| {
+                !self.is_scratch_project(
+                    &project_id,
+                    self.shell
+                        .project(&project_id)
+                        .map(|p| p.workspace_root.as_str()),
+                )
+            })
             .map(|t| conn_contract::to_json(&t.interaction_mode))
             .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_else(|| "default".to_owned());
@@ -1955,7 +1957,9 @@ impl ConnApp {
                 self.drafts.map(&project_key, &session.draft_id);
                 session
             });
+        let id = session.draft_id.clone();
         self.activate_draft(session, window, cx);
+        id
     }
 
     /// Shows `session` as the open draft: the chat card switches to it and the sidebar row of
@@ -2197,39 +2201,6 @@ impl ConnApp {
                 self.discard_draft_row(&draft_id, window, cx);
             }
             _ => {}
-        }
-    }
-
-    /// Changes the target project of the open draft, as Conn's picker does
-    /// (`DraftHeroHeadline` `selectProject`). A draft with text or attachments moves to the
-    /// project, and the project's own draft becomes an unmapped draft in the sidebar. An empty
-    /// draft stays behind its own project, and the project's own draft opens.
-    pub(crate) fn set_draft_project(&mut self, project_id: String, cx: &mut Context<'_, Self>) {
-        let Some(draft) = &self.draft else {
-            return;
-        };
-        if draft.launching || draft.project_id == project_id {
-            return;
-        }
-        let has_content = self.chat.read(cx).draft_has_content(cx);
-        let target_key = self.project_draft_key(&project_id);
-        let draft_id = draft.draft_id.clone();
-        match self.drafts.retarget(&draft_id, &target_key, has_content) {
-            conn_state::Retarget::OpenProjectDraft => {
-                self.start_new_thread(Some(project_id), None, cx);
-            }
-            conn_state::Retarget::Move { .. } => {
-                if let Some(draft) = &mut self.draft {
-                    draft.project_id.clone_from(&project_id);
-                    draft.branch = None;
-                    draft.worktree_path = None;
-                }
-                self.drafts.set_frozen_project(&project_id);
-                self.layout.selected_project_id = Some(project_id);
-                self.sync_chat(cx);
-                self.settle_drafts(cx);
-                cx.notify();
-            }
         }
     }
 
@@ -2631,36 +2602,6 @@ impl ConnApp {
             (Some(scratch), Some(root)) => trim(&scratch) == trim(root),
             _ => false,
         }
-    }
-
-    /// `or start without a project`: retargets the draft at `projects.ensureScratch`.
-    fn start_draft_scratch(&mut self, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
-            return;
-        };
-        if self.draft.as_ref().is_none_or(|d| d.launching) {
-            return;
-        }
-        cx.spawn(async move |this, cx| {
-            let result = connection
-                .call::<conn_contract::rpc::projects::ensure_scratch::Payload, conn_contract::rpc::projects::ensure_scratch::Success>(
-                    "projects.ensureScratch",
-                    &conn_contract::ServerProbePayload {},
-                )
-                .await;
-            let _ = this.update(cx, |app, cx| match result {
-                Ok(project) => {
-                    app.scratch_project_id = Some(project.project_id.clone());
-                    app.set_draft_project(project.project_id, cx);
-                }
-                Err(err) => {
-                    let message = format!("Could not start without a project. {err}");
-                    app.chat
-                        .update(cx, |chat, cx| chat.set_error(Some(message), cx));
-                }
-            });
-        })
-        .detach();
     }
 
     /// Toggles whether the active new-thread draft launches in a fresh git worktree or local root.
@@ -4783,7 +4724,7 @@ impl ConnApp {
             return Ok((project.id, tid));
         }
 
-        self.start_new_thread(Some(project.id.clone()), None, cx);
+        self.open_project_draft(project.id.clone(), None, cx);
         Ok((project.id, String::new()))
     }
 
@@ -4898,7 +4839,11 @@ impl ConnApp {
         match forward {
             ForwardNavigation::Thread(next) => self.select_thread(next, cx),
             ForwardNavigation::NewThread(project_id) => {
-                self.start_new_thread(project_id, None, cx);
+                if let Some(project) = project_id {
+                    self.open_project_draft(project, None, cx);
+                } else {
+                    self.start_general_draft(None, cx).detach();
+                }
             }
         }
     }
@@ -6943,6 +6888,8 @@ impl ConnApp {
         self.offline = offline::Offline::new();
         self.primary_confirmed = false;
         self.reset_linked_environments();
+        self.scratch_project_id = None;
+        self.scratch_workspace_root = None;
         self.shell = ShellState::default();
         self.server_config = std::sync::Arc::default();
         self.threads.clear();
@@ -7674,7 +7621,7 @@ impl Render for ConnApp {
                 app.open_right_panel_add_menu(window, cx);
             }))
             .on_action(cx.listener(|app, _: &NewThread, window, cx| {
-                app.start_new_thread(None, Some(window), cx);
+                app.start_general_draft(Some(window), cx).detach();
             }))
             .on_action(
                 cx.listener(|app, _: &crate::palette::OpenCommandPalette, window, cx| {

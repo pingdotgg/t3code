@@ -53,8 +53,7 @@ use gpui_kit::{
 use self::actions::{PrimaryActionInput, resolve_dispatch_mode, resolve_primary_action};
 use self::footer::{
     FOOTER_CONTROL_HEIGHT_PX, compatible_runtime_modes, footer_permissions_visible,
-    render_interaction_mode_toggle, render_permissions_chip, render_permissions_section,
-    runtime_mode_option,
+    render_interaction_mode_toggle, render_permissions_chip,
 };
 use self::menus::{
     ComposerTrigger, ComposerTriggerKind, FileMentionEntry, SkillEntry, detect_trigger,
@@ -250,7 +249,6 @@ pub(crate) struct Composer {
     meter_timer: Option<gpui_kit::Task<()>>,
     footer_permissions_open: bool,
     picker_permissions_open: bool,
-    strip_permissions_open: bool,
     permission_preview: Option<&'static str>,
     implement_menu_open: bool,
     /// Popovers open at the last render, to tell which opened since (`popovers.rs`).
@@ -413,7 +411,6 @@ impl Composer {
             meter_timer: None,
             footer_permissions_open: false,
             picker_permissions_open: false,
-            strip_permissions_open: false,
             permission_preview: None,
             implement_menu_open: false,
             seen_popovers: Vec::new(),
@@ -632,6 +629,9 @@ impl Composer {
     ) {
         if self.is_draft == is_draft && self.submitting == submitting {
             return;
+        }
+        if self.is_draft != is_draft {
+            self.close_overlays(cx);
         }
         self.is_draft = is_draft;
         self.submitting = submitting;
@@ -1037,7 +1037,6 @@ impl Composer {
         if self.model_picker_open {
             self.active_trigger = None;
             self.footer_permissions_open = false;
-            self.strip_permissions_open = false;
             self.stash.menu_open = false;
             self.picker_provider_filter = self
                 .catalog
@@ -1062,7 +1061,6 @@ impl Composer {
         for open in [
             &mut self.footer_permissions_open,
             &mut self.picker_permissions_open,
-            &mut self.strip_permissions_open,
             &mut self.implement_menu_open,
             &mut self.context_meter_open,
             &mut self.stash.menu_open,
@@ -1095,7 +1093,6 @@ impl Composer {
         self.model_picker_open
             || self.footer_permissions_open
             || self.picker_permissions_open
-            || self.strip_permissions_open
             || self.implement_menu_open
             || self.context_meter_open
             || self.stash.menu_open
@@ -1784,7 +1781,6 @@ impl Composer {
         self.permission_preview = None;
         if self.footer_permissions_open {
             self.model_picker_open = false;
-            self.strip_permissions_open = false;
         }
         cx.notify();
     }
@@ -1792,16 +1788,6 @@ impl Composer {
     pub(super) fn toggle_picker_permissions_menu(&mut self, cx: &mut Context<'_, Self>) {
         self.picker_permissions_open = !self.picker_permissions_open;
         self.permission_preview = None;
-        cx.notify();
-    }
-
-    fn toggle_strip_permissions_menu(&mut self, cx: &mut Context<'_, Self>) {
-        self.strip_permissions_open = !self.strip_permissions_open;
-        self.permission_preview = None;
-        if self.strip_permissions_open {
-            self.model_picker_open = false;
-            self.footer_permissions_open = false;
-        }
         cx.notify();
     }
 
@@ -1829,7 +1815,6 @@ impl Composer {
     pub(super) fn pick_runtime_mode(&mut self, mode: &'static str, cx: &mut Context<'_, Self>) {
         self.footer_permissions_open = false;
         self.picker_permissions_open = false;
-        self.strip_permissions_open = false;
         self.permission_preview = None;
         if self.runtime_mode != mode {
             self.runtime_mode = mode.to_owned();
@@ -2286,14 +2271,8 @@ impl Composer {
         (self.selected_model.clone(), self.selected_driver.as_deref())
     }
 
-    /// Renders Conn's `BranchToolbar` / `ComposerSurface.ContextStrip` under the composer card:
-    /// worktree/local indicator + branch name on the left; on new-thread drafts, the trailing
-    /// permissions control (`ComposerContextPermissions`).
     fn render_context_strip(&self, tokens: &Tokens, cx: &mut Context<'_, Self>) -> AnyElement {
-        let fg = hsla(tokens.foreground);
         let muted = hsla(tokens.muted_foreground);
-        let hover_bg = hsla(tokens.shell_highlight);
-
         let mut left = div()
             .flex()
             .flex_row()
@@ -2305,64 +2284,6 @@ impl Composer {
 
         left = left.child(self.render_workspace_control(tokens, cx));
         let branch_control = self.render_branch_control(tokens, cx);
-
-        // New-thread drafts name the permissions at the strip's trailing end
-        // (`ComposerContextPermissions`); started threads keep them in the footer and picker.
-        let trailing: Option<AnyElement> = self.is_draft.then(|| {
-            let option = runtime_mode_option(&self.runtime_mode);
-            let open = self.strip_permissions_open;
-            let mut slot = div().relative().child(
-                div()
-                    .id("composer-context-permissions")
-                    .a11y_button(
-                        "composer.context-permissions",
-                        format!("Permissions: {}", option.label),
-                    )
-                    .aria_expanded(open)
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(4.0))
-                    .h(px(22.0))
-                    .px(px(6.0))
-                    .rounded_full()
-                    .cursor_pointer()
-                    .text_color(if open { fg } else { muted })
-                    .when(open, |el| el.bg(hover_bg))
-                    .hover(move |s| s.bg(hover_bg).text_color(fg))
-                    .on_click(cx.listener(|composer, _, _, cx| {
-                        composer.toggle_strip_permissions_menu(cx);
-                    }))
-                    .conn_tooltip("Permissions · ⌘⇧A", tokens)
-                    .child(icons::icon(
-                        option.icon,
-                        12.0,
-                        if open { fg } else { muted },
-                    ))
-                    .child(option.label),
-            );
-            if open {
-                let options = self.runtime_mode_options();
-                let section = render_permissions_section(
-                    &self.runtime_mode,
-                    &options,
-                    self.permission_preview,
-                    "strip",
-                    tokens,
-                    cx,
-                );
-                slot = slot.child(
-                    deferred(
-                        div().absolute().bottom_full().right_0().mb(px(4.0)).child(
-                            footer::popover_surface("composer-strip-permissions-popup", tokens)
-                                .child(section),
-                        ),
-                    )
-                    .with_priority(3),
-                );
-            }
-            slot.into_any_element()
-        });
 
         div()
             .id("composer-context-strip")
@@ -2392,10 +2313,7 @@ impl Composer {
                     .items_center()
                     .gap(px(4.0))
                     .min_w_0()
-                    .child(branch_control)
-                    .when_some(trailing, |el, trailing| {
-                        el.child(div().flex_none().child(trailing))
-                    }),
+                    .child(branch_control),
             )
             .into_any_element()
     }
@@ -2668,6 +2586,7 @@ impl Render for Composer {
 
         let attach_btn = div()
             .id("chat-composer-attach")
+            .test_support()
             .a11y_button("composer.attach", "Attach files")
             .flex()
             .items_center()
@@ -3169,7 +3088,7 @@ impl Render for Composer {
                         cx.stop_propagation();
                     }
                     // `⌘⇧G` branch picker, `⌘⇧X` workspace menu, `⌘⇧L` previous worktree.
-                    if m.platform && m.shift && !m.alt && !m.control {
+                    if !composer.is_draft && m.platform && m.shift && !m.alt && !m.control {
                         match keystroke.key.as_str() {
                             "g" => composer.toggle_branch_picker(window, cx),
                             "x" => composer.toggle_workspace_menu(cx),
@@ -3189,15 +3108,13 @@ impl Render for Composer {
                 |el, surface| el.child(surface),
             )
             .child(card);
-        let show_context_strip = self.is_draft || self.persist_context_strip;
-        // Conn `BranchToolbar.logic.ts:shouldShowComposerContextStrip`: shown on drafts and when
-        // `persistComposerContextStrip` is enabled (with symmetric 9px vertical margins); when
-        // hidden on active threads, keep Conn's 20px (`h-[1.25rem]`) bottom spacer below the card.
-        root = if show_context_strip {
-            root.child(self.render_context_strip(&tokens, cx))
-        } else {
-            root.pb(px(COMPOSER_BOTTOM_SPACER_PX))
-        };
+        if !self.is_draft {
+            root = if self.persist_context_strip {
+                root.child(self.render_context_strip(&tokens, cx))
+            } else {
+                root.pb(px(COMPOSER_BOTTOM_SPACER_PX))
+            };
+        }
 
         if let Some(trigger) = self.active_trigger.clone() {
             let menu = render_command_menu(

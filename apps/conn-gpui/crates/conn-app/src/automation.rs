@@ -531,27 +531,33 @@ pub(crate) async fn run(
                 .map(str::to_owned);
             let mode = cmd.get("mode").and_then(Value::as_str).map(str::to_owned);
             let worktree = cmd.get("worktree").and_then(Value::as_bool);
-            let entity = app.upgrade().ok_or("app is gone")?;
-            window
-                .update(cx, |_, window, cx| {
-                    entity.update(cx, |app, cx| {
-                        let project_id = project.and_then(|title| {
-                            app.shell()
-                                .projects
-                                .iter()
-                                .find(|p| p.title == title || p.id == title)
-                                .map(|p| p.id.clone())
-                        });
-                        app.start_new_thread(project_id, Some(window), cx);
-                        if let Some(mode) = mode {
-                            app.set_draft_runtime_mode(Some(mode), cx);
-                        }
-                        if let Some(use_worktree) = worktree {
-                            app.set_draft_workspace_strategy(use_worktree, cx);
-                        }
-                    });
-                })
-                .map_err(|e| e.to_string())?;
+            let task = with_app_window(app, window, cx, |app, window, cx| {
+                if let Some(title) = project {
+                    let id = app
+                        .shell()
+                        .projects
+                        .iter()
+                        .find(|p| p.title == title || p.id == title)
+                        .ok_or_else(|| format!("Unknown project {title}"))?
+                        .id
+                        .clone();
+                    let draft = app.open_project_draft(id, Some(window), cx);
+                    Ok(gpui_kit::Task::ready(Some(draft)))
+                } else {
+                    Ok(app.start_general_draft(Some(window), cx))
+                }
+            })?;
+            let id = task.await.ok_or("Could not open new thread")?;
+            with_app_window(app, window, cx, |app, _, cx| {
+                if app.active_draft_id() != Some(id.as_str()) {
+                    return Err("New thread is no longer selected".to_owned());
+                }
+                app.set_draft_runtime_mode(mode, cx);
+                if let Some(worktree) = worktree {
+                    app.set_draft_workspace_strategy(worktree, cx);
+                }
+                Ok(())
+            })?;
             Ok(json!("ok"))
         }
         "approve" | "deny" => {

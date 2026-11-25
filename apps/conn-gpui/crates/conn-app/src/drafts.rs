@@ -9,8 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use conn_contract::ChatAttachment;
 use conn_state::{
-    ProjectDraftSlots, Retarget, SidebarDraftRow, draft_has_content, keeps_displaced_draft,
-    persists_across_restart, retarget_draft,
+    ProjectDraftSlots, SidebarDraftRow, draft_has_content, keeps_displaced_draft,
+    persists_across_restart,
 };
 use serde::{Deserialize, Serialize};
 
@@ -82,16 +82,6 @@ impl DraftBook {
         self.parked.remove(&draft_id)
     }
 
-    /// Moves `draft_id` to `target_project_key` when it holds content (`selectProject`).
-    pub(crate) fn retarget(
-        &mut self,
-        draft_id: &str,
-        target_project_key: &str,
-        has_content: bool,
-    ) -> Retarget {
-        retarget_draft(&mut self.slots, draft_id, target_project_key, has_content)
-    }
-
     /// The project key that opens `draft_id`, if one does.
     pub(crate) fn project_key_of(&self, draft_id: &str) -> Option<String> {
         self.slots.project_of(draft_id).map(str::to_owned)
@@ -139,13 +129,6 @@ impl DraftBook {
 
     pub(crate) fn frozen_active(&self) -> Option<&SidebarDraftRow> {
         self.frozen_active.as_ref()
-    }
-
-    /// The open draft moved to another project; its frozen row follows.
-    pub(crate) fn set_frozen_project(&mut self, project_id: &str) {
-        if let Some(row) = &mut self.frozen_active {
-            project_id.clone_into(&mut row.project_id);
-        }
     }
 
     /// Drops parked drafts that no project opens and that hold nothing (`setLogicalProject-

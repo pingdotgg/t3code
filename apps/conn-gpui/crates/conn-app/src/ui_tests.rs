@@ -685,9 +685,12 @@ fn composer_popups_model_picker_and_plan_mode_render_cleanly(cx: &mut TestAppCon
 /// The launch connection asks for the provider catalog, or the composer's picker stays empty
 /// until the user switches servers.
 #[gpui_kit::test]
-fn launch_connection_subscribes_to_server_config(cx: &mut TestAppContext) {
+async fn new_thread_uses_the_primary_scratch_project_and_launches_the_first_message(
+    cx: &mut TestAppContext,
+) {
     cx.executor().allow_parking();
     let (tags_tx, tags_rx) = std::sync::mpsc::channel::<String>();
+    let (launch_tx, mut launch_rx) = tokio::sync::mpsc::unbounded_channel();
     let addr = RT.block_on(async {
         let listener = match TcpListener::bind("127.0.0.1:0").await {
             Ok(l) => l,
@@ -700,6 +703,7 @@ fn launch_connection_subscribes_to_server_config(cx: &mut TestAppContext) {
         tokio::spawn(async move {
             while let Ok((tcp, _)) = listener.accept().await {
                 let tags_tx = tags_tx.clone();
+                let launch_tx = launch_tx.clone();
                 tokio::spawn(async move {
                     let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
                         return;
@@ -707,6 +711,21 @@ fn launch_connection_subscribes_to_server_config(cx: &mut TestAppContext) {
                     while let Some(Ok(Message::Text(text))) = ws.next().await {
                         for frame in conn_wire::decode_client_message(&text).unwrap_or_default() {
                             if let conn_wire::FromClient::Request(req) = frame {
+                                if req.tag == "projects.ensureScratch" {
+                                    let reply = conn_wire::FromServer::Exit {
+                                        request_id: req.id,
+                                        exit: conn_wire::Exit::success(
+                                            json!({"projectId":"primary-scratch"}),
+                                        ),
+                                    };
+                                    ws.send(Message::Text(
+                                        conn_wire::encode_server_frame(&reply).into(),
+                                    ))
+                                    .await
+                                    .expect("send scratch project");
+                                } else if req.tag == "orchestration.launchThread" {
+                                    let _ = launch_tx.send(req.payload);
+                                }
                                 let _ = tags_tx.send(req.tag);
                             }
                         }
@@ -720,7 +739,7 @@ fn launch_connection_subscribes_to_server_config(cx: &mut TestAppContext) {
         Ok(url) => url,
         Err(err) => panic!("invalid loopback URL: {err}"),
     };
-    let (_window, _app) = mount_app_with_server(
+    let (window, app) = mount_app_with_server(
         cx,
         Some(crate::live::StartupServer {
             config: ServerConfig {
@@ -732,14 +751,45 @@ fn launch_connection_subscribes_to_server_config(cx: &mut TestAppContext) {
         }),
     );
 
-    let mut tags = Vec::new();
-    while let Ok(tag) = tags_rx.recv_timeout(Duration::from_secs(5)) {
-        if tag == "subscribeServerConfig" {
-            return;
-        }
-        tags.push(tag);
-    }
-    panic!("launch connection never sent subscribeServerConfig; it sent {tags:?}");
+    while tags_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("server config subscription")
+        != "subscribeServerConfig"
+    {}
+
+    let start = cx
+        .update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.set_shell(two_project_shell(), cx);
+                app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+                app.start_general_draft(Some(window), cx)
+            })
+        })
+        .expect("test window");
+    let draft_id = start.await.expect("opened General draft");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).open_draft_for_test()),
+        Some((draft_id, "primary-scratch".to_owned()))
+    );
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find_by_label("What should we work on?")
+                .is_some()
+        );
+        assert!(window.try_find_by_label("Thread context").is_none());
+        app.update(cx, |app, cx| {
+            app.select_model("codex", "test-model", None, cx);
+            app.send_prompt("Help with Mini".into(), cx);
+        });
+    })
+    .expect("send in draft");
+    let launch = launch_rx.recv().await.expect("launch request");
+    assert_eq!(launch["projectId"], "primary-scratch");
+    assert_eq!(launch["workspaceStrategy"], json!({"type":"root"}));
+    assert_eq!(launch["modelSelection"]["model"], "test-model");
+    assert_eq!(launch["initialMessage"]["text"], "Help with Mini");
 }
 
 #[gpui_kit::test]
@@ -969,26 +1019,26 @@ fn composer_keeps_bottom_breathing_room_and_context_strip_layout(cx: &mut TestAp
         );
     });
 
-    // 3. A new-thread draft always renders the context strip with the same 9px top margin, and the
-    // composer sits vertically centered in the chat card (`isDraftHeroState`).
+    // The same setting applies only after the thread has started.
     cx.update(|cx| {
         app.update(cx, |app, cx| {
-            app.set_persist_composer_context_strip(false, cx);
-            app.start_new_thread(None, None, cx);
+            app.open_project_draft("proj-parity".to_owned(), None, cx);
         });
     });
     let _ = cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
         let hero = window.find_by_label("New thread");
         let card = window.find_by_label("Message input card");
-        let strip = window.find_by_label("Thread context");
-        let top_gap = f32::from(strip.bounds().top()) - f32::from(card.bounds().bottom());
+        assert!(window.try_find_by_label("Thread context").is_none());
         assert!(
-            (8.0..=10.5).contains(&top_gap),
-            "draft context strip top margin should be ~9px (got {top_gap:.1}px)"
+            window
+                .try_find_by_label("What should we work on?")
+                .is_some()
         );
+        assert!(window.try_find_by_label("Attach files").is_some());
+        assert!(window.try_find_by_label("Project: conn-gpui").is_none());
         let above = f32::from(card.bounds().top()) - f32::from(hero.bounds().top());
-        let below = f32::from(hero.bounds().bottom()) - (f32::from(strip.bounds().bottom()) + 9.0);
+        let below = f32::from(hero.bounds().bottom()) - f32::from(card.bounds().bottom());
         assert!(
             (above - below).abs() <= 2.0,
             "draft composer must be vertically centered (above {above:.1}px vs below {below:.1}px)"
@@ -1428,120 +1478,6 @@ fn type_into_composer(
 }
 
 #[gpui_kit::test]
-fn a_draft_moved_onto_a_project_with_a_draft_leaves_that_draft_in_the_sidebar(
-    cx: &mut TestAppContext,
-) {
-    let (window, app) = mount_app(cx);
-    cx.update(|cx| {
-        app.update(cx, |app, cx| {
-            app.set_shell(two_project_shell(), cx);
-            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
-        });
-    });
-
-    // orbit gets a draft with text; conn-gpui gets another.
-    let _ = cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| {
-            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
-        });
-    });
-    type_into_composer(cx, window, &app, "orbit idea");
-    let _ = cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| {
-            app.start_new_thread(Some("proj-parity".to_owned()), Some(window), cx);
-        });
-    });
-    type_into_composer(cx, window, &app, "conn idea");
-    let (moved_id, _) = cx
-        .read(|cx| app.read(cx).open_draft_for_test())
-        .expect("a draft is open");
-
-    // The hero's picker moves the open draft onto orbit, which already has one.
-    cx.update(|cx| {
-        app.update(cx, |app, cx| {
-            app.set_draft_project("proj-other".to_owned(), cx)
-        });
-    });
-    assert_eq!(
-        cx.read(|cx| app.read(cx).open_draft_for_test()),
-        Some((moved_id.clone(), "proj-other".to_owned())),
-        "the draft with content moves to the picked project"
-    );
-    let _ = cx.update_window(window, |_, window, cx| window.render_frame(cx));
-
-    // Orbit's own draft stays: an unmapped row, with its text and project.
-    let _ = cx.update_window(window, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(
-            window
-                .try_find_by_label("orbit idea, Unsent draft, orbit")
-                .is_some(),
-            "the displaced draft keeps a sidebar row"
-        );
-    });
-
-    // Leaving the moved draft lists it too, newest first.
-    cx.update(|cx| {
-        app.update(cx, |app, cx| {
-            app.select_thread("thread-selected".to_owned(), cx)
-        });
-    });
-    let _ = cx.update_window(window, |_, window, cx| {
-        window.render_frame(cx);
-        window.render_frame(cx);
-        assert!(
-            window
-                .try_find_by_label("conn idea, Unsent draft, orbit")
-                .is_some()
-        );
-        assert!(
-            window
-                .try_find_by_label("orbit idea, Unsent draft, orbit")
-                .is_some()
-        );
-    });
-
-    // `New thread` in orbit opens the draft the project points at: the moved one.
-    let _ = cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| {
-            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
-        });
-    });
-    assert_eq!(
-        cx.read(|cx| app.read(cx).open_draft_for_test())
-            .map(|d| d.0),
-        Some(moved_id.clone()),
-    );
-
-    // The unmapped draft reopens from its row, with its text back in the composer.
-    let row = match cx.update_window(window, |_, window, cx| {
-        center_by_label(window, cx, "orbit idea, Unsent draft, orbit")
-    }) {
-        Ok(pt) => pt,
-        Err(err) => panic!("failed to locate the draft row: {err}"),
-    };
-    let _ = cx.update_window(window, |_, window, cx| {
-        window.pointer_move(row, None, cx);
-        window.pointer_down(row, MouseButton::Left, cx);
-        window.pointer_up(row, MouseButton::Left, cx);
-        window.render_frame(cx);
-        window.render_frame(cx);
-    });
-    let reopened = cx.read(|cx| app.read(cx).open_draft_for_test());
-    assert!(
-        reopened.is_some_and(|(id, project)| id != moved_id && project == "proj-other"),
-        "the unmapped draft is the one open now"
-    );
-    let chat = cx.read(|cx| app.read(cx).chat_for_test());
-    let _ = cx.update_window(window, |_, _, cx| {
-        assert!(
-            chat.read(cx).draft_has_content(cx),
-            "the reopened draft shows its text"
-        );
-    });
-}
-
-#[gpui_kit::test]
 fn discarding_a_draft_row_removes_it_and_undo_brings_it_back(cx: &mut TestAppContext) {
     let (window, app) = mount_app(cx);
     cx.update(|cx| {
@@ -1552,7 +1488,7 @@ fn discarding_a_draft_row_removes_it_and_undo_brings_it_back(cx: &mut TestAppCon
     });
     let _ = cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
-            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+            app.open_project_draft("proj-other".to_owned(), Some(window), cx);
         });
     });
     type_into_composer(cx, window, &app, "half a thought");
@@ -1620,7 +1556,7 @@ fn draft_row_menu_offers_copy_project_settings_and_discard(cx: &mut TestAppConte
     });
     let _ = cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
-            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+            app.open_project_draft("proj-other".to_owned(), Some(window), cx);
         });
     });
     type_into_composer(cx, window, &app, "menu draft");
@@ -1690,7 +1626,7 @@ fn drafts_are_saved_to_disk_and_come_back_on_the_next_start(cx: &mut TestAppCont
     });
     let _ = cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
-            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+            app.open_project_draft("proj-other".to_owned(), Some(window), cx);
         });
     });
     type_into_composer(cx, window, &app, "survives a restart");
@@ -1810,7 +1746,7 @@ fn draft_rows_open_and_menu_from_the_keyboard(cx: &mut TestAppContext) {
     });
     let _ = cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
-            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+            app.open_project_draft("proj-other".to_owned(), Some(window), cx);
         });
     });
     type_into_composer(cx, window, &app, "keyboard draft");
@@ -2296,7 +2232,7 @@ fn the_draft_menu_takes_the_arrow_keys(cx: &mut TestAppContext) {
     });
     let _ = cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
-            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+            app.open_project_draft("proj-other".to_owned(), Some(window), cx);
         });
     });
     type_into_composer(cx, window, &app, "menu draft");
@@ -5271,7 +5207,7 @@ fn a_discarded_drafts_browser_goes_when_undo_expires(cx: &mut TestAppContext) {
     let (window, app) = mount_two_thread_app(cx);
     let _ = cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
-            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+            app.open_project_draft("proj-other".to_owned(), Some(window), cx);
         });
     });
     type_into_composer(cx, window, &app, "draft with a page");
