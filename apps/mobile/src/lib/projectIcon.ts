@@ -1,5 +1,6 @@
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { ProjectIconColor, type ProjectIconOverride } from "@t3tools/contracts";
+import { dashboardIconUrl } from "@t3tools/shared/dashboardIcons";
 import { isProjectFaviconFallbackUrl } from "@t3tools/shared/projectFavicon";
 import { projectMonogram } from "@t3tools/shared/projectMonogram";
 import type { AppSymbolName } from "../components/ui/AppSymbol";
@@ -42,6 +43,7 @@ export function resolveProjectIconGlyph(
       return { kind: "monogram", text: projectIcon.text, color: projectIcon.color };
     case "lucide":
       return { kind: "monogram", text: projectMonogram(projectTitle), color: projectIcon.color };
+    case "dashboard-icon":
     case undefined:
       return null;
   }
@@ -71,6 +73,10 @@ export function resolveProjectChipIcon(
   faviconUrl: () => string | null,
 ): ProjectChipIcon | null {
   if (!project || isScratchProject(project, scratchWorkspaceRoot)) return null;
+  if (project.projectIcon?.kind === "dashboard-icon") {
+    // Chip images are built outside React without the appearance, so they use the default file.
+    return { kind: "favicon", uri: dashboardIconUrl(project.projectIcon, "light") };
+  }
   const glyph = resolveProjectIconGlyph(project.projectIcon, project.title);
   if (glyph) return glyph;
   const url = faviconUrl();

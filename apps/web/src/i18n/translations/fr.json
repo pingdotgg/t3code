@@ -9205,7 +9205,23 @@
   "aa453bc3c75ec889": "Emoji personnalisé",
   "f004acc9389f85ab": "Collez un emoji",
   "19fd1473d84aba97": "Choisir l’icône du projet",
-  "c2bc67f3ce7ee110": "Choisissez une icône, un emoji ou un monogramme.",
+  "a6ecfc478ab1caea": "Choisissez une icône, un emoji, un monogramme ou le logo d’une app.",
+  "2fac6636f26addd0": "Logos",
+  "b588accf0def3f69": "Rechercher sur dashboardicons.com",
+  "875ecd4d91821fd6": "Impossible de charger dashboardicons.com.",
+  "d4bb517fc0cbd4e6": "Chargement des icônes…",
+  "16bc8cb61ec0ff56": "Aucune suggestion pour ce projet. Recherchez une app ou un service.",
+  "72aecd2c8c1694a1": "Suggestions",
+  "67aef830ca7751b0": [
+    "Icônes de",
+    " ",
+    {
+      "t": "a",
+      "i": 1,
+      "c": "dashboardicons.com"
+    },
+    ". Les marques appartiennent à leurs propriétaires."
+  ],
   "9aea02b654162049": "Icônes",
   "78f6d1e1dbb5b986": "Emoji",
   "094ddd39c2536c8d": "Monogramme",

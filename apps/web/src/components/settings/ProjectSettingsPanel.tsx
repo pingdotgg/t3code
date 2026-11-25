@@ -605,7 +605,9 @@ function ProjectDetail({
                   ? `${projectIcon.text} · ${projectIcon.color}`
                   : projectIcon?.kind === "emoji"
                     ? projectIcon.emoji
-                    : (faviconPath ?? gt("Automatic"))
+                    : projectIcon?.kind === "dashboard-icon"
+                      ? projectIcon.name
+                      : (faviconPath ?? gt("Automatic"))
             }
             resetAction={
               group.memberProjects.some((member) => !hasDefaultProjectIcon(member)) ? (

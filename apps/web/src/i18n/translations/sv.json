@@ -9211,7 +9211,23 @@
   "aa453bc3c75ec889": "Anpassad emoji",
   "f004acc9389f85ab": "Klistra in en emoji",
   "19fd1473d84aba97": "Välj projektikon",
-  "c2bc67f3ce7ee110": "Välj en ikon, emoji eller ett monogram.",
+  "a6ecfc478ab1caea": "Välj en ikon, emoji, ett monogram eller en applogotyp.",
+  "2fac6636f26addd0": "Logotyper",
+  "b588accf0def3f69": "Sök på dashboardicons.com",
+  "875ecd4d91821fd6": "Det gick inte att läsa in dashboardicons.com.",
+  "d4bb517fc0cbd4e6": "Läser in ikoner…",
+  "16bc8cb61ec0ff56": "Inga förslag för det här projektet. Sök efter en app eller tjänst.",
+  "72aecd2c8c1694a1": "Förslag",
+  "67aef830ca7751b0": [
+    "Ikoner från",
+    " ",
+    {
+      "t": "a",
+      "i": 1,
+      "c": "dashboardicons.com"
+    },
+    ". Varumärken tillhör sina ägare."
+  ],
   "9aea02b654162049": "Ikoner",
   "78f6d1e1dbb5b986": "Emoji",
   "094ddd39c2536c8d": "Monogram",

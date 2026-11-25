@@ -51,6 +51,8 @@ it("only activates the favicon resource after removing a custom icon", async () 
     expect(activeResources.size).toBe(0);
     await screen.rerender(view({ kind: "lucide", name: "leaf", color: "green" }));
     expect(activeResources.size).toBe(0);
+    await screen.rerender(view({ kind: "dashboard-icon", name: "plex", file: "plex.svg" }));
+    expect(activeResources.size).toBe(0);
     await screen.rerender(view(null));
     expect(activeResources.size).toBe(1);
     await screen.rerender(view(project.projectIcon));

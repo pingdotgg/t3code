@@ -38,6 +38,19 @@ describe("resolveProjectChipIcon", () => {
     ).toEqual({ kind: "monogram", text: "LP", color: "emerald" });
   });
 
+  it("loads a dashboard icon from the CDN", () => {
+    const github = project("t3code", {
+      kind: "dashboard-icon",
+      name: "github",
+      file: "github.svg",
+      darkFile: "github-light.svg",
+    });
+    expect(resolveProjectChipIcon(github, null, favicon)).toEqual({
+      kind: "favicon",
+      uri: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/github.svg",
+    });
+  });
+
   it("uses the favicon, then a monogram of the title", () => {
     expect(resolveProjectChipIcon(project("t3code"), null, favicon)).toEqual({
       kind: "favicon",

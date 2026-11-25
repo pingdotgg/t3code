@@ -9213,7 +9213,23 @@
   "aa453bc3c75ec889": "Custom emoji",
   "f004acc9389f85ab": "Paste an emoji",
   "19fd1473d84aba97": "Choose project icon",
-  "c2bc67f3ce7ee110": "Choose an icon, emoji, or monogram.",
+  "a6ecfc478ab1caea": "Choose an icon, emoji, monogram, or app logo.",
+  "2fac6636f26addd0": "Logos",
+  "b588accf0def3f69": "Search dashboardicons.com",
+  "875ecd4d91821fd6": "Could not load dashboardicons.com.",
+  "d4bb517fc0cbd4e6": "Loading icons…",
+  "16bc8cb61ec0ff56": "No suggestions for this project. Search for an app or service.",
+  "72aecd2c8c1694a1": "Suggested",
+  "67aef830ca7751b0": [
+    "Icons from",
+    " ",
+    {
+      "t": "a",
+      "i": 1,
+      "c": "dashboardicons.com"
+    },
+    ". Brands belong to their owners."
+  ],
   "9aea02b654162049": "Icons",
   "78f6d1e1dbb5b986": "Emoji",
   "094ddd39c2536c8d": "Monogram",

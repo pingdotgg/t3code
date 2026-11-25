@@ -5,6 +5,7 @@ import { Image } from "expo-image";
 import { memo, useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 import type { EnvironmentId, ProjectIconOverride } from "@t3tools/contracts";
+import { dashboardIconUrl } from "@t3tools/shared/dashboardIcons";
 import {
   getProjectFaviconCacheKey,
   getProjectFaviconResourceKey,
@@ -46,8 +47,9 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
   const size = props.size ?? 42;
   const symbol = resolveProjectIconSymbol(props.projectIcon);
   const glyph = resolveProjectIconGlyph(props.projectIcon, props.projectTitle);
+  const dashboardIcon = props.projectIcon?.kind === "dashboard-icon" ? props.projectIcon : null;
   const faviconUrl = useAtomValue(
-    props.workspaceRoot == null || glyph !== null
+    props.workspaceRoot == null || glyph !== null || dashboardIcon !== null
       ? EMPTY_FAVICON_URL
       : projectFaviconUrlAtom({
           environmentId: props.environmentId,
@@ -79,6 +81,17 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
     return <ProjectIconGlyphView glyph={glyph} size={size} />;
   }
 
+  if (dashboardIcon !== null) {
+    return (
+      <DashboardProjectFavicon
+        icon={dashboardIcon}
+        open={props.open}
+        projectTitle={props.projectTitle}
+        size={size}
+      />
+    );
+  }
+
   return (
     <ProjectFaviconImage
       key={cacheKey}
@@ -90,6 +103,26 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
     />
   );
 });
+
+function DashboardProjectFavicon(props: {
+  readonly icon: Extract<ProjectIconOverride, { kind: "dashboard-icon" }>;
+  readonly open?: boolean;
+  readonly projectTitle: string;
+  readonly size: number;
+}) {
+  const { themeAppearance } = useAppearancePreferences();
+  const url = dashboardIconUrl(props.icon, themeAppearance);
+  return (
+    <ProjectFaviconImage
+      key={url}
+      cacheKey={url}
+      faviconUrl={url}
+      open={props.open}
+      projectTitle={props.projectTitle}
+      size={props.size}
+    />
+  );
+}
 
 function ProjectIconGlyphView(props: { readonly glyph: ProjectIconGlyph; readonly size: number }) {
   const { glyph, size } = props;
