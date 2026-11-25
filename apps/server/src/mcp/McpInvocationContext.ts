@@ -1,4 +1,5 @@
 import {
+  type AgentFeedbackMode,
   type AuthMcpClientAccess,
   type EnvironmentId,
   McpCapabilityUnavailableError,
@@ -23,6 +24,7 @@ const ALL_MCP_CAPABILITIES = [
   "device",
   "pull-requests",
   "issues",
+  "background-wait",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
@@ -124,10 +126,12 @@ export const withRuntimeModeCeiling = (
   scope: McpInvocationScope,
   ceiling: RuntimeMode | undefined,
 ): McpInvocationScope => {
-  if (ceiling === undefined || scope.client === undefined) return scope;
+  if (ceiling === undefined) return scope;
+  if (scope.client === undefined) return { ...scope, runtimeModeCeiling: ceiling };
   const asked = scope.client.narrowedTo;
   return {
     ...scope,
+    runtimeModeCeiling: ceiling,
     client: {
       ...scope.client,
       narrowedTo: {
@@ -151,6 +155,12 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
+  /** The Agent feedback mode here; `/mcp` reads it per request. Unset is off. */
+  readonly agentFeedback?: AgentFeedbackMode;
+  /** The broadest runtime mode an administrator lets a thread run in here. Unset is full access. */
+  readonly runtimeModeCeiling?: RuntimeMode | undefined;
+  /** True while Labs → Workflows is on here; `/mcp` reads it per request. Unset is off. */
+  readonly workflows?: boolean;
   /**
    * The origin this `/mcp` request reached, e.g. a T3 Connect tunnel. Hosted clients cannot
    * see the URL they were configured with, so links they must fetch carry it. Unset in-process.
@@ -203,11 +213,41 @@ export const hiddenFromOutsideClients = (): boolean => {
   return scope === undefined || scope.thread !== undefined;
 };
 
+/** `hiddenFromOutsideClients`, and hidden from a thread whose provider cannot hold for background work. */
+export const hiddenWithoutBackgroundWait = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return (
+    scope === undefined || (scope.thread !== undefined && scope.capabilities.has("background-wait"))
+  );
+};
+
+/** `McpSchema.EnabledWhen` for tools only a client outside a thread drives, such as the CLI. */
+export const hiddenFromThreads = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.thread === undefined;
+};
+
 /** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */
 export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.linkedEnvironments !== false;
+};
+
+/** `McpSchema.EnabledWhen` for agent feedback tools, for every client including `t3 feedback`. */
+export const hiddenWhileFeedbackOff = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.agentFeedback !== undefined && scope.agentFeedback !== "off";
+};
+
+/** `McpSchema.EnabledWhen` for workflow event types: outside clients only, while Workflows is on. */
+export const hiddenUnlessWorkflowEvents = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope !== undefined && scope.thread === undefined && scope.workflows === true;
 };
 
 /** `McpSchema.EnabledWhen` for tools that act on the thread's forge, hidden where it has none. */

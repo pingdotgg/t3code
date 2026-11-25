@@ -253,7 +253,8 @@ export const make = (
       const paths = [...blobs.map((blob) => blob.path), ...snapshot.pending];
       if (paths.length === 0) return NOTHING;
       const unchecked = Effect.succeed({ exitCode: 1, stdout: "" });
-      const stdin = `${blobs.map((blob) => `${blob.path}\0`).join("")}`;
+      // ./ avoids leading : pathspec magic; check-ignore rejects --literal-pathspecs.
+      const stdin = blobs.map((blob) => `./${blob.path}\0`).join("");
       const [config, attributes, ignored, objects] = yield* Effect.all(
         [
           readConfig(input.cwd),
@@ -290,7 +291,9 @@ export const make = (
         attributes: new Map(paths.map((entryPath, index) => [entryPath, attributes[index]])),
       };
       if (config !== snapshot.config || ignored.exitCode > 1) return { reused: [], before };
-      const ignoredPaths = new Set(ignored.stdout.split("\0"));
+      const ignoredPaths = new Set(
+        ignored.stdout.split("\0").map((entryPath) => entryPath.replace(/^\.\//, "")),
+      );
       const present = new Set(objects.stdout.split("\n"));
       blobs = blobs.filter(
         (blob, index) =>

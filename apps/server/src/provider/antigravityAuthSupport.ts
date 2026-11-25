@@ -227,6 +227,11 @@ function antigravityEnvironment(
     baseEnv.SSL_CERT_DIR === undefined
       ? { SSL_CERT_FILE: profile.caBundlePath }
       : {}),
+    // The 1.5 CLI ignores AGY_ACP_FORCE_FILE_STORAGE and keeps Google sign-ins in one OS keyring
+    // entry for every profile, unless it believes it runs over SSH. Sign-in then uses `--login`.
+    ...(auth.authMethod === "oauth-personal"
+      ? { SSH_CONNECTION: baseEnv.SSH_CONNECTION || "127.0.0.1 0 127.0.0.1 0" }
+      : {}),
     GEMINI_HOME: profile.geminiHome,
     AGY_ACP_FORCE_FILE_STORAGE: "1",
     AGY_CLI_DISABLE_AUTO_UPDATE: "1",
@@ -248,7 +253,11 @@ class AntigravitySkillLinkError extends Schema.TaggedError<AntigravitySkillLinkE
   }
 }
 
-const antigravityUserRuleFiles = ["AGENTS.md", "GEMINI.md"] as const;
+const antigravityUserConfigFiles = [
+  ["AGENTS.md"],
+  ["GEMINI.md"],
+  ["config", "skills.json"],
+] as const;
 
 /** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills and rules from the real ~/.gemini. */
 const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(function* (input: {
@@ -265,12 +274,16 @@ const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(functio
   for (const [link, target, type] of [
     [links[0], targets[0], directoryType],
     [links[1], targets[1], directoryType],
-    // File symlinks need elevation or Developer Mode on Windows, so rules are copied there.
+    // File symlinks need elevation or Developer Mode on Windows, so config files are copied there.
     ...(input.platform === "win32"
       ? []
-      : antigravityUserRuleFiles.map(
-          (name) =>
-            [path.join(input.profileDirectory, name), path.join(userGemini, name), "file"] as const,
+      : antigravityUserConfigFiles.map(
+          (segments) =>
+            [
+              path.join(input.profileDirectory, ...segments),
+              path.join(userGemini, ...segments),
+              "file",
+            ] as const,
         )),
   ] as const) {
     yield* Effect.gen(function* () {
@@ -324,54 +337,58 @@ const decodeRuleCopies = Schema.decodeUnknownOption(RuleCopiesJson);
 const encodeRuleCopies = Schema.encodeSync(RuleCopiesJson);
 
 /** Copies refresh each launch; the recorded copy keeps a file the profile owns or edited untouched. */
-const copyAntigravityUserRuleFiles = Effect.fn("copyAntigravityUserRuleFiles")(function* (input: {
-  readonly profileDirectory: string;
-  readonly userHome: string;
-}): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const manifestPath = path.join(input.profileDirectory, ".t3-rule-copies.json");
-  const readOptional = (file: string) =>
-    fs.readFileString(file).pipe(Effect.orElseSucceed((): string | undefined => undefined));
-  const manifestText = yield* readOptional(manifestPath);
-  const copies: Record<string, string> = {
-    ...Option.getOrElse(decodeRuleCopies(manifestText), () => ({})),
-  };
-  for (const name of antigravityUserRuleFiles) {
-    const link = path.join(input.profileDirectory, name);
-    const target = path.join(input.userHome, ".gemini", name);
-    yield* Effect.gen(function* () {
-      const current = yield* readOptional(link);
-      if (current !== undefined && current !== copies[name]) {
-        delete copies[name];
-        return;
-      }
-      const source = yield* readOptional(target);
-      if (source === undefined) {
-        if (current !== undefined) yield* fs.remove(link);
-        delete copies[name];
-        return;
-      }
-      yield* fs.writeFileString(link, source);
-      copies[name] = source;
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Antigravity user rules are not copied into the profile.", {
-          link,
-          target,
-          error,
-        }),
-      ),
-    );
-  }
-  yield* fs
-    .writeFileString(manifestPath, encodeRuleCopies(copies))
-    .pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Antigravity rule copy record could not be written.", { error }),
-      ),
-    );
-});
+const copyAntigravityUserConfigFiles = Effect.fn("copyAntigravityUserConfigFiles")(
+  function* (input: {
+    readonly profileDirectory: string;
+    readonly userHome: string;
+  }): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const manifestPath = path.join(input.profileDirectory, ".t3-rule-copies.json");
+    const readOptional = (file: string) =>
+      fs.readFileString(file).pipe(Effect.orElseSucceed((): string | undefined => undefined));
+    const manifestText = yield* readOptional(manifestPath);
+    const copies: Record<string, string> = {
+      ...Option.getOrElse(decodeRuleCopies(manifestText), () => ({})),
+    };
+    for (const segments of antigravityUserConfigFiles) {
+      const key = segments.join("/");
+      const link = path.join(input.profileDirectory, ...segments);
+      const target = path.join(input.userHome, ".gemini", ...segments);
+      yield* Effect.gen(function* () {
+        const current = yield* readOptional(link);
+        if (current !== undefined && current !== copies[key]) {
+          delete copies[key];
+          return;
+        }
+        const source = yield* readOptional(target);
+        if (source === undefined) {
+          if (current !== undefined) yield* fs.remove(link);
+          delete copies[key];
+          return;
+        }
+        yield* fs.makeDirectory(path.dirname(link), { recursive: true });
+        yield* fs.writeFileString(link, source);
+        copies[key] = source;
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Antigravity user configuration is not copied into the profile.", {
+            link,
+            target,
+            error,
+          }),
+        ),
+      );
+    }
+    yield* fs
+      .writeFileString(manifestPath, encodeRuleCopies(copies))
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Antigravity rule copy record could not be written.", { error }),
+        ),
+      );
+  },
+);
 
 export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(function* (input: {
   readonly profileDirectory: string;
@@ -521,7 +538,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     );
   yield* linkAntigravityUserConfig({ profileDirectory: geminiHome, userHome, platform });
   if (platform === "win32") {
-    yield* copyAntigravityUserRuleFiles({ profileDirectory: geminiHome, userHome });
+    yield* copyAntigravityUserConfigFiles({ profileDirectory: geminiHome, userHome });
   }
   return profile;
 });

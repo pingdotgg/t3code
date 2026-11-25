@@ -55,6 +55,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   edit: { changeRequest: true, comment: true, maintainerEdits: true },
   stacks: true,
   stackActions: true,
+  stackAutoMerge: true,
   labels: true,
   // Statuses and check runs land on the head commit itself and are read whole, so an empty list
   // after a push is CI that never started rather than a read that saw nothing.
@@ -334,7 +335,7 @@ export const make = Effect.gen(function* () {
   const readChecks = (input: ProviderRepositoryRef & { readonly number: number }) =>
     cli.getPullRequestDetail(input).pipe(
       Effect.flatMap((pullRequest) =>
-        (pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
+        (pullRequest.state !== "open"
           ? Effect.succeed({
               runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
               unavailable: false,
@@ -350,7 +351,7 @@ export const make = Effect.gen(function* () {
                   headSha: pullRequest.headSha,
                   headBranch: pullRequest.headBranch,
                   headRepositoryOwner: pullRequest.headRepositoryOwner,
-                  isCrossRepository: true,
+                  isCrossRepository: pullRequest.isCrossRepository === true,
                 })
                 .pipe(
                   Effect.matchEffect({
@@ -786,6 +787,7 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,
+          number: input.number,
           threadId: input.threadId,
           body: input.body,
         })
@@ -810,6 +812,7 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,
+          number: input.number,
           threadId: input.threadId,
           resolved: input.resolved,
         })

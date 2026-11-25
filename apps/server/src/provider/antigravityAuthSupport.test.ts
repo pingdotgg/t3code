@@ -99,6 +99,7 @@ describe("Antigravity process environment", () => {
         HOME: "/home/developer",
         PATH: "/usr/bin",
         CUSTOM_SETTING: "keep-this",
+        SSH_CONNECTION: "127.0.0.1 0 127.0.0.1 0",
         GEMINI_HOME: profile.geminiHome,
         AGY_ACP_FORCE_FILE_STORAGE: "1",
         AGY_CLI_DISABLE_AUTO_UPDATE: "1",
@@ -148,6 +149,13 @@ describe("Antigravity process environment", () => {
     });
     expect(business.GEMINI_API_KEY).toBeUndefined();
     expect(business.GOOGLE_API_KEY).toBeUndefined();
+
+    // Only the Google account method has the `--login` sign-in that works without the keyring.
+    for (const env of [geminiKey, vertexKey, business]) expect(env.SSH_CONNECTION).toBeUndefined();
+    expect(
+      spawnFor({ authMethod: "oauth-personal", apiKey: "", gcpProject: "", gcpLocation: "" })
+        .SSH_CONNECTION,
+    ).toBe("127.0.0.1 0 127.0.0.1 0");
   });
 
   it("isolates TEMP and TMP to the profile directory on Windows", () => {
@@ -691,9 +699,13 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         const userHome = path.join(temporaryDirectory, "home");
         const profileDirectory = path.join(temporaryDirectory, "profile");
         const userGemini = path.join(userHome, ".gemini");
-        yield* fs.makeDirectory(userGemini, { recursive: true });
+        yield* fs.makeDirectory(path.join(userGemini, "config"), { recursive: true });
         yield* fs.writeFileString(path.join(userGemini, "AGENTS.md"), "global agents rule");
         yield* fs.writeFileString(path.join(userGemini, "GEMINI.md"), "global gemini rule");
+        yield* fs.writeFileString(
+          path.join(userGemini, "config", "skills.json"),
+          JSON.stringify({ entries: [{ path: "/tmp/shared-skills" }] }),
+        );
 
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         expect(yield* fs.readLink(path.join(profileDirectory, "AGENTS.md"))).toBe(
@@ -702,12 +714,17 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect(yield* fs.readLink(path.join(profileDirectory, "GEMINI.md"))).toBe(
           path.join(userGemini, "GEMINI.md"),
         );
+        expect(yield* fs.readLink(path.join(profileDirectory, "config", "skills.json"))).toBe(
+          path.join(userGemini, "config", "skills.json"),
+        );
 
         yield* fs.remove(path.join(userGemini, "AGENTS.md"));
+        yield* fs.remove(path.join(userGemini, "config", "skills.json"));
         yield* fs.remove(path.join(profileDirectory, "GEMINI.md"));
         yield* fs.writeFileString(path.join(profileDirectory, "GEMINI.md"), "profile's own rule");
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         expect(yield* fs.exists(path.join(profileDirectory, "AGENTS.md"))).toBe(false);
+        expect(yield* fs.exists(path.join(profileDirectory, "config", "skills.json"))).toBe(false);
         expect(yield* fs.readFileString(path.join(profileDirectory, "GEMINI.md"))).toBe(
           "profile's own rule",
         );
@@ -725,24 +742,32 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       const prepare = prepareAntigravityProfile({ profileDirectory, userHome, platform: "win32" });
       const profileAgents = path.join(profileDirectory, "AGENTS.md");
       const profileGemini = path.join(profileDirectory, "GEMINI.md");
-      yield* fs.makeDirectory(userGemini, { recursive: true });
+      const profileSkillsJson = path.join(profileDirectory, "config", "skills.json");
+      const userSkillsJson = path.join(userGemini, "config", "skills.json");
+      yield* fs.makeDirectory(path.join(userGemini, "config"), { recursive: true });
       yield* fs.writeFileString(path.join(userGemini, "AGENTS.md"), "global agents rule");
       yield* fs.writeFileString(path.join(userGemini, "GEMINI.md"), "global gemini rule");
+      yield* fs.writeFileString(userSkillsJson, '{"entries":[]}');
 
       yield* prepare;
       expect(yield* fs.readFileString(profileAgents)).toBe("global agents rule");
       expect(yield* fs.readFileString(profileGemini)).toBe("global gemini rule");
+      expect(yield* fs.readFileString(profileSkillsJson)).toBe('{"entries":[]}');
 
       yield* fs.writeFileString(path.join(userGemini, "AGENTS.md"), "edited agents rule");
       yield* fs.remove(path.join(userGemini, "GEMINI.md"));
+      yield* fs.writeFileString(userSkillsJson, '{"entries":[{"path":"/skills"}]}');
       yield* prepare;
       expect(yield* fs.readFileString(profileAgents)).toBe("edited agents rule");
       expect(yield* fs.exists(profileGemini)).toBe(false);
+      expect(yield* fs.readFileString(profileSkillsJson)).toBe('{"entries":[{"path":"/skills"}]}');
 
       yield* fs.writeFileString(profileGemini, "profile's own rule");
       yield* fs.writeFileString(path.join(userGemini, "GEMINI.md"), "global gemini rule");
+      yield* fs.remove(userSkillsJson);
       yield* prepare;
       expect(yield* fs.readFileString(profileGemini)).toBe("profile's own rule");
+      expect(yield* fs.exists(profileSkillsJson)).toBe(false);
     }),
   );
 
