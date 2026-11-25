@@ -69,6 +69,11 @@ export class RunContext extends Context.Service<
     readonly inFlight: InFlight;
     /** Have the engine see the agent turn behind the open wait `wait` through, and wake it. */
     readonly watchTurn: (wait: string) => Effect.Effect<void>;
+    /** Queue the wait `name` for a place in `pool`, which wakes it once it has one. */
+    readonly placeAsked: (name: string, pool: string, size: number) => Effect.Effect<void>;
+    readonly placeLeft: (name: string) => Effect.Effect<void>;
+    /** Hands out the places a pause gave back. */
+    readonly placesFreed: Effect.Effect<void>;
   }
 >()("t3/workflows/workflow/RunContext") {}
 
@@ -200,7 +205,7 @@ export const journaled = <A, I, E>(
       Effect.tapError((error) =>
         Effect.andThen(
           run.store.stepEnded(run.runId, name, "failed", error.reason),
-          run.store.runPaused(run.runId, error.message, held),
+          Effect.andThen(run.store.runPaused(run.runId, error.message, held), run.placesFreed),
         ),
       ),
     ),
@@ -433,7 +438,7 @@ export const jsonSchemaOf = (schema: Schema.Top, closed = false): Record<string,
 
 /** `wait`, also as the question a person answers: `request` is what an inbox shows them. */
 export const waitAs = Effect.fn("workflow.wait")(function* <A, I>(
-  kind: "wait" | "ask",
+  kind: "wait" | "ask" | "queue",
   name: string,
   options: WaitOptions<A, I>,
 ): Effect.fn.Return<Option.Option<A>, StepFailed, InRun> {
@@ -447,6 +452,8 @@ interface WaitOptions<A, I> {
   readonly request?: Schema.Json | undefined;
   /** What the engine looks at to end the wait by itself. */
   readonly watch?: Schema.Json | undefined;
+  /** The pool a `queue` waits for a place in. */
+  readonly pool?: { readonly name: string; readonly size: number } | undefined;
 }
 
 const sameAddress = (left: WorkflowStore.SignalAddress, right: WorkflowStore.SignalAddress) =>
@@ -456,7 +463,7 @@ const sameAddress = (left: WorkflowStore.SignalAddress, right: WorkflowStore.Sig
 
 const waitClaimed = Effect.fnUntraced(function* <A, I>(
   run: RunContext["Service"],
-  kind: "wait" | "ask",
+  kind: "wait" | "ask" | "queue",
   name: string,
   options: WaitOptions<A, I>,
 ): Effect.fn.Return<Option.Option<A>, StepFailed, InRun> {
@@ -519,7 +526,15 @@ const waitClaimed = Effect.fnUntraced(function* <A, I>(
         watchJson: options.watch === undefined ? null : WorkflowStore.jsonText(options.watch),
         deadline,
       });
-      yield* run.store.runStatus(run.runId, "waiting", name);
+      if (options.pool !== undefined) {
+        yield* run.store.stepDetail(run.runId, name, options.pool.name);
+        yield* run.placeAsked(name, options.pool.name, options.pool.size);
+      }
+      yield* run.store.runStatus(
+        run.runId,
+        "waiting",
+        options.pool === undefined ? name : `queue ${options.pool.name}`,
+      );
       yield* deliverEarly(first, firstToken);
     }),
   });
@@ -572,6 +587,58 @@ export const wait = <A, I>(
 ): Effect.Effect<Option.Option<A>, never, InRun> => {
   checkOptions(`wait("${name}")`, options, ["returns", "timeout", "channel"]);
   return Effect.orDie(waitAs("wait", name, options));
+};
+
+const checkLimit = (what: string, limit: unknown) => {
+  if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1) {
+    throw new Error(`${what} takes a whole number of places of 1 or more, as in { limit: 4 }.`);
+  }
+};
+
+/** Holds a place in `pool` while `body` runs, waiting first in line for one when it is full. */
+const holding = Effect.fn("workflow.within")(function* <A, E, R>(
+  name: string,
+  pool: string,
+  limit: number,
+  body: Effect.Effect<A, E, R>,
+): Effect.fn.Return<A, E, R | InRun> {
+  const run = yield* claim(name);
+  yield* Effect.orDie(
+    waitClaimed(run, "queue", name, {
+      returns: Schema.Null,
+      pool: { name: pool, size: limit },
+    }),
+  );
+  const value = yield* body;
+  // A run that pauses or ends inside gives its place back there; this is the body finishing.
+  yield* Activity.make({ name: `${name}/leave`, execute: run.placeLeft(name) });
+  return value;
+});
+
+/**
+ * Run `body` holding one of `limit` places in the pool `pool`, shared by every run on the server.
+ * When all are taken the step queues, first come first served, and the run shows as queued. The
+ * place is given back when `body` ends, or its run pauses or ends; a resumed run queues for it again.
+ * `limit: 1` is a lock.
+ */
+export const within = <A, E, R>(
+  pool: string,
+  options: { readonly limit: number },
+  body: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R | InRun> => {
+  if (typeof pool !== "string" || pool.trim() === "") {
+    throw new Error(
+      'within takes the pool\'s name first, as in within("builders", { limit: 4 }, …).',
+    );
+  }
+  checkOptions(`within("${pool}")`, options, ["limit"]);
+  checkLimit(`within("${pool}")`, options?.limit);
+  return Effect.flatMap(RunContext, (current) => {
+    // Numbered by how many came before in the body, which a replay walks the same way.
+    let n = 1;
+    while (current.names.has(n === 1 ? `pool:${pool}` : `pool:${pool}#${n}`)) n++;
+    return holding(n === 1 ? `pool:${pool}` : `pool:${pool}#${n}`, pool, options.limit, body);
+  });
 };
 
 /** End the run by the workflow's own decision. It ends as `stopped`, which is not a failure. */
@@ -668,6 +735,8 @@ export interface WorkflowDefinition<P = never, A = unknown> {
   readonly triggers: ReadonlyArray<ScheduleTrigger | WebhookTrigger | OpenedTrigger>;
   /** The kinds of question it asks, each with the label a list shows, in the order to show them. */
   readonly asks: AskKinds;
+  /** How many of its runs may go on at once; undefined for no limit. */
+  readonly concurrency: number | undefined;
   /** Fails with the reason as text: by here nothing reads the error but a person. */
   readonly onEnd:
     | ((payload: never, end: RunEnd) => Effect.Effect<void, string, InStep>)
@@ -755,6 +824,8 @@ const invokeAs = Effect.fn("workflow.invoke")(function* <P, A>(
 
 /** The step `onEnd` runs as. */
 export const END_STEP = "onEnd";
+/** The step a run of a workflow with `concurrency` waits for its place as. */
+const RUN_PLACE = "queue";
 const END_RETRY: StepRetry = { times: 3, schedule: Schedule.exponential("2 seconds") };
 
 const DEFAULT_RESUME_AFTER: ReadonlyArray<Duration.Input> = [
@@ -785,6 +856,8 @@ export const workflow = <P, PI, A = void, AI = void, EndError = never>(
      * listed as Other.
      */
     readonly asks?: AskKinds;
+    /** How many runs of this workflow go on at once, across its versions. Later ones queue. */
+    readonly concurrency?: number;
     /**
      * Runs once when the run ends, however it ends, to give back what the run took: a machine, a
      * lock. It gets the payload and the run's id, not the body's values, so name what the run
@@ -804,8 +877,12 @@ export const workflow = <P, PI, A = void, AI = void, EndError = never>(
     "resumeAfter",
     "triggers",
     "asks",
+    "concurrency",
     "onEnd",
   ]);
+  if (options.concurrency !== undefined) {
+    checkLimit(`workflow("${name}")'s concurrency`, options.concurrency);
+  }
   // Read once now, so a duration that does not parse fails the file and not a paused run later.
   for (const rest of options.resumeAfter ?? [])
     durationOf(`workflow("${name}")'s resumeAfter`, rest);
@@ -829,6 +906,7 @@ const definitionOf = <P, PI, A, AI, EndError>(
   resumeAfter: options.resumeAfter ?? DEFAULT_RESUME_AFTER,
   triggers: options.triggers ?? [],
   asks: checkAskKinds(name, options.asks),
+  concurrency: options.concurrency,
   onEnd:
     options.onEnd === undefined
       ? undefined
@@ -878,7 +956,12 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
         }),
       });
       const input = (yield* Effect.orDie(decodePayload(payload.input))) as never;
-      const outcome = yield* definition.body(input, { id: runId }).pipe(
+      const body = definition.body(input, { id: runId });
+      const outcome = yield* (
+        definition.concurrency === undefined
+          ? body
+          : holding(RUN_PLACE, definition.name, definition.concurrency, body)
+      ).pipe(
         Effect.flatMap((value) =>
           definition.returns === ANY_JSON
             ? untypedResult(value)
@@ -932,13 +1015,24 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
             watchTurn: Effect.fn("RunContext.watchTurn")(function* (wait: string) {
               if (link.current !== undefined) yield* link.current.watchTurn(runId, wait);
             }),
+            placeAsked: Effect.fn("RunContext.placeAsked")(function* (name, pool, size) {
+              if (link.current !== undefined) {
+                yield* link.current.placeAsked({ runId, name, pool, size });
+              }
+            }),
+            placeLeft: Effect.fn("RunContext.placeLeft")(function* (name) {
+              if (link.current !== undefined) yield* link.current.placeLeft(runId, name);
+            }),
+            placesFreed: Effect.suspend(() => link.current?.placesFreed ?? Effect.void),
           }),
         ),
       );
       yield* Activity.make({
         name: "run/end",
-        execute: Effect.asVoid(
+        execute: Effect.andThen(
           store.runEnded(runId, outcome.outcome, outcome.reason ?? null, outcome.value),
+          // What it still held, as a run that stops inside `within` does, goes to the next.
+          Effect.suspend(() => link.current?.placesFreed ?? Effect.void),
         ),
       });
       yield* Activity.make({

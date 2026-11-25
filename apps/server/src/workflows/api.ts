@@ -11,5 +11,16 @@ export { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 export { issues, pullRequests } from "./forgeApi.ts";
 export { cancel, runs, signal, signalAll, start, store } from "./stepServices.ts";
 export { Issue, IssueDetail, PullRequest, PullRequestStanding } from "./WorkflowForge.ts";
-export { invoke, skip, sleep, step, stop, tags, title, wait, workflow } from "./workflow.ts";
+export {
+  invoke,
+  skip,
+  sleep,
+  step,
+  stop,
+  tags,
+  title,
+  wait,
+  within,
+  workflow,
+} from "./workflow.ts";
 export { agent, ask } from "./workflowAgent.ts";

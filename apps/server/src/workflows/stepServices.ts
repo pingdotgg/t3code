@@ -122,6 +122,17 @@ export class EngineLink extends Context.Service<
           readonly ended: (runId: string) => Effect.Effect<void>;
           /** Watch the agent turn behind an open wait of `runId` until it ends. */
           readonly watchTurn: (runId: string, wait: string) => Effect.Effect<void>;
+          /** Queue the step `name` of `runId` for a place in `pool`; true when it has one now. */
+          readonly placeAsked: (place: {
+            readonly runId: string;
+            readonly name: string;
+            readonly pool: string;
+            readonly size: number;
+          }) => Effect.Effect<boolean>;
+          /** The step is done with its place, which goes to the next in line. */
+          readonly placeLeft: (runId: string, name: string) => Effect.Effect<void>;
+          /** Hands out the places a pause or an end gave back. */
+          readonly placesFreed: Effect.Effect<void>;
         }
       | undefined;
     /** The steps of each run that are running in this process right now. */

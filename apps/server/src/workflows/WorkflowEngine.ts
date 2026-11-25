@@ -205,6 +205,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   // claim keeps the value, and the resume sends it.
   const wake = Effect.fnUntraced(function* (wait: WorkflowStore.WaitRow, value: typeof Woke.Type) {
     if (resuming.has(wait.run_id) || (yield* store.run(wait.run_id))?.status === "paused") return;
+    // Resumed, but held back until it has its places again: the resume sends the wake.
+    if (yield* store.placesReturning(wait.run_id)) return;
     yield* send(wait, value);
   });
 
@@ -605,6 +607,27 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     },
   );
 
+  // A place given to a queued step wakes its wait. A place given back to a resumed run, once it
+  // has all it gave up, resumes it, apart from whatever handed the place out.
+  const placeWake = (runId: string, name: string) =>
+    Effect.ignore(signal({ runId, wait: name }, null, { id: `place:${runId}/${name}` }));
+  // Typed, as it and the resume it starts refer to each other.
+  const placesTaken: (given: ReadonlyArray<WorkflowStore.PlaceRow>) => Effect.Effect<void> =
+    Effect.fnUntraced(function* (given) {
+      for (const place of given) {
+        if (place.state === "queued") {
+          yield* placeWake(place.run_id, place.name);
+          continue;
+        }
+        if (yield* store.placesReturning(place.run_id)) continue;
+        yield* store.runResumed(place.run_id);
+        yield* Effect.forkIn(Effect.ignore(resumeRun(place.run_id)), scope);
+      }
+    });
+  const placesFreed: Effect.Effect<void> = Effect.flatMap(store.placesGiven, (given) =>
+    placesTaken(given),
+  );
+
   /** With `pause`, the sweep's own resume, which only resumes that pause and not a later one. */
   const resumeRun = Effect.fn("WorkflowEngine.resumeRun")(function* (
     runId: string,
@@ -629,6 +652,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         );
         if (!unpaused && pause !== undefined) return false;
       }
+      // The places its pause gave up come back first, in its old turn.
+      if (yield* store.placesBack(runId)) return "queued" as const;
+      if (yield* store.placesReturning(runId)) return "queued" as const;
       // The step marks its run paused from inside the engine, a moment before the engine records
       // the failure. Resuming in that moment would do nothing, so the record is waited for.
       yield* withEngine(engine.poll(runId)).pipe(
@@ -642,6 +668,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       yield* store.runUnheld(runId);
       return true;
     }).pipe(Effect.ensuring(Effect.sync(() => resuming.delete(runId))));
+    if (resumed === "queued") return yield* placesFreed;
     // Read once `resuming` is clear, so a wake held back meanwhile is among them.
     if (!resumed) return;
     for (const wait of yield* store.waitsClaimed(runId)) {
@@ -655,6 +682,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     if (resuming.has(row.run_id)) return;
     const engine = byTag.get(row.engine_tag);
     if (engine === undefined) return;
+    // Resumed already, and held back until it has its places again.
+    if (yield* store.placesReturning(row.run_id)) return;
     const result = yield* withEngine(engine.poll(row.run_id));
     if (Option.isNone(result) || result.value._tag !== "Suspended") return;
     if (result.value.failed !== true) return;
@@ -664,6 +693,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       row.run_id,
       cause === undefined ? "A step failed." : text(Cause.squash(cause)),
     );
+    yield* placesFreed;
   });
 
   // A cancelled run's body is gone, so its `onEnd` runs here, outside the engine. The sweep asks
@@ -750,6 +780,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       if (wait.woke_json === null) continue;
       yield* wake(wait, WorkflowStore.jsonValue(wait.woke_json) as typeof Woke.Type);
     }
+    // Places a pause or an end gave back, and places whose wake a crash swallowed.
+    yield* placesFreed;
+    yield* placesTaken(yield* store.placesUnwoken);
     // A cancel that was cut short before it reached what the run had invoked.
     for (const child of yield* store.orphans) {
       yield* Effect.ignore(cancel(child.run_id, "the run that invoked it was cancelled"));
@@ -1008,6 +1041,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
             if (!(yield* store.runEnded(runId, "cancelled", reason ?? null, null))) return false;
             if (engine !== undefined) yield* withEngine(engine.interrupt(runId));
             yield* ended(runId);
+            yield* placesFreed;
             return true;
           }),
         );
@@ -1037,6 +1071,17 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     start,
     ended,
     watchTurn,
+    placeAsked: Effect.fn("WorkflowEngine.placeAsked")(function* (place) {
+      const asked = yield* store.placeAsked(place);
+      yield* placesTaken(asked.given);
+      if (asked.held) yield* placeWake(place.runId, place.name);
+      return asked.held;
+    }),
+    placeLeft: Effect.fn("WorkflowEngine.placeLeft")(function* (runId, name) {
+      yield* store.placeLeft(runId, name);
+      yield* placesFreed;
+    }),
+    placesFreed,
     cancel: (runId, reason) => cancel(runId, reason),
     list: Effect.fn("WorkflowEngine.list")(function* (filter) {
       return (yield* store.runsWhere(filter)).map((row) => ({
@@ -1087,6 +1132,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           environmentId: step.environment_id,
           result: step.result_json === null ? null : WorkflowStore.jsonValue(step.result_json),
           said: step.said,
+          ...(step.ahead === null ? {} : { ahead: Number(step.ahead) }),
           startedAt: step.started_at,
           endedAt: step.ended_at,
         })),

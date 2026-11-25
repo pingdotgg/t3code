@@ -33,6 +33,7 @@ import {
   text,
   title,
   wait,
+  within,
   workflow,
 } from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
@@ -40,6 +41,7 @@ import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
+import WorkflowPoolsMigration from "../persistence/Migrations/116_WorkflowPools.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import {
   Issue,
@@ -443,6 +445,46 @@ const control = [
   ),
 ];
 
+const lockFailures = { left: 0 };
+/** The runs that got into a pool, in the order they did. */
+const entered: Array<string> = [];
+const holdUntilDone = (id: string) =>
+  Effect.andThen(
+    step(
+      "entered",
+      { returns: Schema.Number, ...once },
+      Effect.sync(() => entered.push(id)),
+    ),
+    Effect.asVoid(wait("done", { returns: Schema.Null })),
+  );
+const pooled = [
+  workflow("pooled", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, (payload) =>
+    within("p", { limit: 2 }, holdUntilDone(payload.id)),
+  ),
+  /** Fails inside its lock while `lockFailures` lasts. */
+  workflow("locked", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, (payload) =>
+    within(
+      "q",
+      { limit: 1 },
+      Effect.andThen(
+        step(
+          "try",
+          { returns: Schema.Number, ...once },
+          Effect.suspend(() =>
+            lockFailures.left-- > 0 ? Effect.fail("not yet") : Effect.succeed(1),
+          ),
+        ),
+        holdUntilDone(payload.id),
+      ),
+    ),
+  ),
+  workflow(
+    "solo",
+    { version: 1, payload: Schema.Struct({ id: Schema.String }), concurrency: 1 },
+    (payload) => holdUntilDone(payload.id),
+  ),
+];
+
 type Started = Parameters<WorkflowAgents["Service"]["start"]>[0];
 
 /** Agents the test plays: it sees each turn start and decides how that turn ends. */
@@ -757,6 +799,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
   yield* Effect.provide(
     Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration).pipe(
       Effect.andThen(WorkflowRunTagsMigration),
+      Effect.andThen(WorkflowPoolsMigration),
     ),
     database,
   );
@@ -780,6 +823,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
     ...family,
     ...control,
     ...sorted,
+    ...pooled,
   ];
   const engineOf = (registered: typeof all) =>
     WorkflowEngine.layer(registered, store).pipe(
@@ -2502,3 +2546,119 @@ it("error text cuts at 2,000 units without leaving half an emoji", () => {
     `outer: ${"a".repeat(1_992)}`,
   );
 });
+
+it.effect(
+  "a pool lets in as many as it holds, in the order they came, through cancels and restarts",
+  () =>
+    Effect.gen(function* () {
+      entered.length = 0;
+      const { boot, database } = yield* harness();
+      const holding = (detail: string) => (run: WorkflowRun) =>
+        run.status === "waiting" && run.detail === detail;
+      const places = Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) => sql<{ readonly state: string; readonly n: number | bigint }>`
+        SELECT state, COUNT(*) AS n FROM workflow_pool_places GROUP BY state ORDER BY state
+      `,
+      ).pipe(
+        Effect.map((rows) => rows.map((row) => `${row.state} ${Number(row.n)}`)),
+        Effect.provide(database),
+      );
+      const ids = yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const ids: Array<string> = [];
+          for (let n = 0; n < 10; n++) {
+            const { runId } = yield* workflows.start(
+              "pooled",
+              { id: `k${n}` },
+              { idempotencyKey: `k${n}` },
+            );
+            yield* workflows.waitFor(runId, (run) => run.status === "waiting");
+            ids.push(runId);
+          }
+          assert.deepStrictEqual(entered, ["k0", "k1"]);
+          assert.deepStrictEqual(yield* places, ["held 2", "queued 8"]);
+          // A queued run is active and says where it is in line.
+          const last = yield* workflows.get(ids[9]!);
+          assert.deepStrictEqual([last.run.status, last.run.detail], ["waiting", "queue p"]);
+          const queued = last.steps.find((one) => one.name === "pool:p");
+          assert.deepStrictEqual(
+            [queued?.kind, queued?.status, queued?.ahead],
+            ["queue", "running", 7],
+          );
+
+          // Ending a holder lets in the next, and cancelling one does too, with no sweep.
+          yield* workflows.signal({ runId: ids[0]!, wait: "done" }, null, { id: "done-0" });
+          yield* workflows.waitFor(ids[0]!, status("completed"));
+          yield* workflows.waitFor(ids[2]!, holding("done"));
+          yield* workflows.cancel(ids[1]!, "not needed");
+          yield* workflows.waitFor(ids[3]!, holding("done"));
+          assert.deepStrictEqual(entered, ["k0", "k1", "k2", "k3"]);
+          assert.deepStrictEqual(yield* places, ["held 2", "queued 6"]);
+          return ids;
+        }),
+      );
+
+      // After a restart mid-hold the same two hold, and the next in line follows when one ends.
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          yield* workflows.sweep;
+          assert.deepStrictEqual(yield* places, ["held 2", "queued 6"]);
+          assert.equal((yield* workflows.get(ids[4]!)).run.detail, "queue p");
+          yield* workflows.signal({ runId: ids[2]!, wait: "done" }, null, { id: "done-2" });
+          yield* workflows.waitFor(ids[4]!, holding("done"));
+          assert.deepStrictEqual(entered, ["k0", "k1", "k2", "k3", "k4"]);
+          assert.deepStrictEqual(yield* places, ["held 2", "queued 5"]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a workflow with a concurrency runs that many at once and queues the rest", () =>
+  Effect.gen(function* () {
+    entered.length = 0;
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const first = yield* workflows.start("solo", { id: "a" }, { idempotencyKey: "a" });
+        yield* workflows.waitFor(first.runId, (run) => run.detail === "done");
+        const second = yield* workflows.start("solo", { id: "b" }, { idempotencyKey: "b" });
+        const queued = yield* workflows.waitFor(second.runId, (run) => run.status === "waiting");
+        assert.equal(queued.detail, "queue solo");
+        assert.deepStrictEqual(entered, ["a"]);
+        yield* workflows.signal({ runId: first.runId, wait: "done" }, null, { id: "done-a" });
+        yield* workflows.waitFor(second.runId, (run) => run.detail === "done");
+        assert.deepStrictEqual(entered, ["a", "b"]);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a run that pauses gives its place back, and once resumed queues for it again", () =>
+  Effect.gen(function* () {
+    entered.length = 0;
+    lockFailures.left = 1;
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const first = yield* workflows.start("locked", { id: "a" }, { idempotencyKey: "a" });
+        yield* workflows.waitFor(first.runId, status("paused"));
+        const second = yield* workflows.start("locked", { id: "b" }, { idempotencyKey: "b" });
+        yield* workflows.waitFor(second.runId, (run) => run.detail === "done");
+        yield* workflows.resume(first.runId);
+        const queued = yield* workflows.waitFor(first.runId, (run) => run.status === "waiting");
+        assert.equal(queued.detail, "queue q");
+        assert.deepStrictEqual(entered, ["b"]);
+        yield* workflows.signal({ runId: second.runId, wait: "done" }, null, { id: "done-b" });
+        yield* workflows.waitFor(first.runId, (run) => run.detail === "done");
+        assert.deepStrictEqual(entered, ["b", "a"]);
+        yield* workflows.signal({ runId: first.runId, wait: "done" }, null, { id: "done-a" });
+        yield* workflows.waitFor(first.runId, status("completed"));
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);

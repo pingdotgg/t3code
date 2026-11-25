@@ -89,6 +89,18 @@ Under **Needs you**, a picker then shows each kind with how many questions of it
 
 `tags([...])` labels a run for `t3 workflow list --tag backlog`, whether or not it waits on anyone.
 
+## Limit how much runs at once
+
+Wrap part of a run in a named pool to cap how many runs are inside it at once, across the whole server:
+
+```ts
+const { within, agent } = T3;
+
+yield* within("builders", { limit: 4 }, agent("fix", { ... }));
+```
+
+When all places are taken, later runs queue in the order they asked and show as **Queued** with their place in line; they count as running, not as needing you. A place is given back when the wrapped part ends, or when its run ends, is cancelled, or pauses. A paused run queues for its place again when it is resumed. `limit: 1` makes it a lock. To cap whole runs, give the workflow `concurrency: 4` in its options: its runs share a pool named after the workflow.
+
 ## Triggers
 
 - **Schedules:** `every` runs on an interval, starting one interval after the workflow loads; `daily` runs at a local time of day (a time missed by more than 10 minutes while the server is down is skipped).
