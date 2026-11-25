@@ -186,6 +186,7 @@ export function changeRequestsCreatedBy(input: string, output: string) {
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
 
 type SnapshotFields = Omit<ThreadPullRequestSnapshot, "syncedAt">;
+type SyncRequest = "hydrate" | "refresh";
 
 interface LinkEntry {
   readonly thread: ProjectionStore.ProjectionThreadPullRequests;
@@ -363,9 +364,9 @@ export const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
 
   const lastSyncedAt = new Map<string, number>();
-  const requested = new Set<string>();
+  const requested = new Map<string, SyncRequest>();
   // Requests arriving during a host read wait for the next sweep.
-  const pendingRequests = new Set<string>();
+  const pendingRequests = new Map<string, SyncRequest>();
   // PR keys wait in `pendingRequests` for one queued sweep, so a burst of links (an agent
   // linking dozens of pull requests) is read together and shares the summary batches.
   let requestedSweepQueued = false;
@@ -428,8 +429,9 @@ export const make = Effect.gen(function* () {
 
     // A host-level refresh reaches every project, each retaining its own pending retry.
     for (const [key, entries] of groups) {
-      if (!pendingRequests.has(threadPullRequestKeyOf(entries[0]!.link))) continue;
-      requested.add(key);
+      const request = pendingRequests.get(threadPullRequestKeyOf(entries[0]!.link));
+      if (request === undefined) continue;
+      if (requested.get(key) !== "refresh") requested.set(key, request);
       // A new request reads at once; a failure after it backs off further, not from the start.
       const failed = failedReads.get(key);
       if (failed !== undefined) failedReads.set(key, { ...failed, retryAtMs: nowMs });
@@ -508,19 +510,34 @@ export const make = Effect.gen(function* () {
       }
     }, Effect.withSpan("PullRequestSyncReactor.syncEntry"));
 
+    const needsFreshSummary = (key: string, entries: ReadonlyArray<LinkEntry>) =>
+      requested.get(key) === "refresh" ||
+      retryStacks.has(key) ||
+      entries.some(
+        ({ link }) => link.snapshot?.state === "merged" && link.snapshot.mergedAt == null,
+      );
+    const linkedSummaryRead = yield* pullRequests.prepareLinkedSummaryReads(
+      [...groups].flatMap(([key, entries]) =>
+        (scope === "all" || requested.has(key)) &&
+        isDue(key, entries, nowMs) &&
+        !needsFreshSummary(key, entries) &&
+        (pausedUntil.get(pauseKeyOf(entries[0]!)) ?? 0) <= nowMs
+          ? [referenceOf(entries[0]!)]
+          : [],
+      ),
+    );
     const syncGroup = Effect.fnUntraced(function* (key: string, entries: ReadonlyArray<LinkEntry>) {
       const first = entries[0]!;
       const ref = referenceOf(first);
       const refreshRequested = requested.has(key);
       // A held merged summary is served without asking the host, so a snapshot still missing its
       // merge time has to drop it or the slow-cadence re-read would hand back the same gap.
-      const missingMergedAt = entries.some(
-        (entry) => entry.link.snapshot?.state === "merged" && entry.link.snapshot.mergedAt == null,
-      );
-      // A stack retry reads past the cache, or it could get back the layer list it is retrying.
-      const invalidated = refreshRequested || missingMergedAt || retryStacks.has(key);
+      const force = needsFreshSummary(key, entries);
+      const linkedRead = force ? undefined : linkedSummaryRead(ref);
+      const invalidated = force || (refreshRequested && linkedRead === undefined);
       if (invalidated) yield* pullRequests.invalidate({ reference: ref });
-      const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false }).pipe(
+      const read = linkedRead ?? pullRequests.summary(ref, { recoverTransientFailure: false });
+      const summary = yield* read.pipe(
         Effect.tapError((error) =>
           error.reason === "not-found" || error._tag === "PullRequestUnavailableError"
             ? Effect.sync(() => {
@@ -754,7 +771,7 @@ export const make = Effect.gen(function* () {
         ) {
           continue;
         }
-        yield* requestSync(link);
+        yield* queueSync(link, "hydrate");
       }
     },
     Effect.catchCause(logSkipped("pull request refresh after link update skipped", {})),
@@ -893,13 +910,17 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const requestSync: PullRequestSyncReactor["Service"]["requestSync"] = (key) =>
+  const queueSync = (key: ThreadPullRequestKey, request: SyncRequest) =>
     Effect.suspend(() => {
-      pendingRequests.add(threadPullRequestKeyOf(key));
+      const id = threadPullRequestKeyOf(key);
+      if (pendingRequests.get(id) !== "refresh") pendingRequests.set(id, request);
       if (requestedSweepQueued) return Effect.void;
       requestedSweepQueued = true;
       return worker.enqueue("requested");
     });
+
+  const requestSync: PullRequestSyncReactor["Service"]["requestSync"] = (key) =>
+    queueSync(key, "refresh");
 
   return { start, drain: worker.drain, requestSync } satisfies PullRequestSyncReactor["Service"];
 });

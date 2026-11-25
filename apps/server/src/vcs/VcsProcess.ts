@@ -43,6 +43,7 @@ export interface VcsProcessInput {
   readonly classifyFailure?: SourceControlProcessInput["classifyFailure"];
   readonly notFoundDetail?: string;
   readonly concurrency?: SourceControlProcessInput["concurrency"];
+  readonly aroundLaunch?: SourceControlProcessInput["aroundLaunch"];
 }
 
 export interface VcsProcessOutput {
@@ -401,7 +402,8 @@ export const make = Effect.gen(function* () {
   });
 
   const run = Effect.fn("VcsProcess.run")(function* (input: VcsProcessInput) {
-    const bounded = vcsProcesses.withPermits(1)(runUnbounded(input));
+    const launch = runUnbounded(input);
+    const bounded = vcsProcesses.withPermits(1)(input.aroundLaunch?.(launch) ?? launch);
     if (
       input.command === "git" &&
       input.operation === CHECKPOINT_CAPTURE_OPERATION &&

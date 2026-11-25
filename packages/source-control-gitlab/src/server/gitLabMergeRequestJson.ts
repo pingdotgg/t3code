@@ -25,7 +25,10 @@ import type {
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
-import type { ProviderChangeRequestWatchFingerprint } from "@t3tools/source-control-core/server/PullRequestProvider";
+import type {
+  ProviderChangeRequestSummary,
+  ProviderChangeRequestWatchFingerprint,
+} from "@t3tools/source-control-core/server/PullRequestProvider";
 
 /** Unknown pipeline or merge status values must not fail the whole payload. */
 const RawUserSchema = Schema.Struct({
@@ -292,6 +295,17 @@ function toMergeability(
   }
 }
 
+function toRebaseRequired(status: string | null | undefined): boolean | undefined {
+  switch (status?.trim().toLowerCase()) {
+    case "need_rebase":
+      return true;
+    case "mergeable":
+      return false;
+    default:
+      return undefined;
+  }
+}
+
 function toLabels(
   raw: ReadonlyArray<typeof RawLabelRefSchema.Type> | null | undefined,
 ): ReadonlyArray<PullRequestLabel> {
@@ -504,7 +518,6 @@ export function decodePipelineStageChecksJson(
 function toListItem(
   raw: Schema.Schema.Type<typeof RawMergeRequestSchema>,
 ): GitLabMergeRequestListItem {
-  const detailedMergeStatus = raw.detailed_merge_status?.trim().toLowerCase();
   return {
     number: raw.iid,
     title: raw.title,
@@ -515,12 +528,7 @@ function toListItem(
     state: toState(raw),
     isDraft: raw.draft ?? raw.work_in_progress ?? false,
     mergeability: toMergeability(raw),
-    rebaseRequired:
-      detailedMergeStatus === "need_rebase"
-        ? true
-        : detailedMergeStatus === "mergeable"
-          ? false
-          : undefined,
+    rebaseRequired: toRebaseRequired(raw.detailed_merge_status),
     additions: 0,
     deletions: 0,
     createdAt: raw.created_at,
@@ -1574,14 +1582,25 @@ export function decodeMergeMessagesJson(
 }
 
 /** What a listed merge request needs beyond REST: its approval, reviewer and pipeline state. */
-const LIST_STATE_GRAPHQL_FIELDS = `iid approved approvedBy(first: 1) { nodes { username } }
-  reviewers(first: 20) { nodes { username mergeRequestInteraction { reviewState } } }
+const LIST_APPROVAL_GRAPHQL_FIELDS = `iid approved approvedBy(first: 1) { nodes { username } }`;
+const REVIEWER_STATE_GRAPHQL_FIELDS = `mergeRequestInteraction { reviewState }`;
+const LIST_STATE_GRAPHQL_FIELDS = `${LIST_APPROVAL_GRAPHQL_FIELDS}
+  reviewers(first: 20) { nodes { username ${REVIEWER_STATE_GRAPHQL_FIELDS} } }
   headPipeline { status }`;
 
 export const LIST_STATES_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [String!]) {
   metadata { enterprise }
   project(fullPath: $fullPath) {
     mergeRequests(iids: $iids, first: 100) {
+      nodes { ${LIST_STATE_GRAPHQL_FIELDS} }
+    }
+  }
+}`;
+
+export const LINKED_LIST_STATES_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [String!], $first: Int!) {
+  metadata { enterprise }
+  project(fullPath: $fullPath) {
+    mergeRequests(iids: $iids, first: $first) {
       nodes { ${LIST_STATE_GRAPHQL_FIELDS} }
     }
   }
@@ -1727,13 +1746,11 @@ export const LIST_ITEM_GRAPHQL_FIELDS = `${LIST_STATE_GRAPHQL_FIELDS}
   title webUrl state draft createdAt updatedAt mergedAt sourceBranch targetBranch
   conflicts mergeStatusEnum author { username name avatarUrl } labels(first: 100) { nodes { title color description } }`;
 
-const RawGraphqlListNodeSchema = Schema.Struct({
+const RawGraphqlSummaryFields = {
   ...RawListStateFields,
   title: Schema.String,
   webUrl: Schema.String,
-  state: Schema.optional(Schema.NullOr(Schema.String)),
   draft: Schema.optional(Schema.NullOr(Schema.Boolean)),
-  createdAt: Schema.String,
   updatedAt: Schema.String,
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   sourceBranch: Schema.String,
@@ -1749,6 +1766,12 @@ const RawGraphqlListNodeSchema = Schema.Struct({
       }),
     ),
   ),
+};
+
+const RawGraphqlListNodeSchema = Schema.Struct({
+  ...RawGraphqlSummaryFields,
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+  createdAt: Schema.String,
   labels: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -1927,7 +1950,166 @@ export const MERGE_REQUEST_STATS_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [
   }
 }`;
 
+export const LINKED_STATS_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [String!], $first: Int!) {
+  project(fullPath: $fullPath) {
+    mergeRequests(iids: $iids, first: $first) {
+      nodes { iid diffStatsSummary { additions deletions fileCount } }
+    }
+  }
+}`;
+
 const LineCountsSchema = Schema.Struct({ additions: Schema.Int, deletions: Schema.Int });
+
+export const LINKED_SUMMARIES_GRAPHQL_QUERY = `query LinkedMergeRequestSummaries(
+  $fullPath: ID!, $iids: [String!], $first: Int!, $after: String
+) {
+  metadata { enterprise }
+  project(fullPath: $fullPath) {
+    mergeRequests(iids: $iids, first: $first, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        ${LIST_APPROVAL_GRAPHQL_FIELDS}
+        reviewers(first: 20) { nodes { ${REVIEWER_STATE_GRAPHQL_FIELDS} } }
+        headPipeline { status }
+        title webUrl state draft updatedAt closedAt mergedAt sourceBranch targetBranch
+        conflicts mergeStatusEnum detailedMergeStatus author { username name avatarUrl }
+        diffStatsSummary { additions deletions fileCount }
+      }
+    }
+  }
+}`;
+
+const decodeLinkedSummaryPage = decodeJsonResult(
+  Schema.Struct({
+    errors: Schema.optional(Schema.Array(Schema.Unknown)),
+    data: Schema.Struct({
+      metadata: RawMetadataSchema,
+      project: Schema.NullOr(
+        Schema.Struct({
+          mergeRequests: Schema.NullOr(
+            Schema.Struct({
+              pageInfo: Schema.Struct({
+                hasNextPage: Schema.Boolean,
+                endCursor: Schema.NullOr(Schema.String),
+              }),
+              nodes: Schema.Array(
+                Schema.NullOr(
+                  Schema.Struct({
+                    ...RawGraphqlSummaryFields,
+                    state: Schema.String,
+                    closedAt: Schema.optional(Schema.NullOr(Schema.String)),
+                    detailedMergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
+                    diffStatsSummary: Schema.optional(
+                      Schema.NullOr(
+                        Schema.Struct({
+                          ...LineCountsSchema.fields,
+                          fileCount: Schema.Int,
+                        }),
+                      ),
+                    ),
+                  }),
+                ),
+              ),
+            }),
+          ),
+        }),
+      ),
+    }),
+  }),
+);
+
+export function decodeLinkedSummaryPageJson(raw: string) {
+  return Result.map(decodeLinkedSummaryPage(raw), ({ data, errors }) => {
+    const connection = data.project?.mergeRequests;
+    if (connection == null || (errors?.length ?? 0) > 0) return null;
+    const items: ProviderChangeRequestSummary[] = [];
+    for (const node of connection.nodes) {
+      if (node === null) continue;
+      const number = Number(node.iid);
+      if (!Number.isSafeInteger(number) || number <= 0) continue;
+      const rebaseRequired = toRebaseRequired(node.detailedMergeStatus);
+      items.push({
+        number,
+        title: node.title,
+        url: node.webUrl,
+        headBranch: node.sourceBranch,
+        baseBranch: node.targetBranch,
+        state: toState({ state: node.state, merged_at: node.mergedAt }),
+        isDraft: node.draft ?? false,
+        closedAt: trimmed(node.closedAt),
+        mergedAt: trimmed(node.mergedAt),
+        updatedAt: node.updatedAt,
+        author: toActor(
+          node.author == null
+            ? null
+            : {
+                username: node.author.username ?? "",
+                name: node.author.name,
+                avatar_url:
+                  node.author.avatarUrl == null
+                    ? null
+                    : (URL.parse(node.author.avatarUrl, node.webUrl)?.toString() ?? null),
+              },
+        ),
+        mergeability: toMergeability({
+          has_conflicts: node.conflicts,
+          merge_status: node.mergeStatusEnum,
+        }),
+        ...(rebaseRequired === undefined ? {} : { rebaseRequired }),
+        ...(node.diffStatsSummary == null
+          ? {}
+          : {
+              additions: node.diffStatsSummary.additions,
+              deletions: node.diffStatsSummary.deletions,
+              changedFiles: node.diffStatsSummary.fileCount,
+            }),
+        ...toListState(node, data.metadata?.enterprise),
+      });
+    }
+    return { items, ...connection.pageInfo };
+  });
+}
+
+const decodeRestLinkedSummaries = decodeJsonResult(Schema.Array(RawMergeRequestSchema));
+
+export function decodeRestLinkedSummariesJson(raw: string) {
+  return Result.map(decodeRestLinkedSummaries(raw), (rows) =>
+    rows.map((row): ProviderChangeRequestSummary => {
+      const {
+        number,
+        title,
+        url,
+        author,
+        headBranch,
+        baseBranch,
+        state,
+        isDraft,
+        mergeability,
+        rebaseRequired,
+        updatedAt,
+      } = toListItem(row);
+      const checksState =
+        row.head_pipeline === undefined ? undefined : toChecksState(row.head_pipeline?.status);
+      return {
+        number,
+        title,
+        url,
+        author,
+        headBranch,
+        baseBranch,
+        state,
+        isDraft,
+        mergeability,
+        updatedAt,
+        closedAt: trimmed(row.closed_at),
+        mergedAt: trimmed(row.merged_at),
+        ...(rebaseRequired === undefined ? {} : { rebaseRequired }),
+        ...(row.changes_count == null ? {} : { changedFiles: toChangedFiles(row.changes_count) }),
+        ...(checksState === undefined ? {} : { checksState }),
+      };
+    }),
+  );
+}
 
 const RawMergeRequestStatsSchema = Schema.Struct({
   data: Schema.Struct({
@@ -1939,7 +2121,12 @@ const RawMergeRequestStatsSchema = Schema.Struct({
               Schema.NullOr(
                 Schema.Struct({
                   iid: Schema.String,
-                  diffStatsSummary: Schema.NullOr(LineCountsSchema),
+                  diffStatsSummary: Schema.NullOr(
+                    Schema.Struct({
+                      ...LineCountsSchema.fields,
+                      fileCount: Schema.optionalKey(Schema.Int),
+                    }),
+                  ),
                 }),
               ),
             ),
@@ -1956,21 +2143,28 @@ const decodeMergeRequestStats = decodeJsonResult(RawMergeRequestStatsSchema);
  * The counts by merge request number. A merge request GitLab returned no summary for is left
  * out rather than counted as zero, so its row keeps whatever it already showed.
  */
-export function decodeMergeRequestStatsJson(
-  raw: string,
-): Result.Result<
-  ReadonlyMap<number, { readonly additions: number; readonly deletions: number }>,
-  DecodeFailure
-> {
+export function decodeMergeRequestStatsJson(raw: string) {
   const decoded = decodeMergeRequestStats(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
-  const stats = new Map<number, { readonly additions: number; readonly deletions: number }>();
+  const stats = new Map<
+    number,
+    {
+      readonly additions: number;
+      readonly deletions: number;
+      readonly changedFiles?: number;
+    }
+  >();
   for (const node of decoded.success.data.project?.mergeRequests?.nodes ?? []) {
     const iid = Number(node?.iid);
     if (!Number.isSafeInteger(iid) || iid <= 0 || node?.diffStatsSummary == null) continue;
-    stats.set(iid, node.diffStatsSummary);
+    const { additions, deletions, fileCount } = node.diffStatsSummary;
+    stats.set(iid, {
+      additions,
+      deletions,
+      ...(fileCount === undefined ? {} : { changedFiles: fileCount }),
+    });
   }
   return Result.succeed(stats);
 }

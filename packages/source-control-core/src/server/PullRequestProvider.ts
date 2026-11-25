@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as Stream from "effect/Stream";
+import type { SourceControlRateLimit } from "./SourceControlRateLimit.ts";
 import type {
   PullRequestStackMembership,
   PullRequestAction,
@@ -464,6 +465,18 @@ export interface PullRequestProviderApi {
   readonly getChangeRequestSummary?: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestSummary, PullRequestProviderError>;
+
+  /** Linked sync reads sharing a repository and credential route. The adapter admits each launch. */
+  readonly linkedSummaries?: {
+    readonly batchSize: number;
+    readonly read: (
+      input: ProviderRepositoryRef & { readonly numbers: ReadonlyArray<number> },
+    ) => Effect.Effect<
+      ReadonlyMap<number, ProviderChangeRequestSummary>,
+      PullRequestProviderError,
+      SourceControlRateLimit
+    >;
+  };
 
   /** Null means unknown; an absent method requires full watch reads. */
   readonly getChangeRequestWatchFingerprint?: (

@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -11,6 +12,7 @@ import type * as DateTime from "effect/DateTime";
 
 import {
   TrimmedNonEmptyString,
+  SourceControlProviderKind,
   VcsProcessExitError,
   type SourceControlRepositoryVisibility,
   type VcsError,
@@ -20,6 +22,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as RateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   decodeGitLabMergeRequestJson,
   decodeGitLabMergeRequestListJson,
@@ -77,7 +80,7 @@ export class GitLabCliAuthenticationError extends Schema.TaggedError<GitLabCliAu
 
 export class GitLabCliRateLimitError extends Schema.TaggedError<GitLabCliRateLimitError>()(
   "GitLabCliRateLimitError",
-  gitLabCliExecutionErrorContext,
+  { ...gitLabCliExecutionErrorContext, retryAt: Schema.optional(Schema.Number) },
 ) {
   get detail(): string {
     return "GitLab API rate limit exceeded.";
@@ -154,7 +157,11 @@ export class GitLabCliCommandError extends Schema.TaggedError<GitLabCliCommandEr
           case "authentication":
             return new GitLabCliAuthenticationError({ ...context, cause });
           case "rate-limited":
-            return new GitLabCliRateLimitError({ ...context, cause });
+            return new GitLabCliRateLimitError({
+              ...context,
+              cause,
+              ...(cause.retryAt === undefined ? {} : { retryAt: cause.retryAt }),
+            });
           case "not-found":
           case "command-failed":
           case undefined:
@@ -314,6 +321,13 @@ export class GitLabCli extends Context.Service<
       readonly stdin?: string;
       readonly maxOutputBytes?: number;
     }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, GitLabCliError>;
+
+    readonly executeApiPage: (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly path: string;
+      readonly stdin?: string;
+    }) => Effect.Effect<GitLabApiPage, GitLabCliError, RateLimit.SourceControlRateLimit>;
 
     readonly listMergeRequests: (input: {
       readonly cwd: string;
@@ -517,6 +531,27 @@ export const hostOf = (value: string) =>
     .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
     .replace(/\/.*$/, "");
 
+interface GitLabApiPage {
+  readonly status: number;
+  readonly headers: ReadonlyMap<string, string>;
+  readonly body: string;
+  readonly bodyTruncated: boolean;
+}
+
+function apiPage(stdout: string): Omit<GitLabApiPage, "bodyTruncated"> | undefined {
+  const separator = /\r?\n\r?\n/u.exec(stdout);
+  if (separator === null) return undefined;
+  const [statusLine, ...fields] = stdout.slice(0, separator.index).split(/\r?\n/u);
+  const status = Number(/^HTTP\/\d+(?:\.\d+)? (\d{3})\b/u.exec(statusLine ?? "")?.[1]);
+  if (!Number.isInteger(status)) return undefined;
+  const headers = new Map<string, string>();
+  for (const field of fields) {
+    const colon = field.indexOf(":");
+    if (colon > 0) headers.set(field.slice(0, colon).toLowerCase(), field.slice(colon + 1).trim());
+  }
+  return { status, headers, body: stdout.slice(separator.index + separator[0].length) };
+}
+
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
@@ -547,7 +582,8 @@ export const make = Effect.gen(function* () {
 
   // Untraced: every caller is a named `GitLabCli.*` span already.
   const run = Effect.fnUntraced(function* (
-    input: Parameters<GitLabCli["Service"]["execute"]>[0],
+    input: Parameters<GitLabCli["Service"]["execute"]>[0] &
+      Pick<SourceControlHost.SourceControlProcessInput, "allowNonZeroExit" | "aroundLaunch">,
     mapError: (error: VcsError) => GitLabCliError,
   ) {
     const namedHosts = [input.host, input.callerNamedHost].filter((host) => host !== undefined);
@@ -571,6 +607,10 @@ export const make = Effect.gen(function* () {
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
         ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+        ...(input.allowNonZeroExit === undefined
+          ? {}
+          : { allowNonZeroExit: input.allowNonZeroExit }),
+        ...(input.aroundLaunch === undefined ? {} : { aroundLaunch: input.aroundLaunch }),
       })
       .pipe(Effect.mapError(mapError));
   });
@@ -582,6 +622,74 @@ export const make = Effect.gen(function* () {
         error,
       ),
     );
+
+  const executeApiPage: GitLabCli["Service"]["executeApiPage"] = Effect.fn(
+    "GitLabCli.executeApiPage",
+  )(function* (input) {
+    const limits = yield* RateLimit.SourceControlRateLimit;
+    const key = { provider: SourceControlProviderKind.make("gitlab"), host: input.host };
+    const context = { operation: "execute", command: "glab", cwd: input.cwd } as const;
+    const failure = (failureKind: VcsProcessExitFailureKind, retryAt?: number) =>
+      new VcsProcessExitError({
+        ...context,
+        exitCode: 1,
+        detail: "GitLab API request failed.",
+        failureKind,
+        ...(retryAt === undefined ? {} : { retryAt }),
+      });
+    const aroundLaunch: NonNullable<SourceControlHost.SourceControlProcessInput["aroundLaunch"]> =
+      Effect.fn("GitLabCli.admitApiPage")(function* (launch) {
+        const lease = yield* limits
+          .check(key)
+          .pipe(Effect.mapError((error) => failure("rate-limited", error.retryAt)));
+        const output = yield* launch;
+        const page = apiPage(output.stdout);
+        const retryAfter = page?.headers.get("retry-after");
+        if (
+          page?.status === 429 ||
+          ((page?.status === 403 || page?.status === 503) && retryAfter !== undefined) ||
+          (page === undefined &&
+            output.exitCode !== 0 &&
+            /(?:\b429\b|rate limit exceeded|too many requests)/iu.test(output.stderr))
+        ) {
+          const retryAt = RateLimit.retryAtFromHeader(retryAfter, yield* Clock.currentTimeMillis);
+          yield* limits.recordRateLimit({ ...key, lease, retryAt });
+          yield* limits
+            .check(key)
+            .pipe(Effect.mapError((error) => failure("rate-limited", error.retryAt)));
+          return yield* failure("rate-limited", retryAt);
+        }
+        if (page?.status === 401) return yield* failure("authentication");
+        if (page !== undefined && output.exitCode === 0 && page.status < 300) {
+          yield* limits.recordSuccess({ ...key, lease });
+        }
+        return output;
+      });
+    const output = yield* run(
+      {
+        ...input,
+        args: [
+          "api",
+          input.path,
+          "--include",
+          ...(input.stdin === undefined
+            ? []
+            : ["--method", "POST", "--input", "-", "--header", "Content-Type: application/json"]),
+        ],
+        allowNonZeroExit: true,
+        aroundLaunch,
+        maxOutputBytes: MERGE_REQUEST_LIST_MAX_BYTES,
+      },
+      (error) => GitLabCliCommandError.fromVcsError(context, error),
+    );
+    const page = apiPage(output.stdout);
+    // glab exits nonzero for a GraphQL errors response even though the HTTP status is 200.
+    if (page !== undefined && (output.stdoutTruncated || !output.stdoutInvalidUtf8)) {
+      return { ...page, bodyTruncated: output.stdoutTruncated };
+    }
+    const kind = output.exitCode === 0 ? "command-failed" : classifyGlabFailure(output.stderr);
+    return yield* GitLabCliCommandError.fromVcsError(context, failure(kind ?? "command-failed"));
+  });
 
   const executeMergeRequest = (input: {
     readonly cwd: string;
@@ -636,6 +744,7 @@ export const make = Effect.gen(function* () {
 
   return GitLabCli.of({
     execute,
+    executeApiPage,
     listMergeRequests: Effect.fn("GitLabCli.listMergeRequests")(function* (input) {
       const limit = input.limit ?? 20;
       let pageSize = limit;
