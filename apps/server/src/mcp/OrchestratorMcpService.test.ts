@@ -2945,7 +2945,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         };
         const dependencies = Layer.mergeAll(
           Layer.mock(ThreadManagementService.ThreadManagementService)({
-            hasReceipt: () => Effect.succeed(false),
+            replayDelegatedTask: () => Effect.succeedNone,
             getThreadRecords: (threadId) =>
               Effect.succeed(
                 threadId === parentThreadId
