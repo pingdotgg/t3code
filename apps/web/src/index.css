@@ -2950,3 +2950,13 @@ li:has(+ .kaluwa-folder-thread) > .kaluwa-folder-head-trunk {
   height: 7px;
   background: var(--kaluwa-st) linear-gradient(#fff, #fff) center / 1.2px 3.6px no-repeat;
 }
+
+/* Fork: the command palette's current row was a 9% tint, nearly invisible on a black theme.
+   In the base layer because important declarations in earlier layers beat the item's own
+   important utilities, while unlayered ones lose to them. */
+@layer base {
+  [data-slot="command-item"][data-active] {
+    background-color: color-mix(in srgb, var(--foreground) 16%, transparent) !important;
+    color: var(--foreground) !important;
+  }
+}
