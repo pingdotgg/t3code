@@ -83,7 +83,11 @@ vi.mock(import("./ui/toast"), async (original) => {
 });
 
 import { useClosedViewStore } from "../closedViewStore";
-import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import {
+  ISSUES_PANEL_REF,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { ReopenClosedViewShortcut } from "./ReopenClosedViewShortcut";
 
@@ -358,6 +362,41 @@ describe("root reopen shortcut", () => {
       expect(useClosedViewStore.getState().entries).toEqual([]);
     },
   );
+  it("puts a reopened issue tab's selection in the /issues URL", async () => {
+    setup();
+    useClosedViewStore.getState().remember({
+      kind: "panel-tab",
+      threadRef: ISSUES_PANEL_REF,
+      surface: {
+        id: "issue:remote:project-1:github.com:github:pingdotgg%2Ft3code:42",
+        kind: "issue",
+        environmentId: "remote",
+        projectId: "project-1",
+        tracker: "github",
+        host: "github.com",
+        scope: "pingdotgg/t3code",
+        key: "42",
+      },
+    });
+    await using _view = await renderShortcut();
+    await act(() => {
+      press();
+    });
+    expect(state.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "/issues",
+        search: expect.objectContaining({
+          selectedEnvironmentId: "remote",
+          selectedProjectId: "project-1",
+          selectedHost: "github.com",
+          tracker: "github",
+          scope: "pingdotgg/t3code",
+          key: "42",
+        }),
+      }),
+    );
+  });
+
   it("forwards address-bar focus, zoom, and panel new and close from a focused desktop page", async () => {
     setup();
     await using _shortcut = await renderShortcut();
