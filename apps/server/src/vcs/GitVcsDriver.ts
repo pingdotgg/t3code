@@ -1300,11 +1300,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         const configured = yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["config", "--get", "lfs.storage"],
+          args: ["config", "--null", "--get", "lfs.storage"],
           allowNonZeroExit: true,
         });
-        // git-lfs resolves a relative lfs.storage against the common Git directory.
-        const storage = path.resolve(gitCommonDir, trimAsciiWhitespace(configured.stdout) || "lfs");
+        const configuredStorage = configured.stdout.split("\0", 1)[0] ?? "";
+        // Older Git LFS versions read config line by line. Keep the existing handling for LF.
+        const storageDirectory = configuredStorage.includes("\n")
+          ? trimAsciiWhitespace(configuredStorage)
+          : configuredStorage;
+        const storage = path.resolve(gitCommonDir, storageDirectory || "lfs");
         yield* Effect.forEach(
           objects,
           (entry) =>

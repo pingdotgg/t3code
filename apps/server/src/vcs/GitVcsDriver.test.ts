@@ -489,7 +489,14 @@ it.effect.each(["interrupt", "timeout"] as const)(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect.each([undefined, "lfs objects\u00a0"])(
+const checkpointLfsStorageCases = [
+  undefined,
+  "lfs objects\u00a0",
+  " lfs objects",
+  ...(HostProcess.Platform.defaultValue() === "win32" ? [] : ["lfs objects ", "lfs objects\t"]),
+];
+
+it.effect.each(checkpointLfsStorageCases)(
   "checkpoint staging moves Git LFS objects into configured storage %s",
   (configuredStorage) =>
     Effect.gen(function* () {
