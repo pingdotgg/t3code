@@ -3,15 +3,19 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { EnvironmentId, NonNegativeInt } from "./baseSchemas.ts";
 import { CloudSpeechProvider } from "./speech.ts";
-
+/** Hosted read-aloud APIs. OpenAI is left out: its speech models shut down on 6 January 2027. */
+export const CloudSpeechSynthesisProvider = Schema.Literals(["xai", "openrouter", "elevenlabs"]);
+export type CloudSpeechSynthesisProvider = typeof CloudSpeechSynthesisProvider.Type;
 /** `local` runs a downloaded model on the selected environment; the rest are hosted APIs. */
-export const SpeechSynthesisProvider = Schema.Union([CloudSpeechProvider, Schema.Literal("local")]);
+export const SpeechSynthesisProvider = Schema.Union([
+  CloudSpeechSynthesisProvider,
+  Schema.Literal("local"),
+]);
 export type SpeechSynthesisProvider = typeof SpeechSynthesisProvider.Type;
 export const READ_ALOUD_LABELS = {
   off: "Off",
   system: "System voices",
   local: "Local model",
-  openai: "OpenAI",
   xai: "Grok TTS",
   openrouter: "OpenRouter",
   elevenlabs: "ElevenLabs",
@@ -29,9 +33,9 @@ export const ReadAloudSettings = Schema.Struct({
     "elevenlabs",
   ]).pipe(
     Schema.decodeTo(
-      Schema.Literals(["off", "system", "local", "openai", "xai", "openrouter", "elevenlabs"]),
+      Schema.Literals(["off", "system", "local", "xai", "openrouter", "elevenlabs"]),
       SchemaTransformation.transform({
-        decode: (value) => (value === "chatgpt" ? ("off" as const) : value),
+        decode: (value) => (value === "chatgpt" || value === "openai" ? ("off" as const) : value),
         encode: (value) => value,
       }),
     ),

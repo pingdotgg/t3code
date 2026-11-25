@@ -209,7 +209,7 @@ it("keeps a reply resumable when recording takes focus while playback activates"
   });
   void readAloudController.start("cloud", "reply", {
     ...DEFAULT_READ_ALOUD_SETTINGS,
-    provider: "openai",
+    provider: "xai",
     environmentId: EnvironmentId.make("host"),
   });
   await activating.promise;

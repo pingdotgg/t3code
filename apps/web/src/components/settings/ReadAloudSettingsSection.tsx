@@ -12,7 +12,7 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
-  CloudSpeechProvider,
+  CloudSpeechSynthesisProvider,
   AuthFilesystemReadScope,
   AuthSettingsWriteScope,
   CLOUD_SPEECH_PROVIDER_NAMES,
@@ -293,7 +293,7 @@ export function ReadAloudSettingsSection() {
   const [catalogVersion, setCatalogVersion] = useState(0);
   // A hosted provider is confirmed in its key dialog before read aloud switches to it.
   const [pendingCloud, setPendingCloud] = useState<{
-    readonly provider: CloudSpeechProvider;
+    readonly provider: CloudSpeechSynthesisProvider;
     readonly environmentId: EnvironmentId;
   } | null>(null);
   const catalogKey = JSON.stringify([settings.environmentId, settings.provider]);
@@ -381,7 +381,9 @@ export function ReadAloudSettingsSection() {
         }));
   const source = remote ? `${settings.provider}:${settings.environmentId}` : settings.provider;
   const cloudProvider =
-    remote && settings.provider !== "local" ? (settings.provider as CloudSpeechProvider) : null;
+    remote && settings.provider !== "local"
+      ? (settings.provider as CloudSpeechSynthesisProvider)
+      : null;
   const [keys] = useCloudRead(cloudProvider ? prepared : null, getCloudSpeechKeys);
   const keyMissing =
     cloudProvider !== null && AsyncResult.isSuccess(keys) && keys.value?.[cloudProvider] === false;
@@ -439,7 +441,7 @@ export function ReadAloudSettingsSection() {
                       });
                     else
                       setPendingCloud({
-                        provider: provider as CloudSpeechProvider,
+                        provider: provider as CloudSpeechSynthesisProvider,
                         environmentId: environment.environmentId,
                       });
                   }
@@ -516,7 +518,7 @@ export function ReadAloudSettingsSection() {
                           Cloud via <Var>{environment.label}</Var>
                         </T>
                       </SelectGroupLabel>
-                      {CloudSpeechProvider.literals.map((provider) => (
+                      {CloudSpeechSynthesisProvider.literals.map((provider) => (
                         <SelectItem
                           key={provider}
                           value={`${provider}:${environment.environmentId}`}

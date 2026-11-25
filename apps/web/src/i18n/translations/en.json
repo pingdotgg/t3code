@@ -12959,7 +12959,7 @@
   "09f85302ef58020c": "Updating the key keeps read aloud on.",
   "bec2c35646e0496a": "Preview",
   "b9e06e668bd9bff0": "Replies you play are sent to {company} through {environment}, which bills its API key. The key is shared with dictation.",
-  "3985d8550c7bc219": "tts text to speech speak read aloud OpenAI Grok OpenRouter ElevenLabs voice playback",
+  "236b7b3f5ff18a4d": "tts text to speech speak read aloud Grok OpenRouter ElevenLabs voice playback",
   "9fa6e93a8218ad60": "Voice",
   "17076b27f1f3ada5": "Off",
   "154bec57dbece73c": "Stop reading",

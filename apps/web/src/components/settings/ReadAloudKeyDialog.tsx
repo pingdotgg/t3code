@@ -11,7 +11,7 @@ import {
   CLOUD_SPEECH_PROVIDER_NAMES,
   READ_ALOUD_LABELS,
   isSecretReference,
-  type CloudSpeechProvider,
+  type CloudSpeechSynthesisProvider,
   type SecretProviderId,
   type SettingsSecretValue,
 } from "@t3tools/contracts";
@@ -50,7 +50,7 @@ export function ReadAloudKeyDialog({
   close,
 }: {
   environment: Pick<EnvironmentPresentation, "environmentId" | "label" | "serverConfig">;
-  provider: CloudSpeechProvider;
+  provider: CloudSpeechSynthesisProvider;
   /** Read-aloud already uses this provider here, so the dialog only manages its key. */
   active: boolean;
   onEnable: () => void;

@@ -12886,7 +12886,7 @@
   "09f85302ef58020c": "키를 업데이트해도 소리 내어 읽기는 계속 켜져 있습니다.",
   "bec2c35646e0496a": "미리 듣기",
   "b9e06e668bd9bff0": "재생하는 답변은 {environment}을(를) 통해 {company}(으)로 전송되며 해당 API 키로 요금이 청구됩니다. 이 키는 받아쓰기와 공유됩니다.",
-  "3985d8550c7bc219": "tts 텍스트 음성 변환 소리 내어 읽기 음성 재생 OpenAI Grok OpenRouter ElevenLabs",
+  "236b7b3f5ff18a4d": "tts 텍스트 음성 변환 소리 내어 읽기 음성 재생 Grok OpenRouter ElevenLabs",
   "9fa6e93a8218ad60": "음성",
   "17076b27f1f3ada5": "끄기",
   "154bec57dbece73c": "읽기 중지",

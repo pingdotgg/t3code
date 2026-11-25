@@ -7,7 +7,7 @@ import { useGT } from "gt-react-native";
 import { ScrollView, TextInput, View } from "react-native";
 import {
   AuthSettingsWriteScope,
-  CloudSpeechProvider,
+  CloudSpeechSynthesisProvider,
   DEFAULT_READ_ALOUD_SETTINGS,
   READ_ALOUD_LABELS,
   EMPTY_SPEECH_SYNTHESIS_CATALOG,
@@ -435,7 +435,7 @@ export function ReadAloudSection() {
                     key={environment.environmentId}
                     title={gt("Cloud via {environment}", { environment: environment.label })}
                   >
-                    {CloudSpeechProvider.literals.map((provider) => (
+                    {CloudSpeechSynthesisProvider.literals.map((provider) => (
                       <ListChoiceRow
                         key={provider}
                         label={READ_ALOUD_LABELS[provider]}

@@ -1,5 +1,6 @@
 import {
   SpeechSynthesisError,
+  type CloudSpeechSynthesisProvider,
   type SpeechSynthesisProvider,
   type SpeechSynthesisRequest,
   type SpeechSynthesisCatalog,
@@ -152,37 +153,6 @@ const sameCredential = Schema.toEquivalence(SettingsSecretValue);
 const OpenRouterCatalog = Schema.Struct({
   data: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optionalKey(Schema.String) })),
 });
-const openAiSpeechModels = [
-  {
-    id: "gpt-4o-mini-tts",
-    name: "GPT-4o mini TTS",
-    voices: [
-      "alloy",
-      "ash",
-      "ballad",
-      "coral",
-      "echo",
-      "fable",
-      "nova",
-      "onyx",
-      "sage",
-      "shimmer",
-      "verse",
-      "marin",
-      "cedar",
-    ],
-  },
-  {
-    id: "tts-1",
-    name: "TTS-1",
-    voices: ["alloy", "ash", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer"],
-  },
-  {
-    id: "tts-1-hd",
-    name: "TTS-1 HD",
-    voices: ["alloy", "ash", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer"],
-  },
-] as const;
 
 function openRouterSpeechFormat(model: string) {
   return model.startsWith("google/gemini-") || model.startsWith("heygen/") ? "pcm" : "mp3";
@@ -320,11 +290,11 @@ export class CloudSpeech extends Context.Service<
   CloudSpeech,
   {
     readonly synthesisModels: (
-      provider: CloudSpeechProvider,
+      provider: CloudSpeechSynthesisProvider,
     ) => Effect.Effect<SpeechSynthesisCatalog, SpeechSynthesisError | ServerSettingsError>;
     /** MP3 that streams through as the provider produces it, with word timings where it has them. */
     readonly stream: (
-      provider: CloudSpeechProvider,
+      provider: CloudSpeechSynthesisProvider,
       request: SpeechSynthesisRequest,
     ) => Stream.Stream<SpeechSynthesisPart, SpeechSynthesisError | ServerSettingsError>;
     readonly configured: Effect.Effect<CloudSpeechKeys, ServerSettingsError>;
@@ -405,8 +375,7 @@ export const layer = Layer.effect(
       (exit) => (Exit.isSuccess(exit) ? "10 minutes" : 0),
     );
     const loadSynthesisModels = Effect.fn("CloudSpeech.synthesisModels")(
-      function* (provider: CloudSpeechProvider) {
-        if (provider === "openai") return { models: openAiSpeechModels };
+      function* (provider: CloudSpeechSynthesisProvider) {
         if (provider === "xai" || provider === "elevenlabs") {
           const source = (yield* credentials)[provider];
           const key = yield* resolveKey(
@@ -512,29 +481,6 @@ export const layer = Layer.effect(
       (exit) => (Exit.isSuccess(exit) ? "10 minutes" : 0),
     );
     const synthesisBackends = {
-      openai: {
-        catalog: {
-          defaultModel: openAiSpeechModels[0].id,
-          apiKeyProvider: "openai",
-          supportsModelSelection: true,
-          supportsVoiceSelection: true,
-          speedAppliedByProvider: true,
-        },
-        models: loadSynthesisModels("openai"),
-        request: (input) =>
-          Effect.succeed(
-            HttpClientRequest.post("https://api.openai.com/v1/audio/speech").pipe(
-              HttpClientRequest.bodyJsonUnsafe({
-                model: input.model || openAiSpeechModels[0].id,
-                input: input.text,
-                voice: input.voice || "alloy",
-                speed: input.speed,
-                response_format: "mp3",
-              }),
-            ),
-          ),
-        errorReason: synthesisErrorReason,
-      },
       xai: {
         catalog: {
           defaultModel: "grok-tts",
@@ -638,9 +584,9 @@ export const layer = Layer.effect(
             })),
           ),
       },
-    } satisfies Record<CloudSpeechProvider, SynthesisBackend>;
+    } satisfies Record<CloudSpeechSynthesisProvider, SynthesisBackend>;
     const synthesisModels = Effect.fn("CloudSpeech.synthesisCatalog")(function* (
-      provider: CloudSpeechProvider,
+      provider: CloudSpeechSynthesisProvider,
     ) {
       const backend = synthesisBackends[provider];
       return yield* backend.models.pipe(
@@ -656,7 +602,7 @@ export const layer = Layer.effect(
       );
     });
     const synthesizePiece = Effect.fn("CloudSpeech.synthesizePiece")(
-      function* (provider: CloudSpeechProvider, input: SpeechSynthesisRequest) {
+      function* (provider: CloudSpeechSynthesisProvider, input: SpeechSynthesisRequest) {
         const unavailable = (cause?: unknown) =>
           isSynthesisError(cause)
             ? cause
@@ -731,7 +677,7 @@ export const layer = Layer.effect(
     );
     // Pieces play back to back as one stream; each is requested once the last one ends. A piece's
     // words move to its place in the request text and to where its audio starts.
-    const stream = (provider: CloudSpeechProvider, request: SpeechSynthesisRequest) =>
+    const stream = (provider: CloudSpeechSynthesisProvider, request: SpeechSynthesisRequest) =>
       Stream.suspend(() => {
         let elapsed = 0;
         return Stream.fromIterable(

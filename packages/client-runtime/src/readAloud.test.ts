@@ -221,7 +221,7 @@ it("warms each local model once per interval, and again after a failed request",
   const local = { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "local" as const, environmentId };
   warmup(local);
   warmup(local);
-  warmup({ ...local, provider: "openai" });
+  warmup({ ...local, provider: "xai" });
   warmup({ ...local, environmentId: null });
   expect(warm.mock.calls).toEqual([[environmentId, local.model]]);
   now = 4 * 60_000;

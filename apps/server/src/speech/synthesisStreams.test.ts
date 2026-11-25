@@ -41,7 +41,7 @@ it.effect("hands every reader the audio from its start while synthesis continues
     yield* Effect.gen(function* () {
       const streams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
       yield* Queue.offer(source, Uint8Array.of(1));
-      const token = yield* streams.start("openai", request);
+      const token = yield* streams.start("xai", request);
       const live = yield* Effect.forkChild(audio(yield* streams.read(token)));
       yield* Queue.offer(source, Uint8Array.of(2));
       yield* Queue.end(source);
@@ -85,14 +85,14 @@ it.effect("answers word timings as they arrive and the audio length once synthes
 it.effect.each([
   [
     "a provider error",
-    Stream.fail(new SpeechSynthesisError({ provider: "openai", reason: "rate-limit" })),
+    Stream.fail(new SpeechSynthesisError({ provider: "xai", reason: "rate-limit" })),
     "rate-limit",
   ],
   ["no audio", Stream.empty, "unavailable"],
 ] as const)("fails to start on %s before any audio", ([, source, reason]) =>
   Effect.gen(function* () {
     const streams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
-    expect(yield* Effect.flip(streams.start("openai", request))).toMatchObject({ reason });
+    expect(yield* Effect.flip(streams.start("xai", request))).toMatchObject({ reason });
   }).pipe(Effect.provide(withSource(source))),
 );
 
@@ -102,10 +102,10 @@ it.effect("fails readers when synthesis breaks off after the first audio", () =>
     yield* Effect.gen(function* () {
       const streams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
       yield* Queue.offer(source, Uint8Array.of(1));
-      const token = yield* streams.start("openai", request);
+      const token = yield* streams.start("xai", request);
       yield* Queue.fail(
         source,
-        new SpeechSynthesisError({ provider: "openai", reason: "unavailable" }),
+        new SpeechSynthesisError({ provider: "xai", reason: "unavailable" }),
       );
       expect(Exit.isFailure(yield* Effect.exit(audio(yield* streams.read(token))))).toBe(true);
     }).pipe(Effect.provide(withSource(Stream.fromQueue(source))));
@@ -122,7 +122,7 @@ it.effect.each([
     yield* Effect.gen(function* () {
       const streams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
       yield* Queue.offer(source, Uint8Array.of(1));
-      const token = yield* streams.start("openai", request);
+      const token = yield* streams.start("xai", request);
       if (read)
         expect(yield* audio((yield* streams.read(token))?.pipe(Stream.take(1)))).toEqual([1]);
       yield* TestClock.adjust(grace);

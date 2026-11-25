@@ -12890,7 +12890,7 @@
   "09f85302ef58020c": "キーを更新しても読み上げはオンのままです。",
   "bec2c35646e0496a": "プレビュー",
   "b9e06e668bd9bff0": "再生する返信は {environment} を通じて {company} に送信され、その API キーに課金されます。このキーは音声入力と共有されます。",
-  "3985d8550c7bc219": "tts 音声合成 読み上げ 音声 再生 OpenAI Grok OpenRouter ElevenLabs",
+  "236b7b3f5ff18a4d": "tts 音声合成 読み上げ 音声 再生 Grok OpenRouter ElevenLabs",
   "9fa6e93a8218ad60": "音声",
   "17076b27f1f3ada5": "オフ",
   "154bec57dbece73c": "読み上げを停止",

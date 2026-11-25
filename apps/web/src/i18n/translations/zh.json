@@ -12968,7 +12968,7 @@
   "09f85302ef58020c": "更新密钥后朗读仍保持开启。",
   "bec2c35646e0496a": "试听",
   "b9e06e668bd9bff0": "你播放的回复会通过 {environment} 发送到 {company}，费用计入其 API 密钥。该密钥与听写共用。",
-  "3985d8550c7bc219": "tts 文字转语音 朗读 语音 播放 OpenAI Grok OpenRouter ElevenLabs",
+  "236b7b3f5ff18a4d": "tts 文字转语音 朗读 语音 播放 Grok OpenRouter ElevenLabs",
   "9fa6e93a8218ad60": "声音",
   "17076b27f1f3ada5": "关闭",
   "154bec57dbece73c": "停止朗读",

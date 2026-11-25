@@ -258,7 +258,7 @@ it.effect("places ElevenLabs word timings of later pieces after the earlier piec
   }),
 );
 
-it.effect.each(["openai", "xai", "openrouter"] as const)(
+it.effect.each(["xai", "openrouter"] as const)(
   "synthesizes with %s without leaking keys to another destination",
   (provider) =>
     Effect.gen(function* () {
@@ -291,14 +291,11 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
               ),
             ),
           );
-        yield* service.setKey(
-          provider === "openai" ? "xai" : "openai",
-          Redacted.make("must-not-be-forwarded"),
-        );
+        yield* service.setKey("openai", Redacted.make("must-not-be-forwarded"));
         const request = {
           text: "Read this reply.",
-          model: provider === "openai" ? "gpt-4o-mini-tts" : "google/gemini-test-tts",
-          voice: provider === "openai" ? "alloy" : "reader",
+          model: "google/gemini-test-tts",
+          voice: "reader",
           speed: 1.25,
           language: "en",
         };
@@ -347,7 +344,6 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
         const [url, init] = upstream.mock.calls[0]!;
         expect(String(url)).toBe(
           {
-            openai: "https://api.openai.com/v1/audio/speech",
             xai: "https://api.x.ai/v1/tts",
             openrouter: "https://openrouter.ai/api/v1/audio/speech",
           }[provider],
@@ -361,7 +357,7 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
                 input: request.text,
                 model: request.model,
                 voice: request.voice,
-                response_format: provider === "openai" ? "mp3" : "pcm",
+                response_format: "pcm",
               },
         );
         if (provider === "openrouter")
@@ -370,31 +366,19 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
         const catalog = yield* service.synthesisModels(provider);
         expect(catalog).toMatchObject({
           apiKeyProvider: provider,
-          defaultModel:
-            provider === "openai"
-              ? "gpt-4o-mini-tts"
-              : provider === "xai"
-                ? "grok-tts"
-                : "google/gemini-test-tts",
+          defaultModel: provider === "xai" ? "grok-tts" : "google/gemini-test-tts",
           speedAppliedByProvider: provider !== "openrouter",
           supportsModelSelection: true,
           supportsVoiceSelection: true,
         });
-        if (provider === "openai")
-          expect(catalog.models.map((model) => model.id)).toEqual([
-            "gpt-4o-mini-tts",
-            "tts-1",
-            "tts-1-hd",
-          ]);
-        else
-          expect(catalog.models).toEqual(
-            provider === "xai"
-              ? [{ id: "grok-tts", name: "Grok TTS", voices: ["reader"] }]
-              : [
-                  { id: "google/gemini-test-tts", name: "Speech", voices: ["reader"] },
-                  { id: "minimax/speech-test:free", name: "minimax/speech-test:free", voices: [] },
-                ],
-          );
+        expect(catalog.models).toEqual(
+          provider === "xai"
+            ? [{ id: "grok-tts", name: "Grok TTS", voices: ["reader"] }]
+            : [
+                { id: "google/gemini-test-tts", name: "Speech", voices: ["reader"] },
+                { id: "minimax/speech-test:free", name: "minimax/speech-test:free", voices: [] },
+              ],
+        );
         if (provider === "xai") {
           expect(new Headers(upstream.mock.calls.at(-1)?.[1]?.headers).get("authorization")).toBe(
             "Bearer speech-key",
@@ -479,9 +463,7 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
         yield* Effect.promise(() => reading.promise);
         yield* TestClock.adjust("2 minutes");
         expect(yield* Fiber.join(stalled)).toMatchObject({ reason: "unavailable" });
-        for (const operation of (provider === "openai"
-          ? ["synthesis"]
-          : ["catalog", "synthesis"]) as ReadonlyArray<"catalog" | "synthesis">) {
+        for (const operation of ["catalog", "synthesis"] as const) {
           let pulls = 0;
           const cancel = vi.fn();
           upstream.mockResolvedValueOnce(

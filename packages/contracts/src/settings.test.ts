@@ -557,21 +557,24 @@ describe("server model preferences", () => {
   });
 });
 
-it("disables retired subscription speech without resetting other preferences", () => {
-  const settings = decodeClientSettings({
-    speechCorrectionWord: "correct",
-    readAloud: {
+it.each(["chatgpt", "openai"])(
+  "disables retired %s read aloud without resetting other preferences",
+  (provider) => {
+    const settings = decodeClientSettings({
+      speechCorrectionWord: "correct",
+      readAloud: {
+        ...DEFAULT_READ_ALOUD_SETTINGS,
+        provider,
+        speed: 1.25,
+        backgroundPlayback: false,
+      },
+    });
+    expect(settings.readAloud).toEqual({
       ...DEFAULT_READ_ALOUD_SETTINGS,
-      provider: "chatgpt",
+      provider: "off",
       speed: 1.25,
       backgroundPlayback: false,
-    },
-  });
-  expect(settings.readAloud).toEqual({
-    ...DEFAULT_READ_ALOUD_SETTINGS,
-    provider: "off",
-    speed: 1.25,
-    backgroundPlayback: false,
-  });
-  expect(settings.speechCorrectionWord).toBe("correct");
-});
+    });
+    expect(settings.speechCorrectionWord).toBe("correct");
+  },
+);
