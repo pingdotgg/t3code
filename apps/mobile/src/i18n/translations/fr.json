@@ -1916,6 +1916,7 @@
   "69c659d8b6e271cc": "La page demande un fichier.",
   "a6efeb99b479990a": "Choisir des fichiers",
   "59c87648d44b958c": "Choisir un fichier",
+  "6f321f153b8711bb": "Choisir une option",
   "61a552a67e9e3eac": "Réponse à la boîte de dialogue",
   "1d9bd868fafea18a": "Refuser",
   "1d0a7acef4a95536": "Accepter",
@@ -5682,5 +5683,9 @@
       "k": "_gt_value_1",
       "v": "v"
     }
-  ]
+  ],
+  "1a1beecff68a6e61": "Vérifier le compte Google",
+  "99451a5d2d40440f": "Retirée par {by}.",
+  "3ee30a50b70fffab": "Retirée par {by} : {reason}",
+  "201490988858b511": "retirée par {by}"
 }

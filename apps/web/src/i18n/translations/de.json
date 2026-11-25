@@ -1552,6 +1552,7 @@
   "6848f5bbb2bd9eec": "PDF-Dokument",
   "7873a79df0cf6d0e": "Browserseite",
   "0b55696e27387e4e": "Drücke Shift+Escape, um die Browserseite zu verlassen.",
+  "90dfebe26eb86b2d": "Auswahloptionen der Seite",
   "737d3c6bec93f9e6": "Dateien für die Seite auswählen",
   "e6a3fa7cfc14f86a": "Browserdialog",
   "61a552a67e9e3eac": "Antwort auf Dialog",
@@ -12282,10 +12283,26 @@
   "a16b48709357a5a7": "Nutzung verwalten",
   "a00e74aaa421c524": "übrig",
   "0e34c3076c08feb2": [
-    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    {
+      "t": "span",
+      "i": 1,
+      "c": [
+        "↻ +",
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        "%"
+      ]
+    },
     " ",
     "in ",
-    { "i": 3, "k": "_gt_value_3", "v": "v" }
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    }
   ],
   "8bd6f07136317c8f": "Kein Anbieter in den ausgewählten Umgebungen meldet Abo-Limits.",
   "87f5d0c61b335f38": "Nutzung in ChatGPT mit deinem verbundenen Konto ansehen.",
@@ -12953,5 +12970,10 @@
       "v": "v"
     },
     " braucht eine Begründung."
-  ]
+  ],
+  "91aadfc843c600de": "Google-Konto bestätigen",
+  "201490988858b511": "zurückgezogen von {by}",
+  "99451a5d2d40440f": "Zurückgezogen von {by}.",
+  "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
+  "92e129bf413a1220": "zurückgezogen"
 }

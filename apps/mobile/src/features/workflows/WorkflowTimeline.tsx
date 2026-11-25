@@ -2,6 +2,7 @@ import {
   workflowAgentSummary,
   isOwnWorkflowAnswer,
   workflowAnswer,
+  workflowWithdrawal,
   workflowOneLine,
   workflowResultLines,
   workflowRunNow,
@@ -346,13 +347,16 @@ export function WorkflowTimeline(props: {
       }
       case "ask": {
         const answer = workflowAnswer(beat.result);
-        return answer === null
-          ? gt("nobody answered")
-          : isOwnWorkflowAnswer(answer, props.sessionId)
+        if (answer !== null)
+          return isOwnWorkflowAnswer(answer, props.sessionId)
             ? gt("You answered {choice}", { choice: answer.choice })
             : answer.answeredBy === null
               ? gt("Answered {choice}", { choice: answer.choice })
               : gt("{who} answered {choice}", { who: answer.answeredBy, choice: answer.choice });
+        const withdrawal = workflowWithdrawal(beat.result);
+        return withdrawal === null
+          ? gt("nobody answered")
+          : gt("withdrawn by {by}", { by: withdrawal.by });
       }
       case "run": {
         const child = node.children.find(
