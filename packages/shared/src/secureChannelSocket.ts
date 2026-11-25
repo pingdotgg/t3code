@@ -35,8 +35,25 @@ const HANDSHAKE_TIMEOUT = Duration.seconds(10);
 
 type SecureChannelServices = Aead.Aead | Digest.Digest | Kdf.Kdf | KeyAgreement.KeyAgreement;
 
+/**
+ * The handshake context of a media socket: the environment ID and the socket's query. The query
+ * names what the socket reaches, such as a preview tab or a device, and the upgrade proof covers
+ * only the path. Without the query here, the hop that ends TLS could point an accepted socket at
+ * another target. The proof itself rides in `dpop` and is left out.
+ */
+export const mediaSocketContext = (environmentId: string, query: URLSearchParams) =>
+  new TextEncoder().encode(
+    JSON.stringify([
+      environmentId,
+      [...query]
+        .filter(([name]) => name !== "dpop")
+        .map((pair) => JSON.stringify(pair))
+        .sort(),
+    ]),
+  );
+
 export interface SecureClientSocketOptions {
-  /** UTF-8 bytes of the environment ID. */
+  /** UTF-8 bytes of the environment ID, or `mediaSocketContext` on a media socket. */
   readonly context: Uint8Array;
   /** The DPoP proof key: 65-byte uncompressed P-256 point, ES256 `r‖s` signatures. */
   readonly identity: SecureChannelIdentity;
@@ -45,7 +62,7 @@ export interface SecureClientSocketOptions {
 }
 
 export interface SecureEnvironmentSocketOptions {
-  /** UTF-8 bytes of the environment ID. */
+  /** UTF-8 bytes of the environment ID, or `mediaSocketContext` on a media socket. */
   readonly context: Uint8Array;
   /** The environment key: raw 32-byte Ed25519 public key, plain Ed25519 signatures. */
   readonly identity: SecureChannelIdentity;

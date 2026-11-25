@@ -57,10 +57,17 @@ and the environment's identity key.
   travels as one sealed POST to `/api/secure`, and the routes run on the request inside it
   ([`secureHttp.ts`](../../apps/server/src/auth/secureHttp.ts)). Cookie and bearer sessions have no
   proof key and are unchanged.
-- **The client asks inside a signed proof.** The `t3sc` claim rides in the DPoP proof because the
-  hop cannot strip it. A server that verified a proof with the claim never answers in plaintext,
-  and a proof with the claim on anything but a socket upgrade is refused outside the sealed
-  envelope, so a captured proof cannot be replayed in the clear.
+- **The client asks inside a signed proof.** Anything the client asks for that the hop could
+  remove to weaken the connection rides as a claim in the DPoP proof, never in a header, query, or
+  body the hop can edit. `t3sc` asks for the channel: a server that verified a proof with the
+  claim never answers in plaintext, and a proof with the claim on anything but a socket upgrade
+  is refused outside the sealed envelope, so a captured proof cannot be replayed in the clear.
+  `t3cc` says the device shows the v2 approval code: were it strippable, both sides would fall
+  back to the code that covers the device alone and still match.
+- **A media socket's handshake covers its query.** The upgrade proof covers the path, and the
+  query names the tab or device the socket reaches, so the query is part of the handshake context
+  (`mediaSocketContext`). A hop that rewrites it gets a failed handshake, not the client's input
+  on another target.
 - **Advertised or pinned.** The capability in the environment descriptor is an unauthenticated
   hint: it lets a new client keep working with an old server. Once a client has pinned an
   environment's identity key it uses the channel regardless, so hiding the capability cannot

@@ -1,4 +1,7 @@
-import { makeSecureEnvironmentSocket } from "@t3tools/shared/secureChannelSocket";
+import {
+  makeSecureEnvironmentSocket,
+  mediaSocketContext,
+} from "@t3tools/shared/secureChannelSocket";
 import * as Effect from "effect/Effect";
 import type { HttpServerRequest } from "effect/http";
 
@@ -21,7 +24,10 @@ export const upgradeMediaSocket = Effect.fnUntraced(function* (
   const environmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const identity = yield* (yield* EnvironmentSigningKey).secureChannelIdentity.pipe(Effect.orDie);
   return yield* makeSecureEnvironmentSocket(yield* request.upgrade, {
-    context: new TextEncoder().encode(environmentId),
+    context: mediaSocketContext(
+      environmentId,
+      new URL(request.originalUrl, "http://localhost").searchParams,
+    ),
     identity,
     proofKeyThumbprint: session.proofKeyThumbprint,
   });

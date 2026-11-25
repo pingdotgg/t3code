@@ -3,7 +3,7 @@ import * as NodeWS from "@effect/platform-node/NodeWS";
 import { AuthSessionId, EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
 import { computeDpopJwkThumbprint } from "@t3tools/shared/dpop";
 import { SecureChannelError, type SecureChannelIdentity } from "@t3tools/shared/secureChannel";
-import { makeSecureClientSocket } from "@t3tools/shared/secureChannelSocket";
+import { makeSecureClientSocket, mediaSocketContext } from "@t3tools/shared/secureChannelSocket";
 import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -63,11 +63,12 @@ export const makeSecureSocketKeys = Effect.gen(function* () {
     }),
     secureChannel: true,
   });
-  const connect = (url: string) =>
-    Socket.makeWebSocket(url).pipe(
+  /** `sent` is the URL the socket opens when a hop rewrote the one the client asked for. */
+  const connect = (url: string, sent = url) =>
+    Socket.makeWebSocket(sent).pipe(
       Effect.flatMap((socket) =>
         makeSecureClientSocket(socket, {
-          context: new TextEncoder().encode(ENVIRONMENT_ID),
+          context: mediaSocketContext(ENVIRONMENT_ID, new URL(url).searchParams),
           identity: client.identity,
           verifyPeer: (input) =>
             signature

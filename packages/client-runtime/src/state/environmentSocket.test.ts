@@ -4,6 +4,7 @@ import { DpopPublicJwk } from "@t3tools/shared/dpop";
 import { SecureChannelError } from "@t3tools/shared/secureChannel";
 import {
   makeSecureEnvironmentSocket,
+  mediaSocketContext,
   SECURE_CHANNEL_CLOSE_CODE,
 } from "@t3tools/shared/secureChannelSocket";
 import * as Cause from "effect/Cause";
@@ -195,7 +196,7 @@ describe("makeEnvironmentSocketOpener", () => {
       const opened = nextEvent(socket, "open");
       raw.open();
       const secured = yield* makeSecureEnvironmentSocket(raw.environment, {
-        context: new TextEncoder().encode(ENVIRONMENT_ID),
+        context: mediaSocketContext(ENVIRONMENT_ID, new URL(raw.url).searchParams),
         identity: environment,
         proofKeyThumbprint: thumbprint,
       });
@@ -231,7 +232,7 @@ describe("makeEnvironmentSocketOpener", () => {
       const opened = nextEvent(socket, "open");
       raw.open();
       const secured = yield* makeSecureEnvironmentSocket(raw.environment, {
-        context: new TextEncoder().encode(ENVIRONMENT_ID),
+        context: mediaSocketContext(ENVIRONMENT_ID, new URL(raw.url).searchParams),
         identity: environment,
         proofKeyThumbprint: thumbprint,
       });

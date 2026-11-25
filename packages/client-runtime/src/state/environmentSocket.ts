@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
 import * as Socket from "effect/socket/Socket";
+import { mediaSocketContext } from "@t3tools/shared/secureChannelSocket";
 
 import type { PreparedConnection } from "../connection/model.ts";
 import * as Persistence from "../platform/persistence.ts";
@@ -64,6 +65,7 @@ export const makeEnvironmentSocketOpener = Effect.fn(
             ? { secureChannel: true }
             : {}),
         });
+        const context = mediaSocketContext(prepared.environmentId, target.searchParams);
         target.searchParams.set("dpop", proof);
         const raw = yield* Socket.fromWebSocket(
           Effect.acquireRelease(
@@ -72,7 +74,7 @@ export const makeEnvironmentSocketOpener = Effect.fn(
           ),
           { disableReconnects: true },
         );
-        return secure === undefined ? raw : yield* secure.wrap(raw);
+        return secure === undefined ? raw : yield* secure.wrap(raw, context);
       }).pipe(
         Effect.mapError(
           (cause) =>

@@ -11,8 +11,9 @@ export interface SecureRpcChannel {
   /**
    * Wraps one raw RPC socket. With no key pinned, the first frame the environment seals pins the
    * key it presented: the environment only seals after it accepted this device's handshake.
+   * `context` defaults to the environment ID; a media socket passes `mediaSocketContext`.
    */
-  readonly wrap: (socket: Socket.Socket) => Effect.Effect<Socket.Socket>;
+  readonly wrap: (socket: Socket.Socket, context?: Uint8Array) => Effect.Effect<Socket.Socket>;
   /** True once the environment presented a key other than the pinned one. */
   readonly keyChanged: () => boolean;
 }
@@ -72,9 +73,9 @@ export const prepareSecureRpcChannel = Effect.fn("clientRuntime.rpc.prepareSecur
     });
     return {
       // The proofs for this socket already loaded the key, and the signer keeps it.
-      wrap: (socket) =>
+      wrap: (socket, context = new TextEncoder().encode(environmentId)) =>
         secureClientSocket(socket, {
-          context: new TextEncoder().encode(environmentId),
+          context,
           verifyPeer: (input) =>
             Effect.sync(() => {
               const result = checkEnvironmentKey({ ...input, pinned });

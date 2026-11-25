@@ -177,6 +177,22 @@ it.live("runs a socket that asked for it inside the secure channel and forwards 
   }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
 );
 
+it.live("refuses a secure socket whose query was changed on the way", () =>
+  Effect.gen(function* () {
+    const keys = yield* makeSecureSocketKeys;
+    const { origin } = yield* serveHubProxy(
+      keys.session([AuthOrchestrationOperateScope]),
+      Effect.succeed(keys.environment),
+    );
+    const url = `${origin}/api/device-hub/vendor/serve-sim/helper/ws?device=test&wsTicket=test`;
+    const socket = yield* keys.connect(url, url.replace("device=test", "device=other"));
+    const error = yield* Effect.flip(Effect.flatMap(socket.reader, ({ pull }) => pull));
+    expect(error.reason._tag === "SocketCloseError" ? error.reason.code : undefined).toBe(
+      SECURE_CHANNEL_CLOSE_CODE,
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
+);
+
 it.live("closes a plaintext client on a socket whose proof asked for the secure channel", () =>
   Effect.gen(function* () {
     const keys = yield* makeSecureSocketKeys;
