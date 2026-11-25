@@ -15,10 +15,8 @@ import {
 import { defineSecretProviderDriver } from "@t3tools/secret-provider-core/server/driver";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import { defineSecretProvider } from "@t3tools/secret-provider-core/shared/definition";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
@@ -570,7 +568,7 @@ it.effect("a file request streams its value once through an owner-only pipe", ()
           assert.equal(stat.mode & 0o777, 0o600);
           assert.equal((yield* fs.stat(path.dirname(file))).mode & 0o777, 0o700);
           // A retried request_secret gets the same pipe while it still waits.
-          assert.equal(yield* service.saveToFile({ threadId, turnItemId }), file);
+          assert.equal(singleFile(yield* service.saveToFile({ threadId, turnItemId })), file);
           assert.equal(yield* fs.readFileString(file), "cf_token'$(id)");
           // The pipe is removed before the read completes.
           assert.isFalse(yield* fs.exists(file));

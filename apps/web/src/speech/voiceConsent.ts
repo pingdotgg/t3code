@@ -86,8 +86,10 @@ export function adoptHostAudioDestination(host: string | null, catalog: Environm
   if (!catalog.entries.has(environmentId)) return;
   const choice = readChoice();
   if (choice === "off" || pendingGrant(choice)) return;
-  if (choice && !("pending" in choice) && catalog.entries.has(choice.destination.environmentId))
-    return;
+  if (choice && !("pending" in choice)) {
+    const { destination } = choice;
+    if (destination.kind === "device" || catalog.entries.has(destination.environmentId)) return;
+  }
   chooseAudioDestination({ kind: "environment", environmentId });
 }
 

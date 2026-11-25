@@ -444,7 +444,7 @@ const make = Effect.gen(function* () {
 
   const discard: SecretRequests["Service"]["discard"] = Effect.fn("SecretRequests.discard")(
     function* (input) {
-      yield* forgetAnswer(input.threadId, input.turnItemId);
+      held.delete(keyOf(yield* refFor(input.threadId, input.turnItemId)));
     },
   );
 

@@ -1112,7 +1112,10 @@ export function useComposerSend(input: ComposerSendInput) {
       }),
       spokenReply,
     );
-    if (isCurrentRouteThread() && composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
+    if (
+      isCurrentRouteThread() &&
+      composerRef.current?.validateProviderInput(outgoingMessageText) === false
+    ) {
       return;
     }
 

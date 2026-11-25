@@ -28,9 +28,17 @@ export const secretRequestPrivacyNote = (
   resolve: MFunctionType = mFallback,
 ) =>
   item.delivery === "browser"
-    ? resolve(msg("Typed straight into this page's field, never stored. The agent sees only what the page shows, and passwords show as dots"))
+    ? resolve(
+        msg(
+          "Typed straight into this page's field, never stored. The agent sees only what the page shows, and passwords show as dots",
+        ),
+      )
     : item.delivery === "file"
-      ? resolve(msg("Kept out of chat and never stored. The next command this agent runs that reads it gets it once"))
+      ? resolve(
+          msg(
+            "Kept out of chat and never stored. The next command this agent runs that reads it gets it once",
+          ),
+        )
       : resolve(msg("Held in memory until used, never shown to the agent"));
 const SECRET_REQUEST_DEFAULT_PLACEHOLDER = msg("Paste the secret");
 
