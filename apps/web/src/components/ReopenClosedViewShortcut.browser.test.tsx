@@ -10,7 +10,7 @@ import {
 } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import { act, render } from "../../test/render";
 
@@ -83,8 +83,10 @@ vi.mock(import("./ui/toast"), async (original) => {
 });
 
 import { useClosedViewStore } from "../closedViewStore";
+import { writePullRequestListPreferences } from "./pullRequest/pullRequestListPreferences";
 import {
   ISSUES_PANEL_REF,
+  PULL_REQUESTS_PANEL_REF,
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "../rightPanelStore";
@@ -400,6 +402,41 @@ describe("root reopen shortcut", () => {
     );
   });
 
+  it("reopens a pull request tab with saved list filters, not the current route's search", async () => {
+    setup();
+    writePullRequestListPreferences({ involvement: "reviewing", state: "merged" });
+    onTestFinished(() => localStorage.clear());
+    useClosedViewStore.getState().remember({
+      kind: "panel-tab",
+      threadRef: PULL_REQUESTS_PANEL_REF,
+      surface: {
+        id: "pull-request:remote:project-1:github.com:pingdotgg/t3code:7",
+        kind: "pull-request",
+        environmentId: "remote",
+        projectId: "project-1",
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 7,
+      },
+    });
+    await using _view = await renderShortcut();
+
+    await act(() => {
+      press();
+    });
+
+    const { search } = state.navigate.mock.calls[0]![0];
+    const issuesSearch = { who: "assigned", status: "closed", q: "login", host: "linear.app" };
+    expect(typeof search === "function" ? search(issuesSearch) : search).toEqual({
+      involvement: "reviewing",
+      state: "merged",
+      repository: "pingdotgg/t3code",
+      number: 7,
+      selectedProjectId: "project-1",
+      selectedHost: "github.com",
+      selectedEnvironmentId: "remote",
+    });
+  });
   it("forwards address-bar focus, zoom, and panel new and close from a focused desktop page", async () => {
     setup();
     await using _shortcut = await renderShortcut();
