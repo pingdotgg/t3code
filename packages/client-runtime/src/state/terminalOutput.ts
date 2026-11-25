@@ -305,14 +305,19 @@ function resetOutput(
 const CLEAR_TERMINAL_TEXT = "\u001b[H\u001b[2J\u001b[3J";
 
 /** Earlier output stays retained so a replay from the start restores those modes. */
-function clearOutput(current: TerminalOutputState, maxBufferBytes: number): TerminalOutputState {
+function clearOutput(
+  current: TerminalOutputState,
+  maxBufferBytes: number,
+  pendingControlSequence = "",
+): TerminalOutputState {
+  const data = CLEAR_TERMINAL_TEXT + pendingControlSequence;
   // The erase rides over the budget: trimming here would evict the output that set those modes.
   const cleared = appendOutput(
     { ...current, pendingSnapshotSequenceState: undefined },
-    CLEAR_TERMINAL_TEXT,
+    data,
     maxBufferBytes <= 0
       ? maxBufferBytes
-      : Math.max(maxBufferBytes, current.retainedBytes + CLEAR_TERMINAL_TEXT.length),
+      : Math.max(maxBufferBytes, current.retainedBytes + textEncoder.encode(data).byteLength),
   );
   return { ...cleared, textStartOffset: cleared.nextOffset };
 }
@@ -327,9 +332,10 @@ export function terminalOutputReplay(output: TerminalOutputState): string {
 export function terminalOutputText(output: TerminalOutputState): string {
   const text = output.chunks.map((chunk) => chunk.data).join("");
   const firstOffset = output.chunks[0]?.startOffset ?? output.nextOffset;
-  return text.slice(
-    Math.max(terminalSequenceEnd(output.sequenceState, text), output.textStartOffset - firstOffset),
-  );
+  const start = Math.max(0, output.textStartOffset - firstOffset);
+  const sequenceState = terminalSequenceStateAfter(output.sequenceState, text, 0, start);
+  const visible = text.slice(start);
+  return visible.slice(terminalSequenceEnd(sequenceState, visible));
 }
 
 export function readTerminalOutputUpdate(

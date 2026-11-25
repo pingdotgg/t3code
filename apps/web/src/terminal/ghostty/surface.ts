@@ -23,6 +23,7 @@ import { isMonospaceFamily } from "../../appearanceFonts";
 import { observeResize } from "../../lib/observeResize";
 import { msg } from "gt-react";
 import { m } from "../../i18n/messages";
+import { subscribeI18n } from "../../i18n/runtime";
 
 const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -667,6 +668,7 @@ export class GhosttyTerminalSurface {
     metrics: GhosttyCellMetrics,
     fontFamily: string,
     options: GhosttyTerminalSurfaceOptions,
+    private readonly stopObservingI18n: () => void,
   ) {
     this.mount = mount;
     this.canvas = canvas;
@@ -703,7 +705,6 @@ export class GhosttyTerminalSurface {
 
     const input = document.createElement("textarea");
     input.className = "t3-ghostty-input";
-    input.setAttribute("aria-label", m(msg("Terminal input")));
     input.autocapitalize = "off";
     input.autocomplete = "off";
     input.spellcheck = false;
@@ -714,7 +715,6 @@ export class GhosttyTerminalSurface {
     scrollbar.className =
       "group absolute top-1 right-px bottom-1 z-1 w-[var(--app-scrollbar-width)] cursor-default touch-none";
     scrollbar.setAttribute("role", "scrollbar");
-    scrollbar.setAttribute("aria-label", m(msg("Terminal scrollback")));
     scrollbar.setAttribute("aria-orientation", "vertical");
     scrollbar.tabIndex = 0;
     scrollbar.hidden = true;
@@ -722,42 +722,59 @@ export class GhosttyTerminalSurface {
     scrollbarThumb.className =
       "absolute inset-x-px top-0 rounded-[3px] bg-[var(--app-scrollbar-thumb)] transition-[background-color] duration-[120ms] ease-[ease-out] group-hover:bg-[var(--app-scrollbar-thumb-hover)] group-focus-visible:bg-[var(--app-scrollbar-thumb-hover)]";
     scrollbar.append(scrollbarThumb);
+    const updateAccessibleNames = () => {
+      input.setAttribute("aria-label", m(msg("Terminal input")));
+      scrollbar.setAttribute("aria-label", m(msg("Terminal scrollback")));
+    };
+    updateAccessibleNames();
     mount.replaceChildren(canvas, input, scrollbar);
 
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("Canvas 2D is unavailable");
     context.fillStyle = `rgb(${options.theme.background.r}, ${options.theme.background.g}, ${options.theme.background.b})`;
     context.fillRect(0, 0, canvas.width, canvas.height);
-    const fontSize = terminalFontSize(options.font?.size);
+    const stopObservingI18n = subscribeI18n(updateAccessibleNames);
     try {
-      // Load bundled fonts before measuring; fallback metrics would size the wrong grid.
-      await ensureTerminalSymbolsFont();
-    } catch {}
-    const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
-    const metrics = measureGhosttyCell(context, fontSize, fontFamily);
-    const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
-    const core = await GhosttyTerminalCore.create(
-      grid.cols,
-      grid.rows,
-      metrics.width,
-      metrics.height,
-      options.theme,
-      options.onReply,
-    );
-    const surface = new GhosttyTerminalSurface(
-      mount,
-      canvas,
-      input,
-      scrollbar,
-      scrollbarThumb,
-      context,
-      core,
-      metrics,
-      fontFamily,
-      options,
-    );
-    surface.fit();
-    return surface;
+      const fontSize = terminalFontSize(options.font?.size);
+      try {
+        // Load bundled fonts before measuring; fallback metrics would size the wrong grid.
+        await ensureTerminalSymbolsFont();
+      } catch {}
+      const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
+      const metrics = measureGhosttyCell(context, fontSize, fontFamily);
+      const grid = terminalGridSize(
+        mount.clientWidth,
+        mount.clientHeight,
+        metrics,
+        CONTENT_PADDING,
+      );
+      const core = await GhosttyTerminalCore.create(
+        grid.cols,
+        grid.rows,
+        metrics.width,
+        metrics.height,
+        options.theme,
+        options.onReply,
+      );
+      const surface = new GhosttyTerminalSurface(
+        mount,
+        canvas,
+        input,
+        scrollbar,
+        scrollbarThumb,
+        context,
+        core,
+        metrics,
+        fontFamily,
+        options,
+        stopObservingI18n,
+      );
+      surface.fit();
+      return surface;
+    } catch (error) {
+      stopObservingI18n();
+      throw error;
+    }
   }
 
   setVisible(visible: boolean): void {
@@ -1079,6 +1096,7 @@ export class GhosttyTerminalSurface {
     this.disposed = true;
     this.clearHoveredLink();
     this.stopObservingResize();
+    this.stopObservingI18n();
     document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
     this.dprMedia = null;
