@@ -6,8 +6,9 @@ uses, the server also sends a hashed identifier for your T3 Connect account when
 to one, and a random identifier for each device that connects. The endpoint keeps a copy of each
 event and forwards events to PostHog. Events include the provider, model, reasoning effort,
 permission mode, turn and request results, duration, release channel, and token counts when
-available. Child-agent token counts are reported separately from the main agent's. Events include
-the model ID the provider used, including custom models and models served by a custom endpoint.
+available. Child-agent token counts are reported separately from the main agent's. Models from a
+provider's catalog are reported by name, even when a custom endpoint serves them. Any other
+model, such as a local or fine-tuned one, is reported only as a custom model of that provider.
 
 Product events do not include prompts, responses, file contents, authentication tokens, conversation IDs,
 raw provider events, child-agent output, or identifiers from your provider accounts. The one exception is [agent feedback](#agent-feedback),
