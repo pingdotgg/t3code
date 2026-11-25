@@ -1,4 +1,10 @@
-import { useAuth, useClerk } from "@clerk/react";
+import {
+  resolveClerkSignInProps,
+  retryClerkLoad,
+  useAuth,
+  useClerk,
+  useClerkLoadFailed,
+} from "~/cloud/disabledAuth";
 import { useAtomValue } from "@effect/atom-react";
 import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import {
@@ -15,8 +21,6 @@ import { m } from "../../i18n/messages";
 
 import { isElectron } from "../../env";
 import { runConnectMcpApproval } from "../../state/connectMcpApproval";
-import { resolveClerkSignInProps } from "../clerk/authRedirect";
-import { retryClerkLoad, useClerkLoadFailed } from "../clerk/clerkLoadFailure";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";

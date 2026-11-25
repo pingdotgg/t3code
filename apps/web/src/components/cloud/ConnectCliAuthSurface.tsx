@@ -1,4 +1,10 @@
-import { useAuth, useClerk } from "@clerk/react";
+import {
+  resolveClerkSignInProps,
+  retryClerkLoad,
+  useAuth,
+  useClerk,
+  useClerkLoadFailed,
+} from "~/cloud/disabledAuth";
 import { readConnectAuthorizeRequest } from "@t3tools/shared/connectAuth";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -9,8 +15,6 @@ import {
 } from "../../cloud/connectCliAuth";
 import { isElectron } from "../../env";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
-import { resolveClerkSignInProps } from "../clerk/authRedirect";
-import { retryClerkLoad, useClerkLoadFailed } from "../clerk/clerkLoadFailure";
 import { Button } from "../ui/button";
 
 const invalidLinkMessage = {

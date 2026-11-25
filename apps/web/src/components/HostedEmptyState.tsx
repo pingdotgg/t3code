@@ -1,4 +1,9 @@
-import { useAuth } from "@clerk/react";
+import {
+  retryClerkLoad,
+  useAuth,
+  useClerkLoadFailed,
+  useT3ConnectAuthPrompt,
+} from "~/cloud/disabledAuth";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { T } from "gt-react";
@@ -11,8 +16,6 @@ import { isElectron } from "../env";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { useRelayEnvironmentDiscovery } from "../state/environments";
 import { InstallT3Commands } from "./InstallT3Commands";
-import { retryClerkLoad, useClerkLoadFailed } from "./clerk/clerkLoadFailure";
-import { useT3ConnectAuthPrompt } from "./clerk/useT3ConnectAuthPrompt";
 import { CloudEnvironmentConnectRows } from "./cloud/CloudEnvironmentConnectList";
 import { Button } from "./ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";

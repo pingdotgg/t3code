@@ -1,4 +1,8 @@
-import { useAuth } from "@clerk/react";
+import {
+  type T3ConnectAccountPageUrl,
+  useAuth,
+  useT3ConnectAccountPage,
+} from "~/cloud/disabledAuth";
 import { useAtomValue } from "@effect/atom-react";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import {
@@ -36,10 +40,6 @@ import {
   useEnvironmentCanConfigureRelay,
   useEnvironmentScope,
 } from "~/state/session";
-import {
-  type T3ConnectAccountPageUrl,
-  useT3ConnectAccountPage,
-} from "../clerk/T3ConnectAccountPages";
 import { CloudEnvironmentConnectRows } from "./CloudEnvironmentConnectList";
 import { TunnelLimitAlert } from "./TunnelUsage";
 import { Button } from "../ui/button";
