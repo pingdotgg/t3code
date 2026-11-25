@@ -57,6 +57,7 @@ const DpopJwtPayloadJson = Schema.fromJsonString(
     iat: Schema.Int,
     ath: Schema.optionalKey(Schema.String),
     t3sc: Schema.optionalKey(Schema.Boolean),
+    t3cc: Schema.optionalKey(Schema.Unknown),
   }),
 );
 const decodeDpopJwtPayloadJson = Schema.decodeUnknownOption(DpopJwtPayloadJson);
@@ -69,6 +70,12 @@ export type DpopVerificationResult =
       readonly iat: number;
       /** The proof's `t3sc` claim: the client asks for the secure channel on this socket. */
       readonly secureChannel: boolean;
+      /**
+       * The proof's `t3cc` claim: the device shows the approval code that covers the environment's
+       * identity key. It is signed so the hop that ends TLS cannot make both sides fall back to the
+       * code that covers the device alone.
+       */
+      readonly connectDeviceCodeV2: boolean;
     }
   | {
       readonly ok: false;
@@ -203,6 +210,7 @@ export function verifyDpopProof(input: {
       jti: payload.value.jti,
       iat: payload.value.iat,
       secureChannel: payload.value.t3sc === true,
+      connectDeviceCodeV2: payload.value.t3cc === 2,
     };
   } catch {
     return { ok: false, code: "invalid_proof", reason: "Invalid DPoP proof." };

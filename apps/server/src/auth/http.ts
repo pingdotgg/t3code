@@ -439,9 +439,7 @@ export const layer = HttpApiBuilder.group(
               proof
                 ? {
                     proofKeyThumbprint: proof.thumbprint,
-                    ...(args.payload.connect_device_code === "v2"
-                      ? { connectDeviceCodeV2: true }
-                      : {}),
+                    ...(proof.connectDeviceCodeV2 ? { connectDeviceCodeV2: true } : {}),
                   }
                 : undefined,
             );

@@ -145,7 +145,12 @@ export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(fun
           ),
         );
     });
-  return { thumbprint: result.thumbprint, secureChannel: result.secureChannel, consume };
+  return {
+    thumbprint: result.thumbprint,
+    secureChannel: result.secureChannel,
+    connectDeviceCodeV2: result.connectDeviceCodeV2,
+    consume,
+  };
 });
 
 export const verifyRequestDpopProof = Effect.fn("dpop.verifyRequestDpopProof")(function* (

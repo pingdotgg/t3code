@@ -829,10 +829,13 @@ describe("RemoteEnvironmentAuthorization", () => {
           }),
         });
         expect((yield* Ref.get(harness.pinnedKeys)).get(ENVIRONMENT_ID)).toEqual(environmentKey);
-        const [, exchange] = harness.fetch.calls.find(([url]) =>
-          String(url).endsWith("/oauth/token"),
-        )!;
-        expect(String(exchange.body)).toContain("connect_device_code=v2");
+        // The request for the v2 code is signed: a field in the body could be stripped in transit.
+        expect(yield* Ref.get(harness.proofInputs)).toContainEqual(
+          expect.objectContaining({
+            url: expect.stringMatching(/\/oauth\/token$/),
+            connectDeviceCodeV2: true,
+          }),
+        );
       }),
     );
 

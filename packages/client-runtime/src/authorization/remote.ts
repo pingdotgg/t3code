@@ -123,8 +123,6 @@ export const exchangeRemoteDpopAccessToken = Effect.fn(
   readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
   readonly clientMetadata?: AuthClientPresentationMetadata;
   readonly dpopProof: string;
-  /** Tells a host that waits on approval that this device shows the v2 verification code. */
-  readonly connectDeviceCodeV2?: boolean;
   readonly timeoutMs?: number;
 }) {
   const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "auth");
@@ -140,7 +138,6 @@ export const exchangeRemoteDpopAccessToken = Effect.fn(
         requested_token_type: AuthAccessTokenType,
         ...(input.scopes ? { scope: encodeOAuthScope(input.scopes) } : {}),
         ...clientMetadataTokenExchangeFields(input.clientMetadata),
-        ...(input.connectDeviceCodeV2 ? { connect_device_code: "v2" as const } : {}),
       },
     }),
   );

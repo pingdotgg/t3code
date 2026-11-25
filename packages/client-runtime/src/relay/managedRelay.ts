@@ -61,6 +61,8 @@ export interface ManagedRelayDpopProofInput {
   readonly accessToken?: string;
   /** Adds the `t3sc` claim, which makes the server run the secure channel on that RPC socket. */
   readonly secureChannel?: boolean;
+  /** Adds the `t3cc` claim: this device shows the approval code that covers the environment's key. */
+  readonly connectDeviceCodeV2?: boolean;
 }
 
 export class ManagedRelayDpopKeyLoadError extends Schema.TaggedError<ManagedRelayDpopKeyLoadError>()(

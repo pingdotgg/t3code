@@ -119,9 +119,16 @@ describe("verifyDpopProof", () => {
     const asked = verify({ t3sc: true, future: "claim" });
     if (!asked.ok) assert.fail(asked.reason);
     assert.equal(asked.secureChannel, true);
+    assert.equal(asked.connectDeviceCodeV2, false);
     const declined = verify({ t3sc: false });
     if (!declined.ok) assert.fail(declined.reason);
     assert.equal(declined.secureChannel, false);
+    const v2Code = verify({ t3cc: 2 });
+    if (!v2Code.ok) assert.fail(v2Code.reason);
+    assert.equal(v2Code.connectDeviceCodeV2, true);
+    const laterCode = verify({ t3cc: "v3" });
+    if (!laterCode.ok) assert.fail(laterCode.reason);
+    assert.equal(laterCode.connectDeviceCodeV2, false);
   });
 
   it("rejects malformed DPoP header and payload JSON", () => {

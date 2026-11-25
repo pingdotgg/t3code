@@ -56,6 +56,7 @@ export const createProof = Effect.fn("DpopProof.createProof")(function* (input: 
   readonly url: string;
   readonly accessToken?: string | undefined;
   readonly secureChannel?: boolean | undefined;
+  readonly connectDeviceCodeV2?: boolean | undefined;
   readonly key: DpopProofKey;
 }) {
   const htu = normalizeDpopHtu(input.url);
@@ -70,6 +71,7 @@ export const createProof = Effect.fn("DpopProof.createProof")(function* (input: 
     iat: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
     ...(input.accessToken ? { ath: yield* sha256Base64Url(utf8(input.accessToken)) } : {}),
     ...(input.secureChannel ? { t3sc: true } : {}),
+    ...(input.connectDeviceCodeV2 ? { t3cc: 2 } : {}),
   });
   const signature = yield* input.key.sign(utf8(`${header}.${payload}`));
   return `${header}.${payload}.${Base64Url.encode(signature)}`;

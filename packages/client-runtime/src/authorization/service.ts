@@ -488,6 +488,7 @@ export const make = Effect.gen(function* () {
           method: "POST",
           url: environmentEndpointUrl(bootstrap.endpoint.httpBaseUrl, "/oauth/token"),
           ...(http.sealed ? { secureChannel: true } : {}),
+          connectDeviceCodeV2: true,
         })
         .pipe(
           Effect.mapError(
@@ -504,7 +505,6 @@ export const make = Effect.gen(function* () {
         credential: bootstrap.credential,
         dpopProof: bootstrapProof,
         clientMetadata: presentation.metadata,
-        connectDeviceCodeV2: true,
       }).pipe(
         Effect.catchTags({
           EnvironmentConnectApprovalPendingError: (pending) =>
