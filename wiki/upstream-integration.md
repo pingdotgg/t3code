@@ -6,20 +6,20 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.2-astra
-  at: 2026-11-24T17:46:00+00:00
+  at: 2026-11-25T17:10:38+00:00
 verified:
   - by: opencode/gpt-6.2-astra
-    at: 2026-11-24T17:46:00+00:00
+    at: 2026-11-25T17:10:38+00:00
 snapshot:
-  at: 2026-11-24T17:46:00+00:00
-  fork_main: fc2ff672b6c0961d61cbb59f914b46fdaa87add9
-  upstream_main: 1a01d7ee6f78a3da27810202a3151ff815adc4d4
-  shared_baseline: fa2ee196b5b4d371aecdedbebc3cdbc0c20c8553
-  last_main_integration: d978ce37d2fc8c12628046c847ee2bb32b8624eb
-  last_main_upstream: fa2ee196b5b4d371aecdedbebc3cdbc0c20c8553
-  missing_upstream_on_main: 284
-  branch_integration: 8c7ed57f4ad5b15812802eea3071b538674a67cb
-  branch_code_tip: 8c7ed57f4ad5b15812802eea3071b538674a67cb
+  at: 2026-11-25T17:10:38+00:00
+  fork_main: c6a57831fb900819431f2b5a054fad8d740bfe38
+  upstream_main: 6bb4e3d9d647cc5bf8ea15751a0caab931ae064f
+  shared_baseline: 1a01d7ee6f78a3da27810202a3151ff815adc4d4
+  last_main_integration: c6a57831fb900819431f2b5a054fad8d740bfe38
+  last_main_upstream: 1a01d7ee6f78a3da27810202a3151ff815adc4d4
+  missing_upstream_on_main: 255
+  branch_integration: de10f209e3a4e1dbc61e91d3af36ed5b15b97c66
+  branch_code_tip: 4476abebf8cc8656850bcf3234d5f738a127ea15
   missing_upstream_on_branch: 0
 sources:
   - id: upstream-nov23-policy
@@ -446,7 +446,11 @@ sources:
 
 # Upstream integration
 
-The November 24 candidate merges all 284 upstream commits from `fa2ee196b5` through [upstream `1a01d7ee6f`](https://github.com/pingdotgg/t3code/commit/1a01d7ee6f78a3da27810202a3151ff815adc4d4). PR attribution uses the fork’s shared Git/Jujutsu creation path. Worktree recovery retains the fork’s workspace service and hands a recreated checkout to upstream’s setup runner.
+The November 25 candidate incorporates 255 commits through [upstream `6bb4e3d9d6`](https://github.com/pingdotgg/t3code/commit/6bb4e3d9d647cc5bf8ea15751a0caab931ae064f). Git checkpoints return upstream’s precomputed comparison range alongside the fork’s exclusions. Jujutsu keeps resolving its own refs. T3 Connect Android notifications now match the per-device account hash; self-hosted paired delivery still uses its separate encrypted payload.
+
+## November 24 sync
+
+[Fork PR #92](https://github.com/NicholasZolton/t3code/pull/92) merged all 284 upstream commits from `fa2ee196b5` through [upstream `1a01d7ee6f`](https://github.com/pingdotgg/t3code/commit/1a01d7ee6f78a3da27810202a3151ff815adc4d4). PR attribution uses the fork’s shared Git/Jujutsu creation path. Worktree recovery retains the fork’s workspace service and hands a recreated checkout to upstream’s setup runner.
 
 ## November 23 sync
 
