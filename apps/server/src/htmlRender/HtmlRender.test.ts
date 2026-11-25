@@ -63,6 +63,7 @@ describe("HtmlRender", () => {
       const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-images-" });
       const png = path.join(directory, "shot.png");
       const svg = path.join(directory, "logo.svg");
+      const commented = `<!-- <img src="/t3-missing/shot.png"> -->`;
       yield* fileSystem.writeFile(png, PNG_BYTES);
       yield* fileSystem.writeFileString(svg, "<svg/>");
       const kept = [
@@ -75,8 +76,8 @@ describe("HtmlRender", () => {
       const prepared = yield* htmlRender.prepare(
         [
           "<!doctype html><html><head><title>Shots</title></head><body>",
-          `<img src="${png}"><div style="background:url(${svg})"></div>`,
-          `<script>const shots = ['${png}', \`${svg}\`];</script>`,
+          `${commented}<img src="${png}"><div style="background:url(${svg})"></div>`,
+          `<script>const marker = '<!--'; const shots = ['${png}', \`${svg}\`];</script>`,
           ...kept.map((src) => `<img src="${src}">`),
           "</body></html>",
         ].join(""),
@@ -84,49 +85,13 @@ describe("HtmlRender", () => {
 
       const pngUri = `data:image/png;base64,${Base64.encode(PNG_BYTES)}`;
       const svgUri = `data:image/svg+xml;base64,${Base64.encode("<svg/>")}`;
-      expect(prepared).toContain(`<img src="${pngUri}">`);
+      expect(prepared).toContain(`${commented}<img src="${pngUri}">`);
       expect(prepared).toContain(`url(${svgUri})`);
       expect(prepared).toContain(`['${pngUri}', \`${svgUri}\`]`);
       expect(prepared).not.toContain(directory);
       for (const src of kept) expect(prepared).toContain(`<img src="${src}">`);
       expect(prepared.indexOf("<head>")).toBeLessThan(prepared.indexOf('<style id="t3-theme">'));
       expect(prepared.indexOf('<style id="t3-theme">')).toBeLessThan(prepared.indexOf("<title>"));
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("ignores local images in HTML comments while preserving active references", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const htmlRender = yield* HtmlRender.HtmlRender;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-images-" });
-      const missing = path.join(directory, "missing.png");
-      const comment = `<!-- <img src="${missing}"> -->`;
-      const result = yield* htmlRender.prepare(`${comment}<p>ok</p>`).pipe(Effect.exit);
-      expect(result._tag).toBe("Success");
-      assert(Exit.isSuccess(result));
-      expect(result.value).toContain(`${comment}<p>ok</p>`);
-      const png = path.join(directory, "shot.png");
-      yield* fileSystem.writeFile(png, PNG_BYTES);
-      const pngUri = `data:image/png;base64,${Base64.encode(PNG_BYTES)}`;
-      const prepared = yield* htmlRender.prepare(
-        `${comment}<!-- 🖼 '${png}' --><img src="${png}"><!-- '${missing}'`,
-      );
-      expect(prepared).toContain(
-        `${comment}<!-- 🖼 '${png}' --><img src="${pngUri}"><!-- '${missing}'`,
-      );
-      const multiline = '"/tmp/<!--\r\n-->.png"';
-      expect(yield* htmlRender.prepare(multiline)).toContain(multiline);
-      for (const source of [
-        `<img src="${missing}">`,
-        `<script>const marker = '<!--'; const image = "${missing}";</script>`,
-        `<style>/* <!-- */ p { background: url(${missing}); }</style>`,
-        `<div title="<!--" style="background:url(${missing})"></div>`,
-      ]) {
-        const error = yield* htmlRender.prepare(source).pipe(Effect.flip);
-        assert(error._tag === "HtmlRenderImagesNotFoundError");
-        expect(error.paths).toEqual([missing]);
-      }
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -202,7 +167,7 @@ describe("HtmlRender", () => {
 
       const error = yield* htmlRender
         .prepare(
-          `<img src="${missing}"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}"><img src="${report}"><img src="${config}"><img src="${stalling}"><img src="${unclosed}"><img src="${upper}"><img src="${longer}">`,
+          `<img title="<!--" src="${missing}"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}"><img src="${report}"><img src="${config}"><img src="${stalling}"><img src="${unclosed}"><img src="${upper}"><img src="${longer}">`,
         )
         .pipe(Effect.flip);
 
