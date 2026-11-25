@@ -430,7 +430,7 @@ export async function openDocument(
           name: table.attrs["table:name"] || undefined,
           rows,
           rowCount: rows.length,
-          columns: rows.reduce((columns, row) => Math.max(columns, row.length), 1),
+          columns: rows.length && rows.reduce((columns, row) => Math.max(columns, row.length), 1),
           truncated,
         };
       }),
@@ -583,6 +583,7 @@ const rtfCodePageLabel = (codePage: number) =>
       950: "big5",
       874: "windows-874",
       10000: "macintosh",
+      54936: "gb18030",
     } as Record<number, string>
   )[codePage] ?? `windows-${codePage}`;
 

@@ -1,6 +1,8 @@
 import {
-  retainedTerminalHistory,
+  retainTerminalSnapshotHistory,
+  skipTerminalSnapshotContinuation,
   TERMINAL_SEQUENCE_GROUND,
+  type TerminalSessionSnapshot,
   terminalSequenceEnd,
   terminalSequenceStateAfter,
 } from "@t3tools/contracts";
@@ -20,6 +22,8 @@ export interface TerminalOutputState {
   // The terminal parser's state at the first retained code unit. Trimming can cut a control
   // sequence, and a replay has to skip the rest of it instead of printing it.
   readonly sequenceState: number;
+  /** Parser state of a prefix omitted after the snapshot history. */
+  readonly pendingSnapshotSequenceState?: number | undefined;
   /** Chunks before this offset are replayed to emulators but are no longer displayed text. */
   readonly textStartOffset: number;
 }
@@ -182,6 +186,27 @@ function appendOutput(
   data: string,
   maxBufferBytes: number,
 ): TerminalOutputState {
+  const pending = current.pendingSnapshotSequenceState;
+  if (pending === undefined || data.length === 0) {
+    return appendRetainedOutput(current, data, maxBufferBytes);
+  }
+  const continuation = skipTerminalSnapshotContinuation(pending, data);
+  return appendRetainedOutput(
+    {
+      ...current,
+      pendingSnapshotSequenceState:
+        continuation.state === TERMINAL_SEQUENCE_GROUND ? undefined : continuation.state,
+    },
+    continuation.data,
+    maxBufferBytes,
+  );
+}
+
+function appendRetainedOutput(
+  current: TerminalOutputState,
+  data: string,
+  maxBufferBytes: number,
+): TerminalOutputState {
   if (data.length === 0) return current;
   if (maxBufferBytes <= 0) {
     return {
@@ -254,12 +279,12 @@ function appendOutput(
 
 function resetOutput(
   current: TerminalOutputState,
-  data: string,
+  snapshot: Pick<TerminalSessionSnapshot, "history" | "historySequenceState">,
   maxBufferBytes: number,
 ): TerminalOutputState {
-  const retained = retainedTerminalHistory(data, maxBufferBytes);
+  const retained = retainTerminalSnapshotHistory(snapshot.history, maxBufferBytes);
   const reset = splitOutputChunks(
-    retained,
+    retained.history,
     0,
     Math.min(DEFAULT_TERMINAL_CHUNK_BYTES, Math.max(1, maxBufferBytes)),
   );
@@ -270,6 +295,7 @@ function resetOutput(
     resetVersion: current.resetVersion + 1,
     nextOffset: reset.nextOffset,
     sequenceState: TERMINAL_SEQUENCE_GROUND,
+    pendingSnapshotSequenceState: snapshot.historySequenceState ?? retained.historySequenceState,
     textStartOffset: 0,
   };
 }
@@ -279,14 +305,19 @@ function resetOutput(
 const CLEAR_TERMINAL_TEXT = "\u001b[H\u001b[2J\u001b[3J";
 
 /** Earlier output stays retained so a replay from the start restores those modes. */
-function clearOutput(current: TerminalOutputState, maxBufferBytes: number): TerminalOutputState {
+function clearOutput(
+  current: TerminalOutputState,
+  maxBufferBytes: number,
+  pendingControlSequence = "",
+): TerminalOutputState {
+  const data = CLEAR_TERMINAL_TEXT + pendingControlSequence;
   // The erase rides over the budget: trimming here would evict the output that set those modes.
   const cleared = appendOutput(
-    current,
-    CLEAR_TERMINAL_TEXT,
+    { ...current, pendingSnapshotSequenceState: undefined },
+    data,
     maxBufferBytes <= 0
       ? maxBufferBytes
-      : Math.max(maxBufferBytes, current.retainedBytes + CLEAR_TERMINAL_TEXT.length),
+      : Math.max(maxBufferBytes, current.retainedBytes + textEncoder.encode(data).byteLength),
   );
   return { ...cleared, textStartOffset: cleared.nextOffset };
 }
@@ -301,9 +332,10 @@ export function terminalOutputReplay(output: TerminalOutputState): string {
 export function terminalOutputText(output: TerminalOutputState): string {
   const text = output.chunks.map((chunk) => chunk.data).join("");
   const firstOffset = output.chunks[0]?.startOffset ?? output.nextOffset;
-  return text.slice(
-    Math.max(terminalSequenceEnd(output.sequenceState, text), output.textStartOffset - firstOffset),
-  );
+  const start = Math.max(0, output.textStartOffset - firstOffset);
+  const sequenceState = terminalSequenceStateAfter(output.sequenceState, text, 0, start);
+  const visible = text.slice(start);
+  return visible.slice(terminalSequenceEnd(sequenceState, visible));
 }
 
 export function readTerminalOutputUpdate(
