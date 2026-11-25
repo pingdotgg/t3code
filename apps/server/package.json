@@ -1,14 +1,14 @@
 {
-  "name": "t3",
+  "name": "tix",
   "version": "0.1.11",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pingdotgg/t3code",
+    "url": "https://github.com/penouc/tix",
     "directory": "apps/server"
   },
   "bin": {
-    "t3": "./dist/bin.mjs"
+    "tix": "./dist/bin.mjs"
   },
   "files": [
     "dist"

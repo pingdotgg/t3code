@@ -74,7 +74,7 @@ jobs:
           profile: preview:dev
           environment: preview
           expo-token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-          output: ${{ runner.temp }}/t3code-preview.apk
+          output: ${{ runner.temp }}/tix-preview.apk
 
       # `eas upload` hosts the APK on EAS and returns the page testers install from.
       - id: build
@@ -83,7 +83,7 @@ jobs:
         working-directory: apps/mobile
         shell: bash
         run: |
-          eas upload --platform android --build-path "$RUNNER_TEMP/t3code-preview.apk" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
+          eas upload --platform android --build-path "$RUNNER_TEMP/tix-preview.apk" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
           link="$(sed -n '/^{/,$p' "$RUNNER_TEMP/upload.json" | jq -r '.url // empty')"
           if [ -z "$link" ]; then
             echo "::error::eas upload returned no install link"
@@ -144,7 +144,7 @@ jobs:
           profile: preview:dev
           environment: preview
           expo-token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-          output: ${{ runner.temp }}/t3code-preview.ipa
+          output: ${{ runner.temp }}/tix-preview.ipa
 
       # EAS hosts the signed client and returns its install page.
       - id: build
@@ -153,7 +153,7 @@ jobs:
         working-directory: apps/mobile
         shell: bash
         run: |
-          eas upload --platform ios --build-path "$RUNNER_TEMP/t3code-preview.ipa" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
+          eas upload --platform ios --build-path "$RUNNER_TEMP/tix-preview.ipa" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
           link="$(sed -n '/^{/,$p' "$RUNNER_TEMP/upload.json" | jq -r '.url // empty')"
           if [ -z "$link" ]; then
             echo "::error::eas upload returned no install link"
@@ -169,8 +169,8 @@ jobs:
         env:
           LINK: ${{ steps.build.outputs.link }}
         run: |
-          profile_path="$(unzip -Z -1 "$RUNNER_TEMP/t3code-preview.ipa" | grep -E '^Payload/[^/]+\.app/embedded\.mobileprovision$')"
-          unzip -p "$RUNNER_TEMP/t3code-preview.ipa" "$profile_path" > "$RUNNER_TEMP/preview.mobileprovision"
+          profile_path="$(unzip -Z -1 "$RUNNER_TEMP/tix-preview.ipa" | grep -E '^Payload/[^/]+\.app/embedded\.mobileprovision$')"
+          unzip -p "$RUNNER_TEMP/tix-preview.ipa" "$profile_path" > "$RUNNER_TEMP/preview.mobileprovision"
           security cms -D -i "$RUNNER_TEMP/preview.mobileprovision" > "$RUNNER_TEMP/preview-profile.plist"
           record="$(node .github/scripts/mobile-ios-preview-record.cjs create "$LINK" "$RUNNER_TEMP/preview-profile.plist")"
           echo "record=$record" >> "$GITHUB_OUTPUT"

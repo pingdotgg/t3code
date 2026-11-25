@@ -18,13 +18,13 @@ concurrency:
 jobs:
   mirror:
     name: Mirror beta APK
-    if: github.repository == 'pingdotgg/t3code'
+    if: github.repository == 'penouc/tix'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: write
     env:
-      PACKAGE_NAME: com.t3tools.t3code
+      PACKAGE_NAME: com.penouc.tix
     steps:
       - id: credentials
         name: Check for Play credentials

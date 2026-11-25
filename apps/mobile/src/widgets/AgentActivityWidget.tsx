@@ -102,7 +102,7 @@ export function AgentActivityWidget(
   const linkRow = rows[0];
   const deepLink =
     linkRow && linkRow.deepLink.startsWith("/") && !linkRow.deepLink.startsWith("//")
-      ? `t3code://${linkRow.deepLink.slice(1)}`
+      ? `tix://${linkRow.deepLink.slice(1)}`
       : null;
 
   const background = accessory ? "clear" : isLightScheme ? "#ffffff" : "#1c1c1e";
