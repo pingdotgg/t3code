@@ -33,9 +33,9 @@ import type {
 import { definition } from "../shared/definition.ts";
 
 /**
- * A "reviewing" read already holds only pull requests awaiting the viewer, including those whose
- * review was requested from a team the viewer belongs to. A team request names no login, so record
- * the viewer as requested; otherwise the service drops team-only requests from the list.
+ * `review-requested:<viewer>` search rows include the viewer's team requests, which name no login,
+ * so record the viewer as requested. Search rows only: the listing fallback cannot tell whether the
+ * viewer belongs to a requested team.
  */
 function withViewerRequested<T extends { readonly reviewRequestLogins: ReadonlyArray<string> }>(
   item: T,
@@ -450,7 +450,7 @@ export const make = Effect.gen(function* () {
           Effect.map((page) => ({
             ...page,
             items: page.items.map((item) => ({
-              ...withViewerRequested(item, input),
+              ...(page.continues ? withViewerRequested(item, input) : item),
               author: withAvatar(item.author, new Map<string, string>(), input.host),
             })),
           })),

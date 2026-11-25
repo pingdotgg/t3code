@@ -1013,6 +1013,52 @@ describe("listChangeRequests", () => {
       expect(all.items[0]!.reviewRequestLogins).toEqual(["someone-else"]);
     }),
   );
+
+  it.effect(
+    "does not vouch for a team request the listing fallback cannot scope to the viewer",
+    () =>
+      Effect.gen(function* () {
+        const teamOnly = {
+          number: 1,
+          title: "Change",
+          url: "https://github.com/acme/web/pull/1",
+          author: null,
+          headBranch: "feature",
+          baseBranch: "main",
+          state: "open" as const,
+          isDraft: false,
+          mergeability: "mergeable" as const,
+          additions: 0,
+          deletions: 0,
+          createdAt: "2026-07-01T00:00:00Z",
+          updatedAt: "2026-07-02T00:00:00Z",
+          reviewRequestLogins: [],
+          hasTeamReviewRequest: true,
+          labels: [],
+          reviewDecision: null,
+          checksState: null,
+        };
+        const list = yield* make.pipe(
+          Effect.provide(
+            Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+              listPullRequests: () =>
+                Effect.succeed({ items: [teamOnly], truncated: false, continues: false }),
+            }),
+          ),
+          Effect.map((provider) => provider.listChangeRequests),
+        );
+        const reviewing = yield* list({
+          cwd: "/w",
+          host: "github.com",
+          repository: "acme/web",
+          state: "open",
+          involvement: "reviewing",
+          viewer: "viewer",
+          limit: 50,
+        });
+        expect(reviewing.items[0]!.reviewRequestLogins).toEqual([]);
+      }),
+  );
 });
 
 describe("listChangeRequestsAcross", () => {
