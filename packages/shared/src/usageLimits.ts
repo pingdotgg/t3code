@@ -385,18 +385,22 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     ];
     const winner = fresher ? next : previous;
     const creditSource = creditSources.get(key);
-    // A hub e-mail names the account better than the driver's default instance name.
+    // A hub e-mail or name names the account better than the driver's default instance name.
     const hubEmail = [previous, next].some(
       (account) => account.environments.length === 0 && account.email,
     );
-    const displayName = previous.displayName ?? next.displayName;
+    const displayName =
+      [previous.displayName, next.displayName].find(
+        (name) =>
+          name &&
+          !(
+            hubEmail &&
+            name.toLowerCase() === PROVIDER_DISPLAY_NAMES[previous.driver]?.toLowerCase()
+          ),
+      ) ?? null;
     accounts.set(key, {
       ...previous,
-      displayName:
-        hubEmail &&
-        displayName?.toLowerCase() === PROVIDER_DISPLAY_NAMES[previous.driver]?.toLowerCase()
-          ? null
-          : displayName,
+      displayName,
       plan: planSources.get(key)?.plan ?? previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
@@ -446,7 +450,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         merge(hubRowKey(resolveKey, environmentId, source, account), {
           key,
           driver: account.driver,
-          displayName: account.email ? null : hubAccountName(account),
+          displayName: account.displayName ?? (account.email ? null : hubAccountName(account)),
           email: account.email,
           plan: account.plan,
           accentColor: undefined,
@@ -496,7 +500,7 @@ export function unshownFailedHubAccounts(
       for (const account of source.accounts) {
         if (account.usageLimits.unavailable?.reason !== "probeFailed") continue;
         if (shownRows.has(hubRowKey(resolveKey, environmentId, source, account))) continue;
-        failed.set(account, account.email ?? hubAccountName(account));
+        failed.set(account, account.displayName ?? account.email ?? hubAccountName(account));
       }
     }
   }
@@ -1106,7 +1110,7 @@ export function collectProviderUsageLimits(
       accounts.push({
         id: `${source.id}:${account.id}`,
         driver: account.driver,
-        label: `${source.label} · ${hubAccountName(account)}`,
+        label: `${source.label} · ${account.displayName ?? hubAccountName(account)}`,
         sourceLabel: "CLI Proxy",
         ...(account.usageLimits.resetCredits?.nextCreditId
           ? {

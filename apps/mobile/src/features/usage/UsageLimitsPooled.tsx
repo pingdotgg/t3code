@@ -2,7 +2,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
 import { providerClients } from "@t3tools/client-runtime/provider-clients";
-import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  normalizeProviderAccentColor,
+  providerInstanceInitials,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   collectHttpQuotaSources,
   collectLimitAccounts,
@@ -63,8 +66,8 @@ function accountHue(email: string) {
   return Math.abs(hash) % 360;
 }
 
-// Same hashed hue as the web account chip, so an account keeps its color across clients.
-function AccountChip({ email }: { readonly email: string }) {
+// Same hashed hue and letters as the web account chip, so an account looks alike across clients.
+function AccountChip({ email, name }: { readonly email: string; readonly name: string | null }) {
   const hue = accountHue(email);
   return (
     <View
@@ -72,7 +75,7 @@ function AccountChip({ email }: { readonly email: string }) {
       style={{ backgroundColor: `hsl(${hue}, 45%, 82%)` }}
     >
       <Text className="text-[9px] font-t3-bold" style={{ color: `hsl(${hue}, 45%, 28%)` }}>
-        {emailInitials(email)}
+        {(name ? providerInstanceInitials(name) : "") || emailInitials(email)}
       </Text>
     </View>
   );
@@ -292,7 +295,13 @@ function PoolWindowCard({
                 className="absolute inset-0 flex-row items-center justify-between gap-2 overflow-hidden rounded-md px-2"
               >
                 <View className="min-w-0 shrink flex-row items-center gap-1.5">
-                  {account.email ? <AccountChip email={account.email} /> : null}
+                  {account.email ? (
+                    <AccountChip
+                      email={account.email}
+                      // As on the web, only a named hub account's chip shows its name's letters.
+                      name={account.environments.length === 0 ? account.displayName : null}
+                    />
+                  ) : null}
                   {account.email && !(account.displayName && inlineName) ? null : (
                     <Text
                       numberOfLines={1}

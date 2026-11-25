@@ -650,6 +650,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             url: "https://hub.example.test",
             managementKey: "",
             enabled: true,
+            accountNames: { "alice@example.com": "work" },
           },
         };
         const saved = yield* serverSettings.updateSettings({

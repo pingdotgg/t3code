@@ -76,6 +76,8 @@ export const UsageLimitSourceAccount = Schema.Struct({
   id: TrimmedNonEmptyString,
   driver: ProviderDriverKind,
   email: Schema.optional(TrimmedNonEmptyString),
+  /** The source's name for this account (see UsageLimitSourceConfig.accountNames). */
+  displayName: Schema.optional(TrimmedNonEmptyString),
   plan: Schema.optional(TrimmedNonEmptyString),
   workspaceId: Schema.optional(TrimmedNonEmptyString),
   /** The models the hub routes to this account. */

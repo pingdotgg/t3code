@@ -957,6 +957,8 @@ export const UsageLimitSourceConfig = Schema.Struct({
     secretSetting,
   ),
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Names for hub accounts, keyed by e-mail, so a hub account can carry its instance's name. */
+  accountNames: Schema.optional(Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString)),
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 

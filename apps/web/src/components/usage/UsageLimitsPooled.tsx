@@ -14,7 +14,10 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { T, Var, useGT, useMessages } from "gt-react";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
-import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  normalizeProviderAccentColor,
+  providerInstanceInitials,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import {
   createContext,
@@ -61,17 +64,19 @@ function accountHue(email: string): number {
   return Math.abs(hash) % 360;
 }
 
-function AccountChip({ email }: { readonly email: string }) {
+// A named account reads as the picker's badge for that name; the e-mail keeps its color.
+function AccountChip({ email, name }: { readonly email: string; readonly name: string | null }) {
   const hue = accountHue(email);
+  const initials = (name ? providerInstanceInitials(name) : "") || accountInitials(email);
   const gt = useGT();
   return (
     <span
       role="img"
-      aria-label={gt("Account {initials}", { initials: accountInitials(email) })}
-      className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-3xs leading-none font-semibold"
+      aria-label={gt("Account {initials}", { initials })}
+      className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-0.5 text-3xs leading-none font-semibold"
       style={{ backgroundColor: `oklch(0.85 0.08 ${hue})`, color: `oklch(0.35 0.1 ${hue})` }}
     >
-      {accountInitials(email)}
+      {initials}
     </span>
   );
 }
@@ -100,7 +105,7 @@ function AccountAvatar({
       />
     );
   }
-  return account.email ? <AccountChip email={account.email} /> : null;
+  return account.email ? <AccountChip email={account.email} name={account.displayName} /> : null;
 }
 
 function AccountName({
@@ -110,14 +115,15 @@ function AccountName({
   readonly account: LimitAccount;
   readonly className?: string;
 }) {
-  if (account.displayName) return <span className={className}>{account.displayName}</span>;
-  if (account.email) {
+  // A hub account keeps its chip when named, so it matches its badge in the model picker.
+  if (account.email && (!account.displayName || account.environments.length === 0)) {
     return (
       <span className={cn("inline-flex min-w-0 items-center", className)}>
-        <AccountChip email={account.email} />
+        <AccountChip email={account.email} name={account.displayName} />
       </span>
     );
   }
+  if (account.displayName) return <span className={className}>{account.displayName}</span>;
   return (
     <span className={className}>
       {providerClients.get(account.driver)?.label ?? String(account.driver)}

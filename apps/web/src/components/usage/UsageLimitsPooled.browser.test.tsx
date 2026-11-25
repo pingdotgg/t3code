@@ -3,6 +3,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { CHATGPT_USAGE_URL } from "@t3tools/shared/usageLimits";
 import { describe, expect, it } from "vite-plus/test";
@@ -63,6 +64,64 @@ describe("UsageLimitsPooled ChatGPT usage card", () => {
     await expect
       .element(screen.getByText("View usage in ChatGPT with your connected account."))
       .toBeVisible();
+  });
+});
+
+describe("UsageLimitsPooled hub account badges", () => {
+  it("draws a named hub account with its picker initials and an unnamed one by e-mail", async () => {
+    const account = (email: string, usedPercent: number, displayName?: string) => ({
+      id: `claude-${email}.json`,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      email,
+      ...(displayName ? { displayName } : {}),
+      usageLimits: {
+        checkedAt,
+        windows: [
+          {
+            id: "five_hour",
+            label: "Session",
+            kind: "session" as const,
+            usedPercent,
+            resetsAt: "2026-10-25T18:00:00.000Z",
+          },
+        ],
+      },
+    });
+    const presentations = new Map([
+      [
+        EnvironmentId.make("desk"),
+        {
+          entry: { target: { label: "Desk" } },
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                id: UsageLimitSourceId.make("hub"),
+                kind: "cliproxy" as const,
+                label: "Hub",
+                checkedAt,
+                accounts: [
+                  account("alice@example.com", 20, "work"),
+                  account("bob@example.com", 60),
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    await using screen = await render(
+      <UsageLimitsPooled presentations={presentations} now={Date.parse(checkedAt)} />,
+    );
+
+    // The model picker badges an instance named "work" as WO.
+    await expect.element(screen.getByRole("img", { name: "Account WO" }).first()).toBeVisible();
+    await expect.element(screen.getByRole("img", { name: "Account BE" }).first()).toBeVisible();
+    await expect.element(screen.getByRole("img", { name: "Account AE" })).not.toBeInTheDocument();
+
+    await screen.getByRole("img", { name: "Account WO" }).first().click();
+    await expect.element(screen.getByText("work", { exact: true })).toBeVisible();
+    await expect.element(screen.getByLabelText("Toggle account email visibility")).toBeVisible();
   });
 });
 

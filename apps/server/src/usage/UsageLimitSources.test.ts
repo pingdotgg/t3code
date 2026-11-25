@@ -352,6 +352,64 @@ it.effect("keeps an account's last good reading when the hub's next read of it i
   );
 });
 
+it.effect("names hub accounts by e-mail from the source's account names", () =>
+  Effect.gen(function* () {
+    const sources = yield* UsageLimitSources.make;
+    yield* sources.refresh;
+    const [source] = yield* sources.current;
+    expect(source?.accounts.map(({ email, displayName }) => ({ email, displayName }))).toEqual([
+      { email: "alice@example.com", displayName: "work" },
+      { email: "bob@example.com", displayName: undefined },
+    ]);
+  }).pipe(
+    Effect.provide([
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("hub")]: {
+            kind: "cliproxy",
+            url: "http://hub.test:8317",
+            managementKey: "management-secret",
+            enabled: true,
+            // Names match e-mails in any letter case; a name for an unlisted login is ignored.
+            accountNames: { "Alice@Example.com": "work", "carol@example.com": "personal" },
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
+      }),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() =>
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                new URL(request.url).pathname.endsWith("/auth-files")
+                  ? {
+                      files: ["alice", "bob"].map((name) => ({
+                        id: `claude-${name}@example.com.json`,
+                        auth_index: name,
+                        provider: "claude",
+                        email: `${name}@example.com`,
+                      })),
+                    }
+                  : { status_code: 200, body: JSON.stringify({ five_hour: null }) },
+              ),
+            ),
+          ),
+        ),
+      ),
+      NodeCrypto.layer,
+    ]),
+  ),
+);
+
 const NOW = Date.parse("2026-11-13T12:00:00.000Z");
 const at = (hours: number) => DateTime.formatIso(DateTime.makeUnsafe(NOW + hours * 3_600_000));
 const spent = (id: string, hours: number): ServerProviderUsageWindow => ({

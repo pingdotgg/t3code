@@ -8,6 +8,7 @@ import {
   type ServerSettings,
   UsageLimitSourceConfig,
   settingsSecretLiteral,
+  type UsageLimitSourceAccount,
   type UsageLimitSourceId,
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
@@ -114,10 +115,25 @@ function keepLastGoodReadings(
             candidate.workspaceId === account.workspaceId,
         );
         if (!last || last.usageLimits.unavailable) return account;
-        // Only the reading is lent; an unread model list stays unknown.
-        return { ...last, models: account.models };
+        // Only the reading is lent; an unread model list stays unknown, and names follow settings.
+        return { ...last, models: account.models, displayName: account.displayName };
       }),
     };
+  });
+}
+
+/** The hub keeps no usable name per account, so settings name them by e-mail. */
+function nameAccounts(
+  accounts: ReadonlyArray<UsageLimitSourceAccount>,
+  config: UsageLimitSourceConfig,
+): ReadonlyArray<UsageLimitSourceAccount> {
+  const names = new Map(
+    Object.entries(config.accountNames ?? {}).map(([email, name]) => [email.toLowerCase(), name]),
+  );
+  if (names.size === 0) return accounts;
+  return accounts.map((account) => {
+    const displayName = account.email ? names.get(account.email.toLowerCase()) : undefined;
+    return displayName ? { ...account, displayName } : account;
   });
 }
 
@@ -202,7 +218,7 @@ export const make = Effect.gen(function* () {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
       return { ...base, accounts: [], error: accounts.failure.detail };
     }
-    return { ...base, accounts: accounts.success };
+    return { ...base, accounts: nameAccounts(accounts.success, config) };
   });
 
   const publish = Effect.fn("UsageLimitSources.publish")(function* (

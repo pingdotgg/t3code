@@ -294,6 +294,82 @@ describe("pools", () => {
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
+  it("names hub accounts by the source's names and leaves unnamed ones to their e-mail", () => {
+    const hubAccount = (email: string, displayName?: string): UsageLimitSourceAccount => ({
+      id: `claude-${email}.json`,
+      driver: claude,
+      email,
+      ...(displayName ? { displayName } : {}),
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const accounts = [
+      hubAccount("alice@example.com", "work"),
+      hubAccount("bob@example.com"),
+      hubAccount("carol@example.com", "personal"),
+    ];
+    // Carol is also signed in on the default instance, whose name is the driver's.
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      displayName: "Claude",
+      auth: { status: "authenticated", email: "carol@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: { providers: [native], usageLimitSources: [{ ...source, accounts }] },
+        },
+      ],
+    ]);
+    expect(
+      collectLimitAccounts(input).map(({ email, displayName }) => ({ email, displayName })),
+    ).toEqual([
+      { email: "carol@example.com", displayName: "personal" },
+      { email: "alice@example.com", displayName: "work" },
+      { email: "bob@example.com", displayName: null },
+    ]);
+    const routed = provider({ driver: claude, instanceId: ProviderInstanceId.make("work_claude") });
+    const report = collectProviderUsageLimits(
+      routed.instanceId,
+      [routed],
+      [{ ...source, accounts }],
+      now,
+    );
+    expect(report?.accounts.map((account) => account.label)).toEqual([
+      "hub · work",
+      "hub · claude-bob@example.com",
+      "hub · personal",
+    ]);
+    const unread = (email: string, displayName?: string): UsageLimitSourceAccount => ({
+      ...hubAccount(email, displayName),
+      usageLimits: { checkedAt, windows: [], unavailable: { reason: "probeFailed" } },
+    });
+    const failed = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [unread("alice@example.com", "work"), unread("bob@example.com")],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitNotices(failed)).toEqual([
+      "hub · work: Could not read limits.",
+      "hub · bob@example.com: Could not read limits.",
+    ]);
+  });
+
   it("uses the freshest reported plan even when the newest quota has no plan", () => {
     const snapshot = (label: string | undefined, checkedAt: string, usedPercent: number) =>
       provider({

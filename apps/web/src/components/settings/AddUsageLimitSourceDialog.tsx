@@ -65,6 +65,8 @@ export function AddUsageLimitSourceDialog({
   const save = () => {
     if (!canSave) return;
     const id = sourceIdFromUrl(trimmedUrl, sources, kind);
+    // Adding a saved hub again replaces its entry, so it keeps the account names set for it.
+    const accountNames = sources[id]?.accountNames;
     updateSettings({
       usageLimitSources: {
         [id]: {
@@ -73,6 +75,7 @@ export function AddUsageLimitSourceDialog({
           url: trimmedUrl,
           managementKey,
           enabled: true,
+          ...(accountNames ? { accountNames } : {}),
         },
       },
     });
