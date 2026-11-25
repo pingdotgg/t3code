@@ -873,6 +873,10 @@
   "05b16c85cb1e18bd": "Nenhum repositório",
   "04ea9e0e663983fd": "Todos os repositórios",
   "c07bd24ff49e85d9": "{count, plural, one {{count} repositório} other {{count} repositórios}}",
+  "1b799ebfa94c2408": "Aprovação de hooks de push",
+  "81d703184fe5112e": "Executar os hooks de push deste repositório?",
+  "027b0d65c7a67af6": "Arquivo de hook",
+  "ade585910165bb52": "Hook configurado",
   "e94aa66471dae6aa": "Por que estou recebendo esta pergunta?",
   "228a325b5708e675": "O acesso total ignora as aprovações, mas uma regra de pergunta nas configurações do próprio agente corresponde a esta ação, então ele ainda pergunta. Remova ou restrinja essa regra para parar esses pedidos.",
   "3f9101f696c738a8": "O acesso total ignora as aprovações, mas o agente ainda para em algumas verificações de segurança próprias que nenhuma configuração ignora, como uma exclusão cujo caminho ele não consegue verificar. O T3 Code não consegue desativá-las, então confira a solicitação e aprove se for o que você espera.",
@@ -1298,7 +1302,7 @@
   "c13753167634f7aa": "Leu o arquivo",
   "5ce648cd03020fd9": "Leu {path} e mais {count}",
   "5d6c2898401c94e6": "Leu {path}",
-  "612170d804b03320": "{count, plural, one {{count} registro de uso malformado ou inconsistente foi ignorado; o uso pode estar incompleto.} other {{count} registros de uso malformados ou inconsistentes foram ignorados; o uso pode estar incompleto.}}",
+  "69150fe436b3a0c2": "{count, plural, one {{count} registro de uso malformado ou inconsistente foi ignorado; o uso pode estar incompleto.} other {{count} registros de uso malformados ou inconsistentes foram ignorados; o uso pode estar incompleto.}}",
   "ee448ceb6820ce2f": "{environment} roda uma versão mais antiga do servidor e fica fora dos totais.",
   "732708950237004e": "Este cliente é mais antigo que o servidor em {environment}; o uso dele fica fora dos totais.",
   "9758c2ede06aa19b": "Hoje às {hour}",
@@ -5692,5 +5696,6 @@
   "1a1beecff68a6e61": "Verificar conta Google",
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
-  "201490988858b511": "retirada por {by}"
+  "201490988858b511": "retirada por {by}",
+  "46d614fa7b4bf1e5": "Execuções de workflow"
 }
