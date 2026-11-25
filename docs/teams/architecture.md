@@ -116,19 +116,20 @@ owner (4) > admin (3) > modo (2) > regular (1)
 
 #### Capability matrix
 
-| Action                                         | `regular` | `modo`            | `admin`                    | `owner`   |
-| ---------------------------------------------- | --------- | ----------------- | -------------------------- | --------- |
-| Join team, manage own pseudo & GitHub token    | Yes       | Yes               | Yes                        | Yes       |
-| Invite members / assign role $\le$ own role    | No        | `regular`, `modo` | `regular`, `modo`, `admin` | All roles |
-| Create / edit / delete Views                   | No        | No                | Yes                        | Yes       |
-| Change a thread's View                         | No        | Yes               | Yes                        | Yes       |
-| Create locked thread / lock & unlock threads   | No        | No                | Yes                        | Yes       |
-| Steer another user's ongoing turn              | No        | No                | Yes*                       | Yes*      |
-| Configure team providers & remote environments | No        | No                | Yes                        | Yes       |
-| Configure per-environment ACLs                 | No        | No                | Yes                        | Yes       |
-| Delete team / transfer last owner              | No        | No                | No                         | Yes       |
+| Action                                         | `regular`    | `modo`            | `admin`                    | `owner`      |
+| ---------------------------------------------- | ------------ | ----------------- | -------------------------- | ------------ |
+| Join team, manage own pseudo & GitHub token    | Yes          | Yes               | Yes                        | Yes          |
+| Invite members / assign role $\le$ own role    | No           | `regular`, `modo` | `regular`, `modo`, `admin` | All roles    |
+| Create / edit / delete Views                   | No           | No                | Yes                        | Yes          |
+| Change a thread's View                         | No           | Yes               | Yes                        | Yes          |
+| Create locked thread / lock & unlock threads   | No           | No                | Yes                        | Yes          |
+| Interrupt another user's ongoing turn          | No           | No                | Yes*                       | Yes*         |
+| `Send now` (steer queued message/note)         | Creator only | Creator only      | Creator only               | Creator only |
+| Configure team providers & remote environments | No           | No                | Yes                        | Yes          |
+| Configure per-environment ACLs                 | No           | No                | Yes                        | Yes          |
+| Delete team / transfer last owner              | No           | No                | No                         | Yes          |
 
-_\*See [Section 6](#6-per-turn-github-identity-forwarding--turn-isolation) for the exact security handling when an `owner`/`admin` intervenes in another user's ongoing turn._
+_\*`owner`/`admin` cannot click `Send now` (steer) on another member's thread; they have an explicit **Interrupt** action instead (immediately revoking the active turn's GitHub credential lease). See [Section 6](#6-per-turn-github-identity-forwarding--turn-isolation)._
 
 ### Views (server-enforced read & post policies)
 
@@ -238,7 +239,7 @@ Whenever a member can read a team thread (via its View) **but cannot execute tur
    - If Paul posts a note `N` milliseconds before Jean hits Send (so `N` is not in Jean's `acceptedNotes` payload):
      - Jean's turn is **not** blocked with an error and **must ignore `N`** completely.
      - The server atomically **re-anchors `N` after the new turn** (`anchor_turn_id = newTurnId`) so `N` appears chronologically _after_ Jean's turn in the history, still `pending` for Jean's next turn.
-   - Notes arriving while a turn is already running similarly anchor after the active turn (`anchor_turn_id = activeTurnId`) and never steer the active turn.
+   - Notes arriving while a turn is already running similarly anchor after the active turn (`anchor_turn_id = activeTurnId`) and never auto-steer the active turn. If the owner approves a note while a turn is still running, the approved note is appended to the thread's **queue** with a **dashed border/style** (`en pointillé`) and exposes **`Send now`** (mid-turn steering) strictly to the **thread creator only**.
 
 #### Owner UX (fluid, minimal friction)
 
@@ -353,12 +354,16 @@ To prevent this, we combine **two layers of defense**:
    - This eliminates any risk of in-memory token caching, lingering background subshells, or environment variable leakage from User A's turn into User B's turn.
    - T3 Code's `Session` model already supports stopping and resuming a provider session without losing thread history ([00_glossary.md](../internals/00_glossary.md)).
 
-### Mid-turn steering isolation
+### Mid-turn queueing, `Send now`, and steering isolation
 
-- While a turn initiated by User A is running:
-  - **Other `regular` and `modo` users cannot steer** the ongoing turn. The UI disables steering and only allows queueing a _new_ turn (if they have post permission), which will run after Turn A finishes—triggering the author-switch session recycle and using User B's GitHub identity.
-  - **`owner` and `admin` users** are permitted to intervene:
-    - To preserve strict GitHub credential isolation even when an `owner`/`admin` intervenes, we should offer (and default to) **Interrupt & Start New Turn** (which immediately revokes User A's active turn lease and runs the admin's follow-up under the admin's own identity), and if true mid-turn steering is used by an `owner`/`admin`, immediately **revoke/freeze the original user's GitHub credential lease** for the remainder of that turn so an admin cannot push/act on GitHub using User A's token.
+- While a turn is actively running on a team thread:
+  - **Messages from another member (not the thread creator)** on a shared environment — as well as **approved Notes** accepted while a turn is still running — **never auto-steer** the ongoing turn. They are appended to the thread's **queue** and rendered with a **dashed border/style** (`en pointillé`) to clearly indicate queued status.
+  - **`Send now` (promote to mid-turn steering):**
+    - Accessible **strictly to the thread creator only** (not to the colleague who sent the queued message, and **not** to `owner`/`admin` on someone else's thread).
+    - Clicking `Send now` promotes that queued message or approved note into mid-turn steering of the running turn. _(GitHub safety invariant: if the active turn was authored by someone other than the thread creator, steering immediately revokes that foreign turn's GitHub credential lease for the remainder of the turn.)_
+  - **Explicit `Interrupt` for `owner` and `admin`:**
+    - `owner` and `admin` cannot use `Send now` on another member's thread, but they have an explicit **`Interrupt`** control to stop an ongoing turn—immediately revoking the active turn's GitHub credential lease so queued turns or a fresh turn can then run cleanly under their respective authors' identities.
+  - **Normal queued execution:** When the active turn finishes naturally, queued turns execute in order, triggering the author-switch session recycle and using each queued turn author's own GitHub identity.
 
 ### Agent Privilege Containment (MCP + Hub/Runner OS Split)
 
@@ -462,3 +467,4 @@ The following decisions are locked in for implementation:
 6. **Local-environment isolation & Thread Notes** — no colleague (not even `owner`/`admin`) can execute on another member's local environment; colleagues can read, fork onto an accessible environment, or leave immutable **Notes** (`Note from <pseudo>:`). The owner must explicitly accept, edit (preserving `original_body`), or reject pending notes (with an explicit UI confirmation dialog when the note author is `regular`, while `modo`/`admin`/`owner` authors skip the extra modal), may send an empty prompt once a note is accepted, and any note arriving concurrently with a new turn is ignored by that turn and re-anchored after it.
 7. **Admin-only Team Provider auth & zero-config local execution** — team providers are authenticated solely by `owner`/`admin` on the owning Team Server; teammates never configure provider auth locally. Local team threads automatically provision isolated `team:<teamId>:*` instances (never touching or falling back to personal subscriptions), fed transparently by the Team Server via `proxy` (API/gateway) or ephemeral `token-lease` (OAuth access tokens without `refresh_token`), with `remote-only` fallback for drivers that cannot safely lease/proxy.
 8. **Agent privilege containment (Member-bound MCP + Hub/Runner OS split)** — injected T3 MCP tokens are bound to `actingMemberId = turnAuthorMemberId` (inherited immutably by subagents/delegates) so agents obey the exact same RBAC/View/Lock/Env permissions as the triggering member; for OS-level containment on a shared server, the Team Server supports `--team-hub-only` mode under a dedicated OS user (`t3hub`, `0700` data dir) while an unprivileged `t3runner` user attached over loopback runs the Default Team Environment (with optional Linux `bwrap` worktree sandboxing).
+9. **Mid-turn queueing, `Send now`, and explicit `Interrupt`** — messages from non-creators (and approved Notes) arriving during an active turn are appended to the queue with a **dashed border/style** (`en pointillé`); **`Send now`** (mid-turn steering) is strictly restricted to the **thread creator only** (not even `owner`/`admin`), while `owner`/`admin` have an explicit **`Interrupt`** control that stops the active turn and immediately revokes its GitHub credential lease.

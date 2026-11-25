@@ -95,7 +95,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
   - Greyed-out composer + localized banner when viewing a thread on an inaccessible environment (another member's local machine or a restricted remote environment), offering **`Fork this thread`** and **`Leave a note`**.
   - Inline Note Mode in composer creating immutable, hash-pinned **`Note from <pseudo>:`** timeline entries with owner notification.
   - Owner inline controls (**`Accept`**, **`Edit`**, **`Reject`**, 1-click **`Accept & Send`**), preserving `original_body` when edited by the owner, allowing **empty prompts** when ≥1 note is accepted, and requiring an explicit **UI confirmation dialog** when accepting or editing a note authored by a `regular` member (`modo`+ skip the confirmation modal).
-  - Server-enforced explicit `acceptedNotes: [{ noteId, contentHash }]` turn dispatch + automatic timeline re-anchoring (`anchor_turn_id = newTurnId`) so a note arriving concurrently with a new prompt is ignored by the model and displayed after that turn.
+  - Server-enforced explicit `acceptedNotes: [{ noteId, contentHash }]` turn dispatch + automatic timeline re-anchoring (`anchor_turn_id = newTurnId`) so a note arriving concurrently with a new prompt is ignored by the model and displayed after that turn; notes approved while a turn is already running enter the thread's queue with a **dashed style** and expose **`Send now`** strictly to the thread creator.
 - **Team Environments & ACLs (`team_environments`):**
   - Team Server UI & RPCs to attach additional remote `t3server` environments.
   - Per-environment access rules (default: everyone on the team; configurable by role and/or member whitelist).
@@ -130,16 +130,16 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
   - Local turn-scoped credential broker (`GIT_ASKPASS` + `gh` credential helper + per-turn `GIT_AUTHOR_*` / `GIT_COMMITTER_*`).
   - Short-lived single-turn credential lease for attached remote team environments.
   - Immediate credential revocation when a turn completes, fails, or is cancelled.
-- **Cross-user turn isolation:**
+- **Cross-user turn isolation & mid-turn queueing:**
   - Automatic provider session recycle (stop warm process & resume fresh) whenever `authorMemberId` changes between turns in the same thread.
-  - Block mid-turn steering by other `regular`/`modo` users (allow queueing a next turn instead).
-  - Restrict mid-turn intervention to `owner`/`admin`, with immediate revocation of the original user's active GitHub credential lease on intervention.
+  - Messages posted by non-creators while a turn is running enter the queue rendered with a **dashed border/style** (never auto-steered).
+  - **`Send now`** (mid-turn steering) is restricted strictly to the **thread creator only** (not even `owner`/`admin`); `owner`/`admin` receive an explicit **`Interrupt`** action that stops the active turn and immediately revokes its GitHub credential lease.
 
 ### Definition of Done
 
 - Alice starts a thread on the shared server, asks the agent to commit and open a PR → commit author and PR author are **Alice**.
 - Bob posts a follow-up turn in the same thread asking for another commit and push → commit author and push credentials are **Bob**, with zero access to Alice's token.
-- While Alice's turn is running, Bob cannot steer it; an `admin` can interrupt/intervene without acting under Alice's GitHub credentials.
+- While Alice's turn is running, Bob's message enters the queue in dashed style and Bob cannot click `Send now`; only Alice (creator) can click `Send now`, while an `admin` has an explicit `Interrupt` button (no `Send now`) that revokes Alice's active GitHub lease.
 
 ---
 
