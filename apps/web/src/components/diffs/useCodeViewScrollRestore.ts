@@ -28,6 +28,8 @@ export function createCodeViewScrollRestore() {
   let viewer: Viewer | undefined;
   let handle: ScrollRestoreHandle | null = null;
   let pending: { readonly scrollTop: number; readonly loaded: number } | null = null;
+  // A restore the reader cut short leaves the saved position unreached until a scroll replaces it.
+  let interrupted = false;
   const flush = () => {
     if (pending === null || !viewer || !handle || viewer.getHeight() === 0) return;
     const maxScrollTop = viewer.getScrollHeight() - viewer.getHeight();
@@ -39,13 +41,8 @@ export function createCodeViewScrollRestore() {
     const scrollTop = Math.min(pending.scrollTop, maxScrollTop);
     pending = null;
     // Pierre lands an in-range position target one sticky header (32px) above it and clamps one
-    // past the end, so the last 32px is reachable only at its two ends: take the nearer.
-    const fromHeaderAboveEnd = scrollTop - Math.max(0, maxScrollTop - 32);
-    const position =
-      scrollTop + 32 <= maxScrollTop || maxScrollTop - scrollTop < fromHeaderAboveEnd
-        ? scrollTop + 32
-        : maxScrollTop;
-    if (scrollTop > 0) handle.scrollTo({ type: "position", position });
+    // past its own end, which a footer extends, so a position in the last 32px lands at the end.
+    if (scrollTop > 0) handle.scrollTo({ type: "position", position: scrollTop + 32 });
   };
   return {
     update(
@@ -57,6 +54,7 @@ export function createCodeViewScrollRestore() {
       // A viewer kept across a scope change takes the new scope's position, never the old one's.
       if (viewer && nextScopeKey !== scopeKey) {
         pending = nextScopeKey === null ? null : (savedByScopeKey.get(nextScopeKey) ?? null);
+        interrupted = false;
       }
       scopeKey = nextScopeKey;
       settled = nextSettled;
@@ -69,25 +67,28 @@ export function createCodeViewScrollRestore() {
       if (instance && instance !== viewer) {
         viewer = instance;
         pending = scopeKey === null ? null : (savedByScopeKey.get(scopeKey) ?? null);
+        interrupted = false;
       }
       flush();
     },
     onScroll(scrollTop: number, source: object) {
       if (source !== viewer || pending !== null || scopeKey === null) return;
       savedByScopeKey.set(scopeKey, { scrollTop, loaded });
+      interrupted = false;
     },
     /**
-     * The reader acted before the saved position was reached. Reports whether it was unreached:
-     * a restore was pending, or no viewer has attached to start one.
+     * The reader acted before the saved position was reached. Reports whether it is unreached:
+     * a restore was cut short and no scroll has been saved since, or no viewer has attached.
      */
     cancel() {
-      const unreached = pending !== null || handle === null;
+      if (pending !== null) interrupted = true;
       pending = null;
-      return unreached;
+      return interrupted || handle === null;
     },
     /** Something else positions the viewer, such as a file reveal or collapsing every file. */
     discard() {
       pending = null;
+      interrupted = false;
       if (scopeKey !== null) savedByScopeKey.delete(scopeKey);
     },
     flush,

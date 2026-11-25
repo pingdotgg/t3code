@@ -197,11 +197,13 @@ const COMMIT_PAGE_SIZE = 10;
 
 // Session-only, like the thread diff's folds: switching right-panel tabs remounts this tab.
 const foldsByScopeKey = new Map<string, PullRequestDiffFolds>();
+interface ViewOverrides {
+  readonly wordWrap?: boolean;
+  readonly ignoreWhitespace?: boolean;
+}
+const NO_VIEW_OVERRIDES: ViewOverrides = {};
 // The toggles the reader used, per pull request: a saved position belongs to the layout they give.
-const viewOptionsByPullRequestKey = new Map<
-  string,
-  { readonly wordWrap?: boolean; readonly ignoreWhitespace?: boolean }
->();
+const viewOverridesByPullRequestKey = new Map<string, ViewOverrides>();
 
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
 
@@ -521,16 +523,17 @@ function PullRequestCodeTab({
   }>({ key: "", cursor: null, slices: NO_SLICES });
 
   const referenceKey = pullRequestReviewKey(reference);
-  const viewOptionsKey = JSON.stringify([environmentId, referenceKey]);
-  const [wordWrapOverride, setWordWrapOverride] = useState(
-    () => viewOptionsByPullRequestKey.get(viewOptionsKey)?.wordWrap ?? null,
+  const viewOverridesKey = JSON.stringify([environmentId, referenceKey]);
+  const [viewOverrides, setViewOverrides] = useState(
+    () => viewOverridesByPullRequestKey.get(viewOverridesKey) ?? NO_VIEW_OVERRIDES,
   );
-  const wordWrap = wordWrapOverride ?? settings.wordWrap;
-  const [ignoreWhitespace, setIgnoreWhitespace] = useState(
-    () =>
-      viewOptionsByPullRequestKey.get(viewOptionsKey)?.ignoreWhitespace ??
-      settings.diffIgnoreWhitespace,
-  );
+  const wordWrap = viewOverrides.wordWrap ?? settings.wordWrap;
+  const [initialIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
+  const ignoreWhitespace = viewOverrides.ignoreWhitespace ?? initialIgnoreWhitespace;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- saves the toggles to the session map so a remount restores them, under the key a late host resolution moves to
+  useEffect(() => {
+    viewOverridesByPullRequestKey.set(viewOverridesKey, viewOverrides);
+  }, [viewOverridesKey, viewOverrides]);
   // A commit opened from the timeline or left selected across a force-push may no longer be
   // part of the pull request; read it as "All commits" instead of requesting its diff.
   const commit =
@@ -564,9 +567,6 @@ function PullRequestCodeTab({
     setDraft(null);
     setSelectedLines(null);
     setFolds(foldsByScopeKey.get(scopeKey) ?? EMPTY_PULL_REQUEST_DIFF_FOLDS);
-    const viewOptions = viewOptionsByPullRequestKey.get(viewOptionsKey);
-    setWordWrapOverride(viewOptions?.wordWrap ?? null);
-    setIgnoreWhitespace(viewOptions?.ignoreWhitespace ?? settings.diffIgnoreWhitespace);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
     setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
@@ -1083,8 +1083,9 @@ function PullRequestCodeTab({
     codeViewScroll.cancel();
     codeViewReveal.cancel();
   };
-  // A reveal or a bulk fold moves the viewer for the reader. An offset its restore had not
-  // reached is dropped, so it cannot land afterwards; one the reader left stays until a scroll.
+  // A reveal, a bulk fold or a wrap or whitespace toggle moves the viewer for the reader. An
+  // offset its restore had not reached is dropped, so it cannot land afterwards; one the reader
+  // left stays until a scroll.
   const repositionForReader = () => {
     if (codeViewScroll.cancel()) codeViewScroll.discard();
     scrolledByReader.current = scopeKey;
@@ -1512,23 +1513,15 @@ function PullRequestCodeTab({
           count: hiddenTestFileCount,
         })
       : null;
-  const saveViewOption = (option: { wordWrap: boolean } | { ignoreWhitespace: boolean }) => {
+  const changeViewOverride = (override: ViewOverrides) => {
     // The layout changes under the reader, so a position saved in the old one no longer applies.
     repositionForReader();
-    viewOptionsByPullRequestKey.set(viewOptionsKey, {
-      ...viewOptionsByPullRequestKey.get(viewOptionsKey),
-      ...option,
-    });
+    setViewOverrides({ ...viewOverrides, ...override });
   };
   const changeIgnoreWhitespace = (next: boolean) => {
-    saveViewOption({ ignoreWhitespace: next });
-    setIgnoreWhitespace(next);
+    changeViewOverride({ ignoreWhitespace: next });
     setDraft(null);
     setSelectedLines(null);
-  };
-  const changeWordWrap = (next: boolean) => {
-    saveViewOption({ wordWrap: next });
-    setWordWrapOverride(next);
   };
   const toolbar = (
     <div className="@container flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
@@ -1737,7 +1730,7 @@ function PullRequestCodeTab({
             </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={wordWrap}
-              onCheckedChange={(checked) => changeWordWrap(checked)}
+              onCheckedChange={(checked) => changeViewOverride({ wordWrap: checked })}
             >
               <T>Wrap lines</T>
             </DropdownMenuCheckboxItem>
@@ -1809,7 +1802,7 @@ function PullRequestCodeTab({
                   variant="ghost"
                   size="sm"
                   pressed={wordWrap}
-                  onPressedChange={(pressed) => changeWordWrap(Boolean(pressed))}
+                  onPressedChange={(pressed) => changeViewOverride({ wordWrap: Boolean(pressed) })}
                 />
               }
             >

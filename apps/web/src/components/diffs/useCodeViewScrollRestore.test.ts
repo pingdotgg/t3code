@@ -69,12 +69,12 @@ describe("createCodeViewScrollRestore", () => {
     // Past the end, Pierre clamps the target to the bottom without subtracting the header.
     expect(shrunk.scrolls).toEqual([{ type: "position", position: 1532 }]);
 
-    // In the last 32px, only the bottom and one header above it can be reached.
+    // The viewer's own end can lie past the files (a footer), so the last 32px is left to it.
     const nearEnd = viewer(2000);
     mount("thread-near-end", nearEnd).onScroll(1476, nearEnd.instance);
     const nearEndAgain = viewer(2000);
     mount("thread-near-end", nearEndAgain);
-    expect(nearEndAgain.scrolls).toEqual([{ type: "position", position: 1500 }]);
+    expect(nearEndAgain.scrolls).toEqual([{ type: "position", position: 1508 }]);
   });
 
   it("waits for as many batches as were shown when the position was saved", () => {
@@ -101,10 +101,12 @@ describe("createCodeViewScrollRestore", () => {
 
     const loading = viewer(700);
     const restore = mount("thread-e", loading, false, () => {});
+    // Unreached until a scroll replaces it: a click that cut the restore short scrolls nothing.
     expect(restore.cancel()).toBe(true);
-    expect(restore.cancel()).toBe(false);
+    expect(restore.cancel()).toBe(true);
     expect(createCodeViewScrollRestore().cancel()).toBe(true);
     restore.onScroll(150, loading.instance);
+    expect(restore.cancel()).toBe(false);
     loading.instance.scrollHeight = 10_000;
     restore.update("thread-e", true, null);
     restore.flush();
