@@ -977,6 +977,26 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
+  it.effect("a skill scan leaves the folder entry it scanned from unchanged", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.initialize;
+      yield* harness.provider.onSessionStarted(started, "/workspace");
+      const published = yield* harness.provider.snapshot.getSnapshot;
+      const entryOf = (provider: ServerProvider) =>
+        provider.workspaceSnapshots?.find((entry) => entry.cwd === "/workspace");
+      const skills = [{ name: "deploy", path: "/workspace/.agent/skills/deploy", enabled: true }];
+
+      yield* harness.provider.snapshotForCwd("/workspace", skills);
+      // ProviderRegistry saves the scan only if the entry it scanned from is still published.
+      const republished = mergeProviderSnapshot(
+        published,
+        yield* harness.provider.snapshot.getSnapshot,
+      );
+      expect(entryOf(republished)).toEqual(entryOf(published));
+    }),
+  );
+
   it.effect("bounds workspace metadata without starting sessions for workspace lookup", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
