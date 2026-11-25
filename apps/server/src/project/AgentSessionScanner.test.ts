@@ -1766,6 +1766,63 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("imports older history behind 100 unreadable sessions", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const sessions = path.join(claudeHomePath, "pi-agent", "sessions", "--workspace--");
+        // Nesting past the JSON reader's depth limit makes a transcript unreadable.
+        const tooDeep = "[".repeat(130) + "]".repeat(130);
+        for (let index = 0; index < 100; index++) {
+          const header = encodeTranscriptRecord({
+            type: "session",
+            version: 3,
+            id: `unreadable-${index}`,
+            cwd: workspace,
+          });
+          yield* writeTranscript({
+            filePath: path.join(sessions, `unreadable-${index}.jsonl`),
+            contents: `${header}\n${tooDeep}\n`,
+            mtimeMs: nowMs - (index + 1) * 1_000,
+          });
+        }
+        yield* writeTranscript({
+          filePath: path.join(sessions, "older.jsonl"),
+          contents:
+            [
+              { type: "session", version: 3, id: "older", cwd: workspace },
+              {
+                type: "message",
+                id: "a1",
+                parentId: null,
+                message: { role: "user", content: "Review this change" },
+              },
+              {
+                type: "message",
+                id: "a2",
+                parentId: "a1",
+                message: { role: "assistant", content: [{ type: "text", text: "Looks good" }] },
+              },
+            ]
+              .map((record) => encodeTranscriptRecord(record))
+              .join("\n") + "\n",
+          mtimeMs: nowMs - 200_000,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(threads.map((thread) => thread.providerSessionId)).toEqual(["older"]);
+      }),
+    );
+
     it.effect("keeps the provider instance that owns a custom session home", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
