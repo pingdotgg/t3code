@@ -1283,6 +1283,7 @@ it.effect("a capture through a kept index skips the index rebuild and its scan",
       "ls-files",
       "add",
       "write-tree",
+      "ls-files",
       ...end,
     ]);
     // HEAD lacks untracked.txt, so check-ignore runs; the last diff-tree checks .gitattributes.
@@ -1294,6 +1295,7 @@ it.effect("a capture through a kept index skips the index rebuild and its scan",
       "add",
       "write-tree",
       "diff-tree",
+      "ls-files",
       ...end,
     ]);
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),

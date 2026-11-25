@@ -43,6 +43,7 @@ import {
 import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
+import { parseGitmodulesPaths } from "../workspace/WorkspaceFolders.ts";
 import {
   makeGitVcsDriverCore,
   PATCH_RENDER_PREFIX_ARGS,
@@ -1228,6 +1229,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         cwd,
         args: ["rev-parse", "--show-toplevel"],
       })).stdout.replace(/\r?\n$/, "");
+      const submodules = new Set(
+        parseGitmodulesPaths(
+          yield* fileSystem.readFileString(path.join(topLevel, ".gitmodules")).pipe(
+            Effect.catchIf(
+              (error) => error.reason._tag === "NotFound",
+              () => Effect.succeed(""),
+            ),
+          ),
+        ),
+      );
       const recordedWorktreeBranches = gitlinks.some((gitlink) =>
         isNumberedWorktreePath(gitlink.path),
       )
@@ -1261,6 +1272,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         gitlinks,
         (gitlink) =>
           Effect.gen(function* () {
+            if (submodules.has(gitlink.path)) return null;
             const nestedCwd = path.join(topLevel, gitlink.path);
             const forkPoint = yield* defaultBranchTip(nestedCwd).pipe(
               Effect.flatMap((tip) => nestedGit(nestedCwd, ["merge-base", gitlink.to, tip])),

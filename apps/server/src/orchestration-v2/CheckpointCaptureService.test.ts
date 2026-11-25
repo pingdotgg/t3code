@@ -1789,13 +1789,14 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           "write-tree",
           "diff-tree",
           "log",
+          "ls-files",
           "commit-tree",
           "update-ref",
         ];
 
         assert.deepEqual(yield* capture(2, thread.write(`${root}/README.md`, "# two\n")), {
           files: ["README.md"],
-          commands: [...snapshot, "diff"],
+          commands: [...snapshot, "diff", "diff"],
         });
         // Nothing changed, so there is nothing to diff.
         assert.deepEqual(yield* capture(3, Effect.void), { files: [], commands: snapshot });
@@ -1812,6 +1813,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           committed.commands.toSorted(),
           [
             ...snapshot,
+            "diff",
             "diff",
             "version",
             "rev-list",
