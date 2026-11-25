@@ -73,26 +73,37 @@ export interface ApprovalTextPart {
   readonly named?: true;
 }
 
+// A letter, not one of Arabic's already shaped presentation forms.
+const LETTER = String.raw`(?=\p{L})(?![\uFB50-\uFDFF\uFE70-\uFEFF])`;
+const MONGOLIAN_SELECTOR = String.raw`[\u180B-\u180D\u180F]`;
 // Scripts whose letters join or conjoin, where a joiner or a non-joiner picks the letter's form.
+// Each entry is a character of one script, with only that script's marks between it and a joiner,
+// or a non-joiner and a character of the same script.
 const JOINING =
   "Arab Syrc Nkoo Mand Mong Phag Adlm Rohg Deva Beng Guru Gujr Orya Taml Telu Knda Mlym Sinh Mymr Khmr"
     .split(" ")
-    .map((script) => String.raw`\p{Script=${script}}`)
-    .join("");
-const AFTER_JOINING = String.raw`(?<=[\p{L}\p{M}])(?<=[${JOINING}]\p{M}*)`;
-const PICTURE = String.raw`\p{Extended_Pictographic}`;
+    .map(
+      (script) =>
+        String.raw`\p{Script=${script}}(?=(?:(?![\u200C\u200D])[\p{Script_Extensions=${script}}\p{Script_Extensions=Zinh}])*(?:\u200D|\u200C\p{Script=${script}}))`,
+    )
+    .join("|");
+const AFTER_MONGOLIAN_LETTER = String.raw`(?<=\p{L})(?<=\p{Script=Mong})`;
+// An emoji that is not a skin tone, which only colours the emoji before it.
+const PICTURE = String.raw`(?!\p{Emoji_Modifier})\p{Extended_Pictographic}`;
 // The places where a character that draws nothing itself changes what is drawn beside it.
 const SHAPING = [
-  // A non-joiner between two joining letters, and a joiner after one.
-  String.raw`${AFTER_JOINING}\u200C(?=\p{L})[${JOINING}]`,
-  String.raw`${AFTER_JOINING}\u200D`,
+  // After a joining letter, its drawn marks and a Mongolian selector: a joiner, and a non-joiner
+  // before another letter.
+  String.raw`(?<=${LETTER}(?:${JOINING})(?:(?!\p{Default_Ignorable_Code_Point})\p{M})*${MONGOLIAN_SELECTOR}?)(?:\u200D|\u200C${LETTER})`,
   // A joiner between two emoji, and a presentation selector after an emoji or in a keycap.
-  String.raw`(?<=${PICTURE}[\uFE0F\p{Emoji_Modifier}]?)\u200D${PICTURE}`,
-  String.raw`(?<=${PICTURE})[\uFE0E\uFE0F]`,
+  String.raw`(?<=${PICTURE}\uFE0F?|\p{Emoji_Modifier_Base}\p{Emoji_Modifier})\u200D${PICTURE}`,
+  String.raw`(?<!\p{Emoji_Modifier})(?<=\p{Extended_Pictographic})[\uFE0E\uFE0F]`,
   String.raw`(?<=[0-9#*])\uFE0F\u20E3`,
-  // A variation selector after an ideograph, and a Mongolian one after a Mongolian letter.
-  String.raw`(?<=\p{Script=Han})[\uFE00-\uFE0D\u{E0100}-\u{E01EF}]`,
-  String.raw`(?<=\p{Script=Mong})[\u180B-\u180F]`,
+  // A variation selector after an ideograph that has variants.
+  String.raw`(?<=\p{Unified_Ideograph})[\uFE00-\uFE02\u{E0100}-\u{E01EF}]`,
+  // After a Mongolian letter: a variation selector, and the separator before a final a or e.
+  String.raw`${AFTER_MONGOLIAN_LETTER}${MONGOLIAN_SELECTOR}`,
+  String.raw`${AFTER_MONGOLIAN_LETTER}\u180E(?=[\u1820\u1821])`,
 ].join("|");
 // Control, format, separator and ignorable characters draw as nothing or as a blank box, and some
 // reorder the text beside them. A line feed and a tab draw as themselves.

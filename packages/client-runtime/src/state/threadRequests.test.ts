@@ -766,3 +766,53 @@ it("names a joiner or a variation selector that shapes nothing where it stands",
   unchanged("\u{1F441}\uFE0F\u200D\u{1F5E8}\uFE0F \u2764\uFE0F \u2764\uFE0E 1\uFE0F\u20E3");
   unchanged("\u845B\u{E0100} \u8FBB\uFE00 \u182E\u180B \u1820\u180E\u1820");
 });
+
+it("names a joiner or a selector whose neighbour is of the right script but is not its base", () => {
+  const named = (text: string) =>
+    approvalTextParts(text)
+      .map((part) => (part.named ? `<${part.text}>` : part.text))
+      .join("");
+  const unchanged = (text: string) => expect(approvalTextParts(text)).toEqual([{ text }]);
+
+  // A Mongolian selector after a digit, a punctuation mark or another selector.
+  expect(named("\u1810\u180B \u1800\u180C \u182E\u180B\u180B")).toBe(
+    "\u1810<U+180B> \u1800<U+180C> \u182E\u180B<U+180B>",
+  );
+  expect(named("\u1810\u180E\u1820 \u182E\u180E\u182E \u1820\u180E\u180E\u1820")).toBe(
+    "\u1810<U+180E>\u1820 \u182E<U+180E>\u182E \u1820<U+180E><U+180E>\u1820",
+  );
+  // A joiner after a digit, a sign or a lone mark of a joining script, with or without marks.
+  expect(named("\u0661\u064B\u200D \u066A\u0301\u200D\u0645 \u061C\u064B\u200D")).toBe(
+    "\u0661\u064B<U+200D> \u066A\u0301<U+200D>\u0645 <U+061C>\u064B<U+200D>",
+  );
+  expect(named("\u0967\u094D\u200D\u0937 \u0967\u094D\u200C\u0937 \u094D\u200D")).toBe(
+    "\u0967\u094D<U+200D>\u0937 \u0967\u094D<U+200C>\u0937 \u094D<U+200D>",
+  );
+  // After a letter that is already a fixed form, a mark of another script or an undrawn mark.
+  expect(named("\uFE8D\u200D \u0645\u05B0\u200D \u0645\uFE0F\u200D \u1780\u17B4\u200D")).toBe(
+    "\uFE8D<U+200D> \u0645\u05B0<U+200D> \u0645<U+FE0F><U+200D> \u1780<U+17B4><U+200D>",
+  );
+  // Between letters of two scripts, and a joiner or a non-joiner after another.
+  expect(named("\u0645\u200C\u0915 \u0645\u200D\u200D \u0646\u200C\u200C\u0645")).toBe(
+    "\u0645<U+200C>\u0915 \u0645\u200D<U+200D> \u0646<U+200C><U+200C>\u0645",
+  );
+  // A skin tone is not an emoji to join or to select a presentation of.
+  expect(named("\u{1F44B}\u{1F3FD}\uFE0F \u2764\uFE0F\uFE0F a\u{1F3FD}\u200D\u{1F4BB}")).toBe(
+    "\u{1F44B}\u{1F3FD}<U+FE0F> \u2764\uFE0F<U+FE0F> a\u{1F3FD}<U+200D>\u{1F4BB}",
+  );
+  expect(named("\u00A9\u{1F3FD}\u200D\u{1F4BB} \u{1F469}\u200D\u{1F3FD}")).toBe(
+    "\u00A9\u{1F3FD}<U+200D>\u{1F4BB} \u{1F469}<U+200D>\u{1F3FD}",
+  );
+  expect(named("\u{1F469}\u200D\u200D\u{1F4BB}")).toBe("\u{1F469}<U+200D><U+200D>\u{1F4BB}");
+  // A radical, an iteration mark, a compatibility ideograph, kana and punctuation are not
+  // ideographs with variants, and an ideograph takes one selector.
+  expect(named("\u2F00\u{E0100} \u3005\u{E0100} \uF900\uFE00 \u3042\u{E0100} \u3001\uFE00")).toBe(
+    "\u2F00<U+E0100> \u3005<U+E0100> \uF900<U+FE00> \u3042<U+E0100> \u3001<U+FE00>",
+  );
+  expect(named("\u845B\u{E0100}\u{E0101} \u8FBB\uFE00\uFE01 \u845B\uFE0D")).toBe(
+    "\u845B\u{E0100}<U+E0101> \u8FBB\uFE00<U+FE01> \u845B<U+FE0D>",
+  );
+
+  unchanged("\u182E\u180B\u200D\u1820 \u1820\u180F \u0915\u093C\u094D\u200D\u0937");
+  unchanged("\u0645\u064E\u200C\u0645 \u{1F44B}\u{1F3FD} \u{1F3F3}\uFE0F\u200D\u{1F308}");
+});
