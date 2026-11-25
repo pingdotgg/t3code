@@ -14,6 +14,8 @@ const UNSPOKEN_SELECTOR =
   "svg, button, [role=button], [data-thread-find-ignore], [aria-hidden=true], .katex";
 /** After the user scrolls, following waits this long and for the word to be back in view. */
 const FOLLOW_PAUSE_MS = 3_000;
+/** Following holds still this long after the pointer lands on a word, so a click hits that word. */
+const HOVER_HOLD_MS = 1_500;
 /** The word stays in the middle of the timeline; leaving that band scrolls it to 40%. */
 const FOLLOW_BAND = { top: 0.2, bottom: 0.8, target: 0.4 };
 /** The elements read aloud as one block each; matches `rehypeSpeechOffsets`. */
@@ -31,6 +33,7 @@ let highlights: {
 } | null = null;
 let scroller: HTMLElement | null = null;
 let userScrolledAt: number | null = null;
+let hoveredAt: number | null = null;
 let readingId: string | null = null;
 // The word being read, for the player's way back to it.
 let readingRange: Range | null = null;
@@ -242,12 +245,14 @@ export function hoverReadAloudWord(id: string, event: MouseEvent) {
   const word = wordAtPoint(id, event);
   highlights.hover.clear();
   if (word) highlights.hover.add(word);
+  hoveredAt = word ? performance.now() : null;
   const root = roots.get(id);
   if (root) root.style.cursor = word ? "pointer" : "";
 }
 
 export function clearReadAloudHover(id: string) {
   highlights?.hover.clear();
+  hoveredAt = null;
   const root = roots.get(id);
   if (root) root.style.cursor = "";
 }
@@ -289,11 +294,17 @@ type SpokenText = {
 function spokenText(block: HTMLElement): SpokenText {
   const nodes: Array<{ node: Text; at: number }> = [];
   let value = "";
+  let previous: Element | null = null;
   const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     if (!(node instanceof Text)) continue;
     const unspoken = node.parentElement?.closest(UNSPOKEN_SELECTOR);
     if (unspoken && block.contains(unspoken)) continue;
+    // Table cells and blocks render apart but hold no whitespace between them, which would run
+    // "Edit" and "edit" together into one word no spoken word matches.
+    const container = node.parentElement?.closest(`td, th, ${SPEECH_BLOCK_SELECTOR}`) ?? null;
+    if (container !== previous && value && !/\s$/.test(value)) value += "\n";
+    previous = container;
     nodes.push({ node, at: value.length });
     value += node.data;
   }
@@ -323,7 +334,7 @@ function point(text: SpokenText, offset: number, end: boolean) {
   for (let index = text.nodes.length - 1; index >= 0; index--) {
     const entry = text.nodes[index];
     if (entry && (entry.at < offset || (!end && entry.at === offset)))
-      return { node: entry.node, offset: offset - entry.at };
+      return { node: entry.node, offset: Math.min(offset - entry.at, entry.node.length) };
   }
   return null;
 }
@@ -340,6 +351,7 @@ function range(text: SpokenText, start: number, end: number) {
 
 function follow(target: Range | null, force = false) {
   if (!target || !scroller) return;
+  if (!force && hoveredAt !== null && performance.now() - hoveredAt < HOVER_HOLD_MS) return;
   const rect = target.getClientRects()[0] ?? target.getBoundingClientRect();
   if (rect.width === 0 && rect.height === 0) return;
   const view = scroller.getBoundingClientRect();
@@ -360,6 +372,11 @@ function follow(target: Range | null, force = false) {
   });
 }
 
+// The text moved under the pointer, so the hovered word may no longer be the one under it.
+const onScroll = () => {
+  highlights?.hover.clear();
+  measureAway();
+};
 const markUserScroll = () => {
   userScrolledAt = performance.now();
 };
@@ -377,9 +394,9 @@ function watchScroller(next: HTMLElement | null) {
   scroller?.removeEventListener("touchmove", markUserScroll);
   scroller?.removeEventListener("keydown", markScrollKey);
   scroller?.removeEventListener("pointerdown", markScrollbarDrag);
-  scroller?.removeEventListener("scroll", measureAway);
+  scroller?.removeEventListener("scroll", onScroll);
   scroller = next;
-  next?.addEventListener("scroll", measureAway, { passive: true });
+  next?.addEventListener("scroll", onScroll, { passive: true });
   next?.addEventListener("wheel", markUserScroll, { passive: true });
   next?.addEventListener("touchmove", markUserScroll, { passive: true });
   next?.addEventListener("keydown", markScrollKey);

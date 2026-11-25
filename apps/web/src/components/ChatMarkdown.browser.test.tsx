@@ -248,7 +248,7 @@ it("paints the block and the repeated word being read aloud, and clears them on 
 
 it("reads from a clicked block or a selected point only while that reply is read", async () => {
   const markdown =
-    "Intro.\n\nSecond **part** here.\n\n- First item\n- Second item\n\n```sh\nls\n```";
+    "Intro.\n\nSecond **part** here.\n\n- First item\n- Second item\n\n```sh\nls\n```\n\n| Step | Result |\n| --- | --- |\n| Read | 1 file |\n| Edit | 12 passed |";
   await using screen = await render(
     <div
       ref={readAloudHighlightRoot("reply")}
@@ -279,6 +279,9 @@ it("reads from a clicked block or a selected point only while that reply is read
 
   const part = screen.getByText("part").element().firstChild;
   expect(part && readAloudSourceAt("reply", markdown, part, 2)).toBe(markdown.indexOf("part"));
+  // Cells hold no whitespace between them; a cell's word must not run into its neighbors.
+  const cell = screen.getByText("Edit", { exact: true }).element().firstChild;
+  expect(cell && readAloudSourceAt("reply", markdown, cell, 0)).toBe(markdown.indexOf("Edit"));
   expect(readAloudSourceAt("other", markdown, document.body, 0)).toBeNull();
   readAloudController.stop();
   await reading;
