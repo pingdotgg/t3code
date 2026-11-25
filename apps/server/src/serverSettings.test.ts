@@ -17,6 +17,7 @@ import {
   ServerSettingsPatch,
   UsageLimitSourceConfig,
   UsageLimitSourceId,
+  type SettingsSecretValue,
   type SimlockDeviceHostConfig,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -1662,11 +1663,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         instanceId: opencode,
         instance: {
           ...client.providerInstances[opencode]!,
-          config: { ...clientConfig, serverUrl: "http://127.0.0.1:4097" },
+          config: { ...clientConfig, binaryPath: "/opt/opencode" },
         },
       });
       assert.deepInclude(edited.providerInstances[opencode]?.config, {
-        serverUrl: "http://127.0.0.1:4097",
+        binaryPath: "/opt/opencode",
         serverPassword: "legacy-password",
       });
     }).pipe(Effect.provide(layerServerSettings())),
@@ -1927,6 +1928,90 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           "typed-token",
         );
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("a kept secret is dropped when the address it is sent to changes", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const openCode = ProviderInstanceId.make("opencode");
+      const hub = UsageLimitSourceId.make("hub");
+      const router = ProviderInstanceId.make("openrouter");
+      const reference = {
+        provider: SecretProviderId.make("personal"),
+        reference: "op://Private/Hub/key",
+      };
+      const patch = (input: {
+        readonly serverUrl: string;
+        readonly hubUrl: string;
+        readonly baseUrl: string;
+        readonly secret: SettingsSecretValue;
+      }) => ({
+        providerInstances: {
+          [openCode]: {
+            driver: ProviderDriverKind.make("opencode"),
+            config: { serverUrl: input.serverUrl, serverPassword: input.secret },
+          },
+        },
+        usageLimitSources: {
+          [hub]: {
+            kind: "cliproxy" as const,
+            url: input.hubUrl,
+            managementKey: input.secret,
+            enabled: true,
+          },
+        },
+        textGenerators: {
+          [router]: {
+            kind: "openaiCompatible" as const,
+            baseUrl: input.baseUrl,
+            apiKey: input.secret,
+            enabled: true,
+          },
+        },
+      });
+      const saved = {
+        serverUrl: "http://127.0.0.1:4096",
+        hubUrl: "https://hub.test",
+        baseUrl: "https://router.test/v1",
+      };
+      const elsewhere = {
+        serverUrl: "http://elsewhere.test:4096",
+        hubUrl: "https://elsewhere.test",
+        baseUrl: "https://elsewhere.test/v1",
+      };
+      const secrets = (settings: ServerSettings) => [
+        (settings.providerInstances[openCode]?.config as { serverPassword?: unknown } | undefined)
+          ?.serverPassword,
+        settings.usageLimitSources[hub]?.managementKey,
+        settings.textGenerators[router]?.apiKey,
+      ];
+      const kept = (secret: SettingsSecretValue) => [secret, secret, secret];
+      yield* decodeServerSettingsPatch({
+        secretProviders: {
+          personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
+        },
+      }).pipe(Effect.flatMap(service.updateSettings));
+
+      yield* service.updateSettings(patch({ ...saved, secret: "saved-fixture" }));
+      assert.deepEqual(
+        secrets(yield* service.updateSettings(patch({ ...saved, secret: SECRET_REDACTED }))),
+        kept("saved-fixture"),
+      );
+      assert.deepEqual(
+        secrets(yield* service.updateSettings(patch({ ...elsewhere, secret: SECRET_REDACTED }))),
+        kept(""),
+      );
+      assert.deepEqual(
+        secrets(yield* service.updateSettings(patch({ ...saved, secret: "typed-fixture" }))),
+        kept("typed-fixture"),
+      );
+
+      yield* service.updateSettings(patch({ ...saved, secret: reference }));
+      assert.deepEqual(
+        secrets(yield* service.updateSettings(patch({ ...elsewhere, secret: reference }))),
+        kept(""),
+      );
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
   it.effect("removing a secret provider unsets every field that read from it", () =>
