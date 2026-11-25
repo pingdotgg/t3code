@@ -281,6 +281,9 @@ const RPC_AGGREGATES = {
   [TEAM_WS_METHODS.teamCreateInvite]: "team",
   [TEAM_WS_METHODS.teamRevokeInvite]: "team",
   [TEAM_WS_METHODS.teamListThreadAttributions]: "team",
+  [TEAM_WS_METHODS.teamFollowThread]: "team",
+  [TEAM_WS_METHODS.teamUnfollowThread]: "team",
+  [TEAM_WS_METHODS.teamListFollowedThreads]: "team",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

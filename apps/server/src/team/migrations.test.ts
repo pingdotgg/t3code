@@ -26,8 +26,10 @@ describe("team sidecar migrations", () => {
       expect(tables.map((row) => row.name)).toEqual([
         "team_invites",
         "team_members",
+        "team_relay_binding",
         "team_schema_migrations",
         "team_session_meta",
+        "team_thread_follows",
         "team_thread_meta",
         "team_turn_meta",
         "team_workspaces",

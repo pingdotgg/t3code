@@ -42,6 +42,7 @@ import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
+  CLOUD_LINKED_USER_ID,
   isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -54,6 +55,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as TeamService from "../team/TeamService.ts";
 
 export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
@@ -431,6 +433,7 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const random = yield* SecureRandom.SecureRandom;
   const signingKey = yield* EnvironmentSigningKey;
+  const teamService = yield* Effect.serviceOption(TeamService.TeamService);
   const scope = yield* Effect.scope;
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
@@ -450,13 +453,14 @@ export const make = Effect.gen(function* () {
       );
 
   const readRelayConfig = Effect.gen(function* () {
-    const [url, issuer, environmentCredential] = yield* Effect.all([
+    const [url, issuer, environmentCredential, cloudUserId] = yield* Effect.all([
       readSecretString(RELAY_URL_SECRET),
       readSecretString(RELAY_ISSUER_SECRET),
       readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+      readSecretString(CLOUD_LINKED_USER_ID),
     ]);
     return url && environmentCredential
-      ? { url, issuer: issuer ?? url, environmentCredential }
+      ? { url, issuer: issuer ?? url, environmentCredential, cloudUserId }
       : null;
   });
 
@@ -597,14 +601,35 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
-    const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
+    const rawSnapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       thread,
       project,
       pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
     });
-    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
+    const shouldCheckTeamRelayGate =
+      Option.isSome(teamService) &&
+      Option.isSome(thread) &&
+      (rawSnapshot.state !== null || heldCompletions.has(threadId));
+    const relayNotificationAllowed = shouldCheckTeamRelayGate
+      ? yield* teamService.value.shouldPublishRelayNotificationForThread({
+          threadId,
+          ...(thread.value.latestRunId !== null ? { turnId: thread.value.latestRunId } : {}),
+          cloudUserId: relayConfig.cloudUserId,
+        })
+      : true;
+    if (!relayNotificationAllowed) {
+      heldCompletions.delete(threadId);
+      if (!hasLivePublishedState(publishedStateByThread, threadId)) {
+        publishConfirmDeadlines.delete(threadId);
+        return;
+      }
+    }
+    const snapshot = relayNotificationAllowed
+      ? rawSnapshot
+      : { ...rawSnapshot, state: null, subagentWait: null };
+    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
       !hasLivePublishedState(publishedStateByThread, threadId)
@@ -660,6 +685,7 @@ export const make = Effect.gen(function* () {
       // Settled during the hold, not resumed: alert the current completion, then clear the card
       // on a new window. Only settlement may hide it; queued or silent runs also project to null.
       const unsettled =
+        relayNotificationAllowed &&
         snapshot.state === null &&
         heldCompletions.has(threadId) &&
         Option.isSome(thread) &&
@@ -891,14 +917,24 @@ export const make = Effect.gen(function* () {
       projects: projectSnapshot.projects,
       threads: [...activitySnapshot.threads, ...liveChildren.filter((thread) => thread !== null)],
     });
-    if (activeThreadIds.length === 0) {
+    const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
+    const candidateThreadIds = new Set<ThreadId>(activeThreadIds);
+    for (const threadId of publishedStateByThread.keys()) {
+      if (hasLivePublishedState(publishedStateByThread, threadId)) {
+        candidateThreadIds.add(threadId);
+      }
+    }
+    for (const threadId of heldCompletions) {
+      candidateThreadIds.add(threadId);
+    }
+    if (candidateThreadIds.size === 0) {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");
       return "published" as const;
     }
     yield* Effect.logInfo("publishing active agent activity snapshot", {
-      count: activeThreadIds.length,
+      count: candidateThreadIds.size,
     });
-    yield* Effect.forEach(activeThreadIds, enqueueThreadPublish, { discard: true });
+    yield* Effect.forEach(candidateThreadIds, enqueueThreadPublish, { discard: true });
     yield* worker.drain;
     return "published" as const;
   });
@@ -991,6 +1027,18 @@ export const make = Effect.gen(function* () {
           }).pipe(Effect.andThen(enqueueThreadPublish(threadId)));
         }),
       );
+      if (Option.isSome(teamService)) {
+        const teamNotificationStream = teamService.value.subscribeNotificationEvents?.();
+        if (teamNotificationStream !== undefined) {
+          yield* forkParked(
+            Stream.runForEach(teamNotificationStream, (trigger) =>
+              trigger.type === "thread"
+                ? enqueueThreadPublish(trigger.threadId)
+                : Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid),
+            ),
+          );
+        }
+      }
     },
   );
 

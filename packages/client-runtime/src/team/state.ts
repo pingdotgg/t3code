@@ -8,6 +8,7 @@ import {
   type TeamStateSnapshot,
   type TeamStateStreamEvent,
   type TeamThreadAttribution,
+  type TeamTurnAttribution,
   type TeamWorkspace,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -45,6 +46,9 @@ export interface TeamEnvironmentState {
   readonly members: ReadonlyArray<TeamMember>;
   readonly invites: ReadonlyArray<TeamInvite>;
   readonly threadAttributions: ReadonlyArray<TeamThreadAttribution>;
+  readonly followedThreadIds: ReadonlySet<ThreadId>;
+  readonly latestTurnByThreadId: ReadonlyMap<ThreadId, TeamTurnAttribution>;
+  readonly turnAuthorByTurnId: ReadonlyMap<string, TeamTurnAttribution>;
   readonly memberById: ReadonlyMap<TeamMemberId, TeamMember>;
   readonly attributionByThreadId: ReadonlyMap<ThreadId, TeamThreadAttribution>;
 }
@@ -55,6 +59,9 @@ export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
   members: [],
   invites: [],
   threadAttributions: [],
+  followedThreadIds: new Set(),
+  latestTurnByThreadId: new Map(),
+  turnAuthorByTurnId: new Map(),
   memberById: new Map(),
   attributionByThreadId: new Map(),
 };
@@ -66,12 +73,22 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
   const attributionByThreadId = new Map<ThreadId, TeamThreadAttribution>(
     snapshot.threadAttributions.map((attribution) => [attribution.threadId, attribution] as const),
   );
+  const followedThreadIds = new Set<ThreadId>(snapshot.followedThreadIds);
+  const latestTurnByThreadId = new Map<ThreadId, TeamTurnAttribution>();
+  const turnAuthorByTurnId = new Map<string, TeamTurnAttribution>();
+  for (const turn of snapshot.latestTurnAttributions) {
+    turnAuthorByTurnId.set(turn.turnId, turn);
+    latestTurnByThreadId.set(turn.threadId, turn);
+  }
   return {
     team: snapshot.team,
     currentMember: snapshot.currentMember,
     members: snapshot.members,
     invites: snapshot.invites,
     threadAttributions: snapshot.threadAttributions,
+    followedThreadIds,
+    latestTurnByThreadId,
+    turnAuthorByTurnId,
     memberById,
     attributionByThreadId,
   };
@@ -107,6 +124,21 @@ export function applyTeamStreamEvent(
           attributionsChanged = true;
         }
       }
+      const latestTurnByThreadId = new Map(current.latestTurnByThreadId);
+      const turnAuthorByTurnId = new Map(current.turnAuthorByTurnId);
+      let turnsChanged = false;
+      for (const [threadId, turn] of latestTurnByThreadId) {
+        if (turn.authorMemberId === member.id && turn.authorPseudo !== member.pseudo) {
+          latestTurnByThreadId.set(threadId, { ...turn, authorPseudo: member.pseudo });
+          turnsChanged = true;
+        }
+      }
+      for (const [turnId, turn] of turnAuthorByTurnId) {
+        if (turn.authorMemberId === member.id && turn.authorPseudo !== member.pseudo) {
+          turnAuthorByTurnId.set(turnId, { ...turn, authorPseudo: member.pseudo });
+          turnsChanged = true;
+        }
+      }
       return {
         ...current,
         currentMember,
@@ -118,6 +150,7 @@ export function applyTeamStreamEvent(
               attributionByThreadId,
             }
           : {}),
+        ...(turnsChanged ? { latestTurnByThreadId, turnAuthorByTurnId } : {}),
       };
     }
 
@@ -141,7 +174,55 @@ export function applyTeamStreamEvent(
         attributionByThreadId,
       };
     }
+
+    case "turnAttributed": {
+      const turn = event.payload;
+      const latestTurnByThreadId = new Map(current.latestTurnByThreadId);
+      latestTurnByThreadId.set(turn.threadId, turn);
+      const turnAuthorByTurnId = new Map(current.turnAuthorByTurnId);
+      turnAuthorByTurnId.delete(turn.turnId);
+      turnAuthorByTurnId.set(turn.turnId, turn);
+      while (turnAuthorByTurnId.size > MAX_TRACKED_TURN_ATTRIBUTIONS) {
+        const oldestKey = turnAuthorByTurnId.keys().next().value;
+        if (oldestKey === undefined) break;
+        turnAuthorByTurnId.delete(oldestKey);
+      }
+      return {
+        ...current,
+        latestTurnByThreadId,
+        turnAuthorByTurnId,
+      };
+    }
+
+    case "threadFollowChanged": {
+      const change = event.payload;
+      if (current.currentMember?.id !== change.memberId) {
+        return current;
+      }
+      const followedThreadIds = new Set(current.followedThreadIds);
+      if (change.isFollowing) {
+        followedThreadIds.add(change.threadId);
+      } else {
+        followedThreadIds.delete(change.threadId);
+      }
+      return {
+        ...current,
+        followedThreadIds,
+      };
+    }
   }
+}
+
+const MAX_TRACKED_TURN_ATTRIBUTIONS = 1_000;
+
+export function scanTeamStateStream<E, R>(
+  stream: Stream.Stream<TeamStateStreamEvent, E, R>,
+): Stream.Stream<TeamEnvironmentState, E, R> {
+  // Drop Stream.scan's synthetic initial seed so clients stay unresolved until the first server snapshot lands.
+  return stream.pipe(
+    Stream.scan(() => EMPTY_TEAM_ENVIRONMENT_STATE, applyTeamStreamEvent),
+    Stream.drop(1),
+  );
 }
 
 export function createTeamEnvironmentAtoms<R, E>(
@@ -153,9 +234,7 @@ export function createTeamEnvironmentAtoms<R, E>(
         followStreamInEnvironment(
           environmentId,
           Stream.suspend(() =>
-            subscribe(TEAM_WS_METHODS.teamSubscribeState, {}).pipe(
-              Stream.scan(() => EMPTY_TEAM_ENVIRONMENT_STATE, applyTeamStreamEvent),
-            ),
+            scanTeamStateStream(subscribe(TEAM_WS_METHODS.teamSubscribeState, {})),
           ),
         ),
       )
@@ -179,6 +258,14 @@ export function createTeamEnvironmentAtoms<R, E>(
     revokeInvite: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:revoke-invite",
       tag: TEAM_WS_METHODS.teamRevokeInvite,
+    }),
+    followThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:follow-thread",
+      tag: TEAM_WS_METHODS.teamFollowThread,
+    }),
+    unfollowThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:unfollow-thread",
+      tag: TEAM_WS_METHODS.teamUnfollowThread,
     }),
   };
 }

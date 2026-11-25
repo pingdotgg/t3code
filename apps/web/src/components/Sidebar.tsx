@@ -263,8 +263,14 @@ import {
   hasActiveTeamEnvironment,
   shouldShowThreadInTeamFilter,
 } from "@t3tools/client-runtime/team";
-import { useShowColleaguesThreads, useTeamStatesByEnvironment } from "../state/team";
+import {
+  readTeamThreadFollowActionState,
+  useShowColleaguesThreads,
+  useShowFollowedThreadsOnly,
+  useTeamStatesByEnvironment,
+} from "../state/team";
 import { TeamColleaguesToggle } from "./team/TeamColleaguesToggle";
+import { useTeamThreadFollowToggle } from "./team/useTeamThreadFollowToggle";
 import { TooltipProvider } from "./ui/tooltip";
 import {
   composerDraftHasUserContent,
@@ -503,6 +509,7 @@ function useSidebarThreads(input: {
 
   const teamStatesByEnvironment = useTeamStatesByEnvironment();
   const showColleaguesThreads = useShowColleaguesThreads();
+  const showFollowedThreadsOnly = useShowFollowedThreadsOnly();
   const teamFilteredThreads = hasActiveTeamEnvironment(teamStatesByEnvironment)
     ? threads.filter((thread) =>
         shouldShowThreadInTeamFilter({
@@ -510,6 +517,7 @@ function useSidebarThreads(input: {
           threadId: thread.id,
           teamStates: teamStatesByEnvironment,
           showColleaguesThreads,
+          followedOnly: showFollowedThreadsOnly,
         }),
       )
     : threads;
@@ -2623,6 +2631,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
 
+  const { setFollowing: setTeamThreadFollowing } = useTeamThreadFollowToggle();
   const handleDraftContextMenu = useStableCallback(
     (draftId: DraftId, position: { x: number; y: number }, source: ContextMenuSource) => {
       void (async () => {
@@ -2754,6 +2763,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              teamFollow: readTeamThreadFollowActionState(
+                threadRef.environmentId,
+                threadRef.threadId,
+              ),
               canRename: !fromSearch,
               supports: {
                 settlement: configLoaded,
@@ -2823,6 +2836,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           }
           case "settle":
             attemptSettle(threadRef);
+            return;
+          case "follow":
+          case "unfollow":
+            await setTeamThreadFollowing({
+              environmentId: threadRef.environmentId,
+              threadId: threadRef.threadId,
+              follow: clicked.value === "follow",
+            });
             return;
           case "unsettle":
             attemptUnsettle(threadRef);

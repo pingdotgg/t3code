@@ -136,6 +136,7 @@ import { IssueGlyph, issueStatePresentation } from "../issue/issuePresentation";
 import { formatTeamThreadTitle } from "@t3tools/client-runtime/team";
 import { useTeamThreadCreatorPseudo } from "../../state/team";
 import { TeamPseudoPrefix } from "../team/TeamPseudoPrefix";
+import { TeamThreadFollowedBadge } from "../team/TeamThreadFollowedBadge";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -1377,6 +1378,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {draftIndicator}
               {title}
               {multiline ? titleLineIcons : null}
+              <TeamThreadFollowedBadge environmentId={thread.environmentId} threadId={thread.id} />
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
               {multiline ? null : issueBadge}
@@ -1571,6 +1573,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : null}
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
+              <TeamThreadFollowedBadge environmentId={thread.environmentId} threadId={thread.id} />
               {pinIndicator}
               {props.projectDisplayName ? (
                 <span

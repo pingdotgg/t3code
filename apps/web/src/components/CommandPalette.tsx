@@ -83,15 +83,9 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
-  UsersIcon,
   WorkflowIcon,
 } from "lucide-react";
-import { hasActiveTeamEnvironment } from "@t3tools/client-runtime/team";
-import {
-  toggleShowColleaguesThreads,
-  useShowColleaguesThreads,
-  useTeamStatesByEnvironment,
-} from "../state/team";
+import { useTeamCommandPaletteActions } from "./team/useTeamCommandPaletteActions";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { previewBridge } from "./preview/previewBridge";
@@ -1867,23 +1861,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  const teamStatesByEnvironment = useTeamStatesByEnvironment();
-  const showColleaguesThreads = useShowColleaguesThreads();
-  if (hasActiveTeamEnvironment(teamStatesByEnvironment)) {
-    actionItems.push({
-      kind: "action",
-      value: "action:team-toggle-colleagues",
-      searchTerms: ["team", "colleagues", "members", "filter", "sidebar", "threads", "pseudo"],
-      title: showColleaguesThreads
-        ? gt("Hide colleagues' threads")
-        : gt("Show colleagues' threads"),
-      shortcutCommand: "team.toggleColleagues",
-      icon: <UsersIcon className={ITEM_ICON_CLASS} />,
-      run: async () => {
-        toggleShowColleaguesThreads();
-      },
-    });
-  }
+  actionItems.push(...useTeamCommandPaletteActions(activeThread));
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems }, messages);
   // Every setting goes to the palette's own matcher, so settings get the same

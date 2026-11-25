@@ -1,3 +1,10 @@
+import {
+  formatTeamThreadTitle,
+  resolveTeamThreadNotificationDecision,
+  shouldNotifyForTeamThread,
+  type TeamEnvironmentState,
+  type TeamThreadNotificationDecision,
+} from "@t3tools/client-runtime/team";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import { msg } from "gt-react";
@@ -19,6 +26,38 @@ export function hasNotificationSound(mode: NotificationMode) {
 
 export function hasDesktopNotifications(mode: NotificationMode) {
   return mode === "notifications" || mode === "notifications-and-sound";
+}
+
+export function resolveTeamEnvironmentThreadNotificationDecision(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+  readonly latestRunId?: string | null;
+  readonly threadCreatedAt?: string | null;
+}): TeamThreadNotificationDecision {
+  return resolveTeamThreadNotificationDecision(input);
+}
+
+export function shouldNotifyForTeamEnvironmentThread(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+  readonly latestRunId?: string | null;
+  readonly threadCreatedAt?: string | null;
+}): boolean {
+  return shouldNotifyForTeamThread(input);
+}
+
+export function formatTeamNotificationThreadTitle(input: {
+  readonly title: string;
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+}): string {
+  const { title, teamState, threadId } = input;
+  if (!teamState || teamState.team === null) return title;
+  const attribution = teamState.attributionByThreadId.get(threadId);
+  if (!attribution) return title;
+  const pseudo =
+    teamState.memberById.get(attribution.creatorMemberId)?.pseudo ?? attribution.creatorPseudo;
+  return formatTeamThreadTitle(title, pseudo);
 }
 
 const TAG_HASH_OFFSET_BASIS = 0xcbf29ce484222325n;

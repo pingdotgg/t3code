@@ -1,4 +1,8 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  shouldNotifyTeamMemberForThread,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import type { TeamEnvironmentState } from "./state.ts";
 
 export function resolveTeamThreadCreatorPseudo(input: {
@@ -23,19 +27,134 @@ export function formatTeamThreadTitle(title: string, creatorPseudo: string | nul
 }
 
 /**
+ * Returns true when a thread belongs to an active team environment and was created by
+ * a colleague (not the authenticated member). Follow controls only apply to these threads.
+ */
+export function isTeamColleagueThread(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+}): boolean {
+  const { teamState, threadId } = input;
+  if (!teamState || teamState.team === null || teamState.currentMember === null) {
+    return false;
+  }
+  const attribution = teamState.attributionByThreadId.get(threadId);
+  if (!attribution) {
+    return false;
+  }
+  return attribution.creatorMemberId !== teamState.currentMember.id;
+}
+
+export function isFollowingTeamThread(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+}): boolean {
+  const { teamState, threadId } = input;
+  if (!teamState || teamState.team === null || teamState.currentMember === null) {
+    return false;
+  }
+  return teamState.followedThreadIds.has(threadId);
+}
+
+export type TeamThreadNotificationDecision = "allow" | "suppress" | "defer";
+
+/**
+ * Evaluates whether the current member should receive a notification for a thread
+ * in a given environment, distinguishing confirmed decisions from in-flight metadata races.
+ */
+export function resolveTeamThreadNotificationDecision(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+  readonly latestRunId?: string | null;
+  readonly threadCreatedAt?: string | null;
+}): TeamThreadNotificationDecision {
+  const { teamState, threadId, latestRunId, threadCreatedAt } = input;
+  if (teamState === undefined || teamState === null) {
+    return "defer";
+  }
+  if (teamState.team === null) {
+    return "allow";
+  }
+  const attribution = teamState.attributionByThreadId.get(threadId);
+  if (!attribution) {
+    if (threadCreatedAt !== undefined && threadCreatedAt !== null) {
+      const threadCreatedMs = Date.parse(threadCreatedAt);
+      const teamCreatedMs = Date.parse(teamState.team.createdAt);
+      if (
+        Number.isFinite(threadCreatedMs) &&
+        Number.isFinite(teamCreatedMs) &&
+        threadCreatedMs >= teamCreatedMs
+      ) {
+        return "defer";
+      }
+    }
+    return "allow";
+  }
+  const matchedTurn =
+    latestRunId !== undefined && latestRunId !== null
+      ? (teamState.turnAuthorByTurnId.get(latestRunId) ??
+        (teamState.latestTurnByThreadId.get(threadId)?.turnId === latestRunId
+          ? teamState.latestTurnByThreadId.get(threadId)
+          : undefined))
+      : undefined;
+  const activeTurnAuthorMemberId =
+    matchedTurn !== undefined && matchedTurn.threadId === threadId
+      ? matchedTurn.authorMemberId
+      : null;
+
+  const allowed = shouldNotifyTeamMemberForThread({
+    hasTeam: true,
+    memberId: teamState.currentMember?.id ?? null,
+    creatorMemberId: attribution.creatorMemberId,
+    isFollowing: teamState.followedThreadIds.has(threadId),
+    activeTurnAuthorMemberId,
+  });
+  if (allowed) {
+    return "allow";
+  }
+  // If this completing/active run's attribution hasn't landed yet, defer until turnAttributed arrives.
+  if (
+    latestRunId !== undefined &&
+    latestRunId !== null &&
+    matchedTurn === undefined &&
+    teamState.currentMember !== null
+  ) {
+    return "defer";
+  }
+  return "suppress";
+}
+
+/**
+ * Evaluates whether the current member should receive a notification for a thread
+ * in a given environment. Personal environments and unattributed legacy threads always notify.
+ */
+export function shouldNotifyForTeamThread(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+  readonly latestRunId?: string | null;
+  readonly threadCreatedAt?: string | null;
+}): boolean {
+  return resolveTeamThreadNotificationDecision(input) === "allow";
+}
+
+/**
  * Evaluates whether a thread should appear in the sidebar given the user's
- * colleagues-thread visibility toggle. Personal environments and unattributed
- * legacy threads always remain visible.
+ * colleagues-thread and followed-only toggles. Personal environments and unattributed
+ * legacy threads always remain visible unless `followedOnly` is active on a team env.
  */
 export function shouldShowThreadInTeamFilter(input: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly teamStates: ReadonlyMap<EnvironmentId, TeamEnvironmentState>;
   readonly showColleaguesThreads: boolean;
+  readonly followedOnly?: boolean;
 }): boolean {
   const teamState = input.teamStates.get(input.environmentId);
   if (!teamState || teamState.team === null || teamState.currentMember === null) {
-    return true;
+    return !input.followedOnly;
+  }
+  if (input.followedOnly) {
+    return teamState.followedThreadIds.has(input.threadId);
   }
   if (input.showColleaguesThreads) {
     return true;
@@ -44,7 +163,26 @@ export function shouldShowThreadInTeamFilter(input: {
   if (!attribution) {
     return true;
   }
-  return attribution.creatorMemberId === teamState.currentMember.id;
+  return (
+    attribution.creatorMemberId === teamState.currentMember.id ||
+    teamState.followedThreadIds.has(input.threadId)
+  );
+}
+
+export function countFollowedTeamThreads(
+  teamStates: ReadonlyMap<EnvironmentId, TeamEnvironmentState>,
+): number {
+  let count = 0;
+  for (const state of teamStates.values()) {
+    if (state.team !== null && state.currentMember !== null) {
+      for (const threadId of state.followedThreadIds) {
+        if (isTeamColleagueThread({ teamState: state, threadId })) {
+          count += 1;
+        }
+      }
+    }
+  }
+  return count;
 }
 
 export function hasActiveTeamEnvironment(

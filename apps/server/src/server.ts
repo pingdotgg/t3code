@@ -847,6 +847,9 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(CodexManagedTokenBroker.layer),
   Layer.provideMerge(layerServerEnvironment),
+  Layer.provideMerge(
+    TeamService.layer.pipe(Layer.provide(TeamRepository.layer), Layer.provide(layerPersistence)),
+  ),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(
     Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer, WorkspacePreviewRevisions.layer),
@@ -964,7 +967,6 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),
   Layer.provide(layerServerSettings),
-  Layer.provide(TeamService.layer.pipe(Layer.provide(TeamRepository.layer))),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(ProviderMaintenanceRunner.layer),

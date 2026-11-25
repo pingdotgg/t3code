@@ -24,11 +24,14 @@ import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
+import { readTeamEnvironmentStateFromRegistry, teamEnvironment } from "../state/team";
 import { environmentThreadShells } from "../state/threads";
 import {
+  formatTeamNotificationThreadTitle,
   hasDesktopNotifications,
   hasNotificationSound,
   playNotificationSound,
+  resolveTeamEnvironmentThreadNotificationDecision,
   setNotificationBadge,
   threadNotificationTag,
   unlockNotificationAudio,
@@ -52,9 +55,19 @@ interface NotificationState extends ThreadNotificationObservation {
 
 type ToastId = ReturnType<typeof toastManager.add>;
 
+type DeferredNotificationReason = "team_loading" | "thread_attribution" | "turn_attribution";
+
 interface WatchedEnvironment {
   unsubscribe: () => void;
   previous: Map<ThreadId, NotificationState>;
+  deferred: Map<
+    ThreadId,
+    {
+      readonly state: NotificationState;
+      readonly kind: ThreadNotificationKind;
+      reason: DeferredNotificationReason;
+    }
+  >;
   reconnecting: boolean;
   readonly gate: ReturnType<typeof createThreadNotificationGate<ThreadId>>;
 }
@@ -136,12 +149,39 @@ export function startThreadNotifications(
     kind: ThreadNotificationKind,
   ) => {
     const { thread, status } = state;
+    const watchedEntry = watched.get(environmentId);
     if (
       registry
         .get(environmentThreadShells.hiddenThreadKeysAtom)
         .has(threadKey({ environmentId, threadId: thread.id }))
-    )
+    ) {
+      watchedEntry?.deferred.delete(thread.id);
       return;
+    }
+    const teamState = readTeamEnvironmentStateFromRegistry(registry, environmentId);
+    const decision = resolveTeamEnvironmentThreadNotificationDecision({
+      teamState,
+      threadId: thread.id,
+      latestRunId: thread.latestRun?.runId ?? null,
+      threadCreatedAt: thread.createdAt,
+    });
+    if (decision === "defer") {
+      const reason: DeferredNotificationReason =
+        teamState === null
+          ? "team_loading"
+          : !teamState.attributionByThreadId.has(thread.id)
+            ? "thread_attribution"
+            : "turn_attribution";
+      watchedEntry?.deferred.set(thread.id, { state, kind, reason });
+      return;
+    }
+    watchedEntry?.deferred.delete(thread.id);
+    if (decision === "suppress") return;
+    const notificationThreadTitle = formatTeamNotificationThreadTitle({
+      title: thread.title,
+      teamState,
+      threadId: thread.id,
+    });
     const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
     const active = activeThread();
     const title =
@@ -172,7 +212,7 @@ export function startThreadNotifications(
         onRemove: (): void => forgetToast(toastKey, toastId),
         type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",
         title,
-        description: thread.title,
+        description: notificationThreadTitle,
         data: {
           hideCopyButton: true,
           leadingIcon:
@@ -211,7 +251,7 @@ export function startThreadNotifications(
       return;
     try {
       const notification = new Notification(title, {
-        body: thread.title,
+        body: notificationThreadTitle,
         tag: threadNotificationTag(environmentId, thread.id),
         silent: true,
         // Windows drops clicks after a toast moves into Notification Center.
@@ -302,8 +342,23 @@ export function startThreadNotifications(
     }
     entry.reconnecting = false;
     entry.previous = next;
-    entry.gate.retain(new Set(next.keys()));
     const now = Date.now();
+    for (const [threadId, pendingDeferred] of entry.deferred) {
+      const current = next.get(threadId);
+      if (
+        current === undefined ||
+        current.thread.archivedAt !== null ||
+        current.raw.latestRunStopRequested === true ||
+        current.thread.latestRun?.runId !== pendingDeferred.state.thread.latestRun?.runId ||
+        (pendingDeferred.kind === "input" &&
+          current.attention !== pendingDeferred.state.attention) ||
+        (pendingDeferred.kind === "completion" && !current.settled) ||
+        isSnoozedForNotification(current.thread, current.completedAt, now)
+      ) {
+        entry.deferred.delete(threadId);
+      }
+    }
+    entry.gate.retain(new Set(next.keys()));
     for (const [prior, state] of changed) {
       entry.gate.observe(state.thread.id, prior, state, {
         archived: state.thread.archivedAt !== null,
@@ -316,6 +371,7 @@ export function startThreadNotifications(
   const watchEnvironment = (environmentId: EnvironmentId): WatchedEnvironment => {
     const entry: WatchedEnvironment = {
       previous: new Map(),
+      deferred: new Map(),
       reconnecting: false,
       unsubscribe: () => {},
       gate: createThreadNotificationGate<ThreadId>((threadId, kind) => {
@@ -336,6 +392,7 @@ export function startThreadNotifications(
           return;
         }
         entry.reconnecting = true;
+        entry.deferred.clear();
         entry.gate.pause();
       },
       { immediate: true },
@@ -351,10 +408,86 @@ export function startThreadNotifications(
       environmentThreadShells.delegatedUnderParentAtom,
       reobserve,
     );
+    const unsubscribeTeam = registry.subscribe(teamEnvironment.state(environmentId), () => {
+      const teamState = readTeamEnvironmentStateFromRegistry(registry, environmentId);
+      if (teamState === null) return;
+      for (const [threadId, deferred] of entry.deferred) {
+        const latestRunId = deferred.state.thread.latestRun?.runId ?? null;
+        if (deferred.reason === "turn_attribution") {
+          const matchedTurn =
+            latestRunId !== null
+              ? (teamState.turnAuthorByTurnId.get(latestRunId) ??
+                (teamState.latestTurnByThreadId.get(threadId)?.turnId === latestRunId
+                  ? teamState.latestTurnByThreadId.get(threadId)
+                  : undefined))
+              : undefined;
+          if (matchedTurn === undefined) {
+            if (teamState.followedThreadIds.has(threadId)) {
+              entry.deferred.delete(threadId);
+            }
+            continue;
+          }
+        }
+        const decision = resolveTeamEnvironmentThreadNotificationDecision({
+          teamState,
+          threadId,
+          latestRunId,
+          threadCreatedAt: deferred.state.thread.createdAt,
+        });
+        if (decision === "allow") {
+          entry.deferred.delete(threadId);
+          const current = entry.previous.get(threadId);
+          const now = Date.now();
+          if (
+            current !== undefined &&
+            current.thread.archivedAt === null &&
+            current.raw.latestRunStopRequested !== true &&
+            (current.thread.latestRun?.runId ?? null) === latestRunId &&
+            (deferred.kind === "input"
+              ? current.attention === deferred.state.attention
+              : current.settled) &&
+            !isSnoozedForNotification(current.thread, current.completedAt, now)
+          ) {
+            present(environmentId, current, deferred.kind);
+          }
+        } else if (decision === "suppress") {
+          entry.deferred.delete(threadId);
+        } else {
+          deferred.reason = !teamState.attributionByThreadId.has(threadId)
+            ? "thread_attribution"
+            : "turn_attribution";
+        }
+      }
+      const isSilenced = (threadId: ThreadId) => {
+        const previousState = entry.previous.get(threadId);
+        return (
+          resolveTeamEnvironmentThreadNotificationDecision({
+            teamState,
+            threadId,
+            latestRunId: previousState?.thread.latestRun?.runId ?? null,
+            threadCreatedAt: previousState?.thread.createdAt ?? null,
+          }) !== "allow"
+        );
+      };
+      closeToasts((key) => {
+        const parsed = parseThreadKey(key);
+        return parsed.environmentId === environmentId && isSilenced(parsed.threadId);
+      });
+      const count = pending.size;
+      for (const [tag, item] of pending) {
+        if (item.environmentId === environmentId && isSilenced(item.threadId)) {
+          item.notification.close();
+          pending.delete(tag);
+        }
+      }
+      if (count !== pending.size) setNotificationBadge(pending.size);
+    });
     entry.unsubscribe = () => {
       unsubscribeShell();
       unsubscribeRequests();
       unsubscribeDelegated();
+      unsubscribeTeam();
+      entry.deferred.clear();
       entry.gate.clear();
     };
     return entry;

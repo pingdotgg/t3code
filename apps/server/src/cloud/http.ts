@@ -11,6 +11,7 @@ import {
   EnvironmentHttpUnauthorizedError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -18,6 +19,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
+import * as TeamService from "../team/TeamService.ts";
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import type { RelayRequestError } from "./relayResponse.ts";
@@ -114,6 +116,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const cloudLink = yield* CloudLink.CloudLink;
     const reachability = yield* ConnectReachability.ConnectReachability;
+    const teamService = yield* Effect.serviceOption(TeamService.TeamService);
     return handlers
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
@@ -125,8 +128,19 @@ export const layer = HttpApiBuilder.group(
       )
       .handle("relayConfig", ({ payload }) =>
         Effect.gen(function* () {
-          yield* requireEnvironmentScope(AuthRelayConfigureScope);
-          return yield* toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload));
+          const principal = yield* requireEnvironmentScope(AuthRelayConfigureScope);
+          const result = yield* toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload));
+          if (Option.isSome(teamService)) {
+            if (principal.sessionId !== undefined) {
+              yield* teamService.value.bindRelayRecipientForSession({
+                sessionId: principal.sessionId,
+                cloudUserId: payload.cloudUserId ?? null,
+              });
+            } else {
+              yield* teamService.value.clearRelayRecipientBinding();
+            }
+          }
+          return result;
         }),
       )
       .handle("linkState", () =>
@@ -144,9 +158,14 @@ export const layer = HttpApiBuilder.group(
         requireEnvironmentScope(AuthRelayReadScope).pipe(Effect.andThen(reachability.check)),
       )
       .handle("unlink", () =>
-        requireEnvironmentScope(AuthRelayWriteScope).pipe(
-          Effect.andThen(toHttpError(cloudLink.unlink())),
-        ),
+        Effect.gen(function* () {
+          yield* requireEnvironmentScope(AuthRelayWriteScope);
+          const result = yield* toHttpError(cloudLink.unlink());
+          if (Option.isSome(teamService)) {
+            yield* teamService.value.clearRelayRecipientBinding();
+          }
+          return result;
+        }),
       )
       .handle("preferences", ({ payload }) =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(

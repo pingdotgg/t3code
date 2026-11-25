@@ -79,6 +79,8 @@ describe("TeamService", () => {
         members: [],
         invites: [],
         threadAttributions: [],
+        followedThreadIds: [],
+        latestTurnAttributions: [],
       });
 
       const threadId = ThreadId.make("thread-personal-1");
@@ -582,6 +584,430 @@ describe("TeamService", () => {
         expect(childTurns.map((turn) => [turn.turnId, turn.authorMemberId])).toEqual([
           ["run-child-1", init.owner.id],
         ]);
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "follows and unfollows threads idempotently, rejects invalid targets, syncs across sessions, and gates server notifications",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const repo = yield* TeamRepository.TeamRepository;
+        const sessions = yield* SessionStore.SessionStore;
+        const sql = yield* SqlClient.SqlClient;
+
+        const ownerSession = yield* sessions.issue({ subject: "owner-follow" });
+        const init = yield* team.initializeTeam({
+          sessionId: ownerSession.sessionId,
+          payload: { name: "Follow Team", ownerPseudo: "alice" },
+        });
+        const bobInvite = yield* team.createInvite({
+          sessionId: ownerSession.sessionId,
+          payload: { role: "regular" },
+        });
+        const bobRedeemed = yield* team.redeemInvite({
+          token: bobInvite.token,
+          pseudo: "bob",
+          client: testClient,
+        });
+        const bobSession1 = yield* sessions.verify(bobRedeemed.accessToken);
+        // Bind a second concurrent session for Bob (e.g. desktop + web) to verify cross-session sync.
+        const bobSession2 = yield* sessions.issue({
+          subject: `team-member:${bobRedeemed.member.id}`,
+        });
+        yield* repo.bindSession({
+          sessionId: bobSession2.sessionId,
+          teamId: init.team.id,
+          memberId: bobRedeemed.member.id,
+          boundAt: DateTime.formatIso(yield* DateTime.now),
+        });
+
+        const aliceThreadId = ThreadId.make("thread-alice-follow");
+        const bobThreadId = ThreadId.make("thread-bob-follow");
+        const missingThreadId = ThreadId.make("thread-does-not-exist");
+        const otherTeamThreadId = ThreadId.make("thread-other-team");
+        const personalLegacyThreadId = ThreadId.make("thread-legacy-unattributed");
+
+        yield* team.recordThreadCreated({
+          sessionId: ownerSession.sessionId,
+          threadId: aliceThreadId,
+        });
+        yield* team.recordTurnAuthored({
+          sessionId: ownerSession.sessionId,
+          threadId: aliceThreadId,
+          turnId: "run-alice-1",
+        });
+        yield* team.recordThreadCreated({
+          sessionId: bobSession1.sessionId,
+          threadId: bobThreadId,
+        });
+        yield* team.recordTurnAuthored({
+          sessionId: bobSession1.sessionId,
+          threadId: bobThreadId,
+          turnId: "run-bob-1",
+        });
+
+        // Reject following own thread (prevents one-way UI dead end and count inflation).
+        const ownThreadExit = yield* Effect.exit(
+          team.followThread({
+            sessionId: bobSession1.sessionId,
+            payload: { threadId: bobThreadId },
+          }),
+        );
+        expect(ownThreadExit._tag).toBe("Failure");
+        if (ownThreadExit._tag === "Failure") {
+          const failure = Cause.squash(ownThreadExit.cause) as { readonly code?: string };
+          expect(failure.code).toBe("forbidden");
+        }
+
+        // Reject following a non-existent thread.
+        const missingExit = yield* Effect.exit(
+          team.followThread({
+            sessionId: bobSession1.sessionId,
+            payload: { threadId: missingThreadId },
+          }),
+        );
+        expect(missingExit._tag).toBe("Failure");
+        if (missingExit._tag === "Failure") {
+          const failure = Cause.squash(missingExit.cause) as { readonly code?: string };
+          expect(failure.code).toBe("not_found");
+        }
+
+        // Reject following a thread attributed to a different team.
+        yield* sql`PRAGMA foreign_keys = OFF`;
+        yield* sql`
+          INSERT INTO team_thread_meta (thread_id, team_id, creator_member_id, view_id, locked, created_at)
+          VALUES (${otherTeamThreadId}, 'team-foreign', ${init.owner.id}, 'view-foreign', 0, '2026-01-01T00:00:00.000Z')
+        `;
+        yield* sql`PRAGMA foreign_keys = ON`;
+        const foreignExit = yield* Effect.exit(
+          team.followThread({
+            sessionId: bobSession1.sessionId,
+            payload: { threadId: otherTeamThreadId },
+          }),
+        );
+        expect(foreignExit._tag).toBe("Failure");
+        if (foreignExit._tag === "Failure") {
+          const failure = Cause.squash(foreignExit.cause) as { readonly code?: string };
+          expect(failure.code).toBe("forbidden");
+        }
+
+        // Reject unbound sessions.
+        const unboundSession = yield* sessions.issue({ subject: "anonymous" });
+        const unboundExit = yield* Effect.exit(
+          team.followThread({
+            sessionId: unboundSession.sessionId,
+            payload: { threadId: aliceThreadId },
+          }),
+        );
+        expect(unboundExit._tag).toBe("Failure");
+
+        // Initial notification gating before Bob follows Alice's thread:
+        // - Alice (creator) notified
+        // - Bob (non-following colleague) silenced
+        // - Unattributed/personal thread untouched (notified)
+        expect(
+          yield* team.shouldNotifyMemberForThread({
+            memberId: init.owner.id,
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+          }),
+        ).toBe(true);
+        expect(
+          yield* team.shouldNotifyMemberForThread({
+            memberId: bobRedeemed.member.id,
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+          }),
+        ).toBe(false);
+        expect(
+          yield* team.shouldNotifyMemberForThread({
+            memberId: bobRedeemed.member.id,
+            threadId: personalLegacyThreadId,
+          }),
+        ).toBe(true);
+        // Without an explicit relay-to-member binding, team relay push fails closed (never guesses owner).
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+            cloudUserId: "cloud-alice",
+          }),
+        ).toBe(false);
+
+        // Bind T3 Connect relay explicitly to Alice's session + cloud user ID.
+        yield* team.bindRelayRecipientForSession({
+          sessionId: ownerSession.sessionId,
+          cloudUserId: "cloud-alice",
+        });
+
+        // Relay push for bound recipient (Alice): allowed on Alice's thread, silenced on Bob's unfollowed thread.
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+            cloudUserId: "cloud-alice",
+          }),
+        ).toBe(true);
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: bobThreadId,
+            turnId: "run-bob-1",
+            cloudUserId: "cloud-alice",
+          }),
+        ).toBe(false);
+        // Mismatched or missing cloud user ID fails closed when relay binding is tied to a cloud account.
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+            cloudUserId: "cloud-someone-else",
+          }),
+        ).toBe(false);
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+            cloudUserId: null,
+          }),
+        ).toBe(false);
+        // Post-team unattributed threads fail closed; pre-team legacy threads stay allowed.
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: ThreadId.make("thread-post-team-unattributed"),
+            threadCreatedAt: "2099-01-01T00:00:00.000Z",
+            cloudUserId: "cloud-alice",
+          }),
+        ).toBe(false);
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: personalLegacyThreadId,
+            threadCreatedAt: "1969-12-31T23:59:59.000Z",
+            cloudUserId: "cloud-alice",
+          }),
+        ).toBe(true);
+
+        // Subscribe Bob's second session and Alice's session to verify follow events stay member-scoped.
+        const bobSession2Fiber = yield* team
+          .streamState(bobSession2.sessionId)
+          .pipe(Stream.take(3), Stream.runCollect, Effect.forkChild);
+        const aliceFiber = yield* team
+          .streamState(ownerSession.sessionId)
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+        yield* Effect.yieldNow;
+
+        // Bob follows Alice's thread twice (idempotent: only one change event emitted).
+        expect(
+          yield* team.followThread({
+            sessionId: bobSession1.sessionId,
+            payload: { threadId: aliceThreadId },
+          }),
+        ).toEqual({ threadId: aliceThreadId, isFollowing: true });
+        expect(
+          yield* team.followThread({
+            sessionId: bobSession1.sessionId,
+            payload: { threadId: aliceThreadId },
+          }),
+        ).toEqual({ threadId: aliceThreadId, isFollowing: true });
+
+        expect(yield* team.listFollowedThreads(bobSession1.sessionId)).toEqual([aliceThreadId]);
+        expect((yield* team.getState(bobSession2.sessionId)).followedThreadIds).toEqual([
+          aliceThreadId,
+        ]);
+        expect(
+          yield* team.shouldNotifyMemberForThread({
+            memberId: bobRedeemed.member.id,
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+          }),
+        ).toBe(true);
+        expect(
+          yield* team.listNotificationRecipientsForThread({
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+          }),
+        ).toEqual({
+          isTeamThread: true,
+          recipientMemberIds: [init.owner.id, bobRedeemed.member.id],
+        });
+
+        // Bob unfollows twice (idempotent).
+        expect(
+          yield* team.unfollowThread({
+            sessionId: bobSession1.sessionId,
+            payload: { threadId: aliceThreadId },
+          }),
+        ).toEqual({ threadId: aliceThreadId, isFollowing: false });
+        expect(
+          yield* team.unfollowThread({
+            sessionId: bobSession1.sessionId,
+            payload: { threadId: aliceThreadId },
+          }),
+        ).toEqual({ threadId: aliceThreadId, isFollowing: false });
+
+        // Emit a non-follow event so Alice's stream can finish taking 2 items and prove she got no follow events.
+        yield* team.recordTurnAuthored({
+          sessionId: bobSession1.sessionId,
+          threadId: aliceThreadId,
+          turnId: "run-bob-in-alice-thread",
+        });
+
+        const bob2Events = yield* Fiber.join(bobSession2Fiber);
+        const aliceEvents = yield* Fiber.join(aliceFiber);
+        expect(bob2Events.map((event) => event.type)).toEqual([
+          "snapshot",
+          "threadFollowChanged",
+          "threadFollowChanged",
+        ]);
+        expect(aliceEvents.map((event) => event.type)).toEqual(["snapshot", "turnAttributed"]);
+
+        // After unfollowing, Bob is silenced for Alice's turn, but still notified for his own completing turn!
+        expect(
+          yield* team.shouldNotifyMemberForThread({
+            memberId: bobRedeemed.member.id,
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+          }),
+        ).toBe(false);
+        expect(
+          yield* team.shouldNotifyMemberForThread({
+            memberId: bobRedeemed.member.id,
+            threadId: aliceThreadId,
+            turnId: "run-bob-in-alice-thread",
+          }),
+        ).toBe(true);
+
+        // When bound relay recipient (Alice) follows Bob's thread, relay push notification unlocks for Bob's thread.
+        yield* team.followThread({
+          sessionId: ownerSession.sessionId,
+          payload: { threadId: bobThreadId },
+        });
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: bobThreadId,
+            turnId: "run-bob-1",
+            cloudUserId: "cloud-alice",
+          }),
+        ).toBe(true);
+
+        // Multi-owner & relink: add second owner Dana and bind relay to Dana.
+        const danaInvite = yield* team.createInvite({
+          sessionId: ownerSession.sessionId,
+          payload: { role: "owner", prefilledPseudo: "dana" },
+        });
+        const danaRedeemed = yield* team.redeemInvite({
+          token: danaInvite.token,
+          pseudo: "dana",
+          client: testClient,
+        });
+        const danaSession = yield* sessions.verify(danaRedeemed.accessToken);
+        const danaThreadId = ThreadId.make("thread-dana-owner");
+        yield* team.recordThreadCreated({
+          sessionId: danaSession.sessionId,
+          threadId: danaThreadId,
+        });
+        yield* team.bindRelayRecipientForSession({
+          sessionId: danaSession.sessionId,
+          cloudUserId: "cloud-dana",
+        });
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+            cloudUserId: "cloud-dana",
+          }),
+        ).toBe(false);
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: danaThreadId,
+            cloudUserId: "cloud-dana",
+          }),
+        ).toBe(true);
+        yield* team.clearRelayRecipientBinding();
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: danaThreadId,
+            cloudUserId: "cloud-dana",
+          }),
+        ).toBe(false);
+
+        // Soft-deleted attributed thread cannot be followed and is excluded from listFollowedThreads.
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_threads (
+            thread_id, project_id, title, default_provider, runtime_mode,
+            interaction_mode, active_provider_thread_id, created_at, updated_at,
+            archived_at, deleted_at, payload_json
+          ) VALUES (
+            ${bobThreadId}, 'proj-1', 'Deleted Bob thread', 'codex', 'full-access',
+            'default', NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
+            NULL, '2026-01-02T00:00:00.000Z', '{}'
+          )
+        `;
+        expect(yield* team.listFollowedThreads(ownerSession.sessionId)).not.toContain(bobThreadId);
+        const deletedFollowExit = yield* Effect.exit(
+          team.followThread({
+            sessionId: danaSession.sessionId,
+            payload: { threadId: bobThreadId },
+          }),
+        );
+        expect(deletedFollowExit._tag).toBe("Failure");
+        if (deletedFollowExit._tag === "Failure") {
+          const failure = Cause.squash(deletedFollowExit.cause) as { readonly code?: string };
+          expect(failure.code).toBe("not_found");
+        }
+
+        // Duplicate recordTurnAuthored for an existing turnId does NOT re-broadcast turnAttributed.
+        const dupTurnFiber = yield* team
+          .streamState(ownerSession.sessionId)
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* team.recordTurnAuthored({
+          sessionId: bobSession1.sessionId,
+          threadId: aliceThreadId,
+          turnId: "run-bob-in-alice-thread",
+        });
+        yield* team.recordTurnAuthored({
+          sessionId: bobSession1.sessionId,
+          threadId: aliceThreadId,
+          turnId: "run-bob-fresh-2",
+        });
+        const dupTurnEvents = yield* Fiber.join(dupTurnFiber);
+        expect(dupTurnEvents.map((event) => event.type)).toEqual(["snapshot", "turnAttributed"]);
+        const turnEvent = dupTurnEvents[1];
+        if (turnEvent?.type === "turnAttributed") {
+          expect(turnEvent.payload.turnId).toBe("run-bob-fresh-2");
+        }
+
+        // Snapshot retains active/non-terminal run attribution even when >5 newer turns are queued behind it.
+        const activeBobRunId = "run-bob-active-held";
+        yield* team.recordTurnAuthored({
+          sessionId: bobSession1.sessionId,
+          threadId: aliceThreadId,
+          turnId: activeBobRunId,
+        });
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runs (
+            run_id, thread_id, ordinal, provider, provider_thread_id,
+            status, requested_at, completed_at, payload_json
+          ) VALUES (
+            ${activeBobRunId}, ${aliceThreadId}, 1, 'codex', NULL,
+            'running', '2026-01-01T00:00:00.000Z', NULL, '{}'
+          )
+        `;
+        for (let i = 1; i <= 6; i += 1) {
+          yield* team.recordTurnAuthored({
+            sessionId: ownerSession.sessionId,
+            threadId: aliceThreadId,
+            turnId: `run-alice-queued-${i}`,
+          });
+        }
+        const reconnectedSnapshot = yield* team.getState(bobSession1.sessionId);
+        expect(
+          reconnectedSnapshot.latestTurnAttributions.some(
+            (turn) =>
+              turn.turnId === activeBobRunId && turn.authorMemberId === bobRedeemed.member.id,
+          ),
+        ).toBe(true);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });
