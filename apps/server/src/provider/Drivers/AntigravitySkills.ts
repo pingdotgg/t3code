@@ -111,7 +111,11 @@ function parseSkillFrontmatter(contents: string, fileName: string) {
   if (end === -1) return undefined;
   try {
     const frontmatter = decodeSkillFrontmatter(
-      parseYamlDocument(contents.slice(start + 3, end).trim()) ?? {},
+      // Antigravity reads plain scalar names and descriptions as text.
+      parseYamlDocument(contents.slice(start + 3, end).trim(), {
+        schema: "failsafe",
+        customTags: ["null"],
+      }) ?? {},
     );
     const name = frontmatter.name || fileName.slice(0, -3);
     const description = frontmatter.description?.trim();
