@@ -72,15 +72,23 @@ const PROVIDER_FAILURE_CATEGORIES: Partial<
 
 // macOS privacy protection (TCC) refuses a CLI the project folder with EPERM.
 const PERMISSION_DENIED_OUTPUT = /\bEPERM\b|Operation not permitted/u;
+// Node's ENOSPC text, and SQLite's SQLITE_FULL text (Codex's state DB).
+const DISK_FULL_OUTPUT = /\bENOSPC\b|no space left on device|database or disk is full/iu;
+const DISK_FULL_ACTION =
+  "Free up disk space where T3 Code and the provider store their data, then retry the turn.";
+const PROVIDER_LOGS_GUIDANCE =
+  "Check the server logs for the provider's output, then retry the turn.";
 
 /**
  * What to do after a provider CLI exits on its own. Only recognises the
  * output; the output itself stays out of the message.
  */
 export function providerProcessExitGuidance(output: unknown): string {
-  return typeof output === "string" && PERMISSION_DENIED_OUTPUT.test(output)
+  if (typeof output !== "string") return PROVIDER_LOGS_GUIDANCE;
+  if (DISK_FULL_OUTPUT.test(output)) return `The disk is full (ENOSPC). ${DISK_FULL_ACTION}`;
+  return PERMISSION_DENIED_OUTPUT.test(output)
     ? "It was denied access to a file or folder (EPERM). On macOS, allow T3 Code under System Settings > Privacy & Security > Files and Folders, or move the project out of Desktop, Documents, or Downloads, then retry the turn."
-    : "Check the server logs for the provider's output, then retry the turn.";
+    : PROVIDER_LOGS_GUIDANCE;
 }
 
 // codex_protocol::protocol::validate_thread_goal_objective
@@ -122,6 +130,12 @@ function curatedCauseMessages(cause: unknown): {
         continue;
       }
       if (typeof cause !== "object") break;
+      // A Node system error from T3's own file writes (e.g. the provider process record).
+      if ((cause as Record<string, unknown>).code === "ENOSPC") {
+        const stage =
+          category === undefined ? "The disk is full" : `${category.summary}: the disk is full`;
+        return { known: `${stage} (ENOSPC). ${DISK_FULL_ACTION}`, category: categoryMessage() };
+      }
       const tag = (cause as Record<string, unknown>)._tag;
       switch (tag) {
         case "ContextHandoffBudgetError":
