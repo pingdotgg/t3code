@@ -60,6 +60,7 @@ const entry = `
               if (!audio) break;
               encoder ??= new lame.Mp3Encoder(1, audio.sampleRate, mp3Kbps(audio.sampleRate));
               const pcm = pcm16Mono(audio.samples, audio.channels);
+              if (pcm.length) process.send({ type: "t3-synthesis-pcm", pcm, rate: audio.sampleRate });
               // Encoding a text chunk takes longer than synthesizing it, so send it slice by slice.
               for (let start = 0; start < pcm.length && !cancelled; start += ${ENCODE_SLICE_SAMPLES}) {
                 chunk(encoder.encodeBuffer(pcm.subarray(start, start + ${ENCODE_SLICE_SAMPLES})));
@@ -125,6 +126,7 @@ export async function loadLocalSynthesisModel(options: {
   let alive = true;
   let pending: ReturnType<typeof Promise.withResolvers<Reply>> | undefined;
   let receive: ((bytes: Uint8Array) => void) | undefined;
+  let receivePcm: ((pcm: Int16Array, rate: number) => void) | undefined;
   const exited = Promise.withResolvers<void>();
   const fail = (error: Error) => {
     alive = false;
@@ -144,6 +146,16 @@ export async function loadLocalSynthesisModel(options: {
     if (typeof message !== "object" || message === null || !("type" in message)) return;
     if (message.type === "t3-synthesis-chunk") {
       if ("bytes" in message && message.bytes instanceof Uint8Array) receive?.(message.bytes);
+      return;
+    }
+    if (message.type === "t3-synthesis-pcm") {
+      if (
+        "pcm" in message &&
+        message.pcm instanceof Int16Array &&
+        "rate" in message &&
+        typeof message.rate === "number"
+      )
+        receivePcm?.(message.pcm, message.rate);
       return;
     }
     if (message.type !== "t3-synthesis-reply") return;
@@ -197,13 +209,22 @@ export async function loadLocalSynthesisModel(options: {
     get alive() {
       return alive;
     },
-    /** Delivers MP3 as each text chunk is synthesized; resolves once the stream ends or is cancelled. */
-    stream: async (request: AudioCppSynthesisRequest, onAudio: (bytes: Uint8Array) => void) => {
+    /**
+     * Delivers MP3 as each text chunk is synthesized, and the mono PCM each part was encoded
+     * from; resolves once the stream ends or is cancelled.
+     */
+    stream: async (
+      request: AudioCppSynthesisRequest,
+      onAudio: (bytes: Uint8Array) => void,
+      onPcm?: (pcm: Int16Array, rate: number) => void,
+    ) => {
       receive = onAudio;
+      receivePcm = onPcm;
       try {
         await send({ kind: "synthesize", request });
       } finally {
         receive = undefined;
+        receivePcm = undefined;
       }
     },
     /** Stops after the text chunk in progress; the pending `stream` call then resolves. */

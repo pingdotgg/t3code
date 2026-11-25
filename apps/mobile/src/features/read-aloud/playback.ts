@@ -1,10 +1,11 @@
-import { m } from "../../i18n/messages";
+import { getActiveLocale, m } from "../../i18n/messages";
 import {
   createReadAloudController,
   createReadAloudWarmup,
   createTimedWords,
   type SpeechPlayback,
   type SpokenWord,
+  readAloudWordAlignment,
 } from "@t3tools/client-runtime/read-aloud";
 import {
   getSpeechSynthesisModels,
@@ -148,9 +149,13 @@ export const readAloudController = createReadAloudController(async (text, settin
     : null;
   if (!prepared)
     throw new Error("Connect to the read-aloud environment selected in Settings → Voice.");
+  const alignment = readAloudWordAlignment(settings, getActiveLocale());
   let pendingCatalog = catalogs.get(signal);
   if (!pendingCatalog) {
-    pendingCatalog = runSpeech(getSpeechSynthesisModels(prepared, settings.provider), signal);
+    pendingCatalog = runSpeech(
+      getSpeechSynthesisModels(prepared, settings.provider, alignment),
+      signal,
+    );
     catalogs.set(signal, pendingCatalog);
   }
   const catalog = await pendingCatalog;
@@ -164,6 +169,7 @@ export const readAloudController = createReadAloudController(async (text, settin
       voice: settings.voice,
       speed: settings.speed,
       language: settings.language,
+      alignment,
     }),
     signal,
   );
@@ -235,7 +241,6 @@ export const readAloudController = createReadAloudController(async (text, settin
     words: (listener) => {
       timed ??= createTimedWords({
         text,
-        wordTimings: catalog.wordTimings ?? "estimated",
         load: (after, signal) =>
           runSpeech(getSpeechSynthesisTimings(prepared, token, after), signal),
         clock: () => ({

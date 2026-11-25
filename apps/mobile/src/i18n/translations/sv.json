@@ -5740,5 +5740,7 @@
   "1a1beecff68a6e61": "Verifiera Google-konto",
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
-  "201490988858b511": "återkallad av {by}"
+  "201490988858b511": "återkallad av {by}",
+  "1235caa9d67f09c6": "Flerspråkig ordsynkronisering",
+  "1c68db6bfe3f1a9e": "Markerar det upplästa ordet på 25 språk. Laddar ned en modell på 740 MB i stället för en på 135 MB."
 }

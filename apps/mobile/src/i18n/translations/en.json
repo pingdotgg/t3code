@@ -5742,5 +5742,7 @@
   "1a1beecff68a6e61": "Verify Google account",
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
-  "201490988858b511": "withdrawn by {by}"
+  "201490988858b511": "withdrawn by {by}",
+  "1235caa9d67f09c6": "Multilingual word timing",
+  "1c68db6bfe3f1a9e": "Highlight the spoken word in 25 languages. Downloads a 740 MB model instead of a 135 MB one."
 }

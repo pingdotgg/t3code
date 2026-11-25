@@ -32,6 +32,7 @@ import {
 import * as SpeechPostProcessing from "./postProcessing.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
+import * as SpeechAligner from "./SpeechAligner.ts";
 import * as SpeechService from "./SpeechService.ts";
 import * as SpeechSynthesisStreams from "./synthesisStreams.ts";
 
@@ -102,6 +103,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
     const cloud = yield* CloudSpeech.CloudSpeech;
     const local = yield* LocalSpeechSynthesis.LocalSpeechSynthesis;
     const synthesisStreams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
+    const aligner = yield* SpeechAligner.SpeechAligner;
     const mapInstallError = <A, R>(
       effect: Effect.Effect<A, LocalSpeechSynthesis.LocalSynthesisInstallError, R>,
     ) =>
@@ -134,17 +136,26 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "synthesisModels",
         Effect.fn("environment.voice.synthesisModels")(function* (args) {
           yield* guard(args.endpoint.name);
-          if (args.params.provider === "local")
-            return yield* local.catalog.pipe(Effect.flatMap(withoutCatalogHostPaths));
-          return yield* cloud.synthesisModels(args.params.provider).pipe(
-            Effect.catchTags({
-              SpeechSynthesisError: (error) =>
-                Effect.fail(
-                  new SpeechSynthesisError({ provider: error.provider, reason: error.reason }),
-                ),
-              ServerSettingsError: (error) => failEnvironmentInternal("internal_error", error),
-            }),
-          );
+          const catalog =
+            args.params.provider === "local"
+              ? yield* local.catalog.pipe(Effect.flatMap(withoutCatalogHostPaths))
+              : yield* cloud.synthesisModels(args.params.provider).pipe(
+                  Effect.catchTags({
+                    SpeechSynthesisError: (error) =>
+                      Effect.fail(
+                        new SpeechSynthesisError({
+                          provider: error.provider,
+                          reason: error.reason,
+                        }),
+                      ),
+                    ServerSettingsError: (error) =>
+                      failEnvironmentInternal("internal_error", error),
+                  }),
+                );
+          // Choosing a provider without word timings fetches the model that times them.
+          if (args.query.alignment && catalog.wordTimings !== "provider")
+            yield* aligner.prepare(args.query.alignment);
+          return catalog;
         }),
       )
       .handle(

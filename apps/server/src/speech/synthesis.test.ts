@@ -275,7 +275,7 @@ it.effect.each(["xai", "openrouter"] as const)(
             : new Response(new Uint8Array([73, 68, 51, 1]), {
                 headers: {
                   "content-type":
-                    provider === "openrouter" ? "audio/pcm;rate=44100;channels=1" : "audio/mpeg",
+                    provider === "openrouter" ? "audio/pcm;rate=44100;channels=1" : "audio/pcm",
                 },
               }),
       );
@@ -339,8 +339,7 @@ it.effect.each(["xai", "openrouter"] as const)(
           upstream.mockClear();
         }
         const result = yield* synthesize(provider, request);
-        if (provider === "openrouter") expect(mp3SampleRate(result)).toBe(44100);
-        else expect([...result]).toEqual([73, 68, 51, 1]);
+        expect(mp3SampleRate(result)).toBe(provider === "openrouter" ? 44100 : 24000);
         const [url, init] = upstream.mock.calls[0]!;
         expect(String(url)).toBe(
           {
@@ -352,7 +351,13 @@ it.effect.each(["xai", "openrouter"] as const)(
         expect(init?.redirect).toBe("error");
         expect(JSON.parse(String(init?.body))).toMatchObject(
           provider === "xai"
-            ? { text: request.text, voice_id: request.voice, language: "en", speed: 1.25 }
+            ? {
+                text: request.text,
+                voice_id: request.voice,
+                language: "en",
+                speed: 1.25,
+                output_format: { codec: "pcm", sample_rate: 24000 },
+              }
             : {
                 input: request.text,
                 model: request.model,

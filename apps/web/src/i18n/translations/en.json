@@ -13051,5 +13051,8 @@
   "201490988858b511": "withdrawn by {by}",
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
-  "92e129bf413a1220": "withdrawn"
+  "92e129bf413a1220": "withdrawn",
+  "1235caa9d67f09c6": "Multilingual word timing",
+  "2830c15ca3574a86": "Highlight the spoken word in 25 languages, not just English. Downloads a 740 MB model to the selected environment instead of a 135 MB one.",
+  "ac1541a6ce6ec81e": "Time words in 25 languages"
 }

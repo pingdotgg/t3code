@@ -33,7 +33,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
-import { encodeMp3, MAX_SYNTHESIS_BYTES } from "./synthesisAudio.ts";
+import { encodeMp3, isEncodablePcm, MAX_SYNTHESIS_BYTES, monoPcm16 } from "./synthesisAudio.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import { applySpeechAliases, speechRecognitionWords } from "./customWords.ts";
@@ -193,14 +193,19 @@ type SynthesisBackend = {
   >;
 };
 
-/** Audio, or the words of the request text that the audio so far speaks. */
+/**
+ * MP3 audio, the words of the request text that the audio so far speaks, or the mono PCM that
+ * MP3 was encoded from, starting `startSeconds` into the stream, for timing words it lacks.
+ */
 export type SpeechSynthesisPart =
   | Uint8Array
-  | { readonly words: ReadonlyArray<SpeechSynthesisWord> };
+  | { readonly words: ReadonlyArray<SpeechSynthesisWord> }
+  | { readonly pcm: Int16Array; readonly rate: number; readonly startSeconds: number };
 
 // gpt-4o-mini-tts accepts 2,000 tokens, which Chinese or Japanese reaches near 2,000 characters,
 // and OpenRouter's Seed Audio accepts 3,000 characters. Pieces stream back to back, so small is cheap.
 const CLOUD_SYNTHESIS_TEXT_LIMIT = 1000;
+const XAI_SPEECH_RATE = 24_000;
 const SYNTHESIS_STALL_TIMEOUT = "30 seconds";
 
 function wave(samples: Float32Array) {
@@ -498,10 +503,12 @@ export const layer = Layer.effect(
                 voice_id: input.voice || "eve",
                 language: input.language,
                 speed: input.speed,
-                output_format: { codec: "mp3", sample_rate: 24000, bit_rate: 128000 },
+                // PCM, so the words can be timed from it; encoded to MP3 here.
+                output_format: { codec: "pcm", sample_rate: XAI_SPEECH_RATE },
               }),
             ),
           ),
+        pcmFormat: () => ({ rate: XAI_SPEECH_RATE, channels: 1 }),
         errorReason: synthesisErrorReason,
       },
       openrouter: {
@@ -630,7 +637,19 @@ export const layer = Layer.effect(
         const format = backend.pcmFormat?.(response, input);
         if (format) {
           const pcm = yield* readSynthesisBody(response, provider, MAX_SYNTHESIS_BYTES);
-          return encodeMp3(pcm, format.rate, format.channels).pipe(Stream.mapError(unavailable));
+          const encoded = encodeMp3(pcm, format.rate, format.channels);
+          return (
+            isEncodablePcm(pcm, format.rate, format.channels)
+              ? Stream.concat(
+                  Stream.succeed<SpeechSynthesisPart>({
+                    pcm: monoPcm16(pcm, format.channels),
+                    rate: format.rate,
+                    startSeconds: 0,
+                  }),
+                  encoded,
+                )
+              : encoded
+          ).pipe(Stream.mapError(unavailable));
         }
         let size = 0;
         const words = alignedWords(input.text);
@@ -693,6 +712,7 @@ export const layer = Layer.effect(
                     duration.push(part);
                     return part;
                   }
+                  if ("pcm" in part) return { ...part, startSeconds: part.startSeconds + offset };
                   return {
                     words: part.words.map((word) => ({
                       start: word.start + span.start,

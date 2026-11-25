@@ -30,6 +30,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
+import type { SpeechSynthesisPart } from "./CloudSpeech.ts";
 import { loadLocalSynthesisModel, type LocalSynthesisModel } from "./localSynthesisWorker.ts";
 
 /** A preset the model names itself, or one it reads from its own file. */
@@ -238,10 +239,10 @@ export class LocalSpeechSynthesis extends Context.Service<
     readonly remove: (
       modelId: string,
     ) => Effect.Effect<SpeechSynthesisCatalog, LocalSynthesisInstallError>;
-    /** MP3, delivered as each text chunk is synthesized. Stopping early cancels synthesis. */
+    /** MP3 and its PCM, delivered as each text chunk is synthesized. Stopping early cancels synthesis. */
     readonly stream: (
       request: SpeechSynthesisRequest,
-    ) => Stream.Stream<Uint8Array, SpeechSynthesisError>;
+    ) => Stream.Stream<SpeechSynthesisPart, SpeechSynthesisError>;
   }
 >()("t3/speech/LocalSpeechSynthesis") {}
 
@@ -678,7 +679,7 @@ const make = Effect.gen(function* () {
   // Untraced: it runs inside the stream's own span.
   const speak = Effect.fnUntraced(function* (
     request: SpeechSynthesisRequest,
-    queue: Queue.Queue<Uint8Array, SpeechSynthesisError | Cause.Done>,
+    queue: Queue.Queue<SpeechSynthesisPart, SpeechSynthesisError | Cause.Done>,
   ) {
     if (!runtime || !libraryPath) return yield* failure("unavailable");
     const definition = findDefinition(request.model);
@@ -700,6 +701,8 @@ const make = Effect.gen(function* () {
     );
     const model = yield* ensureWorker(definition, paths);
     const language = localSynthesisLanguage(request.language, model.languages);
+    // One encoder spans the whole reply, so PCM time is MP3 time.
+    let spokenSeconds = 0;
     const spoken = model
       .stream(
         {
@@ -711,6 +714,10 @@ const make = Effect.gen(function* () {
           },
         },
         (bytes) => Queue.offerUnsafe(queue, bytes),
+        (pcm, rate) => {
+          Queue.offerUnsafe(queue, { pcm, rate, startSeconds: spokenSeconds });
+          spokenSeconds += pcm.length / rate;
+        },
       )
       .then(
         () => Queue.endUnsafe(queue),
@@ -725,7 +732,9 @@ const make = Effect.gen(function* () {
   });
 
   const stream = (request: SpeechSynthesisRequest) =>
-    Stream.callback<Uint8Array, SpeechSynthesisError>((queue) => speak(request, queue)).pipe(
+    Stream.callback<SpeechSynthesisPart, SpeechSynthesisError>((queue) =>
+      speak(request, queue),
+    ).pipe(
       Stream.tapError((error) =>
         error.reason === "unavailable"
           ? Effect.logWarning("Local speech synthesis failed.", error)

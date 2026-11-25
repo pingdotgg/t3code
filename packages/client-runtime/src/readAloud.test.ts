@@ -337,7 +337,7 @@ it("starts at the block a user picks, keeps its markdown offsets, and ignores a 
   expect(controller.jump("1", 0)).toBeNull();
 });
 
-it("follows provider word timings on the audio clock and estimates them when there are none", async () => {
+it("follows the environment's word timings on the audio clock and estimates them when there are none", async () => {
   vi.useFakeTimers();
   try {
     let seconds = 0;
@@ -348,7 +348,6 @@ it("follows provider word timings on the audio clock and estimates them when the
     ];
     const provider = createTimedWords({
       text: "one two",
-      wordTimings: "provider",
       load: async () => ({ words, done: true }),
       clock,
     });
@@ -370,7 +369,6 @@ it("follows provider word timings on the audio clock and estimates them when the
     seconds = 2.5;
     const estimated = createTimedWords({
       text: "one two three.",
-      wordTimings: "estimated",
       load: async () => ({ words: [], done: true, durationSeconds: 3 }),
       clock,
     });

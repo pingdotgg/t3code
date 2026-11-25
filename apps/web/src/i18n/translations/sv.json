@@ -13049,5 +13049,8 @@
   "201490988858b511": "återkallad av {by}",
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
-  "92e129bf413a1220": "återkallad"
+  "92e129bf413a1220": "återkallad",
+  "1235caa9d67f09c6": "Flerspråkig ordsynkronisering",
+  "2830c15ca3574a86": "Markerar det upplästa ordet på 25 språk, inte bara engelska. Laddar ned en modell på 740 MB till den valda miljön i stället för en på 135 MB.",
+  "ac1541a6ce6ec81e": "Synkronisera ord på 25 språk"
 }

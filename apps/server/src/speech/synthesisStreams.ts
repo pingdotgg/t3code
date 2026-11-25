@@ -7,6 +7,7 @@ import {
   type SpeechSynthesisTimings,
   type SpeechSynthesisWord,
 } from "@t3tools/contracts";
+import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
@@ -16,12 +17,14 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
+import * as SpeechAligner from "./SpeechAligner.ts";
 import { mp3Duration } from "./synthesisTimings.ts";
 
 // A started stream nobody opens is abandoned.
@@ -41,8 +44,11 @@ type Job = {
     readonly count: number;
     readonly words: number;
     readonly done: boolean;
+    /** Every word is timed; can trail `done` while the last audio is aligned. */
+    readonly timed: boolean;
   }>;
   fiber?: Fiber.Fiber<void>;
+  alignment?: Fiber.Fiber<void>;
   failed: boolean;
   readers: number;
   everRead: boolean;
@@ -67,6 +73,7 @@ export class SpeechSynthesisStreams extends Context.Service<
 const make = Effect.gen(function* () {
   const cloud = yield* CloudSpeech.CloudSpeech;
   const local = yield* LocalSpeechSynthesis.LocalSpeechSynthesis;
+  const aligner = yield* SpeechAligner.SpeechAligner;
   const random = yield* SecureRandom.SecureRandom;
   const scope = yield* Effect.scope;
   const jobs = new Map<string, Job>();
@@ -79,6 +86,7 @@ const make = Effect.gen(function* () {
     if (job.idle !== generation || job.readers > 0) return;
     jobs.delete(token);
     if (job.fiber) yield* Fiber.interrupt(job.fiber);
+    if (job.alignment) yield* Fiber.interrupt(job.alignment);
   });
 
   const start = Effect.fn("SpeechSynthesisStreams.start")(function* (
@@ -94,21 +102,57 @@ const make = Effect.gen(function* () {
       chunks: [],
       words: [],
       duration: mp3Duration(),
-      progress: yield* SubscriptionRef.make({ count: 0, words: 0, done: false }),
+      progress: yield* SubscriptionRef.make({ count: 0, words: 0, done: false, timed: false }),
       failed: false,
       readers: 0,
       everRead: false,
       idle: 0,
     };
+    const addWords = (words: ReadonlyArray<SpeechSynthesisWord>) =>
+      words.length
+        ? Effect.sync(() => job.words.push(...words)).pipe(
+            Effect.andThen(
+              SubscriptionRef.update(job.progress, (progress) => ({
+                ...progress,
+                words: job.words.length,
+              })),
+            ),
+          )
+        : Effect.void;
+    // Audio that comes without word timings is timed from its PCM, off the audio's own path.
+    const pcm = yield* Queue.unbounded<
+      { readonly pcm: Int16Array; readonly rate: number; readonly startSeconds: number },
+      Cause.Done
+    >();
+    job.alignment = yield* Effect.gen(function* () {
+      // Opened on the first PCM, so providers with their own timings never load a model.
+      const opened: { session?: SpeechAligner.AlignmentSession | undefined } = {};
+      yield* Stream.fromQueue(pcm).pipe(
+        Stream.runForEach((part) =>
+          Effect.gen(function* () {
+            if (!("session" in opened))
+              opened.session = yield* aligner.session(
+                request.text,
+                request.language,
+                request.alignment ?? "english",
+              );
+            if (opened.session)
+              yield* addWords(yield* opened.session.push(part.pcm, part.rate, part.startSeconds));
+          }),
+        ),
+      );
+      if (opened.session && !job.failed)
+        yield* addWords(yield* opened.session.finish(job.duration.seconds));
+    }).pipe(
+      Effect.ensuring(
+        SubscriptionRef.update(job.progress, (progress) => ({ ...progress, timed: true })),
+      ),
+      Effect.forkIn(scope),
+    );
     job.fiber = yield* source.pipe(
       Stream.runForEach((part) => {
-        if (!(part instanceof Uint8Array)) {
-          job.words.push(...part.words);
-          return SubscriptionRef.update(job.progress, (progress) => ({
-            ...progress,
-            words: job.words.length,
-          }));
-        }
+        if ("pcm" in part) return Queue.offer(pcm, part);
+        if (!(part instanceof Uint8Array)) return addWords(part.words);
         job.chunks.push(part);
         job.duration.push(part);
         return SubscriptionRef.update(job.progress, (progress) => ({
@@ -118,11 +162,12 @@ const make = Effect.gen(function* () {
       }),
       Effect.onExit((exit) => {
         job.failed = Exit.isFailure(exit);
-        return SubscriptionRef.set(job.progress, {
+        Queue.endUnsafe(pcm);
+        return SubscriptionRef.update(job.progress, (progress) => ({
+          ...progress,
           count: job.chunks.length,
-          words: job.words.length,
           done: true,
-        }).pipe(
+        })).pipe(
           Effect.andThen(
             Exit.isFailure(exit)
               ? Deferred.failCause(first, exit.cause)
@@ -195,15 +240,15 @@ const make = Effect.gen(function* () {
     const job = jobs.get(token);
     if (!job) return { words: [], done: true };
     yield* SubscriptionRef.changes(job.progress).pipe(
-      Stream.filter((progress) => progress.done || progress.words > after),
+      Stream.filter((progress) => progress.timed || progress.words > after),
       Stream.runHead,
       Effect.timeoutOption(TIMINGS_WAIT),
     );
-    const { done } = yield* SubscriptionRef.get(job.progress);
+    const { timed } = yield* SubscriptionRef.get(job.progress);
     return {
       words: job.words.slice(after),
-      done,
-      ...(done && !job.failed ? { durationSeconds: job.duration.seconds } : {}),
+      done: timed,
+      ...(timed && !job.failed ? { durationSeconds: job.duration.seconds } : {}),
     };
   });
 

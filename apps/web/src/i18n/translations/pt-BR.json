@@ -13042,5 +13042,8 @@
   "201490988858b511": "retirada por {by}",
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
-  "92e129bf413a1220": "retirada"
+  "92e129bf413a1220": "retirada",
+  "1235caa9d67f09c6": "Sincronização de palavras multilíngue",
+  "2830c15ca3574a86": "Destaca a palavra falada em 25 idiomas, não só em inglês. Baixa um modelo de 740 MB no ambiente selecionado em vez de um de 135 MB.",
+  "ac1541a6ce6ec81e": "Sincronizar palavras em 25 idiomas"
 }

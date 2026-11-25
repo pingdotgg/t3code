@@ -2,9 +2,9 @@ import {
   SPEECH_SYNTHESIS_MAX_TEXT,
   type EnvironmentId,
   type ReadAloudSettings,
-  type ReadAloudWordTimings,
   type SpeechSynthesisTimings,
   type SpeechSynthesisWord,
+  type SpeechWordAlignment,
 } from "@t3tools/contracts";
 import {
   readAloudBlockFrom,
@@ -95,13 +95,26 @@ export type PlaybackClock = {
 };
 
 /**
+ * The model that times words for providers that report none: English for English UI locales
+ * unless the user asked for the multilingual one, which every other locale uses.
+ */
+export function readAloudWordAlignment(
+  settings: Pick<ReadAloudSettings, "multilingualWordTiming">,
+  locale: string,
+): SpeechWordAlignment {
+  return /^en(?:-|$)/i.test(locale) && !settings.multilingualWordTiming
+    ? "english"
+    : "multilingual";
+}
+
+/**
  * Follows a synthesis' word timings on its audio clock. Players call `refresh` on each media event
  * that moves the clock; between events one timer waits for the next word, not a frame loop.
- * Without provider timings, words are estimated once the environment reports the audio length.
+ * Words come from the environment; when it sends none, they are estimated once it reports the
+ * audio length.
  */
 export function createTimedWords(input: {
   readonly text: string;
-  readonly wordTimings: ReadAloudWordTimings;
   readonly load: (after: number, signal: AbortSignal) => Promise<SpeechSynthesisTimings>;
   readonly clock: () => PlaybackClock;
 }) {
@@ -135,7 +148,7 @@ export function createTimedWords(input: {
     for (;;) {
       const timings = await input.load(received.length, loading.signal);
       received.push(...timings.words);
-      if (input.wordTimings !== "estimated") words = received;
+      words = received;
       if (timings.done && words.length === 0 && timings.durationSeconds)
         words = estimateWordTimings(input.text, timings.durationSeconds);
       refresh();

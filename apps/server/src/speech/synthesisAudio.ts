@@ -55,25 +55,34 @@ export function pcm16Mono(samples: Float32Array, channels: number) {
   return pcm;
 }
 
+/** Whether `encodeMp3` takes this little-endian 16-bit PCM. */
+export function isEncodablePcm(pcm: Uint8Array, rate: number, channels: number) {
+  return (
+    MP3_SAMPLE_RATES.includes(rate) &&
+    (channels === 1 || channels === 2) &&
+    pcm.length > 0 &&
+    pcm.length % (channels * 2) === 0 &&
+    pcm.length <= MAX_SYNTHESIS_BYTES
+  );
+}
+
+/** Little-endian 16-bit PCM bytes as mono samples. */
+export function monoPcm16(pcm: Uint8Array, channels: number) {
+  const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+  const samples = new Float32Array(Math.floor(pcm.length / 2));
+  for (let index = 0; index < samples.length; index++)
+    samples[index] = view.getInt16(index * 2, true) / 0x8000;
+  return pcm16Mono(samples, channels);
+}
+
 /** Encodes little-endian 16-bit PCM to MP3 in slices, so a long clip never holds the event loop. */
 export function encodeMp3(
   pcm: Uint8Array,
   rate: number,
   channels = 1,
 ): Stream.Stream<Uint8Array, Error> {
-  if (
-    !MP3_SAMPLE_RATES.includes(rate) ||
-    (channels !== 1 && channels !== 2) ||
-    !pcm.length ||
-    pcm.length % (channels * 2) ||
-    pcm.length > MAX_SYNTHESIS_BYTES
-  )
-    return Stream.fail(new Error("Invalid speech audio."));
-  const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
-  const samples = new Float32Array(pcm.length / 2);
-  for (let index = 0; index < samples.length; index++)
-    samples[index] = view.getInt16(index * 2, true) / 0x8000;
-  const mono = pcm16Mono(samples, channels);
+  if (!isEncodablePcm(pcm, rate, channels)) return Stream.fail(new Error("Invalid speech audio."));
+  const mono = monoPcm16(pcm, channels);
   const slices = Math.ceil(mono.length / ENCODE_SLICE_SAMPLES);
   // A missing encoder package is a packaging defect, not a recoverable failure.
   return Effect.promise(loadLamejs).pipe(
