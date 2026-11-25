@@ -8373,7 +8373,7 @@
   "a2cdf3c98f80e7a5": "Expo host not saved everywhere",
   "06d3dd3b4f85daa1": "Simlock host not saved everywhere",
   "9ac6c3975fac0571": "Simlock host not removed everywhere",
-  "47e268d13e7fb905": "{count, plural, one {{host}: {count} of {total} environments failed} other {{host}: {count} of {total} environments failed}}",
+  "7404685ee84d2365": "{total, plural, one {{host}: {count} of {total} environment failed} other {{host}: {count} of {total} environments failed}}",
   "35c439dfea3196e7": "{host}: connection checks passed",
   "2f9bff43b16ad241": "failed",
   "62a3728a64068dc5": "Connected or already available locally on each selected environment.",

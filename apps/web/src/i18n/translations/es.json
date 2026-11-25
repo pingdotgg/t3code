@@ -8365,7 +8365,7 @@
   "a2cdf3c98f80e7a5": "El host de Expo no se guardó en todos los entornos",
   "06d3dd3b4f85daa1": "El host de Simlock no se guardó en todos los entornos",
   "9ac6c3975fac0571": "El host de Simlock no se quitó de todos los entornos",
-  "47e268d13e7fb905": "{count, plural, one {{host}: falló {count} de {total} entornos} other {{host}: fallaron {count} de {total} entornos}}",
+  "7404685ee84d2365": "{total, plural, one {{host}: falló {count} de {total} entorno} other {{count, plural, one {{host}: falló {count} de {total} entornos} other {{host}: fallaron {count} de {total} entornos}}}}",
   "35c439dfea3196e7": "{host}: comprobaciones de conexión superadas",
   "2f9bff43b16ad241": "falló",
   "62a3728a64068dc5": "Conectado o ya disponible localmente en cada entorno seleccionado.",

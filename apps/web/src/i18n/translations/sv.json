@@ -8371,7 +8371,7 @@
   "a2cdf3c98f80e7a5": "Expo-värden sparades inte överallt",
   "06d3dd3b4f85daa1": "Simlock-värden sparades inte överallt",
   "9ac6c3975fac0571": "Simlock-värden togs inte bort överallt",
-  "47e268d13e7fb905": "{count, plural, one {{host}: {count} av {total} miljöer misslyckades} other {{host}: {count} av {total} miljöer misslyckades}}",
+  "7404685ee84d2365": "{total, plural, one {{host}: {count} av {total} miljö misslyckades} other {{host}: {count} av {total} miljöer misslyckades}}",
   "35c439dfea3196e7": "{host}: anslutningskontrollerna lyckades",
   "2f9bff43b16ad241": "misslyckades",
   "62a3728a64068dc5": "Ansluten eller redan tillgänglig lokalt i varje vald miljö.",

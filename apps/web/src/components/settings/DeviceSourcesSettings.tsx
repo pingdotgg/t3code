@@ -343,7 +343,7 @@ export function DeviceSourcesSettings(props: {
       type: failed.length ? "error" : "success",
       title: failed.length
         ? gt(
-            "{count, plural, one {{host}: {count} of {total} environments failed} other {{host}: {count} of {total} environments failed}}",
+            "{total, plural, one {{host}: {count} of {total} environment failed} other {{host}: {count} of {total} environments failed}}",
             { host: host.label, count: failed.length, total: targets.length },
           )
         : gt("{host}: connection checks passed", { host: host.label }),

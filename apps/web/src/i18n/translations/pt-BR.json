@@ -8365,7 +8365,7 @@
   "a2cdf3c98f80e7a5": "Host Expo não salvo em todos os ambientes",
   "06d3dd3b4f85daa1": "Host Simlock não salvo em todos os ambientes",
   "9ac6c3975fac0571": "Host Simlock não removido de todos os ambientes",
-  "47e268d13e7fb905": "{count, plural, one {{host}: {count} de {total} ambientes falhou} other {{host}: {count} de {total} ambientes falharam}}",
+  "7404685ee84d2365": "{total, plural, one {{host}: {count} de {total} ambiente falhou} other {{count, plural, one {{host}: {count} de {total} ambientes falhou} other {{host}: {count} de {total} ambientes falharam}}}}",
   "35c439dfea3196e7": "{host}: verificações de conexão aprovadas",
   "2f9bff43b16ad241": "falhou",
   "62a3728a64068dc5": "Conectado ou já disponível localmente em cada ambiente selecionado.",

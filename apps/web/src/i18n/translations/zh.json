@@ -8382,7 +8382,7 @@
   "a2cdf3c98f80e7a5": "未能保存到所有 Expo 主机位置",
   "06d3dd3b4f85daa1": "未能在所有环境保存 Simlock 主机",
   "9ac6c3975fac0571": "未能从所有环境移除 Simlock 主机",
-  "47e268d13e7fb905": "{count, plural, other {{host}：{total} 个环境中有 {count} 个失败}}",
+  "7404685ee84d2365": "{count, plural, other {{host}：{total} 个环境中有 {count} 个失败}}",
   "35c439dfea3196e7": "{host}：连接检查通过",
   "2f9bff43b16ad241": "失败",
   "62a3728a64068dc5": "在每个选中的环境中均已连接或本机已可用。",

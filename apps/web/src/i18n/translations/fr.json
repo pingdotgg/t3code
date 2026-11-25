@@ -8366,7 +8366,7 @@
   "a2cdf3c98f80e7a5": "Hôte Expo non enregistré partout",
   "06d3dd3b4f85daa1": "Hôte Simlock non enregistré partout",
   "9ac6c3975fac0571": "Hôte Simlock non supprimé partout",
-  "47e268d13e7fb905": "{count, plural, one {{host} : {count} environnement sur {total} en échec} other {{host} : {count} environnements sur {total} en échec}}",
+  "7404685ee84d2365": "{count, plural, one {{host} : {count} environnement sur {total} en échec} other {{host} : {count} environnements sur {total} en échec}}",
   "35c439dfea3196e7": "{host} : vérifications de connexion réussies",
   "2f9bff43b16ad241": "échec",
   "62a3728a64068dc5": "Connecté ou déjà disponible localement dans chaque environnement sélectionné.",

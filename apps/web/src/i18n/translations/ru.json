@@ -8365,7 +8365,7 @@
   "a2cdf3c98f80e7a5": "Хост Expo сохранён не везде",
   "06d3dd3b4f85daa1": "Хост Simlock сохранён не везде",
   "9ac6c3975fac0571": "Хост Simlock удалён не везде",
-  "47e268d13e7fb905": "{count, plural, one {{host}: ошибка в {count} из {total} окружений} few {{host}: ошибка в {count} из {total} окружений} many {{host}: ошибка в {count} из {total} окружений} other {{host}: ошибка в {count} из {total} окружений}}",
+  "7404685ee84d2365": "{total, plural, one {{host}: ошибка в {count} из {total} окружения} few {{host}: ошибка в {count} из {total} окружений} many {{host}: ошибка в {count} из {total} окружений} other {{host}: ошибка в {count} из {total} окружения}}",
   "35c439dfea3196e7": "{host}: проверки подключения пройдены",
   "2f9bff43b16ad241": "ошибка",
   "62a3728a64068dc5": "Подключено или уже доступно локально в каждом выбранном окружении.",

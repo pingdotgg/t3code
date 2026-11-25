@@ -8365,7 +8365,7 @@
   "a2cdf3c98f80e7a5": "Expo-Host nicht überall gespeichert",
   "06d3dd3b4f85daa1": "Simlock-Host nicht überall gespeichert",
   "9ac6c3975fac0571": "Simlock-Host nicht überall entfernt",
-  "47e268d13e7fb905": "{count, plural, one {{host}: {count} von {total} Umgebungen fehlgeschlagen} other {{host}: {count} von {total} Umgebungen fehlgeschlagen}}",
+  "7404685ee84d2365": "{total, plural, one {{host}: {count} von {total} Umgebung fehlgeschlagen} other {{host}: {count} von {total} Umgebungen fehlgeschlagen}}",
   "35c439dfea3196e7": "{host}: Verbindungsprüfungen erfolgreich",
   "2f9bff43b16ad241": "fehlgeschlagen",
   "62a3728a64068dc5": "In jeder ausgewählten Umgebung verbunden oder lokal bereits verfügbar.",

@@ -8325,7 +8325,7 @@
   "a2cdf3c98f80e7a5": "일부 환경에서 Expo 호스트가 저장되지 않았습니다",
   "06d3dd3b4f85daa1": "일부 환경에서 Simlock 호스트가 저장되지 않았습니다",
   "9ac6c3975fac0571": "일부 환경에서 Simlock 호스트가 제거되지 않았습니다",
-  "47e268d13e7fb905": "{count, plural, other {{host}: 환경 {total}개 중 {count}개 실패}}",
+  "7404685ee84d2365": "{count, plural, other {{host}: 환경 {total}개 중 {count}개 실패}}",
   "35c439dfea3196e7": "{host}: 연결 확인 통과",
   "2f9bff43b16ad241": "실패",
   "62a3728a64068dc5": "선택한 각 환경에서 연결되었거나 이미 로컬에서 사용할 수 있습니다.",
