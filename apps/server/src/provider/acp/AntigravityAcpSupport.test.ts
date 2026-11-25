@@ -716,26 +716,22 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
   );
 
   it.effect.each([
-    { bytes: new Uint8Array([0x80]), message: "is not a UTF-8 text file" },
-    { bytes: new Uint8Array([0xff, 0xfe, 0x61]), message: "is not a UTF-16LE text file" },
-    { bytes: new Uint8Array([0xfe, 0xff, 0x00, 0x00]), message: "contains binary data" },
-    { bytes: new Uint8Array([0x61, 0, 0x62]), message: "contains binary data" },
-  ])("rejects binary data disguised as code: $message", ({ bytes, message }) =>
+    { bytes: new Uint8Array([0x80]), name: "invalid UTF-8" },
+    { bytes: new Uint8Array([0xff, 0xfe, 0x61]), name: "invalid UTF-16LE" },
+    { bytes: new Uint8Array([0xfe, 0xff, 0x00, 0x00]), name: "UTF-16BE NUL" },
+    { bytes: new Uint8Array([0x61, 0, 0x62]), name: "NUL byte" },
+  ])("keeps undecodable code as a file path: $name", ({ bytes }) =>
     Effect.gen(function* () {
       const fixture = yield* makeAttachmentFixture();
       yield* fixture.write(textAttachment, bytes);
-      const error = yield* buildAntigravityPrompt({
-        input: undefined,
+      const prompt = yield* buildAntigravityPrompt({
+        input: "Read this file.",
         attachments: [textAttachment],
         resolveAttachmentPath: fixture.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
-      }).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "AcpRequestError",
-        code: -32602,
-        errorMessage: expect.stringContaining(message),
       });
+
+      expect(prompt).toEqual([{ type: "text", text: "Read this file." }]);
     }),
   );
 
