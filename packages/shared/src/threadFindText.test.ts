@@ -233,6 +233,29 @@ it("indexes insight bodies without hidden fences and keeps user and plan text li
   expect(assistantSegments(`\`\`\`text\n${text}\n\`\`\``)?.join("\n")).toContain("★ Insight");
 });
 
+it("keeps insight line breaks for column-0 backticked openers, not lists or prose", () => {
+  expect(assistantSegments("`★ Insight ─────`\nfirst line\nsecond line\n`─────`")).toEqual([
+    "first line",
+    " second line",
+  ]);
+  expect(
+    assistantSegments(
+      "1. Step\n   `★ Insight ─────`\n   body one\n   body two\n   `─────`\n\nPara a\npara b",
+    ),
+  ).toEqual(["Step ★ Insight ───── body one body two ─────", "Para a para b"]);
+  expect(
+    assistantSegments(
+      "- ```text\n  ★ Insight ─────\n  literal\n  ─────\n  ```\n\nfirst line\nsecond line",
+    ),
+  ).toEqual(["★ Insight ─────\nliteral\n─────\n", "first line second line"]);
+  expect(assistantSegments("`★ Insight ─────` opens a callout.\nfirst line\nsecond line")).toEqual([
+    "★ Insight ───── opens a callout. first line second line",
+  ]);
+  expect(
+    assistantSegments("`★ Insight ─────`\u2028opens a callout.\nfirst line\nsecond line"),
+  ).toEqual(["★ Insight ─────\u2028opens a callout. first line second line"]);
+});
+
 it("indexes image destinations rendered as file chips", () => {
   expect(
     assistantSegments(
