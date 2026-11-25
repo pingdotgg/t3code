@@ -1,5 +1,6 @@
 import {
   CommandId,
+  linkOriginIsFenced,
   MessageId,
   type ModelSelection,
   ThreadId,
@@ -519,6 +520,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           modelSelection: thread.modelSelection,
           runId: run?.id ?? null,
           status: run?.status ?? null,
+          ...(strategy?.type === "worktree" &&
+          linkOrigin !== undefined &&
+          linkOriginIsFenced(linkOrigin)
+            ? {
+                note: "Project setup scripts do not run for a thread started from a link below Full access.",
+              }
+            : {}),
         };
       }),
     // The launched thread carries the caller's link, if it has one.

@@ -66,6 +66,8 @@ const clientLaunchHarness = (input: {
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
+  /** The client reached this environment through a link. */
+  readonly linked?: true;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -115,6 +117,7 @@ const clientLaunchHarness = (input: {
         label: "Claude Code",
         access: input.runtimeModeCeiling,
         hostedAppUrl: input.hostedAppUrl,
+        ...(input.linked ? { linked: true } : {}),
       },
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
@@ -832,6 +835,44 @@ it.effect("a worktree launch that omits startFromOrigin follows the new-worktree
       expect(launched.map((launch) => launch.workspaceStrategy)).toEqual([strategy]);
     }
   }),
+);
+
+it.effect(
+  "a worktree launch from a link below Full access says the setup script will not run",
+  () =>
+    Effect.gen(function* () {
+      const launch = Effect.fnUntraced(function* (
+        runtimeModeCeiling: RuntimeMode,
+        inWorktree: boolean,
+      ) {
+        const { projectId, dependencies } = clientLaunchHarness({
+          runtimeModeCeiling,
+          launched: [],
+          linked: true,
+        });
+        const toolkit = yield* ProjectToolkit.pipe(
+          Effect.provide(
+            McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+              Layer.provide(dependencies),
+            ),
+          ),
+        );
+        const results = yield* toolkit
+          .handle("t3_thread_launch", {
+            title: "Fix",
+            projectId,
+            workspaceStrategy: inWorktree
+              ? { type: "worktree", baseRef: "main", startFromOrigin: false }
+              : { type: "root" },
+          })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        return (results.at(-1)?.result as { readonly note?: string } | undefined)?.note;
+      });
+
+      expect(yield* launch("auto", true)).toMatch(/do not run .* below Full access/);
+      expect(yield* launch("full-access", true)).toBeUndefined();
+      expect(yield* launch("auto", false)).toBeUndefined();
+    }),
 );
 
 it.effect("a launch that omits its workspace follows the new-threads-in-a-worktree default", () =>
