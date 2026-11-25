@@ -61,7 +61,7 @@ it.each(["combobox", "autocomplete"] as const)(
       .element()
       .closest("[data-slot=scroll-area-viewport]");
     if (!viewport) throw new Error("List is not inside a scroll area");
-    expect(viewport.clientHeight).toBeLessThanOrEqual(288);
+    await vi.waitFor(() => expect(viewport.clientHeight).toBeLessThanOrEqual(288));
     const thumbHeight = () =>
       document
         .querySelector(
@@ -74,7 +74,7 @@ it.each(["combobox", "autocomplete"] as const)(
     await userEvent.click(page.getByRole("combobox", { name: "Search options" }));
     await userEvent.keyboard("match");
     await vi.waitFor(() => expect(page.getByRole("option").elements()).toHaveLength(12));
-    expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+    await vi.waitFor(() => expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight));
 
     await vi.waitFor(() => expect(thumbHeight()).toBeGreaterThan(unfilteredThumbHeight * 2));
   },
