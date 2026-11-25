@@ -66,7 +66,7 @@
   "2f6e4f7cd364da73": "Expected",
   "9d11c93d4035de3e": "Happened",
   "c87d0595693704f9": "Did instead",
-  "d7a4ea6ce5af44e0": "{speaker} · {count} characters",
+  "ed5c85bb4aecb472": "{count, plural, one {{speaker} · {count} character} other {{speaker} · {count} characters}}",
   "f5114fb9c40fd929": "You",
   "cd03eb1b84271c02": "Agent",
   "bfe1a60f3f9c60fb": "Turn {turn} · {what}",
@@ -686,6 +686,7 @@
   "56b4ff3993c93eca": "{host} sent an incompatible server configuration.",
   "368c4d4f99c66bfb": "Update the client and server to compatible versions.",
   "e5fd422e445391fc": "Upload failed. Tap to retry.",
+  "13b14784f8707ddd": "0 bytes",
   "b2bc6bd92ea24e5c": "{size} MB",
   "88f84178edbb7f57": "{size} KB",
   "5a78fd0a1d8e9945": "{count} MB",
@@ -872,6 +873,10 @@
   "05b16c85cb1e18bd": "No repositories",
   "04ea9e0e663983fd": "All repositories",
   "c07bd24ff49e85d9": "{count, plural, one {{count} repository} other {{count} repositories}}",
+  "1b799ebfa94c2408": "Push hooks approval",
+  "81d703184fe5112e": "Run this repository's push hooks?",
+  "027b0d65c7a67af6": "Hook file",
+  "ade585910165bb52": "Configured hook",
   "e94aa66471dae6aa": "Why am I being asked this?",
   "228a325b5708e675": "Full access skips approvals, but an ask rule in the agent's own settings matches this action, so it still asks. Remove or narrow that rule to stop these prompts.",
   "3f9101f696c738a8": "Full access skips approvals, but the agent still stops for a few safety checks of its own that no setting can skip, such as a delete whose path it can't verify. T3 Code can't turn these off, so check the request and approve it if it's what you expect.",
@@ -1297,7 +1302,7 @@
   "c13753167634f7aa": "Read file",
   "5ce648cd03020fd9": "Read {path} +{count} more",
   "5d6c2898401c94e6": "Read {path}",
-  "612170d804b03320": "{count, plural, one {{count} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.} other {{count} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.}}",
+  "69150fe436b3a0c2": "{count, plural, one {{count} malformed or inconsistent usage record was skipped; usage may be incomplete.} other {{count} malformed or inconsistent usage records were skipped; usage may be incomplete.}}",
   "ee448ceb6820ce2f": "{environment} runs an older server version and is excluded from totals.",
   "732708950237004e": "This client is older than the server on {environment}; its usage is excluded from totals.",
   "9758c2ede06aa19b": "{hour} today",
@@ -1916,6 +1921,7 @@
   "69c659d8b6e271cc": "The page asks for a file.",
   "a6efeb99b479990a": "Choose files",
   "59c87648d44b958c": "Choose file",
+  "6f321f153b8711bb": "Choose an option",
   "61a552a67e9e3eac": "Dialog response",
   "1d9bd868fafea18a": "Dismiss",
   "1d0a7acef4a95536": "Accept",
@@ -5210,7 +5216,7 @@
   "0b363b02a7e17bcb": "Raw token cost",
   "ea4beda46b22b8b0": "Processed tokens",
   "212d974007cacf3f": "* if billed at full API rate",
-  "82bc7f1cc5a039fc": "{count, plural, other {Across {sessions} sessions}}",
+  "45340a7dc1f89d51": "{count, plural, one {Across {sessions} session} other {Across {sessions} sessions}}",
   "2a57181a9d128463": "{share} of cost · {tokens} tokens",
   "d8a6a99fbdda0d3e": "{share} of tokens · {cost}",
   "19a3f4f2ba09e787": "Totals",
@@ -5645,5 +5651,59 @@
   "eb287395a09cd288": "Send connection traces",
   "6787f93bbf6ce0b6": "Helps the T3 Code team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About T3 Code > Diagnostics.",
   "0b1e4aecbd38e0cf": "When the app connects to a computer through {product}, it sends the T3 Code team how long each step took, any error type, an ID for this app session, and the app version. Traces never include your threads, prompts, or code.",
-  "e0856d6a402ad821": "{organization}'s policy does not allow project worktree layout commands."
+  "e0856d6a402ad821": "{organization}'s policy does not allow project worktree layout commands.",
+  "7150557773b3818b": "Queued",
+  "efbeb3993ee2c3f5": "Queued for {pool}",
+  "0398ca6c1d24b92d": "queued, next in line",
+  "0af6d5ffd5166214": "{count, plural, one {queued, {count} ahead} other {queued, {count} ahead}}",
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " needs a reason."
+  ],
+  "7e1fd2eb570a372b": "{who} answered {choice}",
+  "a3c43735e1a81498": "Reason for {title}",
+  "bfad234f016cfa3f": "Why, in a sentence. It goes with whichever answer you pick.",
+  "3759768c5d342c22": [
+    "answered",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "by ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "0f93532dd76391fc": "You answered {choice}",
+  "235902a19e95833b": [
+    "by you,",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1a1beecff68a6e61": "Verify Google account",
+  "99451a5d2d40440f": "Withdrawn by {by}.",
+  "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
+  "201490988858b511": "withdrawn by {by}",
+  "46d614fa7b4bf1e5": "Workflow runs"
 }

@@ -10,6 +10,7 @@ import {
   type WorkflowRun,
   type WorkflowRunReference,
   type WorkflowRunsSnapshot,
+  type WorkflowRunSubject,
   type WorkflowStep,
   type WorkflowSummary,
 } from "@t3tools/contracts";
@@ -17,10 +18,24 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
+export interface WorkflowQuestionChoice {
+  readonly value: string;
+  /** What picking it does. */
+  readonly description: string | null;
+  /** The server refuses it without a reason. */
+  readonly requireReason: boolean;
+}
+
+export interface WorkflowQuestionLink {
+  readonly label: string;
+  readonly url: string;
+}
+
 export interface WorkflowQuestionView {
   readonly title: string;
-  readonly choices: ReadonlyArray<string>;
+  readonly choices: ReadonlyArray<WorkflowQuestionChoice>;
   readonly body: string | null;
+  readonly links: ReadonlyArray<WorkflowQuestionLink>;
 }
 
 function field(value: unknown, key: string): unknown {
@@ -29,20 +44,46 @@ function field(value: unknown, key: string): unknown {
     : undefined;
 }
 
+const text = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() !== "" ? value : null;
+
+const isWebUrl = (url: string) => {
+  const protocol = URL.parse(url)?.protocol;
+  return protocol === "https:" || protocol === "http:";
+};
+
 /**
  * What a question shows. `request` is whatever the workflow handed `ask`, so a part that is
  * missing or of another shape is left out instead of failing the whole list.
  */
 export function readWorkflowQuestion(question: WorkflowQuestion): WorkflowQuestionView {
-  const title = field(question.request, "title");
   const choices = field(question.request, "choices");
-  const body = field(field(question.request, "data"), "body");
+  const details = field(question.request, "choiceDetails");
+  const links = field(question.request, "links");
+  const detailOf = (value: string) =>
+    Array.isArray(details) ? details.find((detail) => field(detail, "value") === value) : undefined;
   return {
-    title: typeof title === "string" && title.trim() !== "" ? title : question.name,
+    title: text(field(question.request, "title")) ?? question.name,
     choices: Array.isArray(choices)
-      ? choices.filter((choice): choice is string => typeof choice === "string")
+      ? choices
+          .filter((choice): choice is string => typeof choice === "string")
+          .map((value) => {
+            const detail = detailOf(value);
+            return {
+              value,
+              description: text(field(detail, "description")),
+              requireReason: field(detail, "requireReason") === true,
+            };
+          })
       : [],
-    body: typeof body === "string" && body.trim() !== "" ? body : null,
+    body: text(field(field(question.request, "data"), "body")),
+    links: Array.isArray(links)
+      ? links.flatMap((link) => {
+          const label = text(field(link, "label"));
+          const url = field(link, "url");
+          return label !== null && typeof url === "string" && isWebUrl(url) ? [{ label, url }] : [];
+        })
+      : [],
   };
 }
 
@@ -396,6 +437,14 @@ export function workflowRunState(
           tone: "quiet",
         };
       }
+      if (detail.startsWith("queue ")) {
+        return {
+          word: resolve(
+            msg("Queued", { $context: "workflow run status: it waits for a free place" }),
+          ),
+          tone: "quiet",
+        };
+      }
       // Something below it holds it up; say that, not that it idles.
       if (node.children.some(needsPerson)) return input;
       return { word: resolve(msg("Waiting", { $context: "workflow run status" })), tone: "quiet" };
@@ -447,6 +496,9 @@ export function workflowRunNow(node: WorkflowRunNode, resolve: MFunctionType = m
       if (detail.startsWith("sleep ")) {
         return resolve(msg("Sleeping at {step}", { step: detail.slice(6) }));
       }
+      if (detail.startsWith("queue ")) {
+        return resolve(msg("Queued for {pool}", { pool: detail.slice(6) }));
+      }
       if (below.some((child) => child.run.endedAt === null)) {
         const open = below.filter((child) => child.run.endedAt === null);
         return open.length === 1
@@ -497,6 +549,8 @@ export interface WorkflowBeat {
   readonly result: WorkflowStep["result"];
   /** What an agent said in closing, when its result is data. */
   readonly said: string | null;
+  /** For a step queued for a place in a pool, how many are ahead of it. */
+  readonly ahead: number | undefined;
   readonly startMs: number;
   /** When it ended, or `nowMs` while it is under way. */
   readonly endMs: number;
@@ -567,8 +621,9 @@ export function buildWorkflowTimeline(input: {
     const stepStart = Date.parse(step.startedAt);
     const stepEnd = step.endedAt === null ? nowMs : Date.parse(step.endedAt);
     const childRun = step.kind === "wait" ? (childByStep.get(step.name) ?? null) : null;
+    // A place given at once is bookkeeping too; a wait for one is a beat.
     const isBeat =
-      step.kind !== "step" ||
+      (step.kind !== "step" && step.kind !== "queue") ||
       step.status !== "completed" ||
       step.attempts > 1 ||
       stepEnd - stepStart >= QUICK_STEP_MS;
@@ -585,6 +640,7 @@ export function buildWorkflowTimeline(input: {
       detail: step.detail,
       result: step.result,
       said: step.said,
+      ahead: step.ahead,
       startMs: stepStart,
       endMs: Math.max(stepStart, stepEnd),
       thread:
@@ -616,15 +672,47 @@ const openEnd = (beat: WorkflowBeat) =>
   beat.status === "running" ? Number.POSITIVE_INFINITY : beat.endMs;
 
 /** What a person answered a question with, when a step's result is such an answer. */
-export function workflowAnswer(
-  result: WorkflowStep["result"],
-): { readonly choice: string; readonly reason: string | null } | null {
+export function workflowAnswer(result: WorkflowStep["result"]): {
+  readonly choice: string;
+  readonly reason: string | null;
+  /** The client, tool or agent thread that answered, by name; null on an answer kept before this. */
+  readonly answeredBy: string | null;
+  /** The client session that answered; null for a tool, an agent, or an answer kept before this. */
+  readonly answeredBySession: string | null;
+  readonly answeredAt: string | null;
+} | null {
   const choice = field(result, "choice");
-  const reason = field(result, "reason");
   return typeof choice === "string"
-    ? { choice, reason: typeof reason === "string" && reason.trim() !== "" ? reason : null }
+    ? {
+        choice,
+        reason: text(field(result, "reason")),
+        answeredBy: text(field(result, "answeredBy")),
+        answeredBySession: text(field(result, "answeredBySession")),
+        answeredAt: text(field(result, "answeredAt")),
+      }
     : null;
 }
+
+/** Who withdrew a question unanswered, and why, when a step's result says so. */
+export function workflowWithdrawal(
+  result: WorkflowStep["result"],
+): { readonly by: string; readonly reason: string | null } | null {
+  const withdrawn = field(result, "withdrawn");
+  const by = field(withdrawn, "by");
+  const reason = field(withdrawn, "reason");
+  return typeof by === "string"
+    ? { by, reason: typeof reason === "string" && reason.trim() !== "" ? reason : null }
+    : null;
+}
+
+/**
+ * Whether the client whose session on the run's environment is `sessionId` gave `answer`. Decided
+ * by session, never by name: two browsers share "Chrome on Linux" and every phone its app's name.
+ */
+export const isOwnWorkflowAnswer = (
+  answer: { readonly answeredBySession: string | null },
+  sessionId: string | null | undefined,
+): boolean => answer.answeredBySession !== null && answer.answeredBySession === sessionId;
 
 /** Steps that were under way at the same time, shown side by side. */
 export interface WorkflowTogether {
@@ -811,31 +899,39 @@ const decodeIssueAddress = Schema.decodeUnknownOption(WorkflowIssueAddress);
 const decodePullRequestAddress = Schema.decodeUnknownOption(WorkflowPullRequestAddress);
 
 /** A reference's issue, when it is one and its address reads as one. */
-export function workflowReferenceIssue(reference: WorkflowRunReference): IssueRef | null {
+export function workflowReferenceIssue(reference: WorkflowRunSubject): IssueRef | null {
   return reference.kind === WorkflowReferenceKind.issue
     ? Option.getOrNull(decodeIssueAddress(reference.address))
     : null;
 }
 
 /** A reference's pull request, when it is one and its address reads as one. */
-export function workflowReferencePullRequest(
-  reference: WorkflowRunReference,
-): PullRequestRef | null {
+export function workflowReferencePullRequest(reference: WorkflowRunSubject): PullRequestRef | null {
   return reference.kind === WorkflowReferenceKind.pullRequest
     ? Option.getOrNull(decodePullRequestAddress(reference.address))
     : null;
 }
 
+/** A reference's thread, when it is one, in the run's own environment. */
+export function workflowReferenceThreadId(reference: WorkflowRunSubject): string | null {
+  const threadId = field(reference.address, "threadId");
+  return reference.kind === WorkflowReferenceKind.thread && typeof threadId === "string"
+    ? threadId
+    : null;
+}
+
 /**
  * What a reference is called in a chip: `#412` for an issue or pull request on a git host, a
- * tracker's own key such as `ENG-12`, and the title for a kind this client does not know.
+ * tracker's own key such as `ENG-12`, and otherwise the title, or the host of its web address.
  */
-export function workflowReferenceLabel(reference: WorkflowRunReference): string {
+export function workflowReferenceLabel(reference: WorkflowRunSubject): string {
   const pullRequest = workflowReferencePullRequest(reference);
   if (pullRequest !== null) return `#${pullRequest.number}`;
   const issue = workflowReferenceIssue(reference);
   if (issue !== null) return /^\d+$/.test(issue.key) ? `#${issue.key}` : issue.key;
-  return reference.title === "" ? reference.kind : reference.title;
+  if (reference.title !== "") return reference.title;
+  if (reference.url !== null && URL.canParse(reference.url)) return new URL(reference.url).host;
+  return reference.kind;
 }
 
 /** The references a step touched, in the order the run first touched them. */

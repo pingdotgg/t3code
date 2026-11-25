@@ -91,11 +91,15 @@ import {
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
   findModelConfigOption,
+  makeAcpUnreadToolCalls,
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionUpdateEvent,
   sessionUpdateIsReplay,
   toolCallVisibleOutputChanged,
+  unreadToolCallUpdate,
+  withTrackedChangedPaths,
+  withUnknownChangedPaths,
   withTrackedPermissionToolCall,
   type AcpPlanUpdate,
   type AcpAgentTerminalState,
@@ -105,7 +109,9 @@ import {
 import {
   acpClientExecuteDisposition,
   acpMcpToolApprovalElicitationDisposition,
+  acpChangedPathsOfToolCall,
   acpPermissionDisposition,
+  mergeAcpChangedPaths,
   type AcpPermissionDisposition,
   makeAcpClientPolicyGrants,
   unknownRecord,
@@ -175,7 +181,8 @@ type AcpAppContextEntry = NonNullable<
 >[number];
 
 function formatAcpAppContextEntry(entry: AcpAppContextEntry): string {
-  return `<external_${entry.key}>${entry.text}</external_${entry.key}>`;
+  const updatedAt = entry.updatedAt === undefined ? "" : ` updated_at="${entry.updatedAt}"`;
+  return `<external_${entry.key}${updatedAt}>${entry.text}</external_${entry.key}>`;
 }
 
 function unsentAcpAppContext(
@@ -268,6 +275,7 @@ export interface AcpAdapterV2RuntimeInput {
   readonly onOutgoingResponseFailure?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponse"];
   readonly onIncomingRequest?: AcpSessionRuntime.AcpSessionRuntimeOptions["onIncomingRequest"];
+  readonly onUndecodableNotification?: AcpSessionRuntime.AcpSessionRuntimeOptions["onUndecodableNotification"];
 }
 
 export type AcpAdapterV2NativeLogging = Pick<
@@ -470,6 +478,10 @@ export interface AcpAdapterV2Flavor {
   readonly normalizeSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
+  /** Extract provider-specific context usage while preserving the original session update. */
+  readonly extractContextUsage?: (
+    notification: EffectAcpSchema.SessionNotification,
+  ) => ThreadTokenUsageSnapshot | undefined;
   /**
    * Agent updates that belong to no turn (Kiro's own cloud-config fetch). They
    * are dropped before anything reads them, so they neither show in the turn
@@ -483,7 +495,8 @@ export interface AcpAdapterV2Flavor {
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
     modelState: EffectAcpSchema.SessionModelState | null | undefined,
-  ) => Effect.Effect<void>;
+    options?: { readonly lastCatalogKey?: string | null },
+  ) => Effect.Effect<string | null | void>;
   readonly onUrlElicitation?: (input: {
     readonly elicitationId: string;
     readonly url: string;
@@ -2337,6 +2350,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             : flavor.extractSubagentUpdate?.(tool);
         let turnAttached = yield* Deferred.make<boolean>();
         const activeSessionId = yield* Ref.make<string | null>(null);
+        const unreadToolCalls = makeAcpUnreadToolCalls();
         // session/load replays history before activeSessionId names the loaded session.
         const loadingSessionId = yield* Ref.make<string | null>(null);
         const contextUsageBySessionId = yield* Ref.make(
@@ -2356,6 +2370,41 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         } | null>(null);
         const activeSessionSetup =
           yield* Ref.make<AcpSessionRuntime.AcpSessionRuntimeStartResult | null>(null);
+        const lastPublishedCatalogKey = yield* Ref.make<{
+          readonly epoch: number;
+          readonly key: string | null;
+        }>({ epoch: 0, key: null });
+        const sessionConfigurationPublishPermit = yield* Semaphore.make(1);
+        const resetPublishedCatalogKey = Ref.update(lastPublishedCatalogKey, (current) => ({
+          epoch: current.epoch + 1,
+          key: null,
+        }));
+        // Per-update session config publication shares the enclosing session update/config span.
+        const publishSessionConfiguration = Effect.fnUntraced(function* (
+          targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+        ) {
+          const onSessionConfigurationUpdate = flavor.onSessionConfigurationUpdate;
+          if (onSessionConfigurationUpdate === undefined) return;
+          yield* sessionConfigurationPublishPermit.withPermit(
+            Effect.gen(function* () {
+              const { epoch, key } = yield* Ref.get(lastPublishedCatalogKey);
+              const configOptions = yield* targetRuntime.getConfigOptions;
+              const modeState = yield* targetRuntime.getModeState;
+              const modelState = (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models;
+              const nextKey = yield* onSessionConfigurationUpdate(
+                configOptions,
+                modeState,
+                modelState,
+                { lastCatalogKey: key },
+              );
+              if (nextKey === null || typeof nextKey === "string") {
+                yield* Ref.update(lastPublishedCatalogKey, (current) =>
+                  current.epoch === epoch ? { epoch, key: nextKey } : current,
+                );
+              }
+            }),
+          );
+        });
         const setActiveSessionSetup = Effect.fnUntraced(function* (
           setup: AcpSessionRuntime.AcpSessionRuntimeStartResult,
         ) {
@@ -2375,6 +2424,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           agentRequests.clear();
           nativeChildren.clear();
           yield* Ref.set(activeSessionSetup, setup);
+          yield* resetPublishedCatalogKey;
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
@@ -2805,6 +2855,74 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
+        const withModelContextWindow = Effect.fnUntraced(function* (
+          sessionId: string,
+          usage: ThreadTokenUsageSnapshot,
+        ) {
+          if (sessionId !== (yield* Ref.get(activeSessionId))) return usage;
+          const selection = yield* Ref.get(activeSelection);
+          const setup = yield* Ref.get(activeSessionSetup);
+          if (selection === null || setup === null) return usage;
+          const maxTokens = flavor.getModelContextWindow?.(selection, setup);
+          return maxTokens === undefined ? usage : { ...usage, maxTokens };
+        });
+        const publishProviderThreadState = Effect.fnUntraced(function* (
+          sessionId: string,
+          context: ActiveAcpTurn | null,
+        ) {
+          const knownProviderThread = (yield* Ref.get(providerThreadByNativeSessionId)).get(
+            sessionId,
+          );
+          if (knownProviderThread === undefined) return;
+          const now = yield* DateTime.now;
+          const providerThread: OrchestrationV2ProviderThread = {
+            ...knownProviderThread,
+            // The settled turn's snapshot is still cached as active; no turn runs now.
+            ...(context === null && knownProviderThread.status === "active"
+              ? { status: "idle" as const }
+              : {}),
+            contextUsage:
+              (yield* Ref.get(contextUsageBySessionId)).get(sessionId) ??
+              knownProviderThread.contextUsage ??
+              null,
+            nativeMetadata:
+              (yield* Ref.get(nativeMetadataBySessionId)).get(sessionId) ??
+              knownProviderThread.nativeMetadata ??
+              null,
+            updatedAt: now,
+          };
+          yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+            new Map(current).set(sessionId, providerThread),
+          );
+          yield* emitProviderEvent({
+            type: "provider_thread.updated",
+            driver,
+            providerThread,
+            // Agents like Kimi report usage after the prompt settles, when no run receives it.
+            ...(context === null ? { sessionScoped: true } : {}),
+          });
+        });
+        // Replayed history only records the snapshot; `ensureThread` publishes it.
+        const projectExtractedContextUsage = Effect.fnUntraced(function* (
+          notification: EffectAcpSchema.SessionNotification,
+          live: boolean,
+        ) {
+          if (notification.update.sessionUpdate === "usage_update") return;
+          const reportedUsage = flavor.extractContextUsage?.(notification);
+          if (reportedUsage === undefined) return;
+          const previous = (yield* Ref.get(contextUsageBySessionId)).get(notification.sessionId);
+          const usage = yield* withModelContextWindow(notification.sessionId, {
+            ...previous,
+            ...reportedUsage,
+          });
+          if (previous !== undefined && Equal.equals(previous, usage)) return;
+          yield* Ref.update(contextUsageBySessionId, (current) =>
+            new Map(current).set(notification.sessionId, usage),
+          );
+          const context = yield* Ref.get(activeTurn);
+          if (context?.nativeThreadId === notification.sessionId) context.contextUsage = usage;
+          if (live) yield* publishProviderThreadState(notification.sessionId, context);
+        });
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
           Effect.void;
         let refreshModelSwitchCapability: Effect.Effect<void> = Effect.void;
@@ -2919,6 +3037,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             }),
           ).pipe(Effect.asVoid);
+        // A tool-call notification that was dropped may have named a path, so the calls it
+        // could describe are recorded before the next message is read.
+        const noteUndecodableNotification = Effect.fn("AcpAdapterV2.noteUndecodableNotification")(
+          function* (method: string, payload: unknown) {
+            const unread = unreadToolCallUpdate(method, payload);
+            if (unread === undefined) return;
+            const fromRootSession =
+              unread.sessionId === undefined ||
+              unread.sessionId === (yield* Ref.get(activeSessionId));
+            unreadToolCalls.add(
+              unread,
+              fromRootSession ? ((yield* Ref.get(activeTurn))?.tools.keys() ?? []) : [],
+            );
+          },
+        );
         const makeRuntimeInput = (
           runtimeGeneration: number,
           agentRequests: Set<string>,
@@ -2961,6 +3094,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       agentRequests.add(requestId);
                     }),
                 }),
+            onUndecodableNotification: noteUndecodableNotification,
             onOutgoingResponseFailure: (requestId, error) =>
               Ref.modify(nativeResponseAcknowledgements, (current) => {
                 const entry = current.get(requestId);
@@ -5954,6 +6088,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             (yield* Ref.get(stoppedRunQuarantine))
           )
             return;
+          yield* projectExtractedContextUsage(notification, true);
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
           if (yield* projectDetachedBackgroundCommand(notification, context)) return;
           if (flavor.replyEndsWithUsageUpdate === true) {
@@ -6002,38 +6137,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 context.nativeMetadata = metadata;
               }
             }
-            const knownProviderThread = (yield* Ref.get(providerThreadByNativeSessionId)).get(
-              notification.sessionId,
-            );
-            if (knownProviderThread !== undefined) {
-              const now = yield* DateTime.now;
-              const providerThread: OrchestrationV2ProviderThread = {
-                ...knownProviderThread,
-                // The settled turn's snapshot is still cached as active; no turn runs now.
-                ...(context === null && knownProviderThread.status === "active"
-                  ? { status: "idle" as const }
-                  : {}),
-                contextUsage:
-                  (yield* Ref.get(contextUsageBySessionId)).get(notification.sessionId) ??
-                  knownProviderThread.contextUsage ??
-                  null,
-                nativeMetadata:
-                  (yield* Ref.get(nativeMetadataBySessionId)).get(notification.sessionId) ??
-                  knownProviderThread.nativeMetadata ??
-                  null,
-                updatedAt: now,
-              };
-              yield* Ref.update(providerThreadByNativeSessionId, (current) =>
-                new Map(current).set(notification.sessionId, providerThread),
-              );
-              yield* emitProviderEvent({
-                type: "provider_thread.updated",
-                driver,
-                providerThread,
-                // Agents like Kimi report usage after the prompt settles, when no run receives it.
-                ...(context === null ? { sessionScoped: true } : {}),
-              });
-            }
+            yield* publishProviderThreadState(notification.sessionId, context);
             return;
           }
           if (yield* followNativeChild(notification, context)) return;
@@ -6384,29 +6488,40 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       ? update.content.patch?.text
                       : update.content.newText
                     : undefined;
-              if (text !== undefined) {
-                const previous = context.tools.get(update.toolCallId) ?? {
+              // A diff chunk names files the call changes; the tracked call keeps them for policy.
+              const chunkPaths = acpChangedPathsOfToolCall({ content: [update.content] });
+              const namesPaths = chunkPaths === "unknown" || chunkPaths.length > 0;
+              if (text !== undefined || namesPaths) {
+                const stored: AcpToolCallState = context.tools.get(update.toolCallId) ?? {
                   toolCallId: update.toolCallId,
                   status: "inProgress" as const,
                   data: { toolCallId: update.toolCallId },
                 };
+                const previous = namesPaths
+                  ? {
+                      ...stored,
+                      changedPaths: mergeAcpChangedPaths(stored.changedPaths, chunkPaths),
+                    }
+                  : stored;
                 // Text chunks extend the content list so a later content replacement still shows.
                 yield* emitTool(
                   context,
-                  update.content.type === "content" && previous.data.rawOutput === undefined
-                    ? {
-                        ...previous,
-                        data: {
-                          ...previous.data,
-                          content: appendToolContentText(previous.data.content, text),
-                        },
-                      }
-                    : previous.data.rawOutput === undefined
-                      ? setToolOutputText(
-                          previous,
-                          `${textFromUnknown(previous.data.content) ?? ""}${text}`,
-                        )
-                      : appendToolOutputText(previous, text),
+                  text === undefined
+                    ? previous
+                    : update.content.type === "content" && previous.data.rawOutput === undefined
+                      ? {
+                          ...previous,
+                          data: {
+                            ...previous.data,
+                            content: appendToolContentText(previous.data.content, text),
+                          },
+                        }
+                      : previous.data.rawOutput === undefined
+                        ? setToolOutputText(
+                            previous,
+                            `${textFromUnknown(previous.data.content) ?? ""}${text}`,
+                          )
+                        : appendToolOutputText(previous, text),
                 );
               }
               break;
@@ -7250,10 +7365,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (flavor.ignoreSessionUpdate?.(rawNotification) === true) return;
               // Replayed history feeds snapshots only; it must not drive live turn or wake state.
               if (sessionUpdateIsReplay(rawNotification)) {
-                yield* recordLoadedHistory(
-                  flavor.normalizeSessionUpdate?.(rawNotification) ?? rawNotification,
-                  false,
-                );
+                const normalized =
+                  flavor.normalizeSessionUpdate?.(rawNotification) ?? rawNotification;
+                yield* projectExtractedContextUsage(normalized, false);
+                yield* recordLoadedHistory(normalized, false);
                 return;
               }
               yield* notePromptProgress(rawNotification);
@@ -7300,13 +7415,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 notification.update.sessionUpdate === "config_option_update" ||
                 notification.update.sessionUpdate === "current_mode_update"
               ) {
-                yield* (
-                  flavor.onSessionConfigurationUpdate?.(
-                    yield* runtime.getConfigOptions,
-                    yield* runtime.getModeState,
-                    (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
-                  ) ?? Effect.void
-                );
+                yield* publishSessionConfiguration(runtime);
               }
               const normalized = flavor.normalizeSessionUpdate?.(notification) ?? notification;
               // Turn projection misses compactions that finish while idle or after settlement.
@@ -7422,6 +7531,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return;
           }
           yield* Ref.set(activeSessionSetup, result);
+          yield* resetPublishedCatalogKey;
           // The selection was configured against the provisional setup's
           // options, so the next turn re-applies it against the real ones.
           yield* Ref.set(activeSelection, null);
@@ -7436,13 +7546,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             nativeBuildConfigurationBySessionId.delete(result.sessionId);
           }
           yield* refreshModelSwitchCapability;
-          yield* (
-            flavor.onSessionConfigurationUpdate?.(
-              yield* targetRuntime.getConfigOptions,
-              yield* targetRuntime.getModeState,
-              result.sessionSetupResult.models,
-            ) ?? Effect.void
-          );
+          yield* publishSessionConfiguration(targetRuntime);
         });
 
         const wireAcpRuntimeHandlers = Effect.fnUntraced(function* (
@@ -7564,10 +7668,28 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   : { ...params, options: flavor.answerablePermissionOptions(params) };
               const dispositionFor = (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-                request: EffectAcpSchema.RequestPermissionRequest = params,
+                request: EffectAcpSchema.RequestPermissionRequest,
               ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
+              // Kiro leaves the kind off the permission request for a `tool_call` it already
+              // sent, so policy takes it and the call's changed paths from that tool. Tool ids
+              // are only unique within a session and these are the root session's tools, so
+              // callers pass no tool for another session's request.
+              const policyRequest = (knownTool: AcpToolCallState | undefined) =>
+                withTrackedChangedPaths(
+                  params.toolCall.kind == null && knownTool?.kind !== undefined
+                    ? { ...params, toolCall: { ...params.toolCall, kind: knownTool.kind } }
+                    : params,
+                  unreadToolCalls.has(params.sessionId, params.toolCall.toolCallId)
+                    ? withUnknownChangedPaths(knownTool, params.toolCall.toolCallId)
+                    : knownTool,
+                );
+              const arrivalTool =
+                trackedTurn !== null && params.sessionId === (yield* Ref.get(activeSessionId))
+                  ? trackedTurn.tools.get(params.toolCall.toolCallId)
+                  : undefined;
               if (
-                (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") ||
+                (followsAgentWorkState &&
+                  dispositionFor(latestRuntimePolicy, policyRequest(arrivalTool)) === "ask") ||
                 (postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
               ) {
                 if (!(yield* awaitRequestTurn(handlerGeneration)))
@@ -7579,16 +7701,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const context = followsAgentWorkState
                     ? yield* Ref.get(activeTurn)
                     : yield* activeContext;
-                  // Kiro sends the tool's kind on its `tool_call` and leaves it
-                  // off the permission request for that call; take it from the
-                  // tool already seen under the same id so policy can tell a
-                  // read from a write.
-                  const knownKind = context?.tools.get(params.toolCall.toolCallId)?.kind;
                   const disposition = dispositionFor(
                     context?.input.runtimePolicy ?? latestRuntimePolicy,
-                    params.toolCall.kind == null && knownKind !== undefined
-                      ? { ...params, toolCall: { ...params.toolCall, kind: knownKind } }
-                      : params,
+                    policyRequest(
+                      params.sessionId === (yield* Ref.get(activeSessionId))
+                        ? context?.tools.get(params.toolCall.toolCallId)
+                        : undefined,
+                    ),
                   );
                   if (disposition === "allow") {
                     const optionId = selectAutoApprovedPermissionOption(answerableParams);
@@ -8581,13 +8700,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* validateModelSelection(modelSelection);
           yield* Ref.set(configuredModes, yield* readModes);
           yield* Ref.set(configuredRuntimeMode, runtimePolicy.runtimeMode);
-          yield* (
-            flavor.onSessionConfigurationUpdate?.(
-              yield* runtime.getConfigOptions,
-              yield* runtime.getModeState,
-              (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
-            ) ?? Effect.void
-          );
+          yield* publishSessionConfiguration(runtime);
         });
 
         yield* configureSession(
@@ -9361,6 +9474,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeSessionSetup, null);
+          yield* resetPublishedCatalogKey;
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
           // A failed prompt may have been dropped, so the fresh runtime sends T3's notes again.
@@ -10421,10 +10535,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     ...(itemIdentityVersion === undefined ? {} : { itemIdentityVersion }),
                     now,
                   });
+                  const replayedUsage = (yield* Ref.get(contextUsageBySessionId)).get(sessionId);
+                  const contextUsage =
+                    replayedUsage === undefined
+                      ? null
+                      : yield* withModelContextWindow(sessionId, replayedUsage);
+                  if (contextUsage !== null) {
+                    yield* Ref.update(contextUsageBySessionId, (current) =>
+                      new Map(current).set(sessionId, contextUsage),
+                    );
+                  }
                   const providerThread =
                     threadInput.forceNewNativeThread && threadInput.existingProviderThread
                       ? { ...created, id: threadInput.existingProviderThread.id }
-                      : created;
+                      : { ...created, contextUsage };
                   yield* Ref.update(providerThreadByNativeSessionId, (current) =>
                     new Map(current).set(sessionId, providerThread),
                   );
