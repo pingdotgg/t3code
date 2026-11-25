@@ -4825,6 +4825,111 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("shows a Copilot Autopilot answer once when task_complete repeats it", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const mockAgentPath = yield* bundledMockAgentPath;
+      type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+      const routing = makeCopilotSubagentRouting();
+      const instanceId = ProviderInstanceId.make("copilot-task-complete");
+      const answer = "There are five possible next steps.\n\nTell me which to start.";
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          registerExtensions: routing.registerExtensions,
+          normalizeSessionUpdate: routing.normalizeSessionUpdate,
+          extractSubagentUpdate: extractCopilotSubagentUpdate,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (next) =>
+                Effect.sync(() => {
+                  handler = next;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+              // Frames as Copilot CLI 1.0.114 sends them in Autopilot: the answer, then after
+              // its autopilot nudge a task_complete call whose summary repeats the answer.
+              prompt: () =>
+                Effect.gen(function* () {
+                  assert.isDefined(handler);
+                  const update = (next: EffectAcpSchema.SessionUpdate) =>
+                    handler!({ sessionId: "mock-session-1", update: next });
+                  yield* update({
+                    sessionUpdate: "agent_message_chunk",
+                    messageId: "199b1cf7",
+                    content: { type: "text", text: answer },
+                  });
+                  yield* update({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "toolu_task_complete",
+                    title: "Task completion",
+                    kind: "other",
+                    status: "pending",
+                  });
+                  yield* update({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "toolu_task_complete",
+                    status: "completed",
+                  });
+                  yield* update({
+                    sessionUpdate: "agent_message_chunk",
+                    content: { type: "text", text: answer },
+                  });
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("copilot-task-complete-thread");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("copilot-task-complete-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const events = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+      const messages = new Map(
+        events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [[event.turnItem.id, event.turnItem.text] as const]
+            : [],
+        ),
+      );
+      assert.deepEqual([...messages.values()], [answer]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("routes interleaved Copilot subagent output into subagent threads", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
