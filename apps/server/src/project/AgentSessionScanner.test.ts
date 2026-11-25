@@ -3713,10 +3713,20 @@ describe("parseAgentSessionTranscript", () => {
     });
   });
 
+  it("keeps a Claude question after quoted output full of shell closing tags", () => {
+    const prompt = `<bash-stdout>${"</bash-stdout><bash-stderr>".repeat(16_000)}</bash-stdout><bash-stderr></bash-stderr>\nWhy did this change?`;
+
+    expect(parseClaudeUserTurns([prompt])).toMatchObject({
+      title: "Why did this change?",
+      messages: [{ role: "user", text: prompt }, { role: "assistant" }],
+    });
+  });
+
   it.each([
     "<bash-stdout></bash-stdout>\nfinished\n</bash-stdout><bash-stderr></bash-stderr>",
     "<bash-stderr></bash-stderr>\nfinished\n</bash-stderr>",
-  ])("hides Claude shell output that prints its own closing tag (%s)", (output) => {
+    "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>\n<tools-used-before-summary>Bash, Read</tools-used-before-summary>",
+  ])("hides Claude output with trailing markup of its own (%s)", (output) => {
     expect(
       parseClaudeUserTurns([output, "What happened?"])
         ?.messages.filter((message) => message.role === "user")
