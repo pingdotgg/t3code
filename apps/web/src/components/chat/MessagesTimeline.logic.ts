@@ -464,28 +464,45 @@ export function resolveTimelineMinimapCurrentIndex(input: {
   return precedingIndex;
 }
 
-function resolveTimelineSideGutter(viewportWidth: number, contentWidth: number): number {
-  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0 || !Number.isFinite(contentWidth)) {
+interface TimelineHorizontalRect {
+  readonly left: number;
+  readonly width: number;
+}
+
+function resolveTimelineLeftGutter(
+  viewport: TimelineHorizontalRect,
+  content: TimelineHorizontalRect | null | undefined,
+): number {
+  if (
+    !content ||
+    !Number.isFinite(viewport.left) ||
+    !Number.isFinite(viewport.width) ||
+    viewport.width <= 0 ||
+    !Number.isFinite(content.left) ||
+    !Number.isFinite(content.width) ||
+    content.width <= 0
+  ) {
     return 0;
   }
-  return Math.max(0, (viewportWidth - Math.min(viewportWidth, contentWidth)) / 2);
+  return Math.min(viewport.width, Math.max(0, content.left - viewport.left));
 }
 
 export function resolveTimelineMinimapHasPersistentGutter(
-  viewportWidth: number,
-  contentWidth: number,
+  viewport: TimelineHorizontalRect,
+  content: TimelineHorizontalRect | null | undefined,
 ): boolean {
-  return (
-    resolveTimelineSideGutter(viewportWidth, contentWidth) >= TIMELINE_MINIMAP_PERSISTENT_GUTTER
-  );
+  return resolveTimelineLeftGutter(viewport, content) >= TIMELINE_MINIMAP_PERSISTENT_GUTTER;
 }
 
 const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 32;
 const TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH = 40;
 const TIMELINE_MINIMAP_NAVIGATION_REACH = 14;
 
-export function resolveTimelineMinimapHitStrip(viewportWidth: number, contentWidth: number) {
-  const sideGutter = Math.floor(resolveTimelineSideGutter(viewportWidth, contentWidth));
+export function resolveTimelineMinimapHitStrip(
+  viewport: TimelineHorizontalRect,
+  content: TimelineHorizontalRect | null | undefined,
+) {
+  const sideGutter = Math.floor(resolveTimelineLeftGutter(viewport, content));
   if (sideGutter < TIMELINE_MINIMAP_HIT_STRIP_LEFT + TIMELINE_MINIMAP_NAVIGATION_REACH) {
     // Keep a hover target in the gutter, to the left of the sidebar restore handle.
     return { left: 0, width: Math.min(8, sideGutter) };

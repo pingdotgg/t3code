@@ -1067,18 +1067,18 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   const measureTimelineGutter = (viewportElement: HTMLElement) => {
-    const viewportWidth = viewportElement.getBoundingClientRect().width;
-    const contentWidth =
-      viewportElement.querySelector<HTMLElement>("[data-timeline-root]")?.getBoundingClientRect()
-        .width ?? viewportWidth;
+    const viewportRect = viewportElement.getBoundingClientRect();
+    const contentRect = viewportElement
+      .querySelector<HTMLElement>("[data-timeline-root]")
+      ?.getBoundingClientRect();
     const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(
-      viewportWidth,
-      contentWidth,
+      viewportRect,
+      contentRect,
     );
     setMinimapHasPersistentGutter((current) =>
       current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
     );
-    const nextHitStrip = resolveTimelineMinimapHitStrip(viewportWidth, contentWidth);
+    const nextHitStrip = resolveTimelineMinimapHitStrip(viewportRect, contentRect);
     setMinimapHitStrip((current) =>
       current.left === nextHitStrip.left && current.width === nextHitStrip.width
         ? current
@@ -1112,10 +1112,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const attachTimelineViewportElement = (viewportElement: HTMLDivElement | null) => {
     setTimelineViewportElement(viewportElement);
     if (!viewportElement) return;
-    const stopObserving = observeResize(viewportElement, () => {
-      measureTimelineGutter(viewportElement);
-      scheduleMinimapRefresh();
-    });
+    // ChatCanvas shifts the lane via padding on the scroller without resizing the viewport or lane.
+    const scrollElement = viewportElement.querySelector<HTMLElement>(".messages-timeline-scroll");
+    const stopObserving = observeResize(
+      scrollElement ? [viewportElement, scrollElement] : viewportElement,
+      () => {
+        measureTimelineGutter(viewportElement);
+        scheduleMinimapRefresh();
+      },
+    );
     return () => {
       stopObserving();
       setTimelineViewportElement(null);

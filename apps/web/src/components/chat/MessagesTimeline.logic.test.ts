@@ -34,6 +34,7 @@ import {
   deriveMessagesTimelineRowsWithState,
   isTimelineMinimapTurnVisible,
   resolveAssistantMessageCopyState,
+  resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapHitStrip,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
@@ -43,16 +44,83 @@ import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
 
 describe("resolveTimelineMinimapHitStrip", () => {
   it.each([
-    { viewport: 1280, content: 768, left: 32, width: 40 },
-    { viewport: 768, content: 672, left: 32, width: 16 },
-    { viewport: 768, content: 704, left: 0, width: 8 },
-    { viewport: 768, content: 720, left: 0, width: 8 },
-    { viewport: 768, content: 756, left: 0, width: 6 },
-    { viewport: 768, content: 768, left: 0, width: 0 },
+    {
+      name: "centered 1280/768",
+      viewport: { left: 0, width: 1280 },
+      content: { left: 256, width: 768 },
+      left: 32,
+      width: 40,
+      persistent: true,
+    },
+    {
+      name: "left-shifted 1024/652 at 48px gutter",
+      viewport: { left: 256, width: 1024 },
+      content: { left: 304, width: 652 },
+      left: 32,
+      width: 16,
+      persistent: true,
+    },
+    {
+      name: "left-shifted 1024/652 at 12px gutter",
+      viewport: { left: 256, width: 1024 },
+      content: { left: 268, width: 652 },
+      left: 0,
+      width: 8,
+      persistent: false,
+    },
+    {
+      name: "centered 768/672",
+      viewport: { left: 0, width: 768 },
+      content: { left: 48, width: 672 },
+      left: 32,
+      width: 16,
+      persistent: true,
+    },
+    {
+      name: "centered 768/704",
+      viewport: { left: 0, width: 768 },
+      content: { left: 32, width: 704 },
+      left: 0,
+      width: 8,
+      persistent: false,
+    },
+    {
+      name: "centered 768/720",
+      viewport: { left: 0, width: 768 },
+      content: { left: 24, width: 720 },
+      left: 0,
+      width: 8,
+      persistent: false,
+    },
+    {
+      name: "centered 768/756",
+      viewport: { left: 0, width: 768 },
+      content: { left: 6, width: 756 },
+      left: 0,
+      width: 6,
+      persistent: false,
+    },
+    {
+      name: "centered 768/768",
+      viewport: { left: 0, width: 768 },
+      content: { left: 0, width: 768 },
+      left: 0,
+      width: 0,
+      persistent: false,
+    },
+    {
+      name: "missing content lane",
+      viewport: { left: 256, width: 1024 },
+      content: null,
+      left: 0,
+      width: 0,
+      persistent: false,
+    },
   ])(
-    "keeps the minimap inside the gutter at $viewport/$content",
-    ({ viewport, content, left, width }) => {
+    "keeps the minimap inside the gutter for $name",
+    ({ viewport, content, left, width, persistent }) => {
       expect(resolveTimelineMinimapHitStrip(viewport, content)).toEqual({ left, width });
+      expect(resolveTimelineMinimapHasPersistentGutter(viewport, content)).toBe(persistent);
     },
   );
 });
