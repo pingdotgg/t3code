@@ -2369,9 +2369,9 @@ it.effect.each([
     }),
 );
 
-it.effect(
-  "deleting an owner fences stale delegation and continuation commits across projects",
-  () =>
+it.effect.each([false, true])(
+  "deleting an owner fences cross-project work (nested delegate returns to owner: %s)",
+  (returnsToOwner) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const sink = yield* EventSink.EventSinkV2;
@@ -2381,10 +2381,16 @@ it.effect(
       const now = yield* DateTime.now;
       yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
       VALUES (${projectB}, 'Destination', '/work/destination', '[]', '2026-01-01', '2026-01-01')`;
+      const projectA = ProjectId.make("project:thread-stop");
+      yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES (${projectA}, 'Owner', '/work/owner', '[]', '2026-01-01', '2026-01-01')`;
       yield* createWatchingThread(parentId, 1);
       yield* send(parentId, "start", "start_immediately");
       const childId = yield* delegate(parentId, "cross-project child", projectB);
-      const nestedId = yield* delegate(childId, "nested child");
+      const intermediateId = returnsToOwner
+        ? yield* delegate(childId, "nested work in removed project", projectA)
+        : childId;
+      const nestedId = yield* delegate(intermediateId, "nested child", projectB);
       yield* send(nestedId, "queued before deletion", "queue_after_active");
       const nested = yield* orchestrator.getThreadProjection(nestedId);
       const staleChildId = ThreadId.make("stale-delegate");
@@ -2409,9 +2415,6 @@ it.effect(
         occurredAt: now,
         payload: { ...nested.runs[0]!, id: RunId.make("stale-continuation"), ordinal: 3 },
       };
-      const projectA = ProjectId.make("project:thread-stop");
-      yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
-      VALUES (${projectA}, 'Owner', '/work/owner', '[]', '2026-01-01', '2026-01-01')`;
       const projects = yield* ProjectService.make.pipe(
         Effect.provide(
           Layer.mergeAll(
