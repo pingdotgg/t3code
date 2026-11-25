@@ -40,6 +40,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
 import { vitePlusCommand } from "./check-changed-command.ts";
+import { readKnownFailures, skipPattern } from "./fork-tests.ts";
 
 const GiB = 1024 ** 3;
 
@@ -367,6 +368,15 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   // It reads files other than the ones beside it, so no changed file selects it.
   if (affected.includes("t3")) tests.add("apps/server/src/provider/AgentContextBudget.test.ts");
   const { vitestTests, nodeTests } = splitTests(tests);
+  const selectedVitestFiles = new Set(vitestTests);
+  const knownFailures = readKnownFailures(
+    yield* fs.readFileString(inRoot("scripts/fork-known-failures.json")),
+  ).filter(({ file }) => selectedVitestFiles.has(file));
+  if (knownFailures.length > 0) {
+    yield* Console.log(
+      `check:changed: excluding ${knownFailures.length} cases listed in scripts/fork-known-failures.json`,
+    );
+  }
 
   // React Compiler coverage compiles every client source file, so run only the
   // changed files' cases, in one extra step: a -t filter in the main test step
@@ -547,6 +557,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
               "test",
               "run",
               "--passWithNoTests",
+              ...(knownFailures.length === 0 ? [] : ["-t", skipPattern(knownFailures)]),
               ...vitestTests,
             ]),
             serial: true,

@@ -379,10 +379,12 @@ function launcherFixture() {
   for (const file of [
     "scripts/check-changed.ts",
     "scripts/check-changed-command.ts",
+    "scripts/fork-tests.ts",
     ".github/scripts/ci-changes.cjs",
   ]) {
     write(file, NodeFS.readFileSync(NodePath.join(import.meta.dirname, "..", file), "utf8"));
   }
+  write("scripts/fork-known-failures.json", "[]\n");
   write(".gitignore", "node_modules/\nrecords/\n");
   write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
   write(
@@ -503,6 +505,27 @@ it("lints an Astro component and runs knip when only it changed", () => {
   const commands = calls.map(({ args }) => args);
   expect(commands).toContainEqual(["exec", "knip", "--include", "files"]);
   expect(commands).toContainEqual(["exec", "knip", "--exports"]);
+});
+
+it("applies the baseline exclusions for selected test files", () => {
+  using project = launcherFixture();
+  const file = "packages/example/value.test.ts";
+  project.write(file, "export {};\n");
+  project.write(
+    "scripts/fork-known-failures.json",
+    JSON.stringify([
+      { file, test: "fails on baseline (macOS)", reason: "Reproduced upstream" },
+      { file: "packages/example/other.test.ts", test: "elsewhere", reason: "Reproduced upstream" },
+    ]),
+  );
+  const result = project.run();
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+  const args = project.calls().find((call) => call.args[0] === "test")?.args ?? [];
+  expect(args).toContain(file);
+  expect(args).toContain("-t");
+  const pattern = new RegExp(args[args.indexOf("-t") + 1]!);
+  expect(pattern.test("suite fails on baseline (macOS)")).toBe(false);
+  expect(pattern.test("suite elsewhere")).toBe(true);
 });
 
 it.each(["install", "lint"])("reports a failing %s step with its output", (step) => {
