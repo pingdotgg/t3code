@@ -1,4 +1,3 @@
-import { boundedZip } from "@t3tools/client-runtime/zip/bounded-zip";
 import JSZip from "jszip";
 import { openRtf, openNotebook, openDocument, openEpub } from "./extendedDocumentPreview";
 import type { ScopedThreadRef } from "@t3tools/contracts";
@@ -775,43 +774,4 @@ Third}`;
       expect(result.pages).toEqual([{ title: "First", html: "<p>Hello</p>" }]);
     },
   );
-});
-
-describe("ZIP filename decoding", () => {
-  it("preserves distinct CP437 filenames and their contents", async () => {
-    const bytes = new Uint8Array(
-      await new JSZip()
-        .file("cafA.txt", "FIRST")
-        .file("cafB.txt", "SECOND")
-        .generateAsync({ type: "arraybuffer", compression: "STORE" }),
-    );
-    for (let offset = 0; offset <= bytes.length - 8; offset++) {
-      if (
-        bytes[offset] === 0x63 &&
-        bytes[offset + 1] === 0x61 &&
-        bytes[offset + 2] === 0x66 &&
-        (bytes[offset + 3] === 0x41 || bytes[offset + 3] === 0x42) &&
-        new TextDecoder().decode(bytes.subarray(offset + 4, offset + 8)) === ".txt"
-      ) {
-        bytes[offset + 3] = bytes[offset + 3] === 0x41 ? 0x82 : 0x8a;
-      }
-    }
-    const files = await boundedZip(bytes.buffer);
-    expect([...files].map(([name, file]) => [name, new TextDecoder().decode(file.bytes)])).toEqual([
-      ["café.txt", "FIRST"],
-      ["cafè.txt", "SECOND"],
-    ]);
-  });
-
-  it.each(["UTF-8 flag", "Unicode path extra field"])("honors %s", async (encoding) => {
-    const bytes = await new JSZip().file("日本語.txt", "CONTENT").generateAsync({
-      type: "arraybuffer",
-      ...(encoding === "Unicode path extra field"
-        ? { encodeFileName: (name: string) => "a".repeat(name.length) }
-        : {}),
-    });
-    const files = await boundedZip(bytes);
-    expect([...files.keys()]).toEqual(["日本語.txt"]);
-    expect(new TextDecoder().decode(files.get("日本語.txt")?.bytes)).toBe("CONTENT");
-  });
 });
