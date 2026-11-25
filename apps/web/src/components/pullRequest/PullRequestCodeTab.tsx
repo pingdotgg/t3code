@@ -1062,16 +1062,22 @@ function PullRequestCodeTab({
   );
   // The viewer moves scrollTop itself while it measures restored rows; saving those moves would
   // drift the offset further on every remount, so only a reader's own scroll is saved.
-  const scrolledByReader = useRef(false);
+  const scrolledByReader = useRef<string | null>(null);
   const followReader = () => {
-    scrolledByReader.current = true;
+    scrolledByReader.current = scopeKey;
     codeViewScroll.cancel();
     codeViewReveal.cancel();
   };
+  // A reveal or a bulk fold moves the viewer for the reader. An offset its restore had not
+  // reached is dropped, so it cannot land afterwards; one the reader left stays until a scroll.
+  const repositionForReader = () => {
+    if (codeViewScroll.cancel()) codeViewScroll.discard();
+    scrolledByReader.current = scopeKey;
+  };
   const attachCodeView = useStableCallback(
     (handle: CodeViewHandle<ReviewAnnotationGroup, undefined> | null) => {
-      // Each scope gets its own viewer, which the reader has not scrolled yet.
-      if (handle !== null) scrolledByReader.current = false;
+      // Another scope's viewer starts unscrolled; a reveal queued for this one already counts.
+      if (handle !== null && scrolledByReader.current !== scopeKey) scrolledByReader.current = null;
       codeViewScroll.attach(handle);
       codeViewReveal.attach(handle);
     },
@@ -1124,8 +1130,7 @@ function PullRequestCodeTab({
   const revealFile = (path: string, range?: SelectedLineRange) => {
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
-    codeViewScroll.discard();
-    scrolledByReader.current = true;
+    repositionForReader();
     // Record the unfold even when already open, so a Viewed mark that loads later cannot fold it.
     setFoldChoices(path, (current) =>
       withFileDiffFold(current, buildFileDiffFoldKey(item.fileDiff), false),
@@ -1135,10 +1140,7 @@ function PullRequestCodeTab({
   };
 
   const toggleAllFiles = () => {
-    // A restore still loading pages never reached its offset, and these folds replace its layout.
-    if (codeViewScroll.cancel()) codeViewScroll.discard();
-    // Where the viewer settles after the folds is the reader's doing.
-    scrolledByReader.current = true;
+    repositionForReader();
     const shownTestKeys = annotatedFiles.flatMap((file) =>
       isTestChangedFile(file.path) ? [file.foldKey] : [],
     );
@@ -2109,7 +2111,9 @@ function PullRequestCodeTab({
               }}
               viewerRef={attachCodeView}
               onScroll={(scrollTop, viewer) => {
-                if (scrolledByReader.current) codeViewScroll.onScroll(scrollTop, viewer);
+                if (scrolledByReader.current === scopeKey) {
+                  codeViewScroll.onScroll(scrollTop, viewer);
+                }
               }}
               items={items}
               selectedLines={selectedLines}

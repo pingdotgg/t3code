@@ -102,6 +102,8 @@ describe("createCodeViewScrollRestore", () => {
     const loading = viewer(700);
     const restore = mount("thread-e", loading, false, () => {});
     expect(restore.cancel()).toBe(true);
+    expect(restore.cancel()).toBe(false);
+    expect(createCodeViewScrollRestore().cancel()).toBe(true);
     restore.onScroll(150, loading.instance);
     loading.instance.scrollHeight = 10_000;
     restore.update("thread-e", true, null);
