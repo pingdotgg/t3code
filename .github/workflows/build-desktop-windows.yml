@@ -1,0 +1,142 @@
+name: Build Desktop Windows (Unsigned)
+
+# Builds an unsigned Windows x64 NSIS installer natively on GitHub's official
+# windows-2025 runner without waiting on Linux/WSL or Azure signing.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "!v*-nightly.*"
+      - "!v*-preview.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version override (defaults to tag without v prefix or apps/desktop/package.json version)"
+        required: false
+        type: string
+      publish_release:
+        description: "Create or update a GitHub Release with the built installer"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-desktop-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Windows (x64)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      T3CODE_TELEMETRY_CHANNEL: dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - id: meta
+        name: Resolve version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$INPUT_VERSION" ]]; then
+            version="${INPUT_VERSION#v}"
+          elif [[ "$REF_TYPE" == "tag" && "$REF_NAME" == v* ]]; then
+            version="${REF_NAME#v}"
+          else
+            version="$(node -p "require('./apps/desktop/package.json').version")"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: native/resource-monitor/target/x86_64-pc-windows-msvc/release/t3-resource-monitor.exe
+          key: resource-monitor-x86_64-pc-windows-msvc-${{ hashFiles('.cargo/config.toml', 'native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build resource monitor
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-pc-windows-msvc
+
+      - name: Align package versions
+        shell: bash
+        run: node scripts/update-release-package-versions.ts "${{ steps.meta.outputs.version }}"
+
+      - name: Build JS bundle
+        shell: bash
+        run: vp run build:desktop:bundle
+
+      - name: Package unsigned Windows installer
+        shell: bash
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true"
+        run: |
+          vp run dist:desktop:artifact \
+            --platform win \
+            --target nsis \
+            --arch x64 \
+            --build-version "${{ steps.meta.outputs.version }}" \
+            --skip-build \
+            --verbose
+
+      - name: Collect release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          out_dir="$RUNNER_TEMP/windows-release"
+          mkdir -p "$out_dir"
+          for file in release/*.exe release/*.blockmap release/latest*.yml; do
+            if [[ -f "$file" ]]; then
+              cp "$file" "$out_dir/"
+            fi
+          done
+          ls -la "$out_dir"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tix-desktop-windows-x64-${{ steps.meta.outputs.version }}
+          path: ${{ runner.temp }}/windows-release/*
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish to GitHub Release
+        if: github.event_name == 'push' || inputs.publish_release == true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          APP_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --title "tix ${APP_VERSION}" \
+              --generate-notes || true
+          fi
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP"/windows-release/* --clobber

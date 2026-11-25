@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://t3.codes/sitemap.xml
+Sitemap: https://tix.penglei.dev/sitemap.xml

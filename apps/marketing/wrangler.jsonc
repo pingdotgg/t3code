@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "tix-site",
+  "compatibility_date": "2025-09-01",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page",
+  },
+  "routes": [
+    {
+      "pattern": "tix.penglei.dev",
+      "custom_domain": true,
+    },
+  ],
+}
