@@ -619,8 +619,10 @@ const make = Effect.gen(function* () {
   ) {
     let reply: OrchestratorMcpThreadTimelineItem | undefined;
     let error: OrchestratorMcpThreadTimelineItem | undefined;
-    // Linked peers read newest first without a cursor; this scan runs forward.
-    let afterPosition = -1;
+    // Linked peers read newest first without a cursor, so this scan runs forward. It starts
+    // after position 0, the message that started the thread, which no run's reply can precede;
+    // older peers refuse -1.
+    let afterPosition = 0;
     let run: OrchestratorMcpThreadRun | undefined;
     let remainingItems = 0;
     let tailProbed = false;
