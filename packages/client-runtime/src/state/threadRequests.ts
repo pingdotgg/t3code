@@ -73,10 +73,33 @@ export interface ApprovalTextPart {
   readonly named?: true;
 }
 
-// Control, format and separator characters draw as nothing or as a blank box, and some reorder the
-// text beside them. A line feed and a tab draw as themselves, and a joiner after a letter or an
-// emoji shapes it.
-const UNDRAWN = /(?![\n\t])[\p{Cc}\p{Zl}\p{Zp}]|(?![‌‍])\p{Cf}|(?<![^\0-\x7F])[‌‍]/gu;
+// Scripts whose letters join or conjoin, where a joiner or a non-joiner picks the letter's form.
+const JOINING =
+  "Arab Syrc Nkoo Mand Mong Phag Adlm Rohg Deva Beng Guru Gujr Orya Taml Telu Knda Mlym Sinh Mymr Khmr"
+    .split(" ")
+    .map((script) => String.raw`\p{Script=${script}}`)
+    .join("");
+const AFTER_JOINING = String.raw`(?<=[\p{L}\p{M}])(?<=[${JOINING}]\p{M}*)`;
+const PICTURE = String.raw`\p{Extended_Pictographic}`;
+// The places where a character that draws nothing itself changes what is drawn beside it.
+const SHAPING = [
+  // A non-joiner between two joining letters, and a joiner after one.
+  String.raw`${AFTER_JOINING}\u200C(?=\p{L})[${JOINING}]`,
+  String.raw`${AFTER_JOINING}\u200D`,
+  // A joiner between two emoji, and a presentation selector after an emoji or in a keycap.
+  String.raw`(?<=${PICTURE}[\uFE0F\p{Emoji_Modifier}]?)\u200D${PICTURE}`,
+  String.raw`(?<=${PICTURE})[\uFE0E\uFE0F]`,
+  String.raw`(?<=[0-9#*])\uFE0F\u20E3`,
+  // A variation selector after an ideograph, and a Mongolian one after a Mongolian letter.
+  String.raw`(?<=\p{Script=Han})[\uFE00-\uFE0D\u{E0100}-\u{E01EF}]`,
+  String.raw`(?<=\p{Script=Mong})[\u180B-\u180F]`,
+].join("|");
+// Control, format, separator and ignorable characters draw as nothing or as a blank box, and some
+// reorder the text beside them. A line feed and a tab draw as themselves.
+const UNDRAWN = new RegExp(
+  String.raw`(?![\n\t])[\p{Cc}\p{Zl}\p{Zp}]|(?!${SHAPING})[\p{Cf}\p{Default_Ignorable_Code_Point}]`,
+  "gu",
+);
 const UNDRAWN_NAMES: Readonly<Record<string, string>> = {
   "\r": "\\r",
   "\b": "\\b",

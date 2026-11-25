@@ -718,3 +718,51 @@ it("names the characters of an approval that a screen would not draw", () => {
   expect(approvalTextParts(drawn)).toEqual([{ text: drawn }]);
   expect(approvalTextParts("")).toEqual([]);
 });
+
+it("names a joiner or a variation selector that shapes nothing where it stands", () => {
+  const named = (text: string) =>
+    approvalTextParts(text)
+      .map((part) => (part.named ? `<${part.text}>` : part.text))
+      .join("");
+  const unchanged = (text: string) => expect(approvalTextParts(text)).toEqual([{ text }]);
+
+  // Punctuation, Latin letters with accents, CJK and a lone emoji have nothing to join.
+  expect(named("cat 'safe\u2014\u200D.txt'")).toBe("cat 'safe\u2014<U+200D>.txt'");
+  expect(named("caf\u00E9\u200D\u00E8 \u00E9\u200C\u00E8")).toBe(
+    "caf\u00E9<U+200D>\u00E8 \u00E9<U+200C>\u00E8",
+  );
+  expect(named("e\u0301\u200Dx")).toBe("e\u0301<U+200D>x");
+  expect(named("\u6F22\u200D\u5B57 \u6F22\u200C\u5B57")).toBe(
+    "\u6F22<U+200D>\u5B57 \u6F22<U+200C>\u5B57",
+  );
+  expect(named("\u{1F469}\u200D.txt \u{1F469}\u200C\u{1F4BB}")).toBe(
+    "\u{1F469}<U+200D>.txt \u{1F469}<U+200C>\u{1F4BB}",
+  );
+  // The start and the end of the text.
+  expect(named("\u200Da\u200D")).toBe("<U+200D>a<U+200D>");
+  expect(named("\u200C\u0646\u0645\u06CC\u200C")).toBe("<U+200C>\u0646\u0645\u06CC<U+200C>");
+  expect(named("\u{1F469}\u200D")).toBe("\u{1F469}<U+200D>");
+  // A non-joiner needs a joining letter on both sides; a joiner needs one before it, not a digit.
+  expect(named("\u0645\u06CC\u200C.txt \u0661\u200D\u0661")).toBe(
+    "\u0645\u06CC<U+200C>.txt \u0661<U+200D>\u0661",
+  );
+
+  // Variation selectors and tag characters.
+  expect(named("a\uFE0Fb\uFE0E 1\uFE0F \u6F22\uFE0F")).toBe(
+    "a<U+FE0F>b<U+FE0E> 1<U+FE0F> \u6F22<U+FE0F>",
+  );
+  expect(named("a\uFE00 a\u{E0100} \u00E9\u034F \u3164")).toBe(
+    "a<U+FE00> a<U+E0100> \u00E9<U+034F> <U+3164>",
+  );
+  expect(named("\u{1F3F4}\u{E0067}\u{E0062}\u{E007F} a\u{E0041}")).toBe(
+    "\u{1F3F4}<U+E0067><U+E0062><U+E007F> a<U+E0041>",
+  );
+  expect(named("a\u180B \u180E")).toBe("a<U+180B> <U+180E>");
+
+  // Each of these shapes what stands beside it.
+  unchanged("\u0646\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645 \u0647\u200D");
+  unchanged("\u0915\u094D\u200D\u0937 \u0915\u094D\u200C\u0937 \u0DC1\u0DCA\u200D\u0DBB\u0DD3");
+  unchanged("\u{1F469}\u200D\u{1F4BB} \u{1F44B}\u{1F3FD} \u{1F9D1}\u{1F3FD}\u200D\u{1F4BB}");
+  unchanged("\u{1F441}\uFE0F\u200D\u{1F5E8}\uFE0F \u2764\uFE0F \u2764\uFE0E 1\uFE0F\u20E3");
+  unchanged("\u845B\u{E0100} \u8FBB\uFE00 \u182E\u180B \u1820\u180E\u1820");
+});
