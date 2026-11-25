@@ -45,12 +45,18 @@ public final class T3NativeControlsModule: Module {
       Prop("selectedColor") { (view: T3SidebarTabBarView, value: UIColor) in view.selectedColor = value }
       Prop("showsCompose") { (view: T3SidebarTabBarView, value: Bool) in view.showsCompose = value }
       Prop("compact") { (view: T3SidebarTabBarView, value: Bool) in view.compact = value }
+      Prop("rightToLeft") { (view: T3SidebarTabBarView, value: Bool) in view.rightToLeft = value }
       Prop("appearance") { (view: T3SidebarTabBarView, value: String) in view.appearance = value }
     }
 
     View(T3LayoutMetricsView.self) {
       ViewName("LayoutMetrics")
       Events("onMetricsChange")
+    }
+
+    View(T3NavigationBarDirectionView.self) {
+      ViewName("NavigationBarDirection")
+      Prop("rightToLeft") { (view: T3NavigationBarDirectionView, value: Bool) in view.rightToLeft = value }
     }
 
     View(T3ScrollEdgeBleedView.self) {

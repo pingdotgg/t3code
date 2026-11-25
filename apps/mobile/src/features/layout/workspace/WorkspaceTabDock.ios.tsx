@@ -2,6 +2,7 @@ import { selectedNavigationTab, visibleNavigationTabs } from "./navigation-tab-o
 import { requireNativeView } from "expo";
 import { View, useWindowDimensions, type NativeSyntheticEvent, type ViewProps } from "react-native";
 import { useControlTheme } from "../../../components/ui/useControlTheme";
+import { useInterfaceDirection } from "../../../i18n/direction";
 import { nativeSidebarColumnWidth } from "../../../lib/layout";
 import { useDeviceType } from "../../../native/native-layout-metrics";
 import { useNavigationTabOrder, useHiddenNavigationTabs } from "./navigation-tabs";
@@ -19,6 +20,7 @@ const NativeSidebarTabBar = requireNativeView<
     appearance: string;
     showsCompose: boolean;
     compact?: boolean;
+    rightToLeft: boolean;
     onSelectionChange: (event: NativeSyntheticEvent<{ tab: string }>) => void;
     onCompose: () => void;
   }
@@ -38,6 +40,7 @@ export function WorkspaceTabDock(props: { readonly placement: "column" | "window
   const tabs = [...visibleNavigationTabs(order, hidden), "settings" as const];
   const selectTab = useSelectWorkspaceTab();
   const { colors, colorScheme } = useControlTheme();
+  const direction = useInterfaceDirection();
   const compose = useWorkspaceCompose();
   // Floating tabs carry compose beside them, and keep its room when it's gone so the tabs hold still.
   const compact = useFloatingWorkspaceTabs();
@@ -60,6 +63,7 @@ export function WorkspaceTabDock(props: { readonly placement: "column" | "window
         left: 0,
         bottom: 0,
         height: 128,
+        direction,
         ...(width === undefined ? { right: 0 } : { width }),
       }}
     >
@@ -74,6 +78,7 @@ export function WorkspaceTabDock(props: { readonly placement: "column" | "window
         )}
         selectedColor={colors["--color-primary"]}
         appearance={colorScheme}
+        rightToLeft={direction === "rtl"}
         showsCompose={onCompose !== undefined}
         compact={compact}
         onCompose={() => onCompose?.()}
@@ -85,9 +90,9 @@ export function WorkspaceTabDock(props: { readonly placement: "column" | "window
         style={{
           position: "absolute",
           bottom: 0,
-          left: compact ? 8 : 0,
+          start: compact ? 8 : 0,
           maxWidth: layout.variant === "medium" ? 280 : undefined,
-          right: compact ? 12 + (onCompose ? 0 : 64) : 0,
+          end: compact ? 12 + (onCompose ? 0 : 64) : 0,
           height: 128,
         }}
       />
