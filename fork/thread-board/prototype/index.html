@@ -1507,9 +1507,11 @@ const EMBED_W = 1280, EMBED_H = 800;
 function fitStage() {
   const root = document.documentElement;
   // Narrow frames (inline previews, small windows) get the desktop layout scaled down.
-  const embed = innerWidth < 1000;
+  // The frame's own width: preview hosts may pad <html>.
+  const width = document.getElementById("frame").clientWidth;
+  const embed = width < 1000;
   root.classList.toggle("embed", embed);
-  S.scale = embed ? innerWidth / EMBED_W : 1;
+  S.scale = embed ? width / EMBED_W : 1;
   root.style.setProperty("--s", S.scale);
   root.style.setProperty("--app-h", `${embed ? EMBED_H : innerHeight}px`);
   document.getElementById("frame").style.height = embed ? `${Math.ceil(EMBED_H * S.scale)}px` : "";
