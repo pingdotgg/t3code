@@ -62,7 +62,7 @@ No. HYR Code is a serious developer tool. Locally runnable models are not capabl
 
 ## Does my code go to T3 servers?
 
-No. Your code and prompts go from your machine to your provider (Anthropic, OpenAI, etc.), not to us or to T3. HYR Code release builds turn off product usage events, T3 Connect, and guest links. If you build from source without the release patch, the server sends basic product usage events (provider, model, token totals, no prompts or file contents) to T3 unless you set `T3CODE_TELEMETRY_ENABLED=false`. [Product usage data](./telemetry.md)
+No. Your code and prompts go from your machine to your provider (Anthropic, OpenAI, etc.), not to us or to T3. HYR Code release builds turn off product usage events, T3 Connect, and guest links. If you build from source without the release patch, the server sends basic product usage events (provider, model, token totals, no prompts or file contents) to T3 unless you set `T3CODE_TELEMETRY_ENABLED=false` or `DO_NOT_TRACK=1`. [Product usage data](./telemetry.md)
 
 ## Worktrees are eating my disk. How do I clean them up?
 

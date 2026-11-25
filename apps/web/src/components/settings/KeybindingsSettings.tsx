@@ -158,10 +158,10 @@ function KeybindingsSearchInput({
         value={query}
         onChange={(event) => onChange(event.currentTarget.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
+          if (!isBareEscape(event) || event.nativeEvent.isComposing || event.keyCode === 229)
             return;
           event.preventDefault();
-          if (query.length > 0) {
+          if (query.length > 0 || event.repeat) {
             event.stopPropagation();
             onChange("");
           } else event.currentTarget.blur();
@@ -756,7 +756,7 @@ function rowKeybindingTarget(row: KeybindingRow): ServerRemoveKeybindingInput {
   };
 }
 
-// Esc with a modifier is a shortcut to record, not a cancel.
+// Esc with a modifier is not a cancel.
 function isBareEscape(event: KeyboardEvent<HTMLInputElement>) {
   return (
     event.key === "Escape" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey

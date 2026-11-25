@@ -14,7 +14,8 @@ const ORDERED_ITEM = /^\d{1,9}[.)](?:[ \t]|\r?$)/;
 // CommonMark HTML blocks of types 1-5 and display math run past blank lines until their closer.
 const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
   [/^ {0,3}<(?:script|pre|style|textarea)(?=[\s>]|$)/i, /<\/(?:script|pre|style|textarea)>/i],
-  [/^ {0,3}<!--/, /-->/],
+  // "<!-->" and "<!--->" close themselves, so the closer is searched from just after "<!".
+  [/^ {0,3}<!(?=--)/, /-->/],
   [/^ {0,3}<\?/, /\?>/],
   [/^ {0,3}<!\[CDATA\[/, /\]\]>/],
   [/^ {0,3}<![A-Za-z]/, />/],
@@ -112,6 +113,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let afterBlankLine = false;
   let afterDefinition = false;
   let afterHeading = false;
+  let openedFence = false;
   let definitionChars = 0;
   let openWrappers = 0;
   let heldCut = 0;
@@ -136,8 +138,10 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
       closes = blockCloser(line);
-      // A definition cannot interrupt a paragraph, so it follows a blank line, a heading or
-      // another definition.
+      // An indented fence may sit in a list item, which this does not track.
+      openedFence = /^[`~]/.test(line) && FENCE_OPEN.test(line);
+      // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
+      // a closing code fence or another definition.
       const definition: boolean =
         (first || afterBlankLine || afterDefinition || afterHeading) && LINK_DEFINITION.test(line);
       afterDefinition = definition;
@@ -160,7 +164,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       openWrappers = 0;
     }
     afterBlankLine = line.trim() === "";
-    afterHeading = closes === null && (ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
+    afterHeading =
+      closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
   flush();
   return { chunks, definitions: definitions.join("\n") };

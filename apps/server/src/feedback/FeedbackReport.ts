@@ -167,6 +167,7 @@ export const T3_CLI_COMMANDS: ReadonlyArray<string> = [
   "t3 workflow resume",
   "t3 workflow cancel",
   "t3 workflow signal",
+  "t3 workflow withdraw",
   "t3 workflow questions",
   "t3 workflow hooks",
   "t3 workflow store",

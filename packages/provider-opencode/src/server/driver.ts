@@ -336,6 +336,7 @@ export const OpenCodeDriver: ProviderDriver<
             : resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation.value), {
                 binaryPath: effectiveConfig.binaryPath,
                 env: processEnv,
+                npmCacheDir: pathService.join(host.paths.providerStatusCacheDir, "npm"),
               }),
         ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

@@ -2418,14 +2418,22 @@ code {
   color: var(--code-foreground);
 }
 
-/* Pierre's find panel is a sibling of the diff containers, so it misses their theme tokens.
-   The top inset clears the 32px sticky file header and its line counts. */
+/* Pierre's find panel is a sibling of the diff containers, so it misses their theme tokens. */
 .diff-render-surface > [data-search-panel] {
   --diffs-search-panel-bg: var(--popover);
   --diffs-search-panel-fg: var(--popover-foreground);
   --diffs-search-panel-modified: var(--primary);
   --diffs-header-font-fallback: var(--font-sans);
+}
+
+/* The top inset clears the 32px sticky file header and its line counts. */
+.diff-render-surface:not(.file-preview-virtualizer) > [data-search-panel] {
   --diffs-search-panel-inset-top: 40px;
+}
+
+/* A headerless file preview stays on the code surface, as the editable file view does. */
+.diff-render-surface.file-preview-virtualizer {
+  --code-background: inherit;
 }
 
 /* Pierre's file renderer owns its own surface tokens. Keep the root of a file
