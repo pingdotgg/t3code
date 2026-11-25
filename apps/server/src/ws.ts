@@ -291,6 +291,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import { isWorkspaceBrowserPreviewPath } from "@t3tools/shared/filePreview";
 import { isNetworkPath } from "@t3tools/shared/path";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
@@ -3203,6 +3204,14 @@ export const layerWsRpc = (
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
             const path = yield* Path.Path;
+            const isLocalMediaFile =
+              input.resource._tag === "media-file" &&
+              path.isAbsolute(input.resource.path) &&
+              !isNetworkPath(input.resource.path);
+            const isInlinePage =
+              input.resource._tag === "media-file" &&
+              input.resource.disposition !== "attachment" &&
+              isWorkspaceBrowserPreviewPath(input.resource.path);
             if (
               input.resource._tag === "attachment" ||
               input.resource._tag === "native-app-icon" ||
@@ -3210,9 +3219,7 @@ export const layerWsRpc = (
               input.resource._tag === "tool-output-image" ||
               input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET ||
               // A network path is served only from the thread's project, looked up below.
-              (input.resource._tag === "media-file" &&
-                path.isAbsolute(input.resource.path) &&
-                !isNetworkPath(input.resource.path))
+              (isLocalMediaFile && !isInlinePage)
             ) {
               return yield* issueAssetUrl({ resource: input.resource });
             }
@@ -3251,35 +3258,48 @@ export const layerWsRpc = (
                   : {}),
               });
             }
-            const thread = yield* threadManagement
-              .getThreadRecords(input.resource.threadId, [])
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new AssetWorkspaceContextResolutionError({
-                      resource: input.resource,
-                      cause,
-                    }),
-                ),
-              );
-            const project = yield* projectService.getById(thread.thread.projectId).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new AssetWorkspaceContextResolutionError({
-                    resource: input.resource,
-                    cause,
-                  }),
-              ),
-            );
-            if (Option.isNone(project)) {
-              return yield* new AssetWorkspaceContextNotFoundError({
-                resource: input.resource,
-              });
-            }
-            return yield* issueAssetUrl({
-              resource: input.resource,
-              workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
+            const resource = input.resource;
+            const threadWorkspaceRoot = Effect.gen(function* () {
+              const thread = yield* threadManagement
+                .getThreadRecords(resource.threadId, [])
+                .pipe(
+                  Effect.mapError(
+                    (cause) => new AssetWorkspaceContextResolutionError({ resource, cause }),
+                  ),
+                );
+              const project = yield* projectService
+                .getById(thread.thread.projectId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) => new AssetWorkspaceContextResolutionError({ resource, cause }),
+                  ),
+                );
+              if (Option.isNone(project)) {
+                return yield* new AssetWorkspaceContextNotFoundError({ resource });
+              }
+              return thread.thread.worktreePath ?? project.value.workspaceRoot;
             });
+            if (isLocalMediaFile) {
+              // Clients pick media-file by comparing paths as written, so a page in a project
+              // registered through a symlink arrives here. Served as a workspace file it loads
+              // its stylesheets and scripts; any failure serves the page alone, as before.
+              const asWorkspaceFile = yield* threadWorkspaceRoot.pipe(
+                Effect.flatMap((workspaceRoot) =>
+                  issueAssetUrl({
+                    resource: {
+                      _tag: "workspace-file",
+                      threadId: resource.threadId,
+                      path: resource.path,
+                    },
+                    workspaceRoot,
+                  }),
+                ),
+                Effect.option,
+              );
+              if (Option.isSome(asWorkspaceFile)) return asWorkspaceFile.value;
+              return yield* issueAssetUrl({ resource });
+            }
+            return yield* issueAssetUrl({ resource, workspaceRoot: yield* threadWorkspaceRoot });
           }),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>
           persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
