@@ -1915,9 +1915,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     function* (cwd: string, gitCommonDir?: string | null) {
       const commonDir =
         gitCommonDir === undefined
-          ? yield* readGitCommonDir(cwd).pipe(
+          ? (yield* resolveRepositoryPaths(cwd).pipe(
               Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
-            )
+            ))?.gitCommonDir
           : gitCommonDir;
       const cacheKey = commonDir ?? normalizeRepositoryPathsCacheKey(cwd);
       yield* Cache.invalidate(defaultBranchCache, cacheKey);
@@ -2132,13 +2132,57 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const originRemoteExists = (cwd: string): Effect.Effect<boolean, GitCommandError> =>
     remoteExists({ cwd, remoteName: "origin" });
 
-  const listRemoteNames = (
-    cwd: string,
-    gitDirArgs: ReadonlyArray<string> = [],
-  ): Effect.Effect<ReadonlyArray<string>, GitCommandError> =>
+  const statToken = (target: string) =>
+    fileSystem.stat(target).pipe(
+      Effect.map(
+        (info) =>
+          `${Option.getOrElse(info.ino, () => "")}:${info.size}:${Option.match(info.mtime, {
+            onNone: () => "",
+            onSome: (mtime) => mtime.getTime(),
+          })}`,
+      ),
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("-")),
+    );
+
+  const readRemoteNames = (cwd: string, gitDirArgs: ReadonlyArray<string> = []) =>
     runGitStdout("GitVcsDriver.listRemoteNames", cwd, [...gitDirArgs, "remote"]).pipe(
       Effect.map(parseRemoteNamesInGitOrder),
     );
+  // Git rewrites the repository config through a lock file on every change, `git remote add`
+  // included, so its stat says when the cached names are stale. An unreadable stat never matches.
+  const readConfigToken = (gitCommonDir: string) =>
+    statToken(path.join(gitCommonDir, "config")).pipe(Effect.orElseSucceed(() => null));
+  const remoteNamesCache = yield* Cache.makeWith(
+    (cwd: string) =>
+      Effect.gen(function* () {
+        const gitCommonDir = (yield* resolveRepositoryPaths(cwd).pipe(
+          Effect.orElseSucceed(() => null),
+        ))?.gitCommonDir;
+        if (gitCommonDir === undefined) return null;
+        const configToken = yield* readConfigToken(gitCommonDir);
+        return { gitCommonDir, configToken, names: yield* readRemoteNames(cwd) };
+      }),
+    {
+      capacity: REPOSITORY_PATHS_CACHE_CAPACITY,
+      timeToLive: Exit.match({
+        onSuccess: (cached) => (cached === null ? Duration.zero : STATUS_ORIGIN_EXISTS_CACHE_TTL),
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
+  const listRemoteNames = Effect.fnUntraced(function* (
+    cwd: string,
+    gitDirArgs: ReadonlyArray<string> = [],
+  ) {
+    if (gitDirArgs.length > 0) return yield* readRemoteNames(cwd, gitDirArgs);
+    const cacheKey = normalizeRepositoryPathsCacheKey(cwd);
+    const cached = yield* Cache.get(remoteNamesCache, cacheKey);
+    if (cached === null) return yield* readRemoteNames(cwd);
+    const configToken = yield* readConfigToken(cached.gitCommonDir);
+    if (configToken !== null && configToken === cached.configToken) return cached.names;
+    yield* Cache.invalidate(remoteNamesCache, cacheKey);
+    return (yield* Cache.get(remoteNamesCache, cacheKey))?.names ?? (yield* readRemoteNames(cwd));
+  });
 
   // Only the destination remote's prefix is dropped; `alice/fix` pushed to origin keeps its full name.
   const resolvePublishBranchName = (branchName: string, remoteName: string) =>
@@ -2495,17 +2539,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { allowNonZeroExit: true },
       );
       if (effectiveConfig.exitCode !== 0 || effectiveConfig.stdoutTruncated) return null;
-      const statToken = (target: string) =>
-        fileSystem.stat(target).pipe(
-          Effect.map(
-            (info) =>
-              `${Option.getOrElse(info.ino, () => "")}:${info.size}:${Option.match(info.mtime, {
-                onNone: () => "",
-                onSome: (mtime) => mtime.getTime(),
-              })}`,
-          ),
-          Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("-")),
-        );
       const packedRefsPath = path.join(gitCommonDir, "packed-refs");
       const [packedToken, reftableToken] = yield* Effect.all(
         [statToken(packedRefsPath), statToken(path.join(gitCommonDir, "reftable", "tables.list"))],
@@ -5657,8 +5690,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : gitCommonDir;
     if (commonDir == null) return;
     yield* invalidateListRefsSnapshots(commonDir, currentListRefsGeneration(commonDir));
-    yield* Cache.invalidate(repositoryPathsRefreshCache, repositoryPathsCacheKey);
-    yield* Cache.invalidate(repositoryPathsCache, repositoryPathsCacheKey);
   });
 
   // Single-flight only: concurrent ref lists share one read, and none outlives a checkout.
@@ -5891,8 +5922,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     reason: string,
     remove: boolean,
   ) {
-    const commonDir = yield* readGitCommonDir(cwd);
-    if (commonDir === null) return;
+    const commonDir = (yield* resolveRepositoryPaths(cwd))?.gitCommonDir;
+    if (commonDir === undefined) return;
     const registrations = path.join(commonDir, "worktrees");
     const entries = yield* fileSystem.readDirectory(registrations).pipe(
       Effect.catchIf(
@@ -5943,7 +5974,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Worktrees.`,
         });
       }
-      const identity = `${yield* readGitCommonDir(input.cwd)}\0${targetBranch}`;
+      const identity = `${(yield* resolveRepositoryPaths(input.cwd))?.gitCommonDir ?? null}\0${targetBranch}`;
       const hash = yield* digest.digest(Digest.sha256, new TextEncoder().encode(identity));
       // UTF-8 bytes bound UTF-16 length too, leaving room for files on Windows.
       let prefix = "";
@@ -7091,26 +7122,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ]),
       ),
     );
-  const invalidateWorktreeCreationCaches = Effect.fn(
-    "GitVcsDriverCore.invalidateWorktreeCreationCaches",
-  )(function* (cwd: string) {
-    let gitCommonDir = yield* readGitCommonDir(cwd).pipe(
-      Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
-    );
-    if (gitCommonDir === null) {
-      gitCommonDir = yield* Cache.getOption(
-        repositoryPathsCache,
-        normalizeRepositoryPathsCacheKey(cwd),
-      ).pipe(
-        Effect.map((cached) => Option.getOrNull(cached)?.gitCommonDir ?? null),
-        Effect.orElseSucceed(() => null),
-      );
-    }
-    yield* Effect.all([
-      invalidateListRefsSnapshot(cwd, gitCommonDir).pipe(Effect.ignore),
-      invalidateStatusStaticCaches(cwd, gitCommonDir).pipe(Effect.ignore),
-    ]);
-  });
   const initRepoWithListRefsInvalidation: GitVcsDriver.GitVcsDriver["Service"]["initRepo"] = (
     input,
   ) =>
@@ -7154,9 +7165,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     resolveBranchName,
     listRefs,
     createWorktree: Effect.fnUntraced(function* (input, options) {
-      return yield* createWorktree(input, options).pipe(
-        Effect.ensuring(invalidateWorktreeCreationCaches(input.cwd)),
-      );
+      return yield* withListRefsInvalidation(input.cwd, createWorktree(input, options));
     }),
     clearWorktreeCheckoutCache: checkoutCache?.clear ?? Effect.void,
     fetchRefIntoBranch: Effect.fnUntraced(function* (input) {
