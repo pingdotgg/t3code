@@ -19,7 +19,7 @@ import {
   useThreadUndoNotice,
 } from "./thread-undo-notice";
 
-export function ThreadUndoNotice(props: { readonly visible: boolean }) {
+export function ThreadUndoNotice(props: { readonly visible: boolean; readonly bottom?: number }) {
   const gt = useGT();
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const notice = useThreadUndoNotice();
@@ -51,30 +51,32 @@ export function ThreadUndoNotice(props: { readonly visible: boolean }) {
     rootMetrics.horizontalSizeClass === "compact" &&
     workspace?.state.tabs.threads.searchMode === "resting";
   const bottom =
-    Platform.OS === "ios"
-      ? foldedResting
-        ? // Sit level with the rail's tab pill, which floats inside the bottom safe area.
-          Math.max(
-            rootMetrics.bottomBarInset ?? rootMetrics.safeArea.bottom + 8,
-            keyboardHeight + 8,
-          )
-        : rootMetrics?.hasHinge && rootMetrics.verticalBarEdge !== "none"
-          ? // The column's safe area already includes UIKit's search toolbar in this posture.
-            workspaceSearchBottomClearance({
-              bottomInset: rootMetrics.safeArea.bottom,
-              bottomBarInset: rootMetrics.bottomBarInset,
-              keyboardHeight,
-            }) -
-            16 +
-            8
-          : Math.max(
-              insets.bottom,
-              columnMetrics?.safeArea.bottom ?? 0,
-              (workspace?.bottomClearance ?? 0) - workspacePadding,
-            ) + 8
-      : floatingTabsEnabled && keyboardHeight === 0
-        ? Math.max(insets.bottom + 12, workspace?.bottomClearance ?? 0)
-        : insets.bottom + 12;
+    props.bottom !== undefined
+      ? props.bottom
+      : Platform.OS === "ios"
+        ? foldedResting
+          ? // Sit level with the rail's tab pill, which floats inside the bottom safe area.
+            Math.max(
+              rootMetrics.bottomBarInset ?? rootMetrics.safeArea.bottom + 8,
+              keyboardHeight + 8,
+            )
+          : rootMetrics?.hasHinge && rootMetrics.verticalBarEdge !== "none"
+            ? // The column's safe area already includes UIKit's search toolbar in this posture.
+              workspaceSearchBottomClearance({
+                bottomInset: rootMetrics.safeArea.bottom,
+                bottomBarInset: rootMetrics.bottomBarInset,
+                keyboardHeight,
+              }) -
+              16 +
+              8
+            : Math.max(
+                insets.bottom,
+                columnMetrics?.safeArea.bottom ?? 0,
+                (workspace?.bottomClearance ?? 0) - workspacePadding,
+              ) + 8
+        : floatingTabsEnabled && keyboardHeight === 0
+          ? Math.max(insets.bottom + 12, workspace?.bottomClearance ?? 0)
+          : insets.bottom + 12;
   return (
     <View
       key={instance.key}

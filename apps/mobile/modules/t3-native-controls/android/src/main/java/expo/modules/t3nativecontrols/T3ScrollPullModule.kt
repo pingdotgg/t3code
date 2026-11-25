@@ -27,11 +27,7 @@ class T3ScrollPullModule : Module() {
   }
 }
 
-/**
- * Reports how far a drag of the first descendant scroll view pulls past its end, in dp, and the
- * finger's speed in dp/ms when it lifts. Android shows that pull as a stretch and reports no
- * scroll offset for it. Touches pass through unchanged.
- */
+/** Reports a scroll view drag's pull past its end and sideways travel; touches pass through. */
 class T3ScrollPullView(
   context: Context,
   appContext: AppContext
@@ -42,6 +38,8 @@ class T3ScrollPullView(
   private var dragging = false
   private var lastY: Int? = null
   private var pull = 0
+  private var pullStartX: Float? = null
+  private var swing = 0f
   private var pulling = false
   private var multiTouch = false
   private var velocityTracker: VelocityTracker? = null
@@ -123,7 +121,7 @@ class T3ScrollPullView(
         // A stretch at the end takes the travel ScrollView could not scroll, and gives it back
         // before scrolling again, so the unscrolled travel is the pull.
         val unscrolled = previous - y - (target.scrollY - scrollYBefore)
-        update(if (target.canScrollVertically(1)) 0 else max(0, pull + unscrolled))
+        update(if (target.canScrollVertically(1)) 0 else max(0, pull + unscrolled), event.x)
       }
       MotionEvent.ACTION_POINTER_DOWN -> {
         end(released = false)
@@ -139,17 +137,24 @@ class T3ScrollPullView(
     }
   }
 
-  private fun update(next: Int) {
-    if (next == pull) return
+  private fun update(next: Int, x: Float) {
+    val density = resources.displayMetrics.density
+    val startX = pullStartX ?: x.takeIf { next > 0 }
+    pullStartX = startX
+    val nextSwing = startX?.let { (x - it) / density } ?: 0f
+    if (next == pull && (next == 0 || nextSwing == swing)) return
     pull = next
+    swing = nextSwing
     pulling = true
-    onPull(mapOf("distance" to next / resources.displayMetrics.density))
+    onPull(mapOf("distance" to next / density, "dx" to nextSwing))
   }
 
   private fun end(released: Boolean) {
     if (pulling) onPullEnd(mapOf("released" to released, "velocity" to fingerVelocity()))
     pulling = false
     pull = 0
+    pullStartX = null
+    swing = 0f
     lastY = null
   }
 

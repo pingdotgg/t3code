@@ -22,6 +22,8 @@ off **Settings → General → Use last project** to choose a project every time
 When you pick a project that is on more than one machine, the thread starts on
 a connected one if any is connected. In a thread, you can also keep pulling up past
 the end of the conversation and let go to start a new thread in that thread's project.
+Drag left while pulling to settle the thread instead, or right to snooze it with your first
+snooze preset. Drag back down before letting go to cancel.
 
 When you change a new thread's project, T3 Code stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
