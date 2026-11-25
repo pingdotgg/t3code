@@ -1044,6 +1044,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const highlightedProjectScopeKeyRef = useRef<string | null>(null);
   // Closing the picker from the shortcut skips Base UI's keyboard close, so it restores no focus itself.
   const projectScopeReturnFocusRef = useRef<HTMLElement | null>(null);
+  const projectScopeEscapeFocusRef = useRef<HTMLElement | null>(null);
   const projectScopeTriggerRef = useRef<HTMLButtonElement>(null);
   // Hold dropped rows until server placement is confirmed; block another pickup from replacing the hold.
   const [optimisticDrop, setOptimisticDrop] = useState<SidebarOptimisticDrop | null>(null);
@@ -2993,8 +2994,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         if (isMobile) setOpenMobile(true);
         else if (!sidebarOpen) setSidebarOpen(true);
         suppressNextScopeChangeRef.current = false;
+        projectScopeEscapeFocusRef.current = null;
+        const { activeElement } = document;
         projectScopeReturnFocusRef.current =
-          document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          activeElement instanceof HTMLElement && activeElement !== document.body
+            ? activeElement
+            : null;
         dispatchProjectScopeMenu({ type: "open-changed", open: true });
         return;
       }
@@ -3162,6 +3167,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   open={projectScopeMenuState.open}
                   onOpenChange={(open, eventDetails) => {
                     if (eventDetails.isCanceled) return;
+                    // Only Escape hands the shortcut's saved focus target to finalFocus.
+                    projectScopeEscapeFocusRef.current =
+                      eventDetails.reason === "escape-key"
+                        ? projectScopeReturnFocusRef.current
+                        : null;
                     projectScopeReturnFocusRef.current = null;
                     if (open) suppressNextScopeChangeRef.current = false;
                     dispatchProjectScopeMenu({ type: "open-changed", open });
@@ -3237,7 +3247,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     align="start"
                     collisionAvoidance={{ side: "flip", align: "shift" }}
                     className="w-[min(18rem,var(--available-width))] overflow-hidden"
-                    finalFocus={(closeType) => closeType === "keyboard"}
+                    finalFocus={(closeType) => {
+                      const returnFocus = projectScopeEscapeFocusRef.current;
+                      projectScopeEscapeFocusRef.current = null;
+                      if (!returnFocus) return closeType === "keyboard";
+                      if (isMobile || !returnFocus.isConnected) {
+                        return projectScopeTriggerRef.current;
+                      }
+                      // Base UI would move focus into a non-tabbable target's first tabbable child.
+                      returnFocus.focus();
+                      return false;
+                    }}
                     render={<TooltipScrollDismissArea holdPositionOnExit />}
                   >
                     <ComboboxSearchInput
