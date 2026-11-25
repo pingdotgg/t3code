@@ -10,6 +10,28 @@ import {
 } from "../../providerInstances";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 
+export type PendingThreadRelationshipStatus = "preparing" | "starting" | "queued" | "pending";
+
+export function isActiveThreadRelationshipStatus(status: string | null): boolean {
+  return (
+    status === "preparing" ||
+    status === "starting" ||
+    status === "queued" ||
+    status === "pending" ||
+    status === "running" ||
+    status === "in_progress" ||
+    status === "waiting"
+  );
+}
+
+export function isPendingThreadRelationshipStatus(
+  status: string | null,
+): status is PendingThreadRelationshipStatus {
+  return (
+    status === "preparing" || status === "starting" || status === "queued" || status === "pending"
+  );
+}
+
 export function threadRelationshipStatusLabel(
   status: string | null,
   resolve: MessageResolver = m,
@@ -94,10 +116,7 @@ export function ThreadRelationshipIcon({
         className={cn(
           "absolute -right-1 size-2 rounded-full border-2 border-card",
           anyInstanceBadge ? "-top-1" : "-bottom-1",
-          status === "running" ||
-            status === "in_progress" ||
-            status === "pending" ||
-            status === "waiting"
+          isActiveThreadRelationshipStatus(status)
             ? "bg-info"
             : status === "failed" || status === "error"
               ? "bg-destructive"

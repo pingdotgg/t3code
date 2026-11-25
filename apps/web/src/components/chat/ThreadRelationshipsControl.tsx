@@ -85,7 +85,12 @@ import { orchestrationEnvironment, threadTitlesRead } from "../../state/orchestr
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
 import { AgentElapsed } from "./AgentElapsed";
-import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
+import {
+  isActiveThreadRelationshipStatus,
+  isPendingThreadRelationshipStatus,
+  ThreadRelationshipIcon,
+  threadRelationshipStatusLabel,
+} from "./ThreadRelationshipIcon";
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
 import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import { openSideThread, resolveThreadOpenRoute } from "../../lib/sideChatPane";
@@ -312,7 +317,10 @@ function RemoteSubagentRow(props: {
     startedAt: props.agent.startedAt ? DateTime.formatIso(props.agent.startedAt) : null,
     completedAt: props.agent.completedAt ? DateTime.formatIso(props.agent.completedAt) : null,
   };
-  const showElapsed = !failed && deriveSubagentElapsedMs(timing, 0) !== null;
+  const showElapsed =
+    !failed &&
+    !isPendingThreadRelationshipStatus(status) &&
+    deriveSubagentElapsedMs(timing, 0) !== null;
   const title = relationshipThreadTitle({
     title: props.agent.title ?? gt("Subagent"),
     isSubagent: true,
@@ -670,8 +678,9 @@ export function ThreadRelationshipsPanel(props: {
   ];
   const runningCount =
     (projection?.subagents.filter(
-      (agent) => agent.childThreadId === null && agent.status === "running",
-    ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
+      (agent) => agent.childThreadId === null && isActiveThreadRelationshipStatus(agent.status),
+    ).length ?? 0) +
+    active.filter(({ edge }) => isActiveThreadRelationshipStatus(edge.status)).length;
 
   // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = currentThread?.delegatedFrom;
@@ -688,7 +697,9 @@ export function ThreadRelationshipsPanel(props: {
       // Disconnect lives in this heading, so a thread with only side chats still shows it.
       (canDetach && sideChats.length > 0));
   const sideChatsVisible = props.showSideChats && sideChats.length > 0;
-  const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
+  const runningSideChats = sideChats.filter(({ edge }) =>
+    isActiveThreadRelationshipStatus(edge.status),
+  ).length;
 
   if (!lineageVisible && !sideChatsVisible) {
     return null;
@@ -868,6 +879,7 @@ export function ThreadRelationshipsPanel(props: {
       isSideChat || (isSubagent && !isParent)
         ? trigger((intent) => openSideThreadRow(threadId, intent))
         : { onClick: () => openThread(threadId) };
+    const isPending = isPendingThreadRelationshipStatus(rowStatus);
     const RelationshipPopup = agent ? ThreadHoverCardPopup : TooltipPopup;
     const relationshipTooltip = agent ? (
       <SubagentTooltipContent
@@ -879,8 +891,8 @@ export function ThreadRelationshipsPanel(props: {
         provider={provider}
         providers={providers}
         driver={providerDriver}
-        elapsed={<AgentElapsed agent={agent} />}
-        status={agent.status}
+        elapsed={isPending ? null : <AgentElapsed agent={agent} />}
+        status={isPending ? rowStatus : agent.status}
         result={agent.result}
         progress={agent.progress}
         parentThread={currentThread ?? undefined}
@@ -908,7 +920,10 @@ export function ThreadRelationshipsPanel(props: {
         {agent ? null : (
           <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
         )}
-        {agent && !failed && (deriveSubagentElapsedMs(agent, 0) !== null || canStopWorkflow) ? (
+        {agent &&
+        !failed &&
+        !isPending &&
+        (deriveSubagentElapsedMs(agent, 0) !== null || canStopWorkflow) ? (
           <span
             className={`shrink-0 text-2xs font-normal tabular-nums text-muted-foreground ${canStopWorkflow ? "min-w-6 text-end" : ""} ${trailingVisibilityClass}`}
           >

@@ -1,6 +1,5 @@
 import type {
   OrchestrationV2ThreadShell,
-  OrchestrationV2TurnItemStatus,
   OrchestrationProjectShell,
   ServerProvider,
   ProviderDriverKind,
@@ -14,7 +13,7 @@ import {
 import { readSelectedEffortValue } from "@t3tools/client-runtime/state/thread-execution";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { getTraitsSpeedDisplay, TraitsSpeedIcon } from "./TraitsSpeed";
-import { useGT, useMessages } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 import type { ReactNode } from "react";
 import {
   BotIcon,
@@ -28,6 +27,11 @@ import {
 import { ThreadHoverCard } from "../ThreadHoverCard";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import {
+  isActiveThreadRelationshipStatus,
+  isPendingThreadRelationshipStatus,
+} from "./ThreadRelationshipIcon";
+import type { SubagentDisplayStatus } from "./V2LifecycleRow.logic";
 import { cn } from "~/lib/utils";
 import { deriveProviderInstanceEntries, shouldShowInstanceBadge } from "../../providerInstances";
 
@@ -47,7 +51,7 @@ export function SubagentTooltipContent(props: {
     | undefined;
   parentProject?: Pick<OrchestrationProjectShell, "workspaceRoot"> | undefined;
   childProject?: Pick<OrchestrationProjectShell, "id" | "title" | "workspaceRoot"> | undefined;
-  status: OrchestrationV2TurnItemStatus;
+  status: SubagentDisplayStatus;
   result?: string | null | undefined;
   progress?: string | null | undefined;
 }) {
@@ -65,7 +69,11 @@ export function SubagentTooltipContent(props: {
     props.parentThread !== undefined &&
     props.childProject !== undefined &&
     props.childProject.id !== props.parentThread.projectId;
-  const preview = subagentDetailPreview(props);
+  const preview = subagentDetailPreview({
+    status: isPendingThreadRelationshipStatus(props.status) ? "pending" : props.status,
+    result: props.result,
+    progress: props.progress,
+  });
   const providerModel = props.provider?.models.find((candidate) => candidate.slug === modelSlug);
   const childModel = props.provider
     ? (resolveSelectableModel(
@@ -122,7 +130,7 @@ export function SubagentTooltipContent(props: {
   const entries = deriveProviderInstanceEntries(props.providers ?? []);
   const entry = entries.find((candidate) => candidate.instanceId === props.provider?.instanceId);
   const showInstanceBadge = entry !== undefined && shouldShowInstanceBadge(entry, entries);
-  const working = ["running", "in_progress", "pending", "waiting"].includes(props.status);
+  const working = isActiveThreadRelationshipStatus(props.status);
   const failed = ["failed", "error"].includes(props.status);
   const StatusIcon = working
     ? CircleDashedIcon
@@ -177,23 +185,27 @@ export function SubagentTooltipContent(props: {
           )}
         >
           <StatusIcon aria-hidden className="size-3 shrink-0" />
-          {props.status === "idle"
-            ? gt("idle", { $context: "subagent status" })
-            : props.status === "pending"
-              ? gt("pending", { $context: "subagent status" })
-              : props.status === "running"
-                ? gt("running", { $context: "subagent status" })
-                : props.status === "waiting"
-                  ? gt("waiting", { $context: "subagent status" })
-                  : props.status === "completed"
-                    ? gt("completed", { $context: "subagent status" })
-                    : props.status === "failed"
-                      ? gt("failed", { $context: "subagent status" })
-                      : props.status === "cancelled"
-                        ? gt("cancelled", { $context: "subagent status" })
-                        : props.status === "interrupted"
-                          ? gt("interrupted", { $context: "subagent status" })
-                          : (props.status as string).replaceAll("_", " ")}
+          {props.status === "preparing" || props.status === "starting"
+            ? messages(msg("Starting", { $context: "agent status" }))
+            : props.status === "queued"
+              ? messages(msg("Queued", { $context: "agent status" }))
+              : props.status === "idle"
+                ? gt("idle", { $context: "subagent status" })
+                : props.status === "pending"
+                  ? gt("pending", { $context: "subagent status" })
+                  : props.status === "running"
+                    ? gt("running", { $context: "subagent status" })
+                    : props.status === "waiting"
+                      ? gt("waiting", { $context: "subagent status" })
+                      : props.status === "completed"
+                        ? gt("completed", { $context: "subagent status" })
+                        : props.status === "failed"
+                          ? gt("failed", { $context: "subagent status" })
+                          : props.status === "cancelled"
+                            ? gt("cancelled", { $context: "subagent status" })
+                            : props.status === "interrupted"
+                              ? gt("interrupted", { $context: "subagent status" })
+                              : (props.status as string).replaceAll("_", " ")}
         </span>
         {props.elapsed}
       </div>

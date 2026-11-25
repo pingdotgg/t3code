@@ -594,3 +594,63 @@ it.each([1, 18])("continues scrolling the panel past a list of %i subagents", as
   await userEvent.wheel(list, { delta: { y: 300 } });
   await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
 });
+
+it("shows a subagent whose child has not started yet as starting, not as an idle timer", async () => {
+  setup();
+  using _timers = fakeTimers();
+  vi.setSystemTime(new Date("2026-11-23T12:08:00.000Z"));
+  const startedAt = DateTime.makeUnsafe("2026-11-23T12:00:00.000Z");
+  const projection = makeThreadProjectionFixture();
+  const childThreadId = ThreadId.make("starting-child");
+  state.projection = {
+    ...projection,
+    subagents: [
+      {
+        id: NodeId.make("starting-agent"),
+        threadId: projection.thread.id,
+        runId: null,
+        parentNodeId: NodeId.make("parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: "codex",
+        providerInstanceId: "codex",
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Review the diff",
+        title: "Review the diff",
+        model: null,
+        status: "running",
+        result: null,
+        startedAt,
+        completedAt: null,
+        updatedAt: startedAt,
+      },
+    ],
+  };
+  state.relatedShells = [
+    {
+      id: childThreadId,
+      title: "Review the diff",
+      forkedFrom: null,
+      lineage: { parentThreadId: projection.thread.id, relationshipToParent: "subagent" },
+      activityRunStatus: "starting",
+      status: "running",
+    },
+  ];
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+
+  // Assert synchronously: expect.element polls on timers this test fakes.
+  const row = screen.getByRole("button", { name: /^Review the diff/ }).element();
+  expect(row.textContent).toContain("Starting");
+  expect(row.textContent).not.toContain("8m");
+  expect(row.querySelector(".bg-info")).not.toBeNull();
+  expect(screen.getByText("Lineage · 1 running", { exact: true }).element()).toBeTruthy();
+});

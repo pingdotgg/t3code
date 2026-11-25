@@ -111,9 +111,11 @@ export function deriveThreadRelationshipGraph(input: {
         kind: "subagent",
         status:
           child?.activityRunStatus ??
-          (child?.latestRunId != null && !isOrchestrationV2WorkActive(subagent.status)
-            ? child.status
-            : subagent.status),
+          (child?.status === "queued"
+            ? "queued"
+            : child?.latestRunId != null && !isOrchestrationV2WorkActive(subagent.status)
+              ? child.status
+              : subagent.status),
       });
     }
     for (const transfer of input.projection.contextTransfers) {
