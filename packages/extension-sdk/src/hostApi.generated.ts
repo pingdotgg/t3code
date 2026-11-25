@@ -561,6 +561,7 @@ export type Wire58 = {
   readonly claudeAttachmentBudget?:
     | { readonly bytesUsed: number; readonly pagesUsed: number }
     | undefined;
+  readonly claudeDeliveredAppContext?: { readonly [x: string]: string } | undefined;
 };
 
 export type Wire59 = Wire52 | undefined;
