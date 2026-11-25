@@ -906,6 +906,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
     assertCanPostInThread: () => Effect.void,
     assertCanCreateGuestShare: () => Effect.void,
     assertCanUseWorkflows: () => Effect.void,
+    assertCanUseScheduledTasks: () => Effect.void,
     recordThreadCreated: () => Effect.void,
     recordTurnAuthored: () => Effect.void,
   }),

@@ -465,10 +465,11 @@ export class SessionStore extends Context.Service<
       SessionCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
-    /** Completes when a live socket's session is revoked or expires without a renewal for its DPoP key. */
+    /** Completes when a live socket's session is revoked, its scopes change, or it expires without a renewal for its DPoP key. */
     readonly awaitInvalidation: (
       sessionId: AuthSessionId,
       proofKeyThumbprint?: string,
+      expectedScopes?: ReadonlyArray<AuthEnvironmentScope>,
     ) => Effect.Effect<void, SessionCredentialVerificationError>;
     readonly revoke: (
       sessionId: AuthSessionId,
@@ -1284,6 +1285,7 @@ const make = Effect.gen(function* () {
   const awaitInvalidation = Effect.fn(function* (
     sessionId: AuthSessionId,
     proofKeyThumbprint?: string,
+    expectedScopes?: ReadonlyArray<AuthEnvironmentScope>,
   ) {
     return yield* Effect.scoped(
       Effect.gen(function* () {
@@ -1299,6 +1301,7 @@ const make = Effect.gen(function* () {
             );
         const original = yield* readRow(sessionId);
         if (Option.isNone(original)) return;
+        const baselineScopes = expectedScopes ?? original.value.scopes;
         // Media tickets carry no proof key, so their streams follow the session's own.
         const renewalKey =
           proofKeyThumbprint ??
@@ -1324,7 +1327,7 @@ const make = Effect.gen(function* () {
             if (
               change.type === "clientUpserted" &&
               chain.includes(change.clientSession.sessionId) &&
-              !hasSameScopes(original.value.scopes, change.clientSession.scopes)
+              !hasSameScopes(baselineScopes, change.clientSession.scopes)
             ) {
               return;
             }
@@ -1338,7 +1341,7 @@ const make = Effect.gen(function* () {
               (row) =>
                 Option.isNone(row) ||
                 row.value.revokedAt !== null ||
-                !hasSameScopes(original.value.scopes, row.value.scopes),
+                !hasSameScopes(baselineScopes, row.value.scopes),
             )
           ) {
             return;
@@ -1369,7 +1372,7 @@ const make = Effect.gen(function* () {
           if (
             Option.isNone(successor) ||
             successor.value.subject !== original.value.subject ||
-            !original.value.scopes.every((scope) => successor.value.scopes.includes(scope))
+            !baselineScopes.every((scope) => successor.value.scopes.includes(scope))
           ) {
             return;
           }

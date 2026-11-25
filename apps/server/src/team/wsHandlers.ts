@@ -1,5 +1,6 @@
 import {
   TEAM_WS_METHODS,
+  ThreadId,
   type AssetResource,
   type AuthSessionId,
   type EnvironmentAuthorizationError,
@@ -8,9 +9,11 @@ import {
   type OrchestrationV2SearchThreadsResult,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ShellStreamItem,
+  type PreviewEvent,
   type TeamViewId,
-  type ThreadId,
+  type TerminalMetadataStreamEvent,
 } from "@t3tools/contracts";
+import { derive as deriveOrchestrationId } from "@t3tools/provider-core/server/IdAllocator";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
@@ -283,8 +286,73 @@ export const prepareTeamDispatchAttribution = (
       })
       .pipe(Effect.map((prepared) => (prepared ? command.targetThreadId : null)));
   }
+  if (command.type === "delegated_task.request") {
+    const childThreadId = deriveOrchestrationId.delegatedTaskThread({
+      commandId: command.commandId,
+    });
+    return teamService
+      .prepareThreadInheritedFromParent({
+        parentThreadId: command.parentThreadId,
+        threadId: childThreadId,
+        creatorSessionId: sessionId,
+      })
+      .pipe(Effect.map((prepared) => (prepared ? childThreadId : null)));
+  }
   return Effect.succeed(null);
 };
+
+export const filterTerminalMetadataStreamForSession = <E, R>(
+  teamService: TeamService.TeamService["Service"],
+  sessionId: AuthSessionId,
+  stream: Stream.Stream<TerminalMetadataStreamEvent, E, R>,
+): Stream.Stream<TerminalMetadataStreamEvent, E, R> =>
+  stream.pipe(
+    Stream.mapEffect((event) =>
+      Effect.gen(function* () {
+        if (!(yield* teamService.isTeamConfigured())) {
+          return event;
+        }
+        if (event.type === "snapshot") {
+          if (event.terminals.length === 0) return event;
+          const readableIds = yield* teamService.filterReadableThreadIds(
+            sessionId,
+            event.terminals.map((terminal) => ThreadId.make(terminal.threadId)),
+          );
+          return {
+            ...event,
+            terminals: event.terminals.filter((terminal) =>
+              readableIds.has(ThreadId.make(terminal.threadId)),
+            ),
+          } satisfies TerminalMetadataStreamEvent;
+        }
+        const threadId =
+          event.type === "upsert"
+            ? ThreadId.make(event.terminal.threadId)
+            : ThreadId.make(event.threadId);
+        const readable = yield* teamService.canReadThread(sessionId, threadId);
+        return readable ? event : null;
+      }),
+    ),
+    Stream.filter((event): event is TerminalMetadataStreamEvent => event !== null),
+  );
+
+export const filterPreviewEventsStreamForSession = <E, R>(
+  teamService: TeamService.TeamService["Service"],
+  sessionId: AuthSessionId,
+  stream: Stream.Stream<PreviewEvent, E, R>,
+): Stream.Stream<PreviewEvent, E, R> =>
+  stream.pipe(
+    Stream.mapEffect((event) =>
+      Effect.gen(function* () {
+        if (!(yield* teamService.isTeamConfigured())) {
+          return event;
+        }
+        const readable = yield* teamService.canReadThread(sessionId, ThreadId.make(event.threadId));
+        return readable ? event : null;
+      }),
+    ),
+    Stream.filter((event): event is PreviewEvent => event !== null),
+  );
 
 /**
  * Guards any thread-scoped stream (`subscribeThread`, `subscribeCommandOutput`,

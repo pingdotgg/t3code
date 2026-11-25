@@ -1496,6 +1496,13 @@ describe("TeamService", () => {
         const danaVerifiedAfterDemote = yield* sessions.verify(danaRedeemed.accessToken);
         expect(danaVerifiedAfterDemote.scopes).not.toContain(AuthAccessWriteScope);
 
+        // 1b. Bootstrap race: demotion landing BEFORE awaitInvalidation starts still invalidates immediately when expectedScopes are passed.
+        yield* sessions.awaitInvalidation(
+          danaVerifiedBefore.sessionId,
+          "jkt-dana",
+          danaVerifiedBefore.scopes,
+        );
+
         // 2. Promoting Bob (regular -> admin) broadens DB session scopes AND triggers awaitInvalidation.
         const bobInvalidationFiber = yield* Effect.forkChild(
           sessions.awaitInvalidation(bobVerifiedBefore.sessionId, "jkt-bob"),
@@ -1574,7 +1581,7 @@ describe("TeamService", () => {
           expect(bobStateEvents[1].payload.threadId).toBe(visibleDefaultThreadId);
         }
 
-        // 5. Guest share & workflow guards.
+        // 5. Guest share, workflow, and scheduled-task guards.
         expect(
           (yield* Effect.exit(
             team.assertCanCreateGuestShare(bobVerifiedBefore.sessionId, unseenSecretThreadId),
@@ -1585,6 +1592,10 @@ describe("TeamService", () => {
           (yield* Effect.exit(team.assertCanUseWorkflows(bobVerifiedBefore.sessionId)))._tag,
         ).toBe("Failure");
         yield* team.assertCanUseWorkflows(aliceSession.sessionId);
+        expect(
+          (yield* Effect.exit(team.assertCanUseScheduledTasks(bobVerifiedBefore.sessionId)))._tag,
+        ).toBe("Failure");
+        yield* team.assertCanUseScheduledTasks(aliceSession.sessionId);
 
         // 6. thread.delete restriction: colleague cannot delete Alice's thread even in Default View.
         const bobDeleteAliceExit = yield* Effect.exit(
@@ -1626,6 +1637,28 @@ describe("TeamService", () => {
         ]);
         expect(filteredIds.has(unattributedPostTeamId)).toBe(false);
         expect(filteredIds.has(visibleDefaultThreadId)).toBe(true);
+
+        // 8b. MCP child of a pre-team legacy parent thread gets Default View attribution so regular members can read it.
+        const sql = yield* SqlClient.SqlClient;
+        const legacyParentId = ThreadId.make("thread-legacy-parent-for-mcp");
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_threads (
+            thread_id, project_id, title, default_provider, runtime_mode,
+            interaction_mode, active_provider_thread_id, created_at, updated_at,
+            archived_at, deleted_at, payload_json
+          ) VALUES (
+            ${legacyParentId}, 'proj-legacy', 'Legacy parent', 'codex', 'full-access',
+            'default', NULL, '1969-12-31T23:59:59.000Z', '1969-12-31T23:59:59.000Z',
+            NULL, NULL, '{}'
+          )
+        `;
+        const legacyMcpChildId = ThreadId.make("thread-legacy-mcp-child");
+        const preparedLegacyChild = yield* team.prepareThreadInheritedFromParent({
+          parentThreadId: legacyParentId,
+          threadId: legacyMcpChildId,
+        });
+        expect(preparedLegacyChild).toBe(true);
+        expect(yield* team.canReadThread(bobVerifiedBefore.sessionId, legacyMcpChildId)).toBe(true);
 
         // 9. Suspending Dana revokes her session (and DPoP key) immediately.
         yield* team.updateMemberStatus({

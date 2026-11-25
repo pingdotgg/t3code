@@ -5,7 +5,11 @@ import {
   AuthStandardClientScopes,
   CommandId,
   EnvironmentId,
+  NodeId,
+  PreviewTabId,
   ProjectId,
+  ProviderInstanceId,
+  RunId,
   ThreadId,
   type AuthClientMetadata,
   type OrchestrationV2SearchThreadsResult,
@@ -13,6 +17,8 @@ import {
   type OrchestrationV2ShellStreamItem,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadStreamItem,
+  type PreviewEvent,
+  type TerminalMetadataStreamEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -33,8 +39,10 @@ import * as TeamRepository from "./TeamRepository.ts";
 import * as TeamService from "./TeamService.ts";
 import {
   assertCanReadAssetResource,
+  filterPreviewEventsStreamForSession,
   filterSearchThreadsResultForSession,
   filterShellSnapshotForSession,
+  filterTerminalMetadataStreamForSession,
   filterThreadRecordByReadableIds,
   guardThreadScopedStreamForSession,
   prepareTeamDispatchAttribution,
@@ -363,6 +371,118 @@ describe("Team WS access enforcement helpers", () => {
         expect(prepared).toBe(forkedThreadId);
         expect(yield* team.canReadThread(bobSession.sessionId, forkedThreadId)).toBe(false);
         expect(yield* team.canReadThread(aliceSession.sessionId, forkedThreadId)).toBe(true);
+
+        // prepareTeamDispatchAttribution on delegated_task.request inherits restricted Staff Only view.
+        const delegatedChildId = yield* prepareTeamDispatchAttribution(
+          team,
+          aliceSession.sessionId,
+          {
+            type: "delegated_task.request",
+            commandId: CommandId.make("cmd-delegate-1"),
+            parentThreadId: threadId,
+            parentRunId: RunId.make("run-parent-1"),
+            parentNodeId: NodeId.make("node-parent-1"),
+            task: "Investigate restricted issue",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            completionWake: "always",
+            createdBy: "user",
+            creationSource: "web",
+          },
+        );
+        expect(delegatedChildId).not.toBeNull();
+        expect(yield* team.canReadThread(bobSession.sessionId, delegatedChildId!)).toBe(false);
+        expect(yield* team.canReadThread(aliceSession.sessionId, delegatedChildId!)).toBe(true);
+
+        // Global terminal metadata and preview event streams filter out restricted threads for Bob.
+        const visibleThreadId = ThreadId.make("thread-visible-meta");
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: visibleThreadId,
+        });
+        const terminalEvents: ReadonlyArray<TerminalMetadataStreamEvent> = [
+          {
+            type: "snapshot",
+            terminals: [
+              {
+                threadId,
+                terminalId: "term-secret",
+                cwd: "/secret/repo",
+                worktreePath: null,
+                status: "running",
+                pid: 101,
+                exitCode: null,
+                exitSignal: null,
+                hasRunningSubprocess: false,
+                label: "secret shell",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              },
+              {
+                threadId: visibleThreadId,
+                terminalId: "term-public",
+                cwd: "/public/repo",
+                worktreePath: null,
+                status: "running",
+                pid: 102,
+                exitCode: null,
+                exitSignal: null,
+                hasRunningSubprocess: false,
+                label: "public shell",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          },
+          { type: "remove", threadId, terminalId: "term-secret" },
+          { type: "remove", threadId: visibleThreadId, terminalId: "term-public" },
+        ];
+        const bobTerminalEvents = yield* Stream.runCollect(
+          filterTerminalMetadataStreamForSession(
+            team,
+            bobSession.sessionId,
+            Stream.fromIterable(terminalEvents),
+          ),
+        );
+        expect(bobTerminalEvents).toHaveLength(2);
+        expect(bobTerminalEvents[0]).toMatchObject({
+          type: "snapshot",
+          terminals: [{ threadId: visibleThreadId, terminalId: "term-public" }],
+        });
+        expect(bobTerminalEvents[1]).toEqual({
+          type: "remove",
+          threadId: visibleThreadId,
+          terminalId: "term-public",
+        });
+
+        const previewEvents: ReadonlyArray<PreviewEvent> = [
+          {
+            type: "closed",
+            threadId,
+            tabId: PreviewTabId.make("tab-secret"),
+            createdAt: "2026-01-01T00:00:00.000Z",
+            serverEpoch: "epoch-1",
+            revision: 1,
+          },
+          {
+            type: "closed",
+            threadId: visibleThreadId,
+            tabId: PreviewTabId.make("tab-public"),
+            createdAt: "2026-01-01T00:00:00.000Z",
+            serverEpoch: "epoch-1",
+            revision: 2,
+          },
+        ];
+        const bobPreviewEvents = yield* Stream.runCollect(
+          filterPreviewEventsStreamForSession(
+            team,
+            bobSession.sessionId,
+            Stream.fromIterable(previewEvents),
+          ),
+        );
+        expect(bobPreviewEvents.map((event) => event.threadId)).toEqual([visibleThreadId]);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });

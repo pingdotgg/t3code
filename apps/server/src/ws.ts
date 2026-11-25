@@ -309,8 +309,10 @@ import { requestUrl } from "./requestUrl.ts";
 import * as TeamService from "./team/TeamService.ts";
 import {
   assertCanReadAssetResource,
+  filterPreviewEventsStreamForSession,
   filterSearchThreadsResultForSession,
   filterShellSnapshotForSession,
+  filterTerminalMetadataStreamForSession,
   filterThreadRecordByReadableIds,
   guardThreadScopedStreamForSession,
   makeTeamWsRpcHandlers,
@@ -2213,7 +2215,9 @@ export const layerWsRpc = (
             .assertCanPostInThread(currentSessionId, input.threadId)
             .pipe(Effect.andThen(threadManagement.forceStopThread(input))),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
-          readWorkflowScript({ scriptPath: input.scriptPath }),
+          teamService
+            .assertCanUseWorkflows(currentSessionId)
+            .pipe(Effect.andThen(readWorkflowScript({ scriptPath: input.scriptPath }))),
         [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: (input) =>
           teamService
             .assertCanReadThread(currentSessionId, input.threadId)
@@ -2703,22 +2707,35 @@ export const layerWsRpc = (
             .assertCanUseWorkflows(currentSessionId)
             .pipe(Effect.andThen(workflowDefinitions.remove(input.name))),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
-          scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
-        [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
+          Stream.unwrap(
+            teamService
+              .assertCanUseScheduledTasks(currentSessionId)
+              .pipe(
+                Effect.as(scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls))),
+              ),
+          ),
+        [WS_METHODS.scheduledTasksUpsert]: (input) =>
+          teamService
+            .assertCanUseScheduledTasks(currentSessionId)
+            .pipe(Effect.andThen(scheduledTasks.upsert(input))),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
             Effect.andThen(scheduledTasks.setEnabled(input)),
           ),
         [WS_METHODS.scheduledTasksDelete]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
             Effect.andThen(scheduledTasks.delete(input)),
           ),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
             Effect.andThen(scheduledTasks.runNow(input)),
           ),
         [WS_METHODS.scheduledTasksRotateWebhookToken]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
             Effect.andThen(scheduledTasks.rotateWebhookToken(input)),
           ),
         [WS_METHODS.guestShareCreate]: (input) =>
@@ -2731,13 +2748,19 @@ export const layerWsRpc = (
             Effect.andThen(teamService.assertCanPostInThread(currentSessionId, input.threadId)),
             Effect.andThen(secretRequests.answer(input)),
           ),
-        [WS_METHODS.agentFeedbackAnswerRequest]: (input) => feedbackStore.answer(input),
+        [WS_METHODS.agentFeedbackAnswerRequest]: (input) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(teamService.assertCanPostInThread(currentSessionId, input.threadId)),
+            Effect.andThen(feedbackStore.answer(input)),
+          ),
         [WS_METHODS.scheduledTasksListWebhookDeliveries]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
             Effect.andThen(scheduledTasks.listWebhookDeliveries(input)),
           ),
         [WS_METHODS.scheduledTasksGetWebhookDelivery]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
             Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
           ),
         [WS_METHODS.serverProbe]: (_input) =>
@@ -2956,10 +2979,27 @@ export const layerWsRpc = (
                 }),
             };
           }),
-        [WS_METHODS.mcpAppsCallTool]: (input) => mcpAppRequests.callTool(input),
-        [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),
-        [WS_METHODS.mcpAppsUpdateModelContext]: (input) => mcpAppRequests.updateModelContext(input),
-        [WS_METHODS.mcpAppsReadResource]: (input) => mcpAppRequests.readResource(input),
+        [WS_METHODS.mcpAppsCallTool]: (input) =>
+          teamService
+            .assertCanPostInThread(currentSessionId, input.threadId)
+            .pipe(Effect.andThen(mcpAppRequests.callTool(input))),
+        [WS_METHODS.mcpAppsToolInfo]: (input) =>
+          teamService
+            .assertCanReadThread(currentSessionId, input.threadId)
+            .pipe(Effect.andThen(mcpAppRequests.toolInfo(input))),
+        [WS_METHODS.mcpAppsUpdateModelContext]: (input) =>
+          teamService
+            .assertCanReadThread(currentSessionId, input.threadId)
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanPostInThread(currentSessionId, input.conversationThreadId),
+              ),
+              Effect.andThen(mcpAppRequests.updateModelContext(input)),
+            ),
+        [WS_METHODS.mcpAppsReadResource]: (input) =>
+          teamService
+            .assertCanReadThread(currentSessionId, input.threadId)
+            .pipe(Effect.andThen(mcpAppRequests.readResource(input))),
         [WS_METHODS.providerMcpSignInStart]: (input) => mcpSignIn.start(input),
         [WS_METHODS.providerMcpSignInComplete]: (input) => mcpSignIn.complete(input),
         [WS_METHODS.providerUploadFeedback]:
@@ -3844,10 +3884,14 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.subscribeTerminalMetadata]: (_input) =>
-          Stream.callback<TerminalMetadataStreamEvent>((queue) =>
-            Effect.acquireRelease(
-              terminalManager.subscribeMetadata((event) => Queue.offer(queue, event)),
-              (unsubscribe) => Effect.sync(unsubscribe),
+          filterTerminalMetadataStreamForSession(
+            teamService,
+            currentSessionId,
+            Stream.callback<TerminalMetadataStreamEvent>((queue) =>
+              Effect.acquireRelease(
+                terminalManager.subscribeMetadata((event) => Queue.offer(queue, event)),
+                (unsubscribe) => Effect.sync(unsubscribe),
+              ),
             ),
           ),
         [WS_METHODS.previewOpen]: (input) =>
@@ -3876,7 +3920,8 @@ export const layerWsRpc = (
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
             .pipe(Effect.andThen(previewManager.reportStatus(input))),
-        [WS_METHODS.subscribePreviewEvents]: (_input) => previewManager.events,
+        [WS_METHODS.subscribePreviewEvents]: (_input) =>
+          filterPreviewEventsStreamForSession(teamService, currentSessionId, previewManager.events),
         [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),
@@ -4358,13 +4403,15 @@ export const layer = Layer.unwrap(
           () =>
             Effect.raceFirst(
               framedRpcWebSocketHttpEffect,
-              sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint).pipe(
-                Effect.as(HttpServerResponse.empty()),
-                Effect.catchTags({
-                  SessionCredentialVerificationError: (error) =>
-                    failEnvironmentInternal("internal_error", error),
-                }),
-              ),
+              sessions
+                .awaitInvalidation(session.sessionId, session.proofKeyThumbprint, session.scopes)
+                .pipe(
+                  Effect.as(HttpServerResponse.empty()),
+                  Effect.catchTags({
+                    SessionCredentialVerificationError: (error) =>
+                      failEnvironmentInternal("internal_error", error),
+                  }),
+                ),
             ),
           () => sessions.markDisconnected(session.sessionId),
         );

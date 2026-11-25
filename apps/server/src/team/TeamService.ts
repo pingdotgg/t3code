@@ -312,6 +312,9 @@ export class TeamService extends Context.Service<
     readonly assertCanUseWorkflows: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertCanUseScheduledTasks: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
     readonly followThread: (input: {
       readonly sessionId: AuthSessionId;
       readonly payload: TeamThreadFollowInput;
@@ -1991,6 +1994,48 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const assertCanUseScheduledTasks = Effect.fn("TeamService.assertCanUseScheduledTasks")(function* (
+    sessionId: AuthSessionId,
+  ) {
+    const workspaceOption = yield* repository.getWorkspace().pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.assertCanUseScheduledTasks workspace lookup failed", {
+          cause,
+        }),
+      ),
+      Effect.mapError(() =>
+        teamAdminAuthError(
+          "Only owner and admin members can manage team scheduled tasks.",
+          "team:scheduled_tasks",
+        ),
+      ),
+    );
+    if (Option.isNone(workspaceOption)) {
+      return;
+    }
+    const memberOption = yield* repository.getMemberForSession(sessionId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.assertCanUseScheduledTasks member lookup failed", { cause }),
+      ),
+      Effect.mapError(() =>
+        teamAdminAuthError(
+          "Only owner and admin members can manage team scheduled tasks.",
+          "team:scheduled_tasks",
+        ),
+      ),
+    );
+    const member =
+      Option.isSome(memberOption) && memberOption.value.teamId === workspaceOption.value.id
+        ? memberOption.value
+        : null;
+    if (!isTeamAdminOrOwner(member)) {
+      return yield* teamAdminAuthError(
+        "Only owner and admin members can manage team scheduled tasks.",
+        "team:scheduled_tasks",
+      );
+    }
+  });
+
   const assertCanCreateThreadInView = Effect.fn("TeamService.assertCanCreateThreadInView")(
     function* (input: {
       readonly sessionId: AuthSessionId;
@@ -2812,7 +2857,22 @@ const make = Effect.gen(function* () {
         creatorMemberId = actorOption.value.id;
       }
       if (creatorMemberId === null) {
-        return false;
+        // Pre-team legacy parents legitimately lack attribution; anchor their MCP children to Default View.
+        const parentCreatedAt = yield* repository.getThreadCreatedAtInProjection(
+          input.parentThreadId,
+        );
+        if (!isPreTeamLegacyTimestamp(team, Option.getOrUndefined(parentCreatedAt))) {
+          return false;
+        }
+        const members = yield* repository.listMembers(team.id);
+        const activeOwner = members.find(
+          (member) => member.role === "owner" && member.status === "active",
+        );
+        if (!activeOwner) {
+          return false;
+        }
+        creatorMemberId = activeOwner.id;
+        viewId = team.defaultViewId;
       }
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       const inserted = yield* repository.recordThreadAttribution({
@@ -2926,14 +2986,43 @@ const make = Effect.gen(function* () {
         ),
         Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()),
       );
-      if (Option.isNone(parentAttribution)) return;
+      let inheritedCreatorMemberId: TeamMemberId;
+      let inheritedCreatorPseudo: TeamPseudo;
+      let inheritedViewId: TeamViewId;
+      if (
+        Option.isSome(parentAttribution) &&
+        parentAttribution.value.teamId === workspaceOption.value.id
+      ) {
+        inheritedCreatorMemberId = parentAttribution.value.creatorMemberId;
+        inheritedCreatorPseudo = parentAttribution.value.creatorPseudo;
+        inheritedViewId = parentAttribution.value.viewId;
+      } else {
+        const parentCreatedAt = yield* repository
+          .getThreadCreatedAtInProjection(input.parentThreadId)
+          .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+        if (
+          !isPreTeamLegacyTimestamp(workspaceOption.value, Option.getOrUndefined(parentCreatedAt))
+        ) {
+          return;
+        }
+        const members = yield* repository
+          .listMembers(workspaceOption.value.id)
+          .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamMember>));
+        const activeOwner = members.find(
+          (member) => member.role === "owner" && member.status === "active",
+        );
+        if (!activeOwner) return;
+        inheritedCreatorMemberId = activeOwner.id;
+        inheritedCreatorPseudo = activeOwner.pseudo;
+        inheritedViewId = workspaceOption.value.defaultViewId;
+      }
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       const attribution = yield* repository
         .recordThreadAttribution({
           threadId: input.threadId,
           teamId: workspaceOption.value.id,
-          creatorMemberId: parentAttribution.value.creatorMemberId,
-          viewId: parentAttribution.value.viewId,
+          creatorMemberId: inheritedCreatorMemberId,
+          viewId: inheritedViewId,
           createdAt: nowIso,
         })
         .pipe(
@@ -2958,7 +3047,7 @@ const make = Effect.gen(function* () {
           .recordTurnAttribution({
             turnId: input.turnId,
             threadId: input.threadId,
-            authorMemberId: parentAttribution.value.creatorMemberId,
+            authorMemberId: inheritedCreatorMemberId,
             createdAt: nowIso,
           })
           .pipe(
@@ -2978,8 +3067,8 @@ const make = Effect.gen(function* () {
             payload: {
               turnId: input.turnId,
               threadId: input.threadId,
-              authorMemberId: parentAttribution.value.creatorMemberId,
-              authorPseudo: parentAttribution.value.creatorPseudo,
+              authorMemberId: inheritedCreatorMemberId,
+              authorPseudo: inheritedCreatorPseudo,
               createdAt: nowIso,
             },
           });
@@ -3019,6 +3108,7 @@ const make = Effect.gen(function* () {
     assertCanDispatchCommand,
     assertCanCreateGuestShare,
     assertCanUseWorkflows,
+    assertCanUseScheduledTasks,
     followThread,
     unfollowThread,
     listFollowedThreads,
