@@ -12530,7 +12530,7 @@
   "7755500a4cde5066": "Stäng panelen",
   "b8dcbc93a2ca1861": "Körningen listar det inte längre.",
   "115c69de3202f664": "Öppna",
-  "644eafa9048b62df": "{count, plural, =1 {1:a försöket} =2 {2:a försöket} =3 {3:e försöket} other {försök {count}}}",
+  "a2bbf464a3be4882": "{count, plural, =1 {1:a försöket} =2 {2:a försöket} =3 {3:e försöket} other {försök {count}}}",
   "e39f89c909df4db0": "Kunde inte återuppta körningen",
   "865f034346b82f47": "Avbryta {title}? Dess agenter stoppas och körningen kan inte återupptas.",
   "6bc75632fd9c9136": "Kunde inte avbryta körningen",
