@@ -201,7 +201,7 @@ function turnFailure(
       failure: makeProviderFailure({
         class: "provider_error",
         message:
-          "Antigravity's saved conversation can no longer be sent to the model. The next message starts a fresh Antigravity session with this thread's context.",
+          "Antigravity's saved conversation can no longer be sent to the model. Once any background work finishes, the next message starts a fresh Antigravity session with this thread's context.",
         code: step?.repeatedMediaError ? "INVALID_ARGUMENT" : "INVALID_THINKING_SIGNATURE",
         retryable: true,
       }),

@@ -74,6 +74,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
+import { SessionReplacementBackgroundWorkError } from "@t3tools/provider-core/server/failure";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeAcpMcpOverAcpBridge, type AcpMcpOverAcpBridge } from "./mcpOverAcpBridge.ts";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
@@ -10386,11 +10387,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     const pendingWork = yield* (
                       sessionRuntime.hasPendingBackgroundWork ?? Effect.succeed(false)
                     );
-                    if (currentTurn !== null || pendingWork)
+                    if (pendingWork) return yield* new SessionReplacementBackgroundWorkError();
+                    if (currentTurn !== null)
                       return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                         driver,
-                        detail:
-                          "Cannot replace ACP session while a turn or background work is active",
+                        detail: "Cannot replace ACP session while a turn is active",
                       });
                     yield* awaitRuntimeTeardown();
                     const previousItemIdentityVersion = itemIdentityVersion;
