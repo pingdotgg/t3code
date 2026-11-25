@@ -15,6 +15,20 @@ export const WorkflowRunStatus = Schema.Literals([
 ]);
 export type WorkflowRunStatus = typeof WorkflowRunStatus.Type;
 
+/**
+ * The one thing a run is about, as the workflow declared it: an issue, a pull request, a thread
+ * or a web address. Its `kind`, `key` and `address` read as a `WorkflowRunReference`'s.
+ */
+export const WorkflowRunSubject = Schema.Struct({
+  kind: Schema.String,
+  key: Schema.String,
+  address: Schema.Json,
+  /** Empty until something that touched it knew its title. */
+  title: Schema.String,
+  url: Schema.NullOr(Schema.String),
+});
+export type WorkflowRunSubject = typeof WorkflowRunSubject.Type;
+
 export const WorkflowRun = Schema.Struct({
   runId: Schema.String,
   workflow: Schema.String,
@@ -36,6 +50,8 @@ export const WorkflowRun = Schema.Struct({
   parentStep: Schema.NullOr(Schema.String),
   /** What the workflow tagged the run with, for filtering. Absent for a run with no tags. */
   tags: Schema.optional(Schema.Array(Schema.String)),
+  /** What the run is about. Absent for a run that declared nothing. */
+  subject: Schema.optional(WorkflowRunSubject),
   startedAt: Schema.String,
   updatedAt: Schema.String,
   endedAt: Schema.NullOr(Schema.String),
@@ -44,8 +60,8 @@ export type WorkflowRun = typeof WorkflowRun.Type;
 
 export const WorkflowStep = Schema.Struct({
   name: Schema.String,
-  // A sleep's `detail` is when it wakes, as an ISO time.
-  kind: Schema.Literals(["step", "wait", "agent", "ask", "sleep"]),
+  // A sleep's `detail` is when it wakes, as an ISO time. A `queue` step waits for a place in a pool.
+  kind: Schema.Literals(["step", "wait", "agent", "ask", "sleep", "queue"]),
   status: Schema.Literals(["running", "completed", "failed"]),
   attempts: Schema.Number,
   detail: Schema.NullOr(Schema.String),
@@ -57,6 +73,8 @@ export const WorkflowStep = Schema.Struct({
   result: Schema.NullOr(Schema.Json),
   /** What an agent said in closing, when its result is data and not that reply. */
   said: Schema.NullOr(Schema.String),
+  /** For a `queue` step still waiting, how many asked for a place in its pool before it. */
+  ahead: Schema.optional(Schema.Number),
   startedAt: Schema.String,
   endedAt: Schema.NullOr(Schema.String),
 });
@@ -244,17 +262,29 @@ export const WorkflowRunsSubscribeInput = Schema.Struct({
 export const WorkflowRunGetInput = Schema.Struct({ runId: Schema.String });
 
 /**
+ * Runs whose subject is at the web address `subject`, or is the `issue` or `pullRequest` given:
+ * a listing and an item's own view do not always write one item's address the same way.
+ */
+export const WorkflowRunsAboutInput = Schema.Struct({
+  subject: Schema.String,
+  issue: Schema.optionalKey(IssueRef),
+  pullRequest: Schema.optionalKey(PullRequestRef),
+});
+export type WorkflowRunsAboutInput = typeof WorkflowRunsAboutInput.Type;
+/** Those runs, newest first and 500 at most, with the questions they have open. */
+export const WorkflowRunsAbout = Schema.Struct({
+  runs: Schema.Array(WorkflowRun),
+  questions: Schema.Array(WorkflowQuestion),
+});
+export type WorkflowRunsAbout = typeof WorkflowRunsAbout.Type;
+
+/**
  * Something a run touched: an issue, a pull request, or a kind added later. `kind` is open, so a
  * client shows a kind it does not know by its title and `url`. `key` is the thing's identity in
  * its kind; `address` is whatever that kind needs to open it.
  */
 export const WorkflowRunReference = Schema.Struct({
-  kind: Schema.String,
-  key: Schema.String,
-  address: Schema.Json,
-  /** Empty until something that touched it knew its title. */
-  title: Schema.String,
-  url: Schema.NullOr(Schema.String),
+  ...WorkflowRunSubject.fields,
   /** A word for where it stands, such as `open`, `merged` or `closed`. */
   state: Schema.NullOr(Schema.String),
   /** The steps that touched it, in the order they first did. */
@@ -263,8 +293,16 @@ export const WorkflowRunReference = Schema.Struct({
 });
 export type WorkflowRunReference = typeof WorkflowRunReference.Type;
 
-/** The kinds of reference runs record today; `address` is an `IssueRef` or a `PullRequestRef`. */
-export const WorkflowReferenceKind = { issue: "issue", pullRequest: "pullRequest" } as const;
+/**
+ * The kinds of reference runs record today. `address` is an `IssueRef`, a `PullRequestRef`,
+ * `{ threadId }` or `{ url }`.
+ */
+export const WorkflowReferenceKind = {
+  issue: "issue",
+  pullRequest: "pullRequest",
+  thread: "thread",
+  url: "url",
+} as const;
 export const WorkflowIssueAddress = IssueRef;
 export const WorkflowPullRequestAddress = PullRequestRef;
 

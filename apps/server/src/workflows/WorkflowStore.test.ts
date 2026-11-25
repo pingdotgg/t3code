@@ -17,6 +17,8 @@ import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_Workflow
 import WorkflowRunIndexesMigration from "../persistence/Migrations/114_WorkflowRunIndexes.ts";
 import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
 import WorkflowMailSenderMigration from "../persistence/Migrations/117_WorkflowMailSender.ts";
+import WorkflowPoolsMigration from "../persistence/Migrations/118_WorkflowPools.ts";
+import WorkflowRunSubjectMigration from "../persistence/Migrations/119_WorkflowRunSubject.ts";
 import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
@@ -39,6 +41,8 @@ const withStore = <A, E>(
         Effect.andThen(WorkflowRunIndexesMigration),
         Effect.andThen(WorkflowRunTagsMigration),
         Effect.andThen(WorkflowMailSenderMigration),
+        Effect.andThen(WorkflowPoolsMigration),
+        Effect.andThen(WorkflowRunSubjectMigration),
       ),
     );
     return yield* Effect.provide(
@@ -216,6 +220,40 @@ it.effect("keeps each thing a run touched once, with what the latest touch knew"
         { ...machine, url: null, state: null, steps: ["make"], origin: "step" },
       ]);
       assert.deepStrictEqual(yield* store.references("r2"), []);
+    }),
+  ),
+);
+
+it.effect("a run's subject learns its title and address from whatever touches it", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      yield* store.runStarted({
+        runId: "r1",
+        workflow: "fix",
+        version: 1,
+        engineTag: "fix@1",
+        idempotencyKey: "k",
+        input: null,
+      });
+      const issue = { kind: "issue", key: "i1", address: { scope: "me/app", key: "1" } };
+      const subject = Effect.map(store.run("r1"), (run) =>
+        run?.subject_json == null ? null : WorkflowStore.subjectOf(run.subject_json),
+      );
+      yield* store.runSubject("r1", { ...issue, title: "" });
+      // Another thing the run touches is not its subject, and leaves it alone.
+      yield* store.referenceNoted("r1", "read", { ...issue, key: "i2", title: "Other" });
+      assert.deepStrictEqual(yield* subject, { ...issue, title: "", url: null });
+      yield* store.referenceNoted("r1", "read", { ...issue, title: "Crash", url: "https://x/1" });
+      assert.deepStrictEqual(yield* subject, { ...issue, title: "Crash", url: "https://x/1" });
+      assert.deepStrictEqual(
+        (yield* store.runsWhere({ subject: "https://x/1" })).map((row) => row.run_id),
+        ["r1"],
+      );
+      // A touch that knows no title keeps the one known, and so does saying the subject again.
+      yield* store.referenceNoted("r1", "look", { ...issue, title: "" });
+      yield* store.runSubject("r1", { ...issue, title: "" });
+      assert.deepStrictEqual(yield* subject, { ...issue, title: "Crash", url: "https://x/1" });
     }),
   ),
 );
@@ -446,6 +484,59 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
       yield* TestClock.adjust("10 days");
       yield* store.mailExpire;
       assert.isTrue(yield* store.signalSeen("long"));
+    }),
+  ),
+);
+
+it.effect.each([999, 1000])("buffered mail with a 1s TTL claimed after %i ms", (elapsed) =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const address = { workflow: "gate", channel: "ready" };
+      yield* store.waitOpened({
+        runId: "r1",
+        name: "go",
+        workflow: address.workflow,
+        key: address.channel,
+        token: "token",
+        schemaJson: "{}",
+        requestJson: null,
+        watchJson: null,
+        deadline: null,
+      });
+      yield* store.mailPut({
+        signalId: "first",
+        address,
+        valueJson: "1",
+        expiresAt: "1970-01-01T00:00:01.000Z",
+        sender,
+      });
+      yield* store.mailPut({
+        signalId: "second",
+        address,
+        valueJson: "2",
+        expiresAt: "1970-01-01T00:00:02.000Z",
+        sender,
+      });
+      const selected = yield* store.mailNext([address]);
+      assert.equal(selected?.signalId, "first");
+      yield* TestClock.adjust(elapsed);
+      const live = elapsed < 1000;
+      assert.deepStrictEqual(
+        {
+          next: (yield* store.mailNext([address]))?.signalId,
+          claim: yield* store.mailDeliver(selected!.signalId, "r1", "go", {
+            expired: false,
+            value: 1,
+          }),
+          waitOpen: (yield* store.waitAt({ runId: "r1", wait: "go" })) !== undefined,
+          receipt: yield* store.signalSeen("first"),
+          rowPresent: (yield* store.mailSender("first")) !== undefined,
+        },
+        live
+          ? { next: "first", claim: "delivered", waitOpen: false, receipt: true, rowPresent: false }
+          : { next: "second", claim: "gone", waitOpen: true, receipt: false, rowPresent: true },
+      );
     }),
   ),
 );
@@ -827,6 +918,246 @@ it.effect("a run waiting on you is listed however many runs started after it", (
       const listed = new Set((yield* store.runs(undefined)).map((run) => run.run_id));
       assert.isTrue(listed.has("old"));
       assert.isTrue(listed.has("paused"));
+    }),
+  ),
+);
+
+it.effect("a resumed run takes back all it held, though a smaller limit queued meanwhile", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      for (const runId of ["a", "c", "b"]) {
+        yield* store.runStarted({
+          runId,
+          workflow: "pooled",
+          version: 1,
+          engineTag: "pooled@1",
+          idempotencyKey: runId,
+          input: {},
+        });
+      }
+      const ask = (runId: string, name: string, size: number) =>
+        Effect.map(store.placeAsked({ runId, name, pool: "p", size }), (asked) => asked.held);
+      assert.deepStrictEqual(
+        [yield* ask("a", "outer", 2), yield* ask("a", "inner", 2)],
+        [true, true],
+      );
+      yield* store.runPaused("a", "a step failed");
+      assert.isTrue(yield* ask("c", "only", 2));
+      assert.isFalse(yield* ask("b", "lock", 1));
+      yield* store.runUnpaused("a");
+      assert.isTrue(yield* store.placesBack("a"));
+      yield* store.placeLeft("c", "only");
+      const given = yield* store.placesGiven;
+      assert.deepStrictEqual(
+        given.map((place) => `${place.run_id}/${place.name}`),
+        ["a/outer", "a/inner"],
+      );
+    }),
+  ),
+);
+
+/** Runs in one pool `p` unless a place names another, and what the store did to their places. */
+const pools = Effect.fnUntraced(function* (runIds: ReadonlyArray<string>) {
+  const store = yield* WorkflowStore.WorkflowStore;
+  const sql = yield* SqlClient.SqlClient;
+  for (const runId of runIds) {
+    yield* store.runStarted({
+      runId,
+      workflow: "pooled",
+      version: 1,
+      engineTag: "pooled@1",
+      idempotencyKey: runId,
+      input: {},
+    });
+  }
+  const named = (given: ReadonlyArray<WorkflowStore.PlaceRow>) =>
+    given.map((place) => `${place.run_id}/${place.name}`);
+  return {
+    /** Asks for a place, and says whether the run holds it now. */
+    ask: (runId: string, name: string, size: number, pool = "p") =>
+      Effect.map(store.placeAsked({ runId, name, pool, size }), (asked) => asked.held),
+    pause: (runId: string) => store.runPaused(runId, "a step failed"),
+    /** Resumes the run, and returns the places that gave out. */
+    resume: (runId: string) =>
+      Effect.andThen(
+        Effect.andThen(store.runUnpaused(runId), store.placesBack(runId)),
+        Effect.map(store.placesGiven, named),
+      ),
+    /** Gives a place back, and returns the places that gave out. */
+    leave: (runId: string, name: string) =>
+      Effect.andThen(store.placeLeft(runId, name), Effect.map(store.placesGiven, named)),
+    held: Effect.map(
+      sql<{ readonly place: string }>`
+        SELECT run_id || '/' || name AS place FROM workflow_pool_places
+        WHERE state = 'held' ORDER BY seq
+      `,
+      (rows) => rows.map((row) => row.place),
+    ),
+  };
+});
+
+it.effect("two paused runs that asked for different limits both get back in", () =>
+  withStore(
+    Effect.gen(function* () {
+      const { ask, pause, resume, leave, held } = yield* pools(["a", "b"]);
+      assert.deepStrictEqual([yield* ask("a", "one", 2), yield* ask("a", "two", 2)], [true, true]);
+      yield* pause("a");
+      // The pool is empty while `a` is out, so the lock goes in, and pauses there too.
+      assert.isTrue(yield* ask("b", "lock", 1));
+      yield* pause("b");
+      assert.deepStrictEqual(yield* resume("a"), ["a/one", "a/two"]);
+      // The lock waits for the pool to be empty, holding nothing meanwhile.
+      assert.deepStrictEqual(yield* resume("b"), []);
+      assert.deepStrictEqual(yield* held, ["a/one", "a/two"]);
+      assert.deepStrictEqual(yield* leave("a", "one"), []);
+      assert.deepStrictEqual(yield* leave("a", "two"), ["b/lock"]);
+    }),
+  ),
+);
+
+it.effect("resumed the other way round, the lock goes first and the other run after it", () =>
+  withStore(
+    Effect.gen(function* () {
+      const { ask, pause, resume, leave, held } = yield* pools(["a", "b"]);
+      yield* ask("a", "one", 2);
+      yield* ask("a", "two", 2);
+      yield* pause("a");
+      yield* ask("b", "lock", 1);
+      yield* pause("b");
+      assert.deepStrictEqual(yield* resume("b"), ["b/lock"]);
+      // Not one of its two beside the lock: all of them, once the lock is out.
+      assert.deepStrictEqual(yield* resume("a"), []);
+      assert.deepStrictEqual(yield* held, ["b/lock"]);
+      assert.deepStrictEqual(yield* leave("b", "lock"), ["a/one", "a/two"]);
+    }),
+  ),
+);
+
+it.effect("a resumed run takes back every place it had or none, ahead of whoever is queued", () =>
+  withStore(
+    Effect.gen(function* () {
+      const { ask, pause, resume, leave, held } = yield* pools(["a", "e", "h", "z"]);
+      // Three runs that each held two of the pool's three places, one after the other.
+      for (const runId of ["a", "e", "h"]) {
+        assert.deepStrictEqual(
+          [yield* ask(runId, "one", 3), yield* ask(runId, "two", 3)],
+          [true, true],
+        );
+        yield* pause(runId);
+      }
+      assert.deepStrictEqual(yield* resume("a"), ["a/one", "a/two"]);
+      // One place is free. Taking it would leave `e` holding a place while it cannot go on.
+      assert.deepStrictEqual(yield* resume("e"), []);
+      assert.deepStrictEqual(yield* resume("h"), []);
+      assert.deepStrictEqual(yield* held, ["a/one", "a/two"]);
+      // A newcomer does not take the free place from the runs that wait to come back.
+      assert.isFalse(yield* ask("z", "one", 3));
+      assert.deepStrictEqual(yield* leave("a", "one"), ["e/one", "e/two"]);
+      assert.deepStrictEqual(yield* leave("a", "two"), []);
+      // `h` comes back as soon as two are free, and the newcomer takes the place after that.
+      assert.deepStrictEqual(yield* leave("e", "one"), ["h/one", "h/two"]);
+      assert.deepStrictEqual(yield* leave("e", "two"), ["z/one"]);
+      assert.deepStrictEqual(yield* held, ["h/one", "h/two", "z/one"]);
+    }),
+  ),
+);
+
+it.effect("a resumed run holds nothing in one pool while it waits for a place in another", () =>
+  withStore(
+    Effect.gen(function* () {
+      const { ask, pause, resume, leave, held } = yield* pools(["a", "y"]);
+      assert.deepStrictEqual(
+        [yield* ask("a", "outer", 1, "p"), yield* ask("a", "inner", 1, "q")],
+        [true, true],
+      );
+      yield* pause("a");
+      assert.isTrue(yield* ask("y", "outer", 1, "p"));
+      // `q` is free, but `a` cannot go on without `p`, and `y` needs `q` to ever leave `p`.
+      assert.deepStrictEqual(yield* resume("a"), []);
+      assert.deepStrictEqual(yield* held, ["y/outer"]);
+      assert.isTrue(yield* ask("y", "inner", 1, "q"));
+      assert.deepStrictEqual(yield* leave("y", "inner"), []);
+      assert.deepStrictEqual(yield* leave("y", "outer"), ["a/outer", "a/inner"]);
+    }),
+  ),
+);
+
+it.effect("a run waiting to come back is given no new place it queued for either", () =>
+  withStore(
+    Effect.gen(function* () {
+      const { ask, pause, resume, leave, held } = yield* pools(["a", "x", "y"]);
+      assert.isTrue(yield* ask("a", "first", 1, "p"));
+      assert.isTrue(yield* ask("x", "only", 1, "q"));
+      assert.isFalse(yield* ask("a", "second", 1, "q"));
+      yield* pause("a");
+      assert.isTrue(yield* ask("y", "first", 1, "p"));
+      assert.deepStrictEqual(yield* resume("a"), []);
+      // `q` frees up while `a` still waits for `p`: it goes to `y`, who is going.
+      assert.deepStrictEqual(yield* leave("x", "only"), []);
+      assert.isTrue(yield* ask("y", "second", 1, "q"));
+      assert.deepStrictEqual(yield* leave("y", "second"), []);
+      assert.deepStrictEqual(yield* leave("y", "first"), ["a/first", "a/second"]);
+      assert.deepStrictEqual(yield* held, ["a/first", "a/second"]);
+    }),
+  ),
+);
+
+it.effect(
+  "a resumed run goes back in beside its like while a lock waits, and the lock still runs alone",
+  () =>
+    withStore(
+      Effect.gen(function* () {
+        const { ask, pause, resume, leave, held } = yield* pools(["w1", "w2", "w3", "n"]);
+        assert.deepStrictEqual(
+          [yield* ask("w1", "one", 2), yield* ask("w2", "one", 2)],
+          [true, true],
+        );
+        yield* pause("w2");
+        assert.isFalse(yield* ask("n", "lock", 1));
+        // It had its place before the lock asked, and those inside allow two.
+        assert.deepStrictEqual(yield* resume("w2"), ["w2/one"]);
+        // Nobody who asks after the lock goes in ahead of it, room or not.
+        assert.deepStrictEqual(yield* leave("w1", "one"), []);
+        assert.isFalse(yield* ask("w3", "one", 2));
+        assert.deepStrictEqual(yield* leave("w2", "one"), ["n/lock"]);
+        assert.deepStrictEqual(yield* held, ["n/lock"]);
+        assert.deepStrictEqual(yield* leave("n", "lock"), ["w3/one"]);
+      }),
+    ),
+);
+
+it.effect("a pool lets in no more than the smallest limit of those inside it", () =>
+  withStore(
+    Effect.gen(function* () {
+      const { ask, leave, held } = yield* pools(["two", "three", "four", "n"]);
+      assert.isTrue(yield* ask("two", "one", 2));
+      assert.isTrue(yield* ask("three", "one", 3));
+      // Three would fit by its own limit, but one of those inside asked for two.
+      assert.isFalse(yield* ask("four", "one", 3));
+      assert.isFalse(yield* ask("n", "lock", 1));
+      // The one in line first goes in when there is room for it; the lock waits for an empty pool.
+      assert.deepStrictEqual(yield* leave("two", "one"), ["four/one"]);
+      assert.deepStrictEqual(yield* leave("three", "one"), []);
+      assert.deepStrictEqual(yield* leave("four", "one"), ["n/lock"]);
+      assert.deepStrictEqual(yield* held, ["n/lock"]);
+    }),
+  ),
+);
+
+it.effect("a run paused again before its places came back keeps nobody waiting", () =>
+  withStore(
+    Effect.gen(function* () {
+      const { ask, pause, resume, leave } = yield* pools(["a", "y", "z"]);
+      assert.isTrue(yield* ask("a", "lock", 1));
+      yield* pause("a");
+      assert.isTrue(yield* ask("y", "lock", 1));
+      assert.deepStrictEqual(yield* resume("a"), []);
+      yield* pause("a");
+      assert.deepStrictEqual(yield* leave("y", "lock"), []);
+      assert.isTrue(yield* ask("z", "lock", 1));
+      assert.deepStrictEqual(yield* resume("a"), []);
+      assert.deepStrictEqual(yield* leave("z", "lock"), ["a/lock"]);
     }),
   ),
 );

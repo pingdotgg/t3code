@@ -15,7 +15,6 @@ import { ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
-  trimAsciiWhitespace,
   VcsCheckpointStorageError,
   VcsProcessExitError,
   VcsUnsupportedOperationError,
@@ -69,6 +68,8 @@ export interface ExecuteGitInput {
   readonly progress?: ExecuteGitProgress;
   /** Writes .git/config, which every worktree shares and Git locks without waiting. */
   readonly writesSharedConfig?: boolean;
+  /** A push: the one command `RepositoryHooks` "approved-push" lets run the repository's hooks. */
+  readonly pushes?: boolean;
 }
 
 export interface ExecuteGitResult {
@@ -352,6 +353,54 @@ export const AwaitStatusFetch = Context.Reference<boolean>("t3/vcs/AwaitStatusFe
   defaultValue: () => false,
 });
 
+/**
+ * The hooks Git would run for a push from a checkout, and a digest of what the named files hold.
+ * What those files go on to run is not part of it.
+ */
+export interface PushHooks {
+  /**
+   * The files the digest covers: each hook file Git starts and, where that is the shim husky 9
+   * and Vite+ install, the runner `h` beside it and the script of the hook's name one directory up.
+   */
+  readonly files: ReadonlyArray<string>;
+  /** The hooks Git's configuration defines for a push (`hook.<name>.command`), which Git 2.54 runs too. */
+  readonly commands: ReadonlyArray<{ readonly name: string; readonly command: string }>;
+  /**
+   * Changes when one of `files` is added, removed, moved or edited, or one of `commands` changes
+   * or is started at another point of the push.
+   */
+  readonly digest: string;
+}
+
+/** A push was about to run hooks other than the ones approved; `hooks` is what would run now. */
+export class PushHooksUnapprovedError extends Schema.TaggedError<PushHooksUnapprovedError>()(
+  "PushHooksUnapprovedError",
+  {
+    files: Schema.Array(Schema.String),
+    commands: Schema.Array(Schema.Struct({ name: Schema.String, command: Schema.String })),
+    digest: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "The repository's push hooks are not the ones that were approved.";
+  }
+}
+
+/**
+ * Which repository hooks Git runs for the calling work. "approved-push" runs them for the push
+ * alone, while they are what `digest` was taken from (null: none approved): the driver reads them
+ * again as its last step before starting that push and lets it start those and no other.
+ * Everything else runs with hooks off: no hooks directory and no configured hook.
+ */
+export type RepositoryHooksPolicy =
+  | { readonly _tag: "all" }
+  | { readonly _tag: "none" }
+  | { readonly _tag: "approved-push"; readonly digest: string | null };
+
+export const RepositoryHooks = Context.Reference<RepositoryHooksPolicy>("t3/vcs/RepositoryHooks", {
+  defaultValue: () => ({ _tag: "all" }),
+});
+
 /** Set by background discovery so its Git commands run in their own small lane, not the user's. */
 export const BackgroundGitWork = Context.Reference<boolean>("t3/vcs/BackgroundGitWork", {
   defaultValue: () => false,
@@ -391,6 +440,8 @@ export class GitVcsDriver extends Context.Service<
       fallbackBranch: string | null,
       options?: { readonly remoteName?: string | null },
     ) => Effect.Effect<GitPushResult, GitCommandError>;
+    /** The hooks a push from `cwd` would run now; null when it would run none. */
+    readonly pushHooks: (cwd: string) => Effect.Effect<PushHooks | null, GitCommandError>;
     /** Where `pushCurrentBranch` would push the checked-out branch; null with no remote or when Git picks. */
     readonly resolvePushTarget: (
       cwd: string,
@@ -1300,11 +1351,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         const configured = yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["config", "--get", "lfs.storage"],
+          args: ["config", "--null", "--get", "lfs.storage"],
           allowNonZeroExit: true,
         });
-        // git-lfs resolves a relative lfs.storage against the common Git directory.
-        const storage = path.resolve(gitCommonDir, trimAsciiWhitespace(configured.stdout) || "lfs");
+        // git-lfs reads config with -z and uses the value verbatim, spaces and tabs included.
+        // It resolves a relative lfs.storage against the common Git directory.
+        const configuredStorage = configured.stdout.split("\0", 1)[0] ?? "";
+        const storage = path.resolve(gitCommonDir, configuredStorage || "lfs");
         yield* Effect.forEach(
           objects,
           (entry) =>

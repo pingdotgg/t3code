@@ -489,7 +489,14 @@ it.effect.each(["interrupt", "timeout"] as const)(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect.each([undefined, "lfs objects\u00a0"])(
+const checkpointLfsStorageCases = [
+  undefined,
+  "lfs objects\u00a0",
+  " lfs objects",
+  ...(HostProcess.Platform.defaultValue() === "win32" ? [] : ["lfs objects "]),
+];
+
+it.effect.each(checkpointLfsStorageCases)(
   "checkpoint staging moves Git LFS objects into configured storage %s",
   (configuredStorage) =>
     Effect.gen(function* () {
@@ -536,6 +543,47 @@ it.effect.each([undefined, "lfs objects\u00a0"])(
         "large untracked data\n",
       );
       assert.isFalse(yield* fs.exists(path.join(storage, "tmp")));
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "checkpoint restore smudges Git LFS objects when lfs.storage ends with a space",
+  (ctx) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const sandbox = yield* fs.makeTempDirectoryScoped({ prefix: "t3-lfs-checkpoint-" });
+      const cwd = path.join(sandbox, "repo");
+      yield* fs.makeDirectory(cwd);
+      const lfs = yield* driver.execute({
+        operation: "checkpoint-test",
+        cwd: sandbox,
+        args: ["lfs", "version"],
+        allowNonZeroExit: true,
+      });
+      if (lfs.exitCode !== 0) return ctx.skip("Install git-lfs to run this test.");
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* git(["lfs", "install", "--local"]);
+      // Last in the config, git-lfs 3.6 trims the space unless T3's own -c entries follow it.
+      yield* driver.execute({
+        operation: "checkpoint-test",
+        cwd,
+        args: ["config", "--remove-section", "lfs"],
+        allowNonZeroExit: true,
+      });
+      yield* git(["config", "lfs.storage", "cache "]);
+      yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "*.npz filter=lfs -text\n");
+      yield* fs.writeFileString(path.join(cwd, "weights.npz"), "large untracked data\n");
+
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+      yield* fs.remove(path.join(cwd, "weights.npz"));
+      assert.isTrue(yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef }));
+      assert.strictEqual(
+        yield* fs.readFileString(path.join(cwd, "weights.npz")),
+        "large untracked data\n",
+      );
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
