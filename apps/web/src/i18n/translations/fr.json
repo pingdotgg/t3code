@@ -4123,6 +4123,8 @@
   "ac7416afe98ba5f8": "Extrait du terminal, {label}",
   "bf04d61dc50685dc": "Ligne {lineStart}",
   "000e3bef072f07c8": "Lignes {lineStart}–{lineEnd}",
+  "f3c70064a22a0c76": "{terminalLabel} ligne {lineStart}",
+  "8ba6febaabeb6f14": "{terminalLabel} lignes {lineStart}–{lineEnd}",
   "b3336a0e9a6e3fba": "Sortie du terminal capturée",
   "8d24730972ce4fd3": "Extrait du terminal, {label}, expiré",
   "dd8f1439c88ef92b": "Le contexte du terminal a expiré. Retirez puis ajoutez à nouveau {label} pour l’inclure dans votre message.",
