@@ -19,7 +19,6 @@ import { type Ref, useEffect, useEffectEvent, useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
 import { toastManager } from "~/components/ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -50,6 +49,7 @@ import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
 import { isMacPlatform } from "~/lib/utils";
 import { type PreviewAction, subscribePreviewAction } from "../preview/previewActionBus";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -73,22 +73,20 @@ function treePath(entry: ProjectEntry): string {
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
   const gt = useGT();
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label={gt("Refresh workspace files")}
-            onClick={props.onRefresh}
-          />
-        }
-      >
-        <RefreshIcon refreshing={props.isPending} />
-      </TooltipTrigger>
-      <TooltipPopup>{props.isPending ? gt("Refreshing…") : gt("Refresh files")}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={gt("Refresh workspace files")}
+          onClick={props.onRefresh}
+        />
+      }
+      label={props.isPending ? gt("Refreshing…") : gt("Refresh files")}
+    >
+      <RefreshIcon refreshing={props.isPending} />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -656,34 +654,32 @@ export default function FileBrowserPanel({
           onClose={closeSearch}
         />
         {directoryPaths.length > 0 && !hostFolder ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={
-                    expandAll || allDirectoriesExpanded
-                      ? gt("Collapse all folders")
-                      : gt("Expand all folders")
-                  }
-                  onClick={toggleAllDirectories}
-                />
-              }
-            >
-              {allDirectoriesExpanded ? (
-                <ChevronsDownUpIcon className="size-3.5" />
-              ) : (
-                <ChevronsUpDownIcon className="size-3.5" />
-              )}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {expandAll || allDirectoriesExpanded
+          <SharedTooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label={
+                  expandAll || allDirectoriesExpanded
+                    ? gt("Collapse all folders")
+                    : gt("Expand all folders")
+                }
+                onClick={toggleAllDirectories}
+              />
+            }
+            label={
+              expandAll || allDirectoriesExpanded
                 ? gt("Collapse all folders")
-                : gt("Expand all folders")}
-            </TooltipPopup>
-          </Tooltip>
+                : gt("Expand all folders")
+            }
+          >
+            {allDirectoriesExpanded ? (
+              <ChevronsDownUpIcon className="size-3.5" />
+            ) : (
+              <ChevronsUpDownIcon className="size-3.5" />
+            )}
+          </SharedTooltipTrigger>
         ) : null}
       </div>
       {error || pathSearch.error ? (
