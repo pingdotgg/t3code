@@ -1,10 +1,12 @@
 import type {
   ChatAttachment,
   MessageId,
+  ModelSelection,
   OrchestrationMessageContext,
   RunId,
   UploadChatAttachment,
 } from "@t3tools/contracts";
+import * as Equal from "effect/Equal";
 import { useAtomValue } from "@effect/atom-react";
 import { msg } from "gt-react-native";
 import { stripAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
@@ -26,9 +28,12 @@ import {
   mergeComposerDraftContent,
   setComposerDraftContext,
   setComposerDraftText,
+  updateComposerDraftSettings,
 } from "./use-composer-drafts";
 
 export interface QueuedRunEdit {
+  readonly modelSelection?: ModelSelection;
+  readonly followsThreadSelection?: boolean;
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
@@ -46,6 +51,9 @@ const queuedRunEdits = makeQueuedRunEditStore<QueuedRunEdit>({
 export { queuedEditDraftKey } from "./queued-edit-draft-key";
 
 export const getQueuedRunEdit = queuedRunEdits.get;
+
+export const isQueuedRunEditSaving = (threadKey: string): boolean =>
+  appAtomRegistry.get(queuedRunEdits.savingAtom)[threadKey] === true;
 
 /**
  * The draft a sheet opened for `requestedKey` should edit now: a queued edit's
@@ -77,8 +85,12 @@ function exitQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void {
   const editDraft = getComposerDraftSnapshot(editDraftKey);
   const threadDraft = getComposerDraftSnapshot(threadKey);
   const editRestorable = editDraft.text.trim().length > 0 || editDraft.attachments.length > 0;
+  const modelChanged =
+    editDraft.modelSelection !== undefined &&
+    !Equal.equals(editDraft.modelSelection, edit.modelSelection);
   const recovery = resolveQueuedEditExit({
     editChanged:
+      modelChanged ||
       editDraft.text !== edit.originalText ||
       editDraft.attachments.length > 0 ||
       edit.removedExistingAttachment === true,
@@ -89,6 +101,8 @@ function exitQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void {
       threadDraft.attachments.length === 0,
   });
   if (recovery === "kept") {
+    if (modelChanged)
+      updateComposerDraftSettings(threadKey, { modelSelection: editDraft.modelSelection });
     // The merge publishes the draft before writing it, so a failed write only delays persistence to the next one.
     mergeComposerDraftContent(threadKey, {
       text: editDraft.text,
@@ -124,6 +138,8 @@ export function beginQueuedRunEdit(
   const originalText = stripAttachmentOnlyBootstrapPrompt(edit.originalText);
   clearComposerDraft(draftKey);
   setComposerDraftText(draftKey, originalText);
+  if (edit.modelSelection && !edit.followsThreadSelection)
+    updateComposerDraftSettings(draftKey, { modelSelection: edit.modelSelection });
   setComposerDraftContext(draftKey, edit.context);
   queuedRunEdits.begin(
     threadKey,

@@ -35,7 +35,14 @@ export function restoreDraftLinkState(
   if (!state || !pathname || !/^new\/draft(?:\/|$)/.test(pathname)) return state;
   const target = state.routes.at(-1);
   if (!target) return state;
-  const draft = target.params ?? {};
+  // The draft screen checks out its branch on mount; the checkout comes from the draft, not the link.
+  const {
+    branch: _branch,
+    worktreePath: _worktreePath,
+    ...draft
+  } = (target.params ?? {}) as {
+    readonly [param: string]: unknown;
+  };
   const routes = state.routes.slice(0, -1);
   routes.push({ name: "Thread", params: { draft } });
   if (pathname !== "new/draft") routes.push(target);

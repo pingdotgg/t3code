@@ -69,6 +69,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   ACP_EMPTY_OPTION_VALUE,
@@ -2959,8 +2960,159 @@ describe("AcpAdapterV2", () => {
             (error as ProviderAdapter.ProviderAdapterTurnStartError).cause,
             ProviderAdapter.ProviderCompactionUnsupportedError,
           );
+          assert.isTrue(
+            (error as ProviderAdapter.ProviderAdapterTurnStartError).refusedBeforePrompt,
+          );
         }
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  // A start that cannot reopen its session may be on a session the agent lost. It is not a refusal
+  // before the prompt, so the server's recovery for an unusable session still runs.
+  it.live("does not mark a start whose session failed to reopen as refused before its prompt", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-reopen-failure");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            environment: () => ({ T3_ACP_FAIL_LOAD_SESSION: "1" }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-reopen-failure");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-reopen-failure"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const thread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+      const lostThread: OrchestrationV2ProviderThread = {
+        ...thread,
+        nativeThreadRef: { driver: ACP_TEST_DRIVER, nativeId: "lost-session", strength: "strong" },
+      };
+      const now = yield* DateTime.now;
+      const error = yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread: lostThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            ordinal: 1,
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+      assert.notEqual(
+        (error as ProviderAdapter.ProviderAdapterTurnStartError).refusedBeforePrompt,
+        true,
+      );
+      const methods = yield* pollProtocolMethods(protocolEvents);
+      assert.isTrue(methods.includes("session/load") || methods.includes("session/resume"));
+      assert.notInclude(methods, "session/prompt");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  // Only refusals that leave the session usable mark a start as refused before its prompt. A setup
+  // step other than the model can fail because the session is gone.
+  it.live("does not mark a start whose session setup failed as refused before its prompt", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-setup-failure");
+      const threadId = ThreadId.make("thread-acp-setup-failure");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            environment: { T3_ACP_FAIL_SET_MODE_CONFIG_OPTION: "1" },
+          }),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const opened = { instanceId, model: "composer-2" } as const;
+      const withMode = {
+        instanceId,
+        model: "composer-2",
+        options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: "code" }],
+      } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-setup-failure"),
+        modelSelection: opened,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: opened,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const error = yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            ordinal: 1,
+            modelSelection: withMode,
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+      assert.notInstanceOf(
+        (error as ProviderAdapter.ProviderAdapterTurnStartError).cause,
+        ProviderAdapter.ProviderCompactionUnsupportedError,
+      );
+      assert.notEqual(
+        (error as ProviderAdapter.ProviderAdapterTurnStartError).refusedBeforePrompt,
+        true,
+      );
+      // The start reached the mode step the agent rejected, and sent no prompt.
+      const outgoing = Array.from(yield* Queue.takeAll(protocolEvents)).filter(
+        (event) => event.direction === "outgoing",
+      );
+      assert.isTrue(
+        outgoing.some(
+          (event) =>
+            rawProtocolMethod(event) === "session/set_config_option" &&
+            rawProtocolRequestParam(event, "configId") === "mode",
+        ),
+      );
+      assert.notInclude(outgoing.map(rawProtocolMethod), "session/prompt");
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("reapplies a selection after a switch away from it failed partway", () =>
@@ -5000,7 +5152,7 @@ describe("AcpAdapterV2", () => {
       const search = items.find((item) => item.type === "file_search");
       assert.deepEqual(
         search?.type === "file_search" ? { title: search.title, pattern: search.pattern } : null,
-        { title: "Searched TODO in web", pattern: "apps/web" },
+        { title: "Searched TODO in web", pattern: "TODO" },
       );
       const fileSearch = (nativeId: string) => {
         const item = items.find(
@@ -5019,6 +5171,13 @@ describe("AcpAdapterV2", () => {
       assert.deepEqual(fileSearch("structured-search-query-only"), {
         pattern: "TODO",
         results: [{ fileName: "TODO", preview: "src/a.ts: TODO" }],
+      });
+      assert.deepEqual(fileSearch("structured-search-grep-output"), {
+        pattern: "needle",
+        results: [
+          { fileName: "src/a.ts", line: 3, preview: "const needle = 1;" },
+          { fileName: "src/b.ts", line: 9, preview: "needle();" },
+        ],
       });
       assert.deepEqual(fileSearch("structured-search-query-no-output"), {
         pattern: "FIXME",
@@ -5267,7 +5426,9 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           onSessionConfigurationUpdate: (configOptions) =>
-            Effect.sync(() => publishedConfigurations.push(configOptions)),
+            Effect.sync(() => {
+              publishedConfigurations.push(configOptions);
+            }),
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
@@ -5806,12 +5967,26 @@ describe("AcpAdapterV2", () => {
           now: yield* DateTime.now,
         }),
       );
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const startup = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.filter(
+          (event) =>
+            event.type === "provider_session.updated" ||
+            (event.type === "provider_turn.updated" && event.providerTurn.status === "running"),
+        ),
+        Stream.runCollect,
       );
       assert.equal(runtimeOrdinalSeen, 2);
       assert.lengthOf(runtimeInputs, 2);
+      // Loading the thread into the replacement agent is reported, and cleared before the turn runs.
+      assert.deepEqual(
+        Array.from(startup, (event) =>
+          event.type === "provider_session.updated"
+            ? (event.providerSession.startupPhase ?? null)
+            : "turn running",
+        ).slice(0, 3),
+        ["resume", null, "turn running"],
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -12902,6 +13077,96 @@ describe("AcpAdapterV2", () => {
         assert.isAbove(runtimeCount, 1);
         assert.include(postRestartTurn.prompt, tag("Updated Jira issue PROJ-43"));
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("sends an image to an agent without image prompts as a file path", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const host = yield* ProviderHost.ProviderHost;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const sent: Array<EffectAcpSchema.PromptRequest["prompt"]> = [];
+      const instanceId = ProviderInstanceId.make("acp-test-image-without-image-prompts");
+      const threadId = ThreadId.make("thread-acp-image-without-image-prompts");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: (payload, promptOptions) =>
+                Effect.sync(() => void sent.push(payload.prompt)).pipe(
+                  Effect.andThen(runtime.prompt(payload, promptOptions)),
+                ),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-image-without-prompts"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const screenshot = {
+        type: "image",
+        id: "screenshot-1",
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 8,
+      } as const;
+      const screenshotPath = host.resolveAttachmentPath(screenshot);
+      if (screenshotPath === null) return assert.fail("expected a screenshot path");
+      yield* fileSystem.writeFile(
+        screenshotPath,
+        Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+      );
+      const base = makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now: yield* DateTime.now,
+        messageText: "What is in this screenshot?",
+      });
+
+      yield* runtime.startTurn({
+        ...base,
+        message: { ...base.message, attachments: [screenshot] },
+      });
+      const terminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+
+      assert.equal(Option.getOrThrow(terminal).status, "completed");
+      const blocks = sent[0] ?? [];
+      assert.deepEqual(
+        blocks.filter((block) => block.type !== "text"),
+        [],
+      );
+      assert.include(
+        blocks.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n"),
+        `[Attached image "screenshot.png" is saved at: ${screenshotPath}]`,
+      );
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live(

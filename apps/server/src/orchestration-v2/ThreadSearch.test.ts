@@ -24,6 +24,7 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import { EXACT_PHRASE_GAP } from "@t3tools/shared/paletteSearch";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { rebuildMessageSearch } from "./messageSearchIndex.ts";
@@ -291,7 +292,7 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       for (const match of ['"needle"', null]) {
         const plan = yield* sql<{
           readonly detail: string;
-        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", projectId: null, excludedThreadIds: "[]" })}`;
+        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", hitLimit: 2000, projectId: null, excludedThreadIds: "[]" })}`;
         assert.isFalse(
           plan.some((row) => row.detail.includes("TEMP B-TREE")),
           plan.map((row) => row.detail).join("\n"),
@@ -305,6 +306,15 @@ it.layer(layerTest)("ThreadSearch", (it) => {
             plan.map((row) => row.detail).join("\n"),
           );
         }
+        // A cancelled run can hold tens of thousands of items; scanning them per hit took 50 s.
+        assert.isTrue(
+          plan.some(
+            (row) =>
+              row.detail.includes("orchestration_v2_projection_turn_items_message_ordinal_idx") &&
+              row.detail.includes("<expr>=?"),
+          ),
+          plan.map((row) => row.detail).join("\n"),
+        );
       }
     }),
   );
@@ -498,6 +508,12 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         [
           thread(parent, project),
           message(parent, "parent", "user", "Rename ThreadSearchService before shipping"),
+          message(
+            parent,
+            "webhook",
+            "assistant",
+            "Run it with https://relay.test/v1/hooks/0123456789abcdef/scheduled-task:7f3a9c1e/whk_secretvalue",
+          ),
           thread(subagent, project, { subagentOf: parent }),
           message(subagent, "subagent", "assistant", "ThreadSearchService renamed"),
           thread(sideChat, project, { sideChatOf: parent, title: "ThreadSearchService question" }),
@@ -512,6 +528,12 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         result.matches.map((match) => [match.threadId, match.snippet]),
         [[parent, "Rename ThreadSearchService before shipping"]],
       );
+      // A snippet cut inside a webhook URL shows its token as withheld, and the token is not searchable.
+      assert.deepEqual(
+        (yield* search.search({ query: "7f3a9c1e" })).matches.map((match) => match.snippet),
+        ["…89abcdef/scheduled-task:7f3a9c1e/[withheld]"],
+      );
+      assert.deepEqual((yield* search.search({ query: "whk_secretvalue" })).matches, []);
       // "ab" alone cannot use the index; with a longer token it narrows the hits.
       assert.deepEqual((yield* search.search({ query: "ab" })).matches, []);
       assert.lengthOf((yield* search.search({ query: "renam be" })).matches, 1);
@@ -692,6 +714,56 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
         search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
       assert.deepEqual(yield* threadIds("needle"), [parent]);
       assert.deepEqual(yield* threadIds("pnpm 12"), [parent]);
+    }),
+  );
+
+  it.effect("finds a query in double quotes only where its words are together", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:exact");
+      const together = ThreadId.make("thread:exact-together");
+      const wrapped = ThreadId.make("thread:exact-wrapped");
+      const apart = ThreadId.make("thread:exact-apart");
+      const apartText = `missing notes. ${"Other words. ".repeat(8)}The osprey files`;
+      // Wrapped as far apart as the matcher accepts: the index must still read it.
+      const wrappedText = ["still missing", "osprey", "files"].join(
+        `\n${" ".repeat(EXACT_PHRASE_GAP - 1)}`,
+      );
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(together, project),
+          message(together, "exact-together", "user", "the Missing osprey files turned up"),
+          message(together, "exact-short-word", "user", "an osprey is back"),
+          thread(wrapped, project),
+          message(wrapped, "exact-wrapped", "assistant", wrappedText),
+          thread(apart, project),
+          message(apart, "exact-apart", "user", apartText),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+      assert.sameMembers(yield* threadIds("missing osprey files"), [together, wrapped, apart]);
+      assert.sameMembers(yield* threadIds('"missing osprey files"'), [together, wrapped]);
+      // Newer messages with the words apart, or close but not together, do not hide the phrase:
+      // the first would fill the candidates the index reads, the second the hits it returns.
+      const addNewer = (id: string, text: string, count: number) => sql`
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${count})
+        INSERT INTO orchestration_v2_projection_messages
+          (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+        SELECT ${id} || i, ${apart}, 'user', 0,
+          ${DateTime.formatIso(at(5))}, ${DateTime.formatIso(at(5))}, json_object('text', ${text})
+        FROM n
+      `;
+      yield* addNewer("exact-close:", "missing the osprey files", 2000);
+      // Nor when the index can read only one of the phrase's words.
+      assert.sameMembers(yield* threadIds('"osprey is"'), [together]);
+      yield* addNewer("exact-apart:", apartText, 10_000);
+      assert.sameMembers(yield* threadIds('"missing osprey files"'), [together, wrapped]);
     }),
   );
 
@@ -1453,6 +1525,7 @@ it.effect("starts snippets a few words before the match so one line shows it", (
       snippet(`x${"🚀".repeat(200)}needle`, "needle"),
       /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/,
     );
+    assert.equal(snippet(`needle${" ".repeat(473)}🚀 tail`, "needle"), "needle 🚀…");
     // Emphasis and code marks go, as the thread shows the text.
     assert.equal(
       ThreadSearch.buildSearchSnippet("Use **bold** and `code` here", 0),

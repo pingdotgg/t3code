@@ -349,7 +349,7 @@ it.effect(
             ...settings,
             thread: {
               ...expected,
-              latestUserAuthoredMessageAt: candidate.latestUserAuthoredMessageAt,
+              latestResumingMessageAt: candidate.latestResumingMessageAt,
             },
           }),
         );
@@ -365,7 +365,7 @@ it.effect(
     }).pipe(Effect.provide(layerSql)),
 );
 
-it.effect("sql: the user-authored message time ignores agent notifications", () =>
+it.effect("sql: the resuming message time counts MCP sends and ignores agent notifications", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* createThread("agent-woken");
@@ -373,7 +373,7 @@ it.effect("sql: the user-authored message time ignores agent notifications", () 
     const message = (
       id: string,
       createdBy: "user" | "agent",
-      creationSource: "web" | "provider",
+      creationSource: "web" | "mcp" | "provider",
       at: DateTime.Utc,
     ) =>
       store.apply({
@@ -397,16 +397,15 @@ it.effect("sql: the user-authored message time ignores agent notifications", () 
         },
       });
     const written = DateTime.subtract(now, { hours: 2 });
+    const sent = DateTime.subtract(now, { hours: 1 });
     yield* message("written", "user", "web", written);
+    yield* message("sent", "agent", "mcp", sent);
     yield* message("notification", "agent", "provider", now);
 
     const [candidate] = yield* store.getSettlementCandidates(threadId);
     assert.isDefined(candidate);
     assert.equal(DateTime.formatIso(candidate.latestUserMessageAt!), DateTime.formatIso(now));
-    assert.equal(
-      DateTime.formatIso(candidate.latestUserAuthoredMessageAt!),
-      DateTime.formatIso(written),
-    );
+    assert.equal(DateTime.formatIso(candidate.latestResumingMessageAt!), DateTime.formatIso(sent));
     const shellThread = (yield* store.getShellSnapshot()).threads.find(
       (thread) => thread.id === threadId,
     );

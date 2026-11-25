@@ -4,10 +4,13 @@ import { defineConfig, normalizePath } from "vite-plus";
 import "vite-plus/test/config";
 
 const reactTests = [
+  "src/features/browser/LocalPreviewRouteScreen.test.tsx",
   "src/features/threads/LinkedThreadSheet.test.tsx",
+  "src/features/workflows/WorkflowStepCard.test.tsx",
   "src/features/threads/ThreadGuestShareSheet.test.tsx",
   "src/features/threads/useSubmitAfterNativeImages.test.tsx",
   "src/features/threads/git/GitBranchesSheet.test.tsx",
+  "src/features/threads/git/GitConfirmSheet.test.tsx",
   "src/features/threads/new-task-flow-provider.test.tsx",
   "src/features/threads/NewTaskRouteScreen.test.tsx",
   "src/features/layout/workspace/workspace-tabs-state.test.ts",
@@ -39,6 +42,7 @@ const reactTests = [
   "src/components/ui/FilePreviewSession.test.tsx",
   "src/features/threads/UsageLimitRecoveryCard.test.tsx",
   "src/features/threads/PendingUserInputCard.test.tsx",
+  "src/features/threads/HtmlRenderWebView.test.tsx",
   "src/features/threads/NewTaskDraftRouteScreen.test.tsx",
   "src/native/NativeHeaderToolbar.test.tsx",
   "src/components/ComposerEditor.ios.test.tsx",
@@ -61,6 +65,7 @@ const reactTests = [
   "src/features/connection/LinkedEnvironmentsSection.test.tsx",
   "src/features/devices/device-stream.browser.test.ts",
   "src/features/keyboard/keyboardControllerState.test.tsx",
+  "src/features/voice-input/useVoiceInputController.test.tsx",
 ];
 
 const sourceRoot = `${normalizePath(NodeURL.fileURLToPath(new URL("./src", import.meta.url)))}/`;
