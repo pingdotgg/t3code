@@ -72,9 +72,11 @@ it.effect.each([
   "checkpoint inherited by a prior fork",
   "repeated rollback after a handoff",
   "handoff prompt left in the source",
+  "an extension returning to the original file through a clone",
   "switch timed out after attaching",
 ] as const)("restores exactly the retained Pi history for %s", (scenario) =>
   Effect.gen(function* () {
+    const repro = scenario === "an extension returning to the original file through a clone";
     const fs = yield* FileSystem.FileSystem;
     const dir = yield* fs.makeTempDirectoryScoped();
     const oldFile = `${dir}/old.jsonl`;
@@ -89,7 +91,7 @@ it.effect.each([
       entry("a2", "steer", "assistant", 35),
     ];
     const inherited = scenario === "checkpoint inherited by a prior fork";
-    const handoffEntry = entry("u3", inherited ? "a2" : null, "user", 50);
+    const handoffEntry = entry("u3", inherited ? "a2" : null, "user", repro ? 55 : 50);
     const newEntries =
       scenario === "command-only handoff"
         ? []
@@ -97,11 +99,23 @@ it.effect.each([
           ? [...oldEntries, handoffEntry]
           : [handoffEntry];
     const repeated = scenario === "repeated rollback after a handoff";
-    const oldSuffix = repeated || scenario === "handoff prompt left in the source";
+    const oldSuffix = repro || repeated || scenario === "handoff prompt left in the source";
     const sessions = new Map([
-      [oldFile, oldSuffix ? [...oldEntries, entry("discarded", "a2", "user", 45)] : oldEntries],
+      [
+        oldFile,
+        oldSuffix
+          ? [
+              ...oldEntries,
+              entry("discarded", "a2", "user", repro ? 52 : 45),
+              ...(repro ? [entry("discarded-answer", "discarded", "assistant", 54)] : []),
+            ]
+          : oldEntries,
+      ],
       [currentFile, newEntries],
     ]);
+    // The extension moved into the unrelated currentFile, then cloned the original at
+    // its new head. Returning from that clone does not add any entry to the original.
+    if (repro) sessions.set(previousForkFile, sessions.get(oldFile)!);
     if (repeated) sessions.set(previousForkFile, [...oldEntries, entry("u3", "a2", "user", 50)]);
     for (const [file, entries] of sessions) {
       yield* fs.writeFileString(
@@ -115,7 +129,7 @@ it.effect.each([
     const output = yield* Queue.unbounded<Uint8Array>();
     const switchApplied = yield* Deferred.make<void>();
     const sessionRequests: { readonly type: string; readonly file: string }[] = [];
-    let liveFile = currentFile;
+    let liveFile = repro ? oldFile : currentFile;
     let pending = "";
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
@@ -206,23 +220,31 @@ it.effect.each([
     });
     const events = yield* runtime.events.pipe(Stream.runDrain, Effect.result, Effect.forkScoped);
     const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
-    const turns = (repeated ? [1, 2, 3, 4] : [1, 2, 3]).map(
+    const turns = (repro ? [1, 2, 3, 4, 5] : repeated ? [1, 2, 3, 4] : [1, 2, 3]).map(
       (ordinal): OrchestrationV2ProviderTurn => ({
         id: ProviderTurnId.make(`turn-${ordinal}`),
         providerThreadId: providerThread.id,
         nodeId: NodeId.make(`node-${ordinal}`),
         runAttemptId: null,
         nativeTurnRef:
-          ordinal === 3 && scenario === "command-only handoff"
+          repro && ordinal === 5
             ? null
-            : ordinal === 3 && scenario === "uncaptured handoff"
-              ? ref("uncaptured", "weak")
-              : ref(`u${ordinal}`),
+            : repro && (ordinal === 3 || ordinal === 4)
+              ? ref(`uncaptured-${ordinal}`, "weak")
+              : ordinal === 3 && scenario === "command-only handoff"
+                ? null
+                : ordinal === 3 && scenario === "uncaptured handoff"
+                  ? ref("uncaptured", "weak")
+                  : ref(`u${ordinal}`),
         ...(scenario === "legacy turns"
           ? {}
           : {
               nativeThreadRef: ref(
-                ordinal < 3 ? oldFile : ordinal === 3 && repeated ? previousForkFile : currentFile,
+                ordinal < 3 || (repro && ordinal === 5)
+                  ? oldFile
+                  : (repro && ordinal === 4) || (ordinal === 3 && repeated)
+                    ? previousForkFile
+                    : currentFile,
               ),
             }),
         ordinal,
@@ -252,6 +274,14 @@ it.effect.each([
       yield* Fiber.join(events);
       assert.include(["error", "stopped"], runtime.providerSession.status);
       assert.deepEqual(sessionRequests, [{ type: "switch_session", file: oldFile }]);
+      return;
+    }
+    if (repro) {
+      yield* rollback;
+      assert.deepEqual(
+        sessions.get(liveFile)?.map(({ id }) => id),
+        ["u1", "a1", "u2", "steer", "a2"],
+      );
       return;
     }
     const restored = yield* rollback;
