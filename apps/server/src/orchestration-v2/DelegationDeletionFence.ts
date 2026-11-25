@@ -41,14 +41,16 @@ export const prepareDeletionFence = Effect.fnUntraced(function* (
       !["queued", "preparing", "starting", "running", "waiting"].includes(event.payload.status)
     )
       continue;
-    const rows = yield* sql<{ status: string; attempt: string | null }>`
-      SELECT status, json_extract(payload_json, '$.activeAttemptId') AS attempt
+    const rows = yield* sql<{ status: string; attempt: string | null; held: number | null }>`
+      SELECT status, json_extract(payload_json, '$.activeAttemptId') AS attempt,
+        json_extract(payload_json, '$.queueHeld') AS held
       FROM orchestration_v2_projection_runs WHERE run_id = ${event.payload.id}
         AND thread_id = ${event.threadId}
     `;
     if (
       rows[0]?.status !== event.payload.status ||
-      rows[0]?.attempt !== event.payload.activeAttemptId
+      rows[0]?.attempt !== event.payload.activeAttemptId ||
+      (event.payload.status === "queued" && rows[0]?.held === 1 && event.payload.queueHeld !== true)
     ) {
       admissions.add(event.threadId);
     }

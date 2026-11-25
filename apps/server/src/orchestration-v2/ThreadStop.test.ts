@@ -2517,6 +2517,17 @@ it.effect.each([false, true])(
       const threads = yield* ThreadManagementService.ThreadManagementService;
       yield* threads.stopDelegatedTasks({ threadId: parentId, commandId: deletionCommandId });
       assert.deepEqual((yield* threadState(childId)).runs, ["interrupted"]);
+      assert.isTrue(
+        Exit.isFailure(
+          yield* Effect.exit(
+            orchestrator.dispatch({
+              type: "queue.resume",
+              threadId: nestedId,
+              commandId: CommandId.make("resume-after-owner-deletion"),
+            }),
+          ),
+        ),
+      );
       assert.deepEqual((yield* threadState(nestedId)).runs, ["interrupted", "queued:held"]);
       yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'
       WHERE thread_id = ${parentId}`;
