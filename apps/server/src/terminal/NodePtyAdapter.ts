@@ -206,6 +206,12 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
     this.process.kill(this.platform === "win32" ? undefined : signal);
   }
 
+  cancelStartup(): Effect.Effect<void> {
+    return Effect.sync(() => this.disposeExitSubscription()).pipe(
+      Effect.ensuring(killStartingPty(this.process, this.platform)),
+    );
+  }
+
   onData(callback: (data: string) => void): () => void {
     const disposable = this.process.onData(callback);
     return () => {
@@ -304,9 +310,7 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
       ).pipe(
         Effect.onError(() => {
           if (nativeProcess === undefined) return Effect.void;
-          return Effect.sync(() => trackedProcess?.disposeExitSubscription()).pipe(
-            Effect.ensuring(killStartingPty(nativeProcess, platform)),
-          );
+          return trackedProcess?.cancelStartup() ?? killStartingPty(nativeProcess, platform);
         }),
       );
     }),

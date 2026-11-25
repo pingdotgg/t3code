@@ -33,6 +33,8 @@ export interface PtyProcess {
   write(data: string | Buffer): void;
   resize(cols: number, rows: number): void;
   kill(signal?: string): void;
+  // Abort an incomplete startup even when normal kill depends on shell readiness.
+  cancelStartup?(): Effect.Effect<void>;
   onData(callback: (data: string) => void): () => void;
   onExit(callback: (event: PtyExitEvent) => void): () => void;
 }
