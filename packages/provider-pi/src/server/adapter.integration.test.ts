@@ -174,6 +174,7 @@ it.live("Pi 1.6.0 projects, expands, and reads only allowed skills in a delegate
     const { skills, slashCommands } = parsePiDiscoveredCommands(
       yield* rpc.request({ type: "get_commands" }),
     );
+    assert.equal(rpc.sessionCwd, yield* fs.realPath(cwd));
     assert.include(
       slashCommands.map((command) => command.name),
       "fixture-extension",
@@ -204,6 +205,7 @@ it.live("Pi 1.6.0 projects, expands, and reads only allowed skills in a delegate
     assert.include(JSON.stringify(allowedResult?.result), allowedMarker);
 
     yield* rpc.request({ type: "new_session" });
+    assert.equal(rpc.sessionCwd, yield* fs.realPath(cwd));
     yield* rpc.request({ type: "prompt", message: "/skill:allowed" });
     yield* Stream.fromQueue(rpc.events).pipe(
       Stream.filter((event) => event.type === "agent_end"),

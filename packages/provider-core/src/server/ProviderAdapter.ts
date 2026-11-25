@@ -67,6 +67,7 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   cwd: Schema.NullOr(Schema.String),
+  matchProviderSessionCwd: OrchestrationV2AppThread.fields.matchProviderSessionCwd,
   deniedSkills: Schema.optional(OrchestrationV2DeniedSkills),
   delegationProfile: OrchestrationV2AppThread.fields.delegationProfile,
   approvalPolicy: Schema.optional(Schema.Unknown),

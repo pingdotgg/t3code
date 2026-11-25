@@ -9,6 +9,7 @@ export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 export const T3_PI_SKILL_POLICY_ENV = "T3_PI_SKILL_POLICY";
 export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
+export const PI_T3_SESSION_CWD_STATUS_KEY = "t3-session-cwd";
 
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
@@ -411,6 +412,10 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     if (!approved) {
       return { block: true, reason: \`\${event.toolName} was declined in T3 Code.\` };
     }
+  });
+
+  pi.on("session_start", (_event, ctx) => {
+    ctx.ui.setStatus(${JSON.stringify(PI_T3_SESSION_CWD_STATUS_KEY)}, ctx.cwd);
   });
 
   const endpoint = env(URL_ENV);

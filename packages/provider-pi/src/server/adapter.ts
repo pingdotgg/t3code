@@ -734,6 +734,31 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ),
       );
       let connection: PiRpcConnection = started.connection;
+      const verifySessionCwd = Effect.fn("PiAdapter.verifySessionCwd")(function* (
+        policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+      ) {
+        if (!policy.matchProviderSessionCwd) return;
+        const requested = policy.cwd;
+        const actual = connection.sessionCwd;
+        if (requested === null)
+          return yield* protocolError("Pi has no requested working directory to verify");
+        if (actual === undefined || !path.isAbsolute(actual)) {
+          return yield* protocolError(
+            `Pi did not report a working directory for the requested checkout "${requested}". Check that the configured Pi command loads the T3 Code extension.`,
+          );
+        }
+        const matches =
+          actual === requested ||
+          (yield* Effect.all([fileSystem.realPath(requested), fileSystem.realPath(actual)]).pipe(
+            Effect.map(([requestedPath, actualPath]) => requestedPath === actualPath),
+            Effect.orElseSucceed(() => false),
+          ));
+        if (!matches) {
+          return yield* protocolError(
+            `Pi started in working directory "${actual}" instead of "${requested}". Configure a Pi command that preserves its working directory.`,
+          );
+        }
+      });
       const initialActivationDone = yield* Deferred.make<void>();
       let initialActivationPending = initialSessionPath !== undefined;
       let initialRequestStarted = false;
@@ -3339,6 +3364,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             stateData = undefined;
           }
           stateData ??= yield* request({ type: "get_state" });
+          yield* verifySessionCwd(threadInput.runtimePolicy);
           if (discoveredModels === null) yield* discoverModels();
           contextWindow = rememberModelContextWindow(recordField(stateData, "model"));
           // Capture each baseline before applying selections so our own choices cannot become Pi defaults.
@@ -3637,6 +3663,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (!hasSessionSkillPolicy(turnInput.runtimePolicy)) {
               return yield* protocolError("Pi turn skill deny list does not match this session");
             }
+            yield* verifySessionCwd(turnInput.runtimePolicy);
             if (registrationInProgress)
               return yield* protocolError("Cannot start a Pi turn during registration");
             if (rollbackBarrier !== null)

@@ -248,6 +248,7 @@ export const layerFromProjectStore: Layer.Layer<
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
+          matchProviderSessionCwd: input.thread.matchProviderSessionCwd,
           deniedSkills: input.thread.deniedSkills ?? [],
           delegationProfile: input.thread.delegationProfile,
           ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),

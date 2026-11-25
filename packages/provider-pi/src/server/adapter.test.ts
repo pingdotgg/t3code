@@ -2702,6 +2702,56 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("requires Pi to report the delegated cwd before registering a thread", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workspace = yield* fs.makeTempDirectoryScoped();
+        const checkout = `${workspace}/checkout`;
+        const alias = `${workspace}/alias`;
+        yield* fs.makeDirectory(checkout);
+        yield* fs.symlink(checkout, alias);
+        const policy = { ...runtimePolicy, cwd: alias, matchProviderSessionCwd: true as const };
+        const model = modelSelection("default");
+        const physicalCheckout = yield* fs.realPath(checkout);
+        yield* fs.makeDirectory(`${workspace}/other`);
+        for (const cwd of [`${workspace}/other`, undefined, physicalCheckout]) {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const fake = yield* makeFakePi;
+              const adapter = yield* makeAdapter(fake);
+              if (cwd !== undefined) {
+                yield* fake.emit({
+                  type: "extension_ui_request",
+                  method: "setStatus",
+                  statusKey: "t3-session-cwd",
+                  statusText: cwd,
+                });
+              }
+              const runtime = yield* adapter.openSession({
+                threadId: THREAD_ID,
+                providerSessionId: SESSION_ID,
+                modelSelection: model,
+                runtimePolicy: policy,
+              });
+              const result = yield* runtime
+                .ensureThread({ threadId: THREAD_ID, modelSelection: model, runtimePolicy: policy })
+                .pipe(Effect.result);
+              if (cwd === physicalCheckout) {
+                if (result._tag !== "Success") return assert.fail(String(result.failure));
+                assert.equal(result.success.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+              } else {
+                if (result._tag !== "Failure")
+                  return assert.fail("Pi registered without a matching cwd");
+                assert.match(String(result.failure.cause), /Pi.*working directory/);
+              }
+            }),
+          );
+        }
+      }),
+    ).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("forks a resumed session recorded in another cwd into the runtime cwd", () =>
     Effect.gen(function* () {
       const host = yield* ProviderHost.ProviderHost;

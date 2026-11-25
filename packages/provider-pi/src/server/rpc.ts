@@ -20,6 +20,7 @@ import {
 } from "@t3tools/shared/toolOutput";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
+import { PI_T3_SESSION_CWD_STATUS_KEY } from "./mcpExtensionSource.ts";
 
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
   operation: Schema.String,
@@ -120,6 +121,7 @@ export interface PiRpcConnection {
     record: PiRpcRecord,
     timeoutMs?: number,
   ) => Effect.Effect<unknown, PiRpcError | PiRpcTimeoutError>;
+  readonly sessionCwd: string | undefined;
   readonly events: Queue.Queue<PiRpcRecord, PiRpcError>;
   readonly exited: Effect.Effect<number, PiRpcError>;
   readonly terminate: Effect.Effect<void>;
@@ -318,6 +320,7 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   const transportDown = yield* Deferred.make<never, PiRpcError>();
   const exitDeferred = yield* Deferred.make<number, PiRpcError>();
   let nextRequestId = 0;
+  let sessionCwd: string | undefined;
 
   const failTransport = Effect.fn("PiRpc.failTransport")(function* (error: PiRpcError) {
     const claimed = yield* Deferred.fail(transportDown, error);
@@ -351,6 +354,14 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
           }
           return;
         }
+      }
+      if (
+        record["type"] === "extension_ui_request" &&
+        record["method"] === "setStatus" &&
+        record["statusKey"] === PI_T3_SESSION_CWD_STATUS_KEY
+      ) {
+        sessionCwd = piRecordString(record, "statusText");
+        return;
       }
       yield* Queue.offer(events, record);
     });
@@ -467,6 +478,8 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     record: PiRpcRecord,
     timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   ): Effect.fn.Return<unknown, PiRpcError | PiRpcTimeoutError> {
+    if (record["type"] === "new_session" || record["type"] === "switch_session")
+      sessionCwd = undefined;
     const id = `t3-${nextRequestId++}`;
     const deferred = yield* Deferred.make<unknown, PiRpcError>();
     pendingRequests.set(id, { deferred });
@@ -492,6 +505,9 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   return {
     send,
     request,
+    get sessionCwd() {
+      return sessionCwd;
+    },
     events,
     exited: Deferred.await(exitDeferred),
     terminate: failTransport(
