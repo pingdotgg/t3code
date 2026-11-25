@@ -3055,8 +3055,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           .reverse();
       });
 
-      // Old records hold entry IDs without a session file. Corroborate them with the
-      // saved prompt timestamps and ancestry before using a sibling session.
+      // Old records hold entry IDs without a session file. Recover only when both
+      // timestamped user entries are on the same branch in a sibling session.
       const findHistoricalForkSession = Effect.fnUntraced(function* (
         currentFile: string,
         boundary: Extract<PiForkBoundary, { type: "entry" }>,
