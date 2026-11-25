@@ -19,6 +19,9 @@ import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 import kotlin.math.max
 
+// Bounds the capture event and the picker sheet; matches iOS's maxCapturedLines.
+private const val MAX_CAPTURED_LINES = 5_000
+
 class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
   private val container = FrameLayout(context)
   private val terminalCanvas = TerminalCanvasView(context)
@@ -43,23 +46,13 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     set(value) {
       if (field == value || value <= 0) return
       field = value
-      val frame = if (terminalHandle !=
-        0L
-      ) {
-        TerminalFrame.decode(GhosttyBridge.nativeSnapshot(terminalHandle))
-      } else {
-        null
-      }
-      val text = frame?.let { snapshot ->
-        (0 until snapshot.rows).joinToString("\n") { row ->
-          (0 until snapshot.cols).joinToString("") { col ->
-            snapshot.cellText[
-              row * snapshot.cols +
-                col
-            ]
-          }.trimEnd()
-        }
-      } ?: ""
+      val bytes = if (terminalHandle != 0L) GhosttyBridge.nativeScreenText(terminalHandle) else null
+      // iOS keeps the same newest lines and trims each line the same way.
+      val text = bytes?.let { String(it, Charsets.UTF_8) }
+        ?.split("\n")
+        ?.takeLast(MAX_CAPTURED_LINES)
+        ?.joinToString("\n") { it.trimEnd() }
+        ?: ""
       onCapture(mapOf("text" to text))
     }
   private var terminalHandle = 0L

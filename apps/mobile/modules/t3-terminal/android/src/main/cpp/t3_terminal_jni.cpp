@@ -374,6 +374,41 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeGetSelectionText(JNIEnv* env, j
   return result;
 }
 
+// Returns scrollback plus the active screen as UTF-8 bytes without touching the
+// user's selection, or null when the terminal has no content.
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_expo_modules_t3terminal_GhosttyBridge_nativeScreenText(JNIEnv* env, jclass,
+                                                             jlong handle) {
+  auto* session = FromHandle(handle);
+  if (session == nullptr) return nullptr;
+  std::lock_guard<std::mutex> lock(session->mutex);
+  GhosttySelection everything{};
+  everything.size = sizeof(everything);
+  if (ghostty_terminal_select_all(session->terminal, &everything) != GHOSTTY_SUCCESS) {
+    return nullptr;
+  }
+  GhosttyTerminalSelectionFormatOptions options{};
+  options.size = sizeof(options);
+  options.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
+  options.unwrap = true;
+  options.trim = true;
+  options.selection = &everything;
+  uint8_t* bytes = nullptr;
+  size_t len = 0;
+  if (ghostty_terminal_selection_format_alloc(session->terminal, nullptr, options,
+                                              &bytes, &len) != GHOSTTY_SUCCESS ||
+      bytes == nullptr) {
+    return nullptr;
+  }
+  auto result = env->NewByteArray(static_cast<jsize>(len));
+  if (result != nullptr && len > 0) {
+    env->SetByteArrayRegion(result, 0, static_cast<jsize>(len),
+                            reinterpret_cast<const jbyte*>(bytes));
+  }
+  ghostty_free(nullptr, bytes, len);
+  return result;
+}
+
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_expo_modules_t3terminal_GhosttyBridge_nativeSnapshot(JNIEnv* env, jclass,
                                                            jlong handle) {

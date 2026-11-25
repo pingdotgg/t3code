@@ -54,6 +54,10 @@ shortcuts in Settings > Keybindings.
 On iPhone and iPad, long-press the terminal to paste or to choose Select Text.
 Select Text shows the visible output, where you can copy text or tap a link.
 
+In the mobile app, Attach output lists the terminal's latest 5,000 lines,
+including output scrolled out of view. The last screenful starts selected; tap
+the first and last line of another range to attach that instead.
+
 ## fish
 
 T3 Code starts fish with `no-query-term`, avoiding startup waits for terminal

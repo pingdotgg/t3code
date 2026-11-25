@@ -1,4 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { LegendList } from "@legendapp/list/react-native";
 import {
   ComposerContextId,
   COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS,
@@ -8,7 +9,7 @@ import {
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { msg, T, useGT } from "gt-react-native";
 import { useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { REVIEW_MONO_FONT_FAMILY } from "../review/reviewDiffRendering";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -16,10 +17,13 @@ import { Sheet } from "../../components/ui/Sheet";
 import { Button } from "../../components/ui/Button";
 import { uuidv4 } from "../../lib/uuid";
 import { m } from "../../i18n/messages";
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { insertComposerDraftContext } from "../../state/use-composer-drafts";
 
 export function TerminalContextSheet(props: {
   text: string;
+  /** Rows on screen when the output was captured; the latest screenful starts selected. */
+  visibleRows: number;
   environmentId: EnvironmentId;
   threadId: ThreadId;
   terminalId: string;
@@ -30,7 +34,10 @@ export function TerminalContextSheet(props: {
   const insets = useSafeAreaInsets();
   const gt = useGT();
   const lines = props.text.replace(/\n+$/, "").split("\n");
-  const [range, setRange] = useState({ start: 0, end: lines.length - 1 });
+  const [range, setRange] = useState(() => ({
+    start: Math.max(0, lines.length - props.visibleRows),
+    end: lines.length - 1,
+  }));
   const [anchor, setAnchor] = useState<number | null>(null);
   const selectedText = lines.slice(range.start, range.end + 1).join("\n");
   const tooLarge = selectedText.length > COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS;
@@ -41,10 +48,9 @@ export function TerminalContextSheet(props: {
       kind: "terminal" as const,
       contextId: ComposerContextId.make(uuidv4()),
       // oxlint-disable-next-line t3code/no-untranslated-copy -- context label sent to the agent with the terminal text
-      label: `${props.terminalLabel} · visible lines ${range.start + 1}–${range.end + 1}`,
+      label: `${props.terminalLabel} · lines ${range.start + 1}–${range.end + 1}`,
       terminalId: props.terminalId,
-      // oxlint-disable-next-line t3code/no-untranslated-copy -- context label sent to the agent with the terminal text
-      terminalLabel: `${props.terminalLabel} (visible output)`,
+      terminalLabel: props.terminalLabel,
       lineStart: range.start + 1,
       lineEnd: range.end + 1,
       text: selectedText,
@@ -63,57 +69,63 @@ export function TerminalContextSheet(props: {
     }
     props.onAttach();
   };
+  const selectLine = (index: number) => {
+    if (anchor === null) {
+      setAnchor(index);
+      setRange({ start: index, end: index });
+    } else {
+      setRange({ start: Math.min(anchor, index), end: Math.max(anchor, index) });
+      setAnchor(null);
+    }
+  };
   return (
     <Sheet title={gt("Terminal output")} onClose={props.onClose}>
-      <ScrollView
-        nestedScrollEnabled
+      <LegendList
+        renderScrollComponent={NativeScrollView}
+        data={lines}
+        keyExtractor={(_line, index) => String(index)}
+        extraData={{ range, anchor }}
+        estimatedItemSize={36}
+        recycleItems
+        initialScrollAtEnd
         className="flex-1"
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 20 }}
-      >
-        <Text className="pb-4 text-sm text-foreground-muted">
-          <T>Tap the first and last line to select a range.</T>
-        </Text>
-        <View className="overflow-hidden rounded-xl bg-card-alt">
-          {lines.map(
-            (line, index) => (
-              /* oxlint-disable react/no-array-index-key -- Selection is addressed by line number in this captured terminal snapshot. */ <Pressable
-                key={index}
-                accessibilityRole="button"
-                accessibilityLabel={gt("Line {number}: {line}", { number: index + 1, line })}
-                accessibilityState={{ selected: index >= range.start && index <= range.end }}
-                onPress={() => {
-                  if (anchor === null) {
-                    setAnchor(index);
-                    setRange({ start: index, end: index });
-                  } else {
-                    setRange({ start: Math.min(anchor, index), end: Math.max(anchor, index) });
-                    setAnchor(null);
-                  }
-                }}
-                className={
-                  index >= range.start && index <= range.end
-                    ? "flex-row gap-3 bg-primary/10 px-3 py-2"
-                    : "flex-row gap-3 px-3 py-2"
-                }
+        ListHeaderComponent={
+          <Text className="pb-4 text-sm text-foreground-muted">
+            <T>Tap the first and last line to select a range.</T>
+          </Text>
+        }
+        renderItem={({ item: line, index }) => {
+          const selected = index >= range.start && index <= range.end;
+          return (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={gt("Line {number}: {line}", { number: index + 1, line })}
+              accessibilityState={{ selected }}
+              onPress={() => selectLine(index)}
+              className={
+                selected
+                  ? "flex-row gap-3 bg-primary/10 px-3 py-2"
+                  : "flex-row gap-3 bg-card-alt px-3 py-2"
+              }
+            >
+              <Text
+                className="w-10 text-right text-sm text-foreground-muted"
+                style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
               >
-                <Text
-                  className="w-8 text-right text-sm text-foreground-muted"
-                  style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
-                >
-                  {index + 1}
-                </Text>
-                <Text
-                  className="flex-1 text-sm text-foreground"
-                  style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
-                >
-                  {line || " "}
-                </Text>
-              </Pressable>
-            ) /* oxlint-enable react/no-array-index-key */,
-          )}
-        </View>
-      </ScrollView>
+                {index + 1}
+              </Text>
+              <Text
+                className="flex-1 text-sm text-foreground"
+                style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+              >
+                {line || " "}
+              </Text>
+            </Pressable>
+          );
+        }}
+      />
       <View
         className="gap-3 border-t border-border px-5 pt-4"
         style={{ paddingBottom: Math.max(16, insets.bottom) }}
